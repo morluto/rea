@@ -34,6 +34,7 @@ for (const command of [
   "inspect-pe-load-config",
   "inspect-pe-certificates",
   "inspect-pe-resources",
+  "inspect-ne-executable",
   "inspect-native-exports",
   "inspect-native-initializers",
   "inspect-binary-hardening",

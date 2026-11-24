@@ -387,6 +387,25 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_ne_executable"),
+    {
+      description:
+        "Inspect a 16-bit NE image's header, segments, resources, names, module references and entries",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local NE (Windows 3.x/OS/2) image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/neExecutable.js")
+        ).createNeExecutableService(),
+      "rea-ne-executable",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_devicetree"),
     {
       description: "Inspect a flattened devicetree blob without executing it",

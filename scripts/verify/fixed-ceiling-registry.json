@@ -491,6 +491,13 @@
       "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
     }
   },
+  "src/native/ne/NeExecutableProvider.ts": {
+    "\"The NE metadata allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "NE table metadata retention is a resource policy, like the PE resource metadata allowance (#14235)."
+    }
+  },
   "src/native/pe/PeCertificatesProvider.ts": {
     "selected.name": {
       "class": "pending",

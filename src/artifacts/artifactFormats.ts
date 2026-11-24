@@ -463,6 +463,7 @@ const NON_ZIP_FORMATS = {
   elf: described("elf", plain),
   pe: described("pe", plain),
   "dos-mz": described("dos-mz", plain),
+  ne: described("ne", plain),
   "dos-com": described("dos-com", plain),
   "raw-binary": described("raw-binary", plain),
   "gamecube-dol": described("gamecube-dol", plain),

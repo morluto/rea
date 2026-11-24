@@ -27,8 +27,11 @@ The DOS MZ parser validates page counts, initialized module length, header and
 relocation-table bounds, relocation destinations, and the initialized entry
 point using the available structural bytes and actual file length. It reports
 those DOS facts separately from Windows-header evidence. A recognized PE
-signature remains PE; recognized NE, LE, and LX headers are explicitly
-unsupported. A nonzero Windows-header pointer without a recognized signature
+signature remains PE. A recognized NE header resolves as an `ne` artifact for
+the portable
+[`inspect_ne_executable`](../guides/native/binary-diagnostics.md#portable-ne-executables)
+operation rather than a Ghidra session; recognized LE and LX headers are
+explicitly unsupported. A nonzero Windows-header pointer without a recognized signature
 usually remains an unresolved candidate, even when the DOS structure validates:
 automatic target selection fails closed and reports both observations. When a
 nonempty relocation table ends inside a complete DOS header, the remaining

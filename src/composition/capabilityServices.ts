@@ -85,6 +85,7 @@ import { createPeCertificatesService } from "./binaryDiagnostics/peCertificates.
 import { createPeImportsService } from "./binaryDiagnostics/peImports.js";
 import { createNativeExportsService } from "./binaryDiagnostics/nativeExports.js";
 import { createPeResourcesService } from "./binaryDiagnostics/peResources.js";
+import { createNeExecutableService } from "./binaryDiagnostics/neExecutable.js";
 import { createWindowsShortcutService } from "./binaryDiagnostics/windowsShortcut.js";
 import { createRecordedCrashService } from "./binaryDiagnostics/recordedCrash.js";
 import { createBinaryLayoutService } from "./binaryDiagnostics/binaryLayout.js";
@@ -395,6 +396,7 @@ const modules = {
     ({ options }) => options.il2cppMetadata ?? createIl2cppMetadataService(),
   ),
   peResources: service(() => createPeResourcesService()),
+  neExecutable: service(() => createNeExecutableService()),
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),

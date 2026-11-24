@@ -362,6 +362,7 @@ export const ENTRY_FILES = Object.freeze(
         "exports/NativeExportsProvider.ts",
         "hardening/BinaryHardeningProvider.ts",
         "initializers/NativeInitializersProvider.ts",
+        "ne/NeExecutableProvider.ts",
         "pe/PeCertificatesProvider.ts",
         "pe/PeImportsProvider.ts",
         "pe/PeLoadConfigProvider.ts",

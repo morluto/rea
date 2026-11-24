@@ -26,6 +26,13 @@ export const PE_RESOURCES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free NE header and table decoding. */
+export const NE_EXECUTABLE_PROVIDER = Object.freeze({
+  id: "rea-ne-executable",
+  name: "REA NE executable parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free PE Authenticode table decoding. */
 export const PE_CERTIFICATES_PROVIDER = Object.freeze({
   id: "rea-pe-certificates",

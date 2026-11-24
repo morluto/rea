@@ -9,6 +9,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
+import { neFixture } from "../../../../src/native/ne/NeExecutable.fixture.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
 
@@ -56,6 +57,23 @@ const probeOperations = async (path: string): Promise<string[]> => {
 };
 
 describe("directory inspection probes", () => {
+  it("proposes the portable NE inspection for an NE image", async () => {
+    const root = await createTestTempDirectory("rea-artifact-ne-");
+    const path = join(root, "LEGACY.DLL");
+    await writeFile(path, neFixture().bytes);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(
+        await runProviderAnalysis(path, "inspect_artifact", {}).then(
+          projectCliAnalysisResult,
+        ),
+      ).normalized_result,
+    );
+    expect(inspection.subject.root_format).toBe("ne");
+    expect(inspection.next_probes.map(({ operation }) => operation)).toEqual([
+      "inspect_ne_executable",
+    ]);
+  });
+
   it("proposes native and plist probes for an application bundle without JavaScript", async () => {
     const root = await createTestTempDirectory("rea-artifact-bundle-");
     const bundle = join(root, "Fixture.app");
