@@ -611,7 +611,7 @@ export const decodeCaptureProtobuf = async (
       ]);
     schema = admitted.value;
     schemaSource = {
-      decoder: "protobuf-es-2.16.0",
+      decoder: "protobuf-es-2.17.0",
       descriptor_set_path: redact(path),
       descriptor_set_sha256: snapshot.sha256,
       descriptor_set_bytes: snapshot.bytes.length,

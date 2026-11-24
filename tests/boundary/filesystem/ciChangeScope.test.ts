@@ -1140,7 +1140,7 @@ it.each([
   ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
   ["scripts/lib/release-proposal.d.mts", { code: true, package: true }],
   ["scripts/lib/release-pull-request.mjs", { code: true, package: true }],
-  ["patches/release-please+17.3.0.patch", { code: true, package: true }],
+  ["patches/release-please+17.11.2.patch", { code: true, package: true }],
   [
     "tests/boundary/filesystem/releaseProposal.test.ts",
     { code: true, package: true },

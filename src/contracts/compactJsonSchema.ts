@@ -644,9 +644,7 @@ const REDUCED_ITEM_MAX_DEPTH = 3;
  * nullable union, and other unions keep the typed branches every surveyed
  * target accepts below the root.
  */
-const typedAlternatives = (
-  types: readonly string[],
-): Record<string, unknown> =>
+const typedAlternatives = (types: readonly string[]): Record<string, unknown> =>
   types.length === 1
     ? { type: types[0] }
     : { anyOf: types.map((type) => ({ type })) };
