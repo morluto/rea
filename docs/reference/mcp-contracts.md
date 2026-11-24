@@ -336,8 +336,13 @@ and unknowns retain their separate meaning. Legacy replies keep their existing
 framing.
 
 `list_procedures`, `search_procedures`, `list_strings`, `search_strings` and
-`list_names` accept `detail: "summary"`. Complete inline delivery remains the
-default. Summary retains the original complete Evidence and returns its row
+`list_names` accept `detail: "complete"` or `detail: "summary"`. These five
+inventories, `batch_decompile` and `trace_feature` grow with the target, so an
+omitted `detail` is size-aware: the complete Evidence is returned inline when
+its UTF-8 JSON is at most 32 KiB, and otherwise the session retains it and
+returns its summary. A server that retains no Evidence returns the complete
+Evidence. On a stripped 1.2 MB ELF (Debian 12 `zstd`), complete MCP results
+were 8.2 MB for `list_names` and 3.6 MB for `trace_feature` with `error`. Summary retains the original complete Evidence and returns its row
 count, provider identity, analysis-profile digest, original query, parent Evidence
 ID, limitations and explicit unknown discovery coverage. Delivery detail is excluded from provider arguments
 and original Evidence identity.
@@ -884,7 +889,9 @@ reachability. The CLI keeps complete trace JSON; save it and use
 
 ### Selected batch decompile results
 
-`batch_decompile` returns every pseudocode body by default. `detail: "summary"`
+`batch_decompile` returns every pseudocode body inline when the batch Evidence is
+at most 32 KiB; an omitted `detail` summarizes a larger batch, and
+`detail: "complete"` always returns every body. `detail: "summary"`
 retains the complete batch in the session first and returns its producer counts,
 `source_provider` (the composing workflow), `source_analysis_profile_digest`,
 `decompiling_provider`, procedure identity counts, total and largest
@@ -2090,7 +2097,8 @@ when both are omitted, storage is not compared.
 `compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
 ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
-ESP flash partitions (`esp-flash-partition`) and FIT images (`fit-image`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
+ESP flash partitions (`esp-flash-partition`), FIT images (`fit-image`) and tar
+members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
 only one side records, or that the other side records as another kind, is

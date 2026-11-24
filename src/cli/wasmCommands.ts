@@ -51,7 +51,6 @@ export const registerWasmCommands = (
     logger,
     wasmArtifactModule.contract,
     {
-      command: wasmArtifactModule.cliCommand,
       description: "Inspect an explicit local WASM artifact with WABT",
       positionals: ["path"],
       callerPaths: ["path", "glue_paths", "candidate_paths"],

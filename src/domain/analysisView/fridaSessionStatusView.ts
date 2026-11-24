@@ -12,7 +12,10 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 
 export const fridaSessionStatusSummarySchema = fridaSessionStatusSchema
@@ -35,15 +38,7 @@ export const projectFridaSessionStatusView = (
 ) => {
   const view = ownedView<SummaryAnalysisView>(admitted, "summary");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Frida session status supports summary views.",
-        },
-      ]),
-    );
+    return invalidAnalysisView("Frida session status supports summary views.");
   const report = readFridaSessionStatus(parent);
   if (!report.ok) return report;
   const parameters = fridaSessionStatusViewContext.source_parameters.safeParse(

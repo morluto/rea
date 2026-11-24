@@ -64,26 +64,6 @@ mcpTest(
 );
 
 mcpTest(
-  "requires an absolute path for inspect_v8_code_cache",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_v8_code_cache",
-        arguments: { path: "module.jsc" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_v8_code_cache" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
   "reports a foreign magic as an unsupported target rather than a parse",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);

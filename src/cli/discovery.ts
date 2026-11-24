@@ -18,7 +18,7 @@ import {
 import { formatCliOutput } from "./cliOutputFormatter.js";
 import { estimateTokenCount } from "tokenx";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
-import { sliceTextByTokenWindow } from "./tokenWindow.js";
+import { formatTokenWindow } from "./tokenWindow.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   commandSchemaDocument,
@@ -204,14 +204,8 @@ const presentDiscoveryAnswer = (
     return text;
   if (controls.tokenCount) return `${estimateTokenCount(text)}\n`;
   if (!controls.tokenWindow) return text;
-  const window = sliceTextByTokenWindow(
-    text,
-    controls.tokenOffset ?? 0,
-    controls.tokenLimit,
-  );
-  return window.truncated
-    ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]\n`
-    : text;
+  const window = formatTokenWindow(text, controls);
+  return window.truncated ? `${window.text}\n` : text;
 };
 
 const sortedCommands = (cli: CliInstance): readonly CliCommandEntry[] =>

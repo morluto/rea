@@ -462,3 +462,23 @@ it("charges unusable FFS headers against the same inventory budget as FV block m
     ]),
   });
 });
+
+it("retains an aligned volume with a corrupted header checksum and surfaces fv-checksum-mismatch", async () => {
+  const image = buildReaderImage();
+  // Corrupt the revision byte inside the volume header at 0x1000 so checksumValid is false.
+  image[0x1000 + 55] = 3;
+  const { entries, coverage } = await inventory(image);
+  expect(entries.map((entry) => [entry.path, entry.kind])).toEqual([
+    ["firmware-volume-0x1000", "directory"],
+    [`firmware-volume-0x1000/ffs-file-${DRIVER_GUID}.bin`, "file"],
+  ]);
+  expect(entries[0]?.limitations).toEqual(
+    expect.arrayContaining([expect.stringContaining("fv-checksum-mismatch")]),
+  );
+  expect(coverage).toEqual({
+    status: "unknown",
+    limitations: expect.arrayContaining([
+      expect.stringContaining("fv-checksum-mismatch"),
+    ]),
+  });
+});

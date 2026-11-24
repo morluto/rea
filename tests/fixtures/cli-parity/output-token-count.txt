@@ -1,7 +1,7 @@
 $ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_result.window --token-count
 exit: 0
 --- stdout
-13
+17
 <end>
 --- stderr
 <end>
