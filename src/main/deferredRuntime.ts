@@ -17,9 +17,24 @@ import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import { SERVER_START_FAILED } from "../server/serverStartFailure.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
+import {
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+  type McpOutputSchemaProfile,
+} from "../contracts/mcpSchemaPresentation.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
+
+/**
+ * Digests of the selected output profile. The catalog file records the `off`
+ * identity; compact listings advertise different schemas and must start with
+ * the compact digest or the first runtime attach rejects them.
+ */
+const deferredCatalogDigests = (
+  catalog: RecordedMcpCatalog,
+  profile: McpOutputSchemaProfile | undefined,
+): RecordedMcpCatalog["identity"]["digests"] =>
+  RECORDED_CATALOG_DIGEST_PROFILES?.[profile ?? "off"] ??
+  catalog.identity.digests;
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
 const readCatalog = (): RecordedMcpCatalog => {
@@ -126,9 +141,17 @@ export const runDeferred = async (
   const serverLogger = createLogger("mcp", config.logLevel).child({
     layer: "server",
   });
-  // `main.ts` defers only the default output profile, which omits output
-  // schemas from listings. Canonical result validation loads on first use.
+  // Deferred listings serve build-recorded output advertisements (omitted,
+  // or compact when recorded); canonical result validation loads on first use.
+  // A catalog recorded before compact outputs existed falls back to eager.
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
+  if (
+    config.mcpOutputSchemaProfile === "compact" &&
+    firstCatalog.compactOutputSchemas === undefined
+  ) {
+    const { runEager } = await import("./eagerRuntime.js");
+    return runEager(dependencies, config);
+  }
   const toolFamilies =
     config.mcpToolFamilies === undefined
       ? undefined
@@ -214,12 +237,14 @@ export const runDeferred = async (
               {
                 maximumInputElements: config.mcpMaxInputElements,
                 compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
+                outputProfile: config.mcpOutputSchemaProfile,
                 toolFamilies,
                 identity: {
                   ...catalog.identity,
-                  digests:
-                    RECORDED_CATALOG_DIGEST_PROFILES?.off ??
-                    catalog.identity.digests,
+                  digests: deferredCatalogDigests(
+                    catalog,
+                    config.mcpOutputSchemaProfile,
+                  ),
                 },
               },
             );

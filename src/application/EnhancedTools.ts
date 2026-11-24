@@ -77,7 +77,7 @@ import {
 import type { DirectEnhancedToolName } from "./oneShotOperationInput.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
-import { resolveXrefsName } from "./XrefsAddressResolution.js";
+import { resolveNativeSymbol } from "./NativeSymbolSelection.js";
 import {
   parseProcedureAddress,
   resolveProcedureAddress,
@@ -687,19 +687,28 @@ export class EnhancedTools {
     signal?: AbortSignal,
   ): EnhancedResult {
     const { name, limit, offset } = input;
-    const resolved = await resolveXrefsName(
+    const resolved = await resolveNativeSymbol(
       this.analysis,
       name,
-      signal,
       "find_xrefs_to_name",
+      signal,
+      { procedureLookup: true },
     );
     if (!resolved.ok) return resolved;
-    if (resolved.value === null)
-      return ok({ status: "unresolved", name, reason: "name_not_found" });
+    const resolution = resolved.value;
+    if (resolution.status === "unresolved")
+      return ok({
+        status: "unresolved",
+        name,
+        reason: "name_not_found",
+        ...(resolution.candidates.length === 0
+          ? {}
+          : { candidates: resolution.candidates.map((item) => ({ ...item })) }),
+      });
 
     const observed = await this.#observe(
       "xrefs",
-      { address: resolved.value },
+      { address: resolution.address },
       signal,
     );
     if (!observed.ok) return observed;
@@ -719,7 +728,8 @@ export class EnhancedTools {
     return ok({
       status: "resolved",
       name,
-      address: resolved.value,
+      ...(resolution.name === name ? {} : { resolved_name: resolution.name }),
+      address: resolution.address,
       xrefs: page,
       ...(hasPaging
         ? {

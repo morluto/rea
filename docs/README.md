@@ -133,6 +133,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [WeChat mini-program wxapkg archives](wxapkg.md)
 - [Android binary XML (AXML)](axml.md)
 - [Android compiled resources (arsc)](arsc.md)
+- [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
 
 ## WebAssembly
 

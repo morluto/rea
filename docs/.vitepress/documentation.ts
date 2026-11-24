@@ -523,6 +523,11 @@ export const documentationSections = [
         source: "arsc.md",
         route: "/arsc",
       },
+      {
+        text: "GPU asset headers: DDS, GLB, KTX and KTX2",
+        source: "gpu-asset-headers.md",
+        route: "/gpu-asset-headers",
+      },
     ],
   },
   {

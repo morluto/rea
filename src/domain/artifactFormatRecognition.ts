@@ -14,6 +14,20 @@ import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
+import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
+import { BinaryFormatFailure } from "./binaryContainer.js";
+import {
+  hasDevicetreeMagic,
+  readDevicetreeHeader,
+} from "./firmware/devicetreeHeader.js";
+import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
+import { hasSqliteHeader } from "./sqliteFormat.js";
+import {
+  hasDdsHeader,
+  hasGlbHeader,
+  hasKtx1Identifier,
+  hasKtx2Identifier,
+} from "./gpuAssetFormats.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
 
@@ -27,6 +41,10 @@ export type RecognizedArtifactFormat = Extract<
   | "wxapkg"
   | "axml"
   | "arsc"
+  | "dds"
+  | "glb"
+  | "ktx"
+  | "ktx2"
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
@@ -39,7 +57,27 @@ export type RecognizedArtifactFormat = Extract<
   | "fit"
   | "ntfs-mft"
   | "plist"
+  | StandaloneArtifactFormat
 >;
+
+/**
+ * Single-file formats that a dedicated execution-free tool reads. Inventory
+ * records only the file itself; the inspection routes it to that tool.
+ */
+export const STANDALONE_ARTIFACT_FORMATS = [
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
+] as const;
+
+export type StandaloneArtifactFormat =
+  (typeof STANDALONE_ARTIFACT_FORMATS)[number];
+
+export const isStandaloneArtifactFormat = (
+  format: string,
+): format is StandaloneArtifactFormat =>
+  (STANDALONE_ARTIFACT_FORMATS as readonly string[]).includes(format);
 
 /** The bytes one route has read when it asks which format a file holds. */
 export interface ArtifactRecognitionInput {
@@ -111,6 +149,10 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     ),
     when("axml", hasAxmlHeader),
     when("arsc", hasArscHeader),
+    when("dds", hasDdsHeader),
+    when("glb", hasGlbHeader),
+    when("ktx", hasKtx1Identifier),
+    when("ktx2", hasKtx2Identifier),
     when("uimage", hasUImageMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
     ({ prefix }) => {
@@ -154,6 +196,30 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     when("fit", hasFitImagesNode),
     when("ntfs-mft", hasMftFileRecordHeader),
+    when("sqlite", hasSqliteHeader),
+    when("windows-shortcut", hasWindowsShortcutHeader),
+    // Only a pinned CPython magic claims the format; a CR LF trailer alone
+    // is too weak a signature for arbitrary bytes.
+    when("python-pyc", (prefix) => {
+      const observed = observePythonBytecodePrefix(prefix);
+      return observed.state === "framed" && observed.identity !== null;
+    }),
+    // A FIT image is a devicetree too, so FIT claims it first. The header
+    // owner decides whether the remaining blob is one REA reads.
+    ({ prefix }) => {
+      if (!hasDevicetreeMagic(prefix)) return undefined;
+      try {
+        readDevicetreeHeader(prefix);
+      } catch (cause: unknown) {
+        if (!(cause instanceof BinaryFormatFailure)) throw cause;
+        return {
+          state: "refused",
+          format: "devicetree",
+          reason: cause.message,
+        };
+      }
+      return { state: "recognized", format: "devicetree" };
+    },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
   ];

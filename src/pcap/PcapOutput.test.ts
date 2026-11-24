@@ -626,3 +626,23 @@ it("reports hasDnsProtocol only when base dissection sees DNS, mDNS, or LLMNR tr
     ).hasDnsProtocol,
   ).toBe(true);
 });
+
+it("refuses tshark JSON above producer_limits.output_bytes and admits it when raised", async () => {
+  const text = capture([{ "ip.src": ["192.0.2.1"] }]);
+  await expect(
+    parseTsharkJsonOutput(text, undefined, undefined, text.length - 1),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: undefined,
+    limit: {
+      control_kind: "parameter",
+      parameter: "producer_limits.output_bytes",
+      effective_value: text.length - 1,
+      maximum: 128 * 1024 * 1024,
+      default_value: 8 * 1024 * 1024,
+    },
+  });
+  await expect(
+    parseTsharkJsonOutput(text, undefined, undefined, text.length),
+  ).resolves.toMatchObject({ endpointCount: 1 });
+});

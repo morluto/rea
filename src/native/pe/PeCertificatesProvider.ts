@@ -1,4 +1,10 @@
 import {
+  maxFileBytesReadBudget,
+  PE_FILE_CEILING_BYTES,
+} from "../../domain/artifactReadBudget.js";
+import {
+  artifactFileCeilingConstraint,
+  artifactReadBudgetConstraint,
   artifactFilePrimaryFacts,
   projectArtifactCloseFailure,
   projectStableArtifactFailure,
@@ -53,8 +59,12 @@ export class PeCertificatesProvider implements PeCertificatesPort {
       return await this.#resources.run(async () =>
         withStableArtifactHandle(
           input.path,
-          input.max_file_bytes,
+          PE_FILE_CEILING_BYTES,
           {
+            readBudget: maxFileBytesReadBudget(
+              input.max_file_bytes,
+              MAX_INSPECT_PE_CERTIFICATE_FILE_BYTES,
+            ),
             retainBytes: (size) => Math.min(size, PE_HEADER_PREFIX_BYTES),
             signal: options?.signal,
             resourceScope: this.#resources,
@@ -82,17 +92,10 @@ export class PeCertificatesProvider implements PeCertificatesPort {
   }
 }
 
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectPeCertificatesInput,
-): string =>
-  boundary === "file-size"
-    ? input.max_file_bytes >= MAX_INSPECT_PE_CERTIFICATE_FILE_BYTES
-      ? `The image exceeds the ${String(MAX_INSPECT_PE_CERTIFICATE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
-    : input.max_entries >= MAX_INSPECT_PE_CERTIFICATE_ENTRIES
-      ? `The image exceeds the ${String(MAX_INSPECT_PE_CERTIFICATE_ENTRIES)}-entry certificate-table ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected certificate entry budget.`;
+const entryBudgetRemediation = (input: InspectPeCertificatesInput): string =>
+  input.max_entries >= MAX_INSPECT_PE_CERTIFICATE_ENTRIES
+    ? `The image exceeds the ${String(MAX_INSPECT_PE_CERTIFICATE_ENTRIES)}-entry certificate-table ceiling this operation accepts; select a smaller artifact.`
+    : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected certificate entry budget.`;
 
 /** A fixed PKCS#7 decoder allowance; neither request fields nor retries raise it. */
 const decoderAllowanceFailure = (
@@ -158,6 +161,31 @@ const peCertificatesFailure = (
         description: "PE image",
         fallbackMessage: "PE certificate inspection failed.",
         recognise: (failure, origin) => {
+          const reported = {
+            max_file_bytes: input.max_file_bytes,
+            max_entries: input.max_entries,
+          };
+          const readBudget = artifactReadBudgetConstraint(
+            OPERATION,
+            failure,
+            reported,
+          );
+          if (readBudget !== undefined) return readBudget;
+          if (
+            origin === "owned-or-classified" &&
+            failure instanceof ArtifactReaderFailure &&
+            failure.reason === "limit" &&
+            failure.boundary === "file-size"
+          )
+            return artifactFileCeilingConstraint(
+              OPERATION,
+              failure,
+              {
+                name: "The PE whole-file ceiling (32-bit file offsets)",
+                bytes: PE_FILE_CEILING_BYTES,
+              },
+              reported,
+            );
           if (
             origin === "owned-or-classified" &&
             failure instanceof PeCertificateAsn1Failure &&
@@ -184,10 +212,7 @@ const peCertificatesFailure = (
                   ? {}
                   : {
                       retryable: false,
-                      remediationAction: inputBudgetRemediation(
-                        failure.boundary,
-                        input,
-                      ),
+                      remediationAction: entryBudgetRemediation(input),
                     }),
               },
             );

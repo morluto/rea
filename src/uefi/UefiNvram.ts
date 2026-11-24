@@ -283,6 +283,29 @@ function collectChain(
   return { endOffset: cursor, nextSearchOffset: cursor };
 }
 
+const ERASED_PADDING_CHUNK = Buffer.alloc(65_536, 0xff);
+
+/** Check erased bytes in bounded blocks and stop at the first different byte. */
+function erasedPaddingEnd(
+  image: Buffer,
+  start: number,
+  checkpoint: () => void,
+): number {
+  let cursor = start;
+  while (image[cursor] === 0xff) {
+    checkpoint();
+    const end = Math.min(image.length, cursor + ERASED_PADDING_CHUNK.length);
+    if (
+      image.compare(ERASED_PADDING_CHUNK, 0, end - cursor, cursor, end) !== 0
+    ) {
+      while (cursor < end && image[cursor] === 0xff) cursor += 1;
+      break;
+    }
+    cursor = end;
+  }
+  return cursor;
+}
+
 /** Scan a raw image for chained AMI NVRAM variable stores. */
 export const scanAmiNvramStores = (
   image: Buffer,
@@ -308,7 +331,8 @@ export const scanAmiNvramStores = (
   };
   const context = { reader, reserve, maxDepth, noteOmission };
   let searchFrom = 0;
-  while (searchFrom + NVAR_MIN_ENTRY_BYTES <= image.length) {
+  const lastSearchStart = image.length - NVAR_MIN_ENTRY_BYTES;
+  while (searchFrom <= lastSearchStart) {
     checkpoint();
     const firstOffset = image.indexOf(NVAR_BYTES, searchFrom);
     if (firstOffset < 0) break;
@@ -331,23 +355,22 @@ export const scanAmiNvramStores = (
       { depth: 0, parentOffset: null },
       variables,
     );
-    let padding = 0;
-    while (
-      limit.offset === null &&
-      endOffset + padding < image.length &&
-      image[endOffset + padding] === 0xff
-    ) {
-      if (padding % 65536 === 0) checkpoint();
-      padding += 1;
-    }
+    const paddingEnd =
+      limit.offset === null
+        ? erasedPaddingEnd(image, endOffset, checkpoint)
+        : endOffset;
     if (variables.length > 0)
       stores.push({
         offset: firstOffset,
         name: first.entry.name,
         variables,
-        trailingPadding: padding > 0 ? padding : null,
+        trailingPadding: paddingEnd > endOffset ? paddingEnd - endOffset : null,
       });
-    searchFrom = nextSearchOffset;
+    // Leave the final discovery eligible to charge even a short signature.
+    searchFrom = Math.max(
+      nextSearchOffset,
+      Math.min(paddingEnd, lastSearchStart),
+    );
     if (limit.offset !== null) break;
   }
   if (limit.offset !== null) {

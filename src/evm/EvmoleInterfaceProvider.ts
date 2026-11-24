@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
   capturedProviderOutput,
   providerResultDiagnostics,
@@ -93,7 +94,10 @@ import {
   EVM_WORKER_HEAP_MIB,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
-import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
+import {
+  EVMOLE_PROVIDER_IDENTITY,
+  EVMOLE_VERSION,
+} from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -249,7 +253,7 @@ export const evmLimiterAvailability = async (
 const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
-    version: z.literal("0.9.3"),
+    version: z.literal(EVMOLE_VERSION),
     bytecode: z.strictObject({
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       bytes: z.int().nonnegative(),
@@ -946,18 +950,69 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         );
       }
     }
-    const retainCancellation = (outcome: EvmOutcome): EvmOutcome =>
-      outcome.ok && options?.signal?.aborted
-        ? err(
-            cancelledBy(OPERATION, options.signal, {
-              partialObservation: evmInterfaceEvidence(input, outcome.value),
-              ...(retainedOutput === undefined
-                ? {}
-                : { capturedOutput: retainedOutput }),
-            }),
-          )
-        : outcome;
-    result = retainCancellation(result);
+    let rootCleanup:
+      | { readonly owner: EvmRuntimeRoot; readonly lease: AnalysisCleanupLease }
+      | undefined;
+    const finalized = await runOwned(async () => result, {
+      providerId: EVMOLE_PROVIDER_IDENTITY.id,
+      operation: OPERATION,
+      signal: options?.signal,
+      partial: (execution) => evmInterfaceEvidence(input, execution),
+      capturedOutput: (_execution, replacement) =>
+        replacement === "cancellation" ? retainedOutput : undefined,
+      close: async () => {
+        if (root === undefined || processOwner !== undefined) return;
+        const lease = rootLeaseFor(root);
+        try {
+          await lease.release();
+        } catch (cause: unknown) {
+          rootCleanup = { owner: root, lease };
+          const failure = result.ok
+            ? evmCleanupFailure(
+                input,
+                result,
+                [root.path],
+                errorMessage(cause),
+                retainedOutput,
+                cause,
+              )
+            : new ProviderCleanupError(
+                EVMOLE_PROVIDER_IDENTITY.id,
+                [root.path],
+                { reason: errorMessage(cause) },
+                { operation: OPERATION, cause },
+              );
+          bindEvmCleanupOwners(failure, [lease]);
+          throw failure;
+        }
+      },
+      composeCleanupFailure: (primary, cleanup) =>
+        evmCleanupFailure(
+          input,
+          err(primary),
+          cleanup.cleanupResources,
+          errorMessage(cleanup.cause),
+          retainedOutput,
+          cleanup.cause,
+        ),
+    });
+    if (rootCleanup !== undefined) {
+      const cleanup = rootCleanup;
+      const primary =
+        finalized.kind === "completed-cleanup-retained"
+          ? ok(finalized.value)
+          : finalized.kind === "failed" || finalized.kind === "cancelled"
+            ? err(finalized.error.cleanupPrimary ?? finalized.error)
+            : result;
+      this.#pendingCleanup = {
+        input,
+        result: primary,
+        output: retainedOutput,
+        root: cleanup,
+        process: undefined,
+      };
+    }
+    result = finalizedResult(finalized);
     if (processOwner !== undefined) {
       const lease = processLeaseFor(processOwner);
       const rootOwnerLease =
@@ -1022,38 +1077,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       );
       return err(failure);
     }
-    if (root !== undefined) {
-      try {
-        await rootLeaseFor(root).release();
-      } catch (cause: unknown) {
-        const retainedRoot = root;
-        const lease = rootLeaseFor(retainedRoot);
-        const cleanupResult = retainCancellation(result);
-        this.#pendingCleanup = {
-          input,
-          result: cleanupResult,
-          output: retainedOutput,
-          root: { owner: retainedRoot, lease },
-          process: undefined,
-        };
-        root = undefined;
-        const failure = evmCleanupFailure(
-          input,
-          cleanupResult,
-          [retainedRoot.path],
-          errorMessage(cause),
-          retainedOutput,
-          cause,
-        );
-        bindEvmCleanupOwners(
-          failure,
-          [lease],
-          cleanupResult.ok ? undefined : cleanupResult.error,
-        );
-        return err(failure);
-      }
-    }
-    return retainCancellation(result);
+    return result;
   }
 
   async close(): Promise<void> {

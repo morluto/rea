@@ -1323,3 +1323,30 @@ describe("Ghidra native facet coordinate admission", () => {
     },
   );
 });
+
+it("accepts an address outside every function as an incoming-reference target, without function facts", () => {
+  const target = {
+    address: "0x18004a168",
+    name: "PTR_VirtualAlloc_18004a168",
+    symbol: null,
+    classification: null,
+    body: { available: false, reason: "outside every Ghidra function" },
+  };
+  const observation = (procedure: JsonValue) => ({
+    procedure,
+    direction: "incoming",
+    references: [ghidraReferenceEdge()],
+    reference_kinds_available: true,
+    unresolved_calls: [],
+  });
+  expect(
+    parseFunctionValueFixture("procedure_references", observation(target)),
+  ).toMatchObject({ ok: true, value: { procedure: target } });
+  // A function identity keeps its classification and body; mixing fails.
+  expect(
+    parseFunctionValueFixture(
+      "procedure_references",
+      observation({ ...ghidraFunctionIdentity(), classification: null }),
+    ),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+});

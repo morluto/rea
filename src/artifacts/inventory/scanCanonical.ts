@@ -541,8 +541,9 @@ const buildInventorySnapshot = async (
     ...input.parentResolution.limitations,
     ...edgeResult.limitations,
   ];
+  const recognitionLimitations = input.recognitionLimitations ?? [];
   const coverage =
-    relationshipLimitations.length === 0
+    relationshipLimitations.length === 0 && recognitionLimitations.length === 0
       ? traversal.coverage
       : { ...traversal.coverage, status: "unknown" as const };
   return {

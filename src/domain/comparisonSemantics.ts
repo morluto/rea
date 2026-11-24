@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "./canonicalDigest.js";
 
 /** Whether an inventory can support a claim that an item is absent. */
 export const absenceClaimable = (coverage: {
@@ -15,7 +15,7 @@ export const canonicalJson = (
   value: unknown,
   context = "Comparison",
 ): string => {
-  const encoded = canonicalize(value);
+  const encoded = serializeCanonicalValue(value);
   if (encoded === undefined)
     throw new TypeError(`${context} could not canonicalize data`);
   return encoded;

@@ -88,6 +88,26 @@ const DOCS_AND_CODE_INPUTS = [
 const matchesAny = (file, patterns) =>
   patterns.some((pattern) => matchesGlob(file, pattern));
 
+const TYPED_LINT_FILE_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
+// Leave space in the Linux runner's environment for JSON-escaped job outputs
+// and the other lane outputs consumed by the required gate.
+const TYPED_LINT_OUTPUT_MAX_BYTES = 16 * 1024;
+
+const selectTypedLintFiles = (files, listCheckedOutFiles) => {
+  const candidates = files.filter((file) =>
+    TYPED_LINT_FILE_EXTENSION.test(file),
+  );
+  if (!candidates.length) return [];
+  // Deletions still affect lane and test selection. Oxlint only takes files
+  // tracked in the checkout it will check, and owns its own ignore patterns.
+  const checkedOutFiles = new Set(listCheckedOutFiles());
+  const selected = candidates.filter((file) => checkedOutFiles.has(file));
+  return Buffer.byteLength(JSON.stringify(selected)) <=
+    TYPED_LINT_OUTPUT_MAX_BYTES
+    ? selected
+    : null;
+};
+
 /**
  * Plan the CI lanes for one event. `repository` answers the Git questions the
  * plan asks, so the classification runs without a process per decision.
@@ -411,6 +431,9 @@ export function planChanges(request, repository) {
         ]
       : [linux],
   };
+  let checkedOutFiles;
+  const listCheckedOutFiles = () =>
+    (checkedOutFiles ??= repository.listFiles("HEAD", []));
   const testSelection = planTestSelection({
     files,
     event,
@@ -419,10 +442,14 @@ export function planChanges(request, repository) {
     // The checked-out revision is the one whose tests run. Script and
     // configuration files are listed so shared script modules can be traced.
     snapshot: {
-      list: () => repository.listFiles("HEAD", []),
+      list: listCheckedOutFiles,
       read: (paths) => repository.readFiles("HEAD", paths),
     },
   });
+  const typedLintFiles =
+    event === "pull_request" && tier === "fast" && selected.code
+      ? selectTypedLintFiles(files, listCheckedOutFiles)
+      : [];
   return {
     ...selected,
     tier,
@@ -431,6 +458,7 @@ export function planChanges(request, repository) {
     reasons,
     testSelection,
     testShards: testShards(tier, testSelection),
+    typedLintFiles,
   };
 }
 
@@ -461,13 +489,37 @@ export const gitRepository = (cwd = process.cwd()) => {
       git("ls-tree", "-r", "-z", "--name-only", revision, "--", ...directories)
         .split("\0")
         .filter(Boolean),
-    // NUL-terminate requests so a line break in a path remains part of its name.
     readFiles: (revision, paths) => {
-      const output = execFileSync("git", ["cat-file", "--batch", "-z"], {
+      if (!paths.length) return new Map();
+      // Resolve the tree once instead of walking revision:path for every test.
+      const maxBuffer = 512 * 1024 * 1024;
+      const tree = execFileSync("git", ["ls-tree", "-rz", revision], {
         cwd,
-        input: paths.map((path) => `${revision}:${path}\0`).join(""),
-        maxBuffer: 512 * 1024 * 1024,
+        encoding: "utf8",
+        maxBuffer,
       });
+      const objects = new Map();
+      for (const entry of tree.split("\0")) {
+        // Let Git resolve replacement characters so invalid UTF-8 bytes
+        // cannot alias a requested path when the listing is decoded.
+        if (!entry || entry.includes("\uFFFD")) continue;
+        // Git separates the header from the raw path at the first tab.
+        const tab = entry.indexOf("\t");
+        const [, , oid] = entry.slice(0, tab).split(" ");
+        objects.set(entry.slice(tab + 1), oid);
+      }
+      const requests = paths.map(
+        (path) => objects.get(path) ?? `${revision}:${path}`,
+      );
+      const output = execFileSync(
+        "git",
+        ["cat-file", "--batch", "--buffer", "-z"],
+        {
+          cwd,
+          input: requests.join("\0") + "\0",
+          maxBuffer,
+        },
+      );
       const contents = new Map();
       let offset = 0;
       for (const path of paths) {
