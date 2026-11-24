@@ -3,6 +3,7 @@ import type {
   ArmElfMetadata,
   ArmIsaExtensionDeclaration,
 } from "../domain/binaryTargetTypes.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Observed AEABI declarations and coverage of their source tables. */
@@ -204,7 +205,9 @@ const aeabiDeclarations = (
     const scope = readUleb128(section, cursor, end);
     if (scope === null || scope.value < 1 || scope.value > 3) return null;
     if (scope.next + 4 > end) return null;
-    const blockEnd = cursor + section.readUInt32LE(scope.next);
+    const blockEnd =
+      cursor +
+      new BinaryReader(section, true, "ARM attributes").u32(scope.next);
     if (blockEnd < scope.next + 4 || blockEnd > end) return null;
     // Section and Symbol scopes open with a NUL-terminated ULEB128
     // index list naming the regions or symbols their tags apply to.
@@ -249,7 +252,8 @@ const armAttributesDeclarations = (section: Buffer): AeabiDeclarations => {
   let cursor = 1;
   let merged: AeabiDeclarations | null = null;
   while (cursor + 4 <= section.length) {
-    const subsectionEnd = cursor + section.readUInt32LE(cursor);
+    const subsectionEnd =
+      cursor + new BinaryReader(section, true, "ARM attributes").u32(cursor);
     if (
       subsectionEnd <= cursor + 4 ||
       subsectionEnd > section.length ||
@@ -352,9 +356,9 @@ export const readArmElfCpuArch = async (
   const bytes = header.value;
   const little = metadata.byteOrder === "little";
   const u16 = (data: Buffer, offset: number): number =>
-    little ? data.readUInt16LE(offset) : data.readUInt16BE(offset);
+    new BinaryReader(data, little, "elf").u16(offset);
   const u32 = (data: Buffer, offset: number): number =>
-    little ? data.readUInt32LE(offset) : data.readUInt32BE(offset);
+    new BinaryReader(data, little, "elf").u32(offset);
   if (
     bytes.toString("hex", 0, 4) !== "7f454c46" ||
     bytes[4] !== 1 ||

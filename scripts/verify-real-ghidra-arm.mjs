@@ -2,8 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -26,6 +25,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { removeArmAttributes } from "./lib/arm-objcopy.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (!["linux", "darwin"].includes(process.platform))
@@ -54,7 +54,12 @@ const objcopyCandidates =
     : [selectedObjcopy];
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-arm-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-arm-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -477,13 +482,14 @@ if (
   completed.process_lineage.status !== "verified" ||
   completed.process_lineage.descendants.length !== 0
 )
-  throw new Error(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure },
   );
 if (primaryFailure !== undefined)
-  throw new Error(`ARM verification failed; retained workspace: ${workspace}`, {
-    cause: primaryFailure,
-  });
-await rm(workspace, { recursive: true, force: true });
+  throw workspaceFixture.retainedError(
+    `ARM verification failed; retained workspace: ${workspace}`,
+    { cause: primaryFailure },
+  );
+await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));
