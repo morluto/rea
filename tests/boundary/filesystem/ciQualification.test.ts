@@ -404,3 +404,72 @@ it.each([
     expect(await readFile(outcome.output, "utf8")).not.toContain("receipt_");
   },
 );
+
+it("allows warm main-push tier only on push with code-only cache warming and requires static and build", async () => {
+  const { CI_FLAGS } = await import(
+    new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
+  );
+  const warmChanges: Record<string, string> = {
+    ...Object.fromEntries(CI_FLAGS.map((flag: string) => [flag, "false"])),
+    tier: "warm",
+    code: "true",
+  };
+  const passed = await requiredRun(warmChanges, { event: "push" });
+  await expect(passed.result).resolves.toMatchObject({
+    stdout: expect.stringContaining("Every selected CI lane passed"),
+  });
+  expect(await readFile(passed.output, "utf8")).not.toContain("receipt_");
+
+  // Missing build fails closed on warm push.
+  const missingBuild = await requiredRun(warmChanges, {
+    event: "push",
+    failed: "build",
+  });
+  await expect(missingBuild.result).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("build"),
+  });
+
+  // Warm tier is rejected on pull_request and when extra lanes are selected.
+  const onPr = await requiredRun(warmChanges, { event: "pull_request" });
+  await expect(onPr.result).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("Warm main-push tier"),
+  });
+  const withProvider = await requiredRun(
+    { ...warmChanges, sqlite: "true" },
+    { event: "push" },
+  );
+  await expect(withProvider.result).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("Warm main-push tier"),
+  });
+});
+
+it("records a fast-sweep receipt on scheduled fast runs without letting it satisfy full qualification", async () => {
+  const { CI_FLAGS } = await import(
+    new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
+  );
+  const fastChanges: Record<string, string> = {
+    ...Object.fromEntries(CI_FLAGS.map((flag: string) => [flag, "false"])),
+    tier: "fast",
+    code: "true",
+  };
+  const outcome = await requiredRun(fastChanges, { event: "schedule" });
+  await outcome.result;
+  expect(await readFile(outcome.output, "utf8")).toContain(
+    "receipt_name=ci-fast-sweep-v1\n",
+  );
+  const receipt = JSON.parse(
+    await readFile(
+      join(outcome.directory, ".cache", "receipt", "receipt.json"),
+      "utf8",
+    ),
+  );
+  expect(receipt).toMatchObject({ schemaVersion: 1, tier: "fast" });
+
+  // A fast-sweep artifact must NOT satisfy a full qualification lookup.
+  const fastArtifact = artifact({ name: "ci-fast-sweep-v1" });
+  const fullLookup = await decide(fastArtifact, run());
+  expect(fullLookup.decision).toMatchObject({ run_full: true });
+});
