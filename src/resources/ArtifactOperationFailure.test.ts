@@ -29,6 +29,8 @@ import {
   withArtifactFileHandle,
 } from "./ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { artifactReaderLimitFailure } from "./index.js";
 import {
   malformedInput,
@@ -176,10 +178,18 @@ it.each([
         partial_observation: observation,
       },
     });
+    // The inventory path carries the format owner's parsed facts too, so
+    // both adapters name the same format and failure kind.
     expect(projectAnalysisError(generic)).toMatchObject({
       code: genericCode,
       category: genericCode,
-      details: { reason: cause.kind, detail: cause.message },
+      details: {
+        reason: cause.kind,
+        detail: cause.message,
+        ...(cause.kind === "unsupported"
+          ? {}
+          : { format_failure: cause.kind, format: "pe" }),
+      },
     });
   },
 );
@@ -497,4 +507,40 @@ it("keeps a reader's named check when a provider supplies its own cause and opti
     code: "artifact_changed",
     details: { integrity_check: "reconstruction" },
   });
+});
+
+// A reader's `format` reason means target bytes; only `path` names the
+// caller's selection. A non-regular source is a path-kind refusal at its owner.
+it("keeps only a path-kind reader refusal a selection error", () => {
+  const operation = "inspect_erlang_beam";
+  const path = "/artifacts/app.beam";
+  const nonRegular = artifactFileAdmissionFailure(
+    path,
+    "BEAM",
+    new NonRegularFileReadError(path, true),
+  );
+  expect(nonRegular.reason).toBe("path");
+  expect(
+    projectAnalysisError(
+      projectOwnedArtifactInputFailure(
+        artifactFilePrimaryFacts(nonRegular),
+        operation,
+        path,
+      )!,
+    ),
+  ).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation,
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    },
+  });
+  const bytes = new ArtifactReaderFailure("format", "Corrupt member table");
+  expect(
+    projectOwnedArtifactInputFailure(
+      artifactFilePrimaryFacts(bytes),
+      operation,
+      path,
+    ),
+  ).toBeUndefined();
 });

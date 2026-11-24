@@ -236,7 +236,9 @@ const fileFailure = (
       });
     if (physical.reason === "limit" && physical.boundary === "file-size")
       return file.fileSize?.(physical, { ...details, cause });
-    if (physical.reason === "path" || physical.reason === "format")
+    // Only a path-kind refusal is the caller's selection; byte faults are
+    // the target's and keep the reader's own classification.
+    if (physical.reason === "path")
       return stableArtifactInputFailure(
         physical,
         operation,

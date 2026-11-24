@@ -37,9 +37,8 @@ import {
 import { DEFAULT_IL2CPP_NATIVE_INDEX_BYTES } from "../domain/il2cpp/il2cppMetadata.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 
-/** Selection failures name the binary's inputs and IL2CPP's public spellings. */
+/** Selection failures name the binary's architecture input and IL2CPP's public spellings. */
 const IL2CPP_SLICE_SELECTION_INPUT: SliceSelectionInput = {
-  pathField: "binary_path",
   architectureField: "binary_architecture",
   spelling: Object.fromEntries(
     Object.entries(IL2CPP_SLICE_SELECTORS).map(([publicName, selector]) => [
@@ -51,8 +50,9 @@ const IL2CPP_SLICE_SELECTION_INPUT: SliceSelectionInput = {
 
 /**
  * Select the thin image of the caller's binary: IL2CPP's `binary_architecture`
- * maps onto the shared slice selector here, once, and a selection failure
- * names `binary_architecture` or `binary_path`.
+ * maps onto the shared slice selector here, once. A refused selection names
+ * `binary_architecture`; a universal container format failure is a target
+ * refusal at the binary's own path.
  */
 export const requireIl2cppBinaryImage = (
   operation: string,
@@ -190,7 +190,8 @@ export function* openImageSteps(
     // container's architecture names no CPU family this reader decodes.
     if (!selected.ok)
       throw new Il2cppBinaryFormatFailure(
-        selected.error.kind === "malformed"
+        selected.error.kind === "format" &&
+          selected.error.failure.kind !== "unsupported"
           ? "malformed-container"
           : "unsupported-container",
         selected.error.message,
