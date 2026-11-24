@@ -369,7 +369,7 @@ it("handles malformed XML, DOCTYPE rejection, non-UTF-8 assets, missing referenc
     status: "unavailable",
     functions: [],
     limitations: [
-      "AppFunctions schema XML declares a DOCTYPE/DTD, which is rejected.",
+      "AppFunctions schema XML: XML document types are unsupported",
     ],
   });
 
@@ -405,6 +405,14 @@ it("handles malformed XML, DOCTYPE rejection, non-UTF-8 assets, missing referenc
       bytes:
         '<appfunctions><appfunction id="ok#fn" enabled_by_default="maybe"/></appfunctions>',
     },
+    {
+      path: "assets/bom_app_functions.xml",
+      bytes: '\uFEFF<appfunctions><appfunction id="bom#fn"/></appfunctions>',
+    },
+    {
+      path: "assets/literal_replacement_app_functions.xml",
+      bytes: '<appfunctions><appfunction id="ok#\uFFFD"/></appfunctions>',
+    },
   ]);
 
   const inventory = await projectManifestAndApk(
@@ -419,7 +427,7 @@ it("handles malformed XML, DOCTYPE rejection, non-UTF-8 assets, missing referenc
   );
 
   expect(inventory.status).toBe("partial");
-  expect(inventory.schemas).toHaveLength(5);
+  expect(inventory.schemas).toHaveLength(7);
   const byPath = new Map(
     inventory.schemas.map((schema) => [schema.path, schema]),
   );
@@ -428,7 +436,27 @@ it("handles malformed XML, DOCTYPE rejection, non-UTF-8 assets, missing referenc
   );
   expect(
     byPath.get("assets/doctype_app_functions.xml")?.limitations.join(" "),
-  ).toContain("DOCTYPE/DTD");
+  ).toContain("XML document types are unsupported");
+  for (const path of [
+    "assets/doctype_app_functions.xml",
+    "assets/malformed_app_functions.xml",
+    "assets/invalid_utf8_app_functions.xml",
+    "assets/bom_app_functions.xml",
+  ]) {
+    expect(byPath.get(path)?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(byPath.get(path)?.size).toBeGreaterThan(0);
+  }
+  expect(byPath.get("assets/bom_app_functions.xml")).toMatchObject({
+    status: "unavailable",
+    functions: [],
+  });
+  expect(
+    byPath.get("assets/literal_replacement_app_functions.xml"),
+  ).toMatchObject({
+    status: "complete",
+    functions: [{ id: "ok#\uFFFD" }],
+    limitations: [],
+  });
   expect(byPath.get("assets/malformed_app_functions.xml")?.status).toBe(
     "unavailable",
   );

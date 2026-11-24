@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { androidManifestLocationSchema } from "./androidManifestComponents.js";
 
@@ -50,7 +51,7 @@ export const androidAppFunctionSchemaAssetSchema = z.strictObject({
   source_path: z.string().min(1),
   sha256: digestSchema.nullable(),
   size: z.int().nonnegative().nullable(),
-  status: z.enum(["complete", "partial", "unavailable"]),
+  status: z.enum([...knownCoverageStatusSchema.options, "unavailable"]),
   functions: z.array(androidAppFunctionEntrySchema),
   limitations: z.array(z.string()),
 });
@@ -60,7 +61,7 @@ export type AndroidAppFunctionSchemaAsset = Readonly<
 
 /** Static AppFunctions manifest bindings and bundled XML schema inventory. */
 export const androidAppFunctionsSchema = z.strictObject({
-  status: z.enum(["complete", "partial", "unavailable"]),
+  status: z.enum([...knownCoverageStatusSchema.options, "unavailable"]),
   services: z.array(androidAppFunctionServiceSchema),
   schemas: z.array(androidAppFunctionSchemaAssetSchema),
   limitations: z.array(z.string()),
@@ -72,7 +73,7 @@ export type AndroidAppFunctionsInventory = Readonly<
 /** Parsed, JSON-only checkpoint captured before a live APK ZIP reader is finalized. */
 export const androidAppFunctionAssetCheckpointSchema = z.strictObject({
   scan_state: z.enum(["completed", "interrupted"]),
-  status: z.enum(["complete", "partial", "unavailable"]),
+  status: z.enum([...knownCoverageStatusSchema.options, "unavailable"]),
   examined_entries: z.int().nonnegative(),
   schemas: z.array(androidAppFunctionSchemaAssetSchema),
   limitations: z.array(z.string()),
@@ -82,7 +83,9 @@ export type AndroidAppFunctionAssetCheckpoint = Readonly<
 >;
 
 export const androidAppFunctionsPartialFactsSchema = z.strictObject({
-  manifest_status: z.enum(["complete", "partial", "unavailable"]).nullable(),
+  manifest_status: z
+    .enum([...knownCoverageStatusSchema.options, "unavailable"])
+    .nullable(),
   services: z.array(androidAppFunctionServiceSchema),
   referenced_asset_paths: z.array(z.string()),
   manifest_limitations: z.array(z.string()),

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { Element, Node } from "@xmldom/xmldom";
 import {
   ArtifactReaderFailure,
@@ -23,8 +22,12 @@ import type { ObservedAndroidManifestComponentInventory } from "../domain/androi
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { isAndroidAttribute } from "./AndroidManifestXml.js";
 import {
@@ -90,11 +93,6 @@ const NESTED_SCHEMA_TAGS = new Set([
   "schema_metadata",
 ]);
 
-const utf8Decoder = new TextDecoder("utf-8", {
-  fatal: true,
-  ignoreBOM: true,
-});
-
 export interface AndroidAppFunctionAssetScan {
   readonly status: "complete" | "partial" | "unavailable";
   readonly examinedEntries: number;
@@ -107,16 +105,8 @@ const MANIFEST_DIAGNOSTIC_BYTES = 12 * 1024;
 const ASSET_SCAN_DIAGNOSTIC_BYTES = 3 * 1024;
 
 const boundedDiagnosticToken = (raw: string, maxBytes = 256): string => {
-  if (Buffer.byteLength(raw, "utf8") <= maxBytes) return raw;
-  let bytes = 0;
-  let end = 0;
-  for (const char of raw) {
-    const charBytes = Buffer.byteLength(char, "utf8");
-    if (bytes + charBytes > maxBytes) break;
-    bytes += charBytes;
-    end += char.length;
-  }
-  return `${raw.slice(0, end)}...[truncated]`;
+  const excerpt = utf8HeadExcerpt(raw, maxBytes);
+  return excerpt.truncated ? `${excerpt.text}...[truncated]` : raw;
 };
 
 const createBoundedDiagnostics = (
@@ -461,9 +451,7 @@ export const parseAndroidAppFunctionXml = (
       status: "unavailable",
       functions: [],
       limitations: [
-        parsed.error.reason === "doctype"
-          ? "AppFunctions schema XML declares a DOCTYPE/DTD, which is rejected."
-          : `AppFunctions schema XML is not well-formed (${parsed.error.reason}).`,
+        `AppFunctions schema XML: ${boundedDiagnosticToken(parsed.error.message)}`,
       ],
     };
   const root = parsed.value.documentElement;
@@ -636,6 +624,7 @@ const readExactZipMemberBytes = async (
         throw new ArtifactReaderFailure(
           "integrity",
           "AppFunctions XML asset exceeds its declared ZIP size",
+          { integrityCheck: "declared-size" },
         );
       part.copy(buffer, offset);
       offset += part.length;
@@ -647,6 +636,7 @@ const readExactZipMemberBytes = async (
     throw new ArtifactReaderFailure(
       "integrity",
       "AppFunctions XML asset is shorter than its declared ZIP size",
+      { integrityCheck: "declared-size" },
     );
   return buffer;
 };
@@ -798,7 +788,7 @@ export const readAndroidAppFunctionAssets = async (input: {
               input.signal,
             );
             throwIfJadxInterrupted(input.signal);
-            const sha256 = createHash("sha256").update(bytes).digest("hex");
+            const sha256 = sha256Hex(bytes);
             inProgress = {
               path: entry.path,
               source_path: sourcePath,
@@ -812,7 +802,7 @@ export const readAndroidAppFunctionAssets = async (input: {
             };
             let xmlText: string | undefined;
             try {
-              xmlText = utf8Decoder.decode(bytes);
+              xmlText = decodeStrictUtf8(bytes, "preserve");
             } catch {
               xmlText = undefined;
             }
@@ -858,11 +848,7 @@ export const readAndroidAppFunctionAssets = async (input: {
               size: null,
               status: "unavailable",
               functions: [],
-              limitations: [
-                boundedDiagnosticToken(
-                  cause instanceof Error ? cause.message : String(cause),
-                ),
-              ],
+              limitations: [boundedDiagnosticToken(errorMessage(cause))],
             };
           }
           inProgress = undefined;
@@ -895,9 +881,7 @@ export const readAndroidAppFunctionAssets = async (input: {
           status = schemas.length > 0 ? "partial" : "unavailable";
           diagnostics.pushParts([
             "APK archive asset scan could not complete (",
-            boundedDiagnosticToken(
-              cause instanceof Error ? cause.message : String(cause),
-            ),
+            boundedDiagnosticToken(errorMessage(cause)),
             "); bundled AppFunctions XML schema assets may be unavailable.",
           ]);
         }
@@ -962,10 +946,7 @@ export const readAndroidAppFunctionAssets = async (input: {
       }
       const closeOutcome = await input.resources.release(owner);
       if (closeOutcome.kind === "failed") {
-        const reason =
-          closeOutcome.cause instanceof Error
-            ? closeOutcome.cause.message
-            : String(closeOutcome.cause);
+        const reason = errorMessage(closeOutcome.cause);
         const cleanup = new ProviderCleanupError(
           "jadx",
           [owner.resource],
