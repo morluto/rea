@@ -84,12 +84,17 @@ try {
   // Prove the preload actually reaches a child before reporting its protection.
   reportStage("Node network guard negative control");
   await assert.rejects(
-    execute(node, ["-e", 'require("node:net").connect(1, "127.0.0.1")'], {
-      cwd: workspace,
-      env: environment,
-      timeout: 30_000,
-      maxBuffer: 64 * 1024,
-    }),
+    execute(
+      commands,
+      node,
+      ["-e", 'require("node:net").connect(1, "127.0.0.1")'],
+      {
+        cwd: workspace,
+        env: environment,
+        timeout: 30_000,
+        maxBuffer: 64 * 1024,
+      },
+    ),
     (cause) => {
       assert.match(
         cause.stderr,
