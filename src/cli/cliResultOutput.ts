@@ -520,14 +520,21 @@ export const createCliResultOutput = (
       return true;
     };
     if (
-      (format === "toon" || format === "md") &&
+      format === "md" &&
       !options.tokenCount &&
-      (!options.tokenWindow || format === "md" || failureReported) &&
-      (format === "md"
-        ? containsUnrepresentableMarkdown(selected)
-        : containsUnpairedSurrogate(selected))
+      containsUnrepresentableMarkdown(selected)
     )
       return refuseUnrepresentableText();
+    if (format === "toon") {
+      // Scalar strings can be counted or sliced directly. Structured TOON
+      // documents must be representable before the encoder can produce text.
+      const usesRawString =
+        typeof selected === "string" &&
+        !failureReported &&
+        (options.tokenCount ? !options.fullOutput : options.tokenWindow);
+      if (!usesRawString && containsUnpairedSurrogate(selected))
+        return refuseUnrepresentableText();
+    }
     const filtered =
       (format === "json" || format === "jsonl") &&
       ownsFilteredOutput &&
@@ -663,6 +670,8 @@ export const createCliResultOutput = (
       const sliced = window.truncated
         ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`
         : formatted;
+      if (format === "toon" && hasUnpairedSurrogate(sliced))
+        return refuseUnrepresentableText();
       const outputDocument = options.fullOutput
         ? formatCliOutput(
             window.truncated
@@ -680,8 +689,6 @@ export const createCliResultOutput = (
             format,
           )
         : sliced;
-      if (format === "toon" && hasUnpairedSurrogate(outputDocument))
-        return refuseUnrepresentableText();
       handled = true;
       try {
         await writeOutputText(

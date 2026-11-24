@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): bdb70de6447e4a19c1061aa291fcab8035438585e9ebf83c808c69125ae001ae
+Runtime dependency fingerprint (SHA-256): e1f1370db6395607a5a7e007557bf0022ec285567075a64b99aafb8c3c9e6c85
 
 ===== @babel/helper-string-parser@8.0.6 =====
 Declared license: MIT
@@ -1774,10 +1774,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== @toon-format/toon@2.3.1 =====
+===== @toon-format/toon@4.4.0 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@toon-format/toon/-/toon-2.3.1.tgz
-Integrity: sha512-sWqEMeAJGMda9qRrfPKrX3C4c33CO9SJuvJzzrcBEn5sbDB+k6pSLkDsfN0rVnLQwR97MV3sDgVbcxQNsq8xVw==
+Archive: https://registry.npmjs.org/@toon-format/toon/-/toon-4.4.0.tgz
+Integrity: sha512-A6UcsVoWbNdhdLNhJbe6JpRlocmf/DZGG57fur3bd8oQtsjBaKWo2hHbOU2zTuy+byUmLIOyP1xJeitopCZzpQ==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -1803,7 +1803,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
 
 ===== @xmldom/xmldom@0.9.12 =====
 Declared license: MIT
