@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { retainedBrowserScenarioCaptureSchema } from "./browserScenarioCapture.js";
+import { presentCompleteObservation } from "./schemaAnnotations.js";
 
 /** Scenario artifact families compared after step alignment. */
 export const browserScenarioArtifactKindSchema = z.enum([
@@ -74,14 +75,16 @@ const normalizationInputSchema = z
 
 /** Input for step-aligned comparison of two browser scenario captures. */
 export const compareBrowserScenariosInputSchema = z.strictObject({
-  before_scenario: retainedBrowserScenarioCaptureSchema
-    .describe(
+  before_scenario: presentCompleteObservation(
+    retainedBrowserScenarioCaptureSchema.describe(
       "Earlier complete normalized_result from capture_browser_scenario.",
-    )
-    .meta({ "x-rea-complete-observation": true }),
-  after_scenario: retainedBrowserScenarioCaptureSchema
-    .describe("Later complete normalized_result from capture_browser_scenario.")
-    .meta({ "x-rea-complete-observation": true }),
+    ),
+  ),
+  after_scenario: presentCompleteObservation(
+    retainedBrowserScenarioCaptureSchema.describe(
+      "Later complete normalized_result from capture_browser_scenario.",
+    ),
+  ),
   normalization: normalizationInputSchema
     .default({ rules: [] })
     .describe("Exact-literal rules committed in the comparison result."),

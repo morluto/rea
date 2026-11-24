@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   STDIO_DEFAULT_MAX_BUFFER_SIZE,
@@ -9,31 +8,38 @@ import {
   type RecordedMcpCatalog,
 } from "../recordedMcpCatalog.js";
 import type { AppConfig } from "../config/types.js";
-import {
-  resolveMcpInputSchemaProfile,
-  type McpInputSchemaProfile,
-} from "../config/mcpInputSchemaProfile.js";
+import { RECORDED_CATALOG_DIGEST_PROFILES } from "../contracts/catalog/recordedCatalogDigests.js";
 import { DeferredEvidenceMcpServer } from "../server/DeferredEvidenceMcpServer.js";
 import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";
 import { reportMcpShutdownFailure } from "./shutdown.js";
 import type { McpServerHandle, RuntimeDependencies } from "./types.js";
-import { SERVER_START_FAILED } from "./messages.js";
+import { SERVER_START_FAILED } from "../server/serverStartFailure.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
+import {
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+  type McpOutputSchemaProfile,
+} from "../contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+
+/**
+ * Digests of the selected output profile. The catalog file records the `off`
+ * identity; compact listings advertise different schemas and must start with
+ * the compact digest or the first runtime attach rejects them.
+ */
+const deferredCatalogDigests = (
+  catalog: RecordedMcpCatalog,
+  profile: McpOutputSchemaProfile | undefined,
+): RecordedMcpCatalog["identity"]["digests"] =>
+  RECORDED_CATALOG_DIGEST_PROFILES?.[profile ?? "off"] ??
+  catalog.identity.digests;
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
-const readCatalog = (profile: McpInputSchemaProfile): RecordedMcpCatalog => {
-  const bytes = readFileSync(
-    new URL(
-      profile === "full" ? "../mcp-catalog-full.json" : "../mcp-catalog.json",
-      import.meta.url,
-    ),
-  );
-  if (
-    createHash("sha256").update(bytes).digest("hex") !==
-    RECORDED_MCP_CATALOG_SHA256?.[profile]
-  )
+const readCatalog = (): RecordedMcpCatalog => {
+  const bytes = readFileSync(new URL("../mcp-catalog.json", import.meta.url));
+  if (sha256Hex(bytes) !== RECORDED_MCP_CATALOG_SHA256)
     throw new Error(SERVER_START_FAILED);
   // The digest binds these bytes to the same compiled producer and SDK converter.
   const catalog: unknown = JSON.parse(bytes.toString("utf8"));
@@ -60,7 +66,7 @@ const initializeRuntime = async (
   server.ownRuntimeCleanup(async () => {
     if (shutdown !== undefined) return shutdown();
     const results = await Promise.allSettled([
-      server.closePartialRuntime(),
+      server.closeRuntimeHooks(),
       (async () => {
         if (!sessionClosed && closeSession !== undefined) {
           await closeSession();
@@ -111,14 +117,14 @@ const initializeRuntime = async (
           startedAt,
         });
       },
+      closeServer: () => server.closeRuntimeHooks(),
       serve: (factory) => {
-        let close: (() => Promise<void>) | undefined;
         server.materialize(() => {
-          const configured = factory(context);
-          if (configured !== server) throw new Error(SERVER_START_FAILED);
-          close = configured.close.bind(configured);
+          if (factory(context) !== server) throw new Error(SERVER_START_FAILED);
         });
-        return { close: () => close?.() ?? Promise.resolve() };
+        // The outer SDK closes the protocol. The eager registry owns only the
+        // materialized server's hooks through closeServer.
+        return { close: async () => {} };
       },
     },
     config,
@@ -135,8 +141,21 @@ export const runDeferred = async (
   const serverLogger = createLogger("mcp", config.logLevel).child({
     layer: "server",
   });
-  const profile = resolveMcpInputSchemaProfile(config.mcpInputSchemaProfile);
-  let firstCatalog: RecordedMcpCatalog | undefined = readCatalog(profile);
+  // Deferred listings serve build-recorded output advertisements (omitted,
+  // or compact when recorded); canonical result validation loads on first use.
+  // A catalog recorded before compact outputs existed falls back to eager.
+  let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
+  if (
+    config.mcpOutputSchemaProfile === "compact" &&
+    firstCatalog.compactOutputSchemas === undefined
+  ) {
+    const { runEager } = await import("./eagerRuntime.js");
+    return runEager(dependencies, config);
+  }
+  const toolFamilies =
+    config.mcpToolFamilies === undefined
+      ? undefined
+      : new Set(config.mcpToolFamilies);
   const servers = new OwnedMcpServers<DeferredEvidenceMcpServer>();
   let handle: McpServerHandle | undefined;
   let attempt: Promise<void> | undefined;
@@ -196,7 +215,7 @@ export const runDeferred = async (
       handle = await dependencies.serve(
         (context) => {
           const server = servers.create(() => {
-            const catalog = firstCatalog ?? readCatalog(profile);
+            const catalog = firstCatalog ?? readCatalog();
             firstCatalog = undefined;
             const startedAt = new Date().toISOString();
             const server = new DeferredEvidenceMcpServer(
@@ -215,17 +234,25 @@ export const runDeferred = async (
                   dependencies.setExitCode(1);
                   throw cause;
                 }),
-              config.mcpMaxInputElements,
+              {
+                maximumInputElements: config.mcpMaxInputElements,
+                compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
+                outputProfile: config.mcpOutputSchemaProfile,
+                toolFamilies,
+                identity: {
+                  ...catalog.identity,
+                  digests: deferredCatalogDigests(
+                    catalog,
+                    config.mcpOutputSchemaProfile,
+                  ),
+                },
+              },
             );
             if (config.mcpToolCatalogProfile === "hot-cold")
               server.enableProgressiveCatalog();
             return server;
           });
-          const previous = server.server.onclose;
-          server.server.onclose = () => {
-            previous?.();
-            requestClose();
-          };
+          server.registerTransportCloseHook(requestClose);
           return server;
         },
         {
@@ -242,10 +269,7 @@ export const runDeferred = async (
     }
   } catch (cause) {
     finishServing();
-    serverLogger.error(
-      { error: cause instanceof Error ? cause.message : String(cause) },
-      SERVER_START_FAILED,
-    );
+    serverLogger.error({ error: errorMessage(cause) }, SERVER_START_FAILED);
     try {
       await close();
     } catch (cleanupCause) {

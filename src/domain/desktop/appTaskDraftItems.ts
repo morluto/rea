@@ -7,6 +7,13 @@ import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 const MIN_TEXT = 3;
 const MAX_KEPT = 4;
 
+/** Whether a whole-text selector is stable and fits the draft's text limit. */
+const checkable = (text: string, chars: number): boolean =>
+  text.length >= MIN_TEXT &&
+  text.length <= chars &&
+  !isStamp(text) &&
+  !text.includes("][");
+
 /** The list a member sits in, and the element holding it. */
 const placeOf = (pointer: string) =>
   /^(?<owner>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.owner;
@@ -109,29 +116,22 @@ export const placedItemCheck = (
     at === undefined ||
     !isXmlElement(item) ||
     !isXmlElement(seed) ||
-    value.length < MIN_TEXT ||
-    value.length > context.chars ||
-    isStamp(value) ||
-    value.includes("][") ||
-    siblingTexts(ends.baseline, owner, item).some(
-      (entry) => entry.text === value,
-    )
+    !checkable(value, context.chars)
   )
     return undefined;
   const kept = new Set(
     siblingTexts(ends.baseline, owner, item).map(({ text }) => text),
   );
+  if (kept.has(value)) return undefined;
   const list = resolvePointer(ends.final, `${owner}/children`, "xml");
   const here = Array.isArray(list) ? list.indexOf(item) : 0;
   const guards = siblingTexts(ends.final, owner, item)
-    .filter(
-      ({ text }) =>
-        text.length >= MIN_TEXT && !text.includes("][") && kept.has(text),
-    )
+    .filter(({ text }) => kept.has(text) && checkable(text, context.chars))
     .toSorted(
       (left, right) =>
         Math.abs(left.index - here) - Math.abs(right.index - here),
     )
+    // generation-cap: nearby items kept to build a suggestion
     .slice(0, MAX_KEPT)
     .toSorted((left, right) => left.index - right.index)
     .map(({ text }) => ({

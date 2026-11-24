@@ -4,20 +4,20 @@ import { Readable } from "node:stream";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
-import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
-import { ArtifactFileSource } from "../ArtifactFileSource.js";
-import { normalizeArtifactPath } from "../ArtifactPaths.js";
 import {
+  assertArtifactReadActive,
+  ArtifactFileSource,
+  normalizeArtifactPath,
   ArtifactReaderFailure,
   copyArtifactEntry,
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../ArtifactReader.js";
-import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { hostExecutableMarking } from "../hostExecutableMarking.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+  assertArtifactSelectedSource,
+  DirectoryArtifactReader,
+  hostExecutableMarking,
+  readArtifactFileChunks,
+} from "../../resources/index.js";
 
 /** Read-only single-file reader over one admitted JavaScript/TypeScript source. */
 export class SingleFileJavaScriptArtifactReader implements ArtifactReader {

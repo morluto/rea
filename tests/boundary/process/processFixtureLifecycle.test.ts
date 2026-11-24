@@ -248,7 +248,7 @@ it("times out when a real descendant holds the exited leader's output open", asy
       );
     }
   }
-}, 17_000);
+});
 
 it("terminates a stalled real child at its deadline while retaining captured output", async () => {
   const processes = createTestProcessRegistry();
@@ -277,3 +277,98 @@ it("terminates a stalled real child at its deadline while retaining captured out
     await processes.shutdown();
   }
 });
+
+it(
+  "stops a hung child before its running test's deadline and reports its output",
+  // The test deadline is the behavior under test: the child gets what remains.
+  { timeout: 8_000 },
+  async () => {
+    // processTest uses this registry, so one registry covers both entry points.
+    const processes = createTestProcessRegistry();
+    const started = performance.now();
+    try {
+      const failure: unknown = await processes
+        .run(process.execPath, [
+          "-e",
+          "process.stdout.write('started'); setInterval(() => {}, 1_000);",
+        ])
+        .catch((error: unknown) => error);
+      expect(failure).toMatchObject({
+        message: expect.stringMatching(
+          /^Test process exceeded its \d+ms deadline$/u,
+        ),
+        cause: { stdout: "started" },
+      });
+      expect(performance.now() - started).toBeLessThan(6_000);
+    } finally {
+      await processes.shutdown();
+    }
+  },
+);
+
+it("preserves the exit result when a child closes stdin before consuming its input", async () => {
+  const processes = createTestProcessRegistry();
+  try {
+    await expect(
+      processes.run(
+        process.execPath,
+        [
+          "-e",
+          'process.stderr.write("input refused\\n", () => process.exit(7));',
+        ],
+        { input: Buffer.alloc(4 * 1024 * 1024) },
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 7,
+      stderr: "input refused\n",
+    });
+  } finally {
+    await processes.shutdown();
+  }
+});
+
+it.each(["input", "spawn", "deadline"] as const)(
+  "preserves the %s failure when stdin emits a non-EPIPE error",
+  async (failure) => {
+    vi.useFakeTimers();
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      pid: 901,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      kill: vi.fn(() => true),
+    });
+    const processes = createTestProcessRegistry(
+      () => child as unknown as ChildProcessWithoutNullStreams,
+    );
+    const outcome = processes
+      .run("fixture", [], { timeoutMs: 100 })
+      .catch((error: unknown) => error);
+    const inputError = Object.assign(new Error("stdin write failed"), {
+      code: "EIO",
+    });
+    const spawnError = new Error("spawn failed");
+    try {
+      child.stdin.emit("error", inputError);
+      if (failure === "spawn") child.emit("error", spawnError);
+      if (failure === "deadline") await vi.advanceTimersByTimeAsync(100);
+      child.emit("close", 0, null);
+      if (failure === "deadline") {
+        expect(await outcome).toMatchObject({
+          message: "Test process exceeded its 100ms deadline",
+        });
+      } else {
+        expect(await outcome).toBe(
+          failure === "spawn" ? spawnError : inputError,
+        );
+      }
+    } finally {
+      child.emit("close", 0, null);
+      await outcome;
+      await processes.shutdown();
+      vi.useRealTimers();
+    }
+  },
+);

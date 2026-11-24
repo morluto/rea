@@ -1,4 +1,4 @@
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 
 /** Identity available without loading the V8InspectorProvider implementation. */
 export const V8_INSPECTOR_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({

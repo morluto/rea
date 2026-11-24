@@ -7,8 +7,14 @@ import { summarizeEvidenceBundle } from "./evidenceRecordSummary.js";
 it("preserves native identity independently of missing or incompatible value-flow metadata", () => {
   const records = [
     undefined,
+    {
+      available: true,
+      truncated: true,
+      omitted_operations_lower_bound: 1,
+      known_omitted_inputs: 0,
+      known_omitted_edges: 2,
+    },
     { available: true, truncated: true },
-    { unexpected: "legacy" },
     { available: false, reason: "Decompiler unavailable" },
   ].map((flow) =>
     createEvidence(
@@ -39,9 +45,9 @@ it("preserves native identity independently of missing or incompatible value-flo
         value_flow: {
           status: "observed",
           truncated: true,
-          omitted_operations_lower_bound: null,
-          known_omitted_inputs: null,
-          known_omitted_edges: null,
+          omitted_operations_lower_bound: 1,
+          known_omitted_inputs: 0,
+          known_omitted_edges: 2,
         },
       }),
       expect.objectContaining({
@@ -62,7 +68,7 @@ it.each([
       omitted_operations_lower_bound: 2,
       known_omitted_inputs: 3,
       known_omitted_edges: 4,
-      operations: "historical collection representation",
+      operations: "full collections are not parsed",
     },
     expected: {
       status: "observed",
@@ -74,7 +80,7 @@ it.each([
   },
   {
     flow: { available: false, reason: "" },
-    expected: { status: "unavailable", reason: "" },
+    expected: { status: "unknown", reason: expect.any(String) },
   },
   {
     flow: { available: true, truncated: false, known_omitted_edges: -1 },
@@ -109,3 +115,38 @@ it.each([
     expect(record.normalized_result).toMatchObject({ native_value_flow: flow });
   },
 );
+
+it("filters directory records by their tree digest, like file records by theirs", () => {
+  const provider = { id: "provider", name: "Provider", version: "1" };
+  const observation = {
+    operation: "inventory_artifact",
+    parameters: {},
+    result: {},
+  };
+  const directory = createEvidence(
+    {
+      path: "/fixtures/build",
+      sha256: "d".repeat(64),
+      format: "directory",
+      tree: { algorithm: "rea-directory-tree", version: 1 },
+    },
+    provider,
+    observation,
+  );
+  const file = createEvidence(
+    { path: "/fixtures/build.zip", format: "zip", sha256: "f".repeat(64) },
+    provider,
+    observation,
+  );
+  const bundle = createEvidenceBundle([directory, file]);
+  for (const [digest, expected] of [
+    ["d".repeat(64), directory.evidence_id],
+    ["f".repeat(64), file.evidence_id],
+  ] as const) {
+    const summary = summarizeEvidenceBundle(bundle, { target_sha256: digest });
+    expect(summary.matching_records).toBe(1);
+    expect(summary.records.map(({ evidence_id }) => evidence_id)).toEqual([
+      expected,
+    ]);
+  }
+});

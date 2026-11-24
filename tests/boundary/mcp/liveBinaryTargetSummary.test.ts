@@ -9,6 +9,7 @@ import { toolOutputSchemaWithMetadata } from "../../../src/contracts/toolSchemaM
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { rawLoadAtEntry } from "../../../src/domain/rawBinary.fixture.js";
 
 const identity = { path: "/fixture/target", sha256: "a".repeat(64) };
 const executable = { ...identity, kind: "executable" as const };
@@ -54,6 +55,12 @@ const targets: readonly BinaryTarget[] = [
   },
   {
     ...executable,
+    format: "elf",
+    architecture: "xtensa",
+    availableArchitectures: ["xtensa"],
+  },
+  {
+    ...executable,
     format: "mach-o",
     architecture: "arm64_32",
     availableArchitectures: ["arm64_32"],
@@ -79,8 +86,7 @@ const targets: readonly BinaryTarget[] = [
       format: "raw-binary" as const,
       architecture,
       availableArchitectures: [architecture],
-      entryPoint: "0x1000",
-      entryPointSource: "0x00001000",
+      rawLoad: rawLoadAtEntry("0x00001000"),
     }),
   ),
   {
@@ -100,7 +106,12 @@ const targets: readonly BinaryTarget[] = [
       entryPoint: 0x80003100,
     },
   },
-  { ...identity, kind: "database", format: "analysis-database" },
+  {
+    ...identity,
+    kind: "database",
+    format: "analysis-database",
+    databaseEngine: null,
+  },
   ...([...ZIP_PACKAGE_FORMATS, "asar", "godot-pck", "dmg", "pkg"] as const).map(
     (format) => ({ ...identity, kind: "archive" as const, format }),
   ),
@@ -111,6 +122,9 @@ const targets: readonly BinaryTarget[] = [
   })),
 ];
 const impossible = [
+  ...(["pe", "mach-o", "mach-o-universal", "dos-mz", "dos-com"] as const).map(
+    (format) => ({ kind: "executable", format, architecture: "xtensa" }),
+  ),
   { kind: "database", format: "elf", architecture: "x86" },
   { kind: "executable", format: "zip", architecture: "arm64" },
   { kind: "archive", format: "zip", architecture: "arm64" },
@@ -132,7 +146,53 @@ const impossible = [
     architecture: "arm",
     entry_point: "0x1000",
   },
+  {
+    kind: "executable",
+    format: "raw-binary",
+    architecture: "arm",
+    entry_point: "0x80001c4",
+    architecture_variant: "cortex-m",
+  },
 ];
+
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "reports a Reset-derived M-profile load through %s clients",
+  (draft) => {
+    const advertised = toolOutputSchemaWithMetadata(
+      toolContract("open_binary"),
+    )["~standard"].jsonSchema.output({ target: draft });
+    const validate = new AjvJsonSchemaValidator().getValidator(advertised);
+    const summary = binaryTargetSummary({
+      ...executable,
+      format: "raw-binary",
+      architecture: "arm",
+      availableArchitectures: ["arm"],
+      rawLoad: {
+        baseAddress: "0x8000000",
+        architectureVariant: "armv7e-m",
+        entryPoint: "0x80001c4",
+        entryIsaMode: "thumb",
+        entrySource: {
+          kind: "vector-table",
+          address: "0x8000000",
+          resetVector: "0x080001c5",
+          initialStackPointer: "0x20005000",
+        },
+      },
+    });
+    expect(summary).toEqual({
+      ...identity,
+      kind: "executable",
+      format: "raw-binary",
+      architecture: "arm",
+      entry_point: "0x80001c4",
+      base_address: "0x8000000",
+      architecture_variant: "armv7e-m",
+      vector_table_address: "0x8000000",
+    });
+    expect(validate({ result: summary }).valid).toBe(true);
+  },
+);
 
 it.each(["draft-2020-12", "draft-07"] as const)(
   "preserves canonical live summaries and rejects impossible classifications through %s clients",
@@ -148,9 +208,11 @@ it.each(["draft-2020-12", "draft-07"] as const)(
         kind: target.kind,
         format: target.format,
         architecture: target.architecture ?? null,
-        ...(target.format === "raw-binary" || target.format === "gamecube-dol"
-          ? { entry_point: target.entryPoint }
-          : {}),
+        ...(target.format === "raw-binary"
+          ? { entry_point: target.rawLoad.entryPoint }
+          : target.format === "gamecube-dol"
+            ? { entry_point: target.entryPoint }
+            : {}),
       });
       expect(
         sessionOutputSchemas.open_binary.safeParse({ result: summary }).success,
@@ -237,16 +299,7 @@ it.each(["draft-2020-12", "draft-07"] as const)(
       toolContract("binary_session"),
     )["~standard"].jsonSchema.output({ target });
     const validate = new AjvJsonSchemaValidator().getValidator(advertised);
-    // One representative per distinct projection shape; the complete target matrix is above.
-    for (const format of [
-      "elf",
-      "raw-binary",
-      "gamecube-dol",
-      "zip",
-    ] as const) {
-      const selected = targets.find((candidate) => candidate.format === format);
-      if (selected === undefined)
-        throw new Error(`Missing canonical fixture: ${format}`);
+    for (const selected of targets) {
       const value = {
         result: { ...sessionFacts, ...binaryTargetSummary(selected) },
       };
@@ -255,7 +308,7 @@ it.each(["draft-2020-12", "draft-07"] as const)(
       );
       expect(validate(value).valid).toBe(true);
     }
-    for (const classification of impossible.slice(0, 4)) {
+    for (const classification of impossible) {
       const value = {
         result: { ...sessionFacts, ...identity, ...classification },
       };

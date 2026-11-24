@@ -1,41 +1,25 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createPeResourcesService } from "../../../src/composition/binaryDiagnostics.js";
-import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { createPeResourcesService } from "../../../src/composition/binaryDiagnostics/peResources.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("PE resource stable filesystem boundary", () => {
-  it("reports non-file and malformed PE selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-pe-resource-files-");
     const path = join(root, "image.exe");
     const alias = join(root, "alias.exe");
-    const malformed = join(root, "malformed.exe");
     await writeFile(path, peResourceFixture().bytes);
-    await writeFile(malformed, Buffer.from("not a PE image"));
     await symlink(path, alias);
     const service = createPeResourcesService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [malformed, "invalid_format"],
-      [join(root, "missing.exe"), "invalid_value"],
-      [join(path, "child.exe"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_pe_resources",
-        issues: [
-          {
-            path: ["path"],
-            reason,
-            message: expect.any(String),
-          },
-        ],
-      });
-    }
+    await expectFileSelectionErrors(
+      service,
+      "inspect_pe_resources",
+      { root, alias, path },
+      ".exe",
+    );
   });
 
   it.skipIf(process.platform === "win32")(

@@ -16,6 +16,7 @@ import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
 import { attributesOf, compactValue, previewWriter } from "./compactValue.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
 import { isXmlElement, locatePointer, resolvePointer } from "./viewPointer.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Why a value's pointer cannot go into a check as it is, or why the value is noise. */
 export const VALUE_NOTES = ["by_position", ...NOISE_REASONS] as const;
@@ -58,25 +59,25 @@ export const draftValueSchema = z.strictObject({
   after: jsonValueSchema,
   note: z
     .enum(VALUE_NOTES)
-    .optional()
+    .exactOptional()
     .describe(
       "by_position: no selector names it, so no check can use the pointer; view_state, renumbered, volatile, timestamp, upkeep or layout: noise the app writes, left out of the suggested checks.",
     ),
   refers_to: z
     .array(
       z.strictObject({
-        attribute: z.string().optional(),
+        attribute: z.string().exactOptional(),
         value: z.string(),
         element: z.string(),
       }),
     )
-    .optional()
+    .exactOptional()
     .describe(
       'Other elements a value names by their key or id, such as category 44 naming <cat key="44" name="Groceries"/>.',
     ),
   alternatives: z
     .array(z.string())
-    .optional()
+    .exactOptional()
     .describe(
       "A changed value's pointer naming its element by another identifier or name it holds alone, such as a shape's draw:name, for a check to use instead; at most three.",
     ),
@@ -90,11 +91,6 @@ export const VALUE_LIMITS = {
   chars: 600,
   references: 5,
 } as const;
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The longest value a reference is resolved from. */
 const MAX_REFERENCE_CHARS = 64;
@@ -340,6 +336,7 @@ const referencesOf = (
       ...attributeReferences(resolve, value),
       ...recordListsOf(value)
         .flatMap(({ records }) => records)
+        // generation-cap: nested records read for references
         .slice(0, MAX_NESTED_RECORDS)
         .flatMap((record) => attributeReferences(resolve, record)),
       // A field holding another element's id as its text, as a split's `<split:account>`.

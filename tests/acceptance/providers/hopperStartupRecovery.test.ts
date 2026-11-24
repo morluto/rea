@@ -8,13 +8,17 @@ import { dirname, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { expect, onTestFinished, vi } from "vitest";
+import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
-import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
+import { acquireHopperTargetLease } from "../../../src/hopper/HopperLease.js";
+import { createSystemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
+import { waitFor } from "../../support/testWait.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const statusSchema = z.object({ result: z.object({ open: z.boolean() }) });
 const test = workspaceCliTest.skipIf(process.platform !== "darwin");
@@ -61,7 +65,6 @@ const closeWithLateBridge = async (
 
 test.for(["target", "loader"] as const)(
   "preserves a prepared target or refuses literal-unsafe %s before handoff",
-  { timeout: 90_000 },
   async (source, { workspace, cli }) => {
     const target = workspace.path(
       source === "target" ? 'quoted"target' : "loader-target",
@@ -92,7 +95,10 @@ test.for(["target", "loader"] as const)(
       stderr: "pipe",
       env: environment,
     });
-    const mcp = new Client({ name: "hopper-literal-boundary", version: "1" });
+    const mcp = new Client(
+      { name: "hopper-literal-boundary", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await closeVerifierResources([
         () => mcp.close(),
@@ -133,7 +139,6 @@ test.for(["target", "loader"] as const)(
       const result = await cli.run({
         arguments: ["analyze", target, "--provider", "hopper", "--json"],
         environment,
-        timeoutMs: 15_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -184,7 +189,10 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
     env: environment,
     stderr: "pipe",
   });
-  const mcp = new Client({ name: "hopper-startup-recovery", version: "1" });
+  const mcp = new Client(
+    { name: "hopper-startup-recovery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
@@ -198,12 +206,24 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
       throw new Error(`${name}: ${stderr}`, { cause });
     });
   expect((await call("open_binary", { path: target })).isError).not.toBe(true);
+  const appleEventsRejection = {
+    boundary: "apple_events_authorization",
+    reason: "not_authorized",
+    responsibility: "client_or_disclaimed_runtime",
+    settings_pane: "privacy_security_automation",
+    entitlement_id: "com.apple.security.automation.apple-events",
+  };
   for (const operation of ["current_document", "list_procedures"]) {
     const { error } = parseMcpToolError(await call(operation));
     expect(error).toMatchObject({
       code: "provider_unavailable",
+      category: "unavailable",
+      retryable: false,
       details: {
         stage: "launch",
+        provider_state: "unknown",
+        retry_action: "unknown",
+        launch_rejection: appleEventsRejection,
         launcher: {
           exit_code: 2,
           stderr: {
@@ -214,7 +234,6 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
         },
       },
     });
-    expect(error.message).toContain("Automation");
     const bootstrap = await readFile(receipt, "utf8");
     await expect(access(dirname(bootstrap))).rejects.toMatchObject({
       code: "ENOENT",
@@ -224,12 +243,17 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
   const deniedCli = await cli.run({
     arguments: ["analyze", target, "--provider", "hopper", "--json"],
     environment,
-    timeoutMs: 15_000,
   });
   expect(deniedCli.exitCode).toBe(1);
   expect(deniedCli.json).toMatchObject({
     code: "provider_unavailable",
-    details: { launcher: { exit_code: 2 } },
+    category: "unavailable",
+    retryable: false,
+    details: {
+      retry_action: "unknown",
+      launch_rejection: appleEventsRejection,
+      launcher: { exit_code: 2 },
+    },
   });
 
   await writeFile(mode, "bridge");
@@ -242,36 +266,53 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
   ).toBe(false);
 });
 
+const prepareLateHandoff = async (
+  workspace: TestWorkspace,
+  launchMode: "handoff" | "not-found",
+) => {
+  const startupTimeoutMs = 10_000;
+  const mode = await workspace.write("mode", launchMode);
+  const receipt = workspace.path("bootstrap-path");
+  const environment = {
+    ...workspace.environment,
+    PATH: process.env.PATH ?? "",
+    REA_ANALYSIS_PROVIDER: "hopper",
+    HOPPER_LAUNCHER_PATH: process.execPath,
+    HOPPER_LOADER_ARGS_JSON: JSON.stringify([
+      resolve("tests/fixtures/hopperLaunchAdmission.mjs"),
+      mode,
+      receipt,
+    ]),
+    REA_HOPPER_STARTUP_TIMEOUT_MS: String(startupTimeoutMs),
+    REA_LOG_LEVEL: "silent",
+  };
+  // Cold Swift preparation belongs in setup for this late-handoff scenario.
+  // The real subprocess will authenticate the same workspace-owned cache.
+  const ownership = createSystemProcessOwnershipHost("darwin", environment);
+  await withVerifierCleanup(
+    () => ownership.prepare?.(),
+    [() => ownership.close?.()],
+  );
+  return { environment, mode, receipt, startupTimeoutMs };
+};
+
 test.for(["handoff", "not-found"] as const)(
-  "preserves an unconfirmed %s handoff and closes only a late bridge with matching run identity",
-  { timeout: 60_000 },
+  "retains ownership after %s and closes only a late bridge with matching run identity",
   async (launchMode, { workspace }) => {
     const target = workspace.path("target");
     await copyFile("/usr/bin/true", target);
-    // Budget the complete native startup, including cold helper preparation.
-    // The scenario below requires observed handoff, not a pre-launch timeout.
-    const startupTimeoutMs = 10_000;
-    const mode = await workspace.write("mode", launchMode);
-    const receipt = workspace.path("bootstrap-path");
+    const { environment, mode, receipt, startupTimeoutMs } =
+      await prepareLateHandoff(workspace, launchMode);
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("dist/main.js")],
       stderr: "pipe",
-      env: {
-        ...workspace.environment,
-        PATH: process.env.PATH ?? "",
-        REA_ANALYSIS_PROVIDER: "hopper",
-        HOPPER_LAUNCHER_PATH: process.execPath,
-        HOPPER_LOADER_ARGS_JSON: JSON.stringify([
-          resolve("tests/fixtures/hopperLaunchAdmission.mjs"),
-          mode,
-          receipt,
-        ]),
-        REA_HOPPER_STARTUP_TIMEOUT_MS: String(startupTimeoutMs),
-        REA_LOG_LEVEL: "silent",
-      },
+      env: environment,
     });
-    const mcp = new Client({ name: "hopper-late-readiness", version: "1" });
+    const mcp = new Client(
+      { name: "hopper-late-readiness", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const children: ChildProcess[] = [];
     let runtime: string | undefined;
     onTestFinished(async () => {
@@ -293,7 +334,14 @@ test.for(["handoff", "not-found"] as const)(
     const initial = parseMcpToolError(await call("current_document"));
     // Capture ownership evidence before result assertions so teardown retains
     // the runtime even when the asserted failure stage regresses.
-    const bootstrapPath = await readFile(receipt, "utf8");
+    const bootstrapPath = await readFile(receipt, "utf8").catch(
+      (cause: unknown) => {
+        throw new Error(
+          `Launcher did not acknowledge handoff: ${JSON.stringify(initial.error)}`,
+          { cause },
+        );
+      },
+    );
     runtime = dirname(bootstrapPath);
     expect(initial.error).toMatchObject({
       code: "cleanup_incomplete",
@@ -306,7 +354,17 @@ test.for(["handoff", "not-found"] as const)(
                 : "provider_unavailable",
             details:
               launchMode === "handoff"
-                ? { timeout_ms: startupTimeoutMs, launcher: { exit_code: 0 } }
+                ? {
+                    timeout_ms: startupTimeoutMs,
+                    launcher: {
+                      // The receipt proves launch. The deadline snapshot may
+                      // precede delivery of the successful child exit event.
+                      exit_code: expect.toSatisfy(
+                        (exitCode: unknown) =>
+                          exitCode === null || exitCode === 0,
+                      ),
+                    },
+                  }
                 : { stage: "launch", launcher: { exit_code: 3 } },
           },
         },
@@ -334,9 +392,12 @@ test.for(["handoff", "not-found"] as const)(
       }),
     });
     status.parse((await call("binary_session")).structuredContent);
-    expect(parseMcpToolError(await call("close_binary")).error.code).toBe(
-      "cleanup_incomplete",
-    );
+    // A missing endpoint uses the full reconnect window. The not-found case
+    // exercises that outcome before both variants check live foreign bridges.
+    if (launchMode === "not-found")
+      expect(parseMcpToolError(await call("close_binary")).error.code).toBe(
+        "cleanup_incomplete",
+      );
     const bootstrap = await readFile(bootstrapPath, "utf8");
     const setting = (name: string): string => {
       const line = bootstrap
@@ -369,7 +430,7 @@ test.for(["handoff", "not-found"] as const)(
       [runId, "different-token"],
     ] as const) {
       const wrong = lateBridge(identity, credential);
-      await vi.waitFor(() => access(socket));
+      await waitFor(() => access(socket));
       expect(parseMcpToolError(await call("close_binary")).error.code).toBe(
         "cleanup_incomplete",
       );
@@ -379,7 +440,7 @@ test.for(["handoff", "not-found"] as const)(
       await rm(socket, { force: true });
     }
     const owned = await closeWithLateBridge(mcp, () => lateBridge(runId));
-    await vi.waitFor(() => expect(owned.exitCode).toBe(0));
+    await waitFor(() => expect(owned.exitCode).toBe(0));
     await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
     await writeFile(mode, "bridge");
     expect((await call("open_binary", { path: target })).isError).not.toBe(

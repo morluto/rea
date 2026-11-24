@@ -92,9 +92,9 @@ it.each([
           kind: "unretained-evidence",
           evidence: source,
         },
+        // The session owner reads the session, so retention is known.
         completed_observation: {
-          kind: "inline-evidence",
-          retention: "unknown",
+          kind: "unretained-evidence",
           source_closure: "not-established",
           evidence: { operation: name, evidence_links: [source.evidence_id] },
         },

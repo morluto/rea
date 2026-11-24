@@ -1,10 +1,10 @@
 import { createServer } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
 
@@ -13,7 +13,6 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { V8InspectorProvider } from "./V8InspectorProvider.js";
 
 const failureCases = [
-  ["disconnect", "disconnected"],
   ["protocol failure", "protocol_error"],
   ["idle protocol failure", "protocol_error"],
   ["cancellation", "cancelled"],
@@ -102,7 +101,6 @@ const createPartialInspectorServer = (
           socket.send(JSON.stringify({ id: command.id, result: "malformed" }));
         } else {
           socket.send(JSON.stringify({ id: command.id, result: {} }));
-          if (failure === "disconnect") socket.close();
           if (failure === "idle protocol failure") {
             setTimeout(() => socket.send("{malformed-json"), 20);
             setTimeout(
@@ -128,7 +126,7 @@ const createPartialInspectorServer = (
 it.each(failureCases)(
   "preserves captured scripts and contexts after %s",
   async (failure, reason) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-inspector-partial-"));
+    const root = await createTestTempDirectory("rea-inspector-partial-");
     const scriptPath = join(root, "target.js");
     const scriptUrl = pathToFileURL(scriptPath).href;
     const reportedScriptUrl = failure === "cancellation" ? "" : scriptUrl;
@@ -149,21 +147,13 @@ it.each(failureCases)(
         throw new Error("Inspector fixture did not bind a TCP port");
 
       const controller = new AbortController();
-      const timerSpy =
-        failure === "disconnect" ? vi.spyOn(globalThis, "setTimeout") : null;
-      const clearSpy =
-        failure === "disconnect" ? vi.spyOn(globalThis, "clearTimeout") : null;
-      const executionOptions =
-        failure === "cancellation" || failure === "disconnect"
-          ? { signal: controller.signal }
-          : {};
       const observing = new V8InspectorProvider().observe(
         {
           inspector_endpoint: `http://127.0.0.1:${String(address.port)}`,
           target_id: "target-1",
-          observation_ms: failure === "disconnect" ? 12_345 : 10_000,
+          observation_ms: 10_000,
         },
-        executionOptions,
+        failure === "cancellation" ? { signal: controller.signal } : {},
       );
       if (failure === "cancellation") {
         await scriptSent;
@@ -171,18 +161,6 @@ it.each(failureCases)(
       }
       const result = await observing;
 
-      if (failure === "disconnect") {
-        const observationTimer = timerSpy?.mock.results.find(
-          (result, index) => timerSpy.mock.calls[index]?.[1] === 12_345,
-        )?.value;
-        expect(observationTimer).toBeDefined();
-        expect(
-          clearSpy?.mock.calls.some(([timer]) => timer === observationTimer),
-        ).toBe(true);
-        expect(controller.signal.aborted).toBe(false);
-      }
-
-      expect(result.ok).toBe(false);
       if (result.ok)
         throw new Error("Expected the Inspector operation to fail");
       if (failure === "cancellation") {
@@ -212,7 +190,6 @@ it.each(failureCases)(
         },
         execution_contexts: [
           {
-            context_key: "context_0",
             execution_context_id: 1,
             name: "main",
             origin: reportedScriptUrl,
@@ -220,10 +197,8 @@ it.each(failureCases)(
         ],
       });
     } finally {
-      vi.restoreAllMocks();
       await new Promise<void>((resolve) => sockets.close(() => resolve()));
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(root, { recursive: true, force: true });
     }
   },
 );

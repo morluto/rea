@@ -1,7 +1,9 @@
+import { unknownTarget } from "./targetIdentity.js";
 import {
   createEvidence,
   evidenceEnvelopeForAdmission,
   type Evidence,
+  type EvidenceAuthority,
   type EvidenceCreationOptions,
   type EvidenceLocation,
   type EvidenceProvider,
@@ -9,7 +11,7 @@ import {
 } from "./evidence.js";
 import type { AnalysisProfileCommitment } from "./analysisProfile.js";
 import type { JsonValue } from "./jsonValue.js";
-import type { RelationshipCoverage } from "./relationshipCoverage.js";
+import type { EvidenceRelationshipCoverage } from "./relationshipCoverage.js";
 
 /** Provider observations that can be committed to Evidence. */
 export interface AnalysisObservation {
@@ -19,7 +21,7 @@ export interface AnalysisObservation {
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly limitations: readonly string[];
   /** Provider-owned completeness assessment for caller/callee observations. */
-  readonly relationshipCoverage?: RelationshipCoverage;
+  readonly relationshipCoverage?: EvidenceRelationshipCoverage;
   readonly locations: readonly EvidenceLocation[];
   /** Atomic source records supplied by the producer, with links derived from their identities. */
   readonly sourceEvidence?: readonly Evidence[];
@@ -28,6 +30,11 @@ export interface AnalysisObservation {
    * its caller. Explicit null means the observation has no file subject.
    */
   readonly subject?: EvidenceSubjectTarget | null;
+  /**
+   * The authority the observation itself supports. Missing derives it from the
+   * subject, which a service REA does not own cannot name.
+   */
+  readonly authority?: EvidenceAuthority;
 }
 
 /** Build the single borrowed observation used for admission and commitment. */
@@ -48,6 +55,9 @@ const analysisExecutionEvidenceInput = (
   ...(execution.relationshipCoverage === undefined
     ? {}
     : { relationshipCoverage: execution.relationshipCoverage }),
+  ...(execution.authority === undefined
+    ? {}
+    : { authority: execution.authority }),
   locations: execution.locations,
   confidence,
 });
@@ -57,12 +67,13 @@ export const analysisExecutionEnvelopeForAdmission = (
   operation: string,
   input: unknown,
   execution: AnalysisObservation,
-  confidence: "observed" | "derived",
+  callerTarget?: EvidenceCreationOptions["callerTarget"],
 ) =>
   evidenceEnvelopeForAdmission(
-    execution.subject ?? undefined,
+    execution.subject ?? unknownTarget("not-observed"),
     execution.provider,
-    analysisExecutionEvidenceInput(operation, input, execution, confidence),
+    analysisExecutionEvidenceInput(operation, input, execution, "observed"),
+    callerTarget,
   );
 
 /** Commit identical facts on success and when retaining a completed observation after cancellation. */
@@ -74,7 +85,7 @@ export const createAnalysisExecutionEvidence = (
   options?: EvidenceCreationOptions,
 ): Evidence =>
   createEvidence(
-    execution.subject ?? undefined,
+    execution.subject ?? unknownTarget("not-observed"),
     execution.provider,
     {
       ...analysisExecutionEvidenceInput(

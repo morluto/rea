@@ -6,15 +6,17 @@ import { session } from "./kunaSessionFixture.js";
 
 const SCRIPT = String.raw`
 import assert from "node:assert/strict";
-import { ArtifactResourceScope } from "./dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "./dist/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "./dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "./dist/resources/AnalysisCleanupLease.js";
 import { inspectKunaInstallation } from "./dist/kuna/KunaInstallation.js";
 import { KunaTargetCommands } from "./dist/kuna/KunaTargetCommands.js";
+import { HOST_PLATFORM } from "./dist/platform/HostPlatform.js";
 const fixture = JSON.parse(process.env.REA_TEST_KUNA_FIXTURE);
 const kunaResources = new ArtifactResourceScope();
 const installation = await inspectKunaInstallation(
   { REA_KUNA_COMMAND: fixture.kuna, REA_KUNA_CACHE_DIR: fixture.cacheRoot },
   {
+    platform: HOST_PLATFORM.platform,
     resourceScope: {
       retain: (handle, resource) =>
         kunaResources.retain({ kind: "lease", resource, lease: AnalysisCleanupLease.forCloseOwner(handle, resource) }),

@@ -10,7 +10,6 @@ import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
   "reports the complete-fact ceiling for wide async chunk metadata",
-  { timeout: 60_000 },
   async ({ cli }) => {
     // This bounded public control exceeds the complete-fact allowance. The
     // forked boundary regression separately owns call-argument capacity.
@@ -31,7 +30,6 @@ cliTest(
         "30000",
         "--json",
       ],
-      timeoutMs: 55_000,
     });
     // Analysis retains the interrupted file rather than failing the command.
     expect(response.exitCode, `${response.stdout}\n${response.stderr}`).toBe(0);

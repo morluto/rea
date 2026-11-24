@@ -10,8 +10,6 @@ interface ProviderBinding {
 interface ProviderCatalogSources {
   readonly toolContracts: {
     readonly TOOL_CONTRACTS: readonly { readonly name: string }[];
-  };
-  readonly toolFamilies: {
     readonly TOOL_CONTRACT_GROUPS: Readonly<
       Record<string, readonly { readonly name: string }[]>
     >;
@@ -42,7 +40,7 @@ export function toolFamilyCatalog(sources: {
     readonly TOOL_CONTRACTS: readonly unknown[];
   };
   readonly catalogIdentity: {
-    readonly FULL_CATALOG_IDENTITY: {
+    readonly DEFAULT_CATALOG_IDENTITY: {
       readonly counts: { readonly mcp_tools: number };
     };
   };

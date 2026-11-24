@@ -7,12 +7,12 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
-import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import type { JavaScriptTimeoutPolicyName } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptSourceAnalysisLimits } from "../../domain/javascript/javascriptSourceAnalysis.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
+import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { createJavaScriptPackageTypeLookup } from "./JavaScriptArtifactAnalysis.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
@@ -31,6 +31,7 @@ export const discoverJavaScriptPreloadPaths = async (
   fileSet: JavaScriptArtifactFileSet,
   limits: JavaScriptSourceAnalysisLimits,
   scope: ArtifactResourceScope,
+  sourceAnalysis: JavaScriptSourceAnalysisFactory,
   signal?: AbortSignal,
   timeoutPolicy: JavaScriptTimeoutPolicyName = "stop",
 ): Promise<JavaScriptPreloadDiscovery> => {
@@ -55,7 +56,7 @@ export const discoverJavaScriptPreloadPaths = async (
     (file) => file.kind === "javascript" && file.text.included,
   );
   const files = new Map(fileSet.files.map((file) => [file.path, file]));
-  const worker = await createJavaScriptSourceAnalysis(limits, sources.length, {
+  const worker = await sourceAnalysis(limits, sources.length, {
     scope,
   });
   let outcome: { kind: "completed" } | { kind: "failed"; cause: unknown } = {

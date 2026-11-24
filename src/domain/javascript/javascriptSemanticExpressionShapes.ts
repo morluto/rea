@@ -1,7 +1,7 @@
 import {
-  semanticOpaqueBindingReadMayHaveChanged,
-  semanticOpaqueNameMayHaveChanged,
-} from "./javascriptSemanticOpaqueEffects.js";
+  opaqueCodeMayRebindBinding,
+  opaqueCodeMayChangeGlobalRead,
+} from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
 
 import {
@@ -66,7 +66,7 @@ export const createSemanticExpressionShapeResolver = (
       node = unwrapped.node;
       depth += unwrapped.depth;
       if (depth > state.precision.expression_depth) {
-        state.valueResourceLimits.add("expression-depth");
+        state.observations.valueResourceLimits.add("expression-depth");
         return "unknown";
       }
       if (seen.has(node)) return "unknown";
@@ -89,7 +89,7 @@ export const createSemanticExpressionShapeResolver = (
       }
       if (
         namedProofBlocked() ||
-        semanticOpaqueBindingReadMayHaveChanged(binding, node, state)
+        opaqueCodeMayRebindBinding(binding, state, node)
       )
         return "unknown";
       const initializer = semanticStableInitializer(binding, state);
@@ -110,7 +110,7 @@ export const createSemanticExpressionShapeResolver = (
         isNullishJavaScriptSyntax(node) ||
         (isUnshadowedGlobal(node, state, "undefined") &&
           !namedProofBlocked() &&
-          !semanticOpaqueNameMayHaveChanged(node, state))
+          !opaqueCodeMayChangeGlobalRead(node, state, "undefined"))
       );
     },
   };

@@ -1,6 +1,6 @@
 import { lstat, open } from "node:fs/promises";
 
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import type { VerifierCommands } from "./verifier-command-owner.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
