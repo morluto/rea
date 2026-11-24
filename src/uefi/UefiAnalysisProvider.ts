@@ -1665,16 +1665,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             );
             let executable = "sh";
             if (this.#hostPlatform.platform === "win32") {
-              try {
-                executable = windowsBatchCommand({
-                  environment: this.#environment,
-                  batchPath:
-                    ghidraBin ?? "C:\\ghidra\\support\\analyzeHeadless.bat",
-                  arguments: [],
-                }).command;
-              } catch {
-                executable = "C:\\Windows\\System32\\cmd.exe";
-              }
+              executable = windowsBatchCommand({
+                environment: this.#environment,
+                batchPath:
+                  ghidraBin ?? "C:\\ghidra\\support\\analyzeHeadless.bat",
+                arguments: [],
+              }).command;
             }
             const baseGhidraEnv = ghidraLaunchEnvironment(
               paths,

@@ -10248,11 +10248,15 @@ it("strictly verifies createUefiEvidenceFromWrapper propagates format identity a
   expect(fallbackEvidence.confidence).toBe("observed");
   expect(fallbackEvidence.subject).toMatchObject({
     identity: {
-      sha256: "0".repeat(64),
-      format: "file",
+      kind: "unknown",
+      reason: "not-observed",
     },
-    local_path: "/tmp/inspect.rom",
+    name: null,
+    local_path: null,
   });
+  expect(fallbackEvidence.locations).toEqual([
+    { kind: "artifact-path", path: "/tmp/inspect.rom" },
+  ]);
 });
 
 it("strictly verifies malformed and out-of-bounds PE headers are safely handled", () => {

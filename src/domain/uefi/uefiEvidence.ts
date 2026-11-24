@@ -36,12 +36,16 @@ export const createUefiEvidenceFromWrapper = (
   const result = wrapper.result;
   const provenance = wrapper.provenance;
   const path = provenance?.path ?? input.path;
-  const sha256 =
+  const rawSha256 =
     provenance?.sha256 ??
     (typeof (result as { image_sha256?: unknown })?.image_sha256 === "string"
       ? (result as { image_sha256: string }).image_sha256
-      : "0".repeat(64));
+      : undefined);
   const format = provenance?.format ?? "file";
+  const subject =
+    rawSha256 !== undefined && rawSha256 !== ""
+      ? { path, sha256: rawSha256, format }
+      : null;
   const limitations =
     typeof result === "object" &&
     result !== null &&
@@ -60,7 +64,7 @@ export const createUefiEvidenceFromWrapper = (
       provider: UEFI_PROVIDER_IDENTITY,
       limitations,
       locations: [{ kind: "artifact-path", path }],
-      subject: { path, sha256, format },
+      subject,
     },
     confidence,
   );
