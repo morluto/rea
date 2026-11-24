@@ -16,6 +16,7 @@ import {
   executePortableCommand as execute,
 } from "./lib/portable-command.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 const { values } = parseArgs({
   options: { directory: { type: "string" }, powershell: { type: "string" } },
@@ -38,6 +39,9 @@ const fixture = await VerifierFixture.open({
 });
 const workspace = fixture.path;
 const node = join(directory, "runtime/node.exe");
+// Every verification command runs under this owner, so cleanup and deadlines
+// share one lifetime instead of a second runner.
+const commands = await createVerifierCommands();
 const entry = join(directory, "app/scripts/rea.mjs");
 let complete = false;
 let nodeSocketConnectionsDenied = false;
@@ -113,6 +117,7 @@ try {
     );
   const powershell = async (root, args) =>
     execute(
+      commands,
       powershellExecutable,
       [
         "-NoProfile",
@@ -170,7 +175,7 @@ try {
   reportStage("CLI help and offline setup/doctor");
   assert.match(
     (
-      await executePortableBatchHelp(directory, {
+      await executePortableBatchHelp(commands, directory, {
         cwd: workspace,
         env: environment,
         timeout: 120_000,
@@ -286,6 +291,7 @@ if ($LASTEXITCODE -ne 0 -or -not $piped.healthy) { throw 'Piped doctor failed' }
     passing = "",
   ) =>
     execute(
+      commands,
       powershellExecutable,
       [
         "-NoProfile",
@@ -398,8 +404,12 @@ if ($LASTEXITCODE -ne 0 -or -not $piped.healthy) { throw 'Piped doctor failed' }
   );
   complete = true;
 } finally {
-  if (complete) await fixture.release();
-  else await fixture.keep("portable verification did not complete");
+  try {
+    await commands.close();
+  } finally {
+    if (complete) await fixture.release();
+    else await fixture.keep("portable verification did not complete");
+  }
 }
 console.log(
   JSON.stringify({

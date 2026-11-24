@@ -16,7 +16,13 @@ export async function loadWindowsOwnedProcessClass() {
   return source.WindowsOwnedProcess;
 }
 
-/** Start an owned Windows command while preserving cross-spawn's shim rules. */
+/**
+ * Start an owned Windows command while preserving cross-spawn's shim rules.
+ *
+ * `verbatimArguments` preserves a caller-supplied command line exactly, for a
+ * pre-quoted `cmd /s /c` invocation that cross-spawn does not recognise as a
+ * shim (so it does not set the flag itself).
+ */
 export function createWindowsOwnedCommand(options) {
   const {
     WindowsOwnedProcess,
@@ -25,6 +31,7 @@ export function createWindowsOwnedCommand(options) {
     cwd,
     environment,
     authority,
+    verbatimArguments,
   } = options;
   // This pinned private parser is cross-spawn's own resolution and cmd-shim
   // boundary. Keep its compatibility coupling here instead of copying its rules.
@@ -56,7 +63,8 @@ export function createWindowsOwnedCommand(options) {
     parsed.args,
     cwd,
     environment,
-    parsed.options.windowsVerbatimArguments === true,
+    verbatimArguments === true ||
+      parsed.options.windowsVerbatimArguments === true,
     {
       protocolStdin: true,
       ...(authority === undefined ? {} : { authority }),

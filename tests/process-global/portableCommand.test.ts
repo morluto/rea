@@ -9,6 +9,7 @@ import {
   executePortableCommand,
 } from "../../scripts/lib/portable-command.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createVerifierCommands } from "../../scripts/lib/verify-commands.mjs";
 
 it.skipIf(process.platform !== "win32")(
   "finds batch help outside the package cwd and preserves literal path markers",
@@ -21,23 +22,33 @@ it.skipIf(process.platform !== "win32")(
       "@echo off\r\necho portable-batch-ok\r\ncd\r\n",
       "utf8",
     );
-    const result = await executePortableBatchHelp(directory, {
-      cwd,
-      env: { ...process.env, REA_PORTABLE_PROBE: "expanded", NAME: "expanded" },
-      timeout: 5_000,
-      maxBuffer: 4096,
-    });
-    expect(result.stdout.trim().split("\r\n")).toEqual([
-      "portable-batch-ok",
-      cwd,
-    ]);
-    expect(result.stderr).toBe("");
+    const commands = await createVerifierCommands();
+    try {
+      const result = await executePortableBatchHelp(commands, directory, {
+        cwd,
+        env: {
+          ...process.env,
+          REA_PORTABLE_PROBE: "expanded",
+          NAME: "expanded",
+        },
+        timeout: 5_000,
+        maxBuffer: 4096,
+      });
+      expect(result.stdout.trim().split("\r\n")).toEqual([
+        "portable-batch-ok",
+        cwd,
+      ]);
+      expect(result.stderr).toBe("");
+    } finally {
+      await commands.close();
+    }
   },
 );
 
 it.skipIf(process.platform !== "win32")(
   "preserves command output and nonzero status and rejects output overflow",
   async () => {
+    const commands = await createVerifierCommands();
     const options = {
       cwd: await createTestTempDirectory("rea-portable-output-"),
       env: process.env,
@@ -47,10 +58,16 @@ it.skipIf(process.platform !== "win32")(
     const source =
       'process.stdout.write("中文");process.stderr.write("diagnostic");';
     await expect(
-      executePortableCommand(process.execPath, ["-e", source], options),
+      executePortableCommand(
+        commands,
+        process.execPath,
+        ["-e", source],
+        options,
+      ),
     ).resolves.toEqual({ stdout: "中文", stderr: "diagnostic" });
     await expect(
       executePortableCommand(
+        commands,
         process.execPath,
         ["-e", `${source}process.exitCode=17;`],
         options,
@@ -58,6 +75,7 @@ it.skipIf(process.platform !== "win32")(
     ).rejects.toMatchObject({ code: 17, stdout: "中文", stderr: "diagnostic" });
     await expect(
       executePortableCommand(
+        commands,
         process.execPath,
         [
           "-e",
@@ -66,6 +84,7 @@ it.skipIf(process.platform !== "win32")(
         options,
       ),
     ).rejects.toMatchObject({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+    await commands.close();
   },
 );
 
@@ -126,9 +145,10 @@ it
         : mode === "session"
           ? [...arguments_, session, join(root, "rea.ps1")]
           : [...arguments_, join(root, "rea.ps1")];
+    const commands = await createVerifierCommands();
     try {
       await expect(
-        executePortableCommand(command, args, {
+        executePortableCommand(commands, command, args, {
           cwd: root,
           env: process.env,
           timeout: 10_000,
@@ -145,6 +165,7 @@ it
       // Also stops the pre-fix orphan when exercising this regression in red.
       await writeFile(stop, "stop", "utf8");
       await delay(200);
+      await commands.close();
     }
   },
   20_000,

@@ -17,8 +17,15 @@ Setup changes the selected client's configuration and installs REA's skill.
 After setup, run `.\rea.ps1 doctor --client codex --skill --json` to check
 the bundled runtime, client registration, and installed skill offline.
 Registrations use the absolute paths of this directory's Node and REA entry
-point. If you move the directory later, rerun setup from the new location and
-restart the client. Moving a running server is not supported.
+point.
+
+To move an installed directory, remove the old registration first. Setup from
+the new location cannot replace a registration that names the previous bundle:
+the saved command points at the old directory's Node, which the new bundle
+treats as foreign and refuses to overwrite. While the old directory still
+exists, run `.\rea.ps1 uninstall` there to remove REA-owned client registrations
+and the installed skill, move the directory, then run setup from the new
+location and restart the client. Moving a running server is not supported.
 
 Use `rea.ps1` from PowerShell to keep literal `%NAME%` and `!NAME!` paths intact.
 For Command Prompt, change into the portable directory and use `rea.cmd`.
