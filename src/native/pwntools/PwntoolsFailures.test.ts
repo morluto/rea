@@ -50,19 +50,55 @@ it("keeps the caller-selected pwntools input-limit source", () => {
         providerId: "pwntools",
         producerLimits: resolvePwntoolsLimits(undefined, 4096),
         inputBytesSource: "request",
+        omittedInputBytes: 67_108_864,
       },
     ),
   );
+  // The per-call parameter stopped the read, so the limit names it and the
+  // ceiling that applies when it is omitted, not the registered setting.
+  expect(projected.details?.limit).toStrictEqual({
+    control_kind: "parameter",
+    parameter: "producer_limits.input_bytes",
+    effective_value: 4096,
+    unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: 67_108_864,
+    applies_at: "next_call",
+  });
+  expect(projected.remediation.action).toContain("producer_limits.input_bytes");
+  expect(projected.remediation.action).not.toContain("launch default of");
+});
+
+it("keeps the setting limit when omitting the per-call ceiling would fail configuration", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new ArtifactReaderFailure(
+        "limit",
+        "artifact exceeds the input allowance",
+        { boundary: "file-size" },
+      ),
+      "artifact-read",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits(undefined, 4096),
+        inputBytesSource: "request",
+        omittedInputBytes: undefined,
+      },
+    ),
+  );
+  // No usable default exists, so no parameter limit with an invented
+  // default_value is reported.
+  expect(projected.details?.limit).not.toHaveProperty("control_kind");
   expect(projected.details?.limit).toMatchObject({
     setting: "pwntools.max_input_bytes",
     effective_value: 4096,
     source: "request",
-    update_mode: "parameter",
-    pending_restart: false,
-    parameter: "producer_limits.input_bytes",
-    unit: "bytes",
   });
-  expect(projected.remediation.action).not.toContain("launch default of");
 });
 
 it("names a runtime pwntools ceiling instead of the built-in default", () => {

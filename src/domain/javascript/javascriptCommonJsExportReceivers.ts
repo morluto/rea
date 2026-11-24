@@ -70,7 +70,7 @@ const copiedOwnFields = (
     const node = unwrapJavaScriptExpression(pending.pop()!).node;
     if (seen.has(node)) continue;
     if (seen.size >= state.precision.alias_selections) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return unknown;
     }
     seen.add(node);
@@ -96,7 +96,7 @@ const copiedOwnFields = (
         seen.size + pending.length + selected.length >
         state.precision.alias_selections
       ) {
-        state.valueResourceLimits.add("alias-selections");
+        state.observations.valueResourceLimits.add("alias-selections");
         return unknown;
       }
       for (const value of selected) pending.push(value.node);
