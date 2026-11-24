@@ -75,6 +75,7 @@ export const UNIT_LAYERS = Object.freeze(
       "javascript",
       "java",
       "jeb",
+      "jvm",
       "kuna",
       "model",
       "native",
@@ -494,6 +495,21 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     // the executable identity rules have one owner.
     reason:
       "live packet capture selects and verifies tshark with the pcap provider's Wireshark tool configuration",
+  }),
+  Object.freeze({
+    from: "python",
+    to: "artifacts",
+    files: Object.freeze([
+      "pyinstaller/CArchiveLayout.ts",
+      "pyinstaller/MarshalSubset.ts",
+      "pyinstaller/PythonBytecode.ts",
+      "pyinstaller/PyzArchive.ts",
+    ]),
+    // PyInstaller extraction reuses the artifacts provider's CArchive layout,
+    // marshal subset, and PYZ archive parsers rather than duplicating wire
+    // decoding across provider folders.
+    reason:
+      "PyInstaller extraction reuses the artifacts provider's CArchive, marshal, and PYZ parsers",
   }),
 ]);
 

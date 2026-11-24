@@ -77,6 +77,7 @@ export const readPeCoffHeader = (bytes: Buffer) => {
   return ok({
     machine: record.u16(0),
     sectionCount: record.u16(2),
+    timeDateStamp: record.u32(4),
     symbolTableOffset: record.u32(8),
     symbolCount: record.u32(12),
     optionalHeaderSize: record.u16(16),

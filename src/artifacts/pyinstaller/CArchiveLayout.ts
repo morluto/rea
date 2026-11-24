@@ -26,8 +26,8 @@ export const PYINSTALLER_COOKIE_V20_BYTES = 24;
  */
 export const PYINSTALLER_COOKIE_SEARCH_BYTES = 16 * 1024 * 1024;
 
-const MAX_TOC_BYTES = 32 * 1024 * 1024;
-const MAX_TOC_ENTRIES = 100_000;
+export const MAX_TOC_BYTES = 32 * 1024 * 1024;
+export const MAX_TOC_ENTRIES = 100_000;
 const TOC_HEADER_BYTES = 18;
 
 /** Observed CArchive cookie. Offsets are relative to the archive start. */
@@ -123,7 +123,12 @@ export const observePyInstallerCookie = async (
       .lastIndexOf(PYINSTALLER_COOKIE_MAGIC);
     if (relative < 0) break;
     const cookieOffset = fileSize - tailSize + relative;
-    const parsed = parseCookieAt(observed, relative, cookieOffset, fileSize);
+    const parsed = parseCArchiveCookieAt(
+      observed,
+      relative,
+      cookieOffset,
+      fileSize,
+    );
     if (parsed.ok) return ok({ state: "located", cookie: parsed.value });
     failure = parsed.error;
     from = relative;
@@ -225,7 +230,8 @@ export const parseCArchiveToc = (
   return ok(entries);
 };
 
-const parseCookieAt = (
+/** Validate a candidate CArchive cookie at `relative` inside `tail`, checking 2.1 then 2.0 layout. */
+export const parseCArchiveCookieAt = (
   tail: Buffer,
   relative: number,
   cookieOffset: number,
@@ -343,7 +349,7 @@ const safeSum = (left: number, middle: number, right: number): boolean =>
   left + middle + right <= Number.MAX_SAFE_INTEGER;
 
 /** Source directory semantics are validated once before any consumer projects paths. */
-const validateCArchiveMembers = (
+export const validateCArchiveMembers = (
   entries: readonly CArchiveEntry[],
   tocOffset: number,
 ): Result<null, PyInstallerFailure> => {

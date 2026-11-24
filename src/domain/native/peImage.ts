@@ -99,6 +99,9 @@ export type PeImage = BinaryContainer & {
   readonly format: "pe";
   readonly image_base: bigint;
   readonly pe_machine: number;
+  readonly pe_timestamp: number;
+  readonly pe_entry_point_rva: number;
+  readonly pe_subsystem: number;
   readonly pe_section_alignment: number;
   readonly pe_file_alignment: number;
   readonly pe_header_mapping: FileMapping;
@@ -196,6 +199,7 @@ const buildPeImage = (
   optional: number,
   optionalSize: number,
   machine: number,
+  timeDateStamp: number,
   count: number,
   factsValue: PeOptionalFacts,
   sectionTable: Buffer,
@@ -293,6 +297,9 @@ const buildPeImage = (
     format: "pe",
     image_base: imageBase,
     pe_machine: machine,
+    pe_timestamp: timeDateStamp,
+    pe_entry_point_rva: factsValue.entryPointRva,
+    pe_subsystem: factsValue.subsystem,
     pe_section_alignment: sectionAlignment,
     pe_file_alignment: fileAlignment,
     pe_data_directories: dataDirectories,
@@ -352,6 +359,7 @@ export const readPeImage = (
   const {
     machine,
     sectionCount: count,
+    timeDateStamp,
     optionalHeaderSize: optionalSize,
   } = coff.value;
   const optionalRange = peOptionalHeaderRange(
@@ -380,6 +388,7 @@ export const readPeImage = (
     optional,
     optionalSize,
     machine,
+    timeDateStamp,
     count,
     facts.value,
     sectionTable,
@@ -424,6 +433,7 @@ export const readPeImageFromReader = async (
   const {
     machine,
     sectionCount: count,
+    timeDateStamp,
     optionalHeaderSize: optionalSize,
   } = coff.value;
   const optionalRange = peOptionalHeaderRange(
@@ -450,6 +460,7 @@ export const readPeImageFromReader = async (
     optional,
     optionalSize,
     machine,
+    timeDateStamp,
     count,
     facts.value,
     sectionTable,

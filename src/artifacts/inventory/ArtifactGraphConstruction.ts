@@ -1,5 +1,6 @@
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import {
+  hasWasmV1Header,
   isStandaloneArtifactFormat,
   recognizeArtifactFormat,
 } from "../../domain/artifactFormatRecognition.js";
@@ -35,7 +36,9 @@ import {
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import { readUint32At } from "../../domain/binaryContainer.js";
 import { classifyFatContainerEvidence } from "../../domain/apple/machoContainer.js";
+import { hasBoundedJvmClassFraming } from "../../domain/apple/jvmClassFile.js";
 import {
   parsePeRecordFacts,
   parsePeRecordStructure,
@@ -663,6 +666,13 @@ export const classifyArtifactHeader = (
       return only(recognition.format);
   if (evidence.xmlPlistSignature) return only("plist");
   const fatFormat = classifyFatArtifact(evidence);
+  if (fatFormat === "mach-o-universal") return only(fatFormat);
+  if (
+    prefix.length >= 4 &&
+    readUint32At(prefix, 0, false) === 0xcafebabe &&
+    (evidence.jvmClassSignature ?? hasBoundedJvmClassFraming(prefix))
+  )
+    return only("jvm-class");
   if (fatFormat !== null) return only(fatFormat);
   // Admit ELF and thin Mach-O as target resolution does: a magic number
   // whose header does not decode is not an executable REA can open.
@@ -712,6 +722,49 @@ export const classifyArtifactHeader = (
     if (mzEvidence.dos.ok) return only("dos-mz");
     return only("unknown");
   }
+  if (
+    prefix.length >= 6 &&
+    prefix[0] === 0x37 &&
+    prefix[1] === 0x7a &&
+    prefix[2] === 0xbc &&
+    prefix[3] === 0xaf &&
+    prefix[4] === 0x27 &&
+    prefix[5] === 0x1c
+  )
+    return only("7z");
+  if (
+    prefix.length >= 3 &&
+    prefix[0] === 0x42 &&
+    prefix[1] === 0x5a &&
+    prefix[2] === 0x68
+  )
+    return only("bzip2");
+  if (
+    prefix.length >= 6 &&
+    prefix[0] === 0xfd &&
+    prefix[1] === 0x37 &&
+    prefix[2] === 0x7a &&
+    prefix[3] === 0x58 &&
+    prefix[4] === 0x5a &&
+    prefix[5] === 0x00
+  )
+    return only("xz");
+  if (hasWasmV1Header(prefix)) return only("wasm");
+  if (
+    prefix.length >= 8 &&
+    prefix[0] === 0x64 &&
+    prefix[1] === 0x65 &&
+    prefix[2] === 0x78 &&
+    prefix[3] === 0x0a &&
+    prefix[4]! >= 0x30 &&
+    prefix[4]! <= 0x39 &&
+    prefix[5]! >= 0x30 &&
+    prefix[5]! <= 0x39 &&
+    prefix[6]! >= 0x30 &&
+    prefix[6]! <= 0x39 &&
+    prefix[7] === 0x00
+  )
+    return only("dex");
   return only("file");
 };
 

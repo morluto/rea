@@ -22,6 +22,10 @@ export const hasGzipMagic = (prefix: Uint8Array): boolean =>
   prefix[1] === 0x8b &&
   prefix[2] === 0x08;
 
+/** RFC 1952 fixed 10-byte member header with deflate compression and zero reserved FLG bits. */
+export const hasGzipHeader = (prefix: Uint8Array): boolean =>
+  prefix.length >= 10 && hasGzipMagic(prefix) && (prefix[3]! & 0xe0) === 0;
+
 /** Header dialect, from the `magic` and `version` fields. */
 export type TarHeaderDialect = "ustar" | "gnu";
 

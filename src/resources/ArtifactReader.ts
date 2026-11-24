@@ -248,6 +248,7 @@ export interface ArtifactReader {
     | "unityfs"
     | "wxapkg"
     | "tar"
+    | "gzip"
     | "dds"
     | "glb"
     | "ktx"

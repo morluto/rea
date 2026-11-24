@@ -46,7 +46,7 @@ export type PyzArchive =
     };
 
 /** Bound the transient marshal table allocation independently of image expansion. */
-const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
+export const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
 
 interface PyzHeaderFacts {
   readonly pythonMagic: Buffer;
@@ -163,7 +163,7 @@ const parsePyzParts = (
       limitation: `PYZ table of contents could not be parsed (${marshalled.error.message}); the member was left opaque.`,
     });
   }
-  const entries = pyzEntries(marshalled.value, tocOffset, table.length);
+  const entries = parsePyzEntries(marshalled.value, tocOffset, table.length);
   if (!entries.ok)
     return entries.error.reason === "format"
       ? ok({
@@ -189,7 +189,7 @@ const parsePyzParts = (
  * can double in UTF-8; UTF-8 marshal names do not expand. Allow that decoding
  * expansion while bounding the total names repeated by back-references.
  */
-const pyzEntries = (
+export const parsePyzEntries = (
   value: MarshalValue,
   payloadEnd: number,
   tableBytes: number,

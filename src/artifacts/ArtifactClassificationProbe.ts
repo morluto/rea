@@ -12,6 +12,10 @@ import {
   type MachoHeaderPrefixFacts,
 } from "../domain/apple/machoContainer.js";
 import {
+  createJvmClassSignatureProbe,
+  MAX_JVM_CLASS_PROBE_BYTES,
+} from "../domain/apple/jvmClassFile.js";
+import {
   hasDosMzMagic,
   observeMzWindowsHeader,
   type MzWindowsHeaderRecordEvidence,
@@ -39,6 +43,8 @@ export interface ArtifactClassificationEvidence {
   readonly suffix?: Buffer;
   /** The probe matched an XML plist prolog in the retained prefix. */
   readonly xmlPlistSignature: boolean;
+  /** The bounded probe matched a JVM class header and leading constant pool. */
+  readonly jvmClassSignature?: boolean;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
   /** The FAT header decided once for the finished stream size. */
   readonly fatHeader: FatContainerHeader;
@@ -98,6 +104,7 @@ const finishClassificationEvidence = (
   prefix: Buffer,
   suffix: Buffer | undefined,
   xmlPlistSignature: boolean,
+  jvmClassSignature: boolean,
   archiveBytes: number,
   finishAsar: (archiveBytes: number) => FinalAsarHeaderProbeObservation,
   sliceHeadersByOffset: Map<number, MachoHeaderPrefixFacts>,
@@ -127,6 +134,7 @@ const finishClassificationEvidence = (
     prefix,
     ...(suffix === undefined ? {} : { suffix }),
     xmlPlistSignature,
+    jvmClassSignature,
     asarHeader: finishAsar(archiveBytes),
     fatHeader: finalHeader,
     fatSliceHeadersByOffset:
@@ -146,6 +154,7 @@ export const createArtifactClassificationProbe = (
 ) => {
   const xml = createXmlPlistSignatureProbe();
   const asar = createAsarHeaderSignatureProbe(asarHeaderAdmission);
+  const jvm = createJvmClassSignatureProbe();
   const blocks: Buffer[] = [];
   let retainedBytes = 0;
   let observedBytes = 0;
@@ -273,6 +282,7 @@ export const createArtifactClassificationProbe = (
         ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
         xml.state === "pending" ? MAX_XML_PLIST_PROBE_BYTES : 0,
         asar.observation.state === "pending" ? asar.limit : 0,
+        jvm.state === "pending" ? MAX_JVM_CLASS_PROBE_BYTES : 0,
       );
     },
     write(bytes: Uint8Array): void {
@@ -283,9 +293,11 @@ export const createArtifactClassificationProbe = (
         const limit =
           retainedBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES
             ? ARTIFACT_CLASSIFICATION_PREFIX_BYTES
-            : xml.state === "pending"
-              ? MAX_XML_PLIST_PROBE_BYTES
-              : retainedBytes;
+            : Math.max(
+                retainedBytes,
+                xml.state === "pending" ? MAX_XML_PLIST_PROBE_BYTES : 0,
+                jvm.state === "pending" ? MAX_JVM_CLASS_PROBE_BYTES : 0,
+              );
         if (retainedBytes >= limit) break;
         const selected = bytes.subarray(
           offset,
@@ -293,6 +305,7 @@ export const createArtifactClassificationProbe = (
         );
         retain(selected);
         xml.write(selected);
+        jvm.write(selected);
         offset += selected.length;
       }
       if (
@@ -349,6 +362,7 @@ export const createArtifactClassificationProbe = (
           ? suffixBuffer.subarray(0, suffixLength)
           : undefined,
         xml.state === "matched",
+        jvm.state === "matched",
         archiveBytes,
         (bytes) => asar.finish(bytes),
         fatSliceHeadersByOffset,

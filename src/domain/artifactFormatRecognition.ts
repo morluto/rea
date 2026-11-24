@@ -20,7 +20,11 @@ import {
 } from "./firmware/devicetreeHeader.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
-import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
+import {
+  hasGzipHeader,
+  recognizeTarPrefix,
+  tarHeaderRefusal,
+} from "./tarFormat.js";
 import {
   hasDdsHeader,
   hasGlbHeader,
@@ -39,6 +43,7 @@ export type RecognizedArtifactFormat = Extract<
   | "unityfs"
   | "wxapkg"
   | "tar"
+  | "gzip"
   | "dds"
   | "glb"
   | "ktx"
@@ -154,6 +159,8 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
         ? undefined
         : { state: "refused", format: "tar", reason };
     },
+    // Standalone RFC 1952 gzip streams that are not gzip-wrapped tar archives.
+    when("gzip", hasGzipHeader),
     when("dds", hasDdsHeader),
     when("glb", hasGlbHeader),
     when("ktx", hasKtx1Identifier),
@@ -228,6 +235,18 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
   ];
+
+/** WebAssembly binary v1 magic (`\0asm`) plus little-endian version 1 (`01 00 00 00`). */
+export const hasWasmV1Header = (prefix: Uint8Array): boolean =>
+  prefix.length >= 8 &&
+  prefix[0] === 0x00 &&
+  prefix[1] === 0x61 &&
+  prefix[2] === 0x73 &&
+  prefix[3] === 0x6d &&
+  prefix[4] === 0x01 &&
+  prefix[5] === 0x00 &&
+  prefix[6] === 0x00 &&
+  prefix[7] === 0x00;
 
 /**
  * The first recognizer at or after `from` whose format the bytes claim, or

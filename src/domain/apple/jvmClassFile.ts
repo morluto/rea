@@ -1,10 +1,23 @@
-import { BinaryReader } from "../binaryContainer.js";
+import {
+  BinaryReader,
+  readUint16At,
+  readUint32At,
+} from "../binaryContainer.js";
 
 /** Maximum complete class-file buffer retained for FAT/JVM disambiguation. */
 export const MAX_JVM_CLASS_IDENTITY_BYTES = 16 * 1024 * 1024;
 
 export const JVM_CLASS_IDENTITY_LIMIT_REASON =
   "FAT/JVM identity is unresolved because the class identity scan exceeds the 16 MiB limit";
+
+/** Maximum prefix retained by the streaming JVM class signature probe. */
+export const MAX_JVM_CLASS_PROBE_BYTES = 10 + 3 * (3 + 0xffff);
+
+export type JvmClassProbeState = "pending" | "matched" | "rejected";
+
+/** Validate JVMS §4.1 major/minor version combinations: 45–55 permit any minor; 56+ require 0 or 65535. */
+const isValidJvmVersion = (major: number, minor: number): boolean =>
+  major >= 45 && (major < 56 || minor === 0 || minor === 65535);
 
 /** Class-file identity used to disambiguate JVM CAFEBABE from Mach-O FAT. */
 class ClassFileCursor {
@@ -57,10 +70,9 @@ const readMajorVersion = (cursor: ClassFileCursor): number | null => {
   if (cursor.u4() !== 0xcafebabe) return null;
   const minor = cursor.u2();
   const major = cursor.u2();
-  // JVMS §4.1 permits arbitrary minors through major 55. Later releases
-  // use 0 for ordinary class files and 65535 for preview features.
-  if (minor === null || major === null || major < 45) return null;
-  return major < 56 || minor === 0 || minor === 65535 ? major : null;
+  if (minor === null || major === null || !isValidJvmVersion(major, minor))
+    return null;
+  return major;
 };
 
 /** Establish whether the fixed prefix warrants a complete JVM identity scan. */
@@ -287,3 +299,142 @@ export const isJvmClassFile = (bytes: Uint8Array): boolean => {
     cursor.remaining === 0
   );
 };
+
+type ProbeConstantStep =
+  | "need-more"
+  | "invalid"
+  | { readonly nextOffset: number; readonly extraSlots: number };
+
+const stepProbeConstant = (
+  buffered: Uint8Array,
+  offset: number,
+  index: number,
+  poolCount: number,
+): ProbeConstantStep => {
+  const tag = buffered[offset]!;
+  if (tag === 1) {
+    if (offset + 3 > buffered.length) return "need-more";
+    const len = readUint16At(buffered, offset + 1, false);
+    if (offset + 3 + len > buffered.length) return "need-more";
+    return { nextOffset: offset + 3 + len, extraSlots: 0 };
+  }
+  if (tag === 3 || tag === 4) {
+    return offset + 5 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 5, extraSlots: 0 };
+  }
+  if (tag === 5 || tag === 6) {
+    if (index + 1 >= poolCount) return "invalid";
+    return offset + 9 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 9, extraSlots: 1 };
+  }
+  if (tag === 7 || tag === 8 || tag === 16 || tag === 19 || tag === 20) {
+    return offset + 3 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 3, extraSlots: 0 };
+  }
+  if (
+    tag === 9 ||
+    tag === 10 ||
+    tag === 11 ||
+    tag === 12 ||
+    tag === 17 ||
+    tag === 18
+  ) {
+    return offset + 5 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 5, extraSlots: 0 };
+  }
+  if (tag === 15) {
+    return offset + 4 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 4, extraSlots: 0 };
+  }
+  return "invalid";
+};
+
+/**
+ * Streaming, bounded JVM class signature probe.
+ * Checks magic (0xcafebabe), valid major/minor version framing, and parses
+ * up to 3 constant pool entries without requiring the complete file or EOF.
+ */
+export const createJvmClassSignatureProbe = (): {
+  write(bytes: Uint8Array): JvmClassProbeState;
+  readonly state: JvmClassProbeState;
+} => {
+  let state: JvmClassProbeState = "pending";
+  let buffered = new Uint8Array(0);
+
+  return {
+    get state() {
+      return state;
+    },
+    write(bytes: Uint8Array): JvmClassProbeState {
+      if (state !== "pending" || bytes.length === 0) return state;
+
+      const needed = Math.min(
+        MAX_JVM_CLASS_PROBE_BYTES - buffered.length,
+        bytes.length,
+      );
+      if (needed <= 0) {
+        state = "rejected";
+        return state;
+      }
+
+      const next = new Uint8Array(buffered.length + needed);
+      next.set(buffered);
+      next.set(bytes.subarray(0, needed), buffered.length);
+      buffered = next;
+
+      if (buffered.length < 4) return state;
+      if (readUint32At(buffered, 0, false) !== 0xcafebabe) {
+        state = "rejected";
+        return state;
+      }
+      if (buffered.length < 10) return state;
+
+      const minor = readUint16At(buffered, 4, false);
+      const major = readUint16At(buffered, 6, false);
+      const poolCount = readUint16At(buffered, 8, false);
+      if (!isValidJvmVersion(major, minor) || poolCount === 0) {
+        state = "rejected";
+        return state;
+      }
+
+      const targetEntries = Math.min(poolCount - 1, 3);
+      if (targetEntries === 0) {
+        state = "matched";
+        return state;
+      }
+
+      let offset = 10;
+      let parsed = 0;
+      for (let index = 1; index < poolCount; index += 1) {
+        if (offset >= buffered.length) break;
+        const step = stepProbeConstant(buffered, offset, index, poolCount);
+        if (step === "need-more") break;
+        if (step === "invalid") {
+          state = "rejected";
+          return state;
+        }
+        offset = step.nextOffset;
+        index += step.extraSlots;
+        parsed += 1;
+        if (parsed >= targetEntries) {
+          state = "matched";
+          return state;
+        }
+      }
+
+      if (buffered.length >= MAX_JVM_CLASS_PROBE_BYTES) {
+        state = "rejected";
+      }
+      return state;
+    },
+  };
+};
+
+/** Bounded framing check that distinguishes JVM class prefixes from Mach-O FAT without requiring full file EOF. */
+export const hasBoundedJvmClassFraming = (bytes: Uint8Array): boolean =>
+  createJvmClassSignatureProbe().write(bytes) === "matched";

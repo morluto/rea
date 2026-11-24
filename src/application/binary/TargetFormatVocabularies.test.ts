@@ -127,6 +127,7 @@ const TARGETS: TargetFixtures = {
   unityfs: { ...archive, format: "unityfs" },
   wxapkg: { ...archive, format: "wxapkg" },
   tar: { ...archive, format: "tar" },
+  gzip: { ...archive, format: "gzip" },
   dds: { ...archive, format: "dds" },
   glb: { ...archive, format: "glb" },
   ktx: { ...archive, format: "ktx" },

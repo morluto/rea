@@ -95,14 +95,14 @@ cliTest.for(["jar", "zip"])(
           (item) => item.logical_path === name,
         );
         expect(occurrence, name).toMatchObject({
-          artifact_kind: "resource",
-          artifact_format: "file",
+          artifact_kind: "executable",
+          artifact_format: "jvm-class",
         });
         const node = inventory.nodes.find(
           (item) => item.artifact_id === occurrence?.artifact_id,
         );
         expect(node, name).toMatchObject({
-          format: "file",
+          format: "jvm-class",
           sha256: createHash("sha256").update(bytes).digest("hex"),
         });
       }

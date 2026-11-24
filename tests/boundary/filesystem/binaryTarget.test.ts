@@ -965,8 +965,18 @@ it("classifies stored and gzip-compressed tar archives as tar whatever their nam
       ok: true,
       value: { kind: "archive", format: "tar" },
     });
-  // A gzip stream that does not hold tar stays unrecognized.
+  // A standalone RFC 1952 gzip stream that does not hold tar classifies as gzip.
   expect(await parseBinaryTarget(plainGzip)).toMatchObject({
+    ok: true,
+    value: { kind: "archive", format: "gzip" },
+  });
+  // A non-gzip file with only the 2-byte magic or invalid CM/flags stays unrecognized.
+  const badGzip = join(directory, "bad-gzip.bin");
+  await writeFile(
+    badGzip,
+    Buffer.from([0x1f, 0x8b, 0x07, 0x00, 0, 0, 0, 0, 0, 0]),
+  );
+  expect(await parseBinaryTarget(badGzip)).toMatchObject({
     ok: false,
     error: { reason: "unsupported binary format" },
   });

@@ -19,6 +19,7 @@ import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
+import { inventoryCoverage } from "./reader.js";
 import { parseExecutableHeader } from "../../domain/binaryTarget.js";
 import {
   minimalElfImage,
@@ -770,5 +771,219 @@ it("preserves path-selected inventory roles for XML content", () => {
   expect(classifyArtifactBytesAtPath("state.asar", xml)).toEqual({
     kind: "resource",
     format: "file",
+  });
+});
+
+describe("extended artifact signature classification", () => {
+  it("classifies single-stream compression formats and rejects malformed GZIP headers", () => {
+    const gzipBytes = Buffer.from([
+      0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+    ]);
+    expect(classifyArtifactBytesAtPath("payload.gz", gzipBytes)).toEqual({
+      kind: "container",
+      format: "gzip",
+    });
+
+    // Truncated 2-byte magic, non-deflate CM, or reserved FLG bits must not claim gzip
+    expect(
+      classifyArtifactBytesAtPath("short.bin", Buffer.from([0x1f, 0x8b])),
+    ).toEqual({ kind: "resource", format: "file" });
+    expect(
+      classifyArtifactBytesAtPath(
+        "wrong-cm.bin",
+        Buffer.from([0x1f, 0x8b, 0x07, 0x00, 0, 0, 0, 0, 0, 0]),
+      ),
+    ).toEqual({ kind: "resource", format: "file" });
+    expect(
+      classifyArtifactBytesAtPath(
+        "reserved-flg.bin",
+        Buffer.from([0x1f, 0x8b, 0x08, 0x20, 0, 0, 0, 0, 0, 0]),
+      ),
+    ).toEqual({ kind: "resource", format: "file" });
+
+    const bzipBytes = Buffer.from([0x42, 0x5a, 0x68, 0x39]);
+    expect(classifyArtifactBytesAtPath("payload.bz2", bzipBytes)).toEqual({
+      kind: "container",
+      format: "bzip2",
+    });
+
+    const xzBytes = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
+    expect(classifyArtifactBytesAtPath("payload.xz", xzBytes)).toEqual({
+      kind: "container",
+      format: "xz",
+    });
+  });
+
+  it("classifies advanced multi-file archives without misclassifying native binaries as TAR", () => {
+    const sevenZipBytes = Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
+    expect(classifyArtifactBytesAtPath("archive.7z", sevenZipBytes)).toEqual({
+      kind: "container",
+      format: "7z",
+    });
+
+    // A native ELF containing literal "ustar" at offset 257 must remain ELF, never TAR
+    const elfWithUstar = Buffer.alloc(512);
+    minimalElfImage().copy(elfWithUstar, 0);
+    elfWithUstar.write("ustar", 257, "ascii");
+    expect(classifyArtifactBytesAtPath("native.elf", elfWithUstar)).toEqual({
+      kind: "executable",
+      format: "elf",
+    });
+  });
+
+  it("classifies bytecode and web formats and requires complete headers", () => {
+    const wasmBytes = Buffer.from([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    ]);
+    expect(classifyArtifactBytesAtPath("module.wasm", wasmBytes)).toEqual({
+      kind: "executable",
+      format: "wasm",
+    });
+
+    // Truncated 4-byte wasm magic or unsupported version must stay plain file
+    expect(
+      classifyArtifactBytesAtPath(
+        "truncated.wasm",
+        Buffer.from([0x00, 0x61, 0x73, 0x6d]),
+      ),
+    ).toEqual({ kind: "resource", format: "file" });
+    expect(
+      classifyArtifactBytesAtPath(
+        "v2.wasm",
+        Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x02, 0x00, 0x00, 0x00]),
+      ),
+    ).toEqual({ kind: "resource", format: "file" });
+
+    const dexBytes = Buffer.from([
+      0x64, 0x65, 0x78, 0x0a, 0x30, 0x33, 0x35, 0x00,
+    ]);
+    expect(classifyArtifactBytesAtPath("classes.dex", dexBytes)).toEqual({
+      kind: "executable",
+      format: "dex",
+    });
+  });
+
+  it("classifies database formats", () => {
+    const sqliteBytes = Buffer.concat([
+      Buffer.from("SQLite format 3\0"),
+      Buffer.alloc(84),
+    ]);
+    expect(classifyArtifactBytesAtPath("app.db", sqliteBytes)).toEqual({
+      kind: "resource",
+      format: "sqlite",
+    });
+
+    const nonTerminatedSqliteText = Buffer.from(
+      "SQLite format 3: notes on database header layout",
+      "ascii",
+    );
+    expect(
+      classifyArtifactBytesAtPath("notes.txt", nonTerminatedSqliteText).format,
+    ).toBe("file");
+  });
+
+  it("classifies JVM class files larger than 8 KiB prefix without FAT misclassification", () => {
+    const prefix = Buffer.alloc(8192);
+    prefix.writeUInt32BE(0xcafebabe, 0); // magic
+    prefix.writeUInt16BE(0, 4); // minor = 0
+    prefix.writeUInt16BE(61, 6); // major = 61 (Java 17)
+    prefix.writeUInt16BE(4, 8); // constant pool count = 4 (entries 1, 2, 3)
+    // entry 1: UTF8 "Test"
+    prefix[10] = 1;
+    prefix.writeUInt16BE(4, 11);
+    prefix.write("Test", 13);
+    // entry 2: Class pointing to 1
+    prefix[17] = 7;
+    prefix.writeUInt16BE(1, 18);
+    // entry 3: UTF8 "java/lang/Object"
+    prefix[20] = 1;
+    prefix.writeUInt16BE(16, 21);
+    prefix.write("java/lang/Object", 23);
+
+    const result = classifyArtifactBytesAtPath(
+      "LargeService.class",
+      prefix,
+      65536,
+    );
+    expect(result).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+
+    // JVMS §4.1 permits arbitrary minor versions through major 55, while major 56+ requires 0 or 65535
+    const java11Prefix = Buffer.from(prefix);
+    java11Prefix.writeUInt16BE(3, 4); // minor = 3
+    java11Prefix.writeUInt16BE(45, 6); // major = 45 (Java 1.1)
+    expect(
+      classifyArtifactBytesAtPath("Legacy11.class", java11Prefix, 65536),
+    ).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+
+    const java12InvalidMinorPrefix = Buffer.from(prefix);
+    java12InvalidMinorPrefix.writeUInt16BE(3, 4); // minor = 3 (invalid for major >= 56)
+    java12InvalidMinorPrefix.writeUInt16BE(56, 6); // major = 56 (Java 12)
+    expect(
+      classifyArtifactBytesAtPath(
+        "Java12BadMinor.class",
+        java12InvalidMinorPrefix,
+        65536,
+      ),
+    ).toEqual({
+      kind: "resource",
+      format: "file",
+    });
+
+    const java17PreviewPrefix = Buffer.from(prefix);
+    java17PreviewPrefix.writeUInt16BE(0xffff, 4); // preview minor = 65535
+    java17PreviewPrefix.writeUInt16BE(61, 6); // major = 61 (Java 17)
+    expect(
+      classifyArtifactBytesAtPath(
+        "Preview17.class",
+        java17PreviewPrefix,
+        65536,
+      ),
+    ).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+
+    // Maximal 65,535-byte CONSTANT_Utf8 in first entry (> 64 KiB)
+    const maxUtf8Class = Buffer.alloc(10 + 3 + 0xffff + 3);
+    maxUtf8Class.writeUInt32BE(0xcafebabe, 0);
+    maxUtf8Class.writeUInt16BE(0, 4);
+    maxUtf8Class.writeUInt16BE(61, 6);
+    maxUtf8Class.writeUInt16BE(3, 8); // 2 entries
+    maxUtf8Class[10] = 1; // CONSTANT_Utf8
+    maxUtf8Class.writeUInt16BE(0xffff, 11);
+    maxUtf8Class[13 + 0xffff] = 7; // CONSTANT_Class
+    maxUtf8Class.writeUInt16BE(1, 14 + 0xffff);
+    expect(
+      classifyArtifactBytesAtPath(
+        "MaxUtf8.class",
+        maxUtf8Class,
+        maxUtf8Class.length,
+      ),
+    ).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+  });
+
+  it("reports unavailable child inventory coverage for unread archives", () => {
+    for (const format of ["7z", "tar", "bzip2", "xz"] as const) {
+      const res = inventoryCoverage(format, undefined, {
+        status: "complete",
+        limitations: [],
+      });
+      expect(res.coverage).toEqual({
+        scope: "container-entries",
+        status: "unknown",
+      });
+      expect(res.limitations).toContain(
+        `${format} child inventory reader is unavailable.`,
+      );
+    }
   });
 });

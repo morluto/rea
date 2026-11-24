@@ -54,6 +54,7 @@ import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 import { TarArtifactReader } from "./tar/TarArtifactReader.js";
+import { GzipArtifactReader } from "./GzipArtifactReader.js";
 import {
   GpuAssetArtifactReader,
   type GpuAssetFormat,
@@ -393,6 +394,33 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.expanded_bytes,
       ),
   }),
+  gzip: container("gzip", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    createReader: (path, options) =>
+      new GzipArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  "7z": container("7z", {
+    roleContainer: true,
+    absentInventory: "unavailable",
+  }),
+  bzip2: container("bzip2", {
+    roleContainer: true,
+    absentInventory: "unavailable",
+  }),
+  xz: container("xz", {
+    roleContainer: true,
+    absentInventory: "unavailable",
+  }),
+  wasm: described("wasm", plain),
+  dex: described("dex", plain),
+  "jvm-class": described("jvm-class", plain),
   dds: gpuAsset("dds"),
   glb: gpuAsset("glb"),
   ktx: gpuAsset("ktx"),

@@ -85,7 +85,10 @@ import {
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
-import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
+import {
+  hasWasmV1Header,
+  recognizeArtifactFormat,
+} from "../domain/artifactFormatRecognition.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 import {
   locateEspFlashLayout,
@@ -733,17 +736,7 @@ const detectArtifactFormat = async (
     throw cause;
   }
   throwIfTargetResolutionCancelled(signal);
-  if (
-    magic.length >= 8 &&
-    magic[0] === 0 &&
-    magic[1] === 0x61 &&
-    magic[2] === 0x73 &&
-    magic[3] === 0x6d &&
-    magic[4] === 1 &&
-    magic[5] === 0 &&
-    magic[6] === 0 &&
-    magic[7] === 0
-  )
+  if (hasWasmV1Header(magic))
     throw new BinaryTargetError(
       path,
       "WebAssembly v1 artifacts are not supported by the native opening route",

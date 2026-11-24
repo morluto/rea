@@ -45,11 +45,13 @@ export interface PeOptionalHeaderIdentity {
 
 /** Structural facts copied from one declared PE optional header. */
 export interface PeOptionalHeaderFixedFields extends PeOptionalHeaderIdentity {
+  readonly entryPointRva: number;
   readonly imageBase: bigint;
   readonly sectionAlignment: number;
   readonly fileAlignment: number;
   readonly sizeOfImage: number;
   readonly sizeOfHeaders: number;
+  readonly subsystem: number | null;
   /**
    * Null when the declared header ends before the DllCharacteristics word.
    * Mapping fields through SizeOfHeaders do not require it.
@@ -61,8 +63,9 @@ export interface PeOptionalHeaderFixedFields extends PeOptionalHeaderIdentity {
 
 export interface PeOptionalHeaderStructure extends Omit<
   PeOptionalHeaderFixedFields,
-  "dllCharacteristics"
+  "dllCharacteristics" | "subsystem"
 > {
+  readonly subsystem: number;
   readonly dllCharacteristics: number;
   /** Directories the loader reads: NumberOfRvaAndSizes, capped at 16. */
   readonly directoryCount: number;
@@ -140,11 +143,13 @@ const readFixedFields = (
     });
   return ok({
     ...identity.value,
+    entryPointRva: reader.u32(16),
     imageBase: reader.word(bits === 64 ? 24 : 28, bits),
     sectionAlignment: reader.u32(32),
     fileAlignment: reader.u32(36),
     sizeOfImage: reader.u32(56),
     sizeOfHeaders: reader.u32(PE_SIZE_OF_HEADERS_OFFSET),
+    subsystem: reader.bytes.length >= 70 ? reader.u16(68) : null,
     dllCharacteristics: reader.bytes.length >= 72 ? reader.u16(70) : null,
     directoryOffset,
     directoryCountOffset: directoryOffset - 4,
@@ -227,9 +232,10 @@ export const readPeOptionalHeaderStructure = (
   const dataDirectories = Array.from({ length: directoryCount }, (_, index) =>
     readDirectory(reader, fixed.directoryOffset + index * 8),
   );
-  // A directory table starts at byte 96 or 112, so the word at offset 70 is covered.
+  // A directory table starts at byte 96 or 112, so Subsystem (68) and DllCharacteristics (70) are covered.
+  const subsystem = fixed.subsystem;
   const dllCharacteristics = fixed.dllCharacteristics;
-  if (dllCharacteristics === null)
+  if (subsystem === null || dllCharacteristics === null)
     return err({
       kind: "malformed",
       reason: "truncated-fixed-fields",
@@ -237,6 +243,7 @@ export const readPeOptionalHeaderStructure = (
     });
   return ok({
     ...fixed,
+    subsystem,
     dllCharacteristics,
     directoryCount,
     declaredDirectoryCount,

@@ -23,6 +23,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   unityfs: "archive",
   wxapkg: "archive",
   tar: "archive",
+  gzip: "archive",
   dds: "archive",
   glb: "archive",
   ktx: "archive",
