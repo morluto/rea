@@ -407,7 +407,7 @@ const SERVICE_TOOL_BINDINGS = {
               ),
             );
           const { detail, ...input } = parsed.data;
-          const parameters = { detail };
+          const parameters = detail === undefined ? {} : { detail };
           const ready = delivery.preflight(parameters);
           if (!ready.ok) return ready;
           const inspected = await service.inspect(input, options);
@@ -753,7 +753,7 @@ const SERVICE_TOOL_BINDINGS = {
               ),
             );
           const { detail, ...input } = parsed.data;
-          const parameters = { detail };
+          const parameters = detail === undefined ? {} : { detail };
           const ready = delivery.preflight(parameters);
           if (!ready.ok) return ready;
           const inspected = await service.inspect(input, options);

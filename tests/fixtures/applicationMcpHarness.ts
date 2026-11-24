@@ -8,6 +8,8 @@ import type { BinarySession } from "../../src/application/binary/BinarySession.j
 import { observed } from "./analysisExecution.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../scripts/lib/mcp-verification-environment.mjs";
 import { createServer } from "../../src/server/createServer.js";
+import { AGENT_RESULT_BUDGET_SETTING } from "../../src/domain/agentResultBudget.js";
+import { MAXIMUM_AGENT_RESULT_BUDGET_BYTES } from "../../src/domain/analysisResourceLimits.js";
 import {
   createTestMcp,
   type McpClientIdentity,
@@ -29,6 +31,12 @@ export async function createApplicationMcpHarness(
     readonly clientIdentity?: McpClientIdentity;
     readonly schemaValidator?: Parameters<TestMcp["connect"]>[2];
     readonly registerCleanup?: (close: ApplicationMcpHarness["close"]) => void;
+    /**
+     * Complete-Evidence workflows chain inline Evidence, so the harness
+     * raises the agent result budget to its maximum unless a test keeps the
+     * default to observe budgeted delivery.
+     */
+    readonly agentResultBudget?: "maximum" | "default";
   } = {},
 ): Promise<ApplicationMcpHarness> {
   const session =
@@ -79,6 +87,22 @@ export async function createApplicationMcpHarness(
       },
       options.schemaValidator,
     );
+    if (options.agentResultBudget !== "default") {
+      const raised = await client.callTool({
+        name: "update_analysis_settings",
+        arguments: {
+          changes: [
+            {
+              setting: AGENT_RESULT_BUDGET_SETTING,
+              action: "set",
+              value: MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
+            },
+          ],
+        },
+      });
+      if (raised.isError === true)
+        throw new Error("The harness could not raise the agent result budget");
+    }
     return { client, session, close };
   } catch (cause) {
     try {

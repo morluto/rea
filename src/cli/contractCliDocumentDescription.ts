@@ -228,7 +228,7 @@ const admitDocumentDelivery = (
   }
   const detail =
     (values.detail as "complete" | "summary" | undefined) ??
-    (view === undefined ? "complete" : "summary");
+    (view === undefined ? undefined : "summary");
   const delivery: CliEvidenceDeliveryChoice = {
     detail,
     evidenceOutput: values.evidence_output as string | undefined,

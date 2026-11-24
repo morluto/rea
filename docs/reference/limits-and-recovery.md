@@ -267,6 +267,38 @@ same effective setting so readiness changes along with repair and reset.
 `REA_NATIVE_MATCHING_REPRESENTATION_BYTES` is validated the same way, by
 `match_native_functions` alone.
 
+## Agent result budget
+
+`delivery.agent_result_budget_bytes` is a delivery budget, not an admission
+limit. It defaults to 49,152 compact JSON bytes, about 12,000 tokens at the
+documented estimate of 4 bytes per token (an estimate, not a tokenizer
+measurement). It applies to tools with a `detail` selector when the caller
+omits `detail`, on MCP and the CLI. The stdio frame limit,
+`REA_MCP_MAX_RESPONSE_BYTES`, stays a separate transport safety net.
+
+When complete Evidence fits, it is delivered inline as before. When it does
+not, the work is never refused or truncated:
+
+- MCP retains the complete Evidence in the session and returns the
+  operation's summary view. Its `normalized_result.parent_evidence_id` names
+  the retained record, and a limitation states the complete size, the
+  effective budget, its source and range, and the recovery call.
+- `inspect_analysis_view` with view
+  `{kind: "evidence-json", offset, limit}` pages the exact JSON text of the
+  retained record in UTF-16 code units. Joining every page in offset order
+  reproduces it exactly. The default page is 32,768 code units, inside the
+  budget; the maximum is 1,048,576. The producer's own views (`managed-members`,
+  `inventory` and so on) select facts more cheaply.
+- The CLI with `--evidence_output` publishes the complete bundle beside the
+  summary, as `--detail summary` does. Without it, the one-shot CLI has
+  nowhere to retain the record: the summary's limitation says so and names
+  `--evidence_output` or `--detail complete` for a rerun.
+
+Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
+inline on one call, or raise the setting for the runtime with
+`update_analysis_settings`. An operation without a summary view, or with no
+retained session, keeps complete delivery.
+
 ## Keep a fixed ceiling honest
 
 A fixed ceiling is the exception. Keep one only for a stated format, protocol,

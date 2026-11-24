@@ -275,6 +275,8 @@ it("traces transformed operands through CLI and advertised MCP output", async ()
   const cli = createCli({});
   const analyzed = await serveCli(cli, [
     "analyze-javascript-application",
+    "--detail",
+    "complete",
     root,
     "--json",
   ]);

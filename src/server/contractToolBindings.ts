@@ -279,11 +279,20 @@ type ApplicationBinding<Input = unknown> =
  * the call. When `detail` selects delivery (`detail: "delivery"`), it never
  * reaches the workflow and a summary retains the complete Evidence.
  */
+/** Whether a contract input declares the delivery `detail` selector. */
+type HasDeliveryDetail<Input> = string extends keyof Input
+  ? false
+  : "detail" extends keyof Input
+    ? Input extends { readonly detail?: "complete" | "summary" | undefined }
+      ? true
+      : false
+    : false;
+
 type AnalysisBinding<Input> = {
   readonly admission: "sdk";
   readonly completionProgress?: AnalysisWorkflowOptions["completionProgress"];
 } & ExclusiveBinding<"analyze"> &
-  (Input extends { readonly detail: "complete" | "summary" }
+  (HasDeliveryDetail<Input> extends true
     ? {
         readonly detail: "delivery";
         readonly analyze: AnalysisOperation<Omit<Input, "detail">>;
@@ -322,7 +331,7 @@ export type ContractToolBinding<Name extends CatalogToolName> =
   | QueryBinding<ContractInput<Name>>
   // Only a provider operation binds a provider, and only to its own name.
   | (Name extends ProviderOperation ? ProviderBinding<Name> : never)
-  | (ContractInput<Name> extends { readonly detail: "complete" | "summary" }
+  | (HasDeliveryDetail<ContractInput<Name>> extends true
       ? RetainedSummaryBinding<ContractInput<Name>>
       : never);
 
@@ -414,7 +423,7 @@ type SummaryContract = ToolContract<
   string,
   z.ZodType<
     Readonly<Record<string, unknown>> & {
-      readonly detail: "complete" | "summary";
+      readonly detail?: "complete" | "summary" | undefined;
     }
   >
 >;

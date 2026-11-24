@@ -31,6 +31,7 @@ import {
   viewResultBaseFields,
 } from "./analysisViewBase.js";
 import { recordedArrayViewSchema } from "./analysisViewRequest.js";
+import { evidenceJsonViewRequestSchema } from "./evidenceJsonView.js";
 import {
   facetViewSchema,
   itemViewSchema,
@@ -653,6 +654,18 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     kind: z.literal("recorded-array"),
     view: recordedArrayViewSchema,
     rows: z.array(jsonValueSchema),
+  }),
+  z.strictObject({
+    ...viewResultBaseFields,
+    parent_operation: z.string(),
+    artifact: artifactSchema.nullable(),
+    kind: z.literal("evidence-json"),
+    view: evidenceJsonViewRequestSchema,
+    text: z
+      .string()
+      .describe(
+        "This page of the parent Evidence JSON text; join pages in offset order.",
+      ),
   }),
   playwrightTracePageViewResultSchema,
   z.strictObject({

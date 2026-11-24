@@ -37,6 +37,14 @@ import {
   type ToolResultEncoding,
 } from "./toolResultEncoding.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { summarizeOverBudgetEvidence } from "../application/analysisView/AnalysisViewService.js";
+import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
+import {
+  agentBudgetLimitation,
+  agentBudgetOverflowBytes,
+  currentAgentResultBudget,
+} from "../domain/agentResultBudget.js";
+import { currentMcpToolRequest } from "./McpToolRequest.js";
 
 /** Project a response-budget refusal without labeling REA's reserved string limit as Node's ceiling. */
 export const mcpResponseOverflowProjection = (input: {
@@ -292,8 +300,18 @@ export class ToolResultDelivery {
     recorded: Result<unknown, AnalysisError> | undefined,
     viewSource?: JsonValue | (() => JsonValue | undefined),
   ): CallToolResult {
-    return recorded !== undefined && !recorded.ok
-      ? this.toErrorToolResult(recorded.error, contract.returnsTargetContent)
+    if (recorded !== undefined && !recorded.ok)
+      return this.toErrorToolResult(
+        recorded.error,
+        contract.returnsTargetContent,
+      );
+    // Only a retained record can be replaced by its summary.
+    const summary =
+      recorded === undefined
+        ? undefined
+        : overBudgetSummary(evidence, contract);
+    return summary !== undefined
+      ? this.successResult(summary, contract)
       : this.successResult(evidence, contract, () => {
           const resolvedViewSource =
             typeof viewSource === "function" ? viewSource() : viewSource;
@@ -594,6 +612,37 @@ export class ToolResultDelivery {
     );
   }
 }
+
+/**
+ * The retained summary that replaces complete Evidence over the agent result
+ * budget, for a request whose caller left `detail` to that budget. A
+ * selected view, an explicit `detail`, an operation without a summary view,
+ * or a summary its contract does not advertise keeps complete delivery.
+ */
+const overBudgetSummary = (
+  evidence: Evidence,
+  contract: ToolContract,
+): Evidence | undefined => {
+  if (evidence.operation === INSPECT_ANALYSIS_VIEW_OPERATION) return undefined;
+  const selection = currentMcpToolRequest()?.deliverySelection;
+  if (selection === undefined || selection.detail !== undefined)
+    return undefined;
+  const budget = currentAgentResultBudget();
+  const completeBytes = agentBudgetOverflowBytes(evidence, budget);
+  if (completeBytes === undefined) return undefined;
+  const summary = summarizeOverBudgetEvidence(
+    evidence,
+    agentBudgetLimitation({
+      operation: evidence.operation,
+      completeBytes,
+      budget,
+      recovery: { kind: "session", evidenceId: evidence.evidence_id },
+    }),
+  );
+  return summary.ok && contract.outputSchema.safeParse(summary.value).success
+    ? summary.value
+    : undefined;
+};
 
 /** The ledger's own retained/unretained fact for this exact record, if it gave one. */
 const ledgerRetentionFact = (

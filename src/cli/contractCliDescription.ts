@@ -887,7 +887,7 @@ export const describeContractCommand = <
         | undefined;
       const refused = cliEvidenceDeliveryInputError({
         operation: contract.name,
-        detail: detail ?? (view === undefined ? "complete" : "summary"),
+        detail: detail ?? (view === undefined ? undefined : "summary"),
         evidenceOutput: decoded.value.evidence_output as string | undefined,
         view,
       });
@@ -1122,7 +1122,7 @@ const admitInvocation = (
   if (!evidenceDelivery)
     return ok({ input, parsed, parseWholeInput, delivery: undefined });
   const delivery: CliEvidenceDeliveryChoice = {
-    detail: detail ?? (view === undefined ? "complete" : "summary"),
+    detail: detail ?? (view === undefined ? undefined : "summary"),
     evidenceOutput: decoded.evidence_output as string | undefined,
     ...(view === undefined
       ? {}

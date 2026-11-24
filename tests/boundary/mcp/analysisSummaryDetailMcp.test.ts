@@ -79,7 +79,7 @@ it("returns the summary of complete Evidence retained for later views", async ()
   const input = await application();
   const complete = await client.callTool({
     name: contract.name,
-    arguments: input,
+    arguments: { ...input, detail: "complete" },
   });
   expect(complete.isError).not.toBe(true);
   const completeEvidence = contract.outputSchema.parse(

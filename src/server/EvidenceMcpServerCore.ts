@@ -70,6 +70,10 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
             };
           if (result.issues === undefined)
             context?.captureCallerParameters(tool, value, result.value);
+          if (result.issues === undefined && context?.tool === tool)
+            context.deliverySelection = {
+              detail: isRecord(value) ? value.detail : undefined,
+            };
           return result;
         };
         const result = standard.validate(value);

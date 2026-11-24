@@ -5,9 +5,9 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 /** Caller-selected delivery of completed analysis Evidence that supports retained views. */
 export const analysisDetailSchema = z
   .enum(["complete", "summary"])
-  .default("complete")
+  .optional()
   .describe(
-    "complete returns the complete analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; inspect pages, items or facets through normalized_result.parent_evidence_id.",
+    "Omitted: complete Evidence inline when it fits the agent result budget (delivery.agent_result_budget_bytes, default 49152 bytes, about 12k tokens), otherwise the retained summary with a limitation naming the budget and the inspect_analysis_view recovery. complete always returns the complete analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; inspect pages, items or facets through normalized_result.parent_evidence_id.",
   );
 
 /**

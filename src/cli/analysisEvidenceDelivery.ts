@@ -15,7 +15,16 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { cliEvidenceDeliveryInputError } from "./analysisEvidenceDeliveryOptions.js";
+import {
+  cliEvidenceDeliveryInputError,
+  type CliDeliveryDetail,
+} from "./analysisEvidenceDeliveryOptions.js";
+import {
+  agentBudgetLimitation,
+  agentBudgetOverflowBytes,
+  currentAgentResultBudget,
+  type AgentBudgetRecovery,
+} from "../domain/agentResultBudget.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import {
   isObject,
@@ -29,7 +38,8 @@ interface CliEvidencePublication {
   readonly view?: AnalysisViewRequest;
   readonly operation: string;
   readonly signal: AbortSignal;
-  readonly detail: "complete" | "summary";
+  /** Undefined leaves delivery to the agent result budget. */
+  readonly detail: CliDeliveryDetail;
   readonly evidenceOutput: string | undefined;
   /** Exact one-shot CLI target spelling, when this invocation selects a file. */
   readonly callerInputPath?: string;
@@ -169,11 +179,25 @@ export const publishCliAnalysisEvidence = async (
     inputError.retainPartialObservation(complete);
     return projectFailure(inputError);
   }
-  if (evidenceOutput === undefined) return complete;
+  const overBudget = budgetLimitation(complete, input);
+  if (evidenceOutput === undefined) {
+    if (overBudget === undefined) return complete;
+    const summary = await overBudgetSummary(
+      complete,
+      overBudget({ kind: "not-retained" }),
+    );
+    return summary ?? complete;
+  }
+  const outputPath = absoluteCallerPath(evidenceOutput);
   const published = await publishDeliveredEvidence(
     complete,
     evidenceOutput,
     closureInput,
+    overBudget?.({
+      kind: "evidence-file",
+      evidenceId: complete.evidence_id,
+      path: revealsSensitiveValue(outputPath, input) ? undefined : outputPath,
+    }),
   );
   if (!published.ok) {
     const failure = projectFailure(published.error.error);
@@ -181,7 +205,7 @@ export const publishCliAnalysisEvidence = async (
       ? failure
       : withUndeliveredSourceClosure(failure, closureInput);
   }
-  return detail === "summary"
+  return published.value.summarized
     ? {
         summary: published.value.delivered,
         evidence_bundle: published.value.receipt,
@@ -190,17 +214,71 @@ export const publishCliAnalysisEvidence = async (
 };
 
 /**
+ * For a caller that left `--detail` to the agent result budget, the
+ * limitation an over-budget delivery carries for each place the complete
+ * Evidence can be; undefined when complete Evidence fits or was chosen.
+ */
+const budgetLimitation = (
+  complete: Evidence,
+  input: CliEvidencePublication,
+): ((recovery: AgentBudgetRecovery) => string) | undefined => {
+  if (input.detail !== undefined) return undefined;
+  const budget = currentAgentResultBudget();
+  const completeBytes = agentBudgetOverflowBytes(complete, budget);
+  return completeBytes === undefined
+    ? undefined
+    : (recovery) =>
+        agentBudgetLimitation({
+          operation: complete.operation,
+          completeBytes,
+          budget,
+          recovery,
+        });
+};
+
+/**
+ * The summary that replaces over-budget complete Evidence, answering this
+ * same invocation; undefined when the operation has no summary view, which
+ * keeps complete delivery.
+ */
+const overBudgetSummary = async (
+  complete: Evidence,
+  limitation: string,
+): Promise<Evidence | undefined> => {
+  const { summarizeOverBudgetEvidence } =
+    await import("../application/analysisView/AnalysisViewService.js");
+  const summary = summarizeOverBudgetEvidence(complete, limitation);
+  if (!summary.ok) return undefined;
+  return complete.caller_input_path !== undefined ||
+    complete.caller_input_paths !== undefined
+    ? withEvidenceCallerInputPath(
+        summary.value,
+        complete.caller_input_path,
+        complete.caller_input_paths,
+      )
+    : summary.value;
+};
+
+/**
  * Project the requested view, then publish the complete bundle. Projection
  * runs first so a view failure cannot commit an unreported bundle;
- * publication then owns every post-commit outcome.
+ * publication then owns every post-commit outcome. An over-budget delivery
+ * publishes its summary when the operation has one, and complete Evidence
+ * otherwise.
  */
 const publishDeliveredEvidence = async (
   complete: Evidence,
   evidenceOutput: string,
   input: CliEvidencePublication,
+  overBudgetLimitation?: string,
 ): Promise<
   Result<
-    { readonly delivered: Evidence; readonly receipt: JsonValue },
+    {
+      readonly delivered: Evidence;
+      readonly receipt: JsonValue;
+      /** Whether `delivered` is a summary of the published complete record. */
+      readonly summarized: boolean;
+    },
     {
       readonly error: AnalysisError;
       readonly committed: boolean;
@@ -209,6 +287,11 @@ const publishDeliveredEvidence = async (
     }
   >
 > => {
+  const budgeted =
+    overBudgetLimitation === undefined
+      ? undefined
+      : await overBudgetSummary(complete, overBudgetLimitation);
+  const summarized = input.detail === "summary" || budgeted !== undefined;
   const delivered =
     input.detail === "summary"
       ? (
@@ -217,7 +300,7 @@ const publishDeliveredEvidence = async (
           source: { kind: "inline", evidence: complete },
           view: input.view ?? { kind: "summary" },
         })
-      : ok(complete);
+      : ok(budgeted ?? complete);
   if (!delivered.ok)
     return err({
       error: delivered.error.retainPartialObservation(complete),
@@ -280,7 +363,7 @@ const publishDeliveredEvidence = async (
   const { path, bytes } = published.value.evidenceBundle;
   const receipt = bundleReceipt(path, bytes, input);
   recordCliEvidencePublication(receipt);
-  return ok({ delivered: published.value.delivered, receipt });
+  return ok({ delivered: published.value.delivered, receipt, summarized });
 };
 
 /** Whether a caller-selected path contains an excluded sensitive literal. */
