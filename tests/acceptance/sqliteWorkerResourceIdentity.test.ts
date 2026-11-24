@@ -47,6 +47,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         diagnostics: { selected_path: path },
         reported_limits: {
           sqlite_value_or_record_bytes: 16 * 1024 * 1024,
+          sqlite_sql_statement_bytes: 16 * 1024 * 1024,
           worker_reply_bytes: 16 * 1024 * 1024,
         },
       },
@@ -54,5 +55,33 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     expect(cliResult.exitCode).toBe(1);
     expect(cliResult.json).toMatchObject(expectedError);
     expect(parseMcpToolError(mcpResult).error).toMatchObject(expectedError);
+  },
+);
+
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "reports the SQL allowance when a generated row query exceeds it",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sqlite-sql-limit-");
+    const path = join(root, "selected.db");
+    const producer = new DatabaseSync(path);
+    try {
+      const column = `c${"x".repeat(4_199_999)}`;
+      producer.exec(
+        `CREATE TABLE t("${column}" INTEGER); INSERT INTO t VALUES (1)`,
+      );
+    } finally {
+      producer.close();
+    }
+    const result = await cli.run({
+      arguments: ["inspect-sqlite-database", path, "--table", "t", "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reported_limits: { sqlite_sql_statement_bytes: 16 * 1024 * 1024 },
+      },
+    });
   },
 );

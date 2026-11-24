@@ -7,6 +7,7 @@ import type {
 import type { RetainedBrowserScenarioCapture } from "./browserScenarioCapture.js";
 import {
   fingerprintScenarioNetworkTransactions,
+  ScenarioNetworkFingerprintError,
   scenarioNetworkTransactions,
   scenarioNetworkCoverageReason,
 } from "./browserScenarioNetworkComparison.js";
@@ -163,8 +164,7 @@ export const prepareScenarioEvents = (
   for (const [index, node] of nodes.entries()) {
     const step = networkByStep.get(node.step_index) ?? [];
     const fingerprint = fingerprints[index];
-    if (fingerprint === undefined)
-      throw new Error("Network comparison node has no fingerprint");
+    if (fingerprint === undefined) throw new ScenarioNetworkFingerprintError();
     step.push(fingerprint);
     networkByStep.set(node.step_index, step);
   }

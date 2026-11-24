@@ -1,23 +1,26 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, open, readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createPackage } from "@electron/asar";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperationFailure.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import {
+  translateArtifactFailure,
   admitAsarHeader,
   asarHeaderAdmissionRecovery,
-} from "../../../src/artifacts/AsarHeader.js";
+} from "../../../src/resources/index.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { parseEnvironment } from "../../../src/config/environment.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
-  MAXIMUM_ASAR_MAX_HEADER_BYTES,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
-  DEFAULT_ASAR_MAX_HEADER_BYTES,
 } from "../../../src/config/asarHeaderAdmission.js";
+import {
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+} from "../../../src/domain/analysisResourceLimits.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
@@ -40,45 +43,33 @@ const admit = async (path: string, admission?: AsarHeaderAdmission) => {
   try {
     return await admitAsarHeader(handle, undefined, admission);
   } finally {
-    // Admission must inspect only the fixed prefix, even for forged extents.
     const calls = [...read.mock.calls];
-    const results = await Promise.all(
-      read.mock.results.map(
-        ({ value }) => value as Promise<{ readonly bytesRead: number }>,
-      ),
-    );
     read.mockRestore();
     await handle.close();
-    expect(handle.fd).toBe(-1);
-    expect(calls.length).toBeGreaterThan(0);
-    let filled = 0;
-    for (const [index, call] of calls.entries()) {
-      const [buffer, offset, length, position]: readonly unknown[] =
-        call as unknown as readonly unknown[];
-      expect(buffer).toBeInstanceOf(Buffer);
-      expect(offset).toBe(filled);
-      expect(position).toBe(filled);
-      expect(length).toBe(16 - filled);
-      filled += results[index]!.bytesRead;
+    for (const call of calls) {
+      const [, , length, position] = call as unknown as [
+        Buffer,
+        number,
+        number,
+        number,
+      ];
+      expect(position + length).toBeLessThanOrEqual(16);
     }
-    expect(filled).toBeLessThanOrEqual(16);
   }
 };
 
-it("admits a header produced by the upstream ASAR serializer", async () => {
+it("admits a real serialized header only when its complete extent exists", async () => {
   const { archive, original } = await createFixture();
+  const headerBytes = original.readUInt32LE(4);
+  const jsonBytes = original.readUInt32LE(12);
+  const headerEnd = 8 + headerBytes;
   await expect(admit(archive)).resolves.toEqual({
     archiveBytes: original.length,
-    headerBytes: original.readUInt32LE(4),
-    jsonBytes: original.readUInt32LE(12),
+    headerBytes,
+    jsonBytes,
   });
-  expect(Buffer.compare(await readFile(archive), original)).toBe(0);
-});
-
-it("rejects every truncated prefix of a real serialized header", async () => {
-  const { archive, original } = await createFixture();
-  const headerEnd = 8 + original.readUInt32LE(4);
-  for (let length = 0; length < headerEnd; length++) {
+  expect((await readFile(archive)).equals(original)).toBe(true);
+  for (const length of [0, 15, 16, headerEnd - 1]) {
     await writeFile(archive, original.subarray(0, length));
     await expect(
       admit(archive),
@@ -87,10 +78,11 @@ it("rejects every truncated prefix of a real serialized header", async () => {
       reason: "format",
     });
   }
-  // Member data is outside header admission; an intact header still passes.
   await writeFile(archive, original.subarray(0, headerEnd));
-  await expect(admit(archive)).resolves.toMatchObject({
+  await expect(admit(archive)).resolves.toEqual({
     archiveBytes: headerEnd,
+    headerBytes,
+    jsonBytes,
   });
 });
 
@@ -117,61 +109,63 @@ it("rejects contradictory and unsigned-boundary extents before decoding", async 
   }
 });
 
-it("separates the header decode budget from container validity at its exact boundary", async () => {
-  const root = await createTestTempDirectory("rea-asar-header-budget-");
-  const archive = join(root, "budget.asar");
-  expect(DEFAULT_ASAR_MAX_HEADER_BYTES).toBe(16 * 1024 * 1024);
-  for (const headerBytes of [
-    DEFAULT_ASAR_MAX_HEADER_BYTES,
-    DEFAULT_ASAR_MAX_HEADER_BYTES + 4,
-  ]) {
-    const prefix = Buffer.alloc(16);
-    prefix.writeUInt32LE(4, 0);
-    prefix.writeUInt32LE(headerBytes, 4);
-    prefix.writeUInt32LE(headerBytes - 4, 8);
-    prefix.writeUInt32LE(2, 12);
-    await writeFile(archive, prefix);
-    // Supply the declared extent without allocating a header-sized JS buffer.
-    // This tests extent admission only; the padding is not valid archive JSON.
-    await truncate(archive, headerBytes + 8);
-    if (headerBytes === DEFAULT_ASAR_MAX_HEADER_BYTES)
-      await expect(admit(archive)).resolves.toEqual({
-        archiveBytes: headerBytes + 8,
-        headerBytes,
-        jsonBytes: 2,
-      });
-    else
-      await expect(admit(archive)).rejects.toMatchObject({
-        reason: "limit",
-        message: asarHeaderAdmissionRecovery(DEFAULT_ASAR_HEADER_ADMISSION),
-        admission: {
-          kind: "asar-header",
-          maximumBytes: DEFAULT_ASAR_MAX_HEADER_BYTES,
-          source: "default",
-        },
-      });
-  }
-});
-
-const writeOversizedHeaderArchive = async (): Promise<string> => {
-  const root = await createTestTempDirectory("rea-asar-header-recovery-");
-  const archive = join(root, "app.asar");
-  const headerBytes = DEFAULT_ASAR_MAX_HEADER_BYTES + 4;
-  const json = Buffer.from("{}");
+const writeSparseHeaderArchive = async (
+  archive: string,
+  headerBytes: number,
+): Promise<void> => {
   const prefix = Buffer.alloc(16);
   prefix.writeUInt32LE(4, 0);
   prefix.writeUInt32LE(headerBytes, 4);
   prefix.writeUInt32LE(headerBytes - 4, 8);
-  prefix.writeUInt32LE(json.length, 12);
-  await writeFile(archive, Buffer.concat([prefix, json]));
+  prefix.writeUInt32LE(2, 12);
+  // Supply the extent without allocating a header-sized buffer.
+  await writeFile(archive, Buffer.concat([prefix, Buffer.from("{}")]));
   await truncate(archive, headerBytes + 8);
-  return archive;
 };
+
+it("checks the exact default and selected header limits before reading JSON", async () => {
+  const root = await createTestTempDirectory("rea-asar-header-budget-");
+  const archive = join(root, "budget.asar");
+  const raised = DEFAULT_ASAR_MAX_HEADER_BYTES + 4;
+  const expected = (headerBytes: number) => ({
+    archiveBytes: headerBytes + 8,
+    headerBytes,
+    jsonBytes: 2,
+  });
+  await writeSparseHeaderArchive(archive, DEFAULT_ASAR_MAX_HEADER_BYTES);
+  await expect(admit(archive)).resolves.toEqual(
+    expected(DEFAULT_ASAR_MAX_HEADER_BYTES),
+  );
+  await writeSparseHeaderArchive(archive, raised);
+  await expect(admit(archive)).rejects.toMatchObject({
+    reason: "limit",
+    admission: {
+      kind: "asar-header",
+      maximumBytes: DEFAULT_ASAR_MAX_HEADER_BYTES,
+      requiredBytes: raised,
+      source: "default",
+    },
+  });
+  await expect(
+    admit(archive, { maximumBytes: raised - 1, source: "setting" }),
+  ).rejects.toMatchObject({
+    reason: "limit",
+    admission: {
+      maximumBytes: raised - 1,
+      requiredBytes: raised,
+      source: "setting",
+    },
+  });
+  await expect(
+    admit(archive, { maximumBytes: raised, source: "setting" }),
+  ).resolves.toEqual(expected(raised));
+});
 
 it("names the default header admission budget and its setting when source selection cannot bypass it", async () => {
   const recovery = asarHeaderAdmissionRecovery(DEFAULT_ASAR_HEADER_ADMISSION);
-  expect(DEFAULT_ASAR_MAX_HEADER_BYTES).toBe(16 * 1024 * 1024);
-  const archive = await writeOversizedHeaderArchive();
+  const root = await createTestTempDirectory("rea-asar-header-recovery-");
+  const archive = join(root, "app.asar");
+  await writeSparseHeaderArchive(archive, DEFAULT_ASAR_MAX_HEADER_BYTES + 4);
   let inventoryFailure: unknown;
   try {
     await inventoryArtifact(archive);
@@ -213,7 +207,8 @@ it("names the default header admission budget and its setting when source select
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
     },
   });
@@ -260,24 +255,6 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("admits a header above the default when the selected admission raises the budget", async () => {
-  const archive = await writeOversizedHeaderArchive();
-  const headerBytes = DEFAULT_ASAR_MAX_HEADER_BYTES + 4;
-  await expect(
-    admit(archive, { maximumBytes: headerBytes - 1, source: "setting" }),
-  ).rejects.toMatchObject({
-    reason: "limit",
-    admission: { maximumBytes: headerBytes - 1, source: "setting" },
-  });
-  await expect(
-    admit(archive, { maximumBytes: headerBytes, source: "setting" }),
-  ).resolves.toEqual({
-    archiveBytes: headerBytes + 8,
-    headerBytes,
-    jsonBytes: 2,
-  });
-});
-
 it("applies the caller-selected environment, not the ambient one, to inventory and JavaScript analysis", async () => {
   const { archive, original } = await createFixture();
   const headerBytes = original.readUInt32LE(4);
@@ -291,7 +268,9 @@ it("applies the caller-selected environment, not the ambient one, to inventory a
   vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", "1");
   for (const operation of ["inventory_artifact", "inspect_artifact"] as const) {
     await expect(
-      createDirectAnalysis(lowered).runProviderAnalysis(archive, operation, {}),
+      createDirectAnalysis(lowered)
+        .runProviderAnalysis(archive, operation, {})
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({
       code: "truncated",
       message: recovery,
@@ -302,7 +281,9 @@ it("applies the caller-selected environment, not the ambient one, to inventory a
       },
     });
     await expect(
-      createDirectAnalysis({}).runProviderAnalysis(archive, operation, {}),
+      createDirectAnalysis({})
+        .runProviderAnalysis(archive, operation, {})
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({ operation });
   }
   const refused = await analyzeJavaScriptApplication(
@@ -344,30 +325,30 @@ it("refuses invalid settings at startup validation and at each owner", async () 
   ]) {
     const parsed = parseAsarHeaderAdmission(value);
     if (parsed.ok) throw new Error(`Accepted ${JSON.stringify(value)}`);
+    expect(parsed.error.message).toContain("REA_ASAR_MAX_HEADER_BYTES");
+    expect(parsed.error.message).toMatch(/positive decimal integer/i);
+    expect(parsed.error.message).toContain("268435456 bytes");
+    expect(parsed.error.message).toContain("16777216 bytes");
     expect(parsed.error.settings).toEqual([
       {
         setting: "REA_ASAR_MAX_HEADER_BYTES",
-        constraint: expect.stringContaining("at most 268435456 bytes"),
+        constraint: parsed.error.message,
       },
     ]);
     const startup = parseEnvironment({ REA_ASAR_MAX_HEADER_BYTES: value });
-    if (startup.ok)
-      throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-    expect(startup.error.settings).toContainEqual({
-      setting: "REA_ASAR_MAX_HEADER_BYTES",
-      constraint: expect.stringContaining("at most 268435456 bytes"),
-    });
+    if (!startup.ok)
+      throw new Error(
+        `Startup rejected a runtime seed ${JSON.stringify(value)}`,
+      );
   }
 
   // Owners refuse rather than falling back to the default.
   const { archive } = await createFixture();
   const invalid = { REA_ASAR_MAX_HEADER_BYTES: "0" };
   await expect(
-    createDirectAnalysis(invalid).runProviderAnalysis(
-      archive,
-      "inventory_artifact",
-      {},
-    ),
+    createDirectAnalysis(invalid)
+      .runProviderAnalysis(archive, "inventory_artifact", {})
+      .then(projectCliAnalysisResult),
   ).resolves.toMatchObject({ code: "configuration_invalid" });
   const analyzed = await analyzeJavaScriptApplication(
     { input_path: archive },

@@ -1,9 +1,8 @@
 import { plistUidValue } from "./plistUid.js";
 import { z } from "zod";
 
-import { jsonValueSchema } from "../jsonValue.js";
-
-const recordSchema = z.record(z.string(), z.unknown());
+import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
+import { malformedInput } from "../parseFailure.js";
 
 const objectNode = z.strictObject({
   id: z.string().min(1),
@@ -20,7 +19,7 @@ const objectNode = z.strictObject({
   ]),
   class_name: z.string().nullable(),
   name: z.string().min(1),
-  attributes: z.record(z.string(), jsonValueSchema),
+  attributes: jsonObjectSchema,
 });
 
 const connection = z.strictObject({
@@ -29,7 +28,7 @@ const connection = z.strictObject({
   source_id: z.string().min(1),
   destination_id: z.string().nullable(),
   label: z.string().nullable(),
-  attributes: z.record(z.string(), jsonValueSchema),
+  attributes: jsonObjectSchema,
 });
 
 type InterfaceBuilderObject = z.infer<typeof objectNode>;
@@ -94,7 +93,8 @@ export const requireInterfaceBuilderArchive = (value: unknown): void => {
     )
   )
     return;
-  throw new TypeError(
+  throw malformedInput(
+    "interface-builder-archive",
     "Property list is not a recognized Interface Builder archive",
   );
 };
@@ -144,18 +144,17 @@ export const parseInterfaceBuilderRecords = (
     if (attributes["customClass"] === className) carried.add("customClass");
     if (attributes["label"] === label) carried.add("label");
     if (attributes["objectID"] === id) carried.add("objectID");
+    const name = label ?? id;
+    const nodeAttributes = jsonSafeRecord(attributes, carried);
+    const node: InterfaceBuilderObject = {
+      id,
+      kind: classifyObject(className),
+      class_name: className,
+      name,
+      attributes: nodeAttributes,
+    };
     objects.push(
-      objectNode.parse({
-        id,
-        kind: classifyObject(className),
-        class_name: className,
-        name: label ?? id,
-        attributes: jsonSafeRecord(
-          Object.fromEntries(
-            Object.entries(attributes).filter(([key]) => !carried.has(key)),
-          ),
-        ),
-      }),
+      id.length === 0 || name.length === 0 ? objectNode.parse(node) : node,
     );
   }
   for (const [sourceId, rawConnections] of Object.entries(connectionsRaw)) {
@@ -172,16 +171,15 @@ export const parseInterfaceBuilderRecords = (
         item.destinationId,
       );
       const label = firstString(item.label, item.selector, item.identifier);
-      connections.push(
-        connection.parse({
-          id: `${sourceId}:connection:${index}`,
-          kind: classifyConnection(type),
-          source_id: sourceId,
-          destination_id: destination,
-          label,
-          attributes: jsonSafeRecord(item),
-        }),
-      );
+      const conn: InterfaceBuilderConnection = {
+        id: `${sourceId}:connection:${index}`,
+        kind: classifyConnection(type),
+        source_id: sourceId,
+        destination_id: destination,
+        label,
+        attributes: jsonSafeRecord(item),
+      };
+      connections.push(sourceId.length === 0 ? connection.parse(conn) : conn);
     }
   }
   return {
@@ -302,14 +300,14 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
     if (uid !== undefined) return reference(uid);
     if (Array.isArray(value)) return value.map(resolve);
     if (typeof value !== "object" || value === null) return value;
-    const output: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value)) {
-      // `$class` describes the archived object's type. Keep that derived fact
-      // outside its serialized fields so an authored `className` key remains
-      // ordinary application data.
-      if (key !== "$class") output[key] = resolve(child);
-    }
-    return output;
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, child]) => {
+        // `$class` describes the archived object's type. Keep that derived fact
+        // outside its serialized fields so an authored `className` key remains
+        // ordinary application data.
+        return key === "$class" ? [] : [[key, resolve(child)]];
+      }),
+    );
   };
   const hierarchy = (start: unknown) => {
     let omittedReferences = 0;
@@ -452,23 +450,26 @@ const parseKeyedArchive = (
     // the original table position identifies an archived object.
     const objectId = String(index);
     const kind = classifyObject(className, classChainOf(raw));
+    let safeAttributes: Record<string, JsonValue> | undefined;
+    const getSafeAttributes = (): Record<string, JsonValue> => {
+      safeAttributes ??= jsonSafeRecord(fields);
+      return safeAttributes;
+    };
     if (objects.length < 20_000)
-      objects.push(
-        objectNode.parse({
-          id: objectId,
-          kind,
-          class_name: className,
-          name:
-            firstString(
-              fields.label,
-              fields.title,
-              fields.identifier,
-              fields.accessibilityLabel,
-              className,
-            ) ?? `object ${String(index)}`,
-          attributes: jsonSafeRecord(fields),
-        }),
-      );
+      objects.push({
+        id: objectId,
+        kind,
+        class_name: className,
+        name:
+          firstString(
+            fields.label,
+            fields.title,
+            fields.identifier,
+            fields.accessibilityLabel,
+            className,
+          ) ?? `object ${String(index)}`,
+        attributes: getSafeAttributes(),
+      });
     if (
       className !== null &&
       (isInterfaceBuilderConnectionClass(className) ||
@@ -497,31 +498,36 @@ const parseKeyedArchive = (
         continue;
       }
       const kind = controlAction ? "action" : classifyConnection(className);
-      const parsedConnection = connection.parse({
-        id: `archive:${objectId}`,
-        kind,
-        source_id: source,
-        destination_id: uiKit
-          ? objectReference(rawFields[connectionFields.destination])
-          : objectReference(
-              controlAction ? rawFields.source : rawFields.destination,
-              rawFields[connectionFields.destination],
-              controlAction ? rawFields.from : rawFields.to,
-              controlAction ? rawFields.owner : rawFields.target,
-            ),
-        label: uiKit
-          ? firstString(fields[connectionFields.label])
-          : firstString(
-              fields.label,
-              fields[connectionFields.label],
-              fields.selector,
-              fields.identifier,
-              fields.action,
-            ),
-        attributes: jsonSafeRecord(fields),
-      });
-      if (connections.length < 40_000) connections.push(parsedConnection);
-      else omittedConnections += 1;
+      if (connections.length < 40_000) {
+        const parsedConnection: InterfaceBuilderConnection = {
+          id: `archive:${objectId}`,
+          kind,
+          source_id: source,
+          destination_id: uiKit
+            ? objectReference(rawFields[connectionFields.destination])
+            : objectReference(
+                controlAction ? rawFields.source : rawFields.destination,
+                rawFields[connectionFields.destination],
+                controlAction ? rawFields.from : rawFields.to,
+                controlAction ? rawFields.owner : rawFields.target,
+              ),
+          label: uiKit
+            ? firstString(fields[connectionFields.label])
+            : firstString(
+                fields.label,
+                fields[connectionFields.label],
+                fields.selector,
+                fields.identifier,
+                fields.action,
+              ),
+          attributes: getSafeAttributes(),
+        };
+        connections.push(
+          source.length === 0
+            ? connection.parse(parsedConnection)
+            : parsedConnection,
+        );
+      } else omittedConnections += 1;
     }
   }
   const top = record(root.$top);
@@ -546,9 +552,15 @@ const parseKeyedArchive = (
   };
 };
 
-/** Coerce unknown values to a string-keyed record; non-objects become `{}`. */
+/** Borrow decoded dictionaries without copying away keys or UID source identity. */
 export const record = (value: unknown): Record<string, unknown> =>
-  recordSchema.safeParse(value).data ?? {};
+  value !== null &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  (Object.getPrototypeOf(value) === Object.prototype ||
+    Object.getPrototypeOf(value) === null)
+    ? (value as Record<string, unknown>)
+    : {};
 
 /** First non-empty string among the candidates, otherwise null. */
 export const firstString = (...values: unknown[]): string | null => {
@@ -636,18 +648,93 @@ const classifyConnection = (
   return "other";
 };
 
-const jsonSafeRecord = (value: Record<string, unknown>) =>
-  Object.fromEntries(
-    Object.entries(value).flatMap(([key, item]) => {
-      try {
-        const serialized = JSON.stringify(item);
-        if (serialized === undefined) return [];
-        const parsed = jsonValueSchema.safeParse(JSON.parse(serialized));
-        return parsed.success ? [[key, parsed.data]] : [];
-      } catch (cause: unknown) {
-        // Unserializable entries are omitted from the record.
-        void cause;
-        return [];
+const OMIT_JSON_VALUE = Symbol("omit-json-value");
+const UNSERIALIZABLE_JSON_VALUE = Symbol("unserializable-json-value");
+
+const sanitizeJsonValue = (
+  item: unknown,
+  seen: Set<object>,
+): JsonValue | typeof OMIT_JSON_VALUE | typeof UNSERIALIZABLE_JSON_VALUE => {
+  let current = item;
+  if (
+    current !== null &&
+    (typeof current === "object" || typeof current === "function")
+  ) {
+    const toJson = (current as { readonly toJSON?: unknown }).toJSON;
+    if (typeof toJson === "function")
+      current = (toJson as () => unknown).call(current);
+  }
+  if (current === null) return null;
+  const kind = typeof current;
+  if (kind === "string" || kind === "boolean") return current as JsonValue;
+  if (kind === "number")
+    return Number.isFinite(current as number) ? (current as number) : null;
+  if (kind === "undefined" || kind === "function" || kind === "symbol")
+    return OMIT_JSON_VALUE;
+  if (kind === "bigint") return UNSERIALIZABLE_JSON_VALUE;
+  const obj = current as object;
+  if (seen.has(obj)) return UNSERIALIZABLE_JSON_VALUE;
+  seen.add(obj);
+  try {
+    if (Array.isArray(obj)) {
+      const out: JsonValue[] = new Array(obj.length);
+      for (let index = 0; index < obj.length; index += 1) {
+        const sanitized = sanitizeJsonValue(obj[index], seen);
+        if (sanitized === UNSERIALIZABLE_JSON_VALUE)
+          return UNSERIALIZABLE_JSON_VALUE;
+        out[index] = sanitized === OMIT_JSON_VALUE ? null : sanitized;
       }
-    }),
-  );
+      return out;
+    }
+    const out: Record<string, JsonValue> = {};
+    for (const [key, entry] of Object.entries(obj)) {
+      const sanitized = sanitizeJsonValue(entry, seen);
+      if (sanitized === UNSERIALIZABLE_JSON_VALUE)
+        return UNSERIALIZABLE_JSON_VALUE;
+      if (sanitized === OMIT_JSON_VALUE) continue;
+      if (key === "__proto__")
+        Object.defineProperty(out, key, {
+          value: sanitized,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      else out[key] = sanitized;
+    }
+    return out;
+  } finally {
+    seen.delete(obj);
+  }
+};
+
+const jsonSafeRecord = (
+  value: Record<string, unknown>,
+  omitKeys?: ReadonlySet<string>,
+): Record<string, JsonValue> => {
+  const out: Record<string, JsonValue> = {};
+  const seen = new Set<object>();
+  for (const [key, item] of Object.entries(value)) {
+    if (omitKeys?.has(key) === true) continue;
+    try {
+      const sanitized = sanitizeJsonValue(item, seen);
+      if (
+        sanitized === OMIT_JSON_VALUE ||
+        sanitized === UNSERIALIZABLE_JSON_VALUE
+      )
+        continue;
+      if (key === "__proto__")
+        Object.defineProperty(out, key, {
+          value: sanitized,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      else out[key] = sanitized;
+    } catch (cause: unknown) {
+      // Unserializable entries are omitted from the record.
+      void cause;
+      seen.clear();
+    }
+  }
+  return out;
+};

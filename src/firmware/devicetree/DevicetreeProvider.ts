@@ -1,38 +1,31 @@
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import type { DevicetreePort } from "../../application/binaryDiagnostics/DevicetreePort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+  projectArtifactCloseFailure,
+  projectStableArtifactFailure,
+  ArtifactReaderFailure,
+  type StableArtifactSnapshot,
+  readStableArtifact,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { DevicetreePort } from "../../ports/binaryDiagnostics/DevicetreePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   MAX_DEVICETREE_FILE_BYTES,
   type InspectDevicetreeInput,
 } from "../../domain/firmware/devicetree.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import { err, ok } from "../../domain/result.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
-import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
+import {
+  DEVICETREE_FORMAT,
+  parseDevicetree,
+} from "../../domain/firmware/devicetreeParser.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 
 const OPERATION = "inspect_devicetree";
 
@@ -45,183 +38,94 @@ export class DevicetreeProvider implements DevicetreePort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         DEVICETREE_PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
   async inspect(input: InspectDevicetreeInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
           undefined,
           this.#resources,
         );
-        return ok(
-          parseDevicetree(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
-            },
-            input,
-          ),
+        const { report } = parseDevicetree(
+          snapshot.bytes,
+          {
+            path: input.path,
+            sha256: snapshot.sha256,
+            bytes: snapshot.bytes.length,
+          },
+          input,
         );
+        return ok(report);
       });
     } catch (cause) {
-      return err(devicetreeFailure(cause, input));
+      return err(devicetreeFailure(cause, input, snapshot));
     }
   }
 }
 
-const devicetreeFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
+const devicetreeFailure = (
+  cause: unknown,
   input: InspectDevicetreeInput,
+  snapshot?: StableArtifactSnapshot,
 ) => {
-  const { cause, origin } = facts;
-  if (cause instanceof DevicetreeLimitFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      cause.limit === "decoded_bytes" ? "memory" : "capacity",
-      cause.message,
-      {
-        limit: cause.limit,
-        selected:
-          cause.limit === "decoded_bytes" ? 33554432 : input[cause.limit],
-      },
-      { cause, retryable: false, remediationAction: cause.message },
-    );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit") {
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction:
-            input.max_file_bytes < MAX_DEVICETREE_FILE_BYTES
-              ? "Raise max_file_bytes within its schema ceiling or select a smaller DTB."
-              : "Select a smaller DTB; the fixed file-byte ceiling has been reached.",
-        },
-      );
-    }
-
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected devicetree blob could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error ? cause.message : "devicetree inspection failed.",
-    { cause },
-  );
-};
-
-const devicetreeFailure = (cause: unknown, input: InspectDevicetreeInput) => {
-  const primary = devicetreeFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
-  );
-  const snapshot = completedStableArtifact(cause);
-  if (snapshot !== undefined)
-    // The one stable read completed before finalization failed; keep its identity.
-    primary.retainPartialObservation(
-      fileSnapshotPartialObservationSchema.parse({
-        kind: "file-snapshot-hash",
+  const facts = artifactFilePrimaryFacts(cause);
+  return projectStableArtifactFailure(
+    cause,
+    classifyProviderFailure(
+      facts.cause,
+      offlineArtifactFailureDialect(facts, {
+        operation: OPERATION,
+        providerId: DEVICETREE_PROVIDER.id,
         path: input.path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
+        description: "devicetree blob",
+        fallbackMessage: "devicetree inspection failed.",
+        recognise: (failure, origin) => {
+          if (isParseLimit(failure, DEVICETREE_FORMAT))
+            return parseLimitConstraint(
+              OPERATION,
+              failure.failure.limit.name === "decoded_bytes"
+                ? "memory"
+                : "capacity",
+              failure,
+              { retryable: false, remediationAction: failure.failure.detail },
+            );
+          if (
+            origin === "owned-or-classified" &&
+            failure instanceof ArtifactReaderFailure &&
+            failure.reason === "limit"
+          )
+            return new AnalysisResourceConstraintError(
+              OPERATION,
+              failure.boundary ?? "memory",
+              failure.message,
+              { max_file_bytes: input.max_file_bytes },
+              {
+                cause: failure,
+                retryable: false,
+                remediationAction:
+                  input.max_file_bytes < MAX_DEVICETREE_FILE_BYTES
+                    ? "Raise max_file_bytes within its schema ceiling or select a smaller DTB."
+                    : "Select a smaller DTB; the fixed file-byte ceiling has been reached.",
+              },
+            );
+          return undefined;
+        },
       }),
-    );
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+    ),
+    input.path,
     DEVICETREE_PROVIDER.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
+    snapshot,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };

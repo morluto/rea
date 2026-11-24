@@ -1,8 +1,8 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
-import { publicInputStrictObject } from "../publicInput.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -17,7 +17,7 @@ export const MAX_INSPECT_ERLANG_BEAM_ATOMS = 65536;
 export const MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS = 65536;
 
 /** Complete bounded inspection of one Erlang BEAM IFF container. */
-export const inspectErlangBeamInputSchema = publicInputStrictObject({
+export const inspectErlangBeamInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a BEAM file",
   ),
@@ -118,9 +118,13 @@ export const erlangBeamSchema = z.strictObject({
     .nullable(),
   module: z.string().nullable(),
   coverage: z.strictObject({
-    status: z.literal("complete"),
+    // "partial" when bytes trail the declared FOR1 form or a decoded table.
+    status: knownCoverageStatusSchema,
     examined_chunks: uint,
     atoms: uint,
+    // Optional so Evidence retained by builds predating this field reparses
+    // as unknown rather than a fabricated zero; every new parse emits the count.
+    trailing_bytes: uint.optional(),
   }),
   limitations: z.array(z.string()),
 });

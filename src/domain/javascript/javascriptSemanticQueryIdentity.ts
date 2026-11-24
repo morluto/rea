@@ -2,9 +2,11 @@ import { digestCanonicalValue } from "../canonicalDigest.js";
 
 import type { JavaScriptSemanticGraph } from "./javascriptSemanticGraph.js";
 import type { JavaScriptSemanticGraphNode } from "./javascriptSemanticGraphSchemas.js";
+import { getSemanticGraphIndex } from "./javascriptSemanticGraphIndex.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptSemanticQueryInput } from "./javascriptSemanticQuerySchemas.js";
+import { semanticCallLiteralValues } from "./javascriptSemanticCallLiterals.js";
 
 /** Derive the stable identity for one graph-bound query. */
 export const javaScriptSemanticQueryIdentifier = (
@@ -37,6 +39,8 @@ export const resolveJavaScriptSemanticQuerySeeds = (
   graph: JavaScriptSemanticGraph,
   input: JavaScriptSemanticQueryInput,
 ): string[] => {
+  const index = getSemanticGraphIndex(graph);
+  if (index !== undefined) return resolveIndexedSeeds(index, input.seed);
   const fingerprintFunctions = new Set(
     input.seed.kind === "function"
       ? graph.fingerprints
@@ -55,12 +59,53 @@ export const resolveJavaScriptSemanticQuerySeeds = (
         )
       : [],
   );
+  const seed = input.seed;
+  const representedCalls = new Set(
+    seed.kind === "literal"
+      ? graph.nodes.flatMap((node) =>
+          node.kind === "expression" &&
+          node.properties.literal_argument_value === seed.value &&
+          typeof node.properties.literal_argument_call_site_node_id === "string"
+            ? [node.properties.literal_argument_call_site_node_id]
+            : [],
+        )
+      : [],
+  );
   return graph.nodes
     .filter((node) =>
-      seedMatches(node, input, fingerprintFunctions, unresolvedAccesses),
+      seedMatches(
+        node,
+        input,
+        fingerprintFunctions,
+        unresolvedAccesses,
+        representedCalls,
+      ),
     )
     .map(({ node_id }) => node_id)
     .sort(compareUnicodeCodePoints);
+};
+
+const resolveIndexedSeeds = (
+  index: NonNullable<ReturnType<typeof getSemanticGraphIndex>>,
+  seed: JavaScriptSemanticQueryInput["seed"],
+): string[] => {
+  if (seed.kind === "semantic-node") {
+    const node = index.getNodesById().get(seed.node_id);
+    return node === undefined ? [] : [node.node_id];
+  }
+  const seeds = index.getSeedIndex();
+  if (seed.kind === "application-node")
+    return [...(seeds.byApplicationNodeId.get(seed.node_id) ?? [])];
+  if (seed.kind === "function")
+    return [...(seeds.byFingerprint.get(seed.fingerprint_sha256) ?? [])];
+  if (seed.kind === "literal")
+    return [...(seeds.byLiteral.get(seed.value) ?? [])];
+  if (seed.kind === "property")
+    return [...(seeds.byProperty.get(seed.name) ?? [])];
+  if (seed.kind === "endpoint")
+    return [...(seeds.byEndpoint.get(seed.value) ?? [])];
+  if (seed.kind === "event") return [...(seeds.byEvent.get(seed.name) ?? [])];
+  return [...(seeds.byBoundaryField.get(seed.field) ?? [])];
 };
 
 const seedMatches = (
@@ -68,14 +113,25 @@ const seedMatches = (
   input: JavaScriptSemanticQueryInput,
   fingerprintFunctions: ReadonlySet<string>,
   unresolvedAccesses: ReadonlySet<string>,
+  representedCalls: ReadonlySet<string>,
 ): boolean => {
   const seed = input.seed;
   if (seed.kind === "semantic-node") return node.node_id === seed.node_id;
   if (seed.kind === "application-node")
     return node.application_node_ids.includes(seed.node_id);
   if (seed.kind === "function") return fingerprintFunctions.has(node.node_id);
-  if (seed.kind === "literal")
-    return node.kind === "literal" && node.properties.value === seed.value;
+  if (seed.kind === "literal") {
+    if (node.kind === "literal") return node.properties.value === seed.value;
+    if (
+      node.kind === "expression" &&
+      typeof node.properties.literal_argument_call_site_node_id === "string"
+    )
+      return node.properties.literal_argument_value === seed.value;
+    if (representedCalls.has(node.node_id)) return false;
+    return semanticCallLiteralValues(node).some(
+      (value) => value === seed.value,
+    );
+  }
   if (seed.kind === "property") {
     if (node.kind === "property-slot")
       return node.properties.name === seed.name;

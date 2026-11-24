@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
 const expressionWrappers = [
@@ -357,8 +358,8 @@ it.each(expressionWrappers)(
       )
       .toEqual([
         ["local-window", "candidate"],
-        ["/local-db", null],
-        ["/local-cache", null],
+        ["/local-db", "candidate"],
+        ["/local-cache", "candidate"],
         ["changed-window", "candidate"],
         ["uncertain-window", "candidate"],
       ]);
@@ -408,7 +409,7 @@ it("retains endpoint observations for exact template and TypeScript member keys"
 
 it("preserves preload and utility paths through exact computed join members", () => {
   for (const key of ['"join"', "`join`", '"join" as const']) {
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
         const { BrowserWindow, utilityProcess } = require("electron");
         const path = require("node:path");
         new BrowserWindow({ webPreferences: {
@@ -491,7 +492,7 @@ it("keeps dynamic, interpolated, and invalid template keys unresolved", () => {
   ]) {
     const preload = `path[${key}](__dirname, "preload.js")`;
     const worker = `path[${key}](__dirname, "worker.js")`;
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
         const { BrowserWindow, utilityProcess } = require("electron");
         const path = require("node:path");
         client[${key}]("/api/items");

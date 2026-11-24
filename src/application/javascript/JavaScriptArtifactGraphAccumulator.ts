@@ -1,4 +1,8 @@
 import {
+  qualifyJavaScriptLoaderEvidence,
+  type ApplicationGraphEvidence,
+} from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import {
   createJavaScriptApplicationEdge,
   createJavaScriptApplicationNode,
 } from "../../domain/javascript/javascriptApplicationGraph.js";
@@ -17,9 +21,43 @@ export class JavaScriptArtifactGraphAccumulator {
   readonly #nodes = new Map<string, AccumulatedNode>();
   readonly #edges = new Map<string, ApplicationEdge>();
 
+  constructor(
+    private readonly loaderConditions: ReadonlyMap<
+      string,
+      { readonly sha256: string; readonly condition: string }
+    > = new Map(),
+  ) {}
+
+  readonly #qualifyEvidence = (
+    evidence: ApplicationGraphEvidence,
+  ): ApplicationGraphEvidence => {
+    if (
+      !evidence.artifact.available ||
+      !evidence.location.available ||
+      (evidence.authority !== "ast-static-analysis" &&
+        evidence.authority !== "static-relationship-inference")
+    )
+      return evidence;
+    const location = evidence.location.value;
+    const path =
+      location.kind === "source-range"
+        ? location.source
+        : location.kind === "artifact-path"
+          ? location.path
+          : undefined;
+    const origin =
+      path === undefined ? undefined : this.loaderConditions.get(path);
+    return origin?.sha256 === evidence.artifact.sha256
+      ? qualifyJavaScriptLoaderEvidence(evidence, origin.condition)
+      : evidence;
+  };
+
   /** Merge observations into a stable live node; order is finalized by nodes(). */
   addNode<Input extends DisplayableNodeInput>(input: Input): ApplicationNode {
-    const created = createJavaScriptApplicationNode(displayableNode(input));
+    const created = createJavaScriptApplicationNode(
+      displayableNode(input),
+      this.loaderConditions.size === 0 ? undefined : this.#qualifyEvidence,
+    );
     const existing = this.#nodes.get(created.node_id);
     if (existing === undefined) {
       this.#nodes.set(created.node_id, {
@@ -66,7 +104,10 @@ export class JavaScriptArtifactGraphAccumulator {
 
   /** Create or replace one canonical edge by semantic identifier. */
   addEdge(input: unknown): ApplicationEdge {
-    const edge = createJavaScriptApplicationEdge(input);
+    const edge = createJavaScriptApplicationEdge(
+      input,
+      this.loaderConditions.size === 0 ? undefined : this.#qualifyEvidence,
+    );
     this.#edges.set(edge.edge_id, edge);
     return edge;
   }

@@ -51,15 +51,22 @@ export const createAnalysisProfile = (
   });
 };
 
+/** Exact provider identity, including unknown Evidence versions, without interpreting parameters. */
+export const committedProvidersEqual = (
+  left: Readonly<{ id: string; name: string; version: string | null }>,
+  right: Readonly<{ id: string; name: string; version: string | null }>,
+): boolean =>
+  left.id === right.id &&
+  left.name === right.name &&
+  left.version === right.version;
+
 /** Compare two already-validated commitments without interpreting parameters. */
 export const analysisProfilesEqual = (
   left: AnalysisProfileCommitment,
   right: AnalysisProfileCommitment,
 ): boolean =>
   left.digest === right.digest &&
-  left.provider.id === right.provider.id &&
-  left.provider.name === right.provider.name &&
-  left.provider.version === right.provider.version;
+  committedProvidersEqual(left.provider, right.provider);
 
 const profileDigest = (
   profile: z.infer<typeof unsignedAnalysisProfileSchema>,

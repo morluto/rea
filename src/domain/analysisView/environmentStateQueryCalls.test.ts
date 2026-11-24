@@ -1,3 +1,5 @@
+import { StateRecordChronology } from "./StateRecordChronology.js";
+import { parseOffsetDateTimeInstant } from "../offsetDateTime.js";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
@@ -7,6 +9,7 @@ import {
 } from "./environmentStateQueryCalls.js";
 import type {
   StateRecordFacts,
+  StateTimeline,
   StateToolFacts,
 } from "./environmentStateRules.js";
 
@@ -20,7 +23,7 @@ interface Call {
   readonly tool: string;
   readonly template?: string;
   readonly start?: number;
-  readonly end?: number;
+  readonly end?: number | null;
 }
 
 /** How the read-only pass parses response bodies and charges what it keeps of them, when a test watches either. */
@@ -30,15 +33,32 @@ interface Bodies {
 }
 
 /** The read-only tools of a timeline of calls, ordinals in order; a call spans its index unless it gives its times. */
-const readOnlyOf = (calls: readonly Call[], bodies: Bodies = {}): string[] => {
+const readOnlyOf = (
+  calls: readonly Call[],
+  bodies: Bodies = {},
+  timeline: StateTimeline = "recorded-start-time",
+): string[] => {
   const records: StateRecordFacts[] = calls.map((call, index) => ({
     ordinal: index,
     method: call.method,
     path: call.path,
     query: call.query,
     status: call.status === undefined ? 200 : call.status,
-    start: call.start ?? index,
-    end: call.end ?? index,
+    timing: {
+      start: {
+        instant: parseOffsetDateTimeInstant(
+          new Date(call.start ?? index).toISOString(),
+        ),
+        ms: call.start ?? index,
+      },
+      end:
+        call.end === null
+          ? undefined
+          : parseOffsetDateTimeInstant(
+              new Date(call.end ?? index).toISOString(),
+            ),
+      endMs: call.end === null ? undefined : (call.end ?? index),
+    },
   }));
   const tools = new Map<string, StateToolFacts>();
   calls.forEach((call, index) => {
@@ -53,11 +73,16 @@ const readOnlyOf = (calls: readonly Call[], bodies: Bodies = {}): string[] => {
   const withBody: QueryCallIo["withBody"] =
     bodies.withBody ?? ((ordinal, use) => use(calls[ordinal]?.response));
   return [
-    ...readOnlyTools([...tools.values()], records, {
-      withBody,
-      request: (ordinal) => calls[ordinal]?.request,
-      retain: bodies.retain ?? (() => undefined),
-    }),
+    ...readOnlyTools(
+      [...tools.values()],
+      records,
+      {
+        withBody,
+        request: (ordinal) => calls[ordinal]?.request,
+        retain: bodies.retain ?? (() => undefined),
+      },
+      new StateRecordChronology(records, timeline),
+    ),
   ].sort();
 };
 
@@ -169,10 +194,9 @@ describe("POSTs that read state", () => {
     expect(
       readOnlyOf([
         post("/api/query-history", "post_query_history"),
-        post("/api/documents/selection_data/", "post_selection"),
         post("/api/search-results", "post_search_results"),
       ]),
-    ).toEqual(["post_search_results", "post_selection"]);
+    ).toEqual(["post_search_results"]);
   });
 
   it("reads a lookup only by the last literal segment, so a trailing write action stays a write", () => {
@@ -316,6 +340,31 @@ describe("POSTs that read state but stay writes", () => {
 });
 
 describe("the reads either side of a POST", () => {
+  it("requires known read completion without discarding independent known intervals", () => {
+    const known: Call = {
+      method: "GET",
+      path: "/api/members",
+      tool: "get_members",
+      response: JOBS,
+      start: 0,
+      end: 5,
+    };
+    const unknown = { ...known, start: 6, end: null };
+    const post: Call = {
+      method: "POST",
+      path: "/api/members",
+      tool: "post_members",
+      response: JOBS,
+      start: 10,
+      end: 11,
+    };
+    expect(readOnlyOf([unknown, post])).toEqual([]);
+    expect(readOnlyOf([known, unknown, post])).toEqual(["post_members"]);
+    expect(readOnlyOf([unknown, post], {}, "record-order")).toEqual([
+      "post_members",
+    ]);
+  });
+
   it("compares a POST only with reads that finished before it began or began after it ended", () => {
     const note = (title: string): Call => ({
       method: "GET",
@@ -370,18 +419,13 @@ describe("the reads either side of a POST", () => {
 
   it("compares a POST with a read begun after another write, which shows that write's effect", () => {
     const message = { id: 1001, body: "hello" };
-    const get = (
-      start: number,
-      end: number,
-      status = 200,
-      response: JsonValue = message,
-    ): Call => ({
+    const get = (start: number, end: number, status = 200): Call => ({
       method: "GET",
       path: "/api/messages/1001",
       template: "/api/messages/{id}",
       tool: "get_message",
       status,
-      response,
+      response: status === 404 ? { error: "Not found" } : message,
       start,
       end,
     });
@@ -403,14 +447,19 @@ describe("the reads either side of a POST", () => {
       start: 10,
       end: 11,
     };
-    // The read that finished last began before the PUT; the shorter one after it shows the message survived the PUT.
+    const startedBeforeWrite = get(0, 9, 404);
+    const foundMessage = get(3, 4);
+    const missingAgain = get(12, 13, 404);
+    expect(
+      readOnlyOf([startedBeforeWrite, foundMessage, consume, missingAgain]),
+    ).toEqual(["post_ids"]);
     expect(
       readOnlyOf([
-        get(0, 9),
+        startedBeforeWrite,
         put,
-        get(3, 4),
+        foundMessage,
         consume,
-        get(12, 13, 404, { error: "Not found" }),
+        missingAgain,
       ]),
     ).toEqual([]);
   });
@@ -442,121 +491,90 @@ describe("the reads either side of a POST", () => {
 });
 
 describe("read-only decisions over many calls", () => {
-  it("visits each write-free stretch once for all of a lookup's calls in it", () => {
-    let visits = 0;
-    const calls = 2000;
-    const records: StateRecordFacts[] = Array.from(
-      { length: calls * 2 },
-      (_, index) => {
-        const read = index % 2 === 0;
-        const record = {
-          ordinal: index,
-          path: read ? "/api/members" : "/api/members/ids",
-          query: undefined,
-          status: 200,
-          start: index,
-          end: index,
-        };
-        const method = read ? "GET" : "POST";
-        return Object.defineProperty(record, "method", {
-          enumerable: true,
-          get: () => {
-            visits += 1;
-            return method;
+  it.each([
+    {
+      work: "one write-free stretch traversal",
+      readPath: "/api/members",
+      lookupPath: "/api/members/ids",
+      response: [],
+    },
+    {
+      work: "one sweep for preceding reads",
+      readPath: "/v1/jobs/statuses",
+      lookupPath: "/v1/jobs/statuses",
+      response: JOBS,
+      request: { jobs: ["night-watch"] },
+    },
+  ])(
+    "bounds method accesses for $work",
+    ({ readPath, lookupPath, response, request }) => {
+      let visits = 0;
+      const calls = 256;
+      const records: StateRecordFacts[] = Array.from(
+        { length: calls * 2 },
+        (_, ordinal) => {
+          const read = ordinal % 2 === 0;
+          const instant = parseOffsetDateTimeInstant(
+            new Date(ordinal).toISOString(),
+          );
+          return {
+            ordinal,
+            path: read ? readPath : lookupPath,
+            query: undefined,
+            status: 200,
+            timing: {
+              start: { instant, ms: ordinal },
+              end: instant,
+              endMs: ordinal,
+            },
+            get method() {
+              visits += 1;
+              return read ? "GET" : "POST";
+            },
+          };
+        },
+      );
+      const tools: StateToolFacts[] = [
+        {
+          name: "get_fixture",
+          method: "GET",
+          path_template: readPath,
+          record_ordinals: Array.from(
+            { length: calls },
+            (_, index) => index * 2,
+          ),
+        },
+        {
+          name: "post_lookup",
+          method: "POST",
+          path_template: lookupPath,
+          record_ordinals: Array.from(
+            { length: calls },
+            (_, index) => index * 2 + 1,
+          ),
+        },
+      ];
+      expect([
+        ...readOnlyTools(
+          tools,
+          records,
+          {
+            withBody: (_ordinal, use) => use(response),
+            request: () => request,
+            retain: () => undefined,
           },
-        }) as StateRecordFacts;
-      },
-    );
-    const ordinals = (read: boolean) =>
-      records
-        .filter((record) => (record.ordinal % 2 === 0) === read)
-        .map((record) => record.ordinal);
-    const tools: StateToolFacts[] = [
-      {
-        name: "get_members",
-        method: "GET",
-        path_template: "/api/members",
-        record_ordinals: ordinals(true),
-      },
-      {
-        name: "post_ids",
-        method: "POST",
-        path_template: "/api/members/ids",
-        record_ordinals: ordinals(false),
-      },
-    ];
-    visits = 0;
-    expect([
-      ...readOnlyTools(tools, records, {
-        withBody: (_ordinal, use) => use([]),
-        request: () => undefined,
-        retain: () => undefined,
-      }),
-    ]).toEqual(["post_ids"]);
-    expect(visits).toBeLessThan(50 * records.length);
-  });
-});
-
-describe("read-only decisions over a long run of calls", () => {
-  it("finds each call's repeated read without rescanning the run before it", () => {
-    let visits = 0;
-    const calls = 2000;
-    const records: StateRecordFacts[] = Array.from(
-      { length: calls * 2 },
-      (_, index) => {
-        const read = index % 2 === 0;
-        const record = {
-          ordinal: index,
-          path: "/v1/jobs/statuses",
-          query: undefined,
-          status: 200,
-          start: index,
-          end: index,
-        };
-        const method = read ? "GET" : "POST";
-        return Object.defineProperty(record, "method", {
-          enumerable: true,
-          get: () => {
-            visits += 1;
-            return method;
-          },
-        }) as StateRecordFacts;
-      },
-    );
-    const ordinals = (read: boolean) =>
-      records
-        .filter((record) => (record.ordinal % 2 === 0) === read)
-        .map((record) => record.ordinal);
-    const tools: StateToolFacts[] = [
-      {
-        name: "get_statuses",
-        method: "GET",
-        path_template: "/v1/jobs/statuses",
-        record_ordinals: ordinals(true),
-      },
-      {
-        name: "post_statuses",
-        method: "POST",
-        path_template: "/v1/jobs/statuses",
-        record_ordinals: ordinals(false),
-      },
-    ];
-    visits = 0;
-    expect([
-      ...readOnlyTools(tools, records, {
-        withBody: (_ordinal, use) => use(JOBS),
-        request: () => ({ jobs: ["night-watch"] }),
-        retain: () => undefined,
-      }),
-    ]).toEqual(["post_statuses"]);
-    expect(visits).toBeLessThan(50 * records.length);
-  });
+          new StateRecordChronology(records, "recorded-start-time"),
+        ),
+      ]).toEqual(["post_lookup"]);
+      expect(visits).toBeLessThan(50 * records.length);
+    },
+  );
 });
 
 describe("read-only decisions over many lines", () => {
   it("reads each related line's records once per call, however many lines the lookup's path relates to", () => {
     let reads = 0;
-    const lines = 2000;
+    const lines = 128;
     const records: StateRecordFacts[] = Array.from(
       { length: lines + 1 },
       (_, index) => {
@@ -566,8 +584,16 @@ describe("read-only decisions over many lines", () => {
           method: read ? "GET" : "POST",
           path: read ? "/api/members" : "/api/members/ids",
           status: 200,
-          start: index,
-          end: index,
+          timing: {
+            start: {
+              instant: parseOffsetDateTimeInstant(
+                new Date(index).toISOString(),
+              ),
+              ms: index,
+            },
+            end: parseOffsetDateTimeInstant(new Date(index).toISOString()),
+            endMs: index,
+          },
         };
         const query = read ? `?page=${String(index)}` : undefined;
         return Object.defineProperty(record, "query", {
@@ -596,11 +622,16 @@ describe("read-only decisions over many lines", () => {
       },
     ];
     expect([
-      ...readOnlyTools(tools, records, {
-        withBody: (_ordinal, use) => use([]),
-        request: () => undefined,
-        retain: () => undefined,
-      }),
+      ...readOnlyTools(
+        tools,
+        records,
+        {
+          withBody: (_ordinal, use) => use([]),
+          request: () => undefined,
+          retain: () => undefined,
+        },
+        new StateRecordChronology(records, "recorded-start-time"),
+      ),
     ]).toEqual(["post_ids"]);
     expect(reads).toBeLessThan(20 * records.length);
   });

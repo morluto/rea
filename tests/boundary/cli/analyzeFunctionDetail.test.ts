@@ -1,16 +1,19 @@
-import { Cli } from "incur";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import pino from "pino";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import { ok } from "../../../src/domain/result.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // A complete analyze_function Evidence as runDirectAnalysis would return it:
@@ -28,31 +31,34 @@ const cannedCompleteEvidence = () =>
   );
 
 const harness = () => {
-  const runDirectAnalysis = vi.fn(
-    async () => cannedCompleteEvidence() as unknown,
-  );
-  const cli = Cli.create("rea-fn-detail-test", { version: "1", sync: false });
+  const runDirectAnalysis = vi.fn<
+    Parameters<typeof registerCoreBinaryCommands>[2]
+  >(async () => ok(cannedCompleteEvidence()));
+  const cli = createCommandCli();
   registerCoreBinaryCommands(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
-    runDirectAnalysis as never,
+    runDirectAnalysis,
     {},
   );
-  const command = Cli.toCommands.get(cli)?.get(CLI_COMMANDS.function);
+  const command = cliCommand(cli, CLI_COMMANDS.function)?.definition;
   if (command === undefined)
     throw new Error("function command was not registered");
-  const argsSchema = Reflect.get(command, "args");
-  const optionsSchema = Reflect.get(command, "options");
-  const execute = Reflect.get(command, "run");
-  if (typeof execute !== "function")
-    throw new Error("function command has no run callback");
-  const invoke = (options: Record<string, unknown>): Promise<unknown> =>
-    execute({
-      args: (argsSchema as { parse(v: unknown): unknown }).parse({
+  const argsSchema = command.args;
+  const optionsSchema = command.options;
+  if (
+    !(argsSchema instanceof z.ZodObject) ||
+    !(optionsSchema instanceof z.ZodObject)
+  )
+    throw new Error("function command has no input schemas");
+  const invoke = async (options: Record<string, unknown>): Promise<unknown> =>
+    command.run({
+      args: argsSchema.parse({
         path: "/fixtures/native.exe",
         address: "main",
       }),
-      options: (optionsSchema as { parse(v: unknown): unknown }).parse(options),
+      options: optionsSchema.parse(options),
+      formatExplicit: false,
     });
   return { runDirectAnalysis, invoke };
 };
@@ -71,7 +77,18 @@ it("rejects summary delivery without --evidence_output before any analysis", asy
   const h = harness();
   const out = await h.invoke({ detail: "summary" });
   expect(h.runDirectAnalysis).not.toHaveBeenCalled();
-  expect(JSON.stringify(out)).toContain("evidence_output");
+  expect(out).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "analyze_function",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: ["evidence_output"],
+          reason: "invalid_value",
+        }),
+      ]),
+    },
+  });
 });
 
 it("summary delivery returns the compact view and writes a bundle inspect-analysis-view pages", async () => {
@@ -88,6 +105,9 @@ it("summary delivery returns the compact view and writes a bundle inspect-analys
     evidence_bundle: { path: string; bytes: number };
   };
   expect(h.runDirectAnalysis).toHaveBeenCalledOnce();
+  expect(h.runDirectAnalysis.mock.calls[0]?.[3]).toMatchObject({
+    includeEvidenceSources: true,
+  });
   expect(out.summary.normalized_result.kind).toBe("summary");
   expect(typeof out.summary.normalized_result.parent_evidence_id).toBe(
     "string",

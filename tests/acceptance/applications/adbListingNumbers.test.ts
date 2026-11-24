@@ -27,7 +27,15 @@ const processRow = (
   pid: number,
   ppid: number | null,
   rss: number | null,
-) => ({ user: "shell", pid, ppid, rss, state: "S", name });
+) => ({
+  user: "shell",
+  pid,
+  ppid,
+  rss,
+  state: "S",
+  // The final NAME column retains the exact suffix emitted by processLine.
+  name: `${name}  \t`,
+});
 
 const processListing = (variant: Variant) => {
   const boundary = Number.MAX_SAFE_INTEGER;
@@ -184,6 +192,7 @@ cliTest.skipIf(process.platform === "win32")(
       binary,
       `#!${process.execPath}
 const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === 'start-server') process.exit(0);
 if (args.length === 1 && args[0] === 'version') {
   console.log('Android Debug Bridge version 1.0.41\\nVersion 34.0.5-fixture\\nInstalled as ' + process.argv[1]);
   process.exit(0);
@@ -212,9 +221,13 @@ process.stdout.write(require('node:fs').readFileSync(path));
       ] as const) {
         await writeFile(path, listing.stdout);
         const contract = toolContract(operation);
-        const output = await cli.run({
+        const invocation = {
           arguments: [operation.replaceAll("_", "-"), SERIAL, "--json"],
           environment,
+        };
+        const output = await cli.run({
+          ...invocation,
+          freshProcess: variant === "safe",
         });
         expect(output.exitCode, output.stderr).toBe(0);
         const evidence = contract.outputSchema.parse(output.json);

@@ -1,6 +1,6 @@
-/** ASCII golden for the rea-agents-6.5.0 semanticProjection rule in evidence.ts.
- * Its independently computed canonical SHA-256 omits explicit null coverage.
- * This is a schema/identity fixture, not a claim of a released-provider run.
+/** ASCII golden of a rea-agents-6.5.0 Evidence record, which predates format
+ * revisions: readers refuse it with the recreate guidance instead of checking
+ * its ID. This is a schema fixture, not a claim of a released-provider run.
  */
 export const PRE_66_NULL_COVERAGE_EVIDENCE = {
   evidence_id:

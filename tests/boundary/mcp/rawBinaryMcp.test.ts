@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -8,7 +9,7 @@ import { z } from "zod";
 
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisProvider } from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -18,10 +19,12 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { silentLogger } from "../../../src/logger.js";
-import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderMetadata.js";
 import { RAW_ONLY_ARCHITECTURES } from "../../../src/domain/binaryTargetTypes.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const connect = async (
   provider: AnalysisProvider = createCacheProvider([]),
@@ -31,7 +34,10 @@ const connect = async (
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "raw-binary-mcp", version: "1" });
+  const client = new Client(
+    { name: "raw-binary-mcp", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -177,7 +183,16 @@ it.each([
       },
     });
     expect(opened.isError).toBe(true);
-    expect(JSON.stringify(opened.content)).toContain(reason);
+    expect(parseMcpToolError(opened)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          reason: expect.stringContaining(reason),
+          constraint: "load_selection_rejected",
+          field: "entry_point",
+        },
+      },
+    });
     expect(session.activeTarget()).toBeUndefined();
   },
 );
@@ -207,13 +222,13 @@ it("reuses a canonical raw entry and replaces the session when the entry changes
     resolveAnalysisProfile: (target) => {
       if (target.format !== "raw-binary")
         throw new Error("expected raw binary");
-      resolved.push(target.entryPoint);
+      resolved.push(target.rawLoad.entryPoint);
       return Promise.resolve(
         ok({
           profile: createAnalysisProfile(
             { ...fixture.identity(), version: "1" },
             {
-              entry_point: target.entryPoint,
+              entry_point: target.rawLoad.entryPoint,
             },
           ),
         }),
@@ -222,15 +237,15 @@ it("reuses a canonical raw entry and replaces the session when the entry changes
     createClient: (target) => {
       if (target.format !== "raw-binary")
         throw new Error("expected raw binary");
-      created.push(target.entryPoint);
+      created.push(target.rawLoad.entryPoint);
       return {
         execute: (operation) => {
           if (operation !== "health" && operation !== "address_name")
             throw new Error(`unexpected fixture operation: ${operation}`);
-          return Promise.resolve(observed(target.entryPoint));
+          return Promise.resolve(observed(target.rawLoad.entryPoint));
         },
         close: () => {
-          closed.push(target.entryPoint);
+          closed.push(target.rawLoad.entryPoint);
           return Promise.resolve(ok(null));
         },
       };
@@ -242,9 +257,8 @@ it("reuses a canonical raw entry and replaces the session when the entry changes
     response: CallToolResult,
   ) => {
     const tool = tools.find((candidate) => candidate.name === name);
-    if (tool?.outputSchema === undefined)
-      throw new Error(`missing ${name} output schema`);
-    const schema = z.record(z.string(), z.unknown()).parse(tool.outputSchema);
+    if (tool === undefined) throw new Error(`missing ${name} output schema`);
+    const schema = canonicalOutputSchema(tool.name);
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,

@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  ownMember,
   at,
   isObject,
   locateItem,
@@ -151,7 +152,7 @@ export class FailedReadBlame {
       const response =
         call === undefined
           ? undefined
-          : this.#responseObject(records[call]!, item.entity.id);
+          : this.#responseObject(records[call]!, item.entity);
       if (response !== undefined) responses.set(name, response);
     }
     return fieldBlame(
@@ -168,10 +169,13 @@ export class FailedReadBlame {
   /** The entity a write's response shows, located by its id. */
   #responseObject(
     record: StateRecordFacts,
-    id: string,
+    entity: StateEntity,
   ): JsonObject | undefined {
     return this.#facts.io.withBody(record.ordinal, (body) => {
-      const located = body === undefined ? undefined : locateItem(body, id);
+      const located =
+        body === undefined
+          ? undefined
+          : locateItem(body, entity.id, this.#facts.idField(entity.type));
       const object =
         located === undefined ? undefined : at(body!, located.pointer);
       return isObject(object) ? object : undefined;
@@ -271,7 +275,7 @@ const fieldBlame = (
           !Object.hasOwn(read.object, field) ||
           read.volatile.has(field) ||
           others.has(field) ||
-          same(response[field], read.object[field]),
+          same(response[field], ownMember(read.object, field)),
       )
     );
   };
@@ -323,11 +327,13 @@ const lackingFields = (
   const unruled = new Set<string>();
   let unowned = false;
   for (const field of fields) {
-    const value = read.object[field] ?? null;
+    const value = ownMember(read.object, field) ?? null;
     const owners = [...writes.partial.keys()].filter((name) => {
       const response = writes.responses.get(name);
       return (
-        value !== null && response !== undefined && same(response[field], value)
+        value !== null &&
+        response !== undefined &&
+        same(ownMember(response, field), value)
       );
     });
     if (owners.length === 0) unowned = true;
@@ -349,13 +355,13 @@ const names = (
       ? EMBED_SHORT_ID_MATCH_LENGTH
       : EMBED_MATCH_MIN_LENGTH;
   return (
-    scalarText(item[idField]) === id &&
+    scalarText(ownMember(item, idField)) === id &&
     Object.entries(item).some(
       ([key, member]) =>
         key !== idField &&
         typeof member === "string" &&
         member.length >= length &&
-        entity[key] === member,
+        ownMember(entity, key) === member,
     )
   );
 };
@@ -383,7 +389,7 @@ const embeds = (
   entity: JsonObject,
   idField: string,
 ): boolean => {
-  const id = scalarText(entity[idField]);
+  const id = scalarText(ownMember(entity, idField));
   let found = false;
   if (id !== undefined)
     eachObject(value, (item) => {
@@ -422,7 +428,9 @@ const embeddingCreates = (
     if (entity.type === read.type && entity.id === read.entity?.id) continue;
     const held = heldOf(entity);
     const id =
-      held === undefined ? undefined : scalarText(held.fields[held.idField]);
+      held === undefined
+        ? undefined
+        : scalarText(ownMember(held.fields, held.idField));
     if (held === undefined || id === undefined) continue;
     idFields.add(held.idField);
     const key = `${held.idField}\u0000${id}`;
@@ -434,11 +442,11 @@ const embeddingCreates = (
   const tools = new Set<string>();
   if (byId.size === 0) return [];
   for (const [field, value] of Object.entries(read.object)) {
-    const before = read.entity?.fields[field];
+    const before = ownMember(read.entity?.fields, field);
     if (same(before, value)) continue;
     eachObject(value, (item) => {
       for (const idField of idFields) {
-        const id = scalarText(item[idField]);
+        const id = scalarText(ownMember(item, idField));
         for (const entity of id === undefined
           ? []
           : (byId.get(`${idField}\u0000${id}`) ?? []))

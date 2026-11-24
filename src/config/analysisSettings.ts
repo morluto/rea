@@ -1,9 +1,17 @@
 import { err, ok } from "../domain/result.js";
 import type { z } from "zod";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
-import { analysisSettingDefinition } from "../domain/analysisSettingDefinitions.js";
+import {
+  ANALYSIS_SETTINGS,
+  analysisSettingDefinition,
+} from "../domain/analysisSettingDefinitions.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { asarMaxHeaderBytesSchema } from "./asarHeaderAdmission.js";
+import { asarMaxListingBytesSchema } from "./asarListingAdmission.js";
+import {
+  ghidraValueFlowCountSchema,
+  ghidraDecompilePayloadMiBSchema,
+} from "./ghidraValueFlowLimits.js";
 import {
   providerStartupTimeoutSchema,
   ghidraDecompileTimeoutSchema,
@@ -11,9 +19,30 @@ import {
 import { regexMatchingDeadlineMsSchema } from "./regexMatchingDeadline.js";
 import { regexWorkerHeapRequestMiBSchema } from "./regexWorkerHeapRequest.js";
 import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
+import { capturePacketJsonExpansionBytesSchema } from "./capturePacketJsonExpansion.js";
+import { parseNativeMatchingAllowance } from "./nativeMatchingAllowance.js";
+import { javaScriptMemberMutationAliasStatesSchema } from "./javascriptMemberMutationAllowance.js";
+import { bridgeMaxRequestBytesSchema } from "./bridgeMaxRequestBytes.js";
+import { bridgeMaxReplyBytesSchema } from "./bridgeMaxReplyBytes.js";
+import {
+  debuggerCommandDeadlineMsSchema,
+  debuggerMaxCommandOutputBytesSchema,
+} from "./debuggerSessionLimits.js";
+import {
+  windowsChangeTimeDriftMsSchema,
+  windowsChangeTimeSettleMaxPollsSchema,
+  windowsChangeTimeSettlePollMsSchema,
+} from "./windowsChangeTimeSettle.js";
+import { pwntoolsInputBytesSchema } from "./pwntoolsInputLimit.js";
+import { zstandardMaxFramesSchema } from "../domain/compression/zstandardFrameAllowance.js";
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,
+    REA_ASAR_MAX_LISTING_BYTES: asarMaxListingBytesSchema,
+    REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS: ghidraValueFlowCountSchema,
+    REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION: ghidraValueFlowCountSchema,
+    REA_GHIDRA_VALUE_FLOW_MAX_EDGES: ghidraValueFlowCountSchema,
+    REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB: ghidraDecompilePayloadMiBSchema,
     REA_GHIDRA_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_HOPPER_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: ghidraDecompileTimeoutSchema,
@@ -22,11 +51,35 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
     REA_REGEX_WORKER_HEAP_REQUEST_MIB: regexWorkerHeapRequestMiBSchema,
     REA_CAPTURE_DECODER_OLD_GENERATION_MIB:
       captureDecoderOldGenerationMiBSchema,
+    REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES:
+      capturePacketJsonExpansionBytesSchema,
+    REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES:
+      javaScriptMemberMutationAliasStatesSchema,
+    REA_BRIDGE_MAX_REQUEST_BYTES: bridgeMaxRequestBytesSchema,
+    REA_BRIDGE_MAX_REPLY_BYTES: bridgeMaxReplyBytesSchema,
+    REA_DEBUGGER_COMMAND_DEADLINE_MS: debuggerCommandDeadlineMsSchema,
+    REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: debuggerMaxCommandOutputBytesSchema,
+    REA_HOPPER_CALLER_SCAN_BUDGET_MS: providerStartupTimeoutSchema,
+    REA_JEB_MCP_TIMEOUT_MS: providerStartupTimeoutSchema,
+    REA_KUNA_PROJECT_TIMEOUT_MS: providerStartupTimeoutSchema,
+    REA_KUNA_TIMEOUT_MS: providerStartupTimeoutSchema,
+    REA_PWNTOOLS_MAX_INPUT_BYTES: pwntoolsInputBytesSchema,
+    REA_WINDOWS_CHANGE_TIME_DRIFT_MS: windowsChangeTimeDriftMsSchema,
+    REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: windowsChangeTimeSettlePollMsSchema,
+    REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS:
+      windowsChangeTimeSettleMaxPollsSchema,
+    REA_ZSTD_MAX_FRAMES: zstandardMaxFramesSchema,
   };
 export const launchAnalysisSetting = (
   id: AnalysisSettingId,
   environment: Readonly<Record<string, string | undefined>>,
 ) => {
+  if (id === "native.matching_representation_bytes") {
+    const parsed = parseNativeMatchingAllowance(environment);
+    return parsed.ok
+      ? ok({ value: parsed.value.maximumBytes, source: parsed.value.source })
+      : parsed;
+  }
   const definition = analysisSettingDefinition(id);
   const raw =
     definition.environment === undefined
@@ -48,3 +101,20 @@ export const launchAnalysisSetting = (
     );
   return ok({ value: parsed.data, source: "setting" as const });
 };
+
+/** Inspect explicit launch seeds for diagnostics and registration without changing lazy runtime admission. */
+export const inspectAnalysisSettingSeeds = (
+  environment: Readonly<Record<string, string | undefined>>,
+  unresolvedSettings: ReadonlySet<string> = new Set(),
+) =>
+  Object.keys(ANALYSIS_SETTINGS).flatMap((key) => {
+    const id = key as AnalysisSettingId;
+    const definition = analysisSettingDefinition(id);
+    if (
+      definition.environment === undefined ||
+      unresolvedSettings.has(definition.environment)
+    )
+      return [];
+    const parsed = launchAnalysisSetting(id, environment);
+    return parsed.ok ? [] : parsed.error.settings;
+  });

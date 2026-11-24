@@ -4,14 +4,17 @@ import {
 } from "../../domain/analysisView/environmentStateWriteAddress.js";
 import {
   bodyProblem,
+  laterItemFields,
+  optionalFields,
   updatedEntity,
   updatedFields,
   writtenBulkResponse,
 } from "../../domain/analysisView/environmentStateWriteApply.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
-import type {
-  JsonObject,
-  StateEntity,
+import {
+  ownMember,
+  type JsonObject,
+  type StateEntity,
 } from "../../domain/analysisView/environmentStateRules.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -20,6 +23,8 @@ import { callSegments } from "./environmentStateCallLines.js";
 import {
   namedEntity,
   refused,
+  deleteAnswerFields,
+  softDeleteFlag,
   type StateAnswer,
   type StateServing,
 } from "./environmentStateAnswer.js";
@@ -31,6 +36,8 @@ import {
   generator,
   observedEntity,
   pathValues,
+  sortedOrder,
+  storedUpdate,
   unloadable,
   heldEntity,
   updateTarget,
@@ -57,7 +64,8 @@ const namedTargets = (
   const { address } = plan;
   const type = plan.target ?? "";
   const name = environmentToolArguments(tool, true).body;
-  const body = name === undefined ? undefined : (args[name] as JsonValue);
+  const body =
+    name === undefined ? undefined : (ownMember(args, name) as JsonValue);
   if (body !== undefined && !isLoadableValue(body))
     return err(unloadable(tool, "The body"));
   const named =
@@ -79,6 +87,7 @@ const namedTargets = (
     supplied: false,
   }));
   const targets: BulkTarget[] = [];
+  const seen = new Set<BulkTarget["entity"]>();
   for (const { id, body: members } of named) {
     // A body's id is the entity's as written, never a percent-encoded spelling of another.
     const entity = namedEntity(serving.store, type, {
@@ -93,13 +102,14 @@ const namedTargets = (
           `The state holds no ${type} entity ${id}; the state is unchanged.`,
         ),
       );
-    if (targets.some((target) => target.entity === entity))
+    if (seen.has(entity))
       return err(
         refused(
           tool,
           `The body names ${type} entity ${entity.id} more than once; the state is unchanged.`,
         ),
       );
+    seen.add(entity);
     targets.push({ entity, body: members });
   }
   return ok(targets);
@@ -169,7 +179,29 @@ export const answerBulk = (
   const answer = writeAnswer(
     serving,
     request,
-    (recorded) => writtenBulkResponse(plan.response!, recorded, written.value),
+    (recorded) =>
+      writtenBulkResponse(
+        plan.response!,
+        recorded,
+        written.value.map((entity, index) => ({
+          ...entity,
+          fields: update
+            ? entity.fields
+            : deleteAnswerFields(
+                serving,
+                entity.type,
+                entity.fields,
+                Array.isArray(recorded) ? recorded[0] : undefined,
+              ),
+          sent: Object.keys(targets.value[index]!.body ?? {}),
+        })),
+        optionalFields(plan),
+        laterItemFields(
+          serving.store.state.views.values(),
+          serving.store.state.entities,
+          plan.target,
+        ),
+      ),
     {
       source: "state",
       view: update ? "update" : "delete",
@@ -181,9 +213,27 @@ export const answerBulk = (
   );
   if (!answer.ok) return answer;
   if (update) {
-    const updated = serving.store.updateAll(written.value);
+    const stored = written.value.map((entity) => ({
+      ...entity,
+      fields: storedUpdate(serving, plan, entity.fields),
+    }));
+    const updated = serving.store.updateAll(
+      stored,
+      sortedOrder(
+        serving,
+        plan,
+        stored.map((after, index) => ({
+          before: targets.value[index]!.entity,
+          after,
+        })),
+      ),
+    );
     if (!updated.ok) return updated;
-  } else serving.store.removeAll(written.value);
+  } else
+    serving.store.removeAll(
+      written.value,
+      softDeleteFlag(serving, first!.entity.type) !== undefined,
+    );
   serving.store.commitWrite(values.taken);
   return answer;
 };

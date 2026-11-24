@@ -4,7 +4,6 @@ import type {
   JavaScriptRuntimeTargetList,
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { parseCdpEndpointValue, readCdpJson } from "../browser/CdpEndpoint.js";
@@ -28,6 +27,7 @@ export interface V8InspectorTarget {
 
 export interface V8InspectorDiscovery {
   readonly limitations: readonly string[];
+  readonly ambiguousTargetIds?: readonly string[];
   readonly runtime: JavaScriptRuntimeTargetList["runtime"];
   readonly targets: readonly V8InspectorTarget[];
 }
@@ -38,17 +38,32 @@ export const discoverV8Inspector = async (
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): Promise<V8InspectorDiscovery> => {
-  const [versionInput, targetsInput] = await Promise.all([
-    readCdpJson(new URL("/json/version", endpoint), operation, signal),
-    readCdpJson(new URL("/json/list", endpoint), operation, signal),
-  ]);
+  const controller = new AbortController();
+  const discoverySignal =
+    signal === undefined
+      ? controller.signal
+      : AbortSignal.any([signal, controller.signal]);
+  const reads = [
+    readCdpJson(new URL("/json/version", endpoint), operation, discoverySignal),
+    readCdpJson(new URL("/json/list", endpoint), operation, discoverySignal),
+  ] as const;
+  let versionInput: unknown;
+  let targetsInput: unknown;
+  try {
+    [versionInput, targetsInput] = await Promise.all(reads);
+  } catch (cause: unknown) {
+    controller.abort(cause);
+    await Promise.allSettled(reads);
+    throw cause;
+  }
   const version = parseCdpEndpointValue(versionSchema, versionInput, operation);
-  const { targets, limitations } = parseCdpDiscoveryTargets(
+  const { targets, limitations, ambiguousTargetIds } = parseCdpDiscoveryTargets(
     targetsInput,
     operation,
   );
   return {
     limitations,
+    ambiguousTargetIds,
     runtime: {
       product: version.Browser,
       protocol_version: version["Protocol-Version"],

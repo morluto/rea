@@ -1,3 +1,5 @@
+import type { AnalysisViewParent } from "../../src/domain/analysisView/analysisViewParent.js";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import {
   apiSurfaceHar,
@@ -5,8 +7,10 @@ import {
   environmentStateHar,
 } from "./historicalHar.js";
 import { webNetworkCaptureSchema } from "../../src/domain/webNetworkCapture.js";
-import { BINARY_LAYOUT_TEST_PROVIDER } from "./binaryDiagnostics/layout.js";
-import { binaryLayoutFixture } from "./binaryDiagnostics/layout.js";
+import {
+  BINARY_LAYOUT_TEST_PROVIDER,
+  binaryLayoutFixture,
+} from "./binaryDiagnostics/layout.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence, type Evidence } from "../../src/domain/evidence.js";
 import type { JavaScriptApplicationAnalysisResult } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -19,7 +23,7 @@ import { createJavaScriptSemanticGraph } from "../../src/domain/javascript/javas
 import type { BinaryLayout } from "../../src/domain/native/binaryLayout.js";
 import { binaryLayoutSchema } from "../../src/domain/native/binaryLayout.js";
 import { ghidraFunctionDossier } from "../../src/domain/ghidraValues.fixture.js";
-import { functionDossierSchema } from "../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../src/domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../../src/domain/relationshipCoverage.js";
 
 /** Canonical portable Evidence; no native provider is started by this fixture. */
@@ -261,7 +265,7 @@ export const analysisViewCaptureEvidence = (
 ): Evidence =>
   createEvidence(
     capture.artifact.sha256 === null
-      ? undefined
+      ? unknownTarget("not-observed")
       : {
           path: capture.artifact.path,
           sha256: capture.artifact.sha256,
@@ -314,28 +318,56 @@ export const environmentManifestCaptureFixture = (
 export const environmentStateCaptureFixture = () =>
   environmentManifestCaptureFixture(environmentStateHar().log.entries);
 
-/** One synthetic exchange: method, path, JSON response body (a string is recorded as written), status, JSON request body and duration in milliseconds. */
+/** Parent facts passed to a view of captured traffic. */
+export const captureParent = (
+  evidence: Evidence = analysisViewCaptureEvidence(
+    environmentStateCaptureFixture(),
+  ),
+): AnalysisViewParent => ({
+  predicateType: evidence.predicate_type,
+  evidenceId: evidence.evidence_id,
+  operation: evidence.operation,
+  normalizedResult: evidence.normalized_result,
+  subject: evidence.subject,
+  limitations: [],
+  parameters: evidence.parameters,
+});
+
+/** One synthetic exchange. A string response body is recorded as written. */
 export type TimedCaptureRow = readonly [
   method: string,
   path: string,
   body?: JsonValue,
   status?: number,
   request?: JsonValue | undefined,
-  time?: number,
+  durationMs?: number,
+  startOffsetSeconds?: number | undefined,
 ];
 
-/** Capture Evidence of HAR entries one second apart on one origin, as the environment-state view orders them. */
+/** Capture Evidence of HAR entries on one origin, one second apart by default. */
 export const timedCaptureEvidence = (
   rows: readonly TimedCaptureRow[],
 ): Evidence =>
   analysisViewCaptureEvidence(
     environmentManifestCaptureFixture(
       rows.map(
-        ([method, path, body = null, status = 200, sent, time = 5], index) => ({
+        (
+          [
+            method,
+            path,
+            body = null,
+            status = 200,
+            sent,
+            durationMs = 5,
+            startOffsetSeconds,
+          ],
+          index,
+        ) => ({
           startedDateTime: new Date(
-            Date.parse("2026-10-17T18:00:00.000Z") + index * 1000,
+            Date.parse("2026-10-17T18:00:00.000Z") +
+              (startOffsetSeconds ?? index) * 1000,
           ).toISOString(),
-          time,
+          time: durationMs,
           request: {
             method,
             url: `http://app.example${path}`,

@@ -2,7 +2,7 @@ import { createEvidence, type Evidence } from "../../src/domain/evidence.js";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../src/contracts/functionComparisonExample.js";
 import type { NativeSymbolMetadata } from "../../src/domain/native/nativeSymbol.js";
-import { functionDossierSchema } from "../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../src/domain/native/functionDossier.js";
 
 /** Explicit synthetic producer facts; they do not qualify any real provider. */
 export const nativeMatchingProvider = {

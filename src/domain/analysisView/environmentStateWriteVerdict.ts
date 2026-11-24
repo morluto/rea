@@ -1,11 +1,21 @@
-import { at, isObject, type StateEntity } from "./environmentStateRules.js";
+import {
+  at,
+  isObject,
+  type StateEntity,
+  type StateView,
+} from "./environmentStateRules.js";
+import { laterItemFields } from "./environmentStateWriteApply.js";
 import type { WriteDraft, WriteIo } from "./environmentStateWriteEffects.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
 
-/** Whether an update or delete that answers with the entity can answer for an initial entity: one holds, or an update's rules write, every field its recorded response shows. */
+/** Whether an update or delete that answers with the entity can answer for an initial entity: one holds, or an update's rules write, every field its recorded response shows that some initial entity holds. */
 const renders = (
   plan: StateWritePlan,
-  input: { readonly io: WriteIo; readonly entities: readonly StateEntity[] },
+  input: {
+    readonly io: WriteIo;
+    readonly entities: readonly StateEntity[];
+    readonly views: ReadonlyMap<string, StateView>;
+  },
 ): boolean => {
   const { response } = plan;
   if (
@@ -26,25 +36,37 @@ const renders = (
         )
       : [],
   );
+  const later = laterItemFields(
+    input.views.values(),
+    input.entities,
+    plan.target,
+  );
   return (
     shown === undefined ||
     input.entities.some(
       (entity) =>
         entity.type === plan.target &&
         shown.every(
-          (field) => Object.hasOwn(entity.fields, field) || written.has(field),
+          (field) =>
+            Object.hasOwn(entity.fields, field) ||
+            written.has(field) ||
+            later.has(field),
         ),
     )
   );
 };
 
-/** Whether an item action sets something, and a call showed each field it sets already at that value, so the action sets rather than toggles it. */
+/** Whether an item action sets or toggles something, and a call showed each field it sets already at that value, so it sets rather than toggles those. */
 const steady = (plan: StateWritePlan, draft: WriteDraft): boolean => {
   if (plan.address?.by !== "action") return true;
   const set = plan.rules.flatMap((rule) =>
     rule.rule === "set" ? [rule.field] : [],
   );
-  return set.length > 0 && set.every((field) => draft.steady.has(field));
+  // A toggle is learned only from calls that flipped its field both ways.
+  return (
+    (set.length > 0 || plan.rules.some((rule) => rule.rule === "toggle")) &&
+    set.every((field) => draft.steady.has(field))
+  );
 };
 
 /** Whether a clock a call left as it was in its own second has no rule another call showed, so no call showed whether the write stamps it. */
@@ -56,7 +78,11 @@ const unstamped = (plan: StateWritePlan, draft: WriteDraft): boolean =>
 /** A replayed write's plan, served only when it was called, nothing contradicted it, a read confirmed it and its answers can render. */
 export const writeVerdict = (
   draft: WriteDraft,
-  input: { readonly io: WriteIo; readonly entities: readonly StateEntity[] },
+  input: {
+    readonly io: WriteIo;
+    readonly entities: readonly StateEntity[];
+    readonly views: ReadonlyMap<string, StateView>;
+  },
 ): StateWritePlan => {
   const plan = draft.plan;
   if (plan.reason === null) {

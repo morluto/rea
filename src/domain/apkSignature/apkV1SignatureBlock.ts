@@ -17,6 +17,8 @@
  * conflated with malformed input.
  */
 import { type Result, err, ok } from "../result.js";
+import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
+import { decodeAsn1Oid } from "../asn1Oid.js";
 import { Asn1BerFailure, Asn1BerReader, type Asn1BerNode } from "../asn1Ber.js";
 
 export type ApkV1BlockError =
@@ -26,23 +28,28 @@ export type ApkV1BlockError =
       readonly resource:
         | "v1-block-certificates"
         | "v1-signer-infos"
-        | "asn1-elements";
+        | "asn1-elements"
+        | "asn1-depth"
+        | "oid-bytes"
+        | "oid-arc-bytes";
       readonly limit: number;
     };
 
 /** Certificates in one block: a signer leaf plus a short chain is the norm. */
-export const MAX_V1_BLOCK_CERTIFICATES = 32;
+const MAX_V1_BLOCK_CERTIFICATES = 32;
 /** SignerInfos in one block; apksig verifies one, more is pathological. */
-export const MAX_V1_SIGNER_INFOS = 32;
+const MAX_V1_SIGNER_INFOS = 32;
 /** Nesting depth; SignedData → X.509 extensions is under 12 levels deep. */
 const MAX_ASN1_DEPTH = 32;
 /** Elements read while decoding one block; bounds work for any byte length. */
-export const MAX_ASN1_ELEMENTS = 65_536;
+const MAX_ASN1_ELEMENTS = 65_536;
 
 export interface ApkV1SignerInfo {
   readonly identifiedBy: "issuer-and-serial" | "subject-key-identifier";
-  /** Index into `certificates` of the certificate the SignerInfo names; null when none matches. */
+  /** Index into `certificates` of the certificate the SignerInfo names; null when no unique raw certificate matches. */
   readonly certificateIndex: number | null;
+  /** Several distinct DER certificates match the same declared signer identifier. */
+  readonly certificateIssue?: "ambiguous-identifier";
   readonly digestAlgorithmOid: string;
   readonly signatureAlgorithmOid: string;
 }
@@ -97,11 +104,14 @@ class ApkBerReader {
       return this.#reader.read(at, limit, depth);
     } catch (cause: unknown) {
       if (!(cause instanceof Asn1BerFailure)) throw cause;
-      if (cause.kind === "budget-exceeded")
+      if (cause.constraint !== null)
         throw new BlockFailure({
           kind: "budget-exceeded",
-          resource: "asn1-elements",
-          limit: MAX_ASN1_ELEMENTS,
+          resource:
+            cause.constraint.resource === "nodes"
+              ? "asn1-elements"
+              : "asn1-depth",
+          limit: cause.constraint.limit,
         });
       throw malformed(cause.message);
     }
@@ -152,24 +162,18 @@ const expectOctetString = (
 
 /** Dotted OID text; arcs are accumulated as BigInt so no arc overflows. */
 const oidText = (content: Uint8Array): string => {
-  if (content.length === 0 || content.length > 64)
-    throw malformed(`object identifier of ${String(content.length)} bytes`);
-  const arcs: bigint[] = [];
-  let value = 0n;
-  for (const [index, byte] of content.entries()) {
-    value = (value << 7n) | BigInt(byte & 0x7f);
-    if ((byte & 0x80) !== 0) {
-      if (index === content.length - 1)
-        throw malformed("object identifier is truncated");
-      continue;
-    }
-    if (arcs.length === 0) {
-      const first = value < 80n ? value / 40n : 2n;
-      arcs.push(first, value - first * 40n);
-    } else arcs.push(value);
-    value = 0n;
-  }
-  return arcs.join(".");
+  const decoded = decodeAsn1Oid(content, { bytes: 64, arcBytes: 64 });
+  if (decoded.ok) return decoded.value;
+  if (decoded.error.kind === "byte-limit" || decoded.error.kind === "arc-limit")
+    throw new BlockFailure({
+      kind: "budget-exceeded",
+      resource:
+        decoded.error.kind === "byte-limit" ? "oid-bytes" : "oid-arc-bytes",
+      limit: decoded.error.limit,
+    });
+  if (decoded.error.kind === "truncated")
+    throw malformed("object identifier is truncated");
+  throw malformed(`object identifier of ${String(content.length)} bytes`);
 };
 
 const algorithmOid = (tlv: Asn1BerNode | undefined, what: string) =>
@@ -182,7 +186,30 @@ const algorithmOid = (tlv: Asn1BerNode | undefined, what: string) =>
   );
 
 const equalBytes = (a: Uint8Array, b: Uint8Array): boolean =>
-  a.length === b.length && a.every((byte, i) => byte === b[i]);
+  a.length === b.length && Buffer.compare(a, b) === 0;
+
+/**
+ * apksig compares serials as signed INTEGER values, tolerating redundant sign
+ * octets even though DER requires minimal encoding. Normalize each parsed
+ * identity once; retain the original certificate encoding independently.
+ */
+const integerIdentityContents = (bytes: Uint8Array): Uint8Array => {
+  let start = 0;
+  while (start < bytes.length - 1) {
+    const first = bytes[start];
+    const nextHigh = ((bytes[start + 1] ?? 0) & 0x80) !== 0;
+    if (!((first === 0x00 && !nextHigh) || (first === 0xff && nextHigh))) break;
+    start += 1;
+  }
+  return start === 0 ? bytes : bytes.subarray(start);
+};
+
+/** Optional identity interpretation may remain unknown while raw certificate identity survives. */
+const unavailableIdentityInterpretation = (cause: unknown): boolean =>
+  cause instanceof BlockFailure &&
+  (cause.error.kind === "malformed-pkcs7" ||
+    cause.error.resource === "oid-bytes" ||
+    cause.error.resource === "oid-arc-bytes");
 
 /**
  * RFC 5280 §7.1: RDN order matters; attributes in one SET do not. This
@@ -233,17 +260,17 @@ const directoryNameKey = (name: Asn1BerNode): string | null => {
     }
     return JSON.stringify(rdns);
   } catch (cause) {
-    if (cause instanceof BlockFailure && cause.error.kind === "malformed-pkcs7")
-      return null;
+    if (unavailableIdentityInterpretation(cause)) return null;
     throw cause;
   }
 };
 
 /** The X.509 facts a SignerInfo can name: issuer Name DER, serial and SKI. */
 interface CertificateIdentity {
+  readonly encoded: Uint8Array;
   readonly issuer: Uint8Array;
   readonly issuerKey: string | null;
-  readonly serial: Uint8Array;
+  readonly serialIdentity: Uint8Array;
   readonly subjectKeyIdentifier: Uint8Array | null;
 }
 
@@ -267,7 +294,16 @@ const certificateIdentity = (
     const serial = expectTag(fields[offset], TAG.integer, "serialNumber");
     const issuer = expectTag(fields[offset + 2], TAG.sequence, "issuer");
     let subjectKeyIdentifier: Uint8Array | null = null;
-    const extensions = fields.find((field) => field.tag === TAG.context3);
+    // RFC 5280 §4.1: TBSCertificate is a SEQUENCE with at most one
+    // `extensions [3]`, and §4.2 allows each extension at most once. A repeat
+    // is not a TBSCertificate, so the certificate names no SignerInfo.
+    const extensionFields = uniqueKeyed(
+      keyedBy(fields, (field) => String(field.tag)),
+      String(TAG.context3),
+    );
+    if (!extensionFields.ok)
+      throw malformed("tbsCertificate declares extensions more than once");
+    const extensions = extensionFields.value;
     if (extensions !== undefined) {
       const list = expectTag(
         extensions.children[0],
@@ -278,6 +314,10 @@ const certificateIdentity = (
         const parts = extension.children;
         const id = expectTag(parts[0], TAG.oid, "extension id");
         if (oidText(id.content) !== OID_SUBJECT_KEY_IDENTIFIER) continue;
+        if (subjectKeyIdentifier !== null)
+          throw malformed(
+            "tbsCertificate declares subjectKeyIdentifier more than once",
+          );
         const value = expectTag(parts.at(-1), TAG.octetString, "extnValue");
         const inner = reader.read(value.contentStart, value.contentEnd, 0);
         subjectKeyIdentifier = expectTag(
@@ -288,16 +328,42 @@ const certificateIdentity = (
       }
     }
     return {
+      encoded: reader.rawEncodedSpan(certificate),
       issuer: reader.rawEncodedSpan(issuer),
       issuerKey: directoryNameKey(issuer),
-      serial: serial.content,
+      serialIdentity: integerIdentityContents(serial.content),
       subjectKeyIdentifier,
     };
   } catch (cause: unknown) {
-    if (cause instanceof BlockFailure && cause.error.kind === "malformed-pkcs7")
-      return null;
+    if (unavailableIdentityInterpretation(cause)) return null;
     throw cause;
   }
+};
+
+/** Match an identifier to raw certificate identity, independently of certificate order. */
+const matchingCertificate = (
+  identities: readonly (CertificateIdentity | null)[],
+  matches: (identity: CertificateIdentity) => boolean,
+): Pick<ApkV1SignerInfo, "certificateIndex" | "certificateIssue"> => {
+  let selected: CertificateIdentity | undefined;
+  let certificateIndex: number | null = null;
+  for (const [index, identity] of identities.entries()) {
+    if (identity === null || !matches(identity)) continue;
+    if (
+      selected !== undefined &&
+      !equalBytes(selected.encoded, identity.encoded)
+    )
+      return {
+        certificateIndex: null,
+        certificateIssue: "ambiguous-identifier",
+      };
+    if (selected === undefined) {
+      selected = identity;
+      certificateIndex = index;
+    }
+  }
+  // Repeated copies of the exact same DER still name one certificate identity.
+  return { certificateIndex };
 };
 
 const signerInfo = (
@@ -311,31 +377,33 @@ const signerInfo = (
   expectTag(fields[0], TAG.integer, `${what} version`);
   const sid = fields[1];
   let identifiedBy: ApkV1SignerInfo["identifiedBy"];
-  let certificateIndex: number;
+  let certificate: Pick<
+    ApkV1SignerInfo,
+    "certificateIndex" | "certificateIssue"
+  >;
   if (sid?.tag === TAG.sequence) {
     const parts = sid.children;
     const issuerNode = expectTag(parts[0], TAG.sequence, `${what} issuer`);
     const issuer = reader.rawEncodedSpan(issuerNode);
     const issuerKey = directoryNameKey(issuerNode);
-    const serial = expectTag(
-      parts[1],
-      TAG.integer,
-      `${what} serialNumber`,
-    ).content;
+    const serialIdentity = integerIdentityContents(
+      expectTag(parts[1], TAG.integer, `${what} serialNumber`).content,
+    );
     identifiedBy = "issuer-and-serial";
-    certificateIndex = identities.findIndex(
+    certificate = matchingCertificate(
+      identities,
       (identity) =>
-        identity !== null &&
         (equalBytes(identity.issuer, issuer) ||
           (issuerKey !== null && identity.issuerKey === issuerKey)) &&
-        equalBytes(identity.serial, serial),
+        equalBytes(identity.serialIdentity, serialIdentity),
     );
   } else if (sid?.tag === TAG.context0Primitive) {
     const keyId = sid.content;
     identifiedBy = "subject-key-identifier";
-    certificateIndex = identities.findIndex(
+    certificate = matchingCertificate(
+      identities,
       (identity) =>
-        identity?.subjectKeyIdentifier != null &&
+        identity.subjectKeyIdentifier !== null &&
         equalBytes(identity.subjectKeyIdentifier, keyId),
     );
   } else throw malformed(`${what} has no supported signer identifier`);
@@ -349,7 +417,7 @@ const signerInfo = (
   expectOctetString(fields[next + 1], `${what} signature`);
   return {
     identifiedBy,
-    certificateIndex: certificateIndex < 0 ? null : certificateIndex,
+    ...certificate,
     digestAlgorithmOid,
     signatureAlgorithmOid,
   };

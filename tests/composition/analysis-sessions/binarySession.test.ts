@@ -1,17 +1,24 @@
 import {
+  fileSubjectTarget,
+  displayedEvidenceSubject,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import {
   createAnalysisExecution,
   type AnalysisClient,
   type AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { HopperStartError } from "../../../src/domain/hopperErrors.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { HopperStartError } from "../../../src/hopper/HopperErrors.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -34,7 +41,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 const client = (fail = false): AnalysisClient => ({
   execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
@@ -193,74 +200,91 @@ it("preserves the exact abort reason before external mutation admission", async 
   await session.close();
 });
 
-it("drains session calls and retires analysis after an admitted external mutation", async () => {
-  const [target] = await createBinarySessionTargets();
-  const alias = join(dirname(target), "first-alias.hop");
-  await symlink(target, alias);
-  const calls: string[] = [];
-  const clients: { closed: number; targetSha256: string }[] = [];
-  const base = createCacheProvider(calls);
-  const session = createTestBinarySession({
-    ...base,
-    createClient: (...arguments_) => {
-      const client = base.createClient(...arguments_);
-      const tracked = { closed: 0, targetSha256: arguments_[0].sha256 };
-      clients.push(tracked);
-      return {
-        ...client,
-        close: async () => {
-          tracked.closed += 1;
-          return client.close();
-        },
-      };
-    },
-  });
-  expect((await session.open(target)).ok).toBe(true);
-  expect(session.activeTarget()?.path).toBe(target);
-  const originalDigest = session.activeTarget()?.sha256;
-  const started = createDeferred<void>();
-  const release = createDeferred<void>();
+it.each([
+  ["symlink", symlink],
+  ["hard link", link],
+] as const)(
+  "queues analysis and retires the target after an external mutation through a %s",
+  async (_kind, createAlias) => {
+    const [target] = await createBinarySessionTargets();
+    const alias = join(dirname(target), "alias.hop");
+    await createAlias(target, alias);
+    const calls: string[] = [];
+    const clientDigests: string[] = [];
+    const base = createCacheProvider(calls);
+    const session = createTestBinarySession({
+      ...base,
+      createClient: (...arguments_) => {
+        clientDigests.push(arguments_[0].sha256);
+        return base.createClient(...arguments_);
+      },
+    });
+    expect((await session.open(target)).ok).toBe(true);
+    expect(session.activeTarget()?.path).toBe(target);
+    const originalDigest = session.activeTarget()?.sha256;
+    expect(originalDigest).toEqual(expect.any(String));
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
 
-  const mutation = session.withAdmittedExternalMutation(
-    alias,
-    undefined,
-    async () => {
-      expect(session.activeTarget()?.path).toBe(target);
-      started.resolve();
-      await release.promise;
-      await writeFile(alias, "changed by external provider");
-      return resultOk("provider finished");
-    },
-    (_value, error) => error,
-  );
-  await started.promise;
-  const queuedAnalysis = session.execute("address_name", {});
-  expect(calls).toEqual([]);
+    const mutation = session.withAdmittedExternalMutation(
+      alias,
+      undefined,
+      async () => {
+        expect(session.activeTarget()?.path).toBe(target);
+        started.resolve();
+        await release.promise;
+        await writeFile(alias, "changed by external provider");
+        return resultOk("provider finished");
+      },
+      (_value, error) => error,
+    );
+    onTestFinished(async () => {
+      release.resolve();
+      try {
+        await mutation;
+      } finally {
+        await session.close();
+      }
+    });
+    await awaitAcknowledgement(started.promise, mutation, "external mutation");
+    const queuedAnalysis = session.execute("address_name", {});
+    expect(calls).toEqual([]);
 
-  release.resolve();
-  await expect(mutation).resolves.toMatchObject({
-    ok: true,
-    value: { ok: true, value: "provider finished" },
-  });
-  expect((await queuedAnalysis).ok).toBe(false);
-  expect(session.activeTarget()).toBeUndefined();
-  expect(calls).toEqual([]);
-  expect(clients).toHaveLength(0);
-  expect((await session.open(target)).ok).toBe(true);
-  expect((await session.execute("address_name", {})).ok).toBe(true);
-  expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
-  expect(clients.at(-1)?.targetSha256).toBe(session.activeTarget()?.sha256);
-  expect(calls).toEqual(["address_name"]);
-  await session.close();
-});
+    release.resolve();
+    await expect(mutation).resolves.toMatchObject({
+      ok: true,
+      value: { ok: true, value: "provider finished" },
+    });
+    expect((await queuedAnalysis).ok).toBe(false);
+    expect(session.activeTarget()).toBeUndefined();
+    expect(calls).toEqual([]);
+    expect(clientDigests).toEqual([]);
+    expect((await session.open(target)).ok).toBe(true);
+    expect((await session.execute("address_name", {})).ok).toBe(true);
+    expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
+    expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
+    expect(clientDigests).toEqual([session.activeTarget()?.sha256]);
+    expect(calls).toEqual(["address_name"]);
+    await session.close();
+  },
+);
 
 it("leaves analysis unbound when a command returns before its writer finishes", async () => {
   const [target] = await createBinarySessionTargets();
   const session = createTestBinarySession(createCacheProvider([]));
   expect((await session.open(target)).ok).toBe(true);
   const originalDigest = session.activeTarget()?.sha256;
+  expect(originalDigest).toEqual(expect.any(String));
   const releaseWriter = createDeferred<void>();
   let writer: Promise<void> | undefined;
+  onTestFinished(async () => {
+    releaseWriter.resolve();
+    try {
+      await writer;
+    } finally {
+      await session.close();
+    }
+  });
   const result = await session.withAdmittedExternalMutation(
     target,
     undefined,
@@ -275,74 +299,127 @@ it("leaves analysis unbound when a command returns before its writer finishes", 
   expect(result).toEqual(resultOk(resultOk("command replied")));
   expect(session.activeTarget()).toBeUndefined();
   releaseWriter.resolve();
-  await writer;
+  await expect(writer).resolves.toBeUndefined();
   expect((await session.execute("address_name", {})).ok).toBe(false);
   expect((await session.open(target)).ok).toBe(true);
+  expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
   expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
   await session.close();
 });
 
-it("reports an external cleanup blocker until its exact owner confirms release", async () => {
+it.each([false, true])(
+  "reports external writer cleanup until its owner releases it (target already open: %s)",
+  async (alreadyOpen) => {
+    const [target] = await createBinarySessionTargets();
+    const session = createTestBinarySession(createCacheProvider([]));
+    const failure = new ProviderCleanupError(
+      "external-debugger",
+      ["external-run"],
+      {},
+    );
+    const release = vi.fn(async () => {});
+    const lease = new AnalysisCleanupLease(release, ["external-run"]);
+    lease.bindCleanupError(failure);
+    try {
+      if (alreadyOpen) expect((await session.open(target)).ok).toBe(true);
+      expect(await session.status()).toMatchObject({ cleanup_pending: false });
+      const mutation = await session.withAdmittedExternalMutation(
+        target,
+        undefined,
+        async () => err(failure),
+        (_value, error) => error,
+      );
+      expect(mutation).toEqual(resultOk(err(failure)));
+      expect(session.activeTarget()).toBeUndefined();
+      expect(await session.status()).toMatchObject({ cleanup_pending: true });
+      expect(await session.open(target)).toEqual({
+        ok: false,
+        error: failure,
+        targetAtCompletion: null,
+        providerIdAtCompletion: null,
+        selection: { kind: "none" },
+      });
+      const anotherMutation = vi.fn(async () => resultOk(null));
+      expect(
+        await session.withAdmittedExternalMutation(
+          target,
+          undefined,
+          anotherMutation,
+          (_value, error) => error,
+        ),
+      ).toEqual(err(failure));
+      expect(anotherMutation).not.toHaveBeenCalled();
+
+      await session.close({ cleanupRetry: { operation: "close_binary" } });
+      expect(release).not.toHaveBeenCalled();
+      const status = await session.status();
+      expect(status).toMatchObject({ cleanup_pending: true });
+      expect(status).not.toHaveProperty("cleanup_retry");
+      await lease.release();
+      expect(await session.status()).toMatchObject({ cleanup_pending: false });
+      expect((await session.open(target)).ok).toBe(true);
+    } finally {
+      await lease.release();
+      await session.close();
+    }
+  },
+);
+
+it("does not offer close retry while an external owner also blocks cleanup", async () => {
   const [target] = await createBinarySessionTargets();
-  const session = createTestBinarySession(createCacheProvider([]));
-  const failure = new ProviderCleanupError(
+  const externalFailure = new ProviderCleanupError(
     "external-debugger",
     ["external-run"],
     {},
   );
-  let released = false;
-  const lease = new AnalysisCleanupLease(async () => {
-    released = true;
-  }, ["external-run"]);
-  lease.bindCleanupError(failure);
+  const clientFailure = new ProviderCleanupError("fixture", ["client-run"], {});
+  let clientReleased = false;
+  const externalLease = new AnalysisCleanupLease(async () => {}, [
+    "external-run",
+  ]);
+  const clientLease = new AnalysisCleanupLease(async () => {
+    clientReleased = true;
+  }, ["client-run"]);
+  externalLease.bindCleanupError(externalFailure);
+  clientLease.bindCleanupError(clientFailure);
+  const provider = createCacheProvider([]);
+  const session = createTestBinarySession({
+    ...provider,
+    createClient: (...args) => {
+      const client = provider.createClient(...args);
+      return {
+        ...client,
+        close: () =>
+          clientReleased ? client.close() : Promise.resolve(err(clientFailure)),
+      };
+    },
+  });
   try {
-    expect(await session.status()).toMatchObject({ cleanup_pending: false });
+    expect((await session.open(target)).ok).toBe(true);
+    await session.execute("address_name", {
+      address: "0x1000",
+      document: "fixture",
+    });
     await session.withAdmittedExternalMutation(
       target,
       undefined,
-      async () => err(failure),
+      async () => err(externalFailure),
       (_value, error) => error,
     );
-    expect(await session.status()).toMatchObject({ cleanup_pending: true });
-    expect(await session.open(target)).toEqual(err(failure));
-    await session.close();
-    expect(released).toBe(false);
-    expect(await session.status()).toMatchObject({ cleanup_pending: true });
-    await lease.release();
-    expect(await session.status()).toMatchObject({ cleanup_pending: false });
-    expect((await session.open(target)).ok).toBe(true);
+    expect(
+      (await session.close({ cleanupRetry: { operation: "close_binary" } })).ok,
+    ).toBe(false);
+    expect(await session.status()).toMatchObject({
+      open: false,
+      cleanup_pending: true,
+    });
+    expect(await session.status()).not.toHaveProperty("cleanup_retry");
   } finally {
-    await lease.release();
-    await session.close();
+    await clientLease.release();
+    await externalLease.release();
+    const closed = await session.close();
+    if (!closed.ok) throw closed.error;
   }
-});
-
-it("retires analysis when an external mutation uses a hard link", async () => {
-  const [target] = await createBinarySessionTargets();
-  const alias = join(dirname(target), "hard-link-alias.hop");
-  await link(target, alias);
-  const session = createTestBinarySession(createCacheProvider([]));
-  expect((await session.open(target)).ok).toBe(true);
-  const before = session.activeTarget()?.sha256;
-
-  const result = await session.withAdmittedExternalMutation(
-    alias,
-    undefined,
-    async () => {
-      await writeFile(alias, "changed through hard link");
-      return resultOk("changed");
-    },
-    (_value, error) => error,
-  );
-
-  expect(result).toMatchObject({
-    ok: true,
-    value: { ok: true, value: "changed" },
-  });
-  expect(session.activeTarget()).toBeUndefined();
-  expect((await session.open(target)).ok).toBe(true);
-  expect(session.activeTarget()?.sha256).not.toBe(before);
-  await session.close();
 });
 
 it("preserves Evidence records while retiring the client after an external mutation", async () => {
@@ -457,7 +534,6 @@ it("keeps an externally mutated session unbound until cleanup is retried", async
   );
 
   expect(closeAttempts).toBe(1);
-  expect(mutation.ok).toBe(false);
   if (mutation.ok) throw new Error("Expected cleanup failure");
   expect(mutation.error).toBeInstanceOf(ProviderCleanupError);
   expect(mutation.error.cleanupIncomplete).toBe(true);
@@ -585,17 +661,10 @@ describe("evidence metadata imports and snapshot cache", () => {
     const before = session.exportAnalysisSnapshot();
     if (!before.ok) throw before.error;
     const existing = session.exportEvidenceBundle().records[0];
-    if (existing === undefined || existing.subject === null)
+    if (existing === undefined)
       throw new Error("Expected artifact-bound Evidence");
     const addition = createEvidence(
-      {
-        path: existing.subject.local_path,
-        sha256: existing.subject.digest.sha256,
-        format: existing.subject.format,
-        ...(existing.subject.architecture === null
-          ? {}
-          : { architecture: existing.subject.architecture }),
-      },
+      fileSubjectTarget(existing.subject),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         predicateType: "rea.analysis",
@@ -606,10 +675,24 @@ describe("evidence metadata imports and snapshot cache", () => {
     );
     expect(
       session.importEvidenceBundle(createEvidenceBundle([addition])),
-    ).toEqual({ ok: true, value: 1 });
+    ).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 1,
+        unknownsAdded: 0,
+        totalRecords: before.value.evidence_bundle.records.length + 1,
+      },
+    });
     expect(
       session.importEvidenceBundle(createEvidenceBundle([addition])),
-    ).toEqual({ ok: true, value: 0 });
+    ).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        totalRecords: before.value.evidence_bundle.records.length + 1,
+      },
+    });
     expect(session.exportAnalysisSnapshot()).toMatchObject({
       ok: true,
       value: {
@@ -630,7 +713,9 @@ describe("evidence metadata imports and snapshot cache", () => {
     expect(session.exportAnalysisSnapshot().ok).toBe(true);
     await session.close();
   });
+});
 
+describe("Evidence display metadata refresh", () => {
   it.each(["active", "unrelated"] as const)(
     "refreshes %s Evidence display metadata without invalidating provider observations",
     async (scope) => {
@@ -647,7 +732,10 @@ describe("evidence metadata imports and snapshot cache", () => {
         const activeEvidence = baseline.value.evidence_bundle.records.find(
           ({ operation }) => operation === "address_name",
         );
-        if (activeEvidence === undefined || activeEvidence.subject === null)
+        if (
+          activeEvidence === undefined ||
+          activeEvidence.subject.identity.kind !== "file"
+        )
           throw new Error("Expected artifact-bound Evidence");
         const evidence =
           scope === "active"
@@ -658,27 +746,34 @@ describe("evidence metadata imports and snapshot cache", () => {
                 { operation: "health", parameters: {}, result: true },
               );
         expect(session.recordEvidence(evidence).ok).toBe(true);
-        if (evidence.subject === null) throw new Error("Expected a subject");
+        if (evidence.subject.identity.kind !== "file")
+          throw new Error("Expected a subject");
         const relocated = {
           ...evidence,
-          subject: {
-            ...evidence.subject,
+          subject: displayedEvidenceSubject(evidence.subject, {
             local_path: `${evidence.subject.local_path}.moved`,
             name: `${evidence.subject.name}.moved`,
-          },
+          }),
         };
         const changed = vi.fn();
         const unsubscribe = session.onAnalysisSnapshotChanged(changed);
         expect(
           session.importEvidenceBundle(createEvidenceBundle([relocated])),
-        ).toEqual({ ok: true, value: 0 });
+        ).toEqual({
+          ok: true,
+          value: {
+            recordsAdded: 0,
+            unknownsAdded: 0,
+            totalRecords: session.immutableEvidenceBundle().records.length,
+          },
+        });
         expect(changed).toHaveBeenCalledTimes(1);
         unsubscribe();
         expect(session.evidenceById(evidence.evidence_id)).toEqual(relocated);
         const refreshed = session.exportAnalysisSnapshot();
         if (!refreshed.ok) throw refreshed.error;
         if (scope === "active") {
-          expect(refreshed.value.entries[0]?.execution.subject?.path).toBe(
+          expect(refreshed.value.entries[0]?.execution.subject.local_path).toBe(
             relocated.subject.local_path,
           );
           expect(refreshed.value.evidence_bundle.records).toContainEqual(
@@ -801,8 +896,8 @@ describe("snapshot invalidation at mutation dispatch", () => {
         ...parameters,
         name: "after",
       });
-      await started.promise;
       try {
+        await awaitAcknowledgement(started.promise, writing, "session write");
         const during = await session.execute("address_name", parameters);
         if (!during.ok) throw during.error;
         expect(during.value.result).toBe("after");
@@ -877,7 +972,19 @@ describe("replay of exact immutable calls", () => {
     expect(mismatch.importAnalysisSnapshot(snapshot.value).ok).toBe(true);
     const opened = await mismatch.open(second);
     expect(opened.ok).toBe(false);
-    if (!opened.ok) expect(opened.error._tag).toBe("EvidenceIntegrityError");
+    if (!opened.ok) {
+      expect(opened.error._tag).toBe("EvidenceIntegrityError");
+      expect(projectAnalysisError(opened.error).details).toMatchObject({
+        binding_mismatch: {
+          target: {
+            snapshot: {
+              identity: { sha256: snapshot.value.target.identity.sha256 },
+            },
+            selected: { identity: { sha256: expect.any(String) } },
+          },
+        },
+      });
+    }
     await mismatch.close();
 
     const profileMismatchCalls: string[] = [];
@@ -904,7 +1011,14 @@ describe("replay of exact immutable calls", () => {
     expect(profileOpened.ok).toBe(false);
     if (!profileOpened.ok) {
       expect(profileOpened.error._tag).toBe("EvidenceIntegrityError");
-      expect(profileOpened.error.message).toContain("profile_mismatch");
+      expect(projectAnalysisError(profileOpened.error).details).toMatchObject({
+        binding_mismatch: {
+          profile_digest: {
+            snapshot: snapshot.value.binding.analysis_profile.digest,
+            selected: expect.any(String),
+          },
+        },
+      });
     }
     expect(profileMismatchCalls).toEqual([]);
     await profileMismatch.close();
@@ -917,8 +1031,16 @@ describe("replay of exact immutable calls", () => {
       snapshot.value,
     );
     expect(activeImport.ok).toBe(false);
-    if (!activeImport.ok)
-      expect(activeImport.error.message).toContain("profile_mismatch");
+    if (!activeImport.ok) {
+      expect(projectAnalysisError(activeImport.error).details).toMatchObject({
+        binding_mismatch: {
+          profile_digest: {
+            snapshot: snapshot.value.binding.analysis_profile.digest,
+            selected: expect.any(String),
+          },
+        },
+      });
+    }
     await activeProfileMismatch.close();
   });
 });
@@ -968,19 +1090,165 @@ describe("snapshot switch rollback", () => {
 });
 
 describe("snapshot cache eligibility", () => {
-  it("does not snapshot reads that depend on the provider cursor", async () => {
-    const [first] = await createBinarySessionTargets();
-    const calls: string[] = [];
-    const session = createTestBinarySession(createCacheProvider(calls));
-    await openAndExecuteAddressName(session, first, {});
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(calls).toEqual(["address_name", "address_name"]);
-    expect(session.exportAnalysisSnapshot()).toMatchObject({
-      ok: true,
-      value: { entries: [] },
+  it.each([
+    "decode_interface_builder",
+    "inspect_asset_catalog",
+    "inspect_keyed_archive",
+    "trace_dylib_resolution",
+  ] as const)(
+    "reobserves resource-scoped %s without executable snapshot Evidence",
+    async (operation) => {
+      const [target] = await createBinarySessionTargets();
+      const provider = createCacheProvider([]);
+      const [baseCapability] = provider.capabilities();
+      if (baseCapability === undefined)
+        throw new Error("Expected fixture capability");
+      provider.capabilities = () => [
+        { ...baseCapability, operation, cachePolicy: "snapshot" },
+      ];
+      let observations = 0;
+      provider.createClient = () => ({
+        execute: async (name) =>
+          resultOk(
+            createAnalysisExecution(
+              name === "health" ? null : ++observations,
+              provider.identity(),
+            ),
+          ),
+        close: async () => resultOk(null),
+      });
+      const session = createTestBinarySession(provider);
+      try {
+        expect((await session.open(target)).ok).toBe(true);
+        for (const observation of [1, 2]) {
+          const result = await session.execute(operation, {});
+          expect(result).toMatchObject({
+            ok: true,
+            value: { result: observation },
+          });
+          if (result.ok) expect(result.value.evidenceId).toBeUndefined();
+        }
+        expect(session.exportEvidenceBundle().records).toEqual([]);
+        expect(session.exportAnalysisSnapshot()).toMatchObject({
+          ok: true,
+          value: { entries: [] },
+        });
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "retains source Evidence independently of snapshot eligibility (live=%s)",
+    async (live) => {
+      const [target] = await createBinarySessionTargets();
+      const provider = createCacheProvider([]);
+      const capabilities = provider.capabilities();
+      provider.capabilities = () =>
+        capabilities.map((capability) => ({
+          ...capability,
+          ...(live ? { cachePolicy: "live" as const } : {}),
+        }));
+      const source = createEvidence(
+        unknownTarget("not-observed"),
+        provider.identity(),
+        {
+          operation: "health",
+          parameters: { facet: "saved-analysis-report" },
+          result: { original_analysis: "unknown" },
+        },
+        { immutable: true },
+      );
+      provider.createClient = () => ({
+        execute: async () =>
+          resultOk(
+            createAnalysisExecution("name", provider.identity(), {
+              sourceEvidence: [source],
+            }),
+          ),
+        close: async () => resultOk(null),
+      });
+      const session = createTestBinarySession(provider);
+      try {
+        expect((await session.open(target)).ok).toBe(true);
+        const parameters: Readonly<Record<string, JsonValue>> = live
+          ? { address: "0x1000", document: "main" }
+          : {};
+        const evidenceIds: Array<string | undefined> = [];
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const result = await session.execute("address_name", parameters);
+          if (!result.ok) throw result.error;
+          evidenceIds.push(result.value.evidenceId);
+        }
+        const records = session.exportEvidenceBundle().records;
+        if (live) {
+          expect(evidenceIds).toEqual([expect.any(String), evidenceIds[0]]);
+          expect(records.map((record) => record.evidence_id)).toEqual(
+            expect.arrayContaining([source.evidence_id, evidenceIds[0]]),
+          );
+        } else {
+          expect(evidenceIds).toEqual([undefined, undefined]);
+          expect(records).toEqual([source]);
+        }
+        expect(session.exportAnalysisSnapshot()).toMatchObject({
+          ok: true,
+          value: { entries: [] },
+        });
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it("rejects invalid source Evidence on a non-replayable observation", async () => {
+    const [target] = await createBinarySessionTargets();
+    const provider = createCacheProvider([]);
+    const source = createEvidence(
+      unknownTarget("not-observed"),
+      provider.identity(),
+      {
+        operation: "health",
+        parameters: {},
+        result: "original",
+      },
+    );
+    provider.createClient = () => ({
+      execute: async () =>
+        resultOk(
+          createAnalysisExecution("name", provider.identity(), {
+            sourceEvidence: [{ ...source, normalized_result: "tampered" }],
+          }),
+        ),
+      close: async () => resultOk(null),
     });
-    await session.close();
+    const session = createTestBinarySession(provider);
+    try {
+      expect((await session.open(target)).ok).toBe(true);
+      const result = await session.execute("address_name", {});
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceIntegrityError" },
+      });
+      expect(session.exportEvidenceBundle().records).toEqual([]);
+    } finally {
+      await session.close();
+    }
   });
+});
+
+it("does not snapshot reads that depend on the provider cursor", async () => {
+  const [first] = await createBinarySessionTargets();
+  const calls: string[] = [];
+  const session = createTestBinarySession(createCacheProvider(calls));
+  await openAndExecuteAddressName(session, first, {});
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(calls).toEqual(["address_name", "address_name"]);
+  expect(session.exportAnalysisSnapshot()).toMatchObject({
+    ok: true,
+    value: { entries: [] },
+  });
+  await session.close();
 });
 
 describe("provider health and availability", () => {
@@ -1196,22 +1464,6 @@ describe("typed unavailability without dispatching", () => {
     expect(await session.close()).toEqual({ ok: true, value: null });
   });
 
-  it("keeps the active client when a switch fails", async () => {
-    const [first, second] = await createBinarySessionTargets();
-    let created = 0;
-    const session = createTestBinarySession(() => client(created++ === 1));
-    expect((await session.open(first)).ok).toBe(true);
-    expect((await session.open(second)).ok).toBe(false);
-    expect(await session.status()).toMatchObject({
-      open: true,
-      sha256:
-        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
-      architecture: null,
-    });
-    expect(JSON.stringify(await session.status())).toContain("first.hop");
-    expect(created).toBe(3);
-  });
-
   it("orders calls between queued transitions without deadlocking", async () => {
     const [first, second] = await createBinarySessionTargets();
     const clients: ControllableAnalysisClient[] = [];
@@ -1247,46 +1499,59 @@ describe("typed unavailability without dispatching", () => {
     expect(clients[0]?.closed).toBe(1);
     expect(clients[1]?.closed).toBe(1);
   });
-
-  it("cancels a composed admission queued behind open without invoking it", async () => {
-    const [first] = await createBinarySessionTargets();
-    const health = createDeferred<ReturnType<typeof ok>>();
-    const session = createTestBinarySession(
-      () => new ControllableAnalysisClient(health.promise),
-    );
-    const opening = session.open(first);
-    const controller = new AbortController();
-    let invoked = false;
-    const admitted = session.withAdmittedAnalysis(
-      "binary_overview",
-      controller.signal,
-      async () => {
-        invoked = true;
-        return null;
-      },
-    );
-    const reason = { request: "cancel queued composed admission" };
-    controller.abort(reason);
-    try {
-      const result = await admitted;
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "AnalysisCancelledError",
-          operation: "binary_overview",
-        },
-      });
-      if (result.ok) throw new Error("Expected queued admission cancellation");
-      expect(result.error.cause).toBe(reason);
-      expect(invoked).toBe(false);
-    } finally {
-      health.resolve(ok(null));
-      const opened = await opening;
-      await session.close();
-      expect(opened.ok).toBe(true);
-    }
-  });
 });
+
+it.each(["direct", "composed"] as const)(
+  "cancels a %s call before a blocked target transition completes",
+  async (entry) => {
+    const [first, second] = await createBinarySessionTargets();
+    const invoke = vi.fn(async () => ok(null));
+    const session = createTestBinarySession(() => ({
+      execute: (operation) =>
+        operation === "health" ? Promise.resolve(ok(null)) : invoke(),
+      close: async () => resultOk(null),
+    }));
+    const refusedSnapshot = new ProviderAdapterError("fixture", "open_binary");
+    const loading = createDeferred<void>();
+    const release = createDeferred<void>();
+    expect((await session.open(first)).ok).toBe(true);
+    const opening = session.open(second, {
+      loadSnapshot: async () => {
+        loading.resolve();
+        await release.promise;
+        return err(refusedSnapshot);
+      },
+    });
+    onTestFinished(async () => {
+      release.resolve();
+      await opening.finally(() => session.close());
+    });
+    await awaitAcknowledgement(loading.promise, opening, "snapshot load");
+    const controller = new AbortController();
+    const reason = { request: "cancel queued call" };
+    const call =
+      entry === "direct"
+        ? session.execute("binary_overview", {}, { signal: controller.signal })
+        : session.withAdmittedAnalysis(
+            "binary_overview",
+            controller.signal,
+            invoke,
+          );
+    controller.abort(reason);
+    await awaitAcknowledgement(call, opening, "queued cancellation");
+    const result = await call;
+    if (result.ok) throw new Error("Expected queued cancellation");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "binary_overview",
+    });
+    expect(result.error.cause).toBe(reason);
+    expect(invoke).not.toHaveBeenCalled();
+    release.resolve();
+    expect(await opening).toHaveProperty("error", refusedSnapshot);
+    expect(session.activeTarget()?.path).toBe(first);
+  },
+);
 
 describe("active client replacement", () => {
   it("replaces the active client when a canonical path changes contents", async () => {
@@ -1469,14 +1734,19 @@ describe("cancellation during profile resolution", () => {
         openSettled = true;
         return result;
       });
-    await admitted.promise;
-    controller.abort(reason);
     let closeSettled = false;
-    const closing = session.close().then((result) => {
-      closeSettled = true;
-      return result;
-    });
+    let closing: ReturnType<typeof session.close> | undefined;
     try {
+      await awaitAcknowledgement(
+        admitted.promise,
+        opening,
+        "profile admission",
+      );
+      controller.abort(reason);
+      closing = session.close().then((result) => {
+        closeSettled = true;
+        return result;
+      });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(observedSignal?.reason).toBe(reason);
       expect(openSettled).toBe(false);
@@ -1491,37 +1761,18 @@ describe("cancellation during profile resolution", () => {
       expect(created).toBe(0);
       expect(await session.status()).toMatchObject({ cleanup_pending: false });
     } finally {
+      controller.abort(reason);
       release.resolve();
-      await Promise.all([opening, closing]);
-      await session.close();
+      try {
+        await Promise.all([opening, closing]);
+      } finally {
+        await session.close();
+      }
     }
   });
 });
 
 describe("cancellation during client transitions", () => {
-  it("cancels a call while it waits for a transition", async () => {
-    const [first] = await createBinarySessionTargets();
-    const health = createDeferred<ReturnType<typeof ok>>();
-    const session = createTestBinarySession(
-      () => new ControllableAnalysisClient(health.promise),
-    );
-    const opening = session.open(first);
-    const controller = new AbortController();
-    const call = session.execute(
-      "binary_overview",
-      {},
-      {
-        signal: controller.signal,
-      },
-    );
-    controller.abort();
-    const result = await call;
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
-    health.resolve(ok(null));
-    await opening;
-  });
-
   it("closes a failed candidate and reopens the previous target", async () => {
     const [first, second] = await createBinarySessionTargets();
     const clients: ControllableAnalysisClient[] = [];
@@ -1539,6 +1790,13 @@ describe("cancellation during client transitions", () => {
     expect(clients[1]?.closed).toBe(1);
     expect(clients[0]?.closed).toBe(1);
     expect(clients[2]?.closed).toBe(0);
+    expect(await session.status()).toMatchObject({
+      open: true,
+      sha256:
+        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
+      architecture: null,
+    });
+    expect(clients).toHaveLength(3);
     expect(JSON.stringify(await session.status())).toContain("first.hop");
     await session.close();
     await session.close();
@@ -1607,7 +1865,13 @@ describe("no replacement start", () => {
     });
     expect((await session.open(first)).ok).toBe(true);
 
-    expect(await session.open(second)).toEqual(err(cleanupError));
+    expect(await session.open(second)).toEqual({
+      ok: false,
+      error: cleanupError,
+      targetAtCompletion: null,
+      providerIdAtCompletion: null,
+      selection: { kind: "none" },
+    });
     expect(created).toBe(1);
     expect(await session.status()).toMatchObject({ open: false });
   });
@@ -1649,38 +1913,6 @@ describe("selector origin forwarding", () => {
       "direct and admitted calls forward the origin; an unmarked call carries none",
     ).toEqual(["provider", "provider", undefined]);
   });
-});
-
-it("blocks analysis rebinding until the external writer cleanup settles", async () => {
-  const [target] = await createBinarySessionTargets();
-  const session = createTestBinarySession(createCacheProvider([]));
-  expect((await session.open(target)).ok).toBe(true);
-  const failure = new ProviderCleanupError("rizin", ["writer"], {
-    reason: "writer remains alive",
-  });
-  const result = await session.withAdmittedExternalMutation(
-    target,
-    undefined,
-    async () => err(failure),
-    (_value, error) => error,
-  );
-  expect(result).toEqual(resultOk(err(failure)));
-  expect(session.activeTarget()).toBeUndefined();
-  expect(await session.open(target)).toEqual(err(failure));
-  const anotherMutation = vi.fn(async () => resultOk("unrelated command"));
-  expect(
-    await session.withAdmittedExternalMutation(
-      target,
-      undefined,
-      anotherMutation,
-      (_value, error) => error,
-    ),
-  ).toEqual(err(failure));
-  expect(anotherMutation).not.toHaveBeenCalled();
-  // Only the resource owner may acknowledge completed cleanup.
-  failure.resolveCleanup();
-  expect((await session.open(target)).ok).toBe(true);
-  await session.close();
 });
 
 it("requires explicit close before an external mutation of an active Ghidra session", async () => {

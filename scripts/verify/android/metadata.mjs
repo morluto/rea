@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, resolve } from "node:path";
 import { verifyAndroidMethodBodies } from "./method-bodies.mjs";
 import { verifyAndroidDirectInvokes } from "./direct-invokes.mjs";
+import { verifyAndroidExternalReferences } from "./external-invokes.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 /** Prove cold metadata stays unmaterialized and overload identities survive code generation. */
 export const verifyAndroidMetadata = async ({
@@ -33,8 +36,14 @@ export const verifyAndroidMetadata = async ({
       { cause },
     );
   }
-  const classes = await mkdtemp(join(tmpdir(), "rea-android-metadata-"));
-  try {
+  const classesFixture = await VerifierFixture.open({
+    prefix: "rea-android-metadata-",
+    // A plain directory, as before: tools create directories beneath it,
+    // which a private root blocks on Windows.
+    private: false,
+  });
+  const classes = classesFixture.path;
+  await withVerifierFixture(classesFixture, async () => {
     await execute(
       javac,
       [
@@ -47,6 +56,10 @@ export const verifyAndroidMetadata = async ({
         resolve(
           repository,
           "tests/conformance/android/ReaJadxMetadataRegression.java",
+        ),
+        resolve(
+          repository,
+          "tests/conformance/android/ReaJadxExternalReferencesRegression.java",
         ),
       ],
       { timeout: 30_000 },
@@ -83,6 +96,10 @@ export const verifyAndroidMetadata = async ({
     );
     assert.match(
       result.stdout,
+      /DEFAULT_PACKAGE_SELECTOR_REGRESSION_PASS raw=true display=true metadata=true method=true references=true frozen=true/u,
+    );
+    assert.match(
+      result.stdout,
       /INITIALIZER_REGRESSION_PASS folded=2 bounded=true/u,
     );
     assert.match(
@@ -91,11 +108,23 @@ export const verifyAndroidMetadata = async ({
     );
     assert.match(
       result.stdout,
+      /NATIVE_DECLARATION_REGRESSION_PASS raw=true native_only=true unicode=true overloads=true duplicate_dex=true partial=true no_source=true/u,
+    );
+    assert.match(
+      result.stdout,
+      /NATIVE_DECLARATION_COLD_PASS no_apk_load=true raw=true/u,
+    );
+    assert.match(
+      result.stdout,
       /MERGED_METHOD_REGRESSION_PASS exact=true overloaded=true handlers=true/u,
     );
     assert.match(
       result.stdout,
       /CONSTANT_FIELD_REGRESSION_PASS encoded=9 absent=4 opt_in=true/u,
+    );
+    assert.match(
+      result.stdout,
+      /RAW_MEMBER_NAME_REGRESSION_PASS reserved=true overloads=2 inner=true/u,
     );
     assert.match(
       result.stdout,
@@ -149,7 +178,15 @@ export const verifyAndroidMetadata = async ({
       environment,
       execute,
     });
-  } finally {
-    await rm(classes, { recursive: true, force: true });
-  }
+    await verifyAndroidExternalReferences({
+      java,
+      jar,
+      classes,
+      repository,
+      execute,
+      entrypoint,
+      environment,
+      jvmArguments,
+    });
+  });
 };

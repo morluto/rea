@@ -1,19 +1,25 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../dist/contracts/toolContracts.js";
+import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
+import {
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
   process.platform !== "win32",
@@ -28,7 +34,9 @@ assert(
   "Usage: verify-omp-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(tmpdir(), "rea-omp-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-omp-client-",
+});
 const account = join(lab, "account");
 const agent = join(lab, "selected agent");
 const workspace = join(lab, "workspace");
@@ -85,10 +93,7 @@ await withVerifierCleanup(async () => {
     };
     const target = join(lab, "fixture α测试");
     await mkdir(target);
-    await writeFile(
-      join(target, "app.js"),
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
+    await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     const analysisDevice = "xd://mcp__rea_analyze_javascript_application";
     const containsText = (value, text) => {
       if (typeof value === "string") return value.includes(text);
@@ -98,17 +103,8 @@ await withVerifierCleanup(async () => {
         Object.values(value).some((item) => containsText(item, text))
       );
     };
-    const call = (index, name, args) => ({
-      role: "assistant",
-      content: null,
-      tool_calls: [
-        {
-          id: `call_omp_${index}`,
-          type: "function",
-          function: { name, arguments: JSON.stringify(args) },
-        },
-      ],
-    });
+    const call = (index, name, args) =>
+      toolCallMessage(`call_omp_${index}`, name, args);
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: "omp",
@@ -171,37 +167,9 @@ await withVerifierCleanup(async () => {
           evidenceReply,
           "OMP must deliver the full analysis result to the next model turn",
         );
-        const evidence = toolContract(
-          "analyze_javascript_application",
-        ).outputSchema.parse(JSON.parse(evidenceReply.content));
-        await assertJavaScriptApplicationInputPaths(evidence, target);
-        const shape = evidence.normalized_result.graph.nodes
-          .flatMap((node) => node.observations)
-          .map((observation) => observation.properties)
-          .find(
-            (properties) =>
-              properties.semantic_role === "export-return-shapes" &&
-              properties.exported_name === "result",
-          );
-        assert(shape?.return_shape_coverage?.projection_complete);
-        const fields = shape.static_return_shapes.flatMap(
-          (item) => item.fields,
-        );
-        assert(
-          fields.some(
-            (field) =>
-              field.path === "/clientCompatibility" &&
-              field.state === "literal" &&
-              field.value === "REA_CLIENT_FIXTURE",
-          ),
-        );
-        assert(
-          fields.some(
-            (field) =>
-              field.path === "/count" &&
-              field.state === "literal" &&
-              field.value === 7,
-          ),
+        const { evidence } = await assertClientJavaScriptFixtureEvidence(
+          JSON.parse(evidenceReply.content),
+          target,
         );
         const bytes = JSON.stringify(evidence);
         artifactDigest = createHash("sha256").update(bytes).digest("hex");
@@ -345,8 +313,8 @@ await withVerifierCleanup(async () => {
             parsed.plannedActions.every(
               (action) =>
                 action.target === configPath ||
-                action.target === skillDirectory ||
-                action.target.startsWith(skillDirectory + "/"),
+                (isAbsolute(action.target) &&
+                  isPathWithinRoot(skillDirectory, action.target)),
             ),
             "Refuse setup writes outside the owned config/skill",
           );
@@ -484,14 +452,6 @@ await withVerifierCleanup(async () => {
       fixtureFailure: fixture?.failure,
       verifier: lineage,
     };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    await publishClientReceipt(lab, receipt);
   },
 ]);
