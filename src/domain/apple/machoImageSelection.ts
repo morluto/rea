@@ -55,6 +55,34 @@ const containerFailure = (
 };
 
 /**
+ * The universal file's own failure for a FAT header the container reader did
+ * not parse. A header or table past the file's measured end carries that
+ * reader's extent; `needs-data` remains only when a read returned fewer bytes
+ * than the measured size admits.
+ */
+const unparsedHeaderFailure = (
+  fat: Exclude<FatContainerHeader, { state: "parsed" | "not-fat" }>,
+): MachoImageSelectionFailure => {
+  if (fat.state === "malformed")
+    return containerFailure("malformed", fat.reason);
+  if (fat.state === "needs-data")
+    return containerFailure(
+      "truncated",
+      "Universal Mach-O header is truncated",
+    );
+  return {
+    kind: "format",
+    message: fat.reason,
+    failure: {
+      kind: "truncated",
+      format: MACHO_FORMAT,
+      detail: fat.reason,
+      extent: fat.extent,
+    },
+  };
+};
+
+/**
  * Check one selected declaration against its slice's observed header prefix.
  * The table entry and the slice header are two records in the same file, so
  * their disagreement breaks the container's own rule: malformed, never the
@@ -90,12 +118,7 @@ export const readUniversalMachoImage = (
 ): Result<UniversalMachoHeader | null, MachoImageSelectionFailure> => {
   const fat = readFatContainerHeader(bytes, bytes.byteLength);
   if (fat.state === "not-fat") return ok(null);
-  if (fat.state !== "parsed")
-    return err(
-      fat.state === "malformed"
-        ? containerFailure("malformed", fat.reason)
-        : containerFailure("truncated", "Universal Mach-O header is truncated"),
-    );
+  if (fat.state !== "parsed") return err(unparsedHeaderFailure(fat));
   const identity = classifyFatContainerEvidence(fat, bytes);
   if (identity.state === "malformed")
     return err(containerFailure(identity.category, identity.reason));
@@ -173,12 +196,8 @@ export const readUniversalMachoImageFromReader = async (
       }
     }
   }
-  if (fat.state !== "parsed")
-    return err(
-      fat.state === "malformed"
-        ? containerFailure("malformed", fat.reason)
-        : containerFailure("truncated", "Universal Mach-O header is truncated"),
-    );
+  if (fat.state === "not-fat") return ok(null);
+  if (fat.state !== "parsed") return err(unparsedHeaderFailure(fat));
   if (tableBytes.length < fat.tableEnd)
     tableBytes = await readSourceSlice(source, 0, fat.tableEnd);
   const sliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>();

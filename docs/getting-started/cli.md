@@ -870,11 +870,21 @@ rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/pat
 ```
 
 An exact CLI cache hit is normally read before starting a provider process.
-`decompile --provider ghidra --snapshot ...` also retains its single selected
-Program's pseudocode result, even without an explicit document selector. Old
+It returns the saved Evidence record itself, with the same `evidence_id` as the
+record in the snapshot's `evidence_bundle`.
+With Ghidra, every one-shot read-only query (for example `decompile`, `search`,
+`xrefs` and `procedure-references`) is retained for its
+single selected Program, even without an explicit document selector. Old
 snapshots that contain only the Evidence need one new query to add that replay
 entry. This does not retain every body from `decompile-all` or make a persistent
-session's implicit document replayable.
+session's implicit document replayable. `xrefs` with a symbol name resolves the
+name through the provider first, so pass the address to replay without starting
+it.
+
+A provider that declares its results live, such as Hopper, IDA and Kuna, is
+observed again on every call. With `--snapshot`, such a result carries the
+limitation `Not saved for snapshot replay: <provider> declares this result
+live ...`; the snapshot still records its Evidence.
 On Windows, Ghidra first admits the selected source through its native snapshot
 owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically

@@ -51,6 +51,10 @@ import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactRead
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
+import {
+  GpuAssetArtifactReader,
+  type GpuAssetFormat,
+} from "./gpuAsset/GpuAssetArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
@@ -235,6 +239,19 @@ function container<Id extends ArtifactFormatId>(
     : withReader(id, capabilities, createReader);
 }
 
+/** GPU asset containers: declared header facts and stored regions, nothing decoded. */
+const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "GPU asset inventory reports declared header fields and the byte regions they name. Texture, mesh and image payloads are not decoded or decompressed.",
+    createReader: (path, options) =>
+      new GpuAssetArtifactReader(path, id, sourceOf(options)),
+  });
+
 const NON_ZIP_FORMATS = {
   "dotnet-bundle": container("dotnet-bundle", {
     retainClassifiedSource: true,
@@ -343,6 +360,10 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new WxapkgArtifactReader(path, sourceOf(options)),
   }),
+  dds: gpuAsset("dds"),
+  glb: gpuAsset("glb"),
+  ktx: gpuAsset("ktx"),
+  ktx2: gpuAsset("ktx2"),
   uimage: container("uimage", {
     roleContainer: true,
     retainClassifiedSource: true,

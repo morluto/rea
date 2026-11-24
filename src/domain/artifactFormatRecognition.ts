@@ -24,6 +24,12 @@ import {
 } from "./firmware/devicetreeHeader.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
+import {
+  hasDdsHeader,
+  hasGlbHeader,
+  hasKtx1Identifier,
+  hasKtx2Identifier,
+} from "./gpuAssetFormats.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
 
@@ -35,6 +41,10 @@ export type RecognizedArtifactFormat = Extract<
   | "godot-pck"
   | "unityfs"
   | "wxapkg"
+  | "dds"
+  | "glb"
+  | "ktx"
+  | "ktx2"
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
@@ -138,6 +148,10 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       "wxapkg",
       (prefix) => hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix),
     ),
+    when("dds", hasDdsHeader),
+    when("glb", hasGlbHeader),
+    when("ktx", hasKtx1Identifier),
+    when("ktx2", hasKtx2Identifier),
     when("uimage", hasUImageMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
     ({ prefix }) => {

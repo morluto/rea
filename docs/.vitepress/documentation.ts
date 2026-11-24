@@ -514,6 +514,11 @@ export const documentationSections = [
         route: "/wxapkg",
       },
       {
+        text: "GPU asset headers: DDS, GLB, KTX and KTX2",
+        source: "gpu-asset-headers.md",
+        route: "/gpu-asset-headers",
+      },
+      {
         text: "Windows Prefetch files",
         source: "windows-prefetch.md",
         route: "/windows-prefetch",

@@ -41,6 +41,13 @@ import {
   ntfsMftMetadataSchema,
   prefetchMetadataSchema,
 } from "./formatMetadata/androidAndSystemMetadata.js";
+import {
+  ddsMetadataSchema,
+  glbMetadataSchema,
+  gpuAssetRegionMetadataSchema,
+  ktx2MetadataSchema,
+  ktxMetadataSchema,
+} from "./formatMetadata/gpuAssetMetadata.js";
 
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
@@ -79,6 +86,11 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   fitImageMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  ddsMetadataSchema,
+  glbMetadataSchema,
+  ktxMetadataSchema,
+  ktx2MetadataSchema,
+  gpuAssetRegionMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -278,6 +290,26 @@ const declarationsByKind: {
       readonly: metadata.readonly,
       unknown_flags: metadata.unknown_flags,
     }),
+  },
+  dds: {
+    notCompared:
+      "Its header facts come from the texture's own bytes, which content comparison covers.",
+  },
+  glb: {
+    notCompared:
+      "Its header, chunk and JSON facts come from the model's own bytes, which content comparison covers.",
+  },
+  ktx: {
+    notCompared:
+      "Its header facts come from the texture's own bytes, which content comparison covers.",
+  },
+  ktx2: {
+    notCompared:
+      "Its header and index facts come from the texture's own bytes, which content comparison covers.",
+  },
+  "gpu-asset-region": {
+    notCompared:
+      "role and index restate the region's path; its stored bytes are compared by content.",
   },
   fit: {
     notCompared:
