@@ -1564,9 +1564,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             "Ghidra C decompilation omitted to preserve deadline for publication; generated entry point scaffolding instead.",
           );
         } else {
-          const ghidraTimeout = Math.floor(
-            Math.min(45_000, Math.max(1_000, timeLeftForGhidra)),
-          );
           const ghidraRunId = `rea-ghidra-decomp-${randomUUID()}`;
           let ghidraCleanupRetained = false;
           const retainGhidraCleanup = (owner: ProviderProcessSupervisor) => {
@@ -1639,48 +1636,69 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 : {}),
             };
 
-            let ghidraArgs: string[];
+            let ghidraArgs: string[] = [];
             if (!isMultiModuleBatch) {
-              const singleEfiPath = join(tempRoot.path, "mod_1.efi");
-              const singleOutC = join(tempRoot.path, "mod_1_decompiled.c");
-              const m = modulesToProcess[0]!;
-              let b = m.bytes;
-              if (b === undefined && (m.entry || m.sourcePath)) {
-                if (reader !== undefined && m.entry !== undefined) {
-                  b = await buffer(await reader.open(m.entry, signal));
-                } else if (m.sourcePath) {
-                  b = await readFile(m.sourcePath);
-                }
-                const freshSha256 = sha256Hex(b ?? Buffer.alloc(0));
+              const currentGhidraTimeLeft =
+                remainingTimeMs !== undefined
+                  ? Math.floor(
+                      remainingTimeMs() -
+                        PUBLICATION_RESERVE_MS -
+                        GHIDRA_SHUTDOWN_GRACE_MS,
+                    )
+                  : 45_000;
+              if (currentGhidraTimeLeft <= 1_000) {
+                isCoveragePartial = true;
                 if (
-                  m.expectedSha256 !== undefined &&
-                  freshSha256 !== m.expectedSha256
+                  !effectiveLimitations.includes(
+                    "Ghidra C decompilation omitted to preserve deadline for publication; generated entry point scaffolding instead.",
+                  )
                 ) {
-                  throw new Error(
-                    `Source module ${m.sourceRelPath ?? m.sourcePath} was modified concurrently during analysis (expected sha256 ${m.expectedSha256}, observed ${freshSha256}).`,
+                  effectiveLimitations.push(
+                    "Ghidra C decompilation omitted to preserve deadline for publication; generated entry point scaffolding instead.",
                   );
                 }
+              } else {
+                const singleEfiPath = join(tempRoot.path, "mod_1.efi");
+                const singleOutC = join(tempRoot.path, "mod_1_decompiled.c");
+                const m = modulesToProcess[0]!;
+                let b = m.bytes;
+                if (b === undefined && (m.entry || m.sourcePath)) {
+                  if (reader !== undefined && m.entry !== undefined) {
+                    b = await buffer(await reader.open(m.entry, signal));
+                  } else if (m.sourcePath) {
+                    b = await readFile(m.sourcePath);
+                  }
+                  const freshSha256 = sha256Hex(b ?? Buffer.alloc(0));
+                  if (
+                    m.expectedSha256 !== undefined &&
+                    freshSha256 !== m.expectedSha256
+                  ) {
+                    throw new Error(
+                      `Source module ${m.sourceRelPath ?? m.sourcePath} was modified concurrently during analysis (expected sha256 ${m.expectedSha256}, observed ${freshSha256}).`,
+                    );
+                  }
+                }
+                await writeFile(singleEfiPath, b ?? Buffer.alloc(0));
+                successfullyStagedInputs.add(1);
+                ghidraArgs = [
+                  tempRoot.path,
+                  "UefiDecomp_1",
+                  "-import",
+                  singleEfiPath,
+                  "-scriptPath",
+                  bridgeDir,
+                  "-postScript",
+                  scriptPath,
+                  singleOutC,
+                  String(MAX_DECOMPILE_MODULE_BYTES),
+                  String(MAX_DECOMPILE_TOTAL_BYTES),
+                  "-deleteProject",
+                ];
+                ghidraBatchOutcomeMap.set(1, {
+                  cPath: singleOutC,
+                  outcomePath: `${singleOutC}.outcome.json`,
+                });
               }
-              await writeFile(singleEfiPath, b ?? Buffer.alloc(0));
-              successfullyStagedInputs.add(1);
-              ghidraArgs = [
-                tempRoot.path,
-                "UefiDecomp_1",
-                "-import",
-                singleEfiPath,
-                "-scriptPath",
-                bridgeDir,
-                "-postScript",
-                scriptPath,
-                singleOutC,
-                String(MAX_DECOMPILE_MODULE_BYTES),
-                String(MAX_DECOMPILE_TOTAL_BYTES),
-                "-deleteProject",
-              ];
-              ghidraBatchOutcomeMap.set(1, {
-                cPath: singleOutC,
-                outcomePath: `${singleOutC}.outcome.json`,
-              });
             } else {
               await Promise.all([
                 mkdir(ghidraBatchInputDir, { recursive: true }),
@@ -1688,6 +1706,26 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               ]);
               let totalBatchStagedInputBytes = 0;
               for (let i = 0; i < modulesToProcess.length; i++) {
+                if (remainingTimeMs !== undefined) {
+                  const currentStagingTimeLeft = Math.floor(
+                    remainingTimeMs() -
+                      PUBLICATION_RESERVE_MS -
+                      GHIDRA_SHUTDOWN_GRACE_MS,
+                  );
+                  if (currentStagingTimeLeft <= 1_000) {
+                    isCoveragePartial = true;
+                    if (
+                      !effectiveLimitations.includes(
+                        "Batch decompilation input staging truncated to preserve deadline for publication.",
+                      )
+                    ) {
+                      effectiveLimitations.push(
+                        "Batch decompilation input staging truncated to preserve deadline for publication.",
+                      );
+                    }
+                    break;
+                  }
+                }
                 const seq = i + 1;
                 const m = modulesToProcess[i]!;
                 let b = m.bytes;
@@ -1750,49 +1788,78 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               ];
             }
 
-            let execCmd = ghidraBin;
-            let execArgs = ghidraArgs;
+            const launchTimeLeft =
+              remainingTimeMs !== undefined
+                ? Math.floor(
+                    remainingTimeMs() -
+                      PUBLICATION_RESERVE_MS -
+                      GHIDRA_SHUTDOWN_GRACE_MS,
+                  )
+                : 45_000;
+
             if (
-              this.#hostPlatform.platform === "win32" &&
-              isWindowsBatchFile(ghidraBin)
+              launchTimeLeft <= 1_000 ||
+              successfullyStagedInputs.size === 0
             ) {
-              const batch = windowsBatchCommand({
-                environment: ghidraEnv,
-                batchPath: ghidraBin,
-                arguments: ghidraArgs,
-              });
-              execCmd = batch.command;
-              execArgs = [...batch.arguments];
-            }
-            if (this.#hostPlatform.platform === "win32") {
-              await runOwnedCommand(
-                {
-                  command: execCmd,
-                  arguments: execArgs,
-                  runId: ghidraRunId,
-                  windowsVerbatimArguments: true,
-                  platform: "win32",
-                  env: ghidraEnv,
-                  hostEnvironment: process.env,
-                  signal,
-                },
-                {
-                  timeoutMs: ghidraTimeout,
-                  diagnosticBytes: 10 * 1024 * 1024,
-                },
-                {
-                  signal,
-                  retainCleanup: (owner) => retainGhidraCleanup(owner),
-                },
-              );
+              isCoveragePartial = true;
+              if (
+                !effectiveLimitations.includes(
+                  "Ghidra C decompilation omitted to preserve deadline for publication; generated entry point scaffolding instead.",
+                )
+              ) {
+                effectiveLimitations.push(
+                  "Ghidra C decompilation omitted to preserve deadline for publication; generated entry point scaffolding instead.",
+                );
+              }
+              ghidraBatchFailed = true;
             } else {
-              await execFileOutput(execCmd, execArgs, {
-                signal,
-                stopSignal: "SIGTERM",
-                timeout: ghidraTimeout,
-                maxBuffer: 10 * 1024 * 1024,
-                env: ghidraEnv,
-              });
+              const ghidraTimeout = Math.floor(
+                Math.min(45_000, Math.max(1_000, launchTimeLeft)),
+              );
+              let execCmd = ghidraBin;
+              let execArgs = ghidraArgs;
+              if (
+                this.#hostPlatform.platform === "win32" &&
+                isWindowsBatchFile(ghidraBin)
+              ) {
+                const batch = windowsBatchCommand({
+                  environment: ghidraEnv,
+                  batchPath: ghidraBin,
+                  arguments: ghidraArgs,
+                });
+                execCmd = batch.command;
+                execArgs = [...batch.arguments];
+              }
+              if (this.#hostPlatform.platform === "win32") {
+                await runOwnedCommand(
+                  {
+                    command: execCmd,
+                    arguments: execArgs,
+                    runId: ghidraRunId,
+                    windowsVerbatimArguments: true,
+                    platform: "win32",
+                    env: ghidraEnv,
+                    hostEnvironment: process.env,
+                    signal,
+                  },
+                  {
+                    timeoutMs: ghidraTimeout,
+                    diagnosticBytes: 10 * 1024 * 1024,
+                  },
+                  {
+                    signal,
+                    retainCleanup: (owner) => retainGhidraCleanup(owner),
+                  },
+                );
+              } else {
+                await execFileOutput(execCmd, execArgs, {
+                  signal,
+                  stopSignal: "SIGTERM",
+                  timeout: ghidraTimeout,
+                  maxBuffer: 10 * 1024 * 1024,
+                  env: ghidraEnv,
+                });
+              }
             }
           } catch (ghidraBatchError: unknown) {
             if (signal.aborted) signal.throwIfAborted();

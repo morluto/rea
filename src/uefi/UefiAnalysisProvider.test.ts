@@ -8678,3 +8678,239 @@ it("sanitizes non-ASCII Unicode module names into valid C identifier scaffolding
     await provider.close();
   }
 });
+
+it("recalculates Ghidra command timeout immediately before launch when staging consumes time", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-staging-timeout-",
+  );
+  const inDir = join(directory, "extracted");
+  const outDir = join(directory, "decompiled");
+  await mkdir(join(inDir, "dxe"), { recursive: true });
+
+  const payload = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "dxe", "mod1.efi"), payload);
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      parser: { name: "rea-uefi", version: "1.0.0" },
+      source_coverage: "complete",
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      phases: { sec: 0, pei: 0, dxe: 1, smm: 0, app: 0, misc: 0 },
+      modules: [
+        {
+          occurrence: 0,
+          guid: "11111111-2222-3333-4444-555555555555",
+          name: "TimeoutMod",
+          phase: "dxe",
+          type: "driver",
+          payload_file: "dxe/mod1.efi",
+          payload_sha256: sha256(payload),
+          size: payload.length,
+        },
+      ],
+    }),
+  );
+
+  const mockGhidraDir = join(directory, "fake-ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  const origGhidra = process.env.GHIDRA_INSTALL_DIR;
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const ExecFileOutputModule = await import("../process/ExecFileOutput.js");
+  const origExecFileOutput = ExecFileOutputModule.execFileOutput;
+  let capturedTimeout: number | undefined;
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command.includes("analyzeHeadless")) {
+        capturedTimeout = options?.timeout;
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "void func() {}\n");
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({ decompiled_functions: 1, failed_functions: 0 }),
+          );
+        }
+        return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+      }
+      return origExecFileOutput(command, args, options);
+    });
+
+  let remainingCalls = 0;
+  const baseNow = 100_000;
+  const perfSpy = vi.spyOn(performance, "now").mockImplementation(() => {
+    const stack = new Error().stack ?? "";
+    if (stack.includes("remainingTimeMs")) {
+      remainingCalls++;
+      // Calls 1 and 2: initial check and single-module staging check (remaining time is full)
+      if (remainingCalls <= 2) {
+        return baseNow;
+      }
+      // Call 3+: launch check immediately before launch, simulated staging took 35s
+      return baseNow + 35_000;
+    }
+    return baseNow;
+  });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(capturedTimeout).toBeDefined();
+    // At deadline initialization: deadline = baseNow + 60_000.
+    // Staging advanced simulated time to baseNow + 35_000 ms.
+    // At launch: remainingTimeMs is (baseNow + 60_000) - (baseNow + 35_000) = 25_000 ms.
+    // launchTimeLeft = 25_000 - 5_000 (reserve) - 5_000 (grace) = 15_000 ms.
+    expect(capturedTimeout).toBe(15_000);
+  } finally {
+    execSpy.mockRestore();
+    perfSpy.mockRestore();
+    if (origGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = origGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("truncates batch decompilation input staging and omits Ghidra launch when staging consumes publication reserve", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-staging-truncate-",
+  );
+  const inDir = join(directory, "extracted");
+  const outDir = join(directory, "decompiled");
+  await mkdir(join(inDir, "dxe"), { recursive: true });
+
+  const payload1 = createMinimalPeBuffer(0x8664, 1, 256);
+  const payload2 = createMinimalPeBuffer(0x8664, 1, 512);
+  await writeFile(join(inDir, "dxe", "mod1.efi"), payload1);
+  await writeFile(join(inDir, "dxe", "mod2.efi"), payload2);
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      parser: { name: "rea-uefi", version: "1.0.0" },
+      source_coverage: "complete",
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      phases: { sec: 0, pei: 0, dxe: 2, smm: 0, app: 0, misc: 0 },
+      modules: [
+        {
+          occurrence: 0,
+          guid: "11111111-2222-3333-4444-555555555555",
+          name: "Mod1",
+          phase: "dxe",
+          type: "driver",
+          payload_file: "dxe/mod1.efi",
+          payload_sha256: sha256(payload1),
+          size: payload1.length,
+        },
+        {
+          occurrence: 1,
+          guid: "22222222-3333-4444-5555-666666666666",
+          name: "Mod2",
+          phase: "dxe",
+          type: "driver",
+          payload_file: "dxe/mod2.efi",
+          payload_sha256: sha256(payload2),
+          size: payload2.length,
+        },
+      ],
+    }),
+  );
+
+  const mockGhidraDir = join(directory, "fake-ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  const origGhidra = process.env.GHIDRA_INSTALL_DIR;
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const ExecFileOutputModule = await import("../process/ExecFileOutput.js");
+  const origExecFileOutput = ExecFileOutputModule.execFileOutput;
+  let ghidraLaunched = false;
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command.includes("analyzeHeadless")) {
+        ghidraLaunched = true;
+        return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+      }
+      return origExecFileOutput(command, args, options);
+    });
+
+  let remainingCalls = 0;
+  const baseNow = 100_000;
+  const perfSpy = vi.spyOn(performance, "now").mockImplementation(() => {
+    const stack = new Error().stack ?? "";
+    if (stack.includes("remainingTimeMs")) {
+      remainingCalls++;
+      // Call 1: initial timeLeftForGhidra check (remaining time is full)
+      // Call 2: batch module 1 staging check (remaining time is full)
+      if (remainingCalls <= 2) {
+        return baseNow;
+      }
+      // Call 3: batch module 2 staging check (staging took 52s, leaving 8s <= 10s reserve+grace)
+      // Call 4+: launch check (leaving 8s <= 10s reserve+grace)
+      return baseNow + 52_000;
+    }
+    return baseNow;
+  });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+    // Ghidra must not have been launched because staging consumed available time
+    expect(ghidraLaunched).toBe(false);
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some(
+        (l) =>
+          l.includes("staging truncated to preserve deadline") ||
+          l.includes("Ghidra C decompilation omitted to preserve deadline"),
+      ),
+    ).toBe(true);
+  } finally {
+    execSpy.mockRestore();
+    perfSpy.mockRestore();
+    if (origGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = origGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
