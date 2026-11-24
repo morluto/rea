@@ -7,6 +7,7 @@ it("retains numeric identity when serializing and reparsing exact JSON", () => {
     ["1e-7", 1e-7],
     ["9007199254740991", Number.MAX_SAFE_INTEGER],
     ["1e21", 1e21],
+    ["1.000e21", 1e21],
     ["1.7976931348623157e308", Number.MAX_VALUE],
   ] as const) {
     const parsed = parseExactJson(`{"id":${spelling}}`);
@@ -19,6 +20,8 @@ it("retains numeric identity when serializing and reparsing exact JSON", () => {
     "9.007199254740992e15",
     "1e20",
     "100000000000000000000",
+    "1000000000000000000000",
+    "1.00000000000000000001e21",
     "-0",
   ]) {
     expect(parseExactJson(`{"id":${spelling}}`), spelling).toBeUndefined();

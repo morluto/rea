@@ -19,7 +19,10 @@ import {
   type GhidraSeedCommitment,
 } from "./GhidraAnalysisSeeds.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
-import type { GhidraRiscvCallingConvention } from "./GhidraRiscvProfile.js";
+import type {
+  GhidraRiscvCallingConvention,
+  GhidraRiscvLoadPreparation,
+} from "./GhidraRiscvProfile.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
@@ -273,6 +276,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly elfImageBase?: string;
   /** Apply this committed RISC-V calling-convention policy after analysis. */
   readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
+  /** Prepare the memory map for this committed RISC-V section overlap before analysis. */
+  readonly riscvLoadPreparation?: GhidraRiscvLoadPreparation;
   /** Spawn seam for provider-boundary lifecycle tests. */
   readonly spawnProcess?: typeof spawnOwnedProviderProcess;
   /** LaunchSupport probe seam for Java-free launcher fixtures. */
@@ -456,6 +461,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           : {
               riscvCallingConvention: this.options.riscvCallingConvention,
             }),
+        ...(this.options.riscvLoadPreparation === undefined
+          ? {}
+          : { riscvLoadPreparation: this.options.riscvLoadPreparation }),
         projectRoot: paths.projectRoot,
         targetPath: session.targetPath,
         ...(existingProject === undefined ? {} : { existingProject }),
@@ -812,6 +820,7 @@ export interface GhidraHeadlessArgumentOptions {
   readonly psp?: true;
   readonly mipsSoftFloat?: true;
   readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
+  readonly riscvLoadPreparation?: GhidraRiscvLoadPreparation;
   readonly dosMz?: true;
   readonly dosCom?: { readonly loader: "ComLoader" | "BinaryLoader" };
   readonly rawBinary?: {
@@ -844,6 +853,7 @@ type ExistingProjectOptions = Pick<
   | "languageOverride"
   | "mipsSoftFloat"
   | "riscvCallingConvention"
+  | "riscvLoadPreparation"
   | "elfImageBase"
   | "seedPath"
   | "disabledAnalyzers"
@@ -877,6 +887,8 @@ const validateExistingProjectOptions = (
       throw new GhidraAdmissionError(
         "existing_project_riscv_calling_convention",
       );
+    if (options.riscvLoadPreparation !== undefined)
+      throw new GhidraAdmissionError("existing_project_riscv_load_preparation");
     if (options.elfImageBase !== undefined)
       throw new GhidraAdmissionError("existing_project_elf_image_base");
     if (
@@ -909,6 +921,7 @@ export const ghidraHeadlessArguments = (
       options.dosCom !== undefined ||
       options.mipsSoftFloat === true ||
       options.riscvCallingConvention !== undefined ||
+      options.riscvLoadPreparation !== undefined ||
       rawBinary !== undefined ||
       override !== undefined)
   )
@@ -939,6 +952,16 @@ export const ghidraHeadlessArguments = (
       rawBinary !== undefined)
   )
     throw new GhidraAdmissionError("riscv_calling_convention_scope");
+  if (
+    options.riscvLoadPreparation !== undefined &&
+    (options.psp === true ||
+      options.mipsSoftFloat === true ||
+      options.dosMz === true ||
+      options.dosCom !== undefined ||
+      options.elfImageBase !== undefined ||
+      rawBinary !== undefined)
+  )
+    throw new GhidraAdmissionError("riscv_load_preparation_scope");
   if (
     override !== undefined &&
     (options.dosMz === true || options.dosCom !== undefined)
@@ -1086,6 +1109,22 @@ export const ghidraHeadlessArguments = (
           "-preScript",
           scriptPath.join(bridgeDirectory, GHIDRA_BRIDGE_SOURCES.prepareDol),
           gamecubeDol.sectionFilePath,
+        ]),
+    // The memory map is final before seeds name addresses and analysis starts.
+    ...(options.riscvLoadPreparation === undefined
+      ? []
+      : [
+          "-preScript",
+          scriptPath.join(
+            bridgeDirectory,
+            GHIDRA_BRIDGE_SOURCES.prepareElfLoad,
+          ),
+          options.riscvLoadPreparation.policy,
+          options.riscvLoadPreparation.code.address,
+          options.riscvLoadPreparation.code.size,
+          options.riscvLoadPreparation.code.offset,
+          options.riscvLoadPreparation.reservation.address,
+          options.riscvLoadPreparation.reservation.size,
         ]),
     // Seeds follow any loader preparation and precede default auto-analysis.
     ...(options.seedPath === undefined

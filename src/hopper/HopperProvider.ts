@@ -317,7 +317,10 @@ export class HopperProvider implements AnalysisProviderCandidate {
         : "thin";
     const derivedLoaderArgs = hopperLoaderArgsForTarget(
       target,
-      container === "thin" || container === "fat32" || container === "fat64"
+      container === "thin" ||
+        container === "fat" ||
+        container === "fat32" ||
+        container === "fat64"
         ? container
         : undefined,
     );

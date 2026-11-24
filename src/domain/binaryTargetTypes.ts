@@ -86,6 +86,59 @@ export type HeaderArchitecture = Exclude<
   (typeof HEADER_ARCHITECTURE_EXCLUSIONS)[number]
 >;
 
+/** Typed declaration-inspection limitation; consumers switch on `kind`, never prose. */
+export type MipsElfLimitation =
+  | {
+      readonly kind: "truncated_section_table";
+      readonly offset: number;
+      readonly examined: number;
+      readonly declared: number;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "unexamined_declarations";
+      readonly message: string;
+    };
+
+/** Extract human-readable messages from typed MIPS ELF inspection limitations. */
+export const mipsLimitationMessages = (
+  limitations?: readonly MipsElfLimitation[],
+): readonly string[] =>
+  (limitations ?? []).map((limitation) => limitation.message);
+
+const MIPS_ET_EXEC = 2;
+const MIPS_ARCH_1 = 0x00000000;
+const MIPS_ARCH_32 = 0x50000000;
+const MIPS_ARCH_32R2 = 0x70000000;
+
+/**
+ * Whether an ELF header has the recordless legacy ELF32 MIPS ET_EXEC shape:
+ * MIPS-I / MIPS32 / MIPS32r2 with unspecified ABI and no ASE, machine,
+ * FP64, NAN2008, n32, or 32bitmode flags. Does not by itself establish lane
+ * admission (ABI flags, GNU attributes, and limitations are checked by the
+ * provider profile).
+ */
+export const isRecordlessLegacyMipsExecHeader = (
+  metadata: ElfFamilyMetadata,
+): boolean => {
+  const { flags } = metadata;
+  const arch = flags & 0xf0000000;
+  return (
+    metadata.elfClass === 32 &&
+    metadata.type === MIPS_ET_EXEC &&
+    (arch === MIPS_ARCH_1 ||
+      arch === MIPS_ARCH_32 ||
+      arch === MIPS_ARCH_32R2) &&
+    (flags & 0x0f000000) === 0 &&
+    (flags & 0x00ff0000) === 0 &&
+    (flags & 0x0000f000) === 0 &&
+    (flags & 0x20) === 0 &&
+    (flags & 0x40) === 0 &&
+    (flags & 0x100) === 0 &&
+    (flags & 0x600) === 0
+  );
+};
+
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
 export interface MipsElfMetadata extends ElfFamilyMetadata {
   /** Undefined until inspected; null means no ABI record was observed. */
@@ -93,7 +146,7 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
   /** Undefined until inspected; null means no GNU attribute section was observed. */
   readonly gnuAttributes?: MipsGnuAttributes | null;
   /** Unavailable declaration sources; missing records there remain unknown. */
-  readonly limitations?: readonly string[];
+  readonly limitations?: readonly MipsElfLimitation[];
   /** Complete dynamic REL declarations, or the reason they could not be inspected. */
   readonly sharedLoad?:
     | {
@@ -118,7 +171,45 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
 export interface RiscvElfMetadata extends ElfFamilyMetadata {
   /** Undefined until `.riscv.attributes` is inspected. */
   readonly isa?: RiscvIsaDeclaration;
+  /** Undefined until the section table is inspected; read for ET_EXEC and ET_DYN. */
+  readonly sectionOverlap?: ElfSectionOverlap;
 }
+
+/** One allocated section as its header declares it; values are lowercase 0x-hex. */
+export interface ElfSectionExtent {
+  readonly index: number;
+  /** Display only; null when the section-name table was not read. */
+  readonly name: string | null;
+  readonly address: string;
+  readonly size: string;
+}
+
+/** A section that takes part in an overlap of another shape. */
+export interface ElfSectionWitness extends ElfSectionExtent {
+  readonly nobits: boolean;
+  readonly executable: boolean;
+}
+
+/**
+ * Allocated address ranges that an executable section of a fixed-address image
+ * shares with another section. `code-reservation` is the one verified shape: a
+ * NOBITS section that starts with an executable PROGBITS section and covers it,
+ * with no other section overlapping either, as ESP-IDF's `.flash_rodata_dummy`
+ * reserves `.flash.text`.
+ */
+export type ElfSectionOverlap =
+  | { readonly status: "none" }
+  | {
+      readonly status: "code-reservation";
+      readonly code: ElfSectionExtent & { readonly offset: string };
+      readonly reservation: ElfSectionExtent;
+    }
+  /** The two sections whose overlap departs from that shape. */
+  | {
+      readonly status: "unsupported";
+      readonly witnesses: readonly [ElfSectionWitness, ElfSectionWitness];
+    }
+  | { readonly status: "unavailable"; readonly reason: string };
 
 /** The ISA an image declares in `.riscv.attributes`; not proof of every instruction. */
 export type RiscvIsaDeclaration =
@@ -271,6 +362,8 @@ export type BinaryTarget =
       readonly universalSlice: UniversalMachOSlice;
       /** Exact validated FAT declarations, when supplied by target admission. */
       readonly universalSlices?: readonly UniversalMachOSliceIdentity[];
+      /** Physical FAT table width observed at target admission. */
+      readonly universalContainerKind?: "fat32" | "fat64";
       readonly executableRole?: never;
       readonly managed?: never;
     })

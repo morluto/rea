@@ -11,6 +11,7 @@ import {
   decodeMachoFixedWordFields,
   machoFixedWordFieldNames,
   readMachoLoadCommandTableHeader,
+  type MachoHeaderDeclarations,
 } from "./machoLoadCommands.js";
 import {
   classifyMachoVersionMinCommand,
@@ -193,6 +194,7 @@ export const readMachoCommandNames = async (
   maximumStringBytes: number,
   maximumRecords: number,
   maximumProjectedBytes = DEFAULT_PROJECTED_BYTES,
+  admittedHeader?: MachoHeaderDeclarations,
 ): Promise<MachoCommandNames> => {
   if (
     !Number.isSafeInteger(maximumStringBytes) ||
@@ -219,12 +221,17 @@ export const readMachoCommandNames = async (
       throw truncatedInput("macho", "Mach-O range is truncated");
     return value;
   };
-  const header = await exact(0, Math.min(32, imageSize));
-  const parsed = readMachoLoadCommandTableHeader(header, imageSize);
-  if (!parsed.ok) throw malformedInput("macho", parsed.error);
-  if (parsed.value === null)
-    throw malformedInput("macho", "Selected slice is not Mach-O");
-  const table = parsed.value;
+  let table: MachoHeaderDeclarations;
+  if (admittedHeader !== undefined) {
+    table = admittedHeader;
+  } else {
+    const header = await exact(0, Math.min(32, imageSize));
+    const parsed = readMachoLoadCommandTableHeader(header, imageSize);
+    if (!parsed.ok) throw malformedInput("macho", parsed.error);
+    if (parsed.value === null)
+      throw malformedInput("macho", "Selected slice is not Mach-O");
+    table = parsed.value;
+  }
   const cursor = new MachoLoadCommandCursor(table);
   if (table.commandCount > maximumRecords)
     throw loadCommandLimit(maximumRecords, "records");
@@ -695,7 +702,7 @@ export const readMachoCommandNames = async (
       cpuType: table.identity.cpuType,
       cpuSubtype: table.identity.cpuSubtype,
       fileType: table.fileType,
-      flags: machoWordReader(header, table.littleEndian).u32(24),
+      flags: table.flags,
     },
     commands,
   };

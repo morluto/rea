@@ -2423,11 +2423,10 @@ describe("ReleaseExposureService undecoded metadata", () => {
     const { checks, coverage } = releaseExposureReportSchema.parse(
       result.value.normalized_result,
     );
-    return (["go.build_paths", "rust.dependency_metadata"] as const).map(
-      (id) =>
-        coverage.inapplicable_checks.includes(id)
-          ? "inapplicable"
-          : checks.find((check) => check.id === id)?.status,
+    return (["go.build_paths", "rust.dependency_metadata"] as const).map((id) =>
+      coverage.inapplicable_checks.includes(id)
+        ? "inapplicable"
+        : checks.find((check) => check.id === id)?.status,
     );
   };
 

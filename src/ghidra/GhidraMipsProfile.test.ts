@@ -311,7 +311,34 @@ describe("recordless legacy MIPS admission", () => {
       {
         flags: 0x50000001,
         limitations: [
-          "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          {
+            kind: "unexamined_declarations",
+            // Even if prose resembles a section-table truncation message, the
+            // typed discriminator governs admission — never string matching.
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          },
+        ],
+      },
+      "complete ABI-record inspection",
+    ],
+    [
+      {
+        flags: 0x50000001,
+        limitations: [
+          {
+            kind: "truncated_section_table",
+            offset: 96,
+            examined: 2,
+            declared: 5,
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          },
+          {
+            kind: "unexamined_declarations",
+            message:
+              "MIPS ABI record at file offset 4096 extends beyond the captured file",
+          },
         ],
       },
       "complete ABI-record inspection",
@@ -326,6 +353,63 @@ describe("recordless legacy MIPS admission", () => {
         status: "unsupported",
         reason: expect.stringContaining(reason),
       });
+    },
+  );
+
+  it("admits a recordless legacy MIPS32 ET_EXEC whose only limitation is a truncated section table and propagates it to session limitations", async () => {
+    const limitation = {
+      kind: "truncated_section_table" as const,
+      offset: 96,
+      examined: 2,
+      declared: 5,
+      message:
+        "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+    };
+    const carved = target({
+      flags: 0x50000001,
+      abiFlags: null,
+      limitations: [limitation],
+    });
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    expect(ghidra.inspectTargetSupport(carved).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(carved);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters).toMatchObject({
+      mips_support_lane: "elf32-exec-arch32-legacy-pinned",
+      mips_abi_basis: "inferred-o32-assumption",
+      language_id: "MIPS:LE:32:default",
+      mips_elf: {
+        abi_flags_limitations: [limitation],
+      },
+    });
+    const { client } = await session(carved, undefined);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toContain(limitation.message);
+  });
+
+  it.each([
+    ["declared-ABI ET_EXEC", { flags: 0x70001001 }],
+    ["recordless ET_REL", { flags: 0x50000001, type: 1, abiFlags: null }],
+    ["PSP Allegrex", { flags: 0x10a23001 }],
+  ] as const)(
+    "keeps %s fail-closed when the section header table is truncated",
+    (_label, change) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      const value = target({
+        ...change,
+        limitations: [
+          {
+            kind: "truncated_section_table",
+            offset: 96,
+            examined: 2,
+            declared: 5,
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers.",
+          },
+        ],
+      });
+      expect(ghidra.inspectTargetSupport(value).status).toBe("unsupported");
     },
   );
 
@@ -600,7 +684,26 @@ describe("MIPS16 shared-image profile", () => {
   });
   it.each([
     { flags: 0x74001045 },
-    { limitations: ["Unexamined section declarations"] },
+    {
+      limitations: [
+        {
+          kind: "unexamined_declarations",
+          message: "Unexamined section declarations",
+        },
+      ],
+    },
+    {
+      limitations: [
+        {
+          kind: "truncated_section_table",
+          offset: 96,
+          examined: 0,
+          declared: 2,
+          message:
+            "MIPS section header table at file offset 96 extends beyond the captured file: examined 0 of 2 complete headers.",
+        },
+      ],
+    },
     {
       sharedLoad: {
         status: "complete",

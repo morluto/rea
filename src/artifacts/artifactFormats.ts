@@ -19,7 +19,10 @@ import {
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
-import { AsarArtifactReader } from "./AsarArtifactReader.js";
+import {
+  AsarArtifactReader,
+  type AsarAdmission,
+} from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
@@ -105,6 +108,10 @@ const sourceOf = (options: ArtifactReaderConstruction) => {
     : admission;
 };
 
+function admittedAs(
+  kind: "asar",
+  options: ArtifactReaderConstruction,
+): AsarAdmission | ReturnType<typeof sourceOf>;
 function admittedAs(
   kind: "dotnet-bundle",
   options: ArtifactReaderConstruction,
@@ -296,7 +303,18 @@ const NON_ZIP_FORMATS = {
     extractable: true,
     absentInventory: "unavailable",
     createReader: (path, options) => {
-      const admitted = sourceOf(options);
+      const admission = admittedAs("asar", options);
+      const admitted =
+        admission !== undefined && "kind" in admission
+          ? admission.source
+          : admission;
+      const admittedExtents =
+        admission !== undefined && "kind" in admission
+          ? {
+              extents: admission.extents,
+              headerAdmission: admission.headerAdmission,
+            }
+          : undefined;
       return new AsarArtifactReader(path, {
         ...(options.asarHeaderAdmission === undefined
           ? {}
@@ -305,6 +323,7 @@ const NON_ZIP_FORMATS = {
           ? {}
           : { selectedPath: options.selectedPath }),
         ...(admitted === undefined ? {} : { admitted }),
+        ...(admittedExtents === undefined ? {} : { admittedExtents }),
       });
     },
   }),
@@ -371,7 +390,7 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "uImage inventory establishes the 64-byte legacy header facts and stored payload bytes. Compressed payloads are not decompressed, and the image is not executed.",
     createReader: (path, options) =>
-      new UImageArtifactReader(path, sourceOf(options)),
+      new UImageArtifactReader(path, sourceOf(options), options.integrity),
   }),
   "android-boot-image": container("android-boot-image", {
     roleContainer: true,
@@ -526,7 +545,7 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
-      new FitArtifactReader(path, sourceOf(options)),
+      new FitArtifactReader(path, sourceOf(options), options.integrity),
   }),
   "ntfs-mft": described("ntfs-mft", {
     ...plain,
