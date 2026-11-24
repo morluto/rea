@@ -100,9 +100,11 @@ it.each(["fast", "full"] as const)(
       (command) => command.includes("mutation") || command.includes("stryker"),
     );
     expect(mutationCommands).toEqual([
+      "npm run --if-present pretest:mutation:reverse-tools",
       "node scripts/prepare-reverse-tools-mutation.mjs",
       "npx --no-install stryker run stryker.config.mjs --dryRunOnly",
       "npx --no-install stryker run stryker.semantics.config.mjs --dryRunOnly",
+      "npm run --if-present posttest:mutation:reverse-tools",
     ]);
     const coverage = commands.indexOf("npm run test:coverage:reverse-tools");
     expect(coverage).toBeGreaterThanOrEqual(0);
