@@ -10,6 +10,8 @@ import type {
 } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
+import { joinCoverageStatus } from "../coverage.js";
+import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ApplicationVersionComparisonItem } from "./javascriptApplicationVersionComparisonSchemas.js";
 
@@ -151,9 +153,6 @@ const comparisonEvidence = (
 ): ApplicationGraphEvidence => {
   const source =
     right?.observations[0]?.evidence ?? left?.observations[0]?.evidence;
-  const complete =
-    input.left.coverage.status === "complete" &&
-    input.right.coverage.status === "complete";
   return {
     authority: "cross-version-comparison",
     state: "inferred",
@@ -174,23 +173,7 @@ const comparisonEvidence = (
       operation: "compare_application_versions",
       executable_sha256: null,
     },
-    coverage: complete
-      ? {
-          status: "complete",
-          truncated: false,
-          omitted_count: 0,
-          limits: sourceCoverageLimits(input),
-        }
-      : {
-          status: "partial",
-          truncated:
-            input.left.coverage.truncated || input.right.coverage.truncated,
-          omitted_count: combineOmittedCounts(
-            input.left.coverage.omitted_count,
-            input.right.coverage.omitted_count,
-          ),
-          limits: sourceCoverageLimits(input),
-        },
+    coverage: changeGraphCoverage(input),
     limitations: [
       "Cross-version pairing is inferred from the stated match basis; changed_from does not prove runtime reachability.",
       ...item.limitations,
@@ -199,17 +182,29 @@ const comparisonEvidence = (
   };
 };
 
+/**
+ * The coverage both source graphs support, for the change graph and each
+ * `changed_from` edge. A source that cannot tell makes it unknown.
+ */
 const changeGraphCoverage = (
   input: ChangeGraphInput,
 ): JavaScriptApplicationGraph["coverage"] => {
-  if (
-    input.left.coverage.status === "complete" &&
-    input.right.coverage.status === "complete"
-  )
+  const joined = joinCoverageStatus([
+    applicationCoverageKnowledge(input.left.coverage.status),
+    applicationCoverageKnowledge(input.right.coverage.status),
+  ]);
+  if (joined === "complete")
     return {
       status: "complete",
       truncated: false,
       omitted_count: 0,
+      limits: sourceCoverageLimits(input),
+    };
+  if (joined === "unknown")
+    return {
+      status: "unknown",
+      truncated: false,
+      omitted_count: null,
       limits: sourceCoverageLimits(input),
     };
   return {

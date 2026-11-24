@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
@@ -28,14 +29,12 @@ const withClient = async (
 
 const pathSource = () => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (template.subject === null)
-    throw new Error("Call-path fixtures must be artifact-bound");
   const dossier = functionDossierSchema.parse(template.normalized_result);
   return createEvidence(
     {
       path: `${template.subject.local_path}/workflow-unknown-path`,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
@@ -64,13 +63,11 @@ const pathSource = () => {
 
 const incompleteRight = (suffix: string) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.right;
-  if (template.subject === null)
-    throw new Error("Comparison fixtures must be artifact-bound");
   return createEvidence(
     {
       path: `${template.subject.local_path}/${suffix}`,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
@@ -84,6 +81,7 @@ const incompleteRight = (suffix: string) => {
       relationshipCoverage: {
         status: "unknown",
         reason: "The fixture omits call relationship coverage.",
+        limited_directions: ["callers", "callees"],
       },
     },
   );

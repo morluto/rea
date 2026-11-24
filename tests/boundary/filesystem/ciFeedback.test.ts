@@ -12,6 +12,7 @@ import {
   parseStaticTaskContext,
   recordStaticTaskContext,
 } from "../../../scripts/ci/static-task-context.mjs";
+import { testShards } from "../../../scripts/ci/test-selection.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -121,6 +122,7 @@ it.each(["fast", "full"] as const)(
           flags.map((flag) => [flag, tier === "full" ? "true" : "false"]),
         ),
         tier,
+        test_mode: "full",
         code: "true",
         reverse_tools: "true",
       },
@@ -214,9 +216,16 @@ it("starts source feedback before build and requires both groups without waiving
     env: { CI_STATIC_CONTEXT_SCRIPT: "check:ci:deep:tasks" },
   });
   const deepUpload = jobs["static-deep"]?.steps?.find(
-    (step) => step.with?.name === "static-deep-check-reports",
+    (step) => step.name === "Upload complete deep static diagnostics",
   );
   expect(deepUpload?.if).toBe("always()");
+  expect(deepUpload?.with?.name).toContain(
+    "static-deep-check-reports-attempt-{0}",
+  );
+  const fastUpload = jobs.static?.steps?.find(
+    (step) => step.name === "Upload complete static diagnostics",
+  );
+  expect(fastUpload?.with?.name).toContain("static-check-reports-attempt-{0}");
   expect(deepUpload?.with).toMatchObject({
     path: ".cache/static-checks/",
     "if-no-files-found": "ignore",
@@ -230,7 +239,7 @@ it("starts source feedback before build and requires both groups without waiving
     (step) => step.run === "npm run check:ci:deep",
   );
   const uploadIndex = deepSteps.findIndex(
-    (step) => step.with?.name === "static-deep-check-reports",
+    (step) => step.name === "Upload complete deep static diagnostics",
   );
   expect(contextIndex).toBeGreaterThanOrEqual(0);
   expect(checkIndex).toBeGreaterThan(contextIndex);
@@ -265,6 +274,7 @@ it("starts source feedback before build and requires both groups without waiving
           flags.map((flag) => [flag, tier === "full" ? "true" : "false"]),
         ),
         tier,
+        test_mode: "full",
         code: "true",
       };
       const context: Record<
@@ -346,6 +356,8 @@ it("collects basic CI telemetry before optional dependency installation can fail
           steps: z.array(
             z.object({
               id: z.string().optional(),
+              uses: z.string().optional(),
+              with: z.record(z.string(), z.unknown()).optional(),
               run: z.string().optional(),
               if: z.string().optional(),
               "continue-on-error": z.boolean().optional(),
@@ -371,8 +383,17 @@ it("collects basic CI telemetry before optional dependency installation can fail
     expect(collection).toBeGreaterThanOrEqual(0);
     expect(installation).toBeGreaterThan(collection);
   }
+  for (const name of ["ci-job-timings-batch", "ci-health-diagnostics"]) {
+    const uploads = steps.filter(
+      (step) =>
+        step.uses?.startsWith("actions/upload-artifact@") &&
+        step.with?.name === name,
+    );
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]?.with?.overwrite, name).toBe(true);
+  }
   expect(steps[installation]).toMatchObject({
-    run: "npm ci",
+    run: "npm ci --omit=dev --ignore-scripts",
     "continue-on-error": true,
   });
   expect(
@@ -398,7 +419,19 @@ it("merges source and built reports exactly once using the workflow's shard matr
         matrix.slice(3, -2),
         {
           fromJSON: JSON.parse,
-          needs: { changes: { outputs: { tier: "fast" } } },
+          needs: {
+            changes: {
+              outputs: {
+                test_shards: JSON.stringify(
+                  testShards("fast", {
+                    version: 3,
+                    mode: "full",
+                    reason: "Complete fast suite",
+                  }),
+                ),
+              },
+            },
+          },
         },
         { timeout: 1_000 },
       ),
@@ -420,7 +453,7 @@ it("merges source and built reports exactly once using the workflow's shard matr
   const config = join(root, "vitest.config.mjs");
   await writeFile(
     config,
-    `export default { test: { maxWorkers: 1, projects: [${["source", "built"].map((name) => `{ test: { name: "${name}", globals: true, include: ["${name}*.test.js"] } }`).join(",")}] } };`,
+    `export default { test: { fsModuleCache: false, maxWorkers: 1, projects: [${["source", "built"].map((name) => `{ test: { name: "${name}", fsModuleCache: false, globals: true, include: ["${name}*.test.js"] } }`).join(",")}] } };`,
   );
   const files = [
     "source.test.js",

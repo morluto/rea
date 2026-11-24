@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import type { Element, Node } from "@xmldom/xmldom";
 import {
   ArtifactReaderFailure,
+  streamChunkToBuffer,
+  ZipArtifactReader,
   type ArtifactEntry,
-} from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { streamChunkToBuffer } from "../artifacts/StreamBytes.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {

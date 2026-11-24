@@ -2,7 +2,7 @@ import { clientRegistrationSource } from "./ClientRegistrationSource.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { processArgumentSchema } from "../domain/process/processArgument.js";
-import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import {
   clientRegistrationSourceFacts,
   parseClientRegistrationLauncher,

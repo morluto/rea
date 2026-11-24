@@ -11,9 +11,9 @@ import { err } from "../../../../src/domain/result.js";
 import {
   NativeCommandFailure,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import type { AnalysisClient } from "../../../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../../../src/ports/AnalysisProvider.js";
 import { inspectionImage } from "../../../../src/native/NativeMachoInspection.fixture.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import {
@@ -343,9 +343,14 @@ it.each([
     );
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Mismatched FAT slice was admitted");
-    expect(result.error.message).toContain(
-      "Selected lipo slice does not identify exactly one FAT entry",
-    );
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      failure: {
+        detail: expect.stringContaining(
+          "Selected lipo slice does not identify exactly one FAT entry",
+        ),
+      },
+    });
   },
 );
 

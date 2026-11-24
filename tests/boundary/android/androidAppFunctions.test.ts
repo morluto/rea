@@ -13,17 +13,17 @@ import {
 import { parseAndroidManifestComponents } from "../../../src/android/AndroidManifestComponents.js";
 import { analyzeJadxRequest } from "../../../src/android/JadxAnalysis.js";
 import { JadxInterruption } from "../../../src/android/JadxInterruption.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
+import {
+  ArtifactResourceScope,
+  ZipArtifactReader,
+} from "../../../src/resources/index.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 import type { AndroidAppFunctionAssetCheckpoint } from "../../../src/domain/android/androidAppFunctions.js";
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
-import {
-  androidAppFunctionsViewResultSchema,
-  projectAnalysisView,
-} from "../../../src/domain/analysisView/analysisView.js";
+import { projectAnalysisView } from "../../../src/domain/analysisView/analysisView.js";
+import { androidAppFunctionsViewResultSchema } from "../../../src/domain/analysisView/summarySchemas/androidSummarySchemas.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { jsonValueByteLength } from "../../../src/domain/jsonValueByteLength.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";

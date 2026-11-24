@@ -1,3 +1,5 @@
+import { dirname } from "node:path";
+
 import { SetupSkillInstallError, type SkillDestination } from "./SetupSkill.js";
 import type { LinuxPackageFamily } from "./HopperReleaseFeed.js";
 import {
@@ -6,7 +8,7 @@ import {
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
-import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
+import { macHopperUserApplicationPath } from "../hopperPaths/MacHopperPaths.js";
 import type {
   ClientConfigurationInspection,
   SetupAction,
@@ -23,6 +25,7 @@ import { redirectedWriteBlocker } from "./MsixPackageStorage.js";
 import type { DoctorReport } from "./Doctor.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
+import { registrationEnvironmentProposal } from "./UserConfigurationLocation.js";
 
 /**
  * Whether automated Hopper installation can run on this host, and why not.
@@ -475,18 +478,28 @@ const clientConfigurationDetail = (
   environment: SetupProviderEnvironment,
   installHopper: boolean,
 ): string => {
-  const entries = Object.entries(environment)
+  const { configHomeFallback, overrides } =
+    registrationEnvironmentProposal(environment);
+  const entries = Object.entries(overrides)
     .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
     .map(([name, value]) => `${name}=${value}`);
   const environmentDetail =
     entries.length === 0
       ? " No additional provider environment variables. Existing server environment overrides are retained."
       : ` Detected provider environment: ${entries.join(", ")}. Existing server environment overrides are retained; detected values replace matching keys.`;
+  const locatorDetail =
+    configHomeFallback === undefined
+      ? ""
+      : ` If the registration has no XDG_CONFIG_HOME, setup will record ${configHomeFallback} so it can find the saved REA settings.`;
   const hopperDetail = installHopper
     ? environment.HOPPER_LAUNCHER_PATH === undefined
       ? " If this plan installs Hopper, REA will add HOPPER_LAUNCHER_PATH using the launcher path reported by that installation."
       : " The HOPPER_LAUNCHER_PATH value shown above is the current fallback; if this plan installs Hopper, REA will replace it with the launcher path reported by that installation."
     : "";
   const persistence = registrationPersistenceDetail(client);
-  return `Add the REA MCP registration for ${client.displayName ?? client.name}; preserve unrelated configuration. The backup path reflects the configuration inspected for this plan; if that file changes before execution, setup will select a recovery path for its current contents. Command: ${command.map((part) => JSON.stringify(part)).join(" ")}.${environmentDetail}${hopperDetail}${persistence === undefined ? "" : ` ${persistence}`}`;
+  const privateProfile =
+    client.privateProfile === undefined
+      ? ""
+      : ` The profile is private: REA sets its folder ${dirname(client.configPath)} to mode 0700 and the file to 0600.`;
+  return `Add the REA MCP registration for ${client.displayName ?? client.name}; preserve unrelated configuration. The backup path reflects the configuration inspected for this plan; if that file changes before execution, setup will select a recovery path for its current contents. Command: ${command.map((part) => JSON.stringify(part)).join(" ")}.${environmentDetail}${locatorDetail}${hopperDetail}${privateProfile}${persistence === undefined ? "" : ` ${persistence}`}`;
 };

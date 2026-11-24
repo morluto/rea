@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,18 +12,17 @@ import {
 import { createEvidence } from "../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { AnalysisTimeoutError } from "../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../src/domain/result.js";
 import { historicalHar } from "../fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
-it("excludes marked output identity from late CLI publication failure while retaining capture Evidence", async () => {
+const capturePublicationFixture = async (marked: boolean) => {
   const root = await createTestTempDirectory("rea-capture-delivery-");
   const outputPath = join(root, "private-publication-marker.json");
-  await writeFile(outputPath, "existing caller file");
   const bytes = JSON.stringify(historicalHar());
-  const values = ["private-publication-marker"];
+  const values = marked ? ["private-publication-marker"] : [];
   const input = {
     capture_path: join(root, "capture.har"),
     format: "har" as const,
@@ -42,6 +42,13 @@ it("excludes marked output identity from late CLI publication failure while reta
         limitations: [],
       }),
   });
+  return { input, service, outputPath, values };
+};
+
+it("excludes marked output identity from late CLI publication failure while retaining capture Evidence", async () => {
+  const { input, service, outputPath, values } =
+    await capturePublicationFixture(true);
+  await writeFile(outputPath, "existing caller file");
   const output = analysisErrorProjectionSchema.parse(
     await deliverCliAnalysisEvidence({
       run: () => service.inspect(input),
@@ -66,29 +73,8 @@ it("excludes marked output identity from late CLI publication failure while reta
 it.each([true, false])(
   "publishes summary bytes while excluding only a marked receipt identity: %s",
   async (marked) => {
-    const root = await createTestTempDirectory("rea-capture-publication-");
-    const outputPath = join(root, "private-publication-marker.json");
-    const values = marked ? ["private-publication-marker"] : [];
-    const bytes = JSON.stringify(historicalHar());
-    const input = {
-      capture_path: join(root, "capture.har"),
-      format: "har" as const,
-      sensitive_values: values,
-    };
-    const service = new WebNetworkCaptureService({
-      inspect: async () =>
-        ok({
-          ...decodeHarCapture(bytes, values),
-          artifact: {
-            path: input.capture_path,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
-            bytes: Buffer.byteLength(bytes),
-          },
-          format: "har" as const,
-          runtime_attribution: "unknown" as const,
-          limitations: [],
-        }),
-    });
+    const { input, service, outputPath, values } =
+      await capturePublicationFixture(marked);
     const output = await deliverCliAnalysisEvidence({
       run: () => service.inspect(input),
       service,
@@ -117,29 +103,8 @@ it.each([true, false])(
 it.each([true, false])(
   "publishes partial Evidence from a failure while excluding only a marked receipt identity: %s",
   async (marked) => {
-    const root = await createTestTempDirectory("rea-capture-partial-");
-    const outputPath = join(root, "private-publication-marker.json");
-    const values = marked ? ["private-publication-marker"] : [];
-    const bytes = JSON.stringify(historicalHar());
-    const input = {
-      capture_path: join(root, "capture.har"),
-      format: "har" as const,
-      sensitive_values: values,
-    };
-    const service = new WebNetworkCaptureService({
-      inspect: async () =>
-        ok({
-          ...decodeHarCapture(bytes, values),
-          artifact: {
-            path: input.capture_path,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
-            bytes: Buffer.byteLength(bytes),
-          },
-          format: "har" as const,
-          runtime_attribution: "unknown" as const,
-          limitations: [],
-        }),
-    });
+    const { input, service, outputPath, values } =
+      await capturePublicationFixture(marked);
     const completed = await service.inspect(input);
     if (!completed.ok) throw completed.error;
     const output = analysisErrorProjectionSchema.parse(
@@ -189,12 +154,12 @@ it.each([true, false])(
     const outputPath = join(root, "partial.json");
     if (refused) await writeFile(outputPath, "existing caller file");
     const provider = { id: "fixture", name: "Fixture", version: "1" };
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "source_fixture",
       parameters: {},
       result: { observed: 7 },
     });
-    const partial = createEvidence(undefined, provider, {
+    const partial = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "derived_fixture",
       parameters: {},
       result: { completed_sources: 1 },
@@ -209,7 +174,6 @@ it.each([true, false])(
       await publishCliAnalysisEvidence(
         { ok: false, error: failure, sourceEvidence: [source] },
         {
-          providerId: "fixture",
           operation: "derived_fixture",
           signal: new AbortController().signal,
           detail: "complete",

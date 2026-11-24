@@ -2,15 +2,14 @@ import { createHash } from "node:crypto";
 import { writeFile, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { expect, it } from "vitest";
-import {
-  KunaProjectCache,
-  kunaProjectKey,
-} from "../../../../src/kuna/KunaProjectCache.js";
+import { kunaProjectKey } from "../../../../src/kuna/KunaCacheManifest.js";
+import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { writeFakeKuna, fakeKunaCalls } from "./fakeKuna.js";
 import { inspectKunaInstallationOwned } from "./kunaResourceScope.js";
+import { withKunaProjectDeadline } from "./kunaProjectRequest.js";
 const test = it.skipIf(process.platform === "win32");
 
 test.each([false, true])(
@@ -72,12 +71,14 @@ test.each([false, true])(
           jobs: installed.value.configuration.jobs,
         });
         keys.push(key);
-        const pending = cache.build({
-          installation: installed.value,
-          targetPath,
-          targetSha256,
-          signal: controllers[index]!.signal,
-        });
+        const pending = cache.build(
+          withKunaProjectDeadline({
+            installation: installed.value,
+            targetPath,
+            targetSha256,
+            signal: controllers[index]!.signal,
+          }),
+        );
         builds.push(pending);
         await expect
           .poll(async () =>

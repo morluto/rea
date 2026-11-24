@@ -22,12 +22,16 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 const identityFields = new Set([
   "id",
@@ -99,12 +103,10 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   const reusable = isImmutableJsonSnapshot(report);
   const cached = reusable ? checked.get(report) : undefined;
   // Parent identity is checked on every read, independently of reusable facts.
+  const subject = evidenceSubjectTarget(parent.subject);
   if (
-    parent.subject != null &&
-    !apkSignatureMatchesSubject(report.artifact, {
-      sha256: parent.subject.digest.sha256,
-      format: parent.subject.format,
-    })
+    subject !== undefined &&
+    !apkSignatureMatchesSubject(report.artifact, subject)
   )
     return err(
       analysisViewInputError([
@@ -267,15 +269,8 @@ export const projectApkSignatureView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "apk-signature")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof apkSignatureViewRequestSchema>
@@ -305,7 +300,7 @@ export const projectApkSignatureView = (
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const ids = view.ids === undefined ? undefined : new Set(view.ids);
   const signers =

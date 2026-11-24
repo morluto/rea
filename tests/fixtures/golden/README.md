@@ -25,6 +25,10 @@ fixture's `Data([0, 1, 2, 255])`. Its reviewed graph kind is `scalar`; the JSON
 correction updates only the graph digest in `provenance.json`, without
 recapturing or changing the original XML or its producer metadata.
 
+The graph's `archiver` is the archive's declared `$archiver`, `NSKeyedArchiver`
+for this capture. Adding that reported field likewise updates only the graph
+digest.
+
 To recapture the input on an approved macOS host:
 
 ```sh

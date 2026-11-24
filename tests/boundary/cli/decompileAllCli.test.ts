@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 
+import { decompileDirectoryIndexSchema } from "../../../src/contracts/decompileDirectory.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -54,8 +55,6 @@ describe("decompile-all CLI", () => {
           address_start: "0X1000",
           address_end: "0X1040",
           limit: 1,
-          layout: "address",
-          resume: false,
         },
         normalized_result: {
           output_directory: join(root, "out"),
@@ -63,12 +62,16 @@ describe("decompile-all CLI", () => {
           counts: { selected: 2, excluded: 2, written: 1, remaining: 1 },
         },
       });
+      expect(result.json).not.toHaveProperty("parameters.layout");
+      expect(result.json).not.toHaveProperty("parameters.resume");
       expect(await readdir(join(root, "out", "functions"))).toEqual([
         "0x1000.c",
       ]);
-      expect(JSON.stringify(result.json)).not.toContain(
+      const pseudocode = "// single-function";
+      expect(
         await readFile(join(root, "out", "functions", "0x1000.c"), "utf8"),
-      );
+      ).toContain(pseudocode);
+      expect(JSON.stringify(result.json)).not.toContain(pseudocode);
       const resumed = await cli.run({
         arguments: [
           "decompile-all",
@@ -78,6 +81,8 @@ describe("decompile-all CLI", () => {
           "--output",
           "out",
           "--resume",
+          "--layout",
+          "address",
           "--address-start",
           "0X1000",
           "--address-end",
@@ -92,11 +97,55 @@ describe("decompile-all CLI", () => {
       });
       expect(resumed.exitCode, JSON.stringify(resumed.json)).toBe(0);
       expect(resumed.json).toMatchObject({
-        parameters: { limit: 100001, resume: true },
+        parameters: { limit: 100001, resume: true, layout: "address" },
         normalized_result: {
           counts: { selected: 2, written: 1, skipped: 1, remaining: 0 },
         },
       });
+      // Kuna lacks procedure_info, so every retained record keeps an
+      // unavailable body. A resume that writes nothing still summarizes them.
+      const bodyCaveat = expect.stringMatching(
+        /^2 exported function record.*procedure_info is unavailable/u,
+      );
+      expect(resumed.json).toMatchObject({
+        normalized_result: { limitations: [bodyCaveat] },
+      });
+      const noop = await cli.run({
+        arguments: [
+          "decompile-all",
+          target,
+          "--provider",
+          "kuna",
+          "--output",
+          "out",
+          "--resume",
+          "--address-start",
+          "0X1000",
+          "--address-end",
+          "0X1040",
+          "--format",
+          "json",
+        ],
+        cwd: root,
+        environment,
+      });
+      expect(noop.exitCode, JSON.stringify(noop.json)).toBe(0);
+      expect(noop.json).toMatchObject({
+        normalized_result: {
+          counts: { selected: 2, requested: 0, skipped: 2 },
+          limitations: [bodyCaveat],
+        },
+      });
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(join(root, "out", "decompile-index.json"), "utf8"),
+        ),
+      );
+      expect(index.limitations).toEqual([bodyCaveat]);
+      expect(index.functions.map((record) => record.body.available)).toEqual([
+        false,
+        false,
+      ]);
     },
   );
 });
