@@ -102,6 +102,18 @@ const paxSeconds = (value: string | undefined): bigint | undefined =>
     ? BigInt(value.split(".")[0]!)
     : undefined;
 
+/** The first recognized numeric pax keyword whose value does not parse. */
+const invalidPaxNumber = (records: TarPaxRecords): string | undefined => {
+  for (const key of ["size", "uid", "gid"] as const) {
+    const value = records.get(key);
+    if (value !== undefined && decimal(value) === undefined) return key;
+  }
+  const mtime = records.get("mtime");
+  return mtime !== undefined && paxSeconds(mtime) === undefined
+    ? "mtime"
+    : undefined;
+};
+
 /**
  * Apply pax records over earlier ones. POSIX: an empty value deletes the
  * keyword, so the header field applies again.
@@ -257,6 +269,17 @@ export const walkTar = async (
       const records = extension
         ? new Map<string, string>()
         : withPax(global, local);
+      // A recognized numeric pax record that does not parse is not silently
+      // replaced by the header field: the walk stops there as malformed.
+      const invalidPax = invalidPaxNumber(records);
+      if (invalidPax !== undefined) {
+        stop(
+          "malformed",
+          headerOffset,
+          `Tar pax record ${invalidPax} is not a valid number for the member at offset ${String(headerOffset)}; members from it on were not inventoried.`,
+        );
+        break;
+      }
       const declaredSize = decimal(records.get("size")) ?? header.size;
       const size = safeNumber(declaredSize);
       if (size === null || tarPaddedSize(size) > Number.MAX_SAFE_INTEGER) {

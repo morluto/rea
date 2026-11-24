@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { open, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
-import { gzipSync } from "node:zlib";
+import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
@@ -405,6 +405,45 @@ const rechecksum = (block: Buffer): Buffer => {
 const end = Buffer.alloc(1024);
 
 describe("tar header edge cases", () => {
+  it("stops as malformed at a pax size that is not a number, keeping earlier members", async () => {
+    const pax = Buffer.from("12 size=abc\n");
+    const result = await read(
+      Buffer.concat([
+        tarMembers([{ name: "a.txt", data: "a" }]),
+        tarHeader({ name: "PaxHeader", type: "x" }, pax.length),
+        pax,
+        Buffer.alloc(512 - pax.length),
+        tarMembers([{ name: "b.txt", data: "b" }]),
+        end,
+      ]),
+    );
+    expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+    expect(result.metadata).toMatchObject({
+      end_state: "malformed",
+      end_offset: 2048,
+    });
+    expect(result.coverage[0]?.status).toBe("unknown");
+  });
+
+  it("recognizes a gzip tar whose header carries a comment longer than the probe bound", async () => {
+    const tar = tarFixture([{ name: "a.txt", data: "a" }]);
+    const trailer = Buffer.alloc(8);
+    trailer.writeUInt32LE(crc32(tar), 0);
+    trailer.writeUInt32LE(tar.length, 4);
+    const bytes = Buffer.concat([
+      // FLG.FCOMMENT (0x10), then a 3 KiB NUL-terminated comment.
+      Buffer.from([0x1f, 0x8b, 0x08, 0x10, 0, 0, 0, 0, 0, 3]),
+      Buffer.alloc(3072, 0x63),
+      Buffer.alloc(1),
+      deflateRawSync(tar),
+      trailer,
+    ]);
+    expect(recognizeTarPrefix(bytes.subarray(0, 8192))).toBe("gzip");
+    const result = await read(bytes);
+    expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+    expect(result.coverage[0]?.status).toBe("complete");
+  });
+
   it("keeps a pre-1970 GNU base-256 modification time", async () => {
     const header = tarHeader({ name: "old.txt", dialect: "gnu" }, 1);
     header.fill(0xff, 136, 148);

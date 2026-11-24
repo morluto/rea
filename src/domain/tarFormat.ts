@@ -204,6 +204,28 @@ const GZIP_TAR_PROBE_INPUT_BYTES = 2048;
 const GZIP_TAR_PROBE_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 /**
+ * Bytes of an RFC 1952 member header, including FEXTRA, FNAME, FCOMMENT and
+ * FHCRC, or `undefined` when the prefix ends inside it.
+ */
+const gzipHeaderBytes = (prefix: Uint8Array): number | undefined => {
+  if (prefix.length < 10) return undefined;
+  const flags = prefix[3]!;
+  let at = 10;
+  if ((flags & 0x4) !== 0) {
+    if (prefix.length < at + 2) return undefined;
+    at += 2 + (prefix[at]! | (prefix[at + 1]! << 8));
+  }
+  for (const flag of [0x8, 0x10]) {
+    if ((flags & flag) === 0) continue;
+    const end = prefix.indexOf(0, at);
+    if (end === -1) return undefined;
+    at = end + 1;
+  }
+  if ((flags & 0x2) !== 0) at += 2;
+  return at <= prefix.length ? at : undefined;
+};
+
+/**
  * Whether the leading bytes are a gzip member whose first decompressed block
  * is a tar header. Only a bounded prefix is inflated; a gzip stream that is
  * not tar is not claimed.
@@ -214,9 +236,13 @@ export const hasGzipTarPrefix = (prefix: Uint8Array): boolean => {
     // Leave out the last 8 bytes: when the prefix is the whole file they are
     // the CRC32 and ISIZE trailer, which a probe must not verify. A damaged
     // trailer is the reader's fact to report, not a reason to forget the tar.
+    // The bound applies to compressed data after the header's optional
+    // fields, so a long name or comment does not hide the first block.
+    const header = gzipHeaderBytes(prefix);
+    if (header === undefined) return false;
     const input = prefix.subarray(
       0,
-      Math.min(GZIP_TAR_PROBE_INPUT_BYTES, prefix.length - 8),
+      Math.min(header + GZIP_TAR_PROBE_INPUT_BYTES, prefix.length - 8),
     );
     const inflated = gunzipSync(input, {
       finishFlush: zlibConstants.Z_SYNC_FLUSH,
