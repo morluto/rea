@@ -209,6 +209,17 @@ mitigations carry `evidence_kind: "inferred"`; enforcement remains unobserved.
 See
 [PE TLS callbacks and load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
 
+## PE x64 exception-directory function ranges
+
+Use `inspect_pe_unwind_ranges` for an explicit local x64 PE32+ image when the
+question is where functions start and end without a PDB, or whether a
+provider's procedure inventory agrees with the compiler's records. The CLI
+equivalent is `inspect-pe-unwind-ranges PATH`. Primary entries start functions;
+chained entries are fragments of the entry named by `primary_index`, not
+separate functions. Leaf functions have no entry, so a missing entry is not
+absence. Compare provider addresses minus `image_base` with the RVAs. See
+[PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-unwind-ranges.md).
+
 ## Binary hardening
 
 Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file

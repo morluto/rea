@@ -179,6 +179,11 @@ export const documentationSections = [
         route: "/pe-load-config",
       },
       {
+        text: "PE x64 exception-directory function ranges",
+        source: "guides/native/pe-unwind-ranges.md",
+        route: "/pe-unwind-ranges",
+      },
+      {
         text: "Match native functions across builds",
         source: "native-function-matching.md",
         route: "/native-function-matching",
