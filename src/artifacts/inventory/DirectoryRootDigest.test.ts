@@ -163,6 +163,41 @@ describe("directory root digest", () => {
       });
     },
   );
+});
+
+describe("directory root digest names and limits", () => {
+  // Linux file systems store both spellings; APFS, HFS+ and NTFS fold them.
+  it.runIf(process.platform === "linux")(
+    "keeps two names that differ only in Unicode normalization as two members",
+    async () => {
+      const base = await createTestTempDirectory("rea-tree-digest-nfc-");
+      const tree = async (
+        name: string,
+        composed: string,
+        decomposed: string,
+      ) => {
+        const root = join(base, name);
+        await mkdir(root);
+        await writeFile(join(root, "é"), composed);
+        await writeFile(join(root, "é"), decomposed);
+        return inventory(root);
+      };
+      const one = await tree("one", "first", "second");
+      const swapped = await tree("swapped", "second", "first");
+      expect(one.root_digest).toEqual({
+        algorithm: "rea-directory-tree",
+        version: 1,
+        status: "complete",
+        sha256: directoryTreeDigest([
+          { kind: "file", path: "é", sha256: sha("first") },
+          { kind: "file", path: "é", sha256: sha("second") },
+        ]),
+        member_count: 2,
+      });
+      expect(swapped.root_digest?.status).toBe("complete");
+      expect(swapped.manifest.root_sha256).not.toBe(one.manifest.root_sha256);
+    },
+  );
 
   it("reports a walk the entry limit stopped as partial, with no digest", async () => {
     const root = await createTestTempDirectory("rea-tree-digest-limit-");

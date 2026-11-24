@@ -25,6 +25,7 @@ import {
   type CapabilityDescriptor,
   type ProviderIdentity,
   type ExecutionOptions,
+  type RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import {
   inspectBundleKeyedArchive,
@@ -122,6 +123,8 @@ export class ArtifactProvider implements AnalysisProvider {
     path: string,
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
+    /** The caller's lifetime, which keeps a failed cleanup retryable. */
+    retained?: RetainedResourceScope,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const resources = new ArtifactResourceScope();
     let inspected: Result<AnalysisExecution, AnalysisError>;
@@ -149,8 +152,17 @@ export class ArtifactProvider implements AnalysisProvider {
       inspected = err(translateArtifactFailure("inspect_artifact", cause));
     }
     // A completed inspection still fails when its readers could not be
-    // released; the cleanup error retains the resources it could not close.
+    // released. The caller's lifetime keeps this scope, so a later close of
+    // that lifetime retries exactly the owners that are still pending.
     const closed = await closeArtifactResources(resources, path);
+    if (!closed.ok)
+      retained?.retain(
+        {
+          close: () => resources.close(),
+          cleanupResources: resources.cleanupResources,
+        },
+        `artifact directory inspection of ${path}`,
+      );
     return closed.ok || !inspected.ok ? inspected : closed;
   }
 

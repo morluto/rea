@@ -119,7 +119,9 @@ export const resolveArtifactComparisonSources = async (
   const left = await resolveSide("left");
   if (!left.ok) return left;
   const right = await resolveSide("right");
-  if (!right.ok) return right;
+  // The completed left inventory survives the right side's failure.
+  if (!right.ok)
+    return err(right.error.retainArgumentObservation("left", left.value));
   return ok({ left: left.value, right: right.value });
 };
 
@@ -206,24 +208,8 @@ export const resolveArtifactComparisonEvidence = (
   const authenticated = readEvidence(selected.value);
   if (!authenticated.ok) return authenticated;
   const owner = authenticated.value;
-  const identity = evidenceTargetIdentity(evidence);
-  const ownerIdentity = evidenceTargetIdentity(owner);
-  const target = evidenceSubjectTarget(evidence.subject);
-  if (
-    identity === null ||
-    ownerIdentity === null ||
-    target === undefined ||
-    !sameTargetIdentity(identity, ownerIdentity)
-  )
-    return mismatch();
-  // The ledger preserves its original display path; summary delivery may use a
-  // later caller-selected alias for this same authenticated owner identity.
-  // The alias names the whole target, selection included.
-  const { name: _name, ...aliasTarget } = target;
-  const presentation = rebindEvidenceToTargetPath(owner, {
-    ...aliasTarget,
-    path: summary.data.artifact.path,
-  });
+  const presentation = summaryPresentation(evidence, owner, summary.data);
+  if (presentation === undefined) return mismatch();
   const reprojected = inspectAnalysisViewValidated(
     {
       source: { kind: "retained-evidence", evidence_id: parentId },
@@ -236,6 +222,38 @@ export const resolveArtifactComparisonEvidence = (
   // owner refuses earlier projections instead of rebuilding them.
   if (reprojected.value.evidence_id !== evidence.evidence_id) return mismatch();
   return ok(owner);
+};
+
+/**
+ * The owner as the summary presented it. A local owner may be presented at a
+ * later caller-selected alias of the same identity. An owner whose identity
+ * is unknown, such as a partial directory walk, has no alias to rebind: the
+ * exact reprojection alone binds the summary to it.
+ */
+const summaryPresentation = (
+  summary: Evidence,
+  owner: Evidence,
+  view: { readonly artifact: { readonly path: string } },
+): Evidence | undefined => {
+  const ownerIdentity = evidenceTargetIdentity(owner);
+  if (ownerIdentity?.kind === "unknown") return owner;
+  const identity = evidenceTargetIdentity(summary);
+  const target = evidenceSubjectTarget(summary.subject);
+  if (
+    identity === null ||
+    ownerIdentity === null ||
+    target === undefined ||
+    !sameTargetIdentity(identity, ownerIdentity)
+  )
+    return undefined;
+  // The ledger preserves its original display path; summary delivery may use a
+  // later caller-selected alias for this same authenticated owner identity.
+  // The alias names the whole target, selection included.
+  const { name: _name, ...aliasTarget } = target;
+  return rebindEvidenceToTargetPath(owner, {
+    ...aliasTarget,
+    path: view.artifact.path,
+  });
 };
 
 const mismatch = (): Result<never, EvidenceIntegrityError> =>

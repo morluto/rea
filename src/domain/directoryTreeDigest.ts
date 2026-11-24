@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { digestSchema } from "./digests.js";
-import { logicalPathNfc } from "./artifactIdentity.js";
 
 /**
  * The content-addressed identity of a directory tree.
@@ -14,8 +13,12 @@ import { logicalPathNfc } from "./artifactIdentity.js";
  *     record = u8(kind tag)  field(path)  kind-specific fields
  *     field(bytes) = u64be(byte length)  bytes
  *
- * - `path` is the member's path relative to the root, `/`-separated, in
- *   Unicode NFC, encoded as UTF-8. The root itself has no record.
+ * - `path` is the member's path relative to the root: each name's exact
+ *   stored bytes, joined by `/`. Names are never Unicode-normalized, so two
+ *   names that differ only in normalization are two members. The walker
+ *   admits only names that decode as strict UTF-8, which re-encode to the
+ *   same bytes; any other name leaves the walk partial. The root itself has
+ *   no record.
  * - A regular file adds the 32 raw bytes of its content SHA-256. Mode, owner
  *   and time are not part of the identity.
  * - A directory, including an empty one, adds nothing.
@@ -23,8 +26,8 @@ import { logicalPathNfc } from "./artifactIdentity.js";
  *   followed.
  * - A FIFO, socket or device adds nothing; it is recorded, not read.
  *
- * Records are sorted by the UTF-8 bytes of their path, which is Unicode code
- * point order. Length-prefixed fields make the encoding injective for any
+ * Records are sorted by the bytes of their path, which for UTF-8 is Unicode
+ * code point order. Length-prefixed fields make the encoding injective for any
  * name bytes, and the header binds the algorithm, version and record count.
  * An empty directory is the header with a count of zero.
  */
@@ -112,26 +115,30 @@ const HEADER = Buffer.concat([
 const SHA256_HEX = /^[a-f0-9]{64}$/u;
 const HEX = /^(?:[a-f0-9]{2})*$/u;
 
-/** The canonical path bytes, or a reason the path has no canonical spelling. */
-const canonicalPath = (path: string): Buffer => {
-  const normalized = logicalPathNfc(path);
+/**
+ * The member's exact path bytes. A string that cannot round-trip through
+ * UTF-8 (a lone surrogate) or is not a plain relative path is refused rather
+ * than encoded lossily.
+ */
+const memberPathBytes = (path: string): Buffer => {
+  const bytes = Buffer.from(path, "utf8");
   if (
-    normalized !== path ||
+    bytes.toString("utf8") !== path ||
     path.length === 0 ||
     path.includes("\0") ||
     path.startsWith("/") ||
     path.split("/").some((part) => part === "" || part === "." || part === "..")
   )
     throw new TypeError(
-      `Directory tree member path is not a normalized relative path: ${JSON.stringify(path)}`,
+      `Directory tree member path is not an exact relative path: ${JSON.stringify(path)}`,
     );
-  return Buffer.from(path, "utf8");
+  return bytes;
 };
 
 const encodeRecord = (
   record: DirectoryTreeRecord,
 ): { readonly path: Buffer; readonly bytes: Buffer } => {
-  const path = canonicalPath(record.path);
+  const path = memberPathBytes(record.path);
   const head = Buffer.concat([Buffer.of(KIND_TAGS[record.kind]), field(path)]);
   if (record.kind === "file") {
     if (!SHA256_HEX.test(record.sha256))

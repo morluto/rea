@@ -12,7 +12,9 @@ import type { ArtifactPathSource } from "./ArtifactComparisonEvidence.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
+  RetainedResourceScope,
 } from "../../ports/AnalysisProvider.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import type { InspectArtifactDirectory } from "../../ports/artifacts/ArtifactDirectoryInspectionPort.js";
 import type { DirectAnalysisDependencies } from "../DirectAnalysisDependencies.js";
 import {
@@ -41,16 +43,23 @@ export const selectsArtifactDirectory = (path: string): Promise<boolean> =>
  * Inspect the artifact at a caller-selected path, independently of any open
  * session target: a directory is inventoried as a tree, and any other path
  * is admitted as a target in its own artifact-only session that closes
- * before this returns.
+ * before this returns. Whatever could not be released stays in `retained`,
+ * the caller's lifetime, so closing that lifetime retries it.
  */
 export const executeArtifactPathInspection = async (
   dependencies: ArtifactPathInspectionDependencies,
   path: string,
   parameters: Readonly<Record<string, JsonValue>>,
   options: ExecutionOptions = {},
+  retained?: RetainedResourceScope,
 ): Promise<Result<AnalysisExecution, AnalysisError>> => {
   if (await selectsArtifactDirectory(path))
-    return dependencies.inspectArtifactDirectory(path, parameters, options);
+    return dependencies.inspectArtifactDirectory(
+      path,
+      parameters,
+      options,
+      retained,
+    );
   const session = await dependencies.createArtifactBinarySession();
   return withSessionCleanup(
     session,
@@ -62,9 +71,34 @@ export const executeArtifactPathInspection = async (
       if (!opened.ok) return opened;
       return session.execute("inspect_artifact", parameters, options);
     },
-    managedAnalysisCleanupFailure,
+    (value, error) => {
+      retained?.retain(
+        {
+          close: async () => {
+            const closed = await session.close();
+            if (!closed.ok) throw closed.error;
+          },
+          cleanupResources: error.cleanupResources,
+        },
+        `artifact inspection session for ${path}`,
+      );
+      return managedAnalysisCleanupFailure(value, error);
+    },
   );
 };
+
+/** Keep an inspection's failed cleanup in an artifact resource scope. */
+export const retainedInArtifactScope = (
+  scope: ArtifactResourceScope,
+): RetainedResourceScope => ({
+  retain: (owner, resource) =>
+    scope.retain({
+      kind: "lease",
+      resource,
+      lease: { release: () => owner.close() },
+    }),
+  run: (operation) => scope.run(operation),
+});
 
 /**
  * Inventory a comparison side's path in place and return its complete
@@ -74,12 +108,14 @@ export const inventoryArtifactPath = async (
   dependencies: ArtifactPathInspectionDependencies,
   source: ArtifactPathSource,
   signal: AbortSignal | undefined,
+  retained?: RetainedResourceScope,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const execution = await executeArtifactPathInspection(
     dependencies,
     source.path,
     { integrity_policy: source.integrity_policy },
     signal === undefined ? {} : { signal },
+    retained,
   );
   if (!execution.ok) return execution;
   const inventory = execution.value.sourceEvidence?.find(

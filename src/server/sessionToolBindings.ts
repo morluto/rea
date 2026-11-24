@@ -24,6 +24,7 @@ import {
 } from "../application/artifacts/ArtifactComparisonEvidence.js";
 import {
   inventoryArtifactPath,
+  retainedInArtifactScope,
   type ArtifactPathInspectionDependencies,
 } from "../application/artifacts/ArtifactPathInspection.js";
 import {
@@ -191,6 +192,7 @@ export const bindSessionDerivedTools = ({
                     await createArtifactPathInspection(),
                     source,
                     sourceSignal,
+                    retainedInArtifactScope(resources),
                   ),
               }),
         },

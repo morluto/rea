@@ -5,7 +5,10 @@ import {
   resolveArtifactComparisonSources,
 } from "../application/artifacts/ArtifactComparisonEvidence.js";
 import { ArtifactResourceScope } from "../resources/index.js";
-import { inventoryArtifactPath } from "../application/artifacts/ArtifactPathInspection.js";
+import {
+  inventoryArtifactPath,
+  retainedInArtifactScope,
+} from "../application/artifacts/ArtifactPathInspection.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -50,6 +53,7 @@ export const registerArtifactComparisonCommand = (
                   createArtifactPathInspection(environment),
                   source,
                   sourceSignal,
+                  retainedInArtifactScope(resources),
                 );
               },
             },

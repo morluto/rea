@@ -423,6 +423,7 @@ const runAnalysis = async (
         path,
         arguments_,
         { signal },
+        session.resourceScope,
       );
       if (!execution.ok) return execution;
       const evidence = withEvidenceCallerInputPath(

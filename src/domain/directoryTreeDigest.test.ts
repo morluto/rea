@@ -144,11 +144,28 @@ describe("directory tree digest", () => {
     );
   });
 
-  it("refuses a path that is not normalized relative NFC", () => {
-    for (const path of ["", "/abs", "a//b", "./a", "a/..", "é", "a\0b"])
+  it("refuses a path that is not an exact relative path", () => {
+    for (const path of ["", "/abs", "a//b", "./a", "a/..", "a\0b", "\uD800"])
       expect(() => directoryTreeDigest([{ kind: "directory", path }])).toThrow(
         TypeError,
       );
+  });
+
+  it("hashes names by their exact bytes, never by a normalized form", () => {
+    const composed = "é";
+    const decomposed = "é";
+    expect(composed.normalize("NFC")).toBe(decomposed.normalize("NFC"));
+    expect(
+      directoryTreeDigest([{ kind: "directory", path: composed }]),
+    ).not.toBe(directoryTreeDigest([{ kind: "directory", path: decomposed }]));
+    // Two members that share a normalized spelling stay two members, so
+    // swapping their contents changes the identity.
+    const tree = (left: string, right: string) =>
+      directoryTreeDigest([
+        { kind: "file", path: composed, sha256: fileSha(left) },
+        { kind: "file", path: decomposed, sha256: fileSha(right) },
+      ]);
+    expect(tree("one", "two")).not.toBe(tree("two", "one"));
   });
 });
 

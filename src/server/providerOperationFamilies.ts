@@ -85,6 +85,7 @@ export const artifactAnalysisForAdmission =
         path,
         inventoryParameters,
         executionOptions,
+        analysis.resourceScope,
       );
     },
   });

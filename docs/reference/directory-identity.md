@@ -31,7 +31,8 @@ A file subject keeps its SHA-256. A directory subject is:
 }
 ```
 
-The same tree gives the same identity on every host and at every location.
+The same tree, with the same stored names, gives the same identity on every
+host and at every location.
 Any change to a member's content, name or kind, or an added or removed member,
 gives a new one. The identity does not depend on modification times,
 ownership, permission bits or the order the host lists entries in.
@@ -79,8 +80,12 @@ field(b) = u64be(byte length of b)  b
 | Block device     | `0x06`    | none                                     |
 | Character device | `0x07`    | none                                     |
 
-- `path` is relative to the root, uses `/` separators, is in Unicode NFC and is
-  encoded as UTF-8. The root has no record.
+- `path` is relative to the root and joins each name's exact stored bytes
+  with `/`. Names are never Unicode-normalized: on a file system that stores
+  both a composed and a decomposed `é`, they are two members with two
+  records. REA reads only names that decode as strict UTF-8, which re-encode
+  to the same bytes; any other name makes the walk partial. The root has no
+  record.
 - Records are sorted by the bytes of `path`. For UTF-8 this is Unicode code
   point order.
 - Every directory has a record, so an empty subdirectory is part of the
@@ -114,9 +119,13 @@ The design follows tools that already content-address trees:
   an archive makes the identity depend on archive ordering and metadata.
 - [RFC 6962](https://www.rfc-editor.org/rfc/rfc6962#section-2.1) separates
   hash domains with a prefix. The header and kind bytes do the same here.
-- [UAX #15](https://unicode.org/reports/tr15/) defines NFC, which makes the
-  same name spelled in decomposed form, as some file systems return it, hash
-  the same.
+- [UAX #15](https://unicode.org/reports/tr15/) normalization forms are not
+  applied. Normalizing would give two distinct names one path, so trees that
+  differ only by swapping those members' contents would share an identity.
+  Inventory occurrences keep their NFC logical paths for display and
+  comparison; the identity uses the bytes the file system stored, so a tree
+  copied between file systems that normalize names differently can get a
+  different identity.
 
 The encoding is flat: one hash over every record, rather than a hash per
 subdirectory as Git does. REA's inventory is already a flat list of

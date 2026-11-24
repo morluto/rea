@@ -262,7 +262,8 @@ const inventoryEntries = (
           prefix.length === 0 ? omission.path : `${prefix}/${omission.path}`,
       });
       if (tree === undefined) return;
-      const path = normalizeArtifactPath(omission.path);
+      // The tree records each name's exact bytes, never a normalized form.
+      const path = omission.path;
       if (RECORDED_SPECIAL_KINDS.has(omission.kind))
         tree.add({
           kind: omission.kind as
@@ -396,7 +397,7 @@ const visitArtifactEntries = async (
       }
       context.occurrences.push(occurrence);
       if (frame.reader === context.reader && context.tree !== undefined)
-        recordTreeMember(context.tree, entry, logicalPath, digested?.node);
+        recordTreeMember(context.tree, entry, entry.path, digested?.node);
       if (
         expandableAsar &&
         digested !== undefined &&

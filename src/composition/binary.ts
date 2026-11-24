@@ -186,14 +186,14 @@ export const createArtifactPathInspection = (
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
   settings?: AnalysisSettingsReader,
 ): ArtifactPathInspectionDependencies => ({
-  inspectArtifactDirectory: async (path, parameters, options) => {
+  inspectArtifactDirectory: async (path, parameters, options, retained) => {
     const { ArtifactProvider } =
       await import("../artifacts/ArtifactProvider.js");
     return new ArtifactProvider(
       snapshotEnvironment(selectedEnvironment, platform),
       platform,
       settings,
-    ).inspectDirectory(path, parameters, options);
+    ).inspectDirectory(path, parameters, options, retained);
   },
   createArtifactBinarySession: () =>
     createArtifactBinarySession(selectedEnvironment, platform, settings),
