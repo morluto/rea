@@ -1,12 +1,14 @@
 import { err, ok, type Result } from "../result.js";
 import { BinaryReader } from "../binaryContainer.js";
+import type { ParseFailure } from "../parseFailure.js";
 import {
   classifyFatContainerEvidence,
   fatSliceOverlapReason,
   findOverlappingFatSlices,
+  inspectFatSliceRange,
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
-  validateFatSlice,
+  validateFatSliceIdentity,
   type FatContainerHeader,
   type FatSliceDeclaration,
   type MachoHeaderPrefixFacts,
@@ -14,10 +16,98 @@ import {
 import type { ByteSource } from "../byteSource.js";
 
 type UniversalMachoHeader = Extract<FatContainerHeader, { state: "parsed" }>;
-interface MachoImageSelectionFailure {
-  readonly kind: "malformed";
+
+/** The ParseFailure format of a Mach-O image and its universal container. */
+export const MACHO_FORMAT = "macho";
+
+/** What the container reader established about the universal file's bytes. */
+export type MachoContainerFailure = Extract<
+  ParseFailure,
+  { readonly kind: "malformed" | "truncated" | "unsupported" }
+>;
+
+/**
+ * The universal file's own format failure, raised once here. `failure.kind`
+ * is truncated only where this reader measured bytes ending inside a
+ * structure, unsupported where the container reader classified the form as
+ * outside coverage, and malformed otherwise. `message` is the failure's detail.
+ */
+export interface MachoImageSelectionFailure {
+  readonly kind: "format";
   readonly message: string;
+  readonly failure: MachoContainerFailure;
 }
+
+const containerFailure = (
+  kind: MachoContainerFailure["kind"],
+  detail: string,
+  offset?: number,
+): MachoImageSelectionFailure => {
+  const at = offset === undefined ? {} : { offset };
+  return {
+    kind: "format",
+    message: detail,
+    failure:
+      kind === "unsupported"
+        ? { kind, format: MACHO_FORMAT, detail, undecodedContent: false, ...at }
+        : { kind, format: MACHO_FORMAT, detail, ...at },
+  };
+};
+
+/**
+ * The universal file's own failure for a FAT header the container reader did
+ * not parse. A header or table past the file's measured end carries that
+ * reader's extent; `needs-data` remains only when a read returned fewer bytes
+ * than the measured size admits.
+ */
+const unparsedHeaderFailure = (
+  fat: Exclude<FatContainerHeader, { state: "parsed" | "not-fat" }>,
+): MachoImageSelectionFailure => {
+  if (fat.state === "malformed")
+    return containerFailure("malformed", fat.reason);
+  if (fat.state === "needs-data")
+    return containerFailure(
+      "truncated",
+      "Universal Mach-O header is truncated",
+    );
+  return {
+    kind: "format",
+    message: fat.reason,
+    failure: {
+      kind: "truncated",
+      format: MACHO_FORMAT,
+      detail: fat.reason,
+      extent: fat.extent,
+    },
+  };
+};
+
+/**
+ * Check one selected declaration against its slice's observed header prefix.
+ * The table entry and the slice header are two records in the same file, so
+ * their disagreement breaks the container's own rule: malformed, never the
+ * caller's selection.
+ */
+const sliceFailure = (
+  slice: FatSliceDeclaration,
+  containerSize: number,
+  tableEnd: number,
+  prefix: MachoHeaderPrefixFacts,
+): MachoImageSelectionFailure | null => {
+  const range = inspectFatSliceRange(slice, containerSize, tableEnd);
+  if (range !== null)
+    return containerFailure(range.category, range.reason, slice.offset);
+  if (prefix.identity === null)
+    return containerFailure(
+      "truncated",
+      `FAT architecture ${slice.index} has a truncated Mach-O identity`,
+      slice.offset,
+    );
+  const mismatch = validateFatSliceIdentity(slice, prefix.identity);
+  return mismatch === null
+    ? null
+    : containerFailure("malformed", mismatch, slice.offset);
+};
 
 /**
  * Admit a complete in-memory universal image whose slices do not overlap;
@@ -28,24 +118,17 @@ export const readUniversalMachoImage = (
 ): Result<UniversalMachoHeader | null, MachoImageSelectionFailure> => {
   const fat = readFatContainerHeader(bytes, bytes.byteLength);
   if (fat.state === "not-fat") return ok(null);
-  if (fat.state !== "parsed")
-    return err({
-      kind: "malformed",
-      message:
-        fat.state === "malformed"
-          ? fat.reason
-          : "Universal Mach-O header is truncated",
-    });
+  if (fat.state !== "parsed") return err(unparsedHeaderFailure(fat));
   const identity = classifyFatContainerEvidence(fat, bytes);
   if (identity.state === "malformed")
-    return err({ kind: "malformed", message: identity.reason });
+    return err(containerFailure(identity.category, identity.reason));
   if (identity.state !== "mach-o") return ok(null);
   // Every range is valid here; aliased declarations are a malformed container,
   // as the artifact reader also rules, not slices to choose between.
   const overlap = findOverlappingFatSlices(fat.slices);
   return overlap === null
     ? ok(fat)
-    : err({ kind: "malformed", message: fatSliceOverlapReason(overlap) });
+    : err(containerFailure("malformed", fatSliceOverlapReason(overlap)));
 };
 
 /** Validate the selected declaration against the complete embedded CPU identity. */
@@ -55,12 +138,13 @@ export const readUniversalMachoSlice = (
   slice: FatSliceDeclaration,
 ): Result<Buffer, MachoImageSelectionFailure> => {
   const image = bytes.subarray(slice.offset, slice.offset + slice.size);
-  const identity = readMachoHeaderPrefixFacts(image).identity;
-  const message =
-    identity === null
-      ? `FAT architecture ${slice.index} has a truncated Mach-O identity`
-      : validateFatSlice(slice, bytes.length, header.tableEnd, identity);
-  return message === null ? ok(image) : err({ kind: "malformed", message });
+  const failure = sliceFailure(
+    slice,
+    bytes.length,
+    header.tableEnd,
+    readMachoHeaderPrefixFacts(image),
+  );
+  return failure === null ? ok(image) : err(failure);
 };
 
 const readSourceSlice = (
@@ -112,14 +196,8 @@ export const readUniversalMachoImageFromReader = async (
       }
     }
   }
-  if (fat.state !== "parsed")
-    return err({
-      kind: "malformed",
-      message:
-        fat.state === "malformed"
-          ? fat.reason
-          : "Universal Mach-O header is truncated",
-    });
+  if (fat.state === "not-fat") return ok(null);
+  if (fat.state !== "parsed") return err(unparsedHeaderFailure(fat));
   if (tableBytes.length < fat.tableEnd)
     tableBytes = await readSourceSlice(source, 0, fat.tableEnd);
   const sliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>();
@@ -142,12 +220,12 @@ export const readUniversalMachoImageFromReader = async (
     sliceHeadersByOffset,
   );
   if (identity.state === "malformed")
-    return err({ kind: "malformed", message: identity.reason });
+    return err(containerFailure(identity.category, identity.reason));
   if (identity.state !== "mach-o") return ok(null);
   const overlap = findOverlappingFatSlices(fat.slices);
   return overlap === null
     ? ok({ header: fat, tableBytes: tableBytes.subarray(0, fat.tableEnd) })
-    : err({ kind: "malformed", message: fatSliceOverlapReason(overlap) });
+    : err(containerFailure("malformed", fatSliceOverlapReason(overlap)));
 };
 
 /** Validate one FAT slice by reading only its 16-byte Mach-O header prefix. */
@@ -161,10 +239,11 @@ export const validateUniversalMachoSliceFromReader = async (
     slice.offset,
     Math.min(16, slice.size),
   );
-  const identity = readMachoHeaderPrefixFacts(prefix).identity;
-  const message =
-    identity === null
-      ? `FAT architecture ${slice.index} has a truncated Mach-O identity`
-      : validateFatSlice(slice, source.size, header.tableEnd, identity);
-  return message === null ? ok(undefined) : err({ kind: "malformed", message });
+  const failure = sliceFailure(
+    slice,
+    source.size,
+    header.tableEnd,
+    readMachoHeaderPrefixFacts(prefix),
+  );
+  return failure === null ? ok(undefined) : err(failure);
 };

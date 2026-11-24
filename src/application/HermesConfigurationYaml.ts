@@ -22,6 +22,8 @@ import {
 import {
   materializeUnresolvedYamlAliases,
   retainYamlConfigurationSource,
+  initializeEmptyYamlMapping,
+  yamlConfigurationValue,
   yamlAliasValues,
   retainYamlScalarSource,
   yamlNumericValuesEqual,
@@ -259,16 +261,6 @@ export const stringifyHermesConfigurationYaml = (
 ): string =>
   new Document(document, createHermesYamlOptions()).toString({ lineWidth: 0 });
 
-// A comment-only document has no root; a bare marker has an unwritten null
-// scalar. Explicit null values, tags and anchors remain actual values.
-const isEmptyYamlRoot = (root: Document["contents"]): boolean =>
-  root === null ||
-  (isScalar(root) &&
-    root.value === null &&
-    root.source === "" &&
-    root.tag === undefined &&
-    root.anchor === undefined);
-
 const parseHermesDocument = (text: string) => {
   const document = parseDocument(text, createHermesYamlOptions());
   const error = document.errors[0];
@@ -382,17 +374,8 @@ const inheritedYamlMapOverride = (
 };
 
 /** Parse a Hermes `config.yaml`, preserving the distinction between no root and explicit null. */
-export const parseHermesConfigurationYaml = (text: string): unknown => {
-  const document = parseHermesDocument(text);
-  return isEmptyYamlRoot(document.contents)
-    ? {}
-    : document.toJS({
-        reviver: (_key, value) =>
-          typeof value === "bigint" && Number.isSafeInteger(Number(value))
-            ? Number(value)
-            : value,
-      });
-};
+export const parseHermesConfigurationYaml = (text: string): unknown =>
+  yamlConfigurationValue(parseHermesDocument(text));
 
 /** Set or delete one value in a Hermes `config.yaml`, keeping the rest as written. */
 export const editHermesConfigurationYaml = (
@@ -402,15 +385,7 @@ export const editHermesConfigurationYaml = (
 ): string => {
   // A plain Document, so a bare `---` root can be replaced by a new map.
   const document: Document = parseHermesDocument(text);
-  const root = document.contents;
-  if (isEmptyYamlRoot(root)) {
-    const map = document.createNode({});
-    if (isScalar(root))
-      map.commentBefore = [root.commentBefore, root.comment]
-        .filter((comment) => comment !== undefined)
-        .join("\n");
-    document.contents = map;
-  }
+  initializeEmptyYamlMapping(document);
   for (let length = 1; length < path.length; length++) {
     const parent = resolveYamlEditPath(document, path.slice(0, length));
     const previous = document.getIn(parent, true);

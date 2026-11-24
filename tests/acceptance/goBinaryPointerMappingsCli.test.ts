@@ -56,8 +56,10 @@ cliTest(
     });
     expect(rejected.exitCode).toBe(1);
     expect(rejected.json).toMatchObject({
-      code: "invalid_request",
-      details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+      code: "unsupported_target",
+      details: {
+        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+      },
     });
     const response = await call("inspect_go_binary", { path });
     expect(parseMcpToolError(response)).toEqual({ error: rejected.json });

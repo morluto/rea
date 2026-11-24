@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 972; runtime: 174.
+Locked package entries: 971; runtime: 173.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -720,21 +720,21 @@ commander@13.1.0 | development | MIT
   Package: https://www.npmjs.com/package/@lydell/node-pty-win32-x64/v/1.1.0
   Archive: https://registry.npmjs.org/@lydell/node-pty-win32-x64/-/node-pty-win32-x64-1.1.0.tgz
   Integrity: sha512-3N56BZ+WDFnUMYRtsrr7Ky2mhWGl9xXcyqR6cexfuCqcz9RNWL+KoXRv/nZylY5dYaXkft4JaR1uVu+roiZDAw==
-@modelcontextprotocol/client@2.3.1 | runtime | Apache-2.0
+@modelcontextprotocol/client@2.4.0 | runtime | Apache-2.0
   Lockfile path: node_modules/@modelcontextprotocol/client
-  Package: https://www.npmjs.com/package/@modelcontextprotocol/client/v/2.3.1
-  Archive: https://registry.npmjs.org/@modelcontextprotocol/client/-/client-2.3.1.tgz
-  Integrity: sha512-mIGZXpHsjnZ6lD+gD/WCMpR5k8yVQQ8nNFH1N0Srf7AvnwTUMYD6pvTY8ng2+He5FfV7YMZLmrjL7cLa/cc3dQ==
-@modelcontextprotocol/core@2.3.1 | runtime | Apache-2.0
+  Package: https://www.npmjs.com/package/@modelcontextprotocol/client/v/2.4.0
+  Archive: https://registry.npmjs.org/@modelcontextprotocol/client/-/client-2.4.0.tgz
+  Integrity: sha512-LgrD2OphHuG12vfKFKz6SOnq7bKHQmhGJIAYdD+MZBn2npHEyry6uD8zvktodtl5CQM85MO0anUyD9JwmUmxww==
+@modelcontextprotocol/core@2.4.0 | runtime | Apache-2.0
   Lockfile path: node_modules/@modelcontextprotocol/core
-  Package: https://www.npmjs.com/package/@modelcontextprotocol/core/v/2.3.1
-  Archive: https://registry.npmjs.org/@modelcontextprotocol/core/-/core-2.3.1.tgz
-  Integrity: sha512-laVmIhPGpWi7rG9q+0UigblRN0Hws/Yjlb6qLFtVqryXVLkc4h+yN8z731POD2LnAGQlFe7/tXhUm7Bi0YB91g==
-@modelcontextprotocol/server@2.3.1 | runtime | Apache-2.0
+  Package: https://www.npmjs.com/package/@modelcontextprotocol/core/v/2.4.0
+  Archive: https://registry.npmjs.org/@modelcontextprotocol/core/-/core-2.4.0.tgz
+  Integrity: sha512-z8QBKqdfXLPzkLQuG4xp8hrVEMm1PZ1IgxMN2sMbJiFiAKOWXnAzogXn2W4aqIBlP1ea6U5yiqVquvUNM1Cj6Q==
+@modelcontextprotocol/server@2.4.0 | runtime | Apache-2.0
   Lockfile path: node_modules/@modelcontextprotocol/server
-  Package: https://www.npmjs.com/package/@modelcontextprotocol/server/v/2.3.1
-  Archive: https://registry.npmjs.org/@modelcontextprotocol/server/-/server-2.3.1.tgz
-  Integrity: sha512-e59MfWuSssj6DoQ96JCTqdW1AXT5/XtnTl0WWd6MU1Ka434fFUGGosCLJbGNySDhHGvxQWoRWK137FXYFkYNWw==
+  Package: https://www.npmjs.com/package/@modelcontextprotocol/server/v/2.4.0
+  Archive: https://registry.npmjs.org/@modelcontextprotocol/server/-/server-2.4.0.tgz
+  Integrity: sha512-rgR9yxSaAJ+bcsi/XroT/S2AfPiIWloXAnrdfYSCms9ivVju0ishu/wW0J21Ho6+ZOR1r7RyeRbjiRuF87ix5Q==
 @msgpack/msgpack@3.1.3 | runtime | ISC
   Lockfile path: node_modules/@msgpack/msgpack
   Package: https://www.npmjs.com/package/@msgpack/msgpack/v/3.1.3
@@ -2955,11 +2955,6 @@ import-meta-resolve@4.2.0 | development | MIT
   Package: https://www.npmjs.com/package/import-meta-resolve/v/4.2.0
   Archive: https://registry.npmjs.org/import-meta-resolve/-/import-meta-resolve-4.2.0.tgz
   Integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==
-imurmurhash@0.1.4 | runtime | MIT
-  Lockfile path: node_modules/imurmurhash
-  Package: https://www.npmjs.com/package/imurmurhash/v/0.1.4
-  Archive: https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz
-  Integrity: sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==
 indent-string@4.0.0 | development | MIT
   Lockfile path: node_modules/indent-string
   Package: https://www.npmjs.com/package/indent-string/v/4.0.0
@@ -4770,11 +4765,11 @@ wrappy@1.0.2 | runtime | ISC
   Package: https://www.npmjs.com/package/wrappy/v/1.0.2
   Archive: https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz
   Integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==
-write-file-atomic@7.0.0 | runtime | ISC
+write-file-atomic@8.0.0 | runtime | ISC
   Lockfile path: node_modules/write-file-atomic
-  Package: https://www.npmjs.com/package/write-file-atomic/v/7.0.0
-  Archive: https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-7.0.0.tgz
-  Integrity: sha512-YnlPC6JqnZl6aO4uRc+dx5PHguiR9S6WeoLtpxNT9wIG+BDya7ZNE1q7KOjVgaA73hKhKLpVPgJ5QA9THQ5BRg==
+  Package: https://www.npmjs.com/package/write-file-atomic/v/8.0.0
+  Archive: https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-8.0.0.tgz
+  Integrity: sha512-dYwyZredl67GyLLIHJnRM3h2PcOmN5SkcgC7eM5DPDEOEl6dLFqVrMg3F1Ea32usj4VSVZtd2H4MtKTNOf6nPg==
 ws@8.21.0 | runtime | MIT
   Lockfile path: node_modules/ws
   Package: https://www.npmjs.com/package/ws/v/8.21.0

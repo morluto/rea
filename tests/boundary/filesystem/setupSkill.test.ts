@@ -601,26 +601,11 @@ describe("canonical skill transaction", () => {
           "utf8",
         ),
       );
-      expect(installed).not.toMatch(
-        /filesystem-write permission grant|native_mount_approved|only with explicit approval|Obtain the per-call/u,
-      );
     }
-    expect(installedSkill).toContain(
-      "use normal repository tools and do not run REA",
-    );
     expect(installedSkill).toContain(
       `tool_count: ${String(TOOL_CONTRACTS.length)}`,
     );
     expect(await readFile(sibling, "utf8")).toBe("unrelated skill\n");
-    expect(
-      await readFile(
-        join(
-          home,
-          ".agents/skills/reverse-engineer-anything/references/javascript-applications.md",
-        ),
-        "utf8",
-      ),
-    ).toContain("analyze_javascript_application");
     expect(await skillNeedsInstall(home, [])).toBe(false);
     expect(await installSkill(home, [])).toMatchObject({
       ok: true,

@@ -6,7 +6,11 @@ import {
 } from "../domain/javascript/javascriptStaticAnalysis.js";
 import type { JavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisTypes.js";
 import { isJavaScriptMemberMutationRefusal } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
-import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/javascriptSemanticAnalysis.js";
+import {
+  analyzeParsedJavaScriptSemanticsSteps,
+  indexJavaScriptBindingsWithReceiversSteps,
+  type JavaScriptReceiverIndex,
+} from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
 import {
@@ -21,6 +25,9 @@ import {
   type JavaScriptSourceWorkerAnalyzer,
 } from "../javascript/analysis/JavaScriptAnalysisWorkerServer.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+
+/** The resolution mode `indexJavaScriptBindingsWithReceiversSteps` indexes under. */
+const STATIC_PHASE_RESOLUTION_MODE = "import";
 
 const analyze: JavaScriptSourceWorkerAnalyzer = async (
   file,
@@ -48,8 +55,10 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     precision,
     memberMutationAllowance,
   );
-  if (static_ === null) return null;
-  const { resultBudgetBytes, callPaths } = static_;
+  // Structure-only keeps the full static facts and skips semantic analysis;
+  // no semantic result budget is consumed.
+  if (static_ === null || purpose === "structure-only") return null;
+  const { resultBudgetBytes, callPaths, lexicalIndex } = static_;
   if (resultBudgetBytes === 0)
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",
@@ -59,13 +68,22 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       { measuredExhaustion: true },
     );
   await callbacks.phase("semantic");
+  const resolutionMode = moduleResolutionModeForJavaScriptReference(
+    file.path,
+    "static-import",
+  );
   const ir = await completeJavaScriptAnalysisSteps(
     analyzeParsedJavaScriptSemanticsSteps(
       parsed,
-      moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
+      resolutionMode,
       capacity.nodes,
       precision,
       memberMutationAllowance,
+      // The static phase indexes under "import"; any other mode changes the
+      // definitions themselves, so the semantic phase collects its own.
+      resolutionMode === STATIC_PHASE_RESOLUTION_MODE
+        ? lexicalIndex
+        : undefined,
     ),
   );
   parsed = null;
@@ -95,7 +113,9 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
 /**
  * Checkpoint static facts, reusing the ones preload discovery retained for
  * this exact request. Null ends the job: discovery returns only declarations,
- * and a failed parse has no semantic phase.
+ * and a failed parse has no semantic phase. The caller stops after this
+ * checkpoint for structure-only, so that pass reuses the same facts and
+ * still does not start semantic analysis.
  */
 const staticCheckpoint = async (
   source: string,
@@ -107,8 +127,11 @@ const staticCheckpoint = async (
 ): Promise<{
   readonly resultBudgetBytes: number;
   readonly callPaths: JavaScriptStaticAnalysis["electron"]["call_paths"];
+  /** The index this job's static phase built; absent for reused facts. */
+  readonly lexicalIndex?: JavaScriptReceiverIndex;
 } | null> => {
-  const reused = purpose === "analysis" ? callbacks.reusedStatic() : undefined;
+  const reused =
+    purpose === "preload-discovery" ? undefined : callbacks.reusedStatic();
   if (reused !== undefined) {
     const resultBudgetBytes = await callbacks.checkpointReused(reused);
     return reused.parse_status === "failed"
@@ -116,19 +139,37 @@ const staticCheckpoint = async (
       : { resultBudgetBytes, callPaths: reused.call_paths };
   }
   let facts: JavaScriptStaticAnalysis;
+  let lexicalIndex: JavaScriptReceiverIndex;
   try {
+    // One lexical index per parsed file: the static phase reads it here and
+    // the semantic phase continues from it instead of rebuilding it.
+    lexicalIndex = await completeJavaScriptAnalysisSteps(
+      indexJavaScriptBindingsWithReceiversSteps(
+        parsed.program,
+        undefined,
+        precision,
+        memberMutationAllowance,
+      ),
+    );
     facts = await completeJavaScriptAnalysisSteps(
       analyzeParsedJavaScriptStaticSourceSteps(
         source,
         parsed,
         precision,
         memberMutationAllowance,
+        lexicalIndex,
       ),
     );
   } catch (cause: unknown) {
     // The semantic phase indexes the same mutations under the same
     // allowance, so it is not started; the syntax facts cross first.
-    if (purpose === "analysis" && isJavaScriptMemberMutationRefusal(cause))
+    // Structure-only has no later semantic phase, so the same refusal must
+    // still cross the syntax facts. Discovery leaves that report to the
+    // normal pass, which recomputes this source.
+    if (
+      purpose !== "preload-discovery" &&
+      isJavaScriptMemberMutationRefusal(cause)
+    )
       await callbacks.checkpoint(
         memberMutationRefusedJavaScriptStaticAnalysis(source, parsed, cause),
       );
@@ -157,7 +198,11 @@ const staticCheckpoint = async (
   const resultBudgetBytes = await callbacks.checkpoint(facts);
   return facts.parse_status === "failed"
     ? null
-    : { resultBudgetBytes, callPaths: facts.electron.call_paths };
+    : {
+        resultBudgetBytes,
+        callPaths: facts.electron.call_paths,
+        lexicalIndex,
+      };
 };
 
 try {

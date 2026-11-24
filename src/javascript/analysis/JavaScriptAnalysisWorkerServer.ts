@@ -63,7 +63,7 @@ export interface JavaScriptSourceWorkerAnalyzer {
       ) => Promise<number>;
     },
     packageType: JavaScriptPackageType,
-    purpose: "analysis" | "preload-discovery",
+    purpose: "analysis" | "preload-discovery" | "structure-only",
     precision: JavaScriptSemanticPrecisionInput | undefined,
     memberMutationAllowance: JavaScriptMemberMutationAllowance,
   ): Promise<{

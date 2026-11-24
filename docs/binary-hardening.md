@@ -50,14 +50,14 @@ existing encryption reader, the arm64e subtype, and a stack-protector import.
 `hardened_runtime` is `unknown` with `next_probe` `inspect_signature`.
 CodeDirectory flags stay with that tool.
 
-The report states presence of build-time features. It does not state
-exploitability. `inspect_binary_layout` is unchanged.
+The report states presence of build-time features, not exploitability.
 
 The default read budget is 64 MiB (`max_file_bytes`, ceiling 512 MiB). A changed
-file is refused. A malformed header, a Mach-O segment or encryption command that fails admission, or a program, section,
-or segment payload declared outside the file returns no partial report, except that one bad slice in a universal Mach-O leaves the other slices. A symbol table or
+file is refused. A malformed header, a Mach-O segment or encryption command that
+fails admission, or a program, section, or segment payload declared outside the
+file returns no partial report; in a universal Mach-O, one bad slice leaves the
+other slices. A symbol table or
 symbol name over its budget leaves the import rows `unknown` and keeps the
 header rows. A GNU property note over its budget, or a compressed note section
 that may hold one, leaves the CET and BTI/PAC rows `unknown` and keeps the header
-rows. A dynamic-table budget still fails the ELF report. The image is never
-executed.
+rows. A dynamic-table budget still fails the ELF report.
