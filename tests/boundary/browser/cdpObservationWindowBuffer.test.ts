@@ -29,6 +29,20 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
         },
       },
     ];
+  if (command.method === "Network.enable")
+    return [
+      {
+        method: "Network.requestWillBeSent",
+        sessionId: command.sessionId,
+        params: {
+          requestId: "failure-window",
+          type: "Document",
+          frameId: "frame-main",
+          timestamp: 18,
+          request: { url: `${origin}/document`, method: "GET" },
+        },
+      },
+    ];
   if (command.method === "Performance.getMetrics")
     return [
       {
@@ -96,17 +110,6 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
         },
       },
       {
-        method: "Network.requestWillBeSent",
-        sessionId: command.sessionId,
-        params: {
-          requestId: "failure-window",
-          type: "Document",
-          frameId: "frame-main",
-          timestamp: 21,
-          request: { url: `${origin}/document`, method: "GET" },
-        },
-      },
-      {
         method: "Network.loadingFailed",
         sessionId: command.sessionId,
         params: {
@@ -137,6 +140,7 @@ it("buffers clock-response events while dropping lifecycle history before the cl
   const browser = await startFakeCdpBrowser({
     eventsBeforeReply: [
       "Page.enable",
+      "Network.enable",
       "Performance.getMetrics",
       "Page.setLifecycleEventsEnabled",
     ],

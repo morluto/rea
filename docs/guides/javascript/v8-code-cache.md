@@ -8,7 +8,7 @@ decompiler.
 
 ```bash
 rea inspect-v8-code-cache /absolute/path/to/module.jsc --json
-rea inspect-v8-code-cache /absolute/path/to/module.jsc --minStringBytes 8 --json
+rea inspect-v8-code-cache /absolute/path/to/module.jsc --min-string-bytes 8 --json
 ```
 
 The MCP tool is `inspect_v8_code_cache` with the same inputs and the same retained
@@ -16,8 +16,8 @@ Evidence.
 
 ## What is read
 
-A V8 code cache is a version-dependent container. This reader recognizes a pinned
-layout with both supported header extents and reports observed header values and
+A V8 code cache is a version-dependent container. This reader recognizes two pinned
+layouts with their supported header extents and reports observed header values and
 payload bytes.
 
 The [Node v24.22.1 V8 serializer](https://github.com/nodejs/node/blob/v24.22.1/deps/v8/src/snapshot/code-serializer.h#L106-L119)
@@ -42,15 +42,37 @@ appears in `header.fields` with its byte offset, value, role, and confidence.
 could plausibly differ. `unconfirmed` means the word is reported and nothing more is
 claimed.
 
+V8 8.8 through 11.7, which Node 16 through 20 embed, define six words instead. The
+[Node v20.18.0 V8 serializer](https://github.com/nodejs/node/blob/v20.18.0/deps/v8/src/snapshot/code-serializer.h#L121-L135)
+has no build-constant word, so the payload length is the fifth word and the 24-byte
+header needs no alignment padding on either pointer width.
+
+| Offset | Role           | Status      |
+| ------ | -------------- | ----------- |
+| `0x00` | magic          | confirmed   |
+| `0x04` | version hash   | inferred    |
+| `0x08` | source length  | inferred    |
+| `0x0c` | flag hash      | inferred    |
+| `0x10` | payload length | confirmed   |
+| `0x14` | reserved       | unconfirmed |
+
+The six-word roles come from that source definition. No producer of those releases was
+measured, so only the magic and the payload-length relation, which admission checks on
+the container itself, are confirmed. A result for such a container says so in
+`limitations`.
+
 Admission requires the V8 magic high half `0xc0de` and a declared payload
-that reaches the end of the file from a 28- or 32-byte header.
+that reaches the end of the file: from a 28- or 32-byte header when read from the word
+at `0x14`, or from a 24-byte header when read from the word at `0x10`.
 `ExternalReferenceTable::kSize` accounts for the varying low half of the magic word.
+A container that satisfies both relations is ambiguous, and the reader refuses it.
 A candidate 28-byte header followed by a zero word is ambiguous. A 32-byte header
 with a four-byte-truncated payload leaves its zero padding at the same offset as a
 28-byte header whose payload begins with that word. The reader refuses that case.
 
-Header extent describes the retained bytes. The synthetic narrow fixture tests
-reader admission. Runtime compatibility remains unverified for a 32-bit producer.
+Header extent describes the retained bytes. The synthetic narrow and six-word
+fixtures test reader admission. Runtime compatibility remains unverified for a 32-bit
+producer and for a V8 8.8 through 11.7 producer.
 
 `header.source_length` is the producer's recorded source length in UTF-16 code units.
 V8's serializer calls this field the source hash; on the producers measured here its value

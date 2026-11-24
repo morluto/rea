@@ -1,10 +1,8 @@
 import type { Logger } from "pino";
 
 import { evmInterfaceModule } from "../composition/evm.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
 
@@ -20,7 +18,6 @@ export const registerEvmCommands = (
     logger,
     evmInterfaceModule.contract,
     {
-      command: evmInterfaceModule.cliCommand,
       description:
         "Infer interface candidates from explicit local EVM bytecode",
       positionals: ["path", "encoding"],

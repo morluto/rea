@@ -60,7 +60,8 @@ const writeAdmittedGhidra = async (root: string) => {
 
 const reportSchema = z.object({
   healthy: z.boolean(),
-  scope_checks: z.array(z.object({ name: z.string() }).loose()),
+  // Absent from an audit-wide report, whose checks are all in scope.
+  scope_checks: z.array(z.object({ name: z.string() }).loose()).optional(),
   informational_checks: z.array(z.object({ name: z.string() }).loose()),
   identity: z.object({
     registrations: z.array(z.object({ client: z.string() }).loose()),
@@ -89,8 +90,10 @@ const doctor = async (
   return { exitCode: result.exitCode, report: report.data };
 };
 
-const names = (checks: readonly { readonly name: string }[]) =>
-  checks.map(({ name }) => name);
+const names = (checks: readonly { readonly name: string }[] | undefined) => {
+  if (checks === undefined) throw new Error("Expected scoped doctor checks");
+  return checks.map(({ name }) => name);
+};
 
 const CHECK = "registration_environment:claude_code";
 

@@ -2,10 +2,8 @@ import { createHash } from "node:crypto";
 import { writeFile, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { expect, it } from "vitest";
-import {
-  KunaProjectCache,
-  kunaProjectKey,
-} from "../../../../src/kuna/KunaProjectCache.js";
+import { kunaProjectKey } from "../../../../src/kuna/KunaCacheManifest.js";
+import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";

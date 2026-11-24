@@ -272,6 +272,14 @@ child output. Child output remains in the capture Evidence on stdout.
 }
 ```
 
+`executable` is resolved through the scenario's `PATH` with the lookup that
+`execute_rizin_command` uses (see
+[reverse-engineering-tools.md](../../reverse-engineering-tools.md)). Capture
+verifies the file it launches, so it needs the resolved path. Where the lookup
+stops because a native search can stop there, as at a stale network file
+handle or a symbolic link loop in an earlier `PATH` entry, the scenario is
+rejected with the candidates checked instead of launched by name.
+
 `executable` is required. `arguments`, `working_directory`, `environment`,
 `filesystem_observation_paths`, terminal settings, timed `events`, timeouts,
 resource limits, and normalization settings have defaults; see
@@ -456,6 +464,8 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+The target is the session leader of the capture PTY. When that leader exits, the terminal delivers SIGHUP to processes that are still in its foreground process group, as `script -c` and `ssh -t` do. A child that should outlive the target has to leave the group, for example with `setsid`, or ignore SIGHUP. This hangup comes from the terminal, not from REA's owned-process cleanup, and the capture result does not record it.
+
 ### Finalization interval
 
 By default a deadline sends `SIGKILL` at once. Set `finalization_ms` to give the
@@ -521,7 +531,9 @@ absent when no finalization was attempted:
   exited.
   An `unverified` attempt may carry a `reason` string naming why: an unavailable
   identity and its reason, an inspection or signal error, or delivery that did
-  not settle within the bound (1000 ms). An attempt recorded `unverified` after
+  not settle within the fixed bound (1000 ms). That bound is implementation
+  policy with no runtime override, and a larger `finalization_ms` does not
+  extend it. An attempt recorded `unverified` after
   that bound can still complete later; it stays identity-checked, and its late
   result is not added to the record.
 - `elapsed_ms` is when REA observed the exit, relative to the start of
@@ -616,8 +628,10 @@ Every capture requires `truncation_details`, with separate accounting for:
   remain available and issued reads settle before final coverage is returned.
 
 The aggregate `truncated` flag summarizes these observations. Comparisons retain
-results for unaffected dimensions and mark affected dimensions unknown; an
-incomplete capture cannot locate the first divergence across all dimensions.
+results for unaffected dimensions. If the hash budget omits a file's digest,
+different retained digests for another path still mark the filesystem dimension
+`changed`. Incomplete captures leave the first divergence across all dimensions
+unknown.
 Trace assertions use coverage for the sources they select, so an assertion
 about complete raw terminal output need not fail because rendered snapshots
 were omitted. A trace difference applies to the dimensions identified by its
@@ -688,10 +702,9 @@ observations and explicit unavailable fields. Older records may omit this option
 array. No intervention entry is added without an observed signaling fact; absence
 does not prove that cleanup sent no signals.
 
-Readers that previously accepted only `not_required` for a quiesced settlement
-must refresh the advertised MCP schema or update their saved-capture reader to
-accept `cleaned` as well. Existing saved captures remain valid and keep their
-recorded outcome; missing historical signal facts are not reconstructed.
+A quiesced settlement can report `cleaned` as well as `not_required`. Saved
+captures keep their recorded outcome; missing historical signal facts are not
+reconstructed.
 
 When the host withholds an unrelated process's ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`

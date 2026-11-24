@@ -1138,3 +1138,131 @@ describe("native UI action archive coverage", () => {
     ]);
   });
 });
+
+describe("object-match action resolution and graph node depths", () => {
+  it("resolves an Interface Builder object ID to its action and computes exact DAG expansion depths", async () => {
+    const deepDiamondGraph = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        {
+          id: "native:function:0x1000",
+          kind: "function" as const,
+          name: "BuildViewController buildTapped:",
+          location: { address: "0x1000", file_offset: null },
+          attributes: {},
+          evidence,
+        },
+        {
+          id: "helper-a",
+          kind: "function" as const,
+          name: "helperA",
+          location: { address: "0x2000", file_offset: null },
+          attributes: {},
+          evidence,
+        },
+        {
+          id: "helper-b",
+          kind: "function" as const,
+          name: "helperB",
+          location: { address: "0x3000", file_offset: null },
+          attributes: {},
+          evidence,
+        },
+      ],
+      edges: [
+        ...graph.edges,
+        {
+          id: "dispatch-direct",
+          from: "selector",
+          to: "native:function:0x1000",
+          relation: "objc_dispatch" as const,
+          resolution: "resolved" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          id: "fn-a",
+          from: "native:function:0x1000",
+          to: "helper-a",
+          relation: "direct_call" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          id: "a-b",
+          from: "helper-a",
+          to: "helper-b",
+          relation: "direct_call" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          // Shortcut makes helper-b reachable at shortest depth 3 instead of 4.
+          id: "selector-a",
+          from: "selector",
+          to: "helper-a",
+          relation: "direct_call" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+      ],
+    };
+    const atDepth3 = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", [methodInventoryEntry]),
+          procedure_callees: (params) =>
+            execution(
+              "procedure_callees",
+              params.procedure === "0x3000" ? ["0x4000"] : [],
+            ),
+        },
+        deepDiamondGraph,
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "button",
+      max_depth: 3,
+    });
+    if (!atDepth3.ok) throw atDepth3.error;
+    const parsed3 = nativeInvestigationTraceSchema.parse(atDepth3.value);
+    expect(parsed3.start).toBe("action");
+    expect(parsed3.truncated).toBe(true);
+    expect(parsed3.nodes.map(({ id }) => id)).toEqual(
+      expect.arrayContaining([
+        "action",
+        "native:function:0x1000",
+        "helper-a",
+        "helper-b",
+      ]),
+    );
+    expect(parsed3.nodes.map(({ id }) => id)).not.toContain(
+      "native:function:0x4000",
+    );
+
+    const atDepth4 = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", [methodInventoryEntry]),
+          procedure_callees: (params) =>
+            execution(
+              "procedure_callees",
+              params.procedure === "0x3000" ? ["0x4000"] : [],
+            ),
+        },
+        deepDiamondGraph,
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "button",
+      max_depth: 4,
+    });
+    if (!atDepth4.ok) throw atDepth4.error;
+    const parsed4 = nativeInvestigationTraceSchema.parse(atDepth4.value);
+    expect(parsed4.nodes.map(({ id }) => id)).toContain(
+      "native:function:0x4000",
+    );
+  });
+});

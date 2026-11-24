@@ -39,6 +39,7 @@ import {
   semanticDirectEvalRecorded,
   semanticGlobalCodeSites,
 } from "./javascriptSemanticEffectRecord.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 // Match the complete Rolldown runtime operations, including its live getters.
 // Names and formatting are irrelevant; lexical roles, operators and keys are not.
@@ -999,13 +1000,10 @@ const controlBodyOperation = (node: t.Node): t.Node => {
   return node;
 };
 
-const ambientWriteInterops = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  {
-    readonly generation: number;
-    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
-  }
->();
+const ambientWriteInterops = semanticConsumerMemo<{
+  readonly generation: number;
+  readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+}>();
 
 /**
  * Module interop that retains every recorded ambient global write, so an

@@ -481,10 +481,11 @@ describe("CdpElectronProvider target access", () => {
   it("retains a completed page observation when cancellation arrives during final detach", async () => {
     const root = await electronFixture();
     const controller = new AbortController();
+    const reason = { request: "cancel during Electron detach" };
     const browser = await startFakeCdpBrowser({
       electronFileUrl: pathToFileURL(join(root, "index.html")).href,
       commandEvents: ({ method }) => {
-        if (method === "Target.detachFromTarget") controller.abort();
+        if (method === "Target.detachFromTarget") controller.abort(reason);
         return undefined;
       },
     });
@@ -503,6 +504,7 @@ describe("CdpElectronProvider target access", () => {
 
     if (result.ok) throw new Error("Expected late cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
     expect(result.error.partialObservation).toMatchObject({
       kind: "electron-page-observation",
       cleanup: "transport-closed",
@@ -642,6 +644,7 @@ describe("CdpElectronProvider transport lifecycle", () => {
       expect(first.error.cleanupIncomplete).toBe(true);
       expect(first.error.partialObservation).toMatchObject({
         kind: "electron-page-observation",
+        cleanup: "incomplete",
         inspection: { target: { file_path: join(root, "index.html") } },
       });
       const failedCloses = closes;
@@ -855,63 +858,60 @@ describe("CdpElectronProvider packaged pages", () => {
   });
 });
 
-describe("CdpElectronProvider frame capture", () => {
-  it.each([7, undefined])(
-    "reports a malformed child frame ID as unavailable protocol evidence: %s",
-    async (childId) => {
-      const root = await electronFixture();
-      const main = pathToFileURL(join(root, "index.html")).href;
-      const child = pathToFileURL(join(root, "child.html")).href;
-      const browser = await startFakeCdpBrowser({
-        electronFileUrl: main,
-        commandResult: (command) =>
-          command.method === "Page.getFrameTree"
-            ? {
-                frameTree: {
-                  frame: {
-                    id: "frame-main",
-                    loaderId: "loader-frame-main",
-                    url: main,
-                  },
-                  childFrames: [
-                    {
-                      frame: {
-                        ...(childId === undefined ? {} : { id: childId }),
-                        url: child,
-                      },
-                    },
-                  ],
-                },
-              }
-            : undefined,
-      });
-      browsers.push(browser);
-      const result = await new CdpElectronProvider().inspectPage(
-        inspectElectronPageInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          target_id: "electron-page",
-          observation_ms: 0,
-        }),
-      );
-
-      if (!result.ok) throw result.error;
-      expect(result.value.frames.map((frame) => frame.frame_id)).toEqual([
-        "frame-main",
-      ]);
-      expect(result.value.completeness).toMatchObject({
-        unavailable_sections: ["frames"],
-      });
-      expect(result.value.completeness.excluded).toContainEqual({
-        section: "frames",
-        reason: "invalid_protocol_value",
-        count: 1,
-      });
-      expect(result.value.completeness.policy_filtered_sections).not.toContain(
-        "frames",
-      );
-      expect(result.value.completeness.conditions).toContain("attach_limited");
-    },
+it("keeps valid child frames beside missing and malformed IDs", async () => {
+  const root = await electronFixture();
+  const main = pathToFileURL(join(root, "index.html")).href;
+  const child = {
+    parentId: "frame-main",
+    loaderId: "loader-child",
+    url: pathToFileURL(join(root, "child.html")).href,
+  };
+  const browser = await startFakeCdpBrowser({
+    electronFileUrl: main,
+    commandResult: ({ method }) =>
+      method === "Page.getFrameTree"
+        ? {
+            frameTree: {
+              frame: {
+                id: "frame-main",
+                loaderId: "loader-frame-main",
+                url: main,
+              },
+              childFrames: [
+                { frame: { ...child, id: 7 } },
+                { frame: { ...child, id: "valid-child" } },
+                { frame: child },
+              ],
+            },
+          }
+        : undefined,
+  });
+  browsers.push(browser);
+  const result = await new CdpElectronProvider().inspectPage(
+    inspectElectronPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "electron-page",
+      observation_ms: 0,
+    }),
   );
+
+  if (!result.ok) throw result.error;
+  expect(result.value.frames.map((frame) => frame.frame_id)).toEqual([
+    "frame-main",
+    "valid-child",
+  ]);
+  expect(result.value.completeness).toMatchObject({
+    unavailable_sections: ["frames"],
+  });
+  expect(result.value.completeness.excluded).toContainEqual({
+    section: "frames",
+    reason: "invalid_protocol_value",
+    count: 2,
+  });
+  expect(result.value.completeness.policy_filtered_sections).not.toContain(
+    "frames",
+  );
+  expect(result.value.completeness.conditions).toContain("attach_limited");
 });
 
 it("rejects malformed Electron source replies and detaches the selected page", async () => {

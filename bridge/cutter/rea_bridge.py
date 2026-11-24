@@ -1264,12 +1264,19 @@ def _escape_json_fragment(fragment: str) -> bytes:
     return json.dumps(fragment, ensure_ascii=False)[1:-1].encode("utf-8")
 
 
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f]")
+_EXIT_CONTAINER = object()
+
+
 def _within_response_limit(value: Any) -> bool:
-    pending = [value]
+    pending: list[Any] = [value]
     seen: set[int] = set()
     size = 0
     while pending:
         current = pending.pop()
+        if isinstance(current, tuple) and len(current) == 2 and current[0] is _EXIT_CONTAINER:
+            seen.discard(current[1])
+            continue
         if isinstance(current, str):
             size += 2
             if len(current) > MAX_FRAME_BYTES - size:
@@ -1289,11 +1296,12 @@ def _within_response_limit(value: Any) -> bool:
             size += current.count('"') + current.count("\\")
             # A short escape is two JSON bytes and was already counted as one.
             # Other controls expand to a six-byte \\u00XX sequence.
-            size += sum(
-                1 if ord(character) in (0x08, 0x09, 0x0A, 0x0C, 0x0D) else 5
-                for character in current
-                if ord(character) < 0x20
-            )
+            if _CONTROL_CHAR_RE.search(current) is not None:
+                size += sum(
+                    1 if ord(character) in (0x08, 0x09, 0x0A, 0x0C, 0x0D) else 5
+                    for character in current
+                    if ord(character) < 0x20
+                )
         elif isinstance(current, dict):
             identity = id(current)
             if identity in seen:
@@ -1305,6 +1313,7 @@ def _within_response_limit(value: Any) -> bool:
             size += 2 + count + max(0, count - 1)
             if size > MAX_FRAME_BYTES:
                 return False
+            pending.append((_EXIT_CONTAINER, identity))
             pending.extend(current.keys())
             pending.extend(current.values())
         elif isinstance(current, (list, tuple)):
@@ -1317,6 +1326,7 @@ def _within_response_limit(value: Any) -> bool:
             size += 2 + max(0, count - 1)
             if size > MAX_FRAME_BYTES:
                 return False
+            pending.append((_EXIT_CONTAINER, identity))
             pending.extend(current)
         elif current is None:
             size += 4

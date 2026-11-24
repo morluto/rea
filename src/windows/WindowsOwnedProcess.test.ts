@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 import type { WindowsNativeAuthority } from "./WindowsNativeLoader.js";
 import {
+  isWindowsExecutableLaunchFailure,
   quoteWindowsProcessArgument,
   WindowsNativeControlUnavailableError,
   WindowsNativeSpawnControlError,
+  windowsNativeSpawnControlError,
   WindowsOwnedProcess,
 } from "./WindowsOwnedProcess.js";
 
@@ -250,11 +252,27 @@ describe("Windows Job Object memory limits", () => {
           memoryLimitReached: false,
           peakJobMemoryBytes: 300 * 1024 * 1024,
         },
+        {
+          ...settledPoll,
+          exitCode: null,
+          stdoutEnded: false,
+          stderrEnded: false,
+          activeProcesses: 1,
+          memoryLimitReached: true,
+          peakJobMemoryBytes: LIMIT,
+        },
         { ...settledPoll, memoryLimitReached: true, peakJobMemoryBytes: LIMIT },
       ],
     });
     const child = launch(native, LIMIT);
     expect(calls[0]?.arguments_.slice(4)).toEqual([false, LIMIT]);
+    const notifications: { exitCode: number | null; reached: boolean }[] = [];
+    child.on("memory-limit", () => {
+      notifications.push({
+        exitCode: child.exitCode,
+        reached: child.memoryLimitReached,
+      });
+    });
     const closed = once(child, "close");
     const exited = new Promise((resolve) => {
       child.once("exit", (code: number) =>
@@ -264,6 +282,7 @@ describe("Windows Job Object memory limits", () => {
     expect(await exited).toEqual({ code: 3, reached: true });
     expect(child.peakJobMemoryBytes).toBe(LIMIT);
     await closed;
+    expect(notifications).toEqual([{ exitCode: null, reached: true }]);
     expect(calls.at(-1)?.operation).toBe("process_close");
   });
 
@@ -363,6 +382,45 @@ describe("Windows process_spawn control vs executable classification", () => {
     }
     expect(caughtExecutable).toBe(executableFailure);
     expect(caughtExecutable).not.toBeInstanceOf(RuntimeControlUnavailableError);
+  });
+
+  it("fails closed to host-control when structured constraint is absent or unrecognized", () => {
+    const { native } = authority();
+    const proseOnlyExecutableError = Object.assign(
+      new Error(
+        "Create process atomically inside owned Job Object failed [C:\\runtime\\bun.exe] (Win32 2): The system cannot find the file specified.",
+      ),
+      { code: "ENOENT", win32Code: 2 },
+    );
+    expect(isWindowsExecutableLaunchFailure(proseOnlyExecutableError)).toBe(
+      false,
+    );
+    const proseOnlyAuthority: WindowsNativeAuthority = {
+      ...native,
+      call: (operation) => {
+        if (operation === "process_spawn") throw proseOnlyExecutableError;
+        throw new Error(`Unmodeled native operation ${operation}`);
+      },
+    };
+    expect(() => launch(proseOnlyAuthority)).toThrow(
+      WindowsNativeSpawnControlError,
+    );
+
+    const unclassifiedNativeError = Object.assign(
+      new Error("Unexpected native failure"),
+      { code: "ERR_REA_WINDOWS_NATIVE" },
+    );
+    expect(isWindowsExecutableLaunchFailure(unclassifiedNativeError)).toBe(
+      false,
+    );
+    expect(
+      windowsNativeSpawnControlError(unclassifiedNativeError),
+    ).toBeInstanceOf(WindowsNativeSpawnControlError);
+
+    const posixSpawnError = Object.assign(new Error("spawn /bin/tool ENOENT"), {
+      code: "ENOENT",
+    });
+    expect(windowsNativeSpawnControlError(posixSpawnError)).toBeUndefined();
   });
 });
 

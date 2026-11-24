@@ -98,18 +98,24 @@ export const inspectJebRegistration = (
     checks: [
       parsed === undefined
         ? unknownCheck("registration", "REA_JEB_MCP_URL")
-        : {
-            name: "registration",
-            ok: valid,
-            code: valid ? null : "invalid_configuration",
-            detail: parsed.ok
-              ? `JEB MCP endpoint ${parsed.value.href} is valid. Upstream availability, compatibility, and project binding are checked when analysis starts; no JEB process was launched.`
-              : `JEB MCP endpoint is invalid: ${endpointConstraint(parsed.error)}.`,
-            remediation: valid
-              ? null
-              : "Set REA_JEB_MCP_URL to your running JEB MCP endpoint; see docs/providers/jeb-analysis.md.",
-            classification: "config_drift",
-          },
+        : valid
+          ? {
+              name: "registration",
+              ok: true,
+              code: null,
+              detail: `JEB MCP endpoint ${parsed.value.href} is valid. Upstream availability, compatibility, and project binding are checked when analysis starts; no JEB process was launched.`,
+              remediation: null,
+              classification: "healthy",
+            }
+          : {
+              name: "registration",
+              ok: false,
+              code: "invalid_configuration",
+              detail: `JEB MCP endpoint is invalid: ${endpointConstraint(parsed.error)}.`,
+              remediation:
+                "Set REA_JEB_MCP_URL to your running JEB MCP endpoint; see docs/providers/jeb-analysis.md.",
+              classification: "config_drift",
+            },
       ...timeoutChecks,
       ...availabilityChecks,
     ],

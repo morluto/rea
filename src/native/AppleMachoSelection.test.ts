@@ -355,6 +355,7 @@ describe("Mach-O metadata span mapping", () => {
     unmapped.writeUInt32LE(0, 60);
     const data = mappingSegment(0x2000n, 256, 128);
     const opcodes = Buffer.from([
+      0x30, // SET_DYLIB_SPECIAL_IMM self
       0x40,
       ...Buffer.from("_local\0"),
       0x51,
@@ -747,6 +748,7 @@ it.each([LC.DYLD_INFO, LC.DYLD_INFO_ONLY])(
       kind: "bind",
       symbol: "_weak_fixture",
       binding_source: "weak",
+      library_ordinal: -3,
       library: null,
     });
     expect(decoded.decode(0x2010n, 0n)).toMatchObject({
@@ -920,8 +922,9 @@ it.each([0, 129])(
         ? {
             ok: false,
             error: {
-              kind: "malformed",
+              kind: "format",
               message: "FAT header declares no architectures",
+              failure: { kind: "malformed", format: "macho" },
             },
           }
         : { ok: true, value: { fileOffset: 0, selection: null } },

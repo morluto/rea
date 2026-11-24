@@ -15,6 +15,10 @@ const MARKER = "REA_TEST_RESOLVED ";
 // must not resolve them just to register the complete command catalog.
 const DEFERRED_IMPORTS = [
   {
+    name: "inspect-byte-entropy",
+    path: "/dist/composition/binaryDiagnostics/byteEntropy.js",
+  },
+  {
     name: "guided-workflows",
     path: "/dist/application/GuidedWorkflowAccess.js",
   },
@@ -103,12 +107,8 @@ const DEFERRED_IMPORTS = [
     path: "/dist/application/javascript/JavaScriptRuntimeReconciliationService.js",
   },
   {
-    name: "android-application",
-    path: "/dist/application/android/AndroidApplicationService.js",
-  },
-  {
-    name: "apple-application",
-    path: "/dist/application/apple/AppleApplicationService.js",
+    name: "application-inventory-projection",
+    path: "/dist/application/InventoryProjectionEvidence.js",
   },
   {
     name: "reconstruction-coverage",
@@ -130,19 +130,53 @@ const DEFERRED_IMPORTS = [
     name: "environment-server",
     path: "/dist/server/environment/serveEnvironment.js",
   },
+  {
+    name: "mcp-registration",
+    path: "/dist/cli/mcpRegistration.js",
+  },
 ] as const;
+
+const HEAVY_SHARED_MODULES = [
+  {
+    name: "analysis-view-service",
+    path: "/dist/application/analysisView/AnalysisViewService.js",
+  },
+  {
+    name: "analysis-view-result",
+    path: "/dist/domain/analysisView/analysisViewResult.js",
+  },
+  {
+    name: "session-tool-contracts",
+    path: "/dist/contracts/sessionToolContracts.js",
+  },
+  {
+    name: "application-tool-contracts",
+    path: "/dist/contracts/applicationToolContracts.js",
+  },
+  {
+    name: "evidence-bundle-commands",
+    path: "/dist/application/EvidenceBundleCommands.js",
+  },
+  ...DEFERRED_IMPORTS,
+] as const;
+
 // Report each resolved deferred package on stderr without changing resolution.
-const RESOLUTION_HOOK = `data:text/javascript,${encodeURIComponent(`
+const createResolutionHook = (
+  entries: readonly { readonly name: string; readonly path: string }[],
+): string =>
+  `data:text/javascript,${encodeURIComponent(`
 import { registerHooks } from "node:module";
-const imports = ${JSON.stringify(DEFERRED_IMPORTS)};
+const imports = ${JSON.stringify(entries)};
 registerHooks({
   resolve(specifier, context, next) {
     const resolved = next(specifier, context);
-    const name = imports.find((item) =>
-      resolved.url.includes(item.path) ||
-      (item.path.startsWith("/dist/") && item.path.endsWith(".js") &&
-       resolved.url.includes("/dist/cli-runtime/" + item.path.slice(6, -3).split("/").join("__") + "-")),
-    );
+    const name = imports.find((item) => {
+      if (resolved.url.includes(item.path)) return true;
+      if (!item.path.startsWith("/dist/") || !item.path.endsWith(".js")) return false;
+      const facade = "/dist/cli-runtime/" + item.path.slice(6, -3).split("/").join("__") + "-";
+      const shared = "/dist/cli-runtime/" + item.path.slice(item.path.lastIndexOf("/") + 1, -3) + "-";
+      return resolved.url.includes(facade) || resolved.url.includes(shared);
+    });
     if (name !== undefined)
       process.stderr.write(${JSON.stringify(MARKER)} + name.name + "\\n");
     return resolved;
@@ -160,6 +194,10 @@ const resolvedMarkers = (stderr: string): ReadonlySet<string> =>
 
 const resolvedPackages = async (
   arguments_: readonly string[],
+  entries: readonly {
+    readonly name: string;
+    readonly path: string;
+  }[] = DEFERRED_IMPORTS,
 ): Promise<ReadonlySet<string>> => {
   const commands = await createVerifierCommands();
   onTestFinished(() => commands.close());
@@ -167,7 +205,7 @@ const resolvedPackages = async (
     () =>
       commands.exec(
         process.execPath,
-        [`--import=${RESOLUTION_HOOK}`, ...arguments_],
+        [`--import=${createResolutionHook(entries)}`, ...arguments_],
         { cwd: process.cwd(), maxBuffer: 16 * 1_024 * 1_024, timeout: 15_000 },
       ),
     [() => commands.close()],
@@ -221,6 +259,9 @@ describe("CLI startup imports", () => {
         ),
       ),
     ).resolves.toContain("isomorphic-git");
+    await expect(
+      resolvedPackages(["scripts/rea.mjs", "mcp", "add", "--help"]),
+    ).resolves.toContain("mcp-registration");
   });
 
   it("does not load command-specific code to register the command catalog", async () => {
@@ -289,11 +330,134 @@ describe("CLI startup imports", () => {
   });
 });
 
+describe("CLI one-shot command imports", () => {
+  it("loads only the selected diagnostic factory for a standalone command", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-cli-diagnostics-imports-",
+    );
+    const input = join(directory, "bytes");
+    await writeFile(input, "Some bytes to inspect.");
+    await expect(
+      resolvedPackages(
+        ["scripts/rea.mjs", "inspect-byte-entropy", input, "--json"],
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toEqual(new Set(["inspect-byte-entropy"]));
+  });
+
+  it("loads summary projection and bundle delivery only when requested", async () => {
+    const source = await createTestTempDirectory("rea-cli-js-summary-imports-");
+    await writeFile(join(source, "index.js"), "export const answer = 42;\n");
+    const command = [
+      "scripts/rea.mjs",
+      "analyze-javascript-application",
+      source,
+      "--json",
+    ];
+    const output = join(
+      await createTestTempDirectory("rea-cli-js-delivery-"),
+      "evidence.json",
+    );
+    await expect(
+      resolvedPackages(command, HEAVY_SHARED_MODULES),
+    ).resolves.toEqual(new Set(["javascript-application"]));
+    await expect(
+      resolvedPackages(
+        [...command, "--detail", "summary", "--evidence_output", output],
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toEqual(
+      new Set([
+        "javascript-application",
+        "analysis-view-result",
+        "analysis-view-service",
+        "evidence-bundle-commands",
+      ]),
+    );
+  });
+});
+
+describe("Bundled heavy startup controls", () => {
+  it("detects bundled heavy modules through native command and AnalysisView runs", async () => {
+    await expect(
+      resolvedPackages(
+        ["scripts/rea.mjs", "match-native-functions", "--help"],
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toContain("session-tool-contracts");
+    await expect(
+      resolvedPackages(
+        ["scripts/rea.mjs", "inspect-analysis-view", "--help"],
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toContain("analysis-view-result");
+    const viewDir = await createTestTempDirectory("rea-startup-view-");
+    const samplePath = join(viewDir, "sample.bin");
+    const viewInputPath = join(viewDir, "view.json");
+    await writeFile(samplePath, "hello world 1234".repeat(40));
+    const entropyCommands = await createVerifierCommands();
+    onTestFinished(() => entropyCommands.close());
+    const { stdout: evidenceJson } = await withVerifierCleanup(
+      () =>
+        entropyCommands.exec(
+          process.execPath,
+          ["scripts/rea.mjs", "inspect-byte-entropy", samplePath, "--json"],
+          {
+            cwd: process.cwd(),
+            maxBuffer: 16 * 1_024 * 1_024,
+            timeout: 15_000,
+          },
+        ),
+      [() => entropyCommands.close()],
+    );
+    await writeFile(
+      viewInputPath,
+      JSON.stringify({
+        source: { kind: "inline", evidence: JSON.parse(evidenceJson) },
+        view: { kind: "summary" },
+      }),
+    );
+    const viewResolved = await resolvedPackages(
+      ["scripts/rea.mjs", "inspect-analysis-view", viewInputPath, "--json"],
+      HEAVY_SHARED_MODULES,
+    );
+    expect(viewResolved).toContain("analysis-view-service");
+    expect(viewResolved).toContain("analysis-view-result");
+    const appContractResolved = await resolvedPackages(
+      ["scripts/rea.mjs", "trace-application-feature", "--help"],
+      HEAVY_SHARED_MODULES,
+    );
+    expect(appContractResolved).toContain("application-tool-contracts");
+  });
+
+  it("does not load AnalysisView, session, or application contract barrels for single-command startup", async () => {
+    for (const command of [
+      "inspect-uefi-nvram",
+      "inspect-sqlite-database",
+      "inspect-wasm-artifact",
+      "guided-workflows",
+      "compare-source-to-bundle",
+      "compare-static-and-observed-endpoints",
+    ]) {
+      await expect(
+        resolvedPackages(
+          ["scripts/rea.mjs", command, "--help"],
+          HEAVY_SHARED_MODULES,
+        ),
+      ).resolves.toEqual(new Set());
+    }
+  });
+});
+
 describe("MCP startup imports", () => {
   it("initializes and lists tools over stdio with HTTP-only environment settings present", async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [`--import=${RESOLUTION_HOOK}`, "scripts/rea.mjs", "mcp"],
+      args: [
+        `--import=${createResolutionHook(DEFERRED_IMPORTS)}`,
+        "scripts/rea.mjs",
+        "mcp",
+      ],
       cwd: process.cwd(),
       env: {
         PATH: process.env.PATH ?? "",

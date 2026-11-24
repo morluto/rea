@@ -155,12 +155,33 @@ const findNestedDesktopEntry = async (
   return incomplete ? { truncated: true } : undefined;
 };
 
+const tryExecUnavailable = async (
+  entry: DesktopEntry,
+  request: LinuxApplicationRequest,
+): Promise<string | undefined> => {
+  if (entry.type !== "Application" || !entry.try_exec) return undefined;
+  const found = await resolveProgram(
+    entry.try_exec,
+    request.environment,
+    request.callerDirectory,
+  );
+  return found === undefined ? entry.try_exec : undefined;
+};
+
 const locateDesktopEntry = async (
   request: LinuxApplicationRequest,
   selector: string,
   signal?: AbortSignal,
 ): ReturnType<typeof readDesktopEntry> => {
-  if (isAbsolute(selector)) return readDesktopEntry(selector, null, signal);
+  if (isAbsolute(selector)) {
+    const located = await readDesktopEntry(selector, null, signal);
+    if (!located.ok) return located;
+    const program = await tryExecUnavailable(located.value.entry, request);
+    assertArtifactReadActive(signal);
+    return program === undefined
+      ? located
+      : err({ reason: "executable_not_found", program });
+  }
   const id = selector.endsWith(".desktop") ? selector : `${selector}.desktop`;
   const searched = desktopEntryDirectories(request.environment, request.home);
   for (const directory of searched) {
@@ -186,7 +207,13 @@ const locateDesktopEntry = async (
       id.slice(0, -".desktop".length),
       signal,
     );
-    if (!located.ok || !located.value.entry.hidden) return located;
+    if (!located.ok) return located;
+    if (!located.value.entry.hidden) {
+      const program = await tryExecUnavailable(located.value.entry, request);
+      assertArtifactReadActive(signal);
+      if (program !== undefined) continue;
+      return located;
+    }
     const { type, malformed_line } = located.value.entry;
     if (type !== "Application") continue;
     // Claim deletion only after the hidden entry establishes its structure.

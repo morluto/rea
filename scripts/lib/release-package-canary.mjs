@@ -6,6 +6,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { DEFAULT_CATALOG_IDENTITY } from "../../dist/contracts/catalog/catalogIdentity.js";
+import { MCP_TARGET_FREE_ENVIRONMENT_OVERRIDES } from "../../dist/config/mcpTargetEnvironment.js";
+import { mergeEnvironmentOverrides } from "../../dist/process/snapshotEnvironment.js";
 import { verifyCompleteToolCatalog } from "./verify-package-core.mjs";
 
 /** Install the selected archive or registry specifier with an owned ten-minute deadline. */
@@ -59,11 +61,29 @@ export async function verifyInstalledCanaryPackage(
       timeout: 30000,
       maxBuffer: 16 * 1024 * 1024,
     });
+  return verifyCanaryMcp(launcher, workspace, { environment, commands });
+}
+
+/** Check the available target-free tool catalog through the installed launcher. */
+export async function verifyCanaryMcp(
+  launcher,
+  workspace,
+  { environment, commands },
+) {
+  const targetFreeEnvironment = Object.fromEntries(
+    Object.entries(
+      mergeEnvironmentOverrides(
+        environment,
+        MCP_TARGET_FREE_ENVIRONMENT_OVERRIDES,
+        process.platform,
+      ),
+    ).filter(([, value]) => value !== undefined),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [launcher, "mcp"],
     cwd: workspace,
-    env: environment,
+    env: targetFreeEnvironment,
     stderr: "pipe",
   });
   const client = new Client({ name: "release-package-canary", version: "1" });

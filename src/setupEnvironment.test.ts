@@ -199,7 +199,7 @@ it.each([
       healthy: false,
       environment_healthy: healthy,
     });
-    expect(selected.scope_checks.some(({ ok }) => !ok)).toBe(true);
+    expect(selected.scope_checks?.some(({ ok }) => !ok)).toBe(true);
   },
 );
 
@@ -328,7 +328,6 @@ it.each([
   async ({ environment, providerConfigured, installHopper }) => {
     const doctorHost = createDoctorHostFixture({
       platform: "darwin",
-      validTarget: () => Promise.resolve(false),
       executable: () => Promise.resolve(false),
       providerInspections: async () => [inspectJebRegistration(environment)],
     });

@@ -5,10 +5,10 @@ selected local SQLite database snapshot without an active native analysis
 target. Use it to understand application storage, configuration or retained
 database evidence. No separate SQLite installation is required.
 
-This operation requires Node.js 24.x >=24.15 or 26+ with the native
-`DatabaseSync.limits` API. The worker verifies that capability before querying
-the copied database. Other REA features retain their published Node.js 22.x,
-24.x or 26+ requirements.
+This operation needs the native `DatabaseSync.limits` API, which REA's
+supported Node.js 24.x (>=24.22.1) and 26.x (>=26.12.1) releases provide; it is
+unavailable on the supported 22.x line. The worker verifies that capability
+before querying the copied database.
 
 `rea capabilities` reports `inspect_sqlite_database` availability and the
 runtime requirement without opening a database. Unsupported runtimes show
@@ -95,10 +95,11 @@ the selected limit, returned count and whether more rows were observed.
 Rows are read in a stated unique order reported as `rows.order`: `rowid` for
 rowid tables, and `primary_key` for `WITHOUT ROWID` tables, reusing the
 primary-key index's own direction and declared collation. `rows.row_offset`
-reports the rows skipped before the window and `rows.next_row_offset` the offset
-to request for the following page; it is `null` once the window reaches the end.
-Pass `row_offset` (CLI `--row-offset`, requires `table`, default 0) to skip into
-a table rather than repeating earlier rows. If columns shadow all three
+reports the rows skipped before the window. Pass `rows.next_row_offset` as the
+next `row_offset` (CLI `--row-offset`, requires `table`, default 0) to continue
+an ordered sample. A `null` next offset means there is no next page. Check
+`rows.truncated` to distinguish an exhausted window from an unordered sample
+with more rows. If columns shadow all three
 built-in names (`rowid`, `_rowid_`, and `oid`), REA can use a declared
 [`INTEGER PRIMARY KEY` rowid alias](https://www.sqlite.org/lang_createtable.html#rowids_and_the_integer_primary_key),
 even when that column is outside the requested projection. A separately

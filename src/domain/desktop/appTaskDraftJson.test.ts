@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
-import { draftOf, pointerOf, statePath } from "./appTaskDraft.fixture.js";
+import {
+  draftOf,
+  jsonStateArchive,
+  pointerOf,
+  statePath,
+} from "./appTaskDraft.fixture.js";
 import { evaluateTaskChecks, type TaskFileView } from "./appTaskChecks.js";
 import { jsonCounts } from "./appTaskDraftJson.js";
 import { pairRecordsById } from "./jsonRecordPairing.js";
-import { zipEntry, zipView } from "./zipView.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 
 const FILE = "Documents/reading-list.trln";
@@ -331,30 +335,12 @@ describe("draftTaskFiles generated record ids", () => {
 describe("draftTaskFiles generated record ids in archives", () => {
   it("omits a generated record id in JSON inside an archive while keeping its account reference", () => {
     const selected = "550e8400-e29b-41d4-a716-446655440001";
-    const archive = (value: unknown) => {
-      const bytes = new TextEncoder().encode(JSON.stringify(value));
-      return zipView(
-        [
-          zipEntry(
-            {
-              name: "state.json",
-              size: bytes.length,
-              compressedSize: bytes.length,
-              method: 8,
-              encrypted: false,
-            },
-            bytes,
-          ),
-        ],
-        1,
-      );
-    };
     const [file] = draftOf({
       "Documents/state.zip": statePath(
         "document",
         "zip",
-        archive({ nodes: [] }),
-        archive({
+        jsonStateArchive({ nodes: [] }),
+        jsonStateArchive({
           nodes: [
             { uid: "ID_329023692", name: "New", selectedAccount: selected },
           ],
@@ -372,24 +358,6 @@ describe("draftTaskFiles generated record ids in archives", () => {
   });
 
   it("does not require a newly generated record id in an archive's reference array", () => {
-    const archive = (value: unknown) => {
-      const bytes = new TextEncoder().encode(JSON.stringify(value));
-      return zipView(
-        [
-          zipEntry(
-            {
-              name: "state.json",
-              size: bytes.length,
-              compressedSize: bytes.length,
-              method: 8,
-              encrypted: false,
-            },
-            bytes,
-          ),
-        ],
-        1,
-      );
-    };
     const before = { nodes: [{ uid: "old", name: "Parent", children: [] }] };
     const after = {
       nodes: [
@@ -401,8 +369,8 @@ describe("draftTaskFiles generated record ids in archives", () => {
       "Documents/state.zip": statePath(
         "document",
         "zip",
-        archive(before),
-        archive(after),
+        jsonStateArchive(before),
+        jsonStateArchive(after),
       ),
     });
     expect(
