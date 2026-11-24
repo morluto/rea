@@ -489,13 +489,37 @@ export const gitRepository = (cwd = process.cwd()) => {
       git("ls-tree", "-r", "-z", "--name-only", revision, "--", ...directories)
         .split("\0")
         .filter(Boolean),
-    // NUL-terminate requests so a line break in a path remains part of its name.
     readFiles: (revision, paths) => {
-      const output = execFileSync("git", ["cat-file", "--batch", "-z"], {
+      if (!paths.length) return new Map();
+      // Resolve the tree once instead of walking revision:path for every test.
+      const maxBuffer = 512 * 1024 * 1024;
+      const tree = execFileSync("git", ["ls-tree", "-rz", revision], {
         cwd,
-        input: paths.map((path) => `${revision}:${path}\0`).join(""),
-        maxBuffer: 512 * 1024 * 1024,
+        encoding: "utf8",
+        maxBuffer,
       });
+      const objects = new Map();
+      for (const entry of tree.split("\0")) {
+        // Let Git resolve replacement characters so invalid UTF-8 bytes
+        // cannot alias a requested path when the listing is decoded.
+        if (!entry || entry.includes("\uFFFD")) continue;
+        // Git separates the header from the raw path at the first tab.
+        const tab = entry.indexOf("\t");
+        const [, , oid] = entry.slice(0, tab).split(" ");
+        objects.set(entry.slice(tab + 1), oid);
+      }
+      const requests = paths.map(
+        (path) => objects.get(path) ?? `${revision}:${path}`,
+      );
+      const output = execFileSync(
+        "git",
+        ["cat-file", "--batch", "--buffer", "-z"],
+        {
+          cwd,
+          input: requests.join("\0") + "\0",
+          maxBuffer,
+        },
+      );
       const contents = new Map();
       let offset = 0;
       for (const path of paths) {

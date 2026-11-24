@@ -1399,9 +1399,10 @@ rebuilds misses. A restore prefix with the same platform and toolchain permits
 partial task reuse when one generator's inputs change; Turbo still invalidates
 that generator's entry. Native outputs are not stored in this cache.
 
-POSIX native package jobs, documentation checks, Go binary verification, and the
-Apple artifact lane reuse the same workflow's portable Turbo cache
-(`rea-build-cache`) for compiled JavaScript, skills, and catalogs. Windows jobs
+The build job stages and uploads `rea-build-cache` when a selected POSIX native
+package, Apple artifact, or reusable provider job consumes it. Portable test
+shards download `rea-test-runtime`. Documentation checks restore the
+cross-run Turbo cache. Windows jobs
 (`windows-curated` and Windows `package-e2e`) compile with `typescript` rather
 than Linux's accelerated `tsrs` checker, so they restore and publish a separate
 Windows `.turbo/cache/` family (`rea-windows-build-v1-Windows-X64-*`, pruned to

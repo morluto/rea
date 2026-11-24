@@ -12,7 +12,10 @@ import {
   type ModelArtifact,
 } from "../model/modelArtifact.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -193,15 +196,8 @@ export const projectModelArtifactView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "model-artifact")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof modelArtifactViewRequestSchema>
