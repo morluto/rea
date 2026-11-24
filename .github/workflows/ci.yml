@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
-      QUALIFICATION_ONLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.source_sha != '' }}
+      CHECKOUT_TEST_SOURCES: ${{ github.event_name == 'pull_request' && inputs.source_sha == '' }}
     permissions:
       contents: read
       actions: read
@@ -116,11 +116,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.source_sha || github.sha }}
-          # Diff-based plans read test blobs and ancestry. Qualification needs
-          # the planner scripts and root files (including .nvmrc) from HEAD.
-          fetch-depth: ${{ env.QUALIFICATION_ONLY == 'true' && 1 || 0 }}
-          sparse-checkout: ${{ env.QUALIFICATION_ONLY == 'true' && 'scripts' || '' }}
-          filter: ${{ env.QUALIFICATION_ONLY != 'true' && 'blob:none' || '' }}
+          # PR test selection reads tracked test sources. Push plans compare
+          # Git trees and still need ancestry. Qualification uses only HEAD.
+          fetch-depth: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.source_sha != '') && 1 || 0 }}
+          sparse-checkout: ${{ env.CHECKOUT_TEST_SOURCES != 'true' && 'scripts' || '' }}
+          filter: ${{ env.CHECKOUT_TEST_SOURCES == 'true' && 'blob:none' || '' }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
