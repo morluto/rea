@@ -355,3 +355,123 @@ describe("tar extraction", () => {
     ).toBe("GDPC-not-really");
   });
 });
+
+/** Rewrite a header's checksum after editing its fields. */
+const rechecksum = (block: Buffer): Buffer => {
+  block.fill(0x20, 148, 156);
+  let sum = 0;
+  for (const byte of block) sum += byte;
+  block.write(`${sum.toString(8).padStart(6, "0")}\u0000 `, 148, "latin1");
+  return block;
+};
+
+const end = Buffer.alloc(1024);
+
+describe("tar header edge cases", () => {
+  it("keeps a pre-1970 GNU base-256 modification time", async () => {
+    const header = tarHeader({ name: "old.txt", dialect: "gnu" }, 1);
+    header.fill(0xff, 136, 148);
+    const result = await read(
+      Buffer.concat([rechecksum(header), Buffer.alloc(512, 0x61), end]),
+    );
+    expect(result.entries.map((entry) => entry.path)).toEqual(["old.txt"]);
+    expect(result.entries[0]?.formatMetadata).toMatchObject({ mtime: -1 });
+  });
+
+  it("does not apply a pending pax size to a GNU long-name header", async () => {
+    const pax = Buffer.from("12 size=513\n");
+    const long = `${"n".repeat(120)}\u0000`;
+    const bytes = Buffer.concat([
+      tarHeader({ name: "PaxHeader", type: "x" }, pax.length),
+      pax,
+      Buffer.alloc(512 - pax.length),
+      tarHeader(
+        { name: "././@LongLink", type: "L", dialect: "gnu" },
+        long.length,
+      ),
+      Buffer.from(long),
+      Buffer.alloc(512 - long.length),
+      tarHeader({ name: "short", dialect: "gnu" }, 1),
+      Buffer.alloc(1024, 0x62),
+      end,
+    ]);
+    const result = await read(bytes);
+    expect(
+      result.entries.map((entry) => [entry.path, entry.declaredSize]),
+    ).toEqual([["n".repeat(120), 513]]);
+  });
+
+  it("returns to header owner names when a global pax record clears them", async () => {
+    const global = (body: string) => {
+      const records = Buffer.from(body);
+      return Buffer.concat([
+        tarHeader({ name: "GlobalHead", type: "g" }, records.length),
+        records,
+        Buffer.alloc(512 - records.length),
+      ]);
+    };
+    const result = await read(
+      Buffer.concat([
+        global("15 uname=alice\n"),
+        tarMembers([{ name: "a.txt", data: "a" }]),
+        global("9 uname=\n"),
+        tarMembers([{ name: "b.txt", data: "b" }]),
+        end,
+      ]),
+    );
+    expect(
+      result.entries.map((entry) => [
+        entry.path,
+        (entry.formatMetadata as { uname: string }).uname,
+      ]),
+    ).toEqual([
+      ["a.txt", "alice"],
+      ["b.txt", "builder"],
+    ]);
+  });
+
+  it("treats a cut-off zero block as truncation, not an end marker", async () => {
+    const result = await read(
+      Buffer.concat([
+        tarMembers([{ name: "a.txt", data: "a" }]),
+        Buffer.alloc(1),
+      ]),
+    );
+    expect(result.metadata).toMatchObject({ end_state: "truncated" });
+    expect(result.coverage[0]?.status).toBe("unknown");
+  });
+
+  it("keeps earlier members when a later header declares an unsafe size", async () => {
+    const big = tarHeader({ name: "huge.bin", dialect: "gnu" }, 0);
+    big.fill(0, 124, 136);
+    big[124] = 0x80;
+    big.fill(0xff, 125, 136);
+    const result = await read(
+      Buffer.concat([
+        tarMembers([{ name: "a.txt", data: "a" }]),
+        rechecksum(big),
+        end,
+      ]),
+    );
+    expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+    expect(result.metadata).toMatchObject({
+      end_state: "malformed",
+      end_offset: 1024,
+    });
+  });
+
+  it("recognizes a small gzip tar whose trailer is damaged and keeps its complete member", async () => {
+    const bytes = gzipSync(
+      Buffer.concat([
+        tarMembers([{ name: "a.txt", data: "a" }]).subarray(0, 600),
+      ]),
+    );
+    // Corrupt the CRC32: the stream's data is intact, its trailer is not.
+    bytes[bytes.length - 8] = (bytes[bytes.length - 8] ?? 0) ^ 0xff;
+    expect(recognizeTarPrefix(bytes)).toBe("gzip");
+    const result = await read(bytes);
+    expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+    expect(result.contents.get("a.txt")).toBe("a");
+    expect(result.metadata?.end_state).toBe("malformed");
+  });
+});

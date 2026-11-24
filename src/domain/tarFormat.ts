@@ -77,12 +77,13 @@ const checksumMatches = (block: Uint8Array): boolean => {
 export const parseTarNumber = (field: Uint8Array): bigint | undefined => {
   if (field.length === 0) return undefined;
   if ((field[0]! & 0x80) !== 0) {
-    // Base-256: two's complement big-endian with the flag bit removed.
-    if ((field[0]! & 0x40) !== 0) return undefined;
+    // GNU base-256: the remaining bits are a big-endian two's complement
+    // number, so 0xff bytes encode a negative value such as a pre-1970 time.
     let value = BigInt(field[0]! & 0x7f);
     for (let index = 1; index < field.length; index++)
       value = (value << 8n) | BigInt(field[index]!);
-    return value;
+    const bits = BigInt(field.length * 8 - 1);
+    return (field[0]! & 0x40) === 0 ? value : value - (1n << bits);
   }
   let index = 0;
   while (index < field.length && field[index] === 0x20) index++;
@@ -152,12 +153,17 @@ export const parseTarHeaderBlock = (block: Uint8Array): TarHeaderParse => {
   const gid = number(116, 8);
   const size = number(124, 12);
   const mtime = number(136, 12);
+  // Only a modification time may be negative.
   if (
     mode === undefined ||
     uid === undefined ||
     gid === undefined ||
     size === undefined ||
-    mtime === undefined
+    mtime === undefined ||
+    mode < 0n ||
+    uid < 0n ||
+    gid < 0n ||
+    size < 0n
   )
     return { state: "invalid", reason: "header has a malformed numeric field" };
   const name = fieldBytes(block, 0, 100);
@@ -205,13 +211,17 @@ const GZIP_TAR_PROBE_OUTPUT_BYTES = 4 * 1024 * 1024;
 export const hasGzipTarPrefix = (prefix: Uint8Array): boolean => {
   if (!hasGzipMagic(prefix)) return false;
   try {
-    const inflated = gunzipSync(
-      prefix.subarray(0, GZIP_TAR_PROBE_INPUT_BYTES),
-      {
-        finishFlush: zlibConstants.Z_SYNC_FLUSH,
-        maxOutputLength: GZIP_TAR_PROBE_OUTPUT_BYTES,
-      },
+    // Leave out the last 8 bytes: when the prefix is the whole file they are
+    // the CRC32 and ISIZE trailer, which a probe must not verify. A damaged
+    // trailer is the reader's fact to report, not a reason to forget the tar.
+    const input = prefix.subarray(
+      0,
+      Math.min(GZIP_TAR_PROBE_INPUT_BYTES, prefix.length - 8),
     );
+    const inflated = gunzipSync(input, {
+      finishFlush: zlibConstants.Z_SYNC_FLUSH,
+      maxOutputLength: GZIP_TAR_PROBE_OUTPUT_BYTES,
+    });
     return hasTarHeader(inflated);
   } catch {
     // A corrupt or oversized prefix is not a claim; the bytes stay unrecognized.

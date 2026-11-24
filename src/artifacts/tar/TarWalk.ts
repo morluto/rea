@@ -4,7 +4,6 @@ import { Budget } from "../../domain/budget.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
-  isZeroBlock,
   parsePaxRecords,
   parseTarHeaderBlock,
   TAR_BLOCK_BYTES,
@@ -92,7 +91,32 @@ const decodeName = (
 };
 
 const safeNumber = (value: bigint): number | null =>
-  value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+  value <= BigInt(Number.MAX_SAFE_INTEGER) &&
+  value >= BigInt(Number.MIN_SAFE_INTEGER)
+    ? Number(value)
+    : null;
+
+/** Whole seconds of a pax time, which may be negative and fractional. */
+const paxSeconds = (value: string | undefined): bigint | undefined =>
+  value !== undefined && /^-?[0-9]+(?:\.[0-9]+)?$/u.test(value)
+    ? BigInt(value.split(".")[0]!)
+    : undefined;
+
+/**
+ * Apply pax records over earlier ones. POSIX: an empty value deletes the
+ * keyword, so the header field applies again.
+ */
+const withPax = (
+  base: TarPaxRecords,
+  records: TarPaxRecords | undefined,
+): TarPaxRecords => {
+  if (records === undefined) return base;
+  const merged = new Map(base);
+  for (const [key, value] of records)
+    if (value === "") merged.delete(key);
+    else merged.set(key, value);
+  return merged;
+};
 
 const decimal = (value: string | undefined): bigint | undefined =>
   value !== undefined && /^[0-9]+$/u.test(value) ? BigInt(value) : undefined;
@@ -190,7 +214,7 @@ export const walkTar = async (
         );
         break;
       }
-      if (block.length < TAR_BLOCK_BYTES && !isZeroBlock(block)) {
+      if (block.length < TAR_BLOCK_BYTES) {
         if (headerOffset === 0)
           throw tarFormatFailure("first header block is incomplete", 0);
         stop(
@@ -200,10 +224,7 @@ export const walkTar = async (
         );
         break;
       }
-      const parsed =
-        block.length < TAR_BLOCK_BYTES
-          ? ({ state: "zero" } as const)
-          : parseTarHeaderBlock(block);
+      const parsed = parseTarHeaderBlock(block);
       if (parsed.state === "zero") {
         endOffset = headerOffset;
         endState = "end-marker";
@@ -226,23 +247,30 @@ export const walkTar = async (
       }
       const header = parsed.header;
       dialects.add(header.dialect);
-      const records =
-        local === undefined ? global : new Map([...global, ...local]);
-      const declaredSize = decimal(records.get("size")) ?? header.size;
-      const size = safeNumber(declaredSize);
-      if (size === null || tarPaddedSize(size) > Number.MAX_SAFE_INTEGER)
-        throw tarFormatFailure(
-          `member size ${String(declaredSize)} is not a safe byte count`,
-          headerOffset,
-        );
-      const dataOffset = stream.position;
       const typeflag = header.typeflag;
-      if (
+      const extension =
         typeflag === TAR_TYPEFLAGS.paxLocal ||
         typeflag === TAR_TYPEFLAGS.paxGlobal ||
         typeflag === TAR_TYPEFLAGS.gnuLongName ||
-        typeflag === TAR_TYPEFLAGS.gnuLongLink
-      ) {
+        typeflag === TAR_TYPEFLAGS.gnuLongLink;
+      // Pax records describe the next member, never an extension header.
+      const records = extension
+        ? new Map<string, string>()
+        : withPax(global, local);
+      const declaredSize = decimal(records.get("size")) ?? header.size;
+      const size = safeNumber(declaredSize);
+      if (size === null || tarPaddedSize(size) > Number.MAX_SAFE_INTEGER) {
+        const detail = `member size ${String(declaredSize)} is not a safe byte count`;
+        if (headerOffset === 0) throw tarFormatFailure(detail, 0);
+        stop(
+          "malformed",
+          headerOffset,
+          `Tar ${detail} at offset ${String(headerOffset)}; members after it were not inventoried.`,
+        );
+        break;
+      }
+      const dataOffset = stream.position;
+      if (extension) {
         if (declaredSize > BigInt(TAR_EXTENDED_HEADER_BYTES))
           throw extendedHeaderLimit(declaredSize);
         const data = await stream.read(size, signal);
@@ -270,7 +298,7 @@ export const walkTar = async (
             break;
           }
           if (typeflag === TAR_TYPEFLAGS.paxGlobal)
-            global = new Map([...global, ...pax.records]);
+            global = withPax(global, pax.records);
           else local = pax.records;
         } else {
           const end = data.indexOf(0);
@@ -293,7 +321,7 @@ export const walkTar = async (
       local = undefined;
       longName = undefined;
       longLink = undefined;
-      const skipped = await stream.skip(tarPaddedSize(size), signal);
+      const skipped = await stream.skip(size, signal);
       if (skipped < size) {
         stop(
           "truncated",
@@ -305,14 +333,16 @@ export const walkTar = async (
       const sourcePath = name;
       const path = name.replace(/^(?:\.\/)+/u, "");
       const role = memberRole(header, records);
-      if ("omit" in role)
-        omissions.push({ path: path.replace(/\/+$/u, ""), kind: role.omit });
-      else if (role.member !== "root") {
+      // Omissions are retained too, so they share the metadata allowance.
+      if ("omit" in role || role.member !== "root")
         retained.charge(
           MEMBER_OVERHEAD_BYTES +
             2 * (Buffer.byteLength(path) + Buffer.byteLength(linkTarget ?? "")),
           retainedMetadataLimit,
         );
+      if ("omit" in role)
+        omissions.push({ path: path.replace(/\/+$/u, ""), kind: role.omit });
+      else if (role.member !== "root") {
         if (path !== sourcePath)
           memberLimitations.push(
             `tar member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
@@ -328,9 +358,7 @@ export const walkTar = async (
           mode: header.mode,
           uid: safeNumber(decimal(records.get("uid")) ?? header.uid),
           gid: safeNumber(decimal(records.get("gid")) ?? header.gid),
-          mtime: safeNumber(
-            decimal(records.get("mtime")?.split(".")[0]) ?? header.mtime,
-          ),
+          mtime: safeNumber(paxSeconds(records.get("mtime")) ?? header.mtime),
           uname:
             records.get("uname") ??
             (header.uname.length === 0
@@ -345,11 +373,12 @@ export const walkTar = async (
           limitations: memberLimitations,
         });
       }
-      if (skipped < tarPaddedSize(size)) {
+      const padding = tarPaddedSize(size) - size;
+      if ((await stream.skip(padding, signal)) < padding) {
         // The member's bytes are complete; only its block padding is missing.
         stop(
           "truncated",
-          dataOffset + skipped,
+          stream.position,
           `Tar stream ends inside the block padding after member ${JSON.stringify(name)}; the archive is truncated.`,
         );
         break;

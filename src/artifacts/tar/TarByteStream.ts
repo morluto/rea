@@ -1,5 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
-import { pipeline, type Readable } from "node:stream";
+import { pipeline, Readable } from "node:stream";
 import { createGunzip } from "node:zlib";
 
 import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
@@ -67,17 +67,48 @@ export class PlainTarStream implements TarByteStream {
   }
 }
 
+/** RFC 1952 member trailer: CRC32 and ISIZE. */
+const GZIP_TRAILER_BYTES = 8;
+
+/**
+ * The carrier's bytes, with the final 8 in a write of their own. zlib emits
+ * no output for a write that ends in a failed trailer check, so separating
+ * the last member's trailer keeps its decompressed data observable.
+ */
+async function* compressedInput(
+  handle: Pick<FileHandle, "read">,
+  size: number,
+): AsyncGenerator<Buffer> {
+  const split = Math.max(0, size - GZIP_TRAILER_BYTES);
+  if (split > 0)
+    yield* readFileHandleChunks(handle, { start: 0, end: split - 1 });
+  if (size > split)
+    yield* readFileHandleChunks(handle, { start: split, end: size - 1 });
+}
+
+/** Decompressed bytes queued before the inflater is paused. */
+const QUEUE_HIGH_WATER_BYTES = 1024 * 1024;
+
 /**
  * The RFC 1952 decompression of a gzip carrier, pulled on demand. Every
  * decompressed byte is charged before it is used, so expansion stays within
  * the caller's plaintext-work allowance.
+ *
+ * Output is queued from `data` events rather than read through the stream's
+ * iterator: zlib can report a damaged trailer in the same input chunk that
+ * produced the data, and destroying a paused stream would drop that data.
+ * Bytes that arrived before a failure are therefore served first, and the
+ * failure follows them. The queue is bounded by pausing the inflater.
  */
 export class GzipTarStream implements TarByteStream {
   #position = 0;
   #pending: Buffer = Buffer.alloc(0);
   readonly #output: Readable;
-  readonly #chunks: AsyncIterator<Buffer>;
-  #ended = false;
+  readonly #queue: Buffer[] = [];
+  #queuedBytes = 0;
+  #state: "open" | "ended" | { readonly failure: unknown } = "open";
+  #wake: (() => void) | undefined;
+  #closed = false;
 
   constructor(
     handle: Pick<FileHandle, "read">,
@@ -86,14 +117,25 @@ export class GzipTarStream implements TarByteStream {
   ) {
     const gunzip = createGunzip();
     this.#output = pipeline(
-      readFileHandleChunks(handle, { start: 0, end: size - 1 }),
+      Readable.from(compressedInput(handle, size)),
       gunzip,
-      // Failures surface through the decompressed iterator.
+      // The error event below records the failure for the reader.
       () => undefined,
     );
-    this.#chunks = this.#output[
-      Symbol.asyncIterator
-    ]() as AsyncIterator<Buffer>;
+    this.#output.on("data", (chunk: Buffer) => {
+      this.#queue.push(chunk);
+      this.#queuedBytes += chunk.length;
+      if (this.#queuedBytes > QUEUE_HIGH_WATER_BYTES) this.#output.pause();
+      this.#notify();
+    });
+    this.#output.once("end", () => {
+      if (this.#state === "open") this.#state = "ended";
+      this.#notify();
+    });
+    this.#output.once("error", (failure: unknown) => {
+      if (this.#state === "open") this.#state = { failure };
+      this.#notify();
+    });
   }
 
   get position(): number {
@@ -123,9 +165,43 @@ export class GzipTarStream implements TarByteStream {
   }
 
   close(): void {
-    this.#ended = true;
+    this.#closed = true;
     this.#pending = Buffer.alloc(0);
+    this.#queue.length = 0;
+    this.#queuedBytes = 0;
     this.#output.destroy();
+    this.#notify();
+  }
+
+  #notify(): void {
+    const wake = this.#wake;
+    this.#wake = undefined;
+    wake?.();
+  }
+
+  async #next(signal: AbortSignal | undefined): Promise<Buffer | undefined> {
+    for (;;) {
+      assertArtifactReadActive(signal);
+      const chunk = this.#queue.shift();
+      if (chunk !== undefined) {
+        this.#queuedBytes -= chunk.length;
+        if (this.#queuedBytes <= QUEUE_HIGH_WATER_BYTES / 2)
+          this.#output.resume();
+        return chunk;
+      }
+      if (this.#closed) return undefined;
+      const state = this.#state;
+      if (state === "ended") return undefined;
+      if (state !== "open") {
+        // Report the failure once; later reads see the end of the stream.
+        this.#state = "ended";
+        throw gzipStreamFailure(state.failure, this.#position);
+      }
+      this.#output.resume();
+      await new Promise<void>((resolve) => {
+        this.#wake = resolve;
+      });
+    }
   }
 
   async #take(
@@ -133,22 +209,10 @@ export class GzipTarStream implements TarByteStream {
     signal: AbortSignal | undefined,
   ): Promise<Buffer | undefined> {
     if (this.#pending.length === 0) {
-      if (this.#ended) return undefined;
-      assertArtifactReadActive(signal);
-      let next: IteratorResult<Buffer>;
-      try {
-        next = await this.#chunks.next();
-      } catch (cause: unknown) {
-        this.#ended = true;
-        throw gzipStreamFailure(cause, this.#position);
-      }
-      assertArtifactReadActive(signal);
-      if (next.done === true) {
-        this.#ended = true;
-        return undefined;
-      }
-      this.charge(next.value.length);
-      this.#pending = next.value;
+      const next = await this.#next(signal);
+      if (next === undefined) return undefined;
+      this.charge(next.length);
+      this.#pending = next;
     }
     const chunk = this.#pending.subarray(0, length);
     this.#pending = this.#pending.subarray(chunk.length);

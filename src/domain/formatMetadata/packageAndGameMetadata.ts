@@ -354,8 +354,8 @@ export const tarEntryMetadataSchema = z.strictObject({
   mode: z.int().min(0).max(0o7777),
   uid: offset.nullable(),
   gid: offset.nullable(),
-  /** Seconds since the epoch; null when the field exceeds a safe integer. */
-  mtime: offset.nullable(),
+  /** Seconds since the epoch, negative before 1970; null past a safe integer. */
+  mtime: z.int().nullable(),
   uname: z.string().nullable(),
   gname: z.string().nullable(),
   link_name: z.string().nullable(),
