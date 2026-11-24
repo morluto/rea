@@ -113,6 +113,21 @@ describe("isCallerOnlyIncompleteCoverage", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("fails closed without prose matching when historical format-2 coverage omits limited_directions", () => {
+    expect(
+      isCallerOnlyIncompleteCoverage({
+        status: "unknown",
+        reason: "Callers: unavailable.",
+      }),
+    ).toBe(false);
+    expect(
+      isCallerOnlyIncompleteCoverage({
+        status: "partial",
+        limitations: ["Callers: truncated."],
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("assessFunctionCallCoverage", () => {

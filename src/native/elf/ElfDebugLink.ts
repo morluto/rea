@@ -195,7 +195,7 @@ const readLinkName = async (
 
   // An overlong name can still have a usable CRC or build ID. Find its
   // actual terminator without retaining the unreportable name.
-  for (let offset = prefix.length; offset < location.bytes; ) {
+  for (let offset = prefix.length; offset < location.bytes;) {
     const length = Math.min(
       LINK_NAME_SCAN_CHUNK_BYTES,
       location.bytes - offset,

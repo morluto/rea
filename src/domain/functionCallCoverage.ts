@@ -1,5 +1,6 @@
 import {
   relationshipCoverageLimitations,
+  type EvidenceRelationshipCoverage,
   type RelationshipCoverage,
   type RelationshipDiscoveryStatus,
 } from "./relationshipCoverage.js";
@@ -11,8 +12,8 @@ const calleeCoveragePrefix = "Callees: ";
 
 /** Combine caller and callee read outcomes without losing either explanation. */
 export const combineFunctionRelationshipCoverage = (
-  callers: RelationshipCoverage | undefined,
-  callees: RelationshipCoverage | undefined,
+  callers: EvidenceRelationshipCoverage | undefined,
+  callees: EvidenceRelationshipCoverage | undefined,
 ): RelationshipCoverage => {
   const reads = [
     { direction: "callers" as const, coverage: callers },
@@ -73,12 +74,14 @@ export const combineFunctionRelationshipCoverage = (
 };
 
 /**
- * Forward searches depend on callee coverage.
+ * Forward searches depend on callee coverage. Historical format-2 records that
+ * omitted `limited_directions` fail closed (never treated as caller-only).
  */
 export const isCallerOnlyIncompleteCoverage = (
-  coverage: RelationshipCoverage,
+  coverage: EvidenceRelationshipCoverage,
 ): boolean => {
   if (coverage.status === "complete") return false;
+  if (coverage.limited_directions === undefined) return false;
   return !coverage.limited_directions.some(
     (direction) => direction === "callees",
   );
@@ -99,7 +102,7 @@ export interface FunctionCallCoverageAssessment {
 
 /** Keep observed-set blockers separate from descriptive provider caveats. */
 export const assessFunctionCallCoverage = (
-  coverage: RelationshipCoverage | null,
+  coverage: EvidenceRelationshipCoverage | null,
   dossier: Pick<FunctionDossier, "unresolved_calls">,
 ): FunctionCallCoverageAssessment => {
   const unresolvedCallCaveats = uniqueSorted(
