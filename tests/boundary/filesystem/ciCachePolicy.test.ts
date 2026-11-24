@@ -469,7 +469,7 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
             step.uses.startsWith("actions/setup-node@")
           ) {
             expect(step.with).not.toHaveProperty("cache", "npm");
-            expect(step.with?.["package-manager-cache"]).toBe(false);
+            expect(step.with).toMatchObject({ "package-manager-cache": false });
           }
           if (step?.uses !== "./.github/actions/npm-cache") continue;
           npmCacheSteps++;
@@ -642,8 +642,10 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     "persist-credentials": false,
   });
   expect(checkouts).toHaveLength(2);
-  const setupNode = steps.find((step) =>
-    step.uses?.startsWith("actions/setup-node@"),
+  const setupNode = steps.find(
+    (step) =>
+      typeof step.uses === "string" &&
+      step.uses.startsWith("actions/setup-node@"),
   );
   expect(setupNode?.with).toMatchObject({
     "node-version-file": "trusted-retention/.nvmrc",
