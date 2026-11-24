@@ -47,6 +47,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -126,6 +127,8 @@ export interface PwntoolsDecoderProfile<
   readonly identity: ProviderIdentity;
   readonly operation: string;
   readonly bridge: URL;
+  /** The format the worker reads, named in a malformed-target refusal. */
+  readonly targetFormat: string;
   readonly payloadSchema: z.ZodType<Payload>;
   readonly project: (context: {
     readonly input: Input;
@@ -593,14 +596,18 @@ export class PwntoolsDecoder<
               remediationAction: `Review reported limits and available host memory; allocation failure alone does not prove exhaustion. ${pwntoolsBudgetRecovery(producerLimits)}`,
             },
           );
+        // The worker's ELF owner rejected the selected file's bytes.
         if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, { capturedOutput }, [
+          throw new AnalysisTargetFailureError(
+            OPERATION,
+            input.path,
             {
-              path: ["path"],
-              reason: "invalid_format",
-              message: reply.message,
+              kind: "malformed",
+              format: this.profile.targetFormat,
+              detail: reply.message,
             },
-          ]);
+            { capturedOutput },
+          );
         if (reply.reason === "unavailable")
           throw pwntoolsUnavailable(
             reply.message,

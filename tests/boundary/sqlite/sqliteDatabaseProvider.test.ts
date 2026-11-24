@@ -987,10 +987,20 @@ it("rejects malformed databases without altering the selected file", async () =>
   );
   const bytes = await readFile(path);
   const result = await createProvider().inspect({ path });
-  expect(result).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisInputError" },
+  if (result.ok) throw new Error("accepted non-SQLite bytes");
+  // The bytes are at fault, not the request: a target refusal at the path.
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "unsupported_target",
+    retryable: false,
+    details: {
+      operation: "inspect_sqlite_database",
+      path,
+      failure_kind: "malformed",
+      format_failure: "malformed",
+      format: "sqlite",
+    },
   });
+  expect(projectAnalysisError(result.error)).not.toHaveProperty("recovery");
   expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 

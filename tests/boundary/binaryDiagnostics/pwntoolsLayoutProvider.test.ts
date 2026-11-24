@@ -636,7 +636,7 @@ it
         error: {
           _tag:
             scenario === "format" || scenario === "literal-replacement"
-              ? "AnalysisInputError"
+              ? "AnalysisTargetFailureError"
               : scenario === "unavailable"
                 ? "ProviderSelectionError"
                 : scenario === "unsupported"

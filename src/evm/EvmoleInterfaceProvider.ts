@@ -53,6 +53,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   cancelledBy,
   carriedReason,
@@ -761,14 +762,18 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             reply.message,
             { capturedOutput },
           );
+        // The worker rejected the selected bytecode, not the request.
         if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, { capturedOutput }, [
+          throw new AnalysisTargetFailureError(
+            OPERATION,
+            input.path,
             {
-              path: ["path"],
-              reason: "invalid_format",
-              message: reply.message,
+              kind: "malformed",
+              format: "evm-bytecode",
+              detail: reply.message,
             },
-          ]);
+            { capturedOutput },
+          );
         if (reply.reason === "output-limit")
           throw evmReplyBudgetFailure(
             reply.message,

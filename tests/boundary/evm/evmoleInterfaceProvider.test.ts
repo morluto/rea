@@ -508,7 +508,7 @@ it
         error: {
           _tag:
             scenario === "format" || scenario === "literal-replacement"
-              ? "AnalysisInputError"
+              ? "AnalysisTargetFailureError"
               : scenario === "unsupported"
                 ? "AnalysisUnsupportedTargetError"
                 : scenario === "output-limit"
