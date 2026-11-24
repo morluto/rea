@@ -8,12 +8,13 @@ import {
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import {
-  OBLIGATION_OVERGENERATION_LIMITATION_PREFIX,
   reconstructionObligationCoverage,
   reconstructionObligationDependencyGraph,
   reconstructionObligationLedgerClosureDigest,
   reconstructionObligationLedgerStatus,
   hasReconstructionObligationDiagnostic as hasDiagnostic,
+  reconstructionObligationOvergeneration,
+  reconstructionObligationOvergenerationLimitation,
   reconstructionObligationOwnershipGraph,
   reconstructionObligationReports,
   summarizeReconstructionObligations,
@@ -38,7 +39,6 @@ import {
   originalCasesFor,
 } from "./ReconstructionObligationOriginalCases.js";
 import { obligationLedgerEvidenceLinks } from "./ReconstructionObligationLedgerProjection.js";
-import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
@@ -50,17 +50,6 @@ const RETIRED_PROOF_FAILURES: readonly Diagnostic["code"][] = [
   "verifier-failed",
   "contradiction",
 ];
-
-/**
- * Generated obligations in one artifact that have neither runtime authority
- * nor a manifest binding. Above this count the artifact is reported as
- * over-generated: each such claim demands several fixtures and a verifier
- * before any evidence shows the boundary is reachable, so blind fixture work
- * would dominate the reconstruction and decoy boundaries in dead code could
- * absorb it. Hand-written preload or IPC surfaces rarely exceed this count;
- * larger applications first need runtime authority or reviewed dispositions.
- */
-export const OBLIGATION_OVERGENERATION_THRESHOLD = 20;
 
 const groupByObligation = <T extends { readonly obligation_id: string }>(
   entries: readonly T[],
@@ -112,13 +101,23 @@ export const evaluateReconstructionObligationLedger = ({
   const ownershipGraph = reconstructionObligationOwnershipGraph(obligations);
   const dependencyGraph = reconstructionObligationDependencyGraph(obligations);
   const evidenceLinks = obligationLedgerEvidenceLinks(obligations, manifest);
-  const limitations = ledgerLimitations(
-    [...generationLimitations, ...overgenerationLimitations(obligations)],
+  const closureLimitations = ledgerLimitations(
+    generationLimitations,
     candidates.length,
     orphanManifestIds,
     evidenceLinks.filter((id) => !records.has(id)).length,
   );
-  const coverage = reconstructionObligationCoverage(limitations);
+  // Over-generation is advisory: it is listed but never bounds coverage or
+  // closure, which read only the closure limitations.
+  const limitations = [
+    ...new Set([
+      ...closureLimitations,
+      ...reconstructionObligationOvergeneration(obligations).map(
+        reconstructionObligationOvergenerationLimitation,
+      ),
+    ]),
+  ].sort();
+  const coverage = reconstructionObligationCoverage(closureLimitations);
   const semantic = {
     coverage,
     summary: summarizeReconstructionObligations(obligations),
@@ -129,7 +128,10 @@ export const evaluateReconstructionObligationLedger = ({
     evidence_links: evidenceLinks,
     limitations,
   };
-  const status = reconstructionObligationLedgerStatus(obligations, limitations);
+  const status = reconstructionObligationLedgerStatus(
+    obligations,
+    closureLimitations,
+  );
   const closureDigest = reconstructionObligationLedgerClosureDigest({
     status,
     ...semantic,
@@ -217,44 +219,6 @@ const ledgerLimitations = (
         : []),
     ]),
   ].sort();
-
-/**
- * One artifact-level limitation per over-generated artifact. Every candidate
- * stays in the ledger; the limitation tells agents to stop fixture work on
- * static-only, unbound claims until authority or review narrows them. It is
- * advisory: a count is not truncation, so it changes neither coverage nor
- * closure status.
- * Families whose original authority is static (native boundaries) are
- * characterized without runtime authority, so they are not counted.
- */
-const overgenerationLimitations = (
-  obligations: readonly ReconstructionObligation[],
-): string[] => {
-  const unboundByArtifact = new Map<string, ReconstructionObligation[]>();
-  for (const obligation of obligations) {
-    const sha256 = obligation.target.artifact_sha256;
-    if (
-      sha256 === null ||
-      obligation.origin !== "generated" ||
-      obligation.binding !== null ||
-      obligation.source_state === "observed" ||
-      obligation.required_original_authority === "static"
-    )
-      continue;
-    const group = unboundByArtifact.get(sha256);
-    if (group === undefined) unboundByArtifact.set(sha256, [obligation]);
-    else group.push(obligation);
-  }
-  return [...unboundByArtifact]
-    .filter(([, group]) => group.length > OBLIGATION_OVERGENERATION_THRESHOLD)
-    .map(([sha256, group]) => {
-      const retired = group.filter(
-        ({ status }) => status === "out-of-scope",
-      ).length;
-      const unreviewed = group.length - retired;
-      return `${OBLIGATION_OVERGENERATION_LIMITATION_PREFIX} artifact ${sha256} has ${String(group.length)} generated obligations with no runtime authority and no manifest binding (families: ${uniqueSorted(group.map(({ family }) => family)).join(", ")}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(unreviewed)} still unreviewed, ${String(retired)} retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`;
-    });
-};
 
 const evaluateObligation = (
   candidate: ReconstructionObligationCandidate,

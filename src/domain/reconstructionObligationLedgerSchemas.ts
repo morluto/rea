@@ -8,6 +8,7 @@ import { evidenceBundleSchema } from "./evidenceBundle.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
+  reconstructionObligationClosureLimitations,
   reconstructionObligationCoverage,
   reconstructionObligationDependencyGraph,
   reconstructionObligationLedgerClosureDigest,
@@ -369,11 +370,15 @@ export const reconstructionObligationLedgerSchema = z
     limitations: z.array(textSchema),
   })
   .superRefine((ledger, context) => {
+    const closureLimitations = reconstructionObligationClosureLimitations(
+      ledger.obligations,
+      ledger.limitations,
+    );
     if (
       ledger.status !==
       reconstructionObligationLedgerStatus(
         ledger.obligations,
-        ledger.limitations,
+        closureLimitations,
       )
     )
       context.addIssue({
@@ -403,7 +408,7 @@ export const reconstructionObligationLedgerSchema = z
       });
     if (
       ledger.coverage.status !==
-      reconstructionObligationCoverage(ledger.limitations).status
+      reconstructionObligationCoverage(closureLimitations).status
     )
       context.addIssue({
         code: "custom",

@@ -14,7 +14,7 @@ import {
   request,
   reviewedObligation,
 } from "./ReconstructionObligationLedger.fixture.js";
-import { OBLIGATION_OVERGENERATION_THRESHOLD } from "./ReconstructionObligationLedgerEvaluation.js";
+import { OBLIGATION_OVERGENERATION_THRESHOLD } from "../domain/reconstructionObligationLedgerIntegrity.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../domain/evidence.js";
@@ -474,10 +474,10 @@ describe("reconstruction obligation over-generation", () => {
     expect(ledger.status).not.toBe("ready");
     expect(ledger.status).toBe("open");
     expect(ledger.limitations).toEqual(overgeneration(ledger));
-    expect(overgeneration(ledger)).toHaveLength(1);
-    expect(overgeneration(ledger)[0]).toContain(
-      `; 0 still unreviewed, ${String(unbound)} retired by reviewed disposition.`,
-    );
+    // The advisory text reads exactly as before it was made structured.
+    expect(overgeneration(ledger)).toEqual([
+      `obligation-overgeneration: artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(unbound)} generated obligations with no runtime authority and no manifest binding (families: ${countedFamilies(ledger)}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; 0 still unreviewed, ${String(unbound)} retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`,
+    ]);
   });
 });
 

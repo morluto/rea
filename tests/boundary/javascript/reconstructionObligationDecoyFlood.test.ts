@@ -8,7 +8,7 @@ import {
   build,
   request,
 } from "../../../src/application/ReconstructionObligationLedger.fixture.js";
-import { OBLIGATION_OVERGENERATION_THRESHOLD } from "../../../src/application/ReconstructionObligationLedgerEvaluation.js";
+import { OBLIGATION_OVERGENERATION_THRESHOLD } from "../../../src/domain/reconstructionObligationLedgerIntegrity.js";
 
 const DECOY_COUNT = OBLIGATION_OVERGENERATION_THRESHOLD + 5;
 
