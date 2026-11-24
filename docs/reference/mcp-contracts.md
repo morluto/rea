@@ -159,7 +159,8 @@ its reader finishes, is `unknown` with a limitation naming the reader format;
 a complete traversal of one container never covers another.
 ZIP members are listed from the central directory. Coverage is `complete` only
 when its records account for every byte before the directory (a well-formed
-APK signing block is accounted for); otherwise coverage is `unknown` and a
+APK signing block is accounted for, as is all-zero padding under 4 KiB that
+aligns that block to a 4 KiB boundary); otherwise coverage is `unknown` and a
 limitation gives the unaccounted bytes, which may hold local entries the
 directory does not list.
 An extent must fit before the directory and agree with the local header's
@@ -1242,9 +1243,7 @@ inputs `expected_package_version`, `expected_catalog_digest`, and
 `server_identity.catalog` contains catalog counts and schema digests. Grouped
 tool availability carries the name set and current per-tool facts; `tools/list`
 is the canonical source for complete tool definitions, including input and
-output schemas. Clients that previously read `server_identity.catalog.tools`
-should expand `tool_availability.groups` and use `tools/list` for schemas. The
-same catalog identity summary is returned by CLI `capabilities` and `providers`;
+output schemas. The same catalog identity summary is returned by CLI `capabilities` and `providers`;
 MCP tool definitions remain available through `tools/list`.
 
 Provider capabilities are grouped by provider identity and shared facts.
@@ -2083,9 +2082,7 @@ output destination. New ASAR file occurrences explicitly record the boolean
 `unpacked`: `true` identifies a companion file and `false` identifies a packed
 entry. This field describes archive storage, independently of whether the bytes
 were available or passed integrity verification. Older occurrences may omit it;
-omission remains unknown and must not be defaulted to `false`. Consumers that
-previously accepted only literal `true` must also accept `false`, while retaining
-support for omitted historical values.
+omission remains unknown and must not be defaulted to `false`.
 `compare_artifacts` reports a metadata change when both storage values are
 known and differ. If only one value is known, storage comparison is unknown;
 when both are omitted, storage is not compared.
@@ -2226,9 +2223,8 @@ such as kimi-cli have reported failures with the full catalog attached
 every advertised input schema within a 13,312-byte budget, measured to sit below
 Moonshot's observed cap (community measurements: a 13.7 KB schema is accepted
 while a ~15 KB one is rejected). This compact presentation is the only input
-advertisement. `REA_MCP_INPUT_SCHEMA_PROFILE` accepts only `compact`; the former
-`full` profile was removed, and a registration that still selects it fails at
-startup with a configuration error naming the setting. Remove the setting, or
+advertisement. `REA_MCP_INPUT_SCHEMA_PROFILE` accepts only `compact`; a registration that
+selects `full` fails at startup with a configuration error naming the setting. Remove the setting, or
 set it to `compact`. Compact presentation
 also reduces schemas whose expanded JSON tree exceeds ten levels, the limit
 reported by strict-depth MCP clients in [#2813](https://github.com/morluto/rea/issues/2813).
@@ -2448,9 +2444,9 @@ validation, and complete output schemas were about 92% of a default
 `tools/list` (4.3 of 4.6 MB). Some clients also reject a large `tools/list`
 frame or HTTP SSE event before they load any tools (the measured pi-web-ui
 failure is in [#2512](https://github.com/morluto/rea/issues/2512)). Select
-`compact` to bound every advertised output schema to 4,096 bytes. The former
-`full` output profile was removed; a registration that still selects it fails
-at startup with a configuration error naming the setting. Both profiles keep the same named canonical tool contract for server-side result
+`compact` to bound every advertised output schema to 4,096 bytes. A registration
+that selects `full` fails at startup with a configuration error naming the
+setting. Both profiles keep the same named canonical tool contract for server-side result
 validation and still returns complete `structuredContent` and text results;
 the MCP specification does not require an output schema for
 `structuredContent`.

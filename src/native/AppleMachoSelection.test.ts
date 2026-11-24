@@ -922,8 +922,9 @@ it.each([0, 129])(
         ? {
             ok: false,
             error: {
-              kind: "malformed",
+              kind: "format",
               message: "FAT header declares no architectures",
+              failure: { kind: "malformed", format: "macho" },
             },
           }
         : { ok: true, value: { fileOffset: 0, selection: null } },

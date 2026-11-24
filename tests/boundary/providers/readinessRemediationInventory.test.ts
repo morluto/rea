@@ -9,6 +9,7 @@ import { parseConfig } from "../../../src/config/parseConfig.js";
 import { IdaProvider } from "../../../src/ida/IdaProvider.js";
 import { readKunaConfiguration } from "../../../src/kuna/KunaConfiguration.js";
 import { KunaProvider } from "../../../src/kuna/KunaProvider.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { inspectKunaProviderOwned } from "./kuna/kunaResourceScope.js";
 
@@ -97,3 +98,24 @@ it.skipIf(process.platform === "win32").each([
     });
   },
 );
+
+it("keeps the Kuna command repair separate from the not-configured observation", async () => {
+  const owner = readKunaConfiguration({}, HOST_PLATFORM.platform);
+  if (owner.ok) throw new Error("An unset REA_KUNA_COMMAND must be refused");
+  expect(owner.error.reason).toBe("REA_KUNA_COMMAND is not set.");
+  expect(owner.error.remediation).not.toBe(owner.error.reason);
+  const executed = await new KunaProvider({})
+    .createClient({
+      path: process.execPath,
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "x86_64",
+      availableArchitectures: ["x86_64"],
+    } as Parameters<KunaProvider["createClient"]>[0])
+    .execute("procedure_pseudo_code", { procedure: "main" });
+  if (executed.ok) throw new Error("An unconfigured Kuna client must refuse");
+  const projected = projectAnalysisError(executed.error);
+  expect(projected.message).toContain(owner.error.reason);
+  expect(projected.remediation.action).toBe(owner.error.remediation);
+});

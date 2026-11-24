@@ -95,7 +95,6 @@ const nupkgFailure = (
             return undefined;
           if (
             failure.reason !== "path" &&
-            failure.reason !== "format" &&
             failure.reason !== "integrity" &&
             failure.reason !== "cancelled"
           )

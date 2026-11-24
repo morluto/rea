@@ -22,7 +22,6 @@ describe("DWARF compile-unit stable filesystem boundary", () => {
       for (const [candidate, reason] of [
         [root, "invalid_format"],
         [alias, "invalid_format"],
-        [malformed, "invalid_format"],
         [join(root, "missing"), "invalid_value"],
         [join(path, "child"), "invalid_value"],
       ] as const) {
@@ -40,6 +39,14 @@ describe("DWARF compile-unit stable filesystem boundary", () => {
           ],
         });
       }
+      // Malformed bytes are a target refusal, not a request-field error.
+      const malformedResult = await service.inspect({ path: malformed });
+      if (malformedResult.ok) throw new Error("Expected a malformed target");
+      expect(malformedResult.error).toMatchObject({
+        _tag: "AnalysisMalformedTargetError",
+        operation: "inspect_dwarf_units",
+        path: malformed,
+      });
       const aliased = await service.inspect({ path: alias });
       if (aliased.ok) throw new Error("Expected a rejected symlink");
       expect(aliased.error).toMatchObject({

@@ -1,5 +1,7 @@
 import { BinaryReader } from "../binaryContainer.js";
+import type { TruncatedExtent } from "../parseFailure.js";
 import {
+  hasJvmClassHeader,
   isJvmClassFile,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
 } from "./jvmClassFile.js";
@@ -25,10 +27,22 @@ export interface FatSliceRangeIssue {
   readonly reason: string;
 }
 
+/**
+ * A FAT header or table that runs past the measured end of the file: the
+ * declared structure is intact as far as the file goes, so the file is cut
+ * short rather than corrupt.
+ */
+export interface FatContainerTruncation {
+  readonly state: "truncated";
+  readonly reason: string;
+  readonly extent: TruncatedExtent;
+}
+
 export type FatContainerHeader =
   | { readonly state: "not-fat" }
   | { readonly state: "needs-data"; readonly requiredBytes: number }
   | { readonly state: "malformed"; readonly reason: string }
+  | FatContainerTruncation
   | {
       readonly state: "parsed";
       readonly magic: number;
@@ -252,9 +266,14 @@ export const readFatContainerHeader = (
   const table = decodeFatContainerTable(bytes, prefix);
   if (table.state !== "parsed") {
     if (table.state === "needs-data" && table.requiredBytes > fileSize) {
-      return table.requiredBytes === 8 && fileSize < 8
-        ? { state: "malformed", reason: "FAT header is truncated" }
-        : { state: "not-fat" };
+      if (prefix.state === "incomplete")
+        return fatTruncation("FAT header", fileSize, table.requiredBytes);
+      // A CAFEBABE count that reads as a JVM class version may belong to a
+      // class file shorter than the table it would declare. Any other FAT
+      // header that declares a table past the file's end is cut short.
+      return hasJvmClassHeader(bytes)
+        ? { state: "not-fat" }
+        : fatTruncation("FAT table", fileSize, table.requiredBytes);
     }
     return table;
   }
@@ -268,6 +287,16 @@ export const readFatContainerHeader = (
     ),
   };
 };
+
+const fatTruncation = (
+  structure: "FAT header" | "FAT table",
+  availableBytes: number,
+  requiredBytes: number,
+): FatContainerTruncation => ({
+  state: "truncated",
+  reason: `${structure} is truncated: the file has ${availableBytes} bytes and the ${structure} needs ${requiredBytes}`,
+  extent: { availableBytes, requiredBytes },
+});
 
 /** Decode bounded FAT declarations without assuming the final file size. */
 export const readFatContainerTable = (bytes: Uint8Array): FatContainerTable =>

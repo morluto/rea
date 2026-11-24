@@ -114,3 +114,14 @@ export const readAmdGpuNoteTarget = (
 /** Decode the processor field from AMDGPU ELF e_flags (EF_AMDGPU_MACH). */
 export const readAmdGpuElfProcessor = (flags: number): string | null =>
   ELF_PROCESSORS[flags & 0xff] ?? null;
+
+/** AMDGPU runtime ABIs that LLVM assigns to ELF EI_OSABI. */
+export type AmdGpuAbi = "amdhsa" | "amdpal" | "mesa3d" | "unknown";
+const ELF_ABIS: Readonly<Record<number, AmdGpuAbi>> = {
+  64: "amdhsa", // ELFOSABI_AMDGPU_HSA
+  65: "amdpal", // ELFOSABI_AMDGPU_PAL
+  66: "mesa3d", // ELFOSABI_AMDGPU_MESA3D
+};
+/** Select the metadata schema from the declared ABI, never from note contents. */
+export const readAmdGpuElfAbi = (osAbi: number): AmdGpuAbi =>
+  ELF_ABIS[osAbi] ?? "unknown";
