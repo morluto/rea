@@ -650,7 +650,7 @@ describe("streamStableArtifact async chunks and custom chunkBytes", () => {
   });
 
   it.each([0, -1, 1.5, Number.NaN])(
-    "rejects invalid chunkBytes (%j) as a REA defect",
+    "rejects invalid chunkBytes (%j) as an internal invariant violation",
     async (chunkBytes) => {
       const root = await createTestTempDirectory("rea-stable-bad-chunk-");
       const path = join(root, "sample.bin");
