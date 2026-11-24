@@ -1,12 +1,16 @@
 import {
+  ANDROID_SPARSE_CHUNK_COUNT_LIMIT,
   ANDROID_SPARSE_CHUNK_HEADER_SIZE,
-  ANDROID_SPARSE_FIXED_LIMITS,
   ANDROID_SPARSE_HEADER_SIZE,
   AndroidSparseWalkAccumulator,
   parseAndroidSparseChunkHeader,
   parseAndroidSparseHeader,
   readUint32LE,
 } from "../domain/androidSparseImageFormat.js";
+import {
+  DEFAULT_ANDROID_SPARSE_READER_LIMITS,
+  type AndroidSparseReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 import type {
   AndroidSparseChunkMetadata,
   AndroidSparseImageMetadata,
@@ -14,8 +18,8 @@ import type {
 import { ParseFailureError } from "../domain/parseFailure.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
-  artifactFixedLimitFailure,
   artifactParseFailure,
+  artifactReaderLimitFailure,
 } from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
@@ -36,22 +40,16 @@ const toReaderFailure = (
   signal: AbortSignal | undefined,
 ): unknown => {
   const { failure } = error;
-  if (failure.kind === "limit") {
-    const ceiling = ANDROID_SPARSE_FIXED_LIMITS.get(failure.limit.name);
-    if (ceiling !== undefined) {
-      return artifactFixedLimitFailure(
-        {
-          name: ceiling.name,
-          kind: "parser",
-          limit: failure.limit.maximum,
-          unit: ceiling.unit,
-          narrowing: ceiling.narrowing,
-        },
-        error.message,
-        "capacity",
-        { cause: error },
-      );
-    }
+  if (
+    failure.kind === "limit" &&
+    failure.limit.name === ANDROID_SPARSE_CHUNK_COUNT_LIMIT.name
+  ) {
+    return artifactReaderLimitFailure(
+      ANDROID_SPARSE_CHUNK_COUNT_LIMIT.parameter,
+      failure.limit.maximum,
+      ANDROID_SPARSE_CHUNK_COUNT_LIMIT.unit,
+      failure.limit.required,
+    );
   }
   return artifactParseFailure(error, signal, () => "capacity");
 };
@@ -68,7 +66,11 @@ export class AndroidSparseImageArtifactReader extends PositionalArtifactReader<
 > {
   override readonly format = "android-sparse-image" as const;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    private readonly limits: AndroidSparseReaderLimits = DEFAULT_ANDROID_SPARSE_READER_LIMITS,
+  ) {
     super(path, "Android sparse image", admitted);
   }
 
@@ -99,7 +101,11 @@ export class AndroidSparseImageArtifactReader extends PositionalArtifactReader<
     this.assertOpen(signal);
 
     try {
-      const header = parseAndroidSparseHeader(headerBytes, initial.size);
+      const header = parseAndroidSparseHeader(
+        headerBytes,
+        initial.size,
+        this.limits.chunk_count,
+      );
       const accumulator = new AndroidSparseWalkAccumulator(
         header,
         initial.size,

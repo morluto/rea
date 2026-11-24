@@ -42,14 +42,22 @@ Integer overflow checks use exact bigint arithmetic across `chunk_sz * blk_sz`,
 `total_blks * blk_sz`, cumulative block counts (both 32-bit unsigned wraparound
 and `total_blks` equality), `total_sz` framing, and carrier file bounds.
 
-## Bounded metadata, summaries, and fixed ceilings
+## Bounded metadata, summaries, and limits
 
-Fixed parser ceilings reject pathological headers or unbounded chunk tables with
-a typed `fixed_ceiling` capacity failure before walking chunks:
+Header dimensions stay grounded in the format's intrinsic bounds and actual
+carrier size:
 
-- `file_header_size`: at most `4096` bytes.
-- `chunk_header_size`: at most `1024` bytes.
-- `total_chunks`: at most `65536` chunks.
+- `file_header_size`: at least `28` bytes and within `uint16` and the file size
+  (extended bytes between `28` and `file_header_size` are skipped without buffering).
+- `chunk_header_size`: at least `12` bytes and within `uint16`, each chunk's
+  `total_sz`, and the file size.
+- `total_chunks`: carriers whose declared chunks cannot physically fit inside
+  the file fail immediately as truncated; otherwise chunk walking defaults to
+  `65536` chunks and is adjustable per call via
+  `artifact_limits.android_sparse.chunk_count` (`count`, minimum `1`, maximum
+  `2147483647`). Exceeding `chunk_count` reports a retryable limit failure
+  naming `artifact_limits.android_sparse.chunk_count` so callers can raise it
+  on the next operation.
 - Inline descriptor bounds: `format_metadata.chunks` retains up to the first
   `256` chunks (`chunks_omitted` counts the rest) and `crc32_chunk_values`
   retains up to the first `64` checksums (`crc32_chunk_values_omitted` counts

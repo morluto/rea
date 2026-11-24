@@ -1,4 +1,5 @@
 import { BinaryReader } from "./binaryContainer.js";
+import { DEFAULT_ANDROID_SPARSE_READER_LIMITS } from "./artifactReaderLimits.js";
 import {
   decodeLimit,
   malformedInput,
@@ -12,16 +13,7 @@ import type {
   AndroidSparseImageMetadata,
 } from "./formatMetadata/androidAndSystemMetadata.js";
 
-/** Fixed parser ceiling declared by the Android sparse container reader. */
-export interface AndroidSparseFixedLimit {
-  readonly name: string;
-  readonly kind: "parser";
-  readonly limit: number;
-  readonly unit: string;
-  readonly narrowing: string;
-}
-
-/** AOSP `system/core/libsparse/sparse_format.h` constants and REA parser bounds. */
+/** AOSP `system/core/libsparse/sparse_format.h` constants and bounds. */
 export const ANDROID_SPARSE_FORMAT = "android-sparse-image" as const;
 export const ANDROID_SPARSE_MAGIC = 0xed26ff3a;
 export const ANDROID_SPARSE_MAJOR_VERSION = 1;
@@ -33,51 +25,18 @@ export const ANDROID_SPARSE_CHUNK_TYPE_FILL = 0xcac2;
 export const ANDROID_SPARSE_CHUNK_TYPE_DONT_CARE = 0xcac3;
 export const ANDROID_SPARSE_CHUNK_TYPE_CRC32 = 0xcac4;
 
-export const ANDROID_SPARSE_MAX_FILE_HEADER_BYTES = 4096;
-export const ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES = 1024;
-export const ANDROID_SPARSE_MAX_CHUNKS = 65_536;
 export const ANDROID_SPARSE_MAX_METADATA_CHUNKS = 256;
 export const ANDROID_SPARSE_MAX_METADATA_CRC32_VALUES = 64;
 
 const MAX_UINT32 = 0xffff_ffffn;
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
-/** Fixed ceilings enforced when inspecting an Android sparse container. */
-export const ANDROID_SPARSE_FIXED_LIMITS: ReadonlyMap<
-  string,
-  AndroidSparseFixedLimit
-> = new Map([
-  [
-    "sparse-file-header-size",
-    {
-      name: "Android sparse file header size",
-      kind: "parser",
-      limit: ANDROID_SPARSE_MAX_FILE_HEADER_BYTES,
-      unit: "bytes",
-      narrowing: `Provide an Android sparse image whose file_hdr_sz is at most ${String(ANDROID_SPARSE_MAX_FILE_HEADER_BYTES)} bytes.`,
-    },
-  ],
-  [
-    "sparse-chunk-header-size",
-    {
-      name: "Android sparse chunk header size",
-      kind: "parser",
-      limit: ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES,
-      unit: "bytes",
-      narrowing: `Provide an Android sparse image whose chunk_hdr_sz is at most ${String(ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES)} bytes.`,
-    },
-  ],
-  [
-    "sparse-chunk-count",
-    {
-      name: "Android sparse chunk count",
-      kind: "parser",
-      limit: ANDROID_SPARSE_MAX_CHUNKS,
-      unit: "chunks",
-      narrowing: `Split or re-sparse the image so total_chunks is at most ${String(ANDROID_SPARSE_MAX_CHUNKS)}.`,
-    },
-  ],
-]);
+/** Adjustable chunk-count limit specification shared with `artifact_limits.android_sparse.chunk_count`. */
+export const ANDROID_SPARSE_CHUNK_COUNT_LIMIT = {
+  name: "Android sparse chunk count",
+  parameter: "artifact_limits.android_sparse.chunk_count",
+  unit: "count" as const,
+} as const;
 
 /** Parsed fields from the 28-byte LE `sparse_header_t`. */
 export interface AndroidSparseHeader {
@@ -174,12 +133,14 @@ const chunkTypeNameFor = (
 
 /**
  * Parses and validates the 28-byte LE `sparse_header_t`.
- * Enforces minimum/ceiling header sizes, block-size alignment, `uint32`/safe-integer bounds,
- * and `ANDROID_SPARSE_MAX_CHUNKS`.
+ * Enforces intrinsic `uint16`/`fileSize` header bounds, block-size alignment,
+ * `uint32`/safe-integer output sizing, minimum physical chunk-table extent, and
+ * the adjustable `chunkCountLimit` (`artifact_limits.android_sparse.chunk_count`).
  */
 export const parseAndroidSparseHeader = (
   headerBytes: Uint8Array,
   fileSize: number,
+  chunkCountLimit: number = DEFAULT_ANDROID_SPARSE_READER_LIMITS.chunk_count,
 ): AndroidSparseHeader => {
   const availableHeader = Math.min(headerBytes.length, fileSize);
   if (availableHeader < ANDROID_SPARSE_HEADER_SIZE) {
@@ -226,18 +187,6 @@ export const parseAndroidSparseHeader = (
       { offset: 8, field: "file_hdr_sz" },
     );
   }
-  if (fileHdrSz > ANDROID_SPARSE_MAX_FILE_HEADER_BYTES) {
-    throw decodeLimit(
-      ANDROID_SPARSE_FORMAT,
-      `sparse file_hdr_sz (${String(fileHdrSz)}) exceeds fixed ceiling ${String(ANDROID_SPARSE_MAX_FILE_HEADER_BYTES)}`,
-      {
-        name: "sparse-file-header-size",
-        maximum: ANDROID_SPARSE_MAX_FILE_HEADER_BYTES,
-        required: fileHdrSz,
-      },
-      { offset: 8, field: "file_hdr_sz" },
-    );
-  }
   if (fileHdrSz > fileSize) {
     throw truncatedInput(
       ANDROID_SPARSE_FORMAT,
@@ -254,18 +203,6 @@ export const parseAndroidSparseHeader = (
     throw malformedInput(
       ANDROID_SPARSE_FORMAT,
       `sparse chunk_hdr_sz (${String(chunkHdrSz)}) is smaller than ${String(ANDROID_SPARSE_CHUNK_HEADER_SIZE)} bytes`,
-      { offset: 10, field: "chunk_hdr_sz" },
-    );
-  }
-  if (chunkHdrSz > ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES) {
-    throw decodeLimit(
-      ANDROID_SPARSE_FORMAT,
-      `sparse chunk_hdr_sz (${String(chunkHdrSz)}) exceeds fixed ceiling ${String(ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES)}`,
-      {
-        name: "sparse-chunk-header-size",
-        maximum: ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES,
-        required: chunkHdrSz,
-      },
       { offset: 10, field: "chunk_hdr_sz" },
     );
   }
@@ -288,13 +225,34 @@ export const parseAndroidSparseHeader = (
       { offset: 16, field: "total_blks" },
     );
   }
-  if (totalChunks > ANDROID_SPARSE_MAX_CHUNKS) {
+  // Verify carrier size can hold at least total_chunks minimal chunk headers before charging chunk_count.
+  const minRequiredFileBytesBig =
+    BigInt(fileHdrSz) + BigInt(totalChunks) * BigInt(chunkHdrSz);
+  if (minRequiredFileBytesBig > BigInt(fileSize)) {
+    throw truncatedInput(
+      ANDROID_SPARSE_FORMAT,
+      `sparse total_chunks (${String(totalChunks)}) requires at least ${String(minRequiredFileBytesBig)} bytes, past carrier size (${String(fileSize)})`,
+      {
+        offset: 20,
+        field: "total_chunks",
+        ...(minRequiredFileBytesBig <= MAX_SAFE_BIGINT
+          ? {
+              extent: {
+                availableBytes: fileSize,
+                requiredBytes: Number(minRequiredFileBytesBig),
+              },
+            }
+          : {}),
+      },
+    );
+  }
+  if (totalChunks > chunkCountLimit) {
     throw decodeLimit(
       ANDROID_SPARSE_FORMAT,
-      `sparse total_chunks (${String(totalChunks)}) exceeds fixed ceiling ${String(ANDROID_SPARSE_MAX_CHUNKS)}`,
+      `Android sparse image exceeds the ${ANDROID_SPARSE_CHUNK_COUNT_LIMIT.name} allowance of ${String(chunkCountLimit)} ${ANDROID_SPARSE_CHUNK_COUNT_LIMIT.unit}`,
       {
-        name: "sparse-chunk-count",
-        maximum: ANDROID_SPARSE_MAX_CHUNKS,
+        name: ANDROID_SPARSE_CHUNK_COUNT_LIMIT.name,
+        maximum: chunkCountLimit,
         required: totalChunks,
       },
       { offset: 20, field: "total_chunks" },
@@ -692,8 +650,13 @@ export const readUint32LE = (bytes: Uint8Array, offset: number): number =>
  */
 export const inspectAndroidSparseBuffer = (
   bytes: Uint8Array,
+  options?: { readonly chunkCountLimit?: number },
 ): AndroidSparseInspection => {
-  const header = parseAndroidSparseHeader(bytes, bytes.length);
+  const header = parseAndroidSparseHeader(
+    bytes,
+    bytes.length,
+    options?.chunkCountLimit,
+  );
   const accumulator = new AndroidSparseWalkAccumulator(header, bytes.length);
   let offset = header.fileHdrSz;
   for (let index = 0; index < header.totalChunks; index += 1) {

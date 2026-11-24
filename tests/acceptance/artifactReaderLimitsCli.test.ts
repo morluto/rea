@@ -18,6 +18,7 @@ import {
 } from "../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
+import { buildAndroidSparseImage } from "../fixtures/androidSparseImage.js";
 import { buildGodotPck } from "../fixtures/godotPck.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
 
@@ -99,6 +100,20 @@ const readers: readonly ReaderCase[] = [
     lower: { godot: { directory_bytes: 1 } },
     raised: { godot: { directory_bytes: 4096 } },
     parameter: "artifact_limits.godot.directory_bytes",
+    value: 1,
+  },
+  {
+    format: "android-sparse-image",
+    create: () =>
+      buildAndroidSparseImage({
+        chunks: [
+          { kind: "dont_care", blocks: 1 },
+          { kind: "raw", data: Buffer.alloc(4096, 0x3a) },
+        ],
+      }),
+    lower: { android_sparse: { chunk_count: 1 } },
+    raised: { android_sparse: { chunk_count: 2 } },
+    parameter: "artifact_limits.android_sparse.chunk_count",
     value: 1,
   },
   {

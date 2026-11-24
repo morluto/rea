@@ -6,7 +6,6 @@ import {
   ANDROID_SPARSE_CHUNK_TYPE_RAW,
   ANDROID_SPARSE_HEADER_SIZE,
   ANDROID_SPARSE_MAGIC,
-  ANDROID_SPARSE_MAX_CHUNKS,
 } from "../../src/domain/androidSparseImageFormat.js";
 import { artifactInventorySummarySchema } from "../../src/domain/analysisView/artifactInventoryView.js";
 import {
@@ -170,7 +169,7 @@ cliTest(
 );
 
 cliTest(
-  "refuses malformed, truncated, and ceiling-exceeding Android sparse images cleanly",
+  "refuses malformed, truncated, and budget-exceeding Android sparse images and recovers when artifact_limits is raised",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-android-sparse-bad-cli-");
 
@@ -211,25 +210,79 @@ cliTest(
       },
     });
 
-    const limitPath = join(root, "too-many-chunks.img");
+    // Impossible total_chunks exceeding file bytes must fail non-retryably as truncated.
+    const spoofedPath = join(root, "spoofed-chunks.img");
     await writeFile(
-      limitPath,
-      buildAndroidSparseImage({ totalChunks: ANDROID_SPARSE_MAX_CHUNKS + 1 }),
+      spoofedPath,
+      buildAndroidSparseImage({ totalChunks: 0xffff_ffff }),
     );
-    const limitResult = await cli.run({
-      arguments: ["inspect-artifact", limitPath, "--json"],
+    const spoofed = await cli.run({
+      arguments: ["inspect-artifact", spoofedPath, "--json"],
     });
-    expect(limitResult.exitCode).toBe(1);
-    expect(limitResult.json).toMatchObject({
+    expect(spoofed.exitCode).toBe(1);
+    expect(spoofed.json).toMatchObject({
       code: "truncated",
+      retryable: false,
       details: {
-        refusal: {
-          kind: "fixed_ceiling",
-          allowance: "Android sparse chunk count",
-          limit: ANDROID_SPARSE_MAX_CHUNKS,
-          unit: "chunks",
+        format: "android-sparse-image",
+        field: "total_chunks",
+      },
+    });
+
+    // Valid sparse image exceeding configured chunk_count fails retryably and recovers once raised.
+    const boundedPath = join(root, "bounded-chunks.img");
+    await writeFile(
+      boundedPath,
+      buildAndroidSparseImage({
+        chunks: [
+          { kind: "dont_care", blocks: 1 },
+          { kind: "fill", blocks: 2, pattern: 0x11223344 },
+          { kind: "dont_care", blocks: 3 },
+        ],
+      }),
+    );
+    const refused = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        boundedPath,
+        "--artifact-limits",
+        JSON.stringify({ android_sparse: { chunk_count: 2 } }),
+        "--json",
+      ],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "truncated",
+      retryable: true,
+      details: {
+        reader_limit: {
+          parameter: "artifact_limits.android_sparse.chunk_count",
+          effective_value: 2,
+          required_value: 3,
+          unit: "count",
+          can_increase: true,
         },
       },
+    });
+
+    const recovered = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        boundedPath,
+        "--artifact-limits",
+        JSON.stringify({ android_sparse: { chunk_count: 3 } }),
+        "--json",
+      ],
+    });
+    expect(recovered.exitCode, recovered.stdout + recovered.stderr).toBe(0);
+    const recoveredGraph = artifactInventoryResultSchema.parse(
+      artifactInspectionResultSchema.parse(
+        parseEvidence(recovered.json).normalized_result,
+      ).substeps[0]?.evidence.normalized_result,
+    );
+    expect(recoveredGraph.manifest.root_format).toBe("android-sparse-image");
+    expect(recoveredGraph.effective_limits).toMatchObject({
+      android_sparse: { chunk_count: 3 },
     });
   },
 );

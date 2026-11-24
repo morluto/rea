@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANDROID_SPARSE_CHUNK_COUNT_LIMIT,
   ANDROID_SPARSE_CHUNK_HEADER_SIZE,
   ANDROID_SPARSE_CHUNK_TYPE_CRC32,
   ANDROID_SPARSE_CHUNK_TYPE_DONT_CARE,
@@ -7,9 +8,6 @@ import {
   ANDROID_SPARSE_CHUNK_TYPE_RAW,
   ANDROID_SPARSE_HEADER_SIZE,
   ANDROID_SPARSE_MAGIC,
-  ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES,
-  ANDROID_SPARSE_MAX_CHUNKS,
-  ANDROID_SPARSE_MAX_FILE_HEADER_BYTES,
   ANDROID_SPARSE_MAX_METADATA_CHUNKS,
   ANDROID_SPARSE_MAX_METADATA_CRC32_VALUES,
   hasAndroidSparseImageMagic,
@@ -153,6 +151,22 @@ describe("androidSparseImageFormat", () => {
     ]);
   });
 
+  it("supports large uint16 file_hdr_sz and chunk_hdr_sz within carrier file bounds", () => {
+    const sparse = buildAndroidSparseImage({
+      fileHdrSz: 8192,
+      chunkHdrSz: 2048,
+      chunks: [{ kind: "dont_care", blocks: 2 }],
+    });
+    const parsed = inspectAndroidSparseBuffer(sparse);
+    expect(parsed.complete).toBe(true);
+    expect(parsed.metadata).toMatchObject({
+      file_header_size: 8192,
+      chunk_header_size: 2048,
+      total_chunks: 1,
+      dont_care_blocks: 2,
+    });
+  });
+
   it("bounds inline chunks and crc32 lists while preserving full aggregate counters", () => {
     const chunkCount = ANDROID_SPARSE_MAX_METADATA_CHUNKS + 20;
     const chunks = Array.from({ length: chunkCount }, (_, index) =>
@@ -226,6 +240,14 @@ describe("androidSparseImageFormat", () => {
     expectParseFailure(
       () =>
         inspectAndroidSparseBuffer(
+          buildAndroidSparseImage({ fileHdrSz: 4096 }).subarray(0, 100),
+        ),
+      { kind: "truncated", field: "file_hdr_sz", offset: 0 },
+    );
+
+    expectParseFailure(
+      () =>
+        inspectAndroidSparseBuffer(
           buildAndroidSparseImage({
             chunkHdrSz: ANDROID_SPARSE_CHUNK_HEADER_SIZE - 1,
           }),
@@ -245,49 +267,40 @@ describe("androidSparseImageFormat", () => {
     );
   });
 
-  it("enforces fixed parser ceilings without looping or allocating", () => {
+  it("rejects impossible total_chunks dimensions as truncated before enforcing adjustable chunk_count", () => {
+    // A 28-byte image claiming 0xffffffff chunks cannot physically store them; fail truncated, not retryable limit.
     expectParseFailure(
       () =>
         inspectAndroidSparseBuffer(
-          buildAndroidSparseImage({
-            fileHdrSz: ANDROID_SPARSE_MAX_FILE_HEADER_BYTES + 1,
-          }),
+          buildAndroidSparseImage({ totalChunks: 0xffff_ffff }),
+          { chunkCountLimit: 2 },
         ),
-      {
-        kind: "limit",
-        limit: {
-          name: "sparse-file-header-size",
-          maximum: ANDROID_SPARSE_MAX_FILE_HEADER_BYTES,
-        },
-      },
+      { kind: "truncated", field: "total_chunks", offset: 20 },
     );
 
-    const highChunkHdr = buildAndroidSparseImage({ chunks: [] });
-    highChunkHdr.writeUInt16LE(ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES + 1, 10);
-    expectParseFailure(() => inspectAndroidSparseBuffer(highChunkHdr), {
-      kind: "limit",
-      limit: {
-        name: "sparse-chunk-header-size",
-        maximum: ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES,
-      },
+    // When the carrier physically holds all chunk headers, enforce chunkCountLimit and allow raising it.
+    const threeChunkImage = buildAndroidSparseImage({
+      chunks: [
+        { kind: "dont_care", blocks: 1 },
+        { kind: "dont_care", blocks: 2 },
+        { kind: "dont_care", blocks: 3 },
+      ],
     });
-
     expectParseFailure(
-      () =>
-        inspectAndroidSparseBuffer(
-          buildAndroidSparseImage({
-            totalChunks: ANDROID_SPARSE_MAX_CHUNKS + 1,
-          }),
-        ),
+      () => inspectAndroidSparseBuffer(threeChunkImage, { chunkCountLimit: 2 }),
       {
         kind: "limit",
         limit: {
-          name: "sparse-chunk-count",
-          maximum: ANDROID_SPARSE_MAX_CHUNKS,
-          required: ANDROID_SPARSE_MAX_CHUNKS + 1,
+          name: ANDROID_SPARSE_CHUNK_COUNT_LIMIT.name,
+          maximum: 2,
+          required: 3,
         },
       },
     );
+    expect(
+      inspectAndroidSparseBuffer(threeChunkImage, { chunkCountLimit: 3 })
+        .metadata.total_chunks,
+    ).toBe(3);
   });
 
   it("rejects integer overflows, total_blks mismatches, unknown chunk types, and chunk truncation", () => {

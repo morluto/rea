@@ -1,17 +1,14 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import {
-  ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES,
-  ANDROID_SPARSE_MAX_CHUNKS,
-  ANDROID_SPARSE_MAX_FILE_HEADER_BYTES,
-} from "../domain/androidSparseImageFormat.js";
-import {
-  artifactFixedLimitFailure,
-  ArtifactReaderFailure,
-} from "../resources/index.js";
+  DEFAULT_ANDROID_SPARSE_READER_LIMITS,
+  resolveArtifactReaderLimits,
+} from "../domain/artifactReaderLimits.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
+import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import {
   artifactPreparationRecoveryCases,
   artifactReaderLifecycleCases,
@@ -27,6 +24,21 @@ const validImage = (): Buffer =>
     ],
   });
 
+const openReaders: AndroidSparseImageArtifactReader[] = [];
+const trackReader = (
+  reader: AndroidSparseImageArtifactReader,
+): AndroidSparseImageArtifactReader => {
+  openReaders.push(reader);
+  return reader;
+};
+
+afterEach(async () => {
+  while (openReaders.length > 0) {
+    const reader = openReaders.pop()!;
+    await reader.close();
+  }
+});
+
 artifactReaderLifecycleCases({
   image: validImage,
   createReader: (path, admitted) =>
@@ -39,59 +51,89 @@ artifactPreparationRecoveryCases({
     new AndroidSparseImageArtifactReader(path, admitted),
 });
 
-it("maps fixed chunk and header ceilings to structured capacity failures", async () => {
+it("enforces adjustable artifact_limits.android_sparse.chunk_count and recovers when raised", async () => {
   const dir = await createTestTempDirectory("rea-android-sparse-limits-");
-
-  const chunkLimitPath = join(dir, "too-many-chunks.img");
+  const path = join(dir, "three-chunks.img");
   await writeFile(
-    chunkLimitPath,
-    buildAndroidSparseImage({ totalChunks: ANDROID_SPARSE_MAX_CHUNKS + 1 }),
-  );
-  const chunkReader = new AndroidSparseImageArtifactReader(chunkLimitPath);
-  const chunkFailure = await collectEntries(chunkReader).catch(
-    (error: unknown) => error,
-  );
-  await chunkReader.close();
-  expect(chunkFailure).toBeInstanceOf(ArtifactReaderFailure);
-  expect(chunkFailure).toMatchObject({
-    reason: "limit",
-    boundary: "capacity",
-    fixedAllowance: artifactFixedLimitFailure(
-      {
-        name: "Android sparse chunk count",
-        kind: "parser",
-        limit: ANDROID_SPARSE_MAX_CHUNKS,
-        unit: "chunks",
-      },
-      "sparse limit",
-      "capacity",
-    ).fixedAllowance,
-  });
-
-  const fileHdrPath = join(dir, "huge-file-hdr.img");
-  await writeFile(
-    fileHdrPath,
+    path,
     buildAndroidSparseImage({
-      fileHdrSz: ANDROID_SPARSE_MAX_FILE_HEADER_BYTES + 1,
+      chunks: [
+        { kind: "dont_care", blocks: 1 },
+        { kind: "fill", blocks: 2, pattern: 0x01020304 },
+        { kind: "raw", data: Buffer.alloc(4096, 0x44) },
+      ],
     }),
   );
-  const fileHdrReader = new AndroidSparseImageArtifactReader(fileHdrPath);
-  await expect(collectEntries(fileHdrReader)).rejects.toMatchObject({
-    reason: "limit",
-    boundary: "capacity",
-  });
-  await fileHdrReader.close();
 
-  const chunkHdrPath = join(dir, "huge-chunk-hdr.img");
-  const chunkHdrBytes = buildAndroidSparseImage();
-  chunkHdrBytes.writeUInt16LE(ANDROID_SPARSE_MAX_CHUNK_HEADER_BYTES + 1, 10);
-  await writeFile(chunkHdrPath, chunkHdrBytes);
-  const chunkHdrReader = new AndroidSparseImageArtifactReader(chunkHdrPath);
-  await expect(collectEntries(chunkHdrReader)).rejects.toMatchObject({
+  const constrained = trackReader(
+    new AndroidSparseImageArtifactReader(path, undefined, { chunk_count: 2 }),
+  );
+  let failure: unknown;
+  try {
+    await collectEntries(constrained);
+  } catch (error: unknown) {
+    failure = error;
+  } finally {
+    await constrained.close();
+  }
+
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({
     reason: "limit",
     boundary: "capacity",
+    readerLimit: {
+      parameter: "artifact_limits.android_sparse.chunk_count",
+      effective_value: 2,
+      required_value: 3,
+      unit: "count",
+      can_increase: true,
+    },
   });
-  await chunkHdrReader.close();
+
+  const raisedLimits = resolveArtifactReaderLimits({
+    android_sparse: { chunk_count: 3 },
+  });
+  expect(raisedLimits.android_sparse).toEqual({
+    ...DEFAULT_ANDROID_SPARSE_READER_LIMITS,
+    chunk_count: 3,
+  });
+  const snapshot = await scanCanonicalArtifactInventory(path, {
+    readerLimits: raisedLimits,
+  });
+  expect(snapshot.manifest.root_format).toBe("android-sparse-image");
+  expect(snapshot.coverage.status).toBe("complete");
+  expect(snapshot.occurrences[0]!.format_metadata).toMatchObject({
+    kind: "android-sparse-image",
+    total_chunks: 3,
+  });
+});
+
+it("admits extended file_hdr_sz and chunk_hdr_sz up to intrinsic uint16 and file bounds", async () => {
+  const dir = await createTestTempDirectory("rea-android-sparse-ext-hdr-");
+  const path = join(dir, "extended-headers.img");
+  const rawSlice = Buffer.alloc(4096, 0x55);
+  await writeFile(
+    path,
+    buildAndroidSparseImage({
+      fileHdrSz: 8192,
+      chunkHdrSz: 2048,
+      chunks: [{ kind: "raw", data: rawSlice }],
+    }),
+  );
+
+  const reader = trackReader(new AndroidSparseImageArtifactReader(path));
+  try {
+    const entries = await collectEntries(reader);
+    expect(entries).toHaveLength(1);
+    expect(reader.formatMetadata()).toMatchObject({
+      kind: "android-sparse-image",
+      file_header_size: 8192,
+      chunk_header_size: 2048,
+      raw_chunk_count: 1,
+    });
+  } finally {
+    await reader.close();
+  }
 });
 
 it("recomputes carrier identity checks cleanly if file changes after prepare", async () => {
@@ -99,22 +141,25 @@ it("recomputes carrier identity checks cleanly if file changes after prepare", a
   const path = join(dir, "mutated.img");
   await writeFile(path, validImage());
 
-  const reader = new AndroidSparseImageArtifactReader(path);
-  const entries = await collectEntries(reader);
-  expect(entries).toHaveLength(1);
+  const reader = trackReader(new AndroidSparseImageArtifactReader(path));
+  try {
+    const entries = await collectEntries(reader);
+    expect(entries).toHaveLength(1);
 
-  await writeFile(
-    path,
-    buildAndroidSparseImage({
-      chunks: [
-        { kind: "raw", data: Buffer.alloc(4096, 0x99) },
-        { kind: "dont_care", blocks: 10 },
-      ],
-    }),
-  );
+    await writeFile(
+      path,
+      buildAndroidSparseImage({
+        chunks: [
+          { kind: "raw", data: Buffer.alloc(4096, 0x99) },
+          { kind: "dont_care", blocks: 10 },
+        ],
+      }),
+    );
 
-  await expect(reader.open(entries[0]!)).rejects.toMatchObject({
-    reason: "integrity",
-  });
-  await reader.close();
+    await expect(reader.open(entries[0]!)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+  } finally {
+    await reader.close();
+  }
 });

@@ -436,7 +436,11 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "Android sparse inventory records header fields, virtual unsparsed sizing, and bounded chunk metadata while exposing only stored RAW chunk slices. FILL and DONT_CARE blocks are not materialized and checksums are not recomputed across virtual output blocks.",
     createReader: (path, options) =>
-      new AndroidSparseImageArtifactReader(path, sourceOf(options)),
+      new AndroidSparseImageArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_sparse,
+      ),
   }),
   iso9660: container("iso9660", {
     roleContainer: true,
