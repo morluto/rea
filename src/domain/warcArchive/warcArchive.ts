@@ -138,6 +138,8 @@ export const warcRecordSchema = z.strictObject({
   ip_address: z.string().nullable(),
   profile: z.string().nullable(),
   segment_number: z.int().nullable(),
+  /** The supplied WARC-Segment-Number, kept when it did not read as an integer. */
+  segment_number_raw: z.string().nullable(),
   /** The embedded HTTP header block, decoded for `request`/`response` payloads. */
   http: warcHttpMessageSchema.nullable(),
   /**
@@ -162,6 +164,7 @@ export const warcDiagnosticSchema = z.strictObject({
     "unsupported-compression",
     "invalid-header-line",
     "invalid-content-length",
+    "invalid-segment-number",
     "record-limit-reached",
     "decoded-size-limit-reached",
     "trailing-bytes",

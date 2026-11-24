@@ -95,6 +95,7 @@ for an archive-wide fact) and a stable code:
 | `unsupported-compression`         | the gzip member could not be decoded                                  |
 | `invalid-header-line`             | a header line is not a single field                                   |
 | `invalid-content-length`          | the record has no usable `Content-Length`                             |
+| `invalid-segment-number`          | `WARC-Segment-Number` is not a non-negative integer                   |
 | `record-limit-reached`            | inventory stopped at `max_records`                                    |
 | `decoded-size-limit-reached`      | decompression would exceed `max_decoded_bytes`                        |
 | `trailing-bytes`                  | bytes between or after records are not a WARC record                  |

@@ -378,6 +378,51 @@ describe("malformed and bounded archives", () => {
   });
 });
 
+describe("record recovery after a rejected version line", () => {
+  it("recovers past a tail of mid-line WARC/ prefixes in one search", () => {
+    // A rejected version line hands archive bytes to the recovery search, which
+    // used to test every mid-line `WARC/` in JavaScript before the scan limits
+    // were re-entered. The search now finds the line-start form in one native
+    // call, and a mid-line prefix is still not mistaken for a record.
+    const tail = "x" + "WARC/".repeat(200_000);
+    const archive = parsed(
+      "WARC/not-a-version\r\n" +
+        record("resource", [["WARC-Record-ID", "<urn:1>"]]) +
+        tail,
+      { maxRecords: 100 },
+    );
+    expect(archive.records).toHaveLength(1);
+    expect(archive.diagnostics.map((d) => d.code)).toEqual([
+      "invalid-version-line",
+      "trailing-bytes",
+    ]);
+  });
+});
+
+describe("segment numbers", () => {
+  it("keeps a segment number that does not read as an integer", () => {
+    const archive = parsed(
+      record("continuation", [["WARC-Segment-Number", "not-a-number"]]),
+    );
+    expect(archive.records[0]?.segment_number).toBeNull();
+    expect(archive.records[0]?.segment_number_raw).toBe("not-a-number");
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "invalid-segment-number",
+    );
+  });
+
+  it("keeps an absent segment number distinct from an unreadable one", () => {
+    const archive = parsed(
+      record("continuation", [["WARC-Segment-Number", "2"]]),
+    );
+    expect(archive.records[0]).toMatchObject({
+      segment_number: 2,
+      segment_number_raw: null,
+    });
+    expect(archive.diagnostics).toHaveLength(0);
+  });
+});
+
 describe("field validation", () => {
   it("reports a field name that is not a header token", () => {
     // "Bad Name: value" passed the old colon-only check, so the field was

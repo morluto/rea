@@ -7,14 +7,13 @@ import {
   readStableArtifact,
   stableArtifactInputRecovery,
 } from "../../resources/index.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  carriedReason,
-  cancelledBy,
   fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -22,6 +21,10 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../../providers/classifyProviderFailure.js";
 import {
   WARC_ARCHIVE_MAX_FILE_BYTES,
   WARC_ARCHIVE_OPERATION as operation,
@@ -40,10 +43,15 @@ import {
 } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
-const inputFailure = (message: string, cause?: unknown) =>
+const inputFailure = (
+  message: string,
+  cause?: unknown,
+  details: AnalysisErrorOptions = {},
+) =>
   new AnalysisInputError(
     operation,
     {
+      ...details,
       cause,
       ...(isSelectedRegularFileError(cause)
         ? {
@@ -60,75 +68,72 @@ const inputFailure = (message: string, cause?: unknown) =>
   );
 
 /** Keep the reader's typed reasons instead of flattening every failure into "io". */
-const readFailure = (
-  failure: unknown,
+const warcFailureDialect = (
   input: InspectWarcArchiveInput,
-): AnalysisError => {
-  const { cause, origin } = artifactFilePrimaryFacts(failure);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "cancelled")
-      return cancelledBy(operation, carriedReason(cause.cancellation?.reason));
-    if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        input.path,
-        cause.message,
-        { cause },
-      );
-    if (cause.reason === "limit") {
-      const boundary = cause.boundary ?? "file-size";
-      // `max_file_bytes` is the caller's budget, not a release ceiling: a
-      // value below WARC_ARCHIVE_MAX_FILE_BYTES can be raised on the next
-      // call, so the refusal advises that raise instead of claiming the
-      // release has no override.
-      if (boundary === "file-size")
-        return new AnalysisResourceConstraintError(
-          operation,
-          boundary,
-          cause.message,
-          { max_file_bytes: input.max_file_bytes },
-          {
-            cause,
-            retryable: false,
-            remediationAction: fileByteBudgetRemediation(input.max_file_bytes),
-          },
-        );
-      return fixedCeilingConstraint(
-        operation,
-        boundary,
-        cause.message,
-        cause.fixedAllowance ?? {
-          name: `The WARC ${boundary} allowance`,
-          kind: "parser",
-        },
-        { cause },
-      );
-    }
-    if (cause.reason === "path" || cause.reason === "format")
-      return inputFailure(cause.message, cause);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
+): ProviderFailureDialect => ({
+  providerId: WARC_ARCHIVE_PROVIDER.id,
+  operation,
+  file: {
+    path: input.path,
+    description: "WARC archive",
+    field: "path",
+    // `max_file_bytes` is the caller's budget, not a release ceiling: a value
+    // below WARC_ARCHIVE_MAX_FILE_BYTES can be raised on the next call, so the
+    // refusal advises that raise instead of claiming the release has no
+    // override.
+    fileSize: (cause, details) =>
+      cause.boundary === "file-size"
+        ? new AnalysisResourceConstraintError(
+            operation,
+            "file-size",
+            cause.message,
+            { max_file_bytes: input.max_file_bytes },
+            {
+              ...details,
+              retryable: false,
+              remediationAction: fileByteBudgetRemediation(
+                input.max_file_bytes,
+              ),
+            },
+          )
+        : fixedCeilingConstraint(
+            operation,
+            cause.boundary ?? "capacity",
+            cause.message,
+            cause.fixedAllowance ?? {
+              name: `The WARC ${cause.boundary ?? "capacity"} allowance`,
+              kind: "parser",
+            },
+            details,
+          ),
+  },
+  // A path that does not resolve to a readable regular file is the caller's
+  // input, not an IO failure; the shared file projection would report it as an
+  // invalid value without the retry that names the host running REA.
+  recognise: (cause, details) => {
+    const physical = artifactFilePrimaryFacts(cause).cause;
+    if (
+      physical instanceof ArtifactReaderFailure &&
+      (physical.reason === "path" || physical.reason === "format")
+    )
+      return inputFailure(physical.message, physical, details);
+    if (isSelectedRegularFileError(physical))
       return inputFailure(
-        `Selected archive could not be read (${cause.code}): ${input.path}`,
-        cause,
+        `Selected archive could not be read (${String((physical as NodeJS.ErrnoException).code)}): ${input.path}.`,
+        physical,
+        details,
       );
-  }
-  return new ArtifactOperationError(
-    operation,
-    "io",
-    undefined,
-    "Archive read failed.",
-    { cause: failure },
-  );
-};
+    return undefined;
+  },
+  unclassified: (cause, details) =>
+    new ArtifactOperationError(
+      operation,
+      "io",
+      undefined,
+      "Archive read failed.",
+      { ...details, cause },
+    ),
+});
 
 /** Evidence parameters carry only the fields the caller actually selected. */
 const withoutOmitted = (
@@ -170,7 +175,7 @@ const readArchive = async (
     return err(
       projectStableArtifactFailure(
         failure,
-        readFailure(failure, input),
+        classifyProviderFailure(failure, warcFailureDialect(input)),
         input.path,
         WARC_ARCHIVE_PROVIDER.id,
         operation,

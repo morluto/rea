@@ -269,11 +269,7 @@ interface HeaderBlockResult {
   readonly block: HeaderBlock | null;
   /** Resource allowance reached while reading this header, if any. */
   readonly limit:
-    | "line"
-    | "block-bytes"
-    | "block-fields"
-    | "archive-fields"
-    | null;
+    "line" | "block-bytes" | "block-fields" | "archive-fields" | null;
   /** The line began `WARC/` but carries no parseable version. */
   readonly invalidVersion?: number;
 }
@@ -762,14 +758,14 @@ const skipRecordSeparator = (data: Buffer, from: number): number => {
  * mid-line suffix and swallowed the genuine record that followed.
  */
 const findRecordStart = (data: Buffer, from: number): number => {
-  let at = from;
-  while (at !== -1) {
-    const next = data.indexOf("WARC/", at, "latin1");
-    if (next === -1) return -1;
-    if (next === from || data[next - 1] === 0x0a) return next;
-    at = next + 5;
-  }
-  return -1;
+  if (from >= data.length) return -1;
+  if (data.subarray(from, from + 5).toString("latin1") === "WARC/") return from;
+  // One native search for the line-start form, rather than a JavaScript loop
+  // over every mid-line `WARC/`: a rejected version line lets archive bytes
+  // reach this before the scan limits or cancellation checks are re-entered,
+  // so the work here must not scale with the number of mid-line matches.
+  const at = data.indexOf("\nWARC/", from, "latin1");
+  return at === -1 ? -1 : at + 1;
 };
 
 interface ParsedStream {
@@ -1046,6 +1042,12 @@ const readOneRecord = (
         record.http_omitted,
       ),
     );
+  if (record.segment_number_raw !== null)
+    diagnostic(
+      ordinal,
+      "invalid-segment-number",
+      `WARC-Segment-Number ${JSON.stringify(record.segment_number_raw)} is not a non-negative integer; it is retained in segment_number_raw.`,
+    );
   if (record.http !== null && record.http.malformed_header_lines.length > 0)
     diagnostic(
       ordinal,
@@ -1085,6 +1087,15 @@ const buildRecord = (
   const type = block.fields.get("warc-type") ?? "";
   const version = block.version;
   const contentLength = parseNonNegativeInt(block.fields.get("content-length"));
+  const suppliedSegment = block.fields.get("warc-segment-number");
+  const segmentNumber = {
+    value: parseNonNegativeInt(suppliedSegment),
+    raw:
+      suppliedSegment !== undefined &&
+      parseNonNegativeInt(suppliedSegment) === null
+        ? suppliedSegment
+        : null,
+  };
   const hasPayload = payloadBytes > 0;
   const http = hasPayload
     ? readHttpMessage(payload, type, budget, redaction)
@@ -1115,9 +1126,10 @@ const buildRecord = (
     payload_digest: block.fields.get("warc-payload-digest") ?? null,
     ip_address: block.fields.get("warc-ip-address") ?? null,
     profile: block.fields.get("warc-profile") ?? null,
-    segment_number: parseNonNegativeInt(
-      block.fields.get("warc-segment-number"),
-    ),
+    segment_number: segmentNumber.value,
+    // A supplied value the reader cannot convert is still what the archive
+    // recorded; a null alone would read as an omitted field.
+    segment_number_raw: segmentNumber.raw,
     http: http.message,
     http_omitted: http.omission,
     http_start_line_over_ceiling: http.omission === "start-line-limit",
@@ -1258,12 +1270,30 @@ export const parseWarcArchive = (
     });
   }
   const stream = parseDecodedStream(decoded.value.decoded, options.maxRecords);
-  const malformedHeaders = stream.records.reduce(
-    (total, record) =>
-      total +
-      record.malformed_header_lines.length +
-      (record.http?.malformed_header_lines.length ?? 0),
-    0,
+  const tally = stream.records.reduce(
+    (counts, record) => {
+      if (record.record_type_known) counts.knownTypes += 1;
+      else counts.unknownTypes += 1;
+      if (record.record_type === "response") counts.responses += 1;
+      if (record.record_type === "request") counts.requests += 1;
+      if (record.record_type === "revisit") counts.revisits += 1;
+      if (record.http !== null) counts.httpMessages += 1;
+      if (record.http_omitted !== null) counts.httpOmitted += 1;
+      counts.malformedHeaders +=
+        record.malformed_header_lines.length +
+        (record.http?.malformed_header_lines.length ?? 0);
+      return counts;
+    },
+    {
+      knownTypes: 0,
+      unknownTypes: 0,
+      responses: 0,
+      requests: 0,
+      revisits: 0,
+      httpMessages: 0,
+      httpOmitted: 0,
+      malformedHeaders: 0,
+    },
   );
   const status: "complete-within-scope" | "partial" =
     stream.diagnostics.length === 0 && !stream.stoppedAtLimit
@@ -1279,26 +1309,14 @@ export const parseWarcArchive = (
     diagnostics: stream.diagnostics,
     summary: {
       records: stream.records.length,
-      known_types: stream.records.filter((record) => record.record_type_known)
-        .length,
-      unknown_types: stream.records.filter(
-        (record) => !record.record_type_known,
-      ).length,
-      responses: stream.records.filter(
-        (record) => record.record_type === "response",
-      ).length,
-      requests: stream.records.filter(
-        (record) => record.record_type === "request",
-      ).length,
-      revisits: stream.records.filter(
-        (record) => record.record_type === "revisit",
-      ).length,
-      http_messages: stream.records.filter((record) => record.http !== null)
-        .length,
-      http_omitted: stream.records.filter(
-        (record) => record.http_omitted !== null,
-      ).length,
-      malformed_headers: malformedHeaders,
+      known_types: tally.knownTypes,
+      unknown_types: tally.unknownTypes,
+      responses: tally.responses,
+      requests: tally.requests,
+      revisits: tally.revisits,
+      http_messages: tally.httpMessages,
+      http_omitted: tally.httpOmitted,
+      malformed_headers: tally.malformedHeaders,
       diagnostics: stream.diagnostics.length,
     },
     source_coverage: {
