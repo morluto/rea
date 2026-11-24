@@ -7,6 +7,10 @@ import {
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
+import {
+  attachManagedDecodeBudget,
+  ManagedDecodeBudget,
+} from "../domain/managed/managedDecodeBudget.js";
 import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
@@ -356,4 +360,71 @@ it("preserves admitted member facts when layout declaration capacity is exhauste
     ],
   });
   expect(complete.layout_declarations?.classes).toHaveLength(100);
+  const comparison = compareManagedMembers(
+    { evidenceId: `ev_${"1".repeat(64)}`, result: limited },
+    {
+      evidenceId: `ev_${"2".repeat(64)}`,
+      result: inspect({
+        typeFlags: [0x100009],
+        classLayouts: [[1, 1, 1]],
+        mvid: Buffer.alloc(16, 1),
+      }),
+    },
+  );
+  expect(comparison.left.resource_limits).toEqual(
+    limited.layout_declarations?.issues,
+  );
+  expect(comparison.right.resource_limits).toEqual([]);
+  expect(comparison.coverage.left_status).toBe("complete");
+  expect(comparison.limitations).toContainEqual(
+    expect.stringContaining("left layout declarations exceeded capacity"),
+  );
+  expect(comparison.limitations).not.toContainEqual(
+    expect.stringContaining("left managed member observation exceeded capacity"),
+  );
+});
+
+it("does not spend selected-layout capacity on unselected declaration rows", () => {
+  const bytes = buildManagedPeFixture({
+    additionalEmptyTypes: 1,
+    typeFlags: [0x0010_0011, 0x0010_0011],
+    fieldRowCount: 2,
+    firstTypeFieldRowCount: 1,
+    distinctMemberNames: true,
+    classLayouts: [
+      ...Array.from({ length: 128 }, () => [0, 8, 1] as const),
+      [0, 16, 2],
+    ],
+    fieldLayouts: [
+      ...Array.from({ length: 128 }, () => [0, 1] as const),
+      [4, 2],
+    ],
+  });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Missing fixture metadata");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "metadata"),
+    size,
+  );
+  const members = readTypeMemberListFacts(bytes, layout);
+  const types = readTypeDefinitions(bytes, layout, [], members);
+  // Admit the layout facet with a bounded remaining allowance: the skipped
+  // rows alone would previously cost 256 * 256 bytes in row bookkeeping.
+  attachManagedDecodeBudget(layout, new ManagedDecodeBudget(16 * 1024));
+  expect(
+    parseManagedLayoutDeclarations(
+      bytes,
+      layout,
+      members,
+      types,
+      new Set(["0x02000002"]),
+    ),
+  ).toMatchObject({
+    state: "complete",
+    classes: [{ token: "0x0f000081", parent_row: 2 }],
+    fields: [{ token: "0x10000081", field_row: 2, offset_bytes: 4 }],
+    issues: [],
+  });
 });

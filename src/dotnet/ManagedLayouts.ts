@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type {
   ManagedMemberInspection,
   ManagedParseIssue,
@@ -10,7 +11,10 @@ import {
   metadataRowCursor,
   metadataToken,
 } from "../domain/managed/managedMetadataHeaps.js";
-import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import {
+  metadataRowOffset,
+  type ManagedMetadataLayout,
+} from "../domain/managed/managedMetadataLayout.js";
 import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
 import { readManagedValue } from "../domain/managed/managedReaderFailure.js";
 import type { TypeRange } from "../domain/managed/managedMemberInspectorCore.js";
@@ -41,6 +45,9 @@ export const parseManagedLayoutDeclarations = (
   const fields: LayoutDeclarations["fields"] = [];
   const seenClasses = new Set<number>();
   const seenFields = new Set<number>();
+  const reader = new BinaryReader(bytes, true, "managed-layout");
+  const typeWidth = layout.tableIndexSize(2);
+  const fieldWidth = layout.tableIndexSize(4);
   const issue = (scope: string, offset: number, detail: string) => {
     issues.push(
       admitManagedProjection(
@@ -68,13 +75,17 @@ export const parseManagedLayoutDeclarations = (
   };
   for (let row = 1; row <= (layout.table(15)?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 15, row);
-      const packing = cursor.u16();
-      const size = cursor.u32();
-      const parent = cursor.readIndex(layout.tableIndexSize(2));
+      const start = metadataRowOffset(layout, 15, row);
+      // The admitted table bounds the owner coordinate. Defer row bookkeeping
+      // until selection is known; unrelated declarations retain no row facts.
+      const parent =
+        typeWidth === 2 ? reader.u16(start + 6) : reader.u32(start + 6);
       const source = memberLists.entries[parent - 1]?.source;
       const token = source === undefined ? null : metadataToken(2, parent);
       if (token !== null && selected !== null && !selected.has(token)) return;
+      const cursor = metadataRowCursor(bytes, layout, 15, row);
+      const packing = cursor.u16();
+      const size = cursor.u32();
       const scope = `metadata.ClassLayout:${metadataToken(15, row)}`;
       if (source === undefined)
         issue(
@@ -125,9 +136,9 @@ export const parseManagedLayoutDeclarations = (
         );
   for (let row = 1; row <= (layout.table(16)?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 16, row);
-      const offset = cursor.u32();
-      const field = cursor.readIndex(layout.tableIndexSize(4));
+      const start = metadataRowOffset(layout, 16, row);
+      const field =
+        fieldWidth === 2 ? reader.u16(start + 4) : reader.u32(start + 4);
       const valid = field > 0 && field <= (layout.table(4)?.rowCount ?? 0);
       const parent =
         valid && owner !== undefined
@@ -141,6 +152,8 @@ export const parseManagedLayoutDeclarations = (
         !selected.has(declared.token)
       )
         return;
+      const cursor = metadataRowCursor(bytes, layout, 16, row);
+      const offset = cursor.u32();
       const scope = `metadata.FieldLayout:${metadataToken(16, row)}`;
       let name: string | null = null;
       if (!valid)

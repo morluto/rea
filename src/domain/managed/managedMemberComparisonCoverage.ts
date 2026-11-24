@@ -183,9 +183,9 @@ export type ManagedComparisonScope = ReturnType<typeof managedComparisonScope>;
 
 /** Copy the source's typed capacity facts without retaining unrelated issue inventories. */
 const resourceLimits = (
-  result: ManagedMemberInspection,
+  issues: ManagedMemberInspection["coverage"]["issues"],
 ): NonNullable<ManagedMemberComparisonResult["left"]["resource_limits"]> =>
-  result.coverage.issues.flatMap(({ code, scope, detail, offset, limit }) =>
+  issues.flatMap(({ code, scope, detail, offset, limit }) =>
     code === "resource-limit"
       ? [
           {
@@ -211,7 +211,10 @@ export const sideManifest = (
     metadata_status: side.result.metadata.status,
     methods_total: side.result.methods.length,
     fields_total: side.result.fields.length,
-    resource_limits: resourceLimits(side.result),
+    resource_limits: [
+      ...resourceLimits(side.result.coverage.issues),
+      ...resourceLimits(side.result.layout_declarations?.issues ?? []),
+    ],
   };
 };
 
@@ -267,12 +270,19 @@ const capacityLimitations = (
   right: ManagedMemberInspection,
 ): string[] => {
   const exceeded = new Set(
-    (["left", "right"] as const).flatMap((side) =>
-      resourceLimits(side === "left" ? left : right).map(
-        ({ scope, detail }) =>
-          `The ${side} managed member observation exceeded capacity at ${scope}: ${detail}. Its member collections are not examined to completion, so empty or missing members do not establish absence, addition or removal.`,
-      ),
-    ),
+    (["left", "right"] as const).flatMap((side) => {
+      const result = side === "left" ? left : right;
+      return [
+        ...resourceLimits(result.coverage.issues).map(
+          ({ scope, detail }) =>
+            `The ${side} managed member observation exceeded capacity at ${scope}: ${detail}. Its member collections are not examined to completion, so empty or missing members do not establish absence, addition or removal.`,
+        ),
+        ...resourceLimits(result.layout_declarations?.issues ?? []).map(
+          ({ scope, detail }) =>
+            `The ${side} layout declarations exceeded capacity at ${scope}: ${detail}. Its layout declarations are not examined to completion; member inventory coverage is reported independently.`,
+        ),
+      ];
+    }),
   );
   return exceeded.size === 0
     ? []
