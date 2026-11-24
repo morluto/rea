@@ -278,7 +278,7 @@ registerHooks({
     const loaded = next(url, context);
     const source = loaded.source?.toString() ?? "";
     const names = modules.filter((name) =>
-      url.endsWith("/dist/" + name) || source.includes("//#region dist/" + name + "\\n"));
+      url.endsWith("/dist/" + name) || source.includes("\\n// dist/" + name + "\\n"));
     if (url.endsWith("/scripts/rea.mjs")) names.push("entrypoint");
     for (const name of names)
       appendFileSync(${JSON.stringify(log)}, JSON.stringify(name) + "\\n");

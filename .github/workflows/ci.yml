@@ -60,6 +60,23 @@ jobs:
       test_shadow_id: ${{ steps.shadow-upload.outputs.artifact-id }}
       qualification_run_id: ${{ steps.qualification.outputs.run_id }}
       code: ${{ steps.plan.outputs.code }}
+      build_cache: >-
+        ${{ steps.plan.outputs.runtime == 'true' ||
+           steps.plan.outputs.apple == 'true' ||
+           steps.plan.outputs.browser == 'true' ||
+           steps.plan.outputs.binary_layout == 'true' ||
+           steps.plan.outputs.evm == 'true' ||
+           steps.plan.outputs.apk_signature == 'true' ||
+           steps.plan.outputs.javascript_recovery == 'true' ||
+           steps.plan.outputs.recorded_crash == 'true' ||
+           steps.plan.outputs.web_network == 'true' ||
+           steps.plan.outputs.web_runtime == 'true' ||
+           steps.plan.outputs.web_source_map == 'true' ||
+           steps.plan.outputs.agentenv == 'true' ||
+           steps.plan.outputs.packet_capture == 'true' ||
+           steps.plan.outputs.signal_recording == 'true' ||
+           steps.plan.outputs.go_binary == 'true' ||
+           steps.plan.outputs.ghidra_bridge == 'true' }}
       reverse_tools: ${{ steps.plan.outputs.reverse_tools }}
       python: ${{ steps.plan.outputs.python }}
       packet_capture: ${{ steps.plan.outputs.packet_capture }}
@@ -97,7 +114,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.source_sha || github.sha }}
-          fetch-depth: 0
+          # Diff-based PR and push plans need ancestry. Qualification uses HEAD.
+          fetch-depth: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.source_sha != '') && 1 || 0 }}
           filter: blob:none
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -192,7 +210,15 @@ jobs:
           restore-keys: rea-static-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - name: Validate workflow syntax and expressions
         if: needs.changes.outputs.workflows == 'true'
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes=
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256_LINUX_AMD64: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSLo "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "$ACTIONLINT_SHA256_LINUX_AMD64  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
       # Code tiers run this source-only policy test in their existing shards.
       # Workflow-only changes need the guard, without preparing runtime artifacts.
       - name: Check action pins for workflow-only changes
@@ -458,22 +484,7 @@ jobs:
     needs: changes
     # Reusable provider workflows consume this run's portable build artifact,
     # even when a workflow-only edit selects the lane without portable tests.
-    if: >-
-      needs.changes.outputs.code == 'true' ||
-      needs.changes.outputs.browser == 'true' ||
-      needs.changes.outputs.binary_layout == 'true' ||
-      needs.changes.outputs.evm == 'true' ||
-      needs.changes.outputs.apk_signature == 'true' ||
-      needs.changes.outputs.javascript_recovery == 'true' ||
-      needs.changes.outputs.recorded_crash == 'true' ||
-      needs.changes.outputs.web_network == 'true' ||
-      needs.changes.outputs.web_runtime == 'true' ||
-      needs.changes.outputs.web_source_map == 'true' ||
-      needs.changes.outputs.agentenv == 'true' ||
-      needs.changes.outputs.packet_capture == 'true' ||
-      needs.changes.outputs.signal_recording == 'true' ||
-      needs.changes.outputs.go_binary == 'true' ||
-      needs.changes.outputs.ghidra_bridge == 'true'
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.build_cache == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -532,11 +543,13 @@ jobs:
       # Native package jobs still run their build and prepack checks; Turbo
       # restores matching outputs or rebuilds when their inputs differ.
       - name: Stage current portable build task cache
+        if: needs.changes.outputs.build_cache == 'true'
         shell: bash
         run: |
           # A new Turbo dry run can evict the entries this build just used.
           node scripts/ci/portable-build-cache.mjs snapshot .cache/ci-build-plan.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: needs.changes.outputs.build_cache == 'true'
         with:
           name: rea-build-cache
           overwrite: true

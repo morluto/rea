@@ -32,7 +32,10 @@ import {
 } from "./analysisViewCoverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 
 export const playwrightTraceViewContextSchema = playwrightTraceSchema
   .omit({
@@ -422,15 +425,8 @@ export const projectPlaywrightTraceView = (
     "playwright-trace",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Playwright trace inventories support summary and playwright-trace pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Playwright trace inventories support summary and playwright-trace pages.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
