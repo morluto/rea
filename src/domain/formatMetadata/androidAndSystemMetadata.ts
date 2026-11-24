@@ -7,7 +7,7 @@ import {
   ntfsAttributeListResolutionSchema,
 } from "../windows/ntfsMftAttributes.js";
 import { MFT_INLINE_HEADER_LIMIT } from "../windows/ntfsMft.js";
-import { offset, uint32 } from "./primitives.js";
+import { offset, uint16, uint32 } from "./primitives.js";
 
 const ntfsRecordHeaderSchema = z.strictObject({
   index: offset,
@@ -270,4 +270,96 @@ export const androidBootImageEntryMetadataSchema = z.strictObject({
 });
 export type AndroidBootImageEntryMetadata = z.infer<
   typeof androidBootImageEntryMetadataSchema
+>;
+
+/** Normalized AOSP sparse chunk type label (`0xCAC1`..`0xCAC4`). */
+export const androidSparseChunkTypeNameSchema = z.enum([
+  "raw",
+  "fill",
+  "dont_care",
+  "crc32",
+]);
+export type AndroidSparseChunkTypeName = z.infer<
+  typeof androidSparseChunkTypeNameSchema
+>;
+
+/** Summary descriptor for one chunk in an Android sparse image. */
+export const androidSparseChunkDescriptorSchema = z.strictObject({
+  chunk_index: uint32,
+  chunk_type: uint16,
+  chunk_type_name: androidSparseChunkTypeNameSchema,
+  reserved: uint16,
+  chunk_blocks: uint32,
+  total_size: uint32,
+  file_offset: offset,
+  data_offset: offset,
+  payload_bytes: offset,
+  output_block_offset: offset,
+  output_byte_offset: offset,
+  output_bytes: offset,
+  fill_pattern: uint32.nullable(),
+  crc32: uint32.nullable(),
+  entry_path: z.string().nullable(),
+});
+export type AndroidSparseChunkDescriptor = z.infer<
+  typeof androidSparseChunkDescriptorSchema
+>;
+
+/**
+ * Android Sparse (`simg`, `0xed26ff3a`) container metadata: 28-byte header
+ * facts, virtual unsparsed sizing, aggregate chunk counters, and bounded
+ * positional chunk descriptors without materializing zero/fill blocks.
+ */
+export const androidSparseImageMetadataSchema = z.strictObject({
+  kind: z.literal("android-sparse-image"),
+  magic: z.literal(0xed26ff3a),
+  major_version: uint16,
+  minor_version: uint16,
+  file_header_size: uint16,
+  chunk_header_size: uint16,
+  block_size: uint32,
+  total_blocks: uint32,
+  total_chunks: uint32,
+  image_checksum: uint32,
+  unsparsed_size: offset,
+  file_size: offset,
+  parsed_bytes: offset,
+  trailing_bytes: offset,
+  raw_chunk_count: uint32,
+  fill_chunk_count: uint32,
+  dont_care_chunk_count: uint32,
+  crc32_chunk_count: uint32,
+  raw_blocks: offset,
+  fill_blocks: offset,
+  dont_care_blocks: offset,
+  raw_data_bytes: offset,
+  virtual_fill_bytes: offset,
+  virtual_dont_care_bytes: offset,
+  crc32_verified: z.literal(false),
+  crc32_chunk_values: z.array(uint32),
+  crc32_chunk_values_omitted: uint32,
+  chunks: z.array(androidSparseChunkDescriptorSchema),
+  chunks_omitted: uint32,
+});
+export type AndroidSparseImageMetadata = z.infer<
+  typeof androidSparseImageMetadataSchema
+>;
+
+/** Metadata attached to each extractable `RAW` chunk entry inside a sparse image. */
+export const androidSparseChunkMetadataSchema = z.strictObject({
+  kind: z.literal("android-sparse-chunk"),
+  chunk_index: uint32,
+  chunk_type: z.literal(0xcac1),
+  chunk_type_name: z.literal("raw"),
+  reserved: uint16,
+  file_offset: offset,
+  data_offset: offset,
+  total_size: uint32,
+  output_block_offset: offset,
+  output_byte_offset: offset,
+  output_blocks: uint32,
+  output_bytes: offset,
+});
+export type AndroidSparseChunkMetadata = z.infer<
+  typeof androidSparseChunkMetadataSchema
 >;

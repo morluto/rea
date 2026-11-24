@@ -19,6 +19,7 @@ import {
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
+import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import {
   AsarArtifactReader,
   type AsarAdmission,
@@ -425,6 +426,16 @@ const NON_ZIP_FORMATS = {
     readerLimitation: ANDROID_OTA_PAYLOAD_LIMITATIONS.inventoryScope,
     createReader: (path, options) =>
       new AndroidOtaPayloadArtifactReader(path, sourceOf(options)),
+  }),
+  "android-sparse-image": container("android-sparse-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android sparse inventory records header fields, virtual unsparsed sizing, and bounded chunk metadata while exposing only stored RAW chunk slices. FILL and DONT_CARE blocks are not materialized and checksums are not recomputed across virtual output blocks.",
+    createReader: (path, options) =>
+      new AndroidSparseImageArtifactReader(path, sourceOf(options)),
   }),
   "javascript-bundle": described("javascript-bundle", plain),
   "source-map": described("source-map", plain),

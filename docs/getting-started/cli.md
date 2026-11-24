@@ -444,6 +444,17 @@ See [Android boot images](../android-boot-image.md) for header versions 0 throug
 4, vendor ramdisk table entries, stored compression, and the unverified AVB
 footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
+Inspect and extract stored `RAW` chunks from an Android sparse (`simg`) image
+without materializing virtual `FILL` or `DONT_CARE` blocks:
+
+```sh
+rea inspect-artifact ./vendor.img --detail summary --evidence_output vendor.json --json
+rea extract-artifact ./vendor.img --json
+```
+
+See [Android sparse images](../android-sparse-image.md) for header fields,
+virtual unsparsed sizing, chunk bounds, and checksum limits.
+
 Inspect local model declarations without loading weights:
 
 ```bash

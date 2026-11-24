@@ -571,3 +571,16 @@ zstd are recorded from leading magic and left compressed. An AVB footer is
 reported with its sizes and is not verified. `ANDROID!` does not say whether
 the file was boot, init_boot, or recovery. Extract `dtb` and pass that file
 to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).
+
+## Inspect Android sparse images
+
+`inspect-artifact` and `extract-artifact` recognize little-endian AOSP sparse
+containers (`0xed26ff3a`) by magic. The container metadata records
+`sparse_header_t` fields, declared unsparsed output size, aggregate block and
+chunk counters across `RAW` (`0xCAC1`), `FILL` (`0xCAC2`), `DONT_CARE`
+(`0xCAC3`), and `CRC32` (`0xCAC4`) chunks, and up to `256` positional chunk
+descriptors. Only stored `RAW` chunk slices (`chunks/chunk-<index>-raw.bin`)
+are exposed for hashing or extraction; virtual `FILL` and `DONT_CARE` regions
+are never materialized into gigabytes of zero or fill bytes, and header/chunk
+checksums are recorded unverified. See
+[Android sparse images](../../android-sparse-image.md).

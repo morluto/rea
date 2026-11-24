@@ -113,6 +113,15 @@ it("recognizes a CrAU v2 payload after the uImage magic check", () => {
   });
 });
 
+it("recognizes an Android sparse magic prefix", () => {
+  expect(
+    recognize(Buffer.from([0x3a, 0xff, 0x26, 0xed, 0x01, 0x00, 0x00, 0x00])),
+  ).toMatchObject({
+    state: "recognized",
+    format: "android-sparse-image",
+  });
+});
+
 it.each([16, 17])(
   "recognizes FIT from an FDT v%s structure in a bounded prefix",
   (version) => {

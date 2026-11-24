@@ -40,6 +40,8 @@ import {
   androidBootImageMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
+  androidSparseChunkMetadataSchema,
+  androidSparseImageMetadataSchema,
   ntfsMftMetadataSchema,
 } from "./formatMetadata/androidAndSystemMetadata.js";
 import {
@@ -88,6 +90,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   fitImageMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  androidSparseImageMetadataSchema,
+  androidSparseChunkMetadataSchema,
   ddsMetadataSchema,
   glbMetadataSchema,
   ktxMetadataSchema,
@@ -242,6 +246,14 @@ const declarationsByKind: {
   "android-ota-partition": {
     notCompared:
       "name and index restate the entry's path; reconstructed partition bytes are compared by content when they are extractable.",
+  },
+  "android-sparse-image": {
+    notCompared:
+      "Header facts, virtual sizing, and chunk layout summary come from the sparse image carrier bytes, which content comparison covers. Checksums are recorded without recomputing over virtual output blocks.",
+  },
+  "android-sparse-chunk": {
+    notCompared:
+      "Chunk index, offset, and extent metadata come from the container header and entry location; raw chunk payload bytes are compared by content.",
   },
   "esp-image": {
     notCompared:

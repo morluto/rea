@@ -349,6 +349,11 @@ export const documentationSections = [
         route: "/android-boot-image",
       },
       {
+        text: "Android sparse images",
+        source: "android-sparse-image.md",
+        route: "/android-sparse-image",
+      },
+      {
         text: "APK signature schemes",
         source: "apk-signature.md",
         route: "/apk-signature",

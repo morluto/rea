@@ -46,6 +46,7 @@ import {
   inventoryPathGlobSchema,
 } from "./inventoryPathGlob.js";
 import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
+import { androidSparseImageSummaryMetadataSchema } from "./androidSparseImageSummary.js";
 import {
   espFlashImageSummaryMetadataSchema,
   summaryRootMetadata,
@@ -141,6 +142,7 @@ export const artifactInventorySummarySchema = z.strictObject({
       artifactFormatMetadataSchema,
       espFlashImageSummaryMetadataSchema,
       androidOtaPayloadSummaryMetadataSchema,
+      androidSparseImageSummaryMetadataSchema,
     ])
     .exactOptional(),
   available_counts: z.strictObject({
@@ -324,7 +326,8 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "dfuse" ||
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
-    inventory.manifest.root_format === "android-ota-payload";
+    inventory.manifest.root_format === "android-ota-payload" ||
+    inventory.manifest.root_format === "android-sparse-image";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,

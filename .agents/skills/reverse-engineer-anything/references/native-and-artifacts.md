@@ -974,6 +974,14 @@ stored. The v4 signature and any AVB footer are reported with sizes and are
 not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
 [Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
 
+Android sparse images (`0xed26ff3a` little-endian `simg`, format
+`android-sparse-image`) use `inspect_artifact` / `extract_artifact` to report
+header fields, declared unsparsed output size, and `RAW`/`FILL`/`DONT_CARE`/
+`CRC32` chunk summaries without expanding gigabytes of zero or fill blocks.
+Only stored `RAW` chunk slices are exposed for hashing or extraction;
+checksums stay unverified. See
+[Android sparse images](https://github.com/morluto/rea/blob/main/docs/android-sparse-image.md).
+
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
 partition table, dynamic groups and signature counts. Signatures are not
