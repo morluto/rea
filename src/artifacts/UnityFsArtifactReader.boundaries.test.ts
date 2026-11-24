@@ -1,5 +1,4 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
@@ -7,10 +6,12 @@ import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { buildUnityFs } from "../../tests/fixtures/unityfs.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const fixture = async (bytes: Buffer): Promise<string> => {
   const path = join(
@@ -152,6 +153,46 @@ describe("UnityFS declared container bounds", () => {
       await reader.close();
     }
   });
+  it.each([false, true])(
+    "validates the encoded block range before its decoded budget (footer: %s)",
+    async (blocksInfoAtEnd) => {
+      const bytes = buildUnityFs([{ path: "data", data: "abc" }], {
+        blocksInfoAtEnd,
+        blocksInfoCompression: 0,
+        blockCompression: 2,
+      });
+      const tableOffset = blocksInfoAtEnd
+        ? bytes.length - bytes.readUInt32BE(40)
+        : 64;
+      // Keep the produced encoded bytes, then declare a decoded size that
+      // exceeds the decoder allowance.
+      bytes.writeUInt32BE(64 * 1024 * 1024 + 1, tableOffset + 20);
+      const control = new UnityFsArtifactReader(await fixture(bytes));
+      try {
+        await expect(entries(control)).rejects.toMatchObject({
+          reason: "limit",
+          boundary: "memory",
+        });
+      } finally {
+        await control.close();
+      }
+
+      // The encoded declaration now exceeds the whole carrier, so it cannot
+      // describe a block even though the same decoded limit still applies.
+      bytes.writeUInt32BE(bytes.length, tableOffset + 24);
+      const invalid = new UnityFsArtifactReader(await fixture(bytes));
+      try {
+        await expect(entries(invalid)).rejects.toMatchObject({
+          reason: "format",
+          message: expect.stringContaining(
+            "declared data area exceeds the bundle extent",
+          ),
+        });
+      } finally {
+        await invalid.close();
+      }
+    },
+  );
 });
 
 describe("UnityFS allocation and malformed-input boundaries", () => {
@@ -185,9 +226,12 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
         });
         expect(reads).toHaveBeenCalledTimes(1); // bounded header only
       } finally {
-        await reader.close();
-        reads.mockRestore();
-        await admitted.handle.close();
+        try {
+          await reader.close();
+        } finally {
+          reads.mockRestore();
+          await admitted.handle.close();
+        }
       }
     },
   );
@@ -200,7 +244,9 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const tableSize = 20 + 300_000 * 10 + 4;
     bytes.writeUInt32BE(tableSize, 40);
     bytes.writeUInt32BE(tableSize, 44);
-    const file = Buffer.alloc(64 + tableSize);
+    // Keep the padded data area start inside the carrier so only the row
+    // representation budget can reject this table.
+    const file = Buffer.alloc(64 + Math.ceil(tableSize / 16) * 16);
     bytes.subarray(0, 64).copy(file);
     file.writeBigUInt64BE(BigInt(file.length), 32);
     file.writeUInt32BE(300_000, 64 + 16);
@@ -223,6 +269,19 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
       size,
       data: index === 0 ? Buffer.alloc(size, 0x61) : Buffer.alloc(0),
     }));
+    const control = new UnityFsArtifactReader(
+      await fixture(
+        buildUnityFs(members.slice(0, 256), {
+          blockSize: size,
+          encodeBlock: repeatedBlock,
+        }),
+      ),
+    );
+    try {
+      expect(await entries(control)).toHaveLength(256);
+    } finally {
+      await control.close();
+    }
     const reader = new UnityFsArtifactReader(
       await fixture(
         buildUnityFs(members, {
@@ -232,7 +291,9 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
       ),
     );
     try {
-      await expect(entries(reader)).rejects.toMatchObject({ reason: "limit" });
+      await expect(entries(reader)).rejects.toMatchObject({
+        reason: "limit",
+      });
     } finally {
       await reader.close();
     }
@@ -335,6 +396,38 @@ it.each([1, 2])(
 );
 
 describe("UnityFS stream ownership and immutable cache", () => {
+  it("preserves a pending read failure when cancellation overlaps it", async () => {
+    const path = await fixture(buildUnityFs([{ path: "x", data: "bytes" }]));
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new UnityFsArtifactReader(path, admitted);
+    const reached = createDeferred<void>();
+    const release = createDeferred<void>();
+    const failure = new Error("member read failed");
+    const controller = new AbortController();
+    const [entry] = await entries(reader);
+    const reads = vi
+      .spyOn(admitted.handle, "read")
+      .mockImplementation((async () => {
+        reached.resolve();
+        await release.promise;
+        throw failure;
+      }) as typeof admitted.handle.read);
+    let consumed: Promise<Buffer> | undefined;
+    try {
+      consumed = buffer(await reader.open(entry!, controller.signal));
+      await awaitAcknowledgement(reached.promise, consumed, "member read");
+      controller.abort(new Error("caller cancelled"));
+      release.resolve();
+      await expect(consumed).rejects.toBe(failure);
+    } finally {
+      release.resolve();
+      await consumed?.catch(() => undefined);
+      reads.mockRestore();
+      await reader.close();
+      await admitted.handle.close();
+    }
+  });
+
   it("retains descriptor ownership after cleanup fails and permits retry", async () => {
     const reader = new UnityFsArtifactReader(
       await fixture(buildUnityFs([{ path: "x", data: "bytes" }])),
@@ -373,10 +466,12 @@ describe("UnityFS stream ownership and immutable cache", () => {
       await release.promise;
       return Reflect.apply(nativeRead, admitted.handle, args);
     }) as typeof admitted.handle.read);
+    let consumed: Promise<Buffer> | undefined;
     try {
       const stream = await reader.open(entry!);
-      stream.read(0);
-      await reached.promise;
+      consumed = buffer(stream);
+      void consumed.catch(() => undefined);
+      await awaitAcknowledgement(reached.promise, consumed, "member read");
       let closed = false;
       const closing = reader.close().then(() => {
         closed = true;
@@ -388,9 +483,13 @@ describe("UnityFS stream ownership and immutable cache", () => {
       expect(stream.closed).toBe(true);
     } finally {
       release.resolve();
-      await reader.close();
-      reads.mockRestore();
-      await admitted.handle.close();
+      try {
+        await reader.close();
+      } finally {
+        await consumed?.catch(() => undefined);
+        reads.mockRestore();
+        await admitted.handle.close();
+      }
     }
   });
 
@@ -422,9 +521,12 @@ describe("UnityFS stream ownership and immutable cache", () => {
         buffer(await reader.open(entry!, controller.signal)),
       ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
     } finally {
-      await reader.close();
-      reads.mockRestore();
-      await admitted.handle.close();
+      try {
+        await reader.close();
+      } finally {
+        reads.mockRestore();
+        await admitted.handle.close();
+      }
     }
   });
 });
@@ -442,12 +544,19 @@ describe("UnityFS stream capacity and cache ownership", () => {
       await fixture(buildUnityFs(members, { blockSize: 1 })),
     );
     try {
+      let completed = 0;
       await expect(
         (async () => {
-          for (const entry of await entries(reader))
+          for (const entry of await entries(reader)) {
             await buffer(await reader.open(entry));
+            completed += 1;
+          }
         })(),
-      ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+      ).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "capacity",
+      });
+      expect(completed).toBe(128);
     } finally {
       await reader.close();
     }

@@ -10,6 +10,7 @@ import {
   readComparisonResult,
   type ParsedComparisonEvidence,
 } from "./comparisonEvidenceResult.js";
+import type { ComparisonEvidenceOperation } from "./comparisonEvidenceIdentity.js";
 import type { Evidence } from "./evidence.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
 import { err, ok, type Result } from "./result.js";
@@ -28,6 +29,12 @@ import {
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
+type ChangedBehaviorComparisonOperation = Exclude<
+  ComparisonEvidenceOperation,
+  "compare_web_screenshots"
+>;
+type ChangedBehaviorComparison =
+  ParsedComparisonEvidence<ChangedBehaviorComparisonOperation>;
 
 /** Input for aggregating existing comparison Evidence. */
 export const changedBehaviorInputSchema = z.strictObject({
@@ -198,17 +205,20 @@ const parseComparisonEvidence = (
   input: unknown,
   fullInput: unknown,
   index: number,
-): ParsedComparisonEvidence => {
+): ChangedBehaviorComparison => {
   const parsedEvidence = readEvidence(input);
   if (!parsedEvidence.ok) throw parsedEvidence.error;
   const evidence = parsedEvidence.value;
-  if (!isComparisonEvidenceOperation(evidence.operation))
+  if (
+    !isComparisonEvidenceOperation(evidence.operation) ||
+    evidence.operation === "compare_web_screenshots"
+  )
     throw callerInputError(
       fullInput,
       ["comparisons", index],
       "Changed-behavior analysis requires process, artifact, or function comparison Evidence",
     );
-  const operation = evidence.operation;
+  const operation: ChangedBehaviorComparisonOperation = evidence.operation;
   if (!hasComparisonEvidenceIdentity(evidence))
     throw evidenceIntegrityError(
       "Comparison Evidence operation, predicate, and provider disagree",
@@ -226,7 +236,7 @@ const parseComparisonEvidence = (
   return result.value;
 };
 
-const findingsFor = (comparison: ParsedComparisonEvidence): Finding[] => {
+const findingsFor = (comparison: ChangedBehaviorComparison): Finding[] => {
   if (comparison.operation === "compare_process_captures")
     return processFindings(comparison);
   if (comparison.operation === "compare_functions")
@@ -236,7 +246,7 @@ const findingsFor = (comparison: ParsedComparisonEvidence): Finding[] => {
 
 const processFindings = (
   comparison: Extract<
-    ParsedComparisonEvidence,
+    ChangedBehaviorComparison,
     { readonly operation: "compare_process_captures" }
   >,
 ): Finding[] => {
@@ -292,7 +302,7 @@ const unprovenEqualityReason = (
 
 const functionFindings = (
   comparison: Extract<
-    ParsedComparisonEvidence,
+    ChangedBehaviorComparison,
     { readonly operation: "compare_functions" }
   >,
 ): Finding[] => {
@@ -333,7 +343,7 @@ const functionFindings = (
 
 const artifactFindings = (
   comparison: Extract<
-    ParsedComparisonEvidence,
+    ChangedBehaviorComparison,
     { readonly operation: "compare_artifacts" }
   >,
 ): Finding[] => {

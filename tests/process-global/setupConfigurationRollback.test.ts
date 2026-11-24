@@ -1,8 +1,9 @@
-import { open, readFile, type FileHandle } from "node:fs/promises";
+import { open, readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 const state = vi.hoisted(() => ({
   readbackFailed: false,
@@ -119,10 +120,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-vi.mock("../../src/application/RegularFileRead.js", async (importOriginal) => {
+vi.mock("../../src/process/RegularFileRead.js", async (importOriginal) => {
   const original =
     await importOriginal<
-      typeof import("../../src/application/RegularFileRead.js")
+      typeof import("../../src/process/RegularFileRead.js")
     >();
   return {
     ...original,
@@ -144,9 +145,9 @@ import {
   configureClientConfiguration,
   ClientConfigurationCleanupRollbackFailure,
 } from "../../src/application/SetupClientConfiguration.js";
-import { RegularFileReadFailure } from "../../src/application/RegularFileRead.js";
+import { RegularFileReadFailure } from "../../src/process/RegularFileRead.js";
 import { retryClientConfigurationCleanup } from "../../src/application/ClientConfigurationCleanup.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import type { DoctorHost } from "../../src/application/Doctor.js";
@@ -155,8 +156,7 @@ import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { systemUninstallHost } from "../../src/application/Uninstall.js";
 import { ConfigurationError } from "../../src/domain/configurationErrors.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { createDeferred } from "../fixtures/binarySession.js";
-import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 
 const ownReadHandle = async (path: string) => {
   const owner = new OwnedFileHandle(await open(path, "r"));
@@ -164,105 +164,68 @@ const ownReadHandle = async (path: string) => {
   return owner;
 };
 
-it("reports a failed config rollback and retains its backup path", async () => {
-  state.readbackFailed = false;
-  state.rejectRestore = false;
-  state.initialCleanupFailure = undefined;
-  state.readbackCleanupFailure = undefined;
-  const root = await createTestTempDirectory("rea-config-rollback-");
-  const path = join(root, "client.json");
-  const original = '{"keep":true}\n';
-  await import("node:fs/promises").then(({ writeFile }) =>
-    writeFile(path, original),
-  );
-  state.rejectRestore = true;
+it.each([
+  { state: "no previous backup", previousBackup: undefined },
+  { state: "stale previous backup", previousBackup: '{"keep":"first"}\n' },
+])(
+  "reports the verified snapshot after failed rollback with $state",
+  async ({ previousBackup }) => {
+    const root = await createTestTempDirectory("rea-config-rollback-");
+    const path = join(root, "client.json");
+    const firstBackup = `${path}.rea.backup`;
+    const original = '{"keep":"current"}\n';
+    await writeFile(path, original);
+    if (previousBackup !== undefined)
+      await writeFile(firstBackup, previousBackup);
+    state.rejectRestore = true;
 
-  const result = await configureClientConfiguration(
-    {
-      name: "cursor",
-      registrationProfile: supportedClientRegistrationProfile("cursor"),
-      configPath: path,
-      format: "json",
-    },
-    {},
-    ["rea", "mcp"],
-  );
+    const result = await configureClientConfiguration(
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: path,
+        format: "json",
+      },
+      {},
+      ["rea", "mcp"],
+    );
 
-  expect(result).toEqual({
-    status: "failed",
-    reason: "rollback",
-    backupPath: `${path}.rea.backup`,
-    failure: {
-      kind: "restore",
-      path,
-      detail: "injected restore write failure",
-    },
-  });
-  expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
-  expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
-    mcpServers: { rea: { command: "rea", args: ["mcp"] } },
-  });
-});
-
-it("preserves the first backup and reports a verified backup of the current original", async () => {
-  state.readbackFailed = false;
-  state.rejectRestore = false;
-  state.initialCleanupFailure = undefined;
-  state.readbackCleanupFailure = undefined;
-  const root = await createTestTempDirectory("rea-config-stale-backup-");
-  const path = join(root, "client.json");
-  const firstOriginal = '{"keep":"first"}\n';
-  const currentOriginal = '{"keep":"current"}\n';
-  await import("node:fs/promises").then(async ({ writeFile }) => {
-    await writeFile(path, currentOriginal);
-    await writeFile(`${path}.rea.backup`, firstOriginal);
-  });
-  state.rejectRestore = true;
-
-  const result = await configureClientConfiguration(
-    {
-      name: "cursor",
-      registrationProfile: supportedClientRegistrationProfile("cursor"),
-      configPath: path,
-      format: "json",
-    },
-    {},
-    ["rea", "mcp"],
-  );
-  state.rejectRestore = false;
-
-  const recoveryPath = `${path}.rea.backup.${createHash("sha256")
-    .update(currentOriginal, "utf8")
-    .digest("hex")}.recovery`;
-  expect(result).toMatchObject({
-    status: "failed",
-    reason: "rollback",
-    backupPath: recoveryPath,
-    failure: {
-      kind: "restore",
-      path,
-      detail: "injected restore write failure",
-    },
-  });
-  expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(firstOriginal);
-  expect(await readFile(recoveryPath, "utf8")).toBe(currentOriginal);
-});
+    const backupPath =
+      previousBackup === undefined
+        ? firstBackup
+        : `${firstBackup}.${createHash("sha256").update(original).digest("hex")}.recovery`;
+    expect(result).toEqual({
+      status: "failed",
+      reason: "rollback",
+      backupPath,
+      failure: {
+        kind: "restore",
+        path,
+        detail: "injected restore write failure",
+      },
+    });
+    expect(await readFile(backupPath, "utf8")).toBe(original);
+    if (previousBackup !== undefined)
+      expect(await readFile(firstBackup, "utf8")).toBe(previousBackup);
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+      keep: "current",
+      mcpServers: { rea: { command: "rea", args: ["mcp"] } },
+    });
+  },
+);
 
 it("does not write config when a recovery copy disappears before verification", async () => {
-  state.readbackFailed = false;
-  state.rejectRestore = false;
-  state.removeCopiedRecovery = false;
-  state.initialCleanupFailure = undefined;
-  state.readbackCleanupFailure = undefined;
   const root = await createTestTempDirectory("rea-config-vanished-recovery-");
   const path = join(root, "client.json");
   const firstOriginal = '{"keep":"first"}\n';
   const currentOriginal = '{"keep":"current"}\n';
-  await import("node:fs/promises").then(async ({ writeFile }) => {
-    await writeFile(path, currentOriginal);
-    await writeFile(`${path}.rea.backup`, firstOriginal);
-  });
+  await writeFile(path, currentOriginal);
+  await writeFile(`${path}.rea.backup`, firstOriginal);
   state.removeCopiedRecovery = true;
+  let published = false;
+  state.afterPublication = async () => {
+    published = true;
+  };
 
   const result = await configureClientConfiguration(
     {
@@ -274,8 +237,7 @@ it("does not write config when a recovery copy disappears before verification", 
     {},
     ["rea", "mcp"],
   );
-  state.removeCopiedRecovery = false;
-
+  expect(published).toBe(false);
   expect(result).toEqual({ status: "failed", reason: "backup" });
   expect(await readFile(path, "utf8")).toBe(currentOriginal);
   expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(firstOriginal);
@@ -841,11 +803,9 @@ it("uninstall close joins a publication already admitted by its host", async () 
     path,
     '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}\n',
   );
-  const arrived = createDeferred<void>();
-  const release = createDeferred<void>();
+  const publication = phaseGate();
   state.afterPublication = async () => {
-    arrived.resolve();
-    await release.promise;
+    await publication.hold();
   };
   const host = systemUninstallHost(root);
   const removal = host.removeClient({
@@ -854,18 +814,21 @@ it("uninstall close joins a publication already admitted by its host", async () 
     configPath: path,
     format: "json",
   });
-  await arrived.promise;
   let closed = false;
-  const closing = host.close?.().then((result) => {
-    closed = true;
-    return result;
-  });
+  let closing: ReturnType<NonNullable<typeof host.close>> | undefined;
   try {
+    await publication.reached(removal, "configuration publication");
+    closing = host.close?.().then((result) => {
+      closed = true;
+      return result;
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
     expect(state.publicationHandles[0]!.fd).toBeGreaterThanOrEqual(0);
   } finally {
-    release.resolve();
+    publication.release();
+    await Promise.allSettled([removal, ...(closing ? [closing] : [])]);
+    await host.close?.();
   }
   expect((await removal).status).toBe("failed");
   expect(await closing).toBeUndefined();
@@ -976,9 +939,9 @@ it("cleanup retry never adopts an opaque cancellation reason as another owner", 
   const { RegularFileOperationCancelled } =
     await import("../../src/filesystem/RegularFile.js");
   const { ArtifactResourceScope } =
-    await import("../../src/artifacts/ArtifactResourceScope.js");
+    await import("../../src/resources/ArtifactResourceScope.js");
   const { retryRegularFileCleanupFailures } =
-    await import("../../src/application/RegularFileRead.js");
+    await import("../../src/process/RegularFileRead.js");
   const resources = new ArtifactResourceScope();
   const outcome = await retryRegularFileCleanupFailures(
     new RegularFileCleanupFailure({
@@ -1019,12 +982,10 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
     if (rejectClose) throw new Error("peer close denied");
     await close();
   };
-  const arrived = createDeferred<void>();
-  const release = createDeferred<void>();
+  const publication = phaseGate();
   state.failReadback = false;
   state.afterPublication = async () => {
-    arrived.resolve();
-    await release.promise;
+    await publication.hold();
   };
   const host = systemUninstallHost(root);
   const removal = host.removeClient({
@@ -1035,7 +996,7 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
   });
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    await arrived.promise;
+    await publication.reached(removal, "configuration publication");
     state.initialCleanupFailure = new RegularFileCleanupFailure({
       path: other,
       owner,
@@ -1052,7 +1013,7 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
       }),
     ).toMatchObject({ status: "failed" });
     state.initialCleanupFailure = undefined;
-    release.resolve();
+    publication.release();
     const result = await Promise.race([
       removal,
       new Promise<never>((_resolve, reject) => {
@@ -1075,7 +1036,7 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
     if (timeout !== undefined) clearTimeout(timeout);
     state.initialCleanupFailure = undefined;
     rejectClose = false;
-    release.resolve();
+    publication.release();
     await owner.close();
     for (const handle of state.publicationHandles)
       if (handle.fd >= 0) await handle.close();
@@ -1388,13 +1349,10 @@ it("first-run setup preserves a destination created during staging", async () =>
     state.beforePublicationOpen = undefined;
     await fs.writeFile(path, edited);
   };
-  expect((await runConfigurationChange("setup", root, path)).status).toBe(
-    "failed",
-  );
+  const result = await runConfigurationChange("setup", root, path);
   expect(await fs.readFile(path, "utf8")).toBe(edited);
-  expect(
-    (await fs.readdir(root)).filter((name) => name.startsWith(".rea-config-")),
-  ).toEqual([]);
+  expect(result).toMatchObject({ status: "failed", reason: "conflict" });
+  expect(await fs.readdir(root)).toEqual(["client.json"]);
 });
 
 it.each(["setup", "uninstall"] as const)(
@@ -1475,7 +1433,7 @@ it.each(["setup", "uninstall"] as const)(
   },
 );
 
-it("first-run publication exclusively refuses a destination created after its final check", async () => {
+it("first-run setup exclusively refuses a destination created after its final check", async () => {
   const root = await createTestTempDirectory("rea-config-exclusive-link-");
   const path = join(root, "client.json");
   const fs =
@@ -1486,13 +1444,10 @@ it("first-run publication exclusively refuses a destination created after its fi
   state.beforeFirstPublication = async () => {
     await fs.writeFile(path, edited);
   };
-  await expect(
-    ClientConfigurationPublication.write(path, "{}", undefined),
-  ).rejects.toMatchObject({ code: "EEXIST" });
+  const result = await runConfigurationChange("setup", root, path);
   expect(await fs.readFile(path, "utf8")).toBe(edited);
-  expect(
-    (await fs.readdir(root)).filter((name) => name.startsWith(".rea-config-")),
-  ).toEqual([]);
+  expect(result).toMatchObject({ status: "failed", reason: "conflict" });
+  expect(await fs.readdir(root)).toEqual(["client.json"]);
 });
 
 it("publication keeps its selected canonical parent when a directory symlink is retargeted", async () => {

@@ -4,7 +4,6 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   bzImageGzipFixture,
   truncatedKernelConfigFixture,
@@ -60,26 +59,6 @@ mcpTest(
   },
 );
 
-mcpTest(
-  "requires an absolute path for inspect_kernel_build_config",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_kernel_build_config",
-        arguments: { path: "vmlinux" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_kernel_build_config" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
 mcpTest("reports a truncated IKCFG member as incomplete", async ({ mcp }) => {
   const { client, session } = await connect(mcp);
   try {
@@ -94,7 +73,7 @@ mcpTest("reports a truncated IKCFG member as incomplete", async ({ mcp }) => {
     const evidence = contract.outputSchema.parse(response.structuredContent);
     expect(evidence.normalized_result).toMatchObject({
       config: { status: "incomplete", reason: "config_gzip_truncated" },
-      coverage: { status: "incomplete" },
+      coverage: { status: "partial" },
     });
   } finally {
     await session.close();

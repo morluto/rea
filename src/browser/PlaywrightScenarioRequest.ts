@@ -1,3 +1,4 @@
+import { Deadline } from "../domain/deadline.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -27,6 +28,7 @@ import {
   scenarioQueryLength,
   uriComponentLength,
 } from "./BrowserScenarioSerialization.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type RequestAction = Extract<BrowserScenarioAction, { action: "request" }>;
 
@@ -38,7 +40,7 @@ type PageResponse =
   | { readonly error: string };
 
 /** A request step that could not be sent or did not answer as expected. */
-export class ScenarioRequestError extends Error {
+class ScenarioRequestError extends Error {
   override readonly name = "ScenarioRequestError";
 }
 
@@ -197,7 +199,12 @@ interface PageRequest {
   readonly method: string;
   readonly headers: [string, string][];
   readonly body: string | undefined;
-  readonly deadline: number | undefined;
+  /**
+   * The step deadline on the page's wall clock. The host keeps a monotonic
+   * deadline and converts what is left of it when the request is built,
+   * because the page cannot read the host's monotonic clock.
+   */
+  readonly deadlineEpochMs: number | undefined;
   /** Return the response text up to this many characters, for a step that saves values from it. */
   readonly readLimit: number | undefined;
 }
@@ -224,16 +231,27 @@ const sendFromPage = (
           "Request steps require a page without a controlling service worker so cancellation can guard dispatch.",
       };
     const remaining =
-      request.deadline === undefined
+      request.deadlineEpochMs === undefined
         ? undefined
-        : request.deadline - Date.now();
+        : request.deadlineEpochMs - Date.now();
     if (remaining !== undefined && remaining <= 0)
       return { error: "The request ran out of time before it was sent." };
+    // This callback runs in the page, which cannot reach REA's modules, so
+    // its abort reasons are page-native DOMExceptions defined here.
     const controller = new AbortController();
     const timer =
       remaining === undefined
         ? undefined
-        : setTimeout(() => controller.abort(), remaining);
+        : setTimeout(
+            () =>
+              controller.abort(
+                new DOMException(
+                  "The request ran out of time.",
+                  "TimeoutError",
+                ),
+              ),
+            remaining,
+          );
     try {
       const answer = await fetch(request.url, {
         method: request.method,
@@ -279,7 +297,9 @@ const sendFromPage = (
         }
       return { status: answer.status };
     } catch (cause: unknown) {
-      controller.abort();
+      controller.abort(
+        new DOMException("The request is no longer needed.", "AbortError"),
+      );
       return {
         error: cause instanceof Error ? cause.message : String(cause),
       };
@@ -305,7 +325,7 @@ export const performScenarioRequest = async (input: {
   const deadline =
     action.timeout_ms === undefined
       ? undefined
-      : Date.now() + action.timeout_ms;
+      : Deadline.after(action.timeout_ms);
   const pageOrigin = originOf(page.url());
   if (pageOrigin !== startOrigin)
     throw new ScenarioRequestError(
@@ -355,8 +375,7 @@ export const performScenarioRequest = async (input: {
   if (action.json !== undefined && !hasContentType)
     appendHeader("content-type", "application/json");
   // A step the boundary abandoned, or whose time ran out while values were read, sends nothing.
-  const remaining = deadline === undefined ? undefined : deadline - Date.now();
-  if (signal?.aborted === true || (remaining !== undefined && remaining <= 0))
+  if (signal?.aborted === true || deadline?.expired() === true)
     throw new ScenarioRequestError(
       `Request step ${action.step_id} ran out of time before its request was sent.`,
     );
@@ -369,7 +388,8 @@ export const performScenarioRequest = async (input: {
     method: action.method,
     headers,
     body: json === undefined ? undefined : JSON.stringify(json),
-    deadline,
+    deadlineEpochMs:
+      deadline === undefined ? undefined : Date.now() + deadline.remainingMs(),
     readLimit:
       action.save.length > 0 ? MAX_SAVED_RESPONSE_CHARACTERS : undefined,
   };
@@ -381,7 +401,7 @@ export const performScenarioRequest = async (input: {
         method: action.method,
         headers: [],
         body: request.body ?? null,
-        deadline: deadline ?? null,
+        deadlineEpochMs: request.deadlineEpochMs ?? null,
         readLimit: request.readLimit ?? null,
       },
       envelopeLimit,
@@ -419,10 +439,7 @@ export const performScenarioRequest = async (input: {
       await route.fallback();
       return;
     }
-    if (
-      signal?.aborted === true ||
-      (deadline !== undefined && Date.now() >= deadline)
-    )
+    if (signal?.aborted === true || deadline?.expired() === true)
       await route.abort("aborted");
     else {
       await route.fallback();
@@ -466,7 +483,7 @@ export const performScenarioRequest = async (input: {
       if (primaryFailure !== undefined)
         throw new AggregateError(
           [primaryFailure.cause, cause],
-          `Scenario request failed: ${primaryFailure.cause instanceof Error ? primaryFailure.cause.message : String(primaryFailure.cause)}; route cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          `Scenario request failed: ${errorMessage(primaryFailure.cause)}; route cleanup failed: ${errorMessage(cause)}`,
           { cause: primaryFailure.cause },
         );
       throw cause;
@@ -563,13 +580,10 @@ const namesResponse = (
 /** Publication must still belong to the step after its last asynchronous boundary. */
 const assertResponseSaveActive = (
   stepId: string,
-  deadline: number | undefined,
+  deadline: Deadline | undefined,
   signal: AbortSignal | undefined,
 ): void => {
-  if (
-    signal?.aborted === true ||
-    (deadline !== undefined && Date.now() >= deadline)
-  )
+  if (signal?.aborted === true || deadline?.expired() === true)
     throw new ScenarioRequestError(
       `Step ${stepId} ended before its saved response was read, so nothing was saved.`,
     );
@@ -579,7 +593,7 @@ const assertResponseSaveActive = (
 const beforeStepEnds = <T>(
   work: Promise<T>,
   stepId: string,
-  deadline: number | undefined,
+  deadline: Deadline | undefined,
   signal: AbortSignal | undefined,
 ): Promise<T> =>
   new Promise<T>((resolve, reject) => {
@@ -597,8 +611,7 @@ const beforeStepEnds = <T>(
       );
     };
     work.catch(() => undefined);
-    const remaining =
-      deadline === undefined ? undefined : deadline - Date.now();
+    const remaining = deadline?.remainingMs();
     if (
       signal?.aborted === true ||
       (remaining !== undefined && remaining <= 0)
@@ -643,7 +656,7 @@ export const awaitSavedResponse = (
   },
 ): SavedResponseWait => {
   const { stepId, spec, startOrigin, timeout, secrets, signal } = step;
-  const deadline = timeout === undefined ? undefined : Date.now() + timeout;
+  const deadline = timeout === undefined ? undefined : Deadline.after(timeout);
   const pattern = pathPattern(spec.path);
   const started = new Set<Request>();
   const protectResponse = secrets.responseProtector(stepId, spec.save);
@@ -672,7 +685,7 @@ export const awaitSavedResponse = (
     } catch (cause: unknown) {
       if (cause instanceof ScenarioRequestError) throw cause;
       throw new ScenarioRequestError(
-        `Step ${stepId}: no ${spec.method} ${spec.path} response could be read, so nothing was saved: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Step ${stepId}: no ${spec.method} ${spec.path} response could be read, so nothing was saved: ${errorMessage(cause)}`,
         { cause },
       );
     }
@@ -818,9 +831,7 @@ const saveValues = (
     try {
       secrets.save(`${stepId}.${name}`, name, value, secret);
     } catch (cause) {
-      throw new ScenarioRequestError(
-        `Step ${stepId}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      throw new ScenarioRequestError(`Step ${stepId}: ${errorMessage(cause)}`);
     }
   }
 };

@@ -8,6 +8,7 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
+import * as processOutput from "../process/ExecFileOutput.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
@@ -31,6 +32,8 @@ import {
   PlaywrightElectronActiveProvider,
   safeElectronEnvironment,
 } from "./PlaywrightElectronActiveProvider.js";
+import { waitFor } from "../../tests/support/testWait.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -183,15 +186,13 @@ it("preserves an independent AbortError from actual ownership baseline inspectio
     "independent inspector failure",
     "AbortError",
   );
+  vi.spyOn(processOutput, "execFileOutput").mockImplementation(async () => {
+    controller.abort(reason);
+    throw physical;
+  });
   const host = ownershipObservation.createSystemProcessOwnershipHost(
     "linux",
     {},
-    {
-      execFileOutput: async () => {
-        controller.abort(reason);
-        throw physical;
-      },
-    },
   );
   const prepare = vi
     .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
@@ -236,7 +237,7 @@ it("retains failed ownership-helper cleanup until provider close retries it", as
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const prepare = vi
@@ -414,6 +415,10 @@ it("passes required Windows runtime variables without inheriting unrelated value
 let ownership: PersistentOwnedProcessGroup;
 
 beforeEach(() => {
+  // Fake applications have no hook to announce a refused lock.
+  vi.spyOn(electronActions, "watchSingleInstanceLockRefusal").mockReturnValue(
+    new AbortController().signal,
+  );
   ownership = {
     runId: "run",
     leaderPid: 4242,
@@ -438,6 +443,7 @@ const emptyHookSnapshot = () => ({
   observed_ipc: 0,
   observed_runtime: 0,
   hook_error: false,
+  single_instance_lock_refused: false,
 });
 
 it.each([
@@ -582,8 +588,6 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
     cleaned: false,
     reason: "authored census unavailable",
   });
-  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
-  Object.defineProperty(process, "platform", { value: "win32" });
   const terminateTree = vi
     .spyOn(processOwnership, "cleanupWindowsProcessTree")
     .mockResolvedValue({ cleaned: true, signaled: true });
@@ -608,40 +612,37 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
       application as unknown as Awaited<
         ReturnType<typeof import("playwright-core")._electron.launch>
       >,
+    undefined,
+    "win32",
   );
 
-  try {
-    const result = await provider.capture({
-      ...electronActiveObservationInputSchema.parse({
-        executable_path: process.execPath,
-        application_path: process.execPath,
-      }),
-      application_root: dirname(process.execPath),
-    });
+  const result = await provider.capture({
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: process.execPath,
+    }),
+    application_root: dirname(process.execPath),
+  });
 
-    if (result.ok) throw new Error("Expected unverified cleanup to fail");
-    expect(terminateTree).not.toHaveBeenCalled();
-    expect(result.error).toMatchObject({
-      _tag: "BrowserObservationError",
-      reason: "cleanup_failed",
-      cleanup: {
-        reason: expect.stringContaining(
-          "process table permission denied; helper cleanup was not proven",
-        ),
-      },
-      partialObservation: {
-        kind: "electron-active-observation",
-        capture: {
-          application: {
-            cleanup: "unverified",
-          },
+  if (result.ok) throw new Error("Expected unverified cleanup to fail");
+  expect(terminateTree).not.toHaveBeenCalled();
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cleanup_failed",
+    cleanup: {
+      reason: expect.stringContaining(
+        "process table permission denied; helper cleanup was not proven",
+      ),
+    },
+    partialObservation: {
+      kind: "electron-active-observation",
+      capture: {
+        application: {
+          cleanup: "unverified",
         },
       },
-    });
-  } finally {
-    if (originalPlatform !== undefined)
-      Object.defineProperty(process, "platform", originalPlatform);
-  }
+    },
+  });
 });
 
 it("retains the initial snapshot when the final state read fails", async () => {
@@ -688,6 +689,148 @@ it("retains the initial snapshot when the final state read fails", async () => {
       limitations: expect.arrayContaining([
         expect.stringContaining("initial pre-action snapshot"),
       ]),
+    },
+  });
+});
+
+it.each(["initial", "final"] as const)(
+  "refuses an application handed off to a running instance at the %s snapshot",
+  async (stage) => {
+    const state = (refused: boolean) => ({
+      windows: [],
+      metrics: [],
+      electronVersion: "44.0.0",
+      hookSnapshot: {
+        ...emptyHookSnapshot(),
+        single_instance_lock_refused: refused,
+      },
+    });
+    vi.spyOn(electronActions, "readApplicationState").mockResolvedValueOnce(
+      state(stage === "initial"),
+    );
+    vi.spyOn(
+      electronActions,
+      "readFinalApplicationState",
+    ).mockResolvedValueOnce(state(stage === "final"));
+    const runActions = vi
+      .spyOn(electronActions, "runElectronActions")
+      .mockResolvedValue({ actions: [] });
+    const application = {
+      process: () => ({ pid: 424242 }),
+      close: vi.fn(async () => undefined),
+      windows: () => [],
+    };
+    const provider = new PlaywrightElectronActiveProvider(
+      {},
+      async () =>
+        application as unknown as Awaited<
+          ReturnType<typeof import("playwright-core")._electron.launch>
+        >,
+    );
+
+    const result = await provider.capture({
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: process.execPath,
+      }),
+      application_root: dirname(process.execPath),
+    });
+
+    if (result.ok) throw new Error("Expected the handed-off launch to fail");
+    expect(runActions).toHaveBeenCalledTimes(stage === "initial" ? 0 : 1);
+    expect(application.close).toHaveBeenCalled();
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "application_already_running",
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      message: expect.stringContaining("The application is already running"),
+      remediation: {
+        action: expect.stringContaining("Close the running application"),
+      },
+    });
+    // A refusal first seen in the final snapshot keeps that snapshot, which
+    // holds the blocked lock request and the action effects.
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "electron-active-observation",
+      capture: {
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            stage === "initial"
+              ? "initial pre-action snapshot"
+              : "failed after its final snapshot",
+          ),
+        ]),
+      },
+    });
+  },
+);
+
+it("stops pending actions when the lock is refused while they wait", async () => {
+  const state = (refused: boolean) => ({
+    windows: [],
+    metrics: [],
+    electronVersion: "44.0.0",
+    hookSnapshot: {
+      ...emptyHookSnapshot(),
+      single_instance_lock_refused: refused,
+    },
+  });
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValueOnce(
+    state(false),
+  );
+  vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValueOnce(
+    state(true),
+  );
+  // The refused path never opens the window the action waits for.
+  const refusal = new AbortController();
+  vi.spyOn(electronActions, "watchSingleInstanceLockRefusal").mockReturnValue(
+    refusal.signal,
+  );
+  const windows = vi.fn(() => []);
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows,
+  };
+  const provider = new PlaywrightElectronActiveProvider(
+    {},
+    async () =>
+      application as unknown as Awaited<
+        ReturnType<typeof import("playwright-core")._electron.launch>
+      >,
+  );
+
+  const capture = provider.capture({
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: process.execPath,
+      actions: [
+        { step_id: "open", kind: "click", window_index: 0, selector: "#go" },
+      ],
+    }),
+    application_root: dirname(process.execPath),
+  });
+  let result: Awaited<typeof capture>;
+  try {
+    await waitFor(() => expect(windows).toHaveBeenCalled());
+    refusal.abort();
+    result = await capture;
+  } finally {
+    // A failed wait still stops and joins the capture before mocks restore.
+    await provider.close();
+    await capture;
+  }
+
+  if (result.ok) throw new Error("Expected the handed-off launch to fail");
+  expect(application.close).toHaveBeenCalled();
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "application_already_running",
+    partialObservation: {
+      capture: { actions: [{ step_id: "open", status: "cancelled" }] },
     },
   });
 });
@@ -776,50 +919,68 @@ const captureWithController = async (
   );
 };
 
-it("cancels a windowless wait action and cleans up the owned application", async () => {
-  const cleanupSpies = stubVerifiedElectronCleanup();
-  const state = {
-    windows: [],
-    metrics: [],
-    electronVersion: "44.0.0",
-    hookSnapshot: emptyHookSnapshot(),
-  };
-  vi.spyOn(electronActions, "readApplicationState").mockResolvedValue(state);
-  vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValue(
-    state,
-  );
-  const controller = new AbortController();
-  const reason = new Error("caller-reason");
-  const application = {
-    process: () => ({ pid: 424242 }),
-    close: vi.fn(async () => undefined),
-    windows: () => [],
-    firstWindow: vi.fn(() => {
-      queueMicrotask(() => controller.abort(reason));
-      return new Promise<never>(() => undefined);
-    }),
-  };
+it.each(["read succeeds", "Inspector closes"] as const)(
+  "cancels a windowless wait action and cleans up the owned application (%s)",
+  async (finalRead) => {
+    const cleanupSpies = stubVerifiedElectronCleanup();
+    const state = {
+      windows: [],
+      metrics: [],
+      electronVersion: "44.0.0",
+      hookSnapshot: emptyHookSnapshot(),
+    };
+    vi.spyOn(electronActions, "readApplicationState").mockResolvedValue(state);
+    const inspectorFailure = new Error("Inspector closed during final read");
+    const read = vi.spyOn(electronActions, "readFinalApplicationState");
+    if (finalRead === "Inspector closes")
+      read.mockRejectedValue(inspectorFailure);
+    else read.mockResolvedValue(state);
+    const controller = new AbortController();
+    const reason = new Error("caller-reason");
+    const application = {
+      process: () => ({ pid: 424242 }),
+      close: vi.fn(async () => undefined),
+      windows: () => [],
+      firstWindow: vi.fn(() => {
+        queueMicrotask(() => controller.abort(reason));
+        return new Promise<never>(() => undefined);
+      }),
+    };
 
-  const result = await captureWithController(controller, application, [
-    { step_id: "settle", kind: "wait", duration_ms: 10 },
-  ]);
+    const result = await captureWithController(controller, application, [
+      { step_id: "settle", kind: "wait", duration_ms: 10 },
+    ]);
 
-  expect(application.firstWindow).toHaveBeenCalledOnce();
-  expect(application.close).toHaveBeenCalledOnce();
-  expect(cleanupSpies.some((spy) => spy.mock.calls.length > 0)).toBe(true);
-  if (result.ok) throw new Error("Expected the capture to be cancelled");
-  expect(result.error).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cancelled",
-    partialObservation: {
-      kind: "electron-active-observation",
-      capture: {
-        actions: [{ step_id: "settle", kind: "wait", status: "cancelled" }],
+    expect(application.firstWindow).toHaveBeenCalledOnce();
+    expect(application.close).toHaveBeenCalledOnce();
+    expect(cleanupSpies.some((spy) => spy.mock.calls.length > 0)).toBe(true);
+    if (result.ok) throw new Error("Expected the capture to be cancelled");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "cancelled",
+      partialObservation: {
+        kind: "electron-active-observation",
+        capture: {
+          actions: [{ step_id: "settle", kind: "wait", status: "cancelled" }],
+        },
       },
-    },
-  });
-  expect(result.error.cause).toBe(reason);
-});
+    });
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.secondaryFailures.map(({ cause }) => cause)).toEqual(
+      finalRead === "Inspector closes" ? [inspectorFailure] : [],
+    );
+    if (finalRead === "Inspector closes")
+      expect(result.error.partialObservation).toMatchObject({
+        capture: {
+          limitations: expect.arrayContaining([
+            expect.stringContaining(
+              "Final Windows, metrics, IPC, and timeline state is unknown",
+            ),
+          ]),
+        },
+      });
+  },
+);
 
 it("records actions after a failed action as not executed and keeps the capture", async () => {
   stubVerifiedElectronCleanup();
@@ -836,8 +997,7 @@ it("records actions after a failed action as not executed and keeps the capture"
   const click = vi.fn(async () => {
     throw new Error("strict mode violation");
   });
-  const waitForTimeout = vi.fn(async () => undefined);
-  const page = { locator: () => ({ click }), waitForTimeout };
+  const page = { locator: () => ({ click }) };
   const application = {
     process: () => ({ pid: 424242 }),
     close: vi.fn(async () => undefined),
@@ -867,7 +1027,6 @@ it("records actions after a failed action as not executed and keeps the capture"
 
   if (!result.ok) throw result.error;
   expect(click).toHaveBeenCalledOnce();
-  expect(waitForTimeout).not.toHaveBeenCalled();
   expect(application.close).toHaveBeenCalledOnce();
   expect(result.value.actions).toEqual([
     {
@@ -1052,7 +1211,7 @@ it("reports an expired final state grace period as the caller's cancellation", a
     };
 
     const capture = captureWithController(controller, application, []);
-    await vi.waitFor(() => expect(evaluate).toHaveBeenCalled());
+    await waitFor(() => expect(evaluate).toHaveBeenCalled());
     await vi.advanceTimersByTimeAsync(5_000);
     const result = await capture;
 
@@ -1092,111 +1251,53 @@ const stubCompletedCapture = () => {
   );
 };
 
-it("cancels a completed capture when cancellation arrives during application close", async () => {
-  stubVerifiedElectronCleanup();
-  stubCompletedCapture();
-  const controller = new AbortController();
-  const reason = new Error("SIGTERM during close");
-  const application = {
-    process: () => ({ pid: 424242 }),
-    close: vi.fn(async () => {
-      controller.abort(reason);
-    }),
-    windows: () => [],
-  };
-
-  const result = await captureWithController(controller, application, []);
-
-  expect(application.close).toHaveBeenCalledOnce();
-  if (result.ok) throw new Error("Expected the capture to be cancelled");
-  expect(result.error).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cancelled",
-    partialObservation: {
-      kind: "electron-active-observation",
-      capture: { application: { electron_version: "44.0.0" } },
-    },
-  });
-  expect(result.error.cause).toBe(reason);
-});
-
-it("cancels a completed capture when cancellation arrives during process cleanup", async () => {
-  stubVerifiedElectronCleanup();
-  stubCompletedCapture();
-  const controller = new AbortController();
-  const reason = new Error("SIGTERM during process cleanup");
-  // POSIX cleanup owns the final sweep; Windows uses tree termination.
-  vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
-    async () => {
-      controller.abort(reason);
-      return {
-        cleaned: true,
-        signaled: false,
-        unverified: [{ pid: 777, diagnostic: "command line unavailable" }],
+it.each(["transport", "process"] as const)(
+  "retains completed capture evidence when cancellation arrives during %s cleanup",
+  async (phase) => {
+    stubVerifiedElectronCleanup();
+    stubCompletedCapture();
+    const controller = new AbortController();
+    const reason = new Error(`cancel during ${phase} cleanup`);
+    if (phase === "process") {
+      const finishProcesses = async () => {
+        controller.abort(reason);
+        return {
+          cleaned: true as const,
+          signaled: false,
+          unverified: [{ pid: 777, diagnostic: "command line unavailable" }],
+        };
       };
-    },
-  );
-  vi.spyOn(processOwnership, "cleanupWindowsProcessTree").mockImplementation(
-    async () => {
-      controller.abort(reason);
-      return { cleaned: true, signaled: true };
-    },
-  );
-  const application = {
-    process: () => ({ pid: 424242 }),
-    close: vi.fn(async () => undefined),
-    windows: () => [],
-  };
+      vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
+        finishProcesses,
+      );
+      vi.spyOn(
+        processOwnership,
+        "cleanupWindowsProcessTree",
+      ).mockImplementation(finishProcesses);
+    }
+    const application = {
+      process: () => ({ pid: 424242 }),
+      close: vi.fn(async () => {
+        if (phase === "transport") controller.abort(reason);
+      }),
+      windows: () => [],
+    };
 
-  const result = await captureWithController(controller, application, []);
+    const result = await captureWithController(controller, application, []);
 
-  if (result.ok) throw new Error("Expected the capture to be cancelled");
-  expect(result.error).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cancelled",
-    partialObservation: {
-      kind: "electron-active-observation",
-      capture: { application: { electron_version: "44.0.0" } },
-    },
-  });
-  expect(result.error.cause).toBe(reason);
-});
-
-it("keeps cleanup failure precedence over cancellation observed during cleanup", async () => {
-  stubVerifiedElectronCleanup();
-  stubCompletedCapture();
-  const controller = new AbortController();
-  const failed = async () => {
-    controller.abort(new Error("SIGTERM during process cleanup"));
-    return { cleaned: false as const, reason: "process group still alive" };
-  };
-  vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
-    failed,
-  );
-  vi.spyOn(processOwnership, "cleanupWindowsProcessTree").mockImplementation(
-    failed,
-  );
-  const application = {
-    process: () => ({ pid: 424242 }),
-    close: vi.fn(async () => undefined),
-    windows: () => [],
-  };
-
-  const result = await captureWithController(controller, application, []);
-
-  if (result.ok) throw new Error("Expected cleanup to fail");
-  expect(result.error).toMatchObject({
-    cleanupIncomplete: true,
-    partialObservation: {
-      kind: "electron-active-observation",
-      capture: { application: { cleanup: "unverified" } },
-    },
-  });
-  expect(result.error.cleanupPrimary).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cancelled",
-  });
-});
+    expect(application.close).toHaveBeenCalledOnce();
+    if (result.ok) throw new Error("Expected the capture to be cancelled");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "cancelled",
+      partialObservation: {
+        kind: "electron-active-observation",
+        capture: { application: { electron_version: "44.0.0" } },
+      },
+    });
+    expect(result.error.cause).toBe(reason);
+  },
+);
 
 it.each(["process", "transport"] as const)(
   "preserves cancellation that preceded a %s cleanup failure",
@@ -1385,6 +1486,12 @@ it.each(["process", "transport"] as const)(
       expect(result.error.cleanupPrimary?.cause).toBe(reason);
       expect(result.error.partialObservation).toMatchObject({
         kind: "electron-active-observation",
+        capture: {
+          application: {
+            cleanup:
+              phase === "process" ? "unverified" : "terminated-owned-process",
+          },
+        },
       });
       denied = false;
       await provider.close();

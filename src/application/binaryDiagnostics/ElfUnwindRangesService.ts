@@ -1,36 +1,22 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ElfUnwindRangesPort } from "./ElfUnwindRangesPort.js";
+import { insideArtifact } from "./artifactRange.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ElfUnwindRangesPort } from "../../ports/binaryDiagnostics/ElfUnwindRangesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
-  ELF_UNWIND_LIMITATIONS,
   elfEhPointerEncodingName,
   inspectElfUnwindRangesInputSchema,
   elfUnwindRangesSchema,
   MAX_INSPECT_ELF_UNWIND_RANGES,
+  type ElfUnwindLimitationCode,
   type ElfUnwindRanges,
 } from "../../domain/native/elfUnwindRanges.js";
-import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_elf_unwind_ranges";
-const {
-  cfa: CFA_LIMITATION,
-  untrusted: UNTRUSTED_LIMITATION,
-  indirect: INDIRECT_LIMITATION,
-  headerMismatch: HEADER_MISMATCH,
-  frameAbsent: FRAME_ABSENT,
-  headerAbsent: HEADER_ABSENT,
-  debugPresent: DEBUG_PRESENT,
-  debugAbsent: DEBUG_ABSENT,
-  debugUnknown: DEBUG_UNKNOWN,
-  debugOutside: DEBUG_OUTSIDE,
-} = ELF_UNWIND_LIMITATIONS;
 
 type Range = { readonly offset: number; readonly bytes: number };
 type Encoding = { readonly raw: number; readonly name: string };
@@ -43,76 +29,63 @@ export class ElfUnwindRangesService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectElfUnwindRangesInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = elfUnwindRangesSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(
-        report.data,
-        input.value.max_ranges,
-        input.value.max_file_bytes,
-        input.value.offset,
-        input.value.limit,
-      )
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectElfUnwindRangesInputSchema,
+        outputSchema: elfUnwindRangesSchema,
+        provider: this.provider,
+        retainCompletedReport: true,
+        invalidOutputMessage:
           "ELF unwind provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture = BINARY_ARCHITECTURES.find(
-      (supported) => supported === elfArchitecture(value.machine),
-    );
-    const locations = [
-      { kind: "artifact-path" as const, path: value.artifact.path },
-      ...rangesOf(value).map((range) => ({
-        kind: "file-offset-range" as const,
-        start: range.offset,
-        end: range.offset + range.bytes,
-      })),
-    ];
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "elf",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(
+            report,
+            parameters.max_ranges,
+            parameters.max_file_bytes,
+            parameters.offset,
+            parameters.limit,
+          ),
+        buildEvidence: (value, identity, parameters) => {
+          const architecture = elfArchitecture(value.machine);
+          const locations = [
+            { kind: "artifact-path" as const, path: value.artifact.path },
+            ...rangesOf(value).map((range) => ({
+              kind: "file-offset-range" as const,
+              start: range.offset,
+              end: range.offset + range.bytes,
+            })),
+          ];
+          return createEvidence(
+            {
+              path: value.artifact.path,
+              format: "elf",
+              sha256: value.artifact.sha256,
+              ...(architecture === undefined ? {} : { architecture }),
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations,
+            },
+          );
         },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations,
-        },
-      ),
-      options?.signal,
+      },
+      rawInput,
+      options,
     );
   }
 }
-
-const inside =
-  (fileBytes: number) =>
-  (range: Range): boolean =>
-    range.bytes <= fileBytes && range.offset <= fileBytes - range.bytes;
 
 const rangesOf = (report: ElfUnwindRanges): Range[] => {
   const found: Range[] = [];
@@ -130,8 +103,10 @@ const rangesOf = (report: ElfUnwindRanges): Range[] => {
 const encodingOk = (encoding: Encoding | null): boolean =>
   encoding === null || encoding.name === elfEhPointerEncodingName(encoding.raw);
 
-const has = (report: ElfUnwindRanges, text: string): boolean =>
-  report.limitations.includes(text);
+const hasCode = (
+  report: ElfUnwindRanges,
+  code: ElfUnwindLimitationCode,
+): boolean => report.limitation_codes.includes(code);
 
 const frameOk = (report: ElfUnwindRanges): boolean => {
   const frame = report.eh_frame;
@@ -144,14 +119,13 @@ const frameOk = (report: ElfUnwindRanges): boolean => {
       report.coverage.total_ranges !== 0
     )
       return false;
-    if (frame.status === "unknown")
-      return report.coverage.status === "incomplete";
-    return has(report, FRAME_ABSENT);
+    if (frame.status === "unknown") return report.coverage.status === "partial";
+    return hasCode(report, "eh_frame_absent");
   }
   if (frame.status === "present")
     return frame.source !== null && frame.location !== null;
   return (
-    report.coverage.status === "incomplete" &&
+    report.coverage.status === "partial" &&
     (frame.location === null || frame.source !== null)
   );
 };
@@ -180,12 +154,12 @@ const headerOk = (report: ElfUnwindRanges, maxRanges: number): boolean => {
     return (
       header.status === "unknown" ||
       report.eh_frame.status === "unknown" ||
-      has(report, HEADER_ABSENT)
+      hasCode(report, "eh_frame_hdr_absent")
     );
   }
   if (header.status === "incomplete")
     return (
-      report.coverage.status === "incomplete" &&
+      report.coverage.status === "partial" &&
       report.coverage.eh_frame_hdr_agreement === "unavailable" &&
       (header.fde_count === null || header.table_entries <= header.fde_count)
     );
@@ -217,22 +191,29 @@ const headerOk = (report: ElfUnwindRanges, maxRanges: number): boolean => {
   )
     return false;
   if (report.coverage.eh_frame_hdr_agreement === "agree")
-    return !has(report, HEADER_MISMATCH);
+    return !hasCode(report, "eh_frame_hdr_mismatch");
   if (report.coverage.eh_frame_hdr_agreement === "disagree")
-    return has(report, HEADER_MISMATCH);
+    return hasCode(report, "eh_frame_hdr_mismatch");
   return false;
 };
 
 const debugOk = (report: ElfUnwindRanges): boolean => {
   const debug = report.debug_frame;
   if (debug.status === "present")
-    return debug.location !== null && has(report, DEBUG_PRESENT);
+    return (
+      debug.location !== null &&
+      hasCode(report, "debug_frame_present_undecoded")
+    );
   if (debug.location !== null) return false;
   if (debug.status === "incomplete")
     return (
-      report.coverage.status === "incomplete" && has(report, DEBUG_OUTSIDE)
+      report.coverage.status === "partial" &&
+      hasCode(report, "debug_frame_outside_file")
     );
-  return has(report, debug.status === "absent" ? DEBUG_ABSENT : DEBUG_UNKNOWN);
+  return hasCode(
+    report,
+    debug.status === "absent" ? "debug_frame_absent" : "debug_frame_unknown",
+  );
 };
 
 // The page returns exactly the CIEs its ranges name, in ascending index order,
@@ -381,10 +362,12 @@ const validReport = (
     report.type_name !== elfObjectTypeName(report.type) ||
     report.page.offset !== offset ||
     report.page.limit !== limit ||
-    !rangesOf(report).every(inside(report.artifact.bytes)) ||
-    !has(report, CFA_LIMITATION) ||
-    !has(report, UNTRUSTED_LIMITATION) ||
-    (indirectVisible(report) && !has(report, INDIRECT_LIMITATION))
+    !rangesOf(report).every(insideArtifact(report.artifact.bytes)) ||
+    report.limitations.length === 0 ||
+    !hasCode(report, "cfa_not_evaluated") ||
+    !hasCode(report, "untrusted_names") ||
+    (indirectVisible(report) &&
+      !hasCode(report, "indirect_pointers_not_dereferenced"))
   )
     return false;
   return (

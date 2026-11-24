@@ -64,7 +64,7 @@ import {
   CPU,
   fatImage,
 } from "../../src/artifacts/apple/MachoImage.fixture.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { readElectronFuseImage } from "../../src/electron/ElectronFuseReader.js";
 import { ElectronFuseProvider } from "../../src/electron/ElectronFuseProvider.js";
 import { RegularFileChangedError } from "../../src/filesystem/RegularFile.js";
@@ -132,11 +132,14 @@ it.each([
           Data: { $plist_type: "data", base64: "AAE=" },
         },
       });
+      const operand = commands[0]?.at(-1);
+      expect(operand).toBeDefined();
+      expect(operand).not.toBe(path);
       expect(commands).toEqual([
-        ["file", "-b", path],
-        ["plutil", "-lint", "--", path],
+        ["file", "-b", operand],
+        ["plutil", "-lint", "--", operand],
       ]);
-      expect(fault.reads).toBeGreaterThan(bytes.length);
+      expect(fault.reads).toBe(bytes.length);
       expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
     } finally {
       await client.close();
@@ -144,25 +147,8 @@ it.each([
   },
 );
 
-it("treats true EOF in an incomplete plist markup probe as unknown", async () => {
-  const { path, client } = await nativePlistFixture(Buffer.from("<"));
-  const resources = new ArtifactResourceScope();
-  fault.path = path;
-  fault.maximum = 1;
-  try {
-    expect(
-      await plistSourceFormat("ASCII text", {
-        selection: { path, origin: "selected" },
-        resources,
-        signal: undefined,
-      }),
-    ).toEqual({ ok: true, value: "unknown" });
-    expect(fault.reads).toBe(2);
-    expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
-  } finally {
-    await resources.close();
-    await client.close();
-  }
+it("keeps an incomplete markup prefix unknown", () => {
+  expect(plistSourceFormat("ASCII text", Buffer.from("<"))).toBe("unknown");
 });
 
 it("preserves a native plist probe read denial over a simultaneous abort", async () => {
@@ -337,7 +323,7 @@ it("keeps fuse sentinel offsets, states and complete-file digest across short re
     fault.path = path;
     fault.maximum = 2;
     expect(await provider.inspect({ path })).toEqual(expected);
-    const scanned = await readElectronFuseImage(path, { chunkBytes: 7 });
+    const scanned = await readElectronFuseImage(path);
     expect(scanned.sha256).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
@@ -413,7 +399,8 @@ it.each(["cancelled", "eof", "io"] as const)(
   async (outcome) => {
     const root = await createTestTempDirectory("rea-fuse-scan-short-read-");
     const path = join(root, "Electron");
-    await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
+    const image = thinFuseImage(OBSIDIAN_FUSE_BYTES);
+    await writeFile(path, image.bytes);
     const controller = new AbortController();
     const physicalFailure = Object.assign(new Error("scan read failed"), {
       code: "EIO",
@@ -422,9 +409,8 @@ it.each(["cancelled", "eof", "io"] as const)(
     const scanPositions: number[] = [];
     fault.path = path;
     fault.beforeRead = (position, length) => {
-      // Header reads use their format windows. A seven-byte read at zero
-      // starts this invocation's explicitly selected scan window.
-      if (position === 0 && length === 7) {
+      // Header reads use their format windows; the scan starts with the full file.
+      if (position === 0 && length === image.bytes.length) {
         scanning = true;
         fault.maximum = 2;
       }
@@ -440,7 +426,6 @@ it.each(["cancelled", "eof", "io"] as const)(
     };
     const failure: unknown = await readElectronFuseImage(path, {
       signal: controller.signal,
-      chunkBytes: 7,
     }).catch((cause: unknown) => cause);
     expect(scanning).toBe(true);
     expect(scanPositions).toEqual([0, 2, 4]);

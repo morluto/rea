@@ -1,10 +1,11 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it.each([90, 120])(
   "preserves caller-selected Grok startup timeout %s when refreshing its launcher",
@@ -24,7 +25,8 @@ it.each([90, 120])(
     ).toMatchObject({ status: "configured" });
     const refreshed = await readFile(configPath, "utf8");
     expect(
-      parseClientConfiguration(refreshed, "grok").servers.rea,
+      expectResultValue(parseClientConfiguration(refreshed, "grok")).servers
+        .rea,
     ).toMatchObject({
       command: "rea",
       args: ["mcp"],

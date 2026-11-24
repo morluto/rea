@@ -1,10 +1,12 @@
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { z } from "incur";
-import { cliDecimalField, cliIntegerArgument } from "./options.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { resolveJavaScriptMemberMutationAllowance } from "../config/javascriptMemberMutationAllowance.js";
+import { z } from "zod";
+import { cliDecimalField } from "./options.js";
+import { requirePresence } from "../domain/schemaConstraints.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createHistoricalSourceSummary } from "../domain/referenceSourceSummary.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import {
   referenceSourceImportAnalysisError,
@@ -21,19 +23,17 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import { nativeUiScenarioInputSchema } from "../domain/native/nativeUiObservation.js";
-import {
-  nativeCommandTimeoutField,
-  nativeUiDeadlineField,
-} from "../domain/native/nativeDeadlines.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { swiftSymbolsSchema } from "../contracts/native/nativeToolContracts.js";
+import { CLI_COMMANDS, cliCommandFor } from "../contracts/cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
+import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runOnSessionTarget } from "./contractCommandRunners.js";
 
 export const registerUtilityCommands = (
   cli: CliInstance,
@@ -42,54 +42,13 @@ export const registerUtilityCommands = (
   analysis: Pick<DirectAnalysis, "runProviderAnalysis" | "runSessionStatus">,
 ): void => {
   const { runProviderAnalysis } = analysis;
+  const run = runOnSessionTarget(runProviderAnalysis, logger);
   registerCapabilityCommands(cli, logger, analysis);
   registerNativeCommands(cli, logger, runProviderAnalysis);
   registerNativeCallCommands(cli, logger, runProviderAnalysis);
-  registerNativeUiCommands(cli, logger, runProviderAnalysis);
+  registerNativeUiCommands(cli, logger, run);
   registerReferenceSourceCommand(cli, logger, environment);
 };
-
-/** Decimal argv text; the shared deadline field owns the bounds and help. */
-const cliNativeDeadline = (field: typeof nativeUiDeadlineField) =>
-  cliDecimalField(field);
-
-// Decimal tokens only, for the same reason as cliNativeDeadline.
-const nativeUiScopeOptions = {
-  pid: cliIntegerArgument(1).describe("Existing application PID"),
-  windowId: cliIntegerArgument(1).describe(
-    "Exact selected application window ID",
-  ),
-  screenshot: z
-    .boolean()
-    .default(true)
-    .describe("Capture only the selected window"),
-  accessibility: z
-    .boolean()
-    .default(true)
-    .describe("Read the selected window accessibility tree"),
-  maxNodes: cliIntegerArgument(1)
-    .default(500)
-    .describe("Maximum accessibility nodes per capture"),
-  nativeUiDeadlineMs: cliNativeDeadline(nativeUiDeadlineField),
-};
-
-const nativeUiScope = (options: {
-  readonly pid: number;
-  readonly windowId: number;
-  readonly screenshot: boolean;
-  readonly accessibility: boolean;
-  readonly maxNodes: number;
-  readonly nativeUiDeadlineMs?: number | undefined;
-}) => ({
-  pid: options.pid,
-  window_id: options.windowId,
-  screenshot: options.screenshot,
-  accessibility: options.accessibility,
-  max_nodes: options.maxNodes,
-  ...(options.nativeUiDeadlineMs === undefined
-    ? {}
-    : { native_ui_deadline_ms: options.nativeUiDeadlineMs }),
-});
 
 /**
  * Passive observation and active scenarios have different input contracts.
@@ -99,79 +58,46 @@ const nativeUiScope = (options: {
 const registerNativeUiCommands = (
   cli: CliInstance,
   logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+  run: ReturnType<typeof runOnSessionTarget>,
 ): void => {
-  const pathArgument = z.object({
-    path: localPathStringSchema.describe("Local native executable or app path"),
-  });
-  cli.command(CLI_COMMANDS.observeNativeUi, {
-    description:
-      "Observe one already-running native application window by PID and window ID",
-    args: pathArgument,
-    options: z.object(nativeUiScopeOptions),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.observeNativeUi, () =>
-        runProviderAnalysis(
-          args.path,
-          "observe_native_ui",
-          nativeUiScope(options),
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
-  const operation = "capture_native_ui_scenario";
-  cli.command(CLI_COMMANDS.captureNativeUiScenario, {
-    description:
-      "Run declarative AX actions or waits in one exact native application window",
-    args: pathArgument,
-    options: z.object({
-      ...nativeUiScopeOptions,
-      steps: z
-        .string()
-        .describe(
-          "Required JSON array of one or more declarative AX actions or waits",
-        ),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.captureNativeUiScenario, async () => {
-        const parameters = nativeUiScope(options);
-        const decoded = safeParseJson(options.steps);
-        if (!decoded.ok)
-          return invalidNativeUiScenarioInput(operation, [
-            { path: ["steps"], reason: "invalid_format", expected: "JSON" },
-          ]);
-        const parsed = nativeUiScenarioInputSchema.safeParse({
-          ...parameters,
-          steps: decoded.value,
-        });
-        if (!parsed.success)
-          return invalidNativeUiScenarioInput(
-            operation,
-            projectInputIssues(parsed.error.issues, {
-              ...parameters,
-              steps: decoded.value,
-            }),
-          );
-        const { native_ui_deadline_ms: deadline, ...scenario } = parsed.data;
-        return runProviderAnalysis(
-          args.path,
-          operation,
-          deadline === undefined
-            ? scenario
-            : { ...scenario, native_ui_deadline_ms: deadline },
-          logger,
-        ).then(projectCliAnalysisResult);
-      }),
-  });
+  const sessionTarget = { description: "Local native executable or app path" };
+  const fields = {
+    pid: { description: "Existing application PID" },
+    window_id: { description: "Exact selected application window ID" },
+    max_nodes: { description: "Maximum accessibility nodes per capture" },
+  } as const;
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(NATIVE_TOOL_CONTRACTS, "observe_native_ui"),
+    {
+      description:
+        "Observe one already-running native application window by PID and window ID",
+      sessionTarget,
+      fields,
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(NATIVE_TOOL_CONTRACTS, "capture_native_ui_scenario"),
+    {
+      description:
+        "Run declarative AX actions or waits in one exact native application window",
+      sessionTarget,
+      runtimeJson: { steps: "steps must be valid JSON" },
+      fields: {
+        ...fields,
+        steps: {
+          description:
+            "Required JSON array of one or more declarative AX actions or waits",
+        },
+      },
+    },
+    run,
+  );
 };
-
-const invalidNativeUiScenarioInput = (
-  operation: string,
-  issues: ConstructorParameters<typeof AnalysisInputError>[2],
-) => ({
-  error: "Application workflow failed",
-  ...projectAnalysisError(new AnalysisInputError(operation, undefined, issues)),
-});
 
 const registerCapabilityCommands = (
   cli: CliInstance,
@@ -182,7 +108,7 @@ const registerCapabilityCommands = (
     CLI_COMMANDS.capabilities,
     CLI_COMMANDS.providers,
   ] as const) {
-    cli.command(command, {
+    registerCliCommand(cli, command, {
       description:
         command === "capabilities"
           ? "List provider capabilities and side effects"
@@ -197,89 +123,67 @@ const registerNativeCommands = (
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
+  const run = runOnSessionTarget(runProviderAnalysis, logger);
+  const machoTarget = { description: "Mach-O or app path" };
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_macho"),
+    {
+      description: "Run inspect_macho without launching Hopper",
+      sessionTarget: machoTarget,
+      evidenceDelivery: true,
+    },
+    run,
+  );
   for (const [command, tool] of [
-    [CLI_COMMANDS.inspectMacho, "inspect_macho"],
-    [CLI_COMMANDS.inspectSignature, "inspect_signature"],
-    [CLI_COMMANDS.listArchitectures, "list_architectures"],
-  ] as const) {
-    cli.command(command, {
-      description: `Run ${tool} without launching Hopper`,
-      args: z.object({
-        path: localPathStringSchema.describe("Mach-O or app path"),
-      }),
-      options: z.object({
-        nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
-      }),
-      run: ({ args, options }) =>
-        logCliCommand(logger, command, () =>
-          runProviderAnalysis(
-            args.path,
-            tool,
-            options.nativeCommandTimeoutMs === undefined
-              ? {}
-              : { native_command_timeout_ms: options.nativeCommandTimeoutMs },
-            logger,
-          ).then(projectCliAnalysisResult),
-        ),
-    });
-  }
-  cli.command(CLI_COMMANDS.inspectPlist, {
-    description: "Parse app plist metadata without launching Hopper",
-    args: z.object({
-      path: localPathStringSchema.describe("App or Mach-O path"),
-    }),
-    options: z.object({
-      relativePath: z
-        .string()
-        .optional()
-        .describe(
-          "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
-        ),
-      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-plist", () =>
-        runProviderAnalysis(
-          args.path,
-          "inspect_plist",
-          {
-            ...(options.relativePath === undefined
-              ? {}
-              : { path: options.relativePath }),
-            ...(options.nativeCommandTimeoutMs === undefined
-              ? {}
-              : { native_command_timeout_ms: options.nativeCommandTimeoutMs }),
-          },
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
-  cli.command(CLI_COMMANDS.demangleSwift, {
-    description: "Demangle Swift symbols without Hopper",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Artifact path used for evidence identity",
-      ),
-      symbols: swiftSymbolsSchema.describe("Swift mangled symbols to demangle"),
-    }),
-    options: z.object({
-      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "demangle-swift", () =>
-        runProviderAnalysis(
-          args.path,
-          "demangle_swift",
-          {
-            symbols: args.symbols,
-            ...(options.nativeCommandTimeoutMs === undefined
-              ? {}
-              : { native_command_timeout_ms: options.nativeCommandTimeoutMs }),
-          },
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+    [cliCommandFor("inspect_signature"), "inspect_signature"],
+    [cliCommandFor("list_architectures"), "list_architectures"],
+  ] as const)
+    registerContractCommand(
+      cli,
+      logger,
+      contractNamed(NATIVE_TOOL_CONTRACTS, tool),
+      {
+        command,
+        description: `Run ${tool} without launching Hopper`,
+        sessionTarget: machoTarget,
+      },
+      run,
+    );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_plist"),
+    {
+      description: "Parse app plist metadata without launching Hopper",
+      sessionTarget: { description: "App, Mach-O or plist path" },
+      fields: {
+        path: {
+          name: "relativePath",
+          description:
+            "Plist path relative to the app root, or an absolute path within the opened bundle (default: its Info.plist)",
+        },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(NATIVE_TOOL_CONTRACTS, "demangle_swift"),
+    {
+      description: "Demangle Swift symbols without Hopper",
+      sessionTarget: {
+        description: "Artifact path used for evidence identity",
+      },
+      positionals: ["symbols"],
+      fields: {
+        symbols: { description: "Swift mangled symbols to demangle" },
+      },
+    },
+    run,
+  );
 };
 
 const referenceSourceExcludePathsSchema = z.object({
@@ -347,15 +251,15 @@ const registerReferenceSourceCommand = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  cli.command(CLI_COMMANDS.importReferenceSource, {
+  registerCliCommand(cli, CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",
     args: z.object({
       root: localPathStringSchema.describe(
         "Local source directory to import as historical reference",
       ),
     }),
-    options: z
-      .object({
+    options: requirePresence(
+      z.object({
         excludePaths: z
           .string()
           .optional()
@@ -368,27 +272,25 @@ const registerReferenceSourceCommand = (
           .describe(
             "Complete committed graph or compact historical-source summary",
           ),
-        outlineDepth: cliIntegerArgument(0)
-          .optional()
-          .describe(
-            "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
-          ),
-      })
-      .superRefine((options, context) => {
-        if (options.outlineDepth !== undefined && options.detail !== "summary")
-          context.addIssue({
-            code: "custom",
-            path: ["outlineDepth"],
-            message: "--outline-depth requires --detail summary",
-          });
-      })
-      .meta({
-        if: { required: ["outlineDepth"] },
-        then: {
-          required: ["detail"],
-          properties: { detail: { const: "summary" } },
-        },
+        outlineDepth: cliDecimalField(
+          z
+            .int()
+            .min(0)
+            .optional()
+            .describe(
+              "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
+            ),
+        ),
       }),
+      [
+        {
+          when: "outlineDepth",
+          requires: "detail",
+          requiresValue: "summary",
+          message: "--outline-depth requires --detail summary",
+        },
+      ],
+    ),
     run: ({ args, options }) =>
       logCliCommand(
         logger,
@@ -404,10 +306,18 @@ const registerReferenceSourceCommand = (
               error: "Import failed",
               ...projectAnalysisError(config.error),
             };
+          const memberMutationAllowance =
+            resolveJavaScriptMemberMutationAllowance(environment);
+          if (!memberMutationAllowance.ok)
+            return {
+              error: "Import failed",
+              ...projectAnalysisError(memberMutationAllowance.error),
+            };
           return withCommandCancellation((signal) =>
             runReferenceSourceImport(
               {
                 root: args.root,
+                memberMutationAllowance: memberMutationAllowance.value,
                 caller: "rea-cli",
                 policy: config.value.referenceSourcePolicy,
                 importer: PRODUCT_IDENTITY.packageName,

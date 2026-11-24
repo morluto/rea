@@ -1,12 +1,14 @@
 import type { FileHandle } from "node:fs/promises";
 import { hashReadable } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../resources/index.js";
 import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { readMarshalSubset, type MarshalValue } from "./MarshalSubset.js";
 import {
   pyInstallerFailure,
+  pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
 import { pythonVersionForMagic } from "./PythonBytecode.js";
@@ -44,10 +46,9 @@ export type PyzArchive =
     };
 
 /** Bound the transient marshal table allocation independently of image expansion. */
-export const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
+const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
 
 interface PyzHeaderFacts {
-  readonly signatureMatches: boolean;
   readonly pythonMagic: Buffer;
   readonly pythonVersion: string | undefined;
   readonly tocOffset: number;
@@ -56,11 +57,17 @@ interface PyzHeaderFacts {
 }
 
 /** Called only after the exact fixed-header read has succeeded. */
-const readPyzHeaderFacts = (header: Buffer, size: number): PyzHeaderFacts => {
+const readPyzHeaderFacts = (
+  header: Buffer,
+  size: number,
+): Result<PyzHeaderFacts, PyInstallerFailure> => {
+  if (!header.subarray(0, 4).equals(PYZ_MAGIC))
+    return err(
+      pyInstallerFailure("format", "PYZ archive magic does not match"),
+    );
   const pythonMagic = Buffer.from(header.subarray(4, 8));
-  const tocOffset = header.readUInt32BE(8);
-  return {
-    signatureMatches: header.subarray(0, 4).equals(PYZ_MAGIC),
+  const tocOffset = new BinaryReader(header, false, "pyz").u32(8);
+  return ok({
     pythonMagic,
     pythonVersion: pythonVersionForMagic(pythonMagic),
     tocOffset,
@@ -68,7 +75,7 @@ const readPyzHeaderFacts = (header: Buffer, size: number): PyzHeaderFacts => {
       tocOffset >= PYZ_HEADER_BYTES && tocOffset <= size
         ? size - tocOffset
         : null,
-  };
+  });
 };
 
 /** Parse only the header and table in memory; hash the complete file range in chunks. */
@@ -89,7 +96,9 @@ export const readPyzArchive = async (
     signal,
   });
   if (!headerRead.ok) return headerRead;
-  const header = readPyzHeaderFacts(headerRead.value, size);
+  const admitted = readPyzHeaderFacts(headerRead.value, size);
+  if (!admitted.ok) return admitted;
+  const header = admitted.value;
   const tableSize =
     header.pythonVersion === undefined ? 0 : (header.tableBytes ?? 0);
   if (tableSize > MAX_PYZ_TABLE_BYTES)
@@ -127,10 +136,6 @@ const parsePyzParts = (
   table: Buffer,
   sha256: string,
 ): Result<PyzArchive, PyInstallerFailure> => {
-  if (!header.signatureMatches)
-    return err(
-      pyInstallerFailure("format", "PYZ archive magic does not match"),
-    );
   const { pythonMagic, pythonVersion, tocOffset } = header;
   if (pythonVersion === undefined)
     return ok({
@@ -271,8 +276,7 @@ const onePyzEntry = (
     (length > 0 && offset < PYZ_HEADER_BYTES)
   )
     return err(
-      pyInstallerFailure(
-        "integrity",
+      pyInstallerLayoutFailure(
         `PYZ entry at table index ${String(index)} extends outside the archive payload region`,
       ),
     );

@@ -9,10 +9,14 @@ import type { Result } from "../domain/result.js";
 import { ZodError } from "zod";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
-/** Bind the CLI selection before final cleanup or publication can retain it. */
+/**
+ * Bind the CLI selection before final cleanup or publication can retain it.
+ * An omitted `callerPath` keeps the Evidence's own, binding only the named
+ * auxiliary paths.
+ */
 export const bindCliEvidenceCallerPath =
   (
-    callerPath: string,
+    callerPath: string | undefined,
     run: () => Promise<Result<Evidence, AnalysisError>>,
     additionalPaths?: CallerInputPaths,
   ): (() => Promise<Result<Evidence, AnalysisError>>) =>

@@ -15,6 +15,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createJadxStartupFixture as setup } from "../../fixtures/android/jadxStartup.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -286,10 +287,13 @@ it("returns terminal startup diagnostics and partial identity through the MCP co
     { kind: "session", session },
     { androidAnalysis: f.provider },
   );
-  const client = new Client({
-    name: "jadx-startup-finalization",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "jadx-startup-finalization",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   try {
     const [local, remote] = InMemoryTransport.createLinkedPair();
     await server.connect(remote);

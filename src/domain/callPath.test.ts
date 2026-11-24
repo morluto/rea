@@ -8,7 +8,11 @@ import {
 import { buildCallPath } from "./callPath.js";
 import { combineFunctionRelationshipCoverage } from "./functionCallCoverage.js";
 import { callPathResultSchema, type CallPathInput } from "./callPathSchemas.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "./evidence.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { RelationshipCoverage } from "./relationshipCoverage.js";
 import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
@@ -23,6 +27,7 @@ const observe = (
     readonly relationshipCoverage?: RelationshipCoverage;
     readonly calleeUnavailable?: string;
     readonly analysisProfile?: AnalysisProfileCommitment;
+    readonly target?: EvidenceSubjectTarget;
   } = {},
 ): Evidence => {
   const value = {
@@ -69,7 +74,11 @@ const observe = (
         }),
   } satisfies JsonValue;
   return createEvidence(
-    { path: "/tmp/a", sha256: "a".repeat(64), format: "mach-o" },
+    options.target ?? {
+      path: "/tmp/a",
+      sha256: "a".repeat(64),
+      format: "mach-o",
+    },
     { id: provider, name: provider, version: "1" },
     {
       operation: "analyze_function",
@@ -275,7 +284,7 @@ describe("call path topology and capacity", () => {
     expect(result.status).toBe("unknown");
     expect(result.search_scope.exhaustive).toBe(false);
     expect(result.limitations).toEqual(limitations);
-  }, 30_000);
+  });
 
   it("retains every shortest path through merging branches and cycles", () => {
     const result = run([
@@ -580,6 +589,7 @@ describe("explicit call relationship coverage", () => {
         relationshipCoverage: {
           status: "partial",
           limitations: Array<string>(150_000).fill("omitted"),
+          limited_directions: ["callees"],
         },
         evidenceLimitations: [],
         dossierLimitations: [],
@@ -612,7 +622,11 @@ describe("explicit call relationship coverage", () => {
     const limitation = "Other callees were omitted by the provider cap.";
     const result = run([
       observe("0x1000", ["0x4000"], "rea-workflow", {
-        relationshipCoverage: { status: "partial", limitations: [limitation] },
+        relationshipCoverage: {
+          status: "partial",
+          limitations: [limitation],
+          limited_directions: ["callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -630,7 +644,11 @@ describe("explicit call relationship coverage", () => {
         relationshipCoverage: { status: "complete" },
       }),
       observe("0x4000", ["0x5000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -649,6 +667,7 @@ describe("explicit call relationship coverage", () => {
         relationshipCoverage: {
           status: "unknown",
           reason,
+          limited_directions: ["callers"],
           discovery: { callees: { status: "complete" } },
         },
       }),
@@ -656,6 +675,7 @@ describe("explicit call relationship coverage", () => {
         relationshipCoverage: {
           status: "unknown",
           reason,
+          limited_directions: ["callers"],
           discovery: { callees: { status: "complete" } },
         },
       }),
@@ -672,10 +692,18 @@ describe("explicit call relationship coverage", () => {
       "Callees: Upstream callees capped results at 500; additional callees remain unknown.";
     const result = run([
       observe("0x1000", ["0x2000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callees"],
+        },
       }),
       observe("0x2000", [], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -690,10 +718,18 @@ describe("explicit call relationship coverage", () => {
       "Callers: Upstream xrefs do not establish direct caller relationships. Callees: Upstream callees are not observed.";
     const result = run([
       observe("0x1000", ["0x2000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callers", "callees"],
+        },
       }),
       observe("0x2000", [], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callers", "callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -713,7 +749,11 @@ describe("explicit call relationship coverage", () => {
         },
       }),
       observe("0x2000", ["0x5000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -731,12 +771,14 @@ describe("IDA-capped callee coverage beside unknown callers", () => {
       {
         status: "unknown",
         reason: "Upstream xrefs do not establish direct caller relationships.",
+        limited_directions: ["callers"],
       },
       {
         status: "partial",
         limitations: [
           "Upstream callees capped results at 500; additional callees remain unknown.",
         ],
+        limited_directions: ["callees"],
       },
     );
     expect(combined.status).toBe("unknown");
@@ -792,6 +834,88 @@ describe("call path evidence admission", () => {
         goal: { address: "overlay%ZZ:0x4000" },
       }),
     ).toThrow();
+  });
+
+  it("refuses functions from the same bytes opened at different entry points", () => {
+    const raw = (entryPoint: string): EvidenceSubjectTarget => ({
+      path: "/tmp/a.bin",
+      sha256: "a".repeat(64),
+      format: "raw-binary",
+      architecture: "arm64",
+      selection: { kind: "entry-point", entry_point: entryPoint },
+    });
+    const start = observe("0x1000", ["0x4000"], "rea-workflow", {
+      target: raw("0x0"),
+    });
+    expect(
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", { target: raw("0x0") }),
+      ]).status,
+    ).toBe("found");
+    let refused: unknown;
+    try {
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", { target: raw("0x100") }),
+      ]);
+    } catch (cause: unknown) {
+      refused = cause;
+    }
+    expect(refused).toBeInstanceOf(AnalysisInputError);
+    expect(JSON.stringify((refused as AnalysisInputError).issues)).toContain(
+      "Call-path Evidence mixes artifact subjects",
+    );
+  });
+
+  it("joins M-profile loads with one base, however each chose its entry", () => {
+    const load = (
+      base: string,
+      entry: string,
+      basis: "caller" | "vector-table",
+    ): EvidenceSubjectTarget => ({
+      path: "/tmp/firmware.bin",
+      sha256: "a".repeat(64),
+      format: "raw-binary",
+      architecture: "arm",
+      selection: {
+        kind: "entry-point",
+        entry_point: entry,
+        raw_load: {
+          version: 1,
+          base_address: base,
+          architecture_variant: "armv7-m",
+          ...(basis === "vector-table" ? { vector_table_address: base } : {}),
+          entries: [
+            {
+              address: entry,
+              isa_mode: "thumb",
+              role: basis === "vector-table" ? "reset" : "entry",
+              basis,
+            },
+          ],
+        },
+      },
+    });
+    const start = observe("0x1000", ["0x4000"], "rea-workflow", {
+      target: load("0x0", "0x1c4", "vector-table"),
+    });
+    expect(
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", {
+          target: load("0x0", "0x200", "caller"),
+        }),
+      ]).status,
+    ).toBe("found");
+    expect(() =>
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", {
+          target: load("0x100000", "0x1001c4", "vector-table"),
+        }),
+      ]),
+    ).toThrow(AnalysisInputError);
   });
 
   it("requires an observed start function", () => {
