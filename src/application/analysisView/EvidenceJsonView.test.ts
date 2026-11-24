@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
 import { inspectAnalysisViewValidated } from "./AnalysisViewService.js";
+import { DEFAULT_EVIDENCE_JSON_PAGE_BYTES } from "../../domain/analysisView/evidenceJsonView.js";
+import { DEFAULT_AGENT_RESULT_BUDGET_BYTES } from "../../domain/analysisResourceLimits.js";
 
 const parentEvidence = (): Evidence =>
   createEvidence(
@@ -75,6 +77,47 @@ describe("evidence-json view", () => {
       const last = text.charCodeAt(text.length - 1);
       expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
     }
+  });
+
+  it("keeps a surrogate pair whole even in a one-unit page", () => {
+    const parent = parentEvidence();
+    const ledger = new EvidenceLedger();
+    expect(ledger.record(parent).ok).toBe(true);
+    const text = JSON.stringify(ledger.forAnalysis(parent.evidence_id));
+    const pair = text.indexOf("\u{1F600}");
+    const result = page(ledger, parent.evidence_id, pair, 1);
+    expect(result.text).toBe("\u{1F600}");
+    expect(result.coverage.next_offset).toBe(pair + 2);
+  });
+
+  it("sizes an omitted limit by escaped UTF-8 bytes, not code units", () => {
+    // Three-byte characters and quotes would overflow a code-unit page.
+    const parent = createEvidence(
+      { path: "/fixture/wide.bin", sha256: "d".repeat(64), format: "elf" },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "inspect_byte_entropy",
+        parameters: {},
+        result: { text: '中"'.repeat(40_000) },
+      },
+    );
+    const ledger = new EvidenceLedger();
+    expect(ledger.record(parent).ok).toBe(true);
+    const projected = inspectAnalysisViewValidated(
+      {
+        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+        view: { kind: "evidence-json", offset: 0 },
+      },
+      (id) => ledger.forAnalysis(id),
+    );
+    if (!projected.ok) throw projected.error;
+    const { text } = projected.value.normalized_result as unknown as PageResult;
+    expect(Buffer.byteLength(JSON.stringify(text)) - 2).toBeLessThanOrEqual(
+      DEFAULT_EVIDENCE_JSON_PAGE_BYTES,
+    );
+    expect(Buffer.byteLength(JSON.stringify(projected.value))).toBeLessThan(
+      DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+    );
   });
 
   it("reports an exhausted empty page past the end", () => {

@@ -368,6 +368,8 @@ async function inspect(mode, path, includeStringLiterals = false) {
       "inspect-go-binary",
       path,
       ...(includeStringLiterals ? ["--include-string-literals"] : []),
+      "--detail",
+      "complete",
       "--json",
     ];
     const { stdout } = await commands.exec(process.execPath, args, {
@@ -378,8 +380,8 @@ async function inspect(mode, path, includeStringLiterals = false) {
     envelope = JSON.parse(stdout);
   } else {
     const argumentsPayload = includeStringLiterals
-      ? { path, include_string_literals: true }
-      : { path };
+      ? { path, include_string_literals: true, detail: "complete" }
+      : { path, detail: "complete" };
     const response = await artifactMcpCall(
       client,
       { name: "inspect_go_binary", arguments: argumentsPayload },

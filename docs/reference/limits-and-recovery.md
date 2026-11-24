@@ -273,26 +273,37 @@ same effective setting so readiness changes along with repair and reset.
 limit. It defaults to 49,152 compact JSON bytes, about 12,000 tokens at the
 documented estimate of 4 bytes per token (an estimate, not a tokenizer
 measurement). It applies to tools with a `detail` selector when the caller
-omits `detail`, on MCP and the CLI. The stdio frame limit,
+omits `detail`, on MCP and the CLI. Its launch seed,
+`REA_AGENT_RESULT_BUDGET_BYTES`, also sets it for one-shot CLI invocations;
+an invalid seed leaves delivery unbudgeted (complete, as before) rather than
+falling back to the default, and settings inspection reports it. The stdio frame limit,
 `REA_MCP_MAX_RESPONSE_BYTES`, stays a separate transport safety net.
 
 When complete Evidence fits, it is delivered inline as before. When it does
 not, the work is never refused or truncated:
 
 - MCP retains the complete Evidence in the session and returns the
-  operation's summary view. Its `normalized_result.parent_evidence_id` names
-  the retained record, and a limitation states the complete size, the
-  effective budget, its source and range, and the recovery call.
+  operation's summary view, the same record `detail: "summary"` returns, so
+  its identity holds wherever a summary is accepted. The delivery facts
+  travel beside it, in a second text block `{"delivery": …}` and in
+  `_meta["rea/agent-budget-delivery"]`: `budget_bytes`, `budget_source`, the
+  range, `complete_bytes`, `estimated_complete_tokens`, `evidence_id`,
+  `retained`, `next` (the exact `inspect_analysis_view` call that pages the
+  complete record) and a `note` with the recovery.
 - `inspect_analysis_view` with view
   `{kind: "evidence-json", offset, limit}` pages the exact JSON text of the
   retained record in UTF-16 code units. Joining every page in offset order
-  reproduces it exactly. The default page is 32,768 code units, inside the
-  budget; the maximum is 1,048,576. The producer's own views (`managed-members`,
-  `inventory` and so on) select facts more cheaply.
-- The CLI with `--evidence_output` publishes the complete bundle beside the
-  summary, as `--detail summary` does. Without it, the one-shot CLI has
-  nowhere to retain the record: the summary's limitation says so and names
-  `--evidence_output` or `--detail complete` for a rerun.
+  reproduces it exactly, and no page splits a surrogate pair. With `limit`
+  omitted a page holds at most 32,768 bytes of escaped UTF-8 text, inside the
+  default budget for any characters; an explicit `limit` counts code units,
+  up to 1,048,576. The producer's own views (`managed-members`, `inventory`
+  and so on) select facts more cheaply.
+- The CLI with `--evidence_output` prints
+  `{"summary", "evidence_bundle", "delivery"}`, whose `delivery.next` names
+  the bundle as an `evidence-file` source. Without it, the one-shot CLI has
+  nowhere to retain the record: it prints `{"summary", "delivery"}` with
+  `retained: "not-retained"`, and the note names `--evidence_output` or
+  `--detail complete` for a rerun.
 
 Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
 inline on one call, or raise the setting for the runtime with

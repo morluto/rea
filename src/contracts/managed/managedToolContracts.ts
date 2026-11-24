@@ -66,7 +66,7 @@ export const MANAGED_TOOL_CONTRACTS = [
     retainedSummary: { evidenceParameters: "omit-detail" },
     ...toolContractMetadata("inspect_managed_artifact", evidenceEffects),
     description:
-      "Inspect PE/CLI identity, classification and metadata inventories from an explicit path or selected managed target without loading or executing code. Default complete returns all producer facts; detail summary retains them and returns identity, assembly/MVID, frameworks, coverage and counts. Page references/resources/attributes with inspect_analysis_view kind managed and normalized_result.parent_evidence_id. Counts cover returned rows; partial, malformed and unavailable metadata stay explicit. Tokens are build-local. Use inspect_managed_members for methods, signatures and CIL anchors.",
+      "Inspect PE/CLI identity, classification and metadata inventories from an explicit path or selected managed target without loading or executing code. Omitted detail returns all producer facts within the agent result budget, else the retained summary; detail summary retains them and returns identity, assembly/MVID, frameworks, coverage and counts. Page references/resources/attributes with inspect_analysis_view kind managed and normalized_result.parent_evidence_id. Counts cover returned rows; partial, malformed and unavailable metadata stay explicit. Tokens are build-local. Use inspect_managed_members for methods, signatures and CIL anchors.",
     kind: "managed-provider",
     inputSchema: managedArtifactInputSchema,
     outputSchema,

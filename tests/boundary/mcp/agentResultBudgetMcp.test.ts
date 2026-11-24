@@ -2,10 +2,21 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
-import { DEFAULT_AGENT_RESULT_BUDGET_BYTES } from "../../../src/domain/analysisResourceLimits.js";
-import { AGENT_RESULT_BUDGET_SETTING } from "../../../src/domain/agentResultBudget.js";
+import {
+  DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+  MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+} from "../../../src/domain/analysisResourceLimits.js";
+import { BinaryLayoutService } from "../../../src/application/binaryDiagnostics/BinaryLayoutService.js";
+import { ok } from "../../../src/domain/result.js";
+import { analysisViewLayoutFixture } from "../../fixtures/analysisView.js";
+import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
+import {
+  AGENT_RESULT_BUDGET_ENVIRONMENT,
+  AGENT_RESULT_BUDGET_SETTING,
+} from "../../../src/domain/agentResultBudget.js";
+import { AGENT_BUDGET_DELIVERY_META } from "../../../src/server/ToolResultDelivery.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
@@ -14,6 +25,15 @@ import { inspectAnalysisView } from "../../../src/application/analysisView/Analy
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+// The shared test environment raises the launch seed for semantic tests;
+// these tests observe the built-in default.
+beforeEach(() => {
+  vi.stubEnv(AGENT_RESULT_BUDGET_ENVIRONMENT, undefined);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const connect = async () => {
   const session = createTestBinarySession(() => {
@@ -50,6 +70,35 @@ const textBytes = (content: unknown): number => {
   return Buffer.byteLength(String(first.text));
 };
 
+type Delivery = {
+  readonly kind: string;
+  readonly budget_bytes: number;
+  readonly complete_bytes: number;
+  readonly evidence_id: string;
+  readonly retained: string;
+  readonly next?: {
+    readonly operation: string;
+    readonly arguments: {
+      readonly source: Record<string, string>;
+      readonly view: Record<string, unknown>;
+    };
+  };
+};
+
+/** The delivery facts block that follows the summary's own text block. */
+const deliveryOf = (result: {
+  readonly content?: unknown;
+  readonly _meta?: Record<string, unknown> | undefined;
+}): Delivery => {
+  const blocks = result.content as { type: string; text: string }[];
+  expect(blocks).toHaveLength(2);
+  const { delivery } = JSON.parse(blocks[1]!.text) as {
+    readonly delivery: Delivery;
+  };
+  expect(result._meta?.[AGENT_BUDGET_DELIVERY_META]).toEqual(delivery);
+  return delivery;
+};
+
 type EvidenceJsonPage = {
   readonly text: string;
   readonly coverage: { readonly next_offset: number | null };
@@ -58,16 +107,16 @@ type EvidenceJsonPage = {
 /** Page the retained record through inspect_analysis_view until exhausted. */
 const pageEvidenceJson = async (
   client: Client,
-  evidenceId: string,
+  next: NonNullable<Delivery["next"]>,
 ): Promise<string> => {
   const pages: string[] = [];
   let offset: number | null = 0;
   while (offset !== null) {
     const page = await client.callTool({
-      name: "inspect_analysis_view",
+      name: next.operation,
       arguments: {
-        source: { kind: "retained-evidence", evidence_id: evidenceId },
-        view: { kind: "evidence-json", offset },
+        ...next.arguments,
+        view: { ...next.arguments.view, offset },
       },
     });
     expect(page.isError).not.toBe(true);
@@ -108,12 +157,33 @@ it("delivers a retained summary with a cursor when complete Evidence exceeds the
     parent_operation: "inspect_byte_entropy",
     summary: { block_count: 4096 },
   });
-  const limitation = summary.limitations.find((text) =>
-    text.includes(AGENT_RESULT_BUDGET_SETTING),
+  const delivery = deliveryOf(delivered);
+  expect(delivery).toMatchObject({
+    kind: "agent-budget-summary",
+    budget_bytes: DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+    evidence_id: view.parent_evidence_id,
+    retained: "session",
+    next: {
+      operation: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: view.parent_evidence_id,
+        },
+        view: { kind: "evidence-json", offset: 0 },
+      },
+    },
+  });
+
+  // The budgeted summary is the same record detail summary delivers, so its
+  // identity holds wherever a summary is accepted.
+  const explicit = await client.callTool({
+    name: "inspect_byte_entropy",
+    arguments: { ...input, detail: "summary" },
+  });
+  expect(parseEvidence(explicit.structuredContent).evidence_id).toBe(
+    summary.evidence_id,
   );
-  expect(limitation).toContain(String(DEFAULT_AGENT_RESULT_BUDGET_BYTES));
-  expect(limitation).toContain(view.parent_evidence_id);
-  expect(limitation).toContain('"kind":"evidence-json"');
 
   // An explicit per-call detail keeps complete inline delivery.
   const complete = await client.callTool({
@@ -124,12 +194,11 @@ it("delivers a retained summary with a cursor when complete Evidence exceeds the
   const completeEvidence: Evidence = parseEvidence(complete.structuredContent);
   expect(completeEvidence.operation).toBe("inspect_byte_entropy");
   expect(completeEvidence.evidence_id).toBe(view.parent_evidence_id);
-  expect(textBytes(complete.content)).toBeGreaterThan(
-    DEFAULT_AGENT_RESULT_BUDGET_BYTES,
-  );
+  expect(complete.content).toHaveLength(1);
+  expect(textBytes(complete.content)).toBe(delivery.complete_bytes);
 
   // Paging the cursor reproduces the complete retained Evidence exactly.
-  const joined = await pageEvidenceJson(client, view.parent_evidence_id);
+  const joined = await pageEvidenceJson(client, delivery.next!);
   expect(joined).toBe(JSON.stringify(complete.structuredContent));
   expect(JSON.parse(joined)).toEqual(complete.structuredContent);
 });
@@ -168,6 +237,82 @@ it("delivers complete Evidence that fits, and follows a runtime budget override"
   );
 });
 
+it("budgets tools whose SDK schema defers validation to the application", async () => {
+  const fixture = analysisViewLayoutFixture();
+  // Enough symbol rows to exceed the smallest budget.
+  const layout = {
+    ...fixture,
+    symbols: [
+      ...fixture.symbols,
+      ...Array.from({ length: 16 }, (_, index) => ({
+        ...fixture.symbols[0]!,
+        entry_index: fixture.symbols.length + index,
+      })),
+    ],
+  };
+  const session = createTestBinarySession(() => {
+    throw new Error("Layout inspection must not start a deep provider");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      binaryLayout: new BinaryLayoutService({
+        inspectAndClose(input, options) {
+          return this.inspect(input, options);
+        },
+        identity: BINARY_LAYOUT_TEST_PROVIDER,
+        inspect: () => Promise.resolve(ok(layout)),
+      }),
+    },
+  );
+  const client = new Client(
+    { name: "agent-result-budget-layout", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const lowered = await client.callTool({
+    name: "update_analysis_settings",
+    arguments: {
+      changes: [
+        {
+          setting: AGENT_RESULT_BUDGET_SETTING,
+          action: "set",
+          value: MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+        },
+      ],
+    },
+  });
+  expect(lowered.isError).not.toBe(true);
+  const target = { path: layout.artifact.path };
+  const complete = await client.callTool({
+    name: "inspect_binary_layout",
+    arguments: { ...target, detail: "complete" },
+  });
+  expect(textBytes(complete.content)).toBeGreaterThan(
+    MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+  );
+  const budgeted = await client.callTool({
+    name: "inspect_binary_layout",
+    arguments: target,
+  });
+  expect(budgeted.isError).not.toBe(true);
+  expect(parseEvidence(budgeted.structuredContent).operation).toBe(
+    "inspect_analysis_view",
+  );
+  expect(deliveryOf(budgeted)).toMatchObject({
+    budget_bytes: MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+    evidence_id: parseEvidence(complete.structuredContent).evidence_id,
+  });
+});
+
 it("keeps admission refusals unchanged by the delivery budget", async () => {
   const client = await connect();
   // 32,769 blocks of 256 bytes exceed the 32,768-block admission limit.
@@ -201,15 +346,21 @@ it("delivers the same over-budget summary through CLI publication, with complete
       evidenceOutput,
     });
 
-  const unretained = parseEvidence(await publish(undefined));
-  expect(unretained.operation).toBe("inspect_analysis_view");
+  const unretained = (await publish(undefined)) as {
+    readonly summary: unknown;
+    readonly delivery: Delivery;
+  };
+  const unretainedSummary = parseEvidence(unretained.summary);
+  expect(unretainedSummary.operation).toBe("inspect_analysis_view");
   expect(
-    (unretained.normalized_result as { parent_evidence_id: string })
+    (unretainedSummary.normalized_result as { parent_evidence_id: string })
       .parent_evidence_id,
   ).toBe(complete.evidence_id);
-  expect(
-    unretained.limitations.some((text) => text.includes("--evidence_output")),
-  ).toBe(true);
+  expect(unretained.delivery).toMatchObject({
+    retained: "not-retained",
+    evidence_id: complete.evidence_id,
+  });
+  expect(unretained.delivery.next).toBeUndefined();
   expect(parseEvidence(await publish("complete")).evidence_id).toBe(
     complete.evidence_id,
   );
@@ -221,15 +372,17 @@ it("delivers the same over-budget summary through CLI publication, with complete
   const published = (await publish(undefined, bundle)) as {
     readonly summary: Evidence;
     readonly evidence_bundle: { readonly path: string };
+    readonly delivery: Delivery;
   };
   expect(published.summary.operation).toBe("inspect_analysis_view");
   expect(published.evidence_bundle.path).toBe(bundle);
+  expect(published.delivery.next?.arguments.source).toEqual({
+    kind: "evidence-file",
+    path: bundle,
+    evidence_id: complete.evidence_id,
+  });
   const page = await inspectAnalysisView({
-    source: {
-      kind: "evidence-file",
-      path: bundle,
-      evidence_id: complete.evidence_id,
-    },
+    ...published.delivery.next!.arguments,
     view: { kind: "evidence-json", offset: 0, limit: 1_048_576 },
   });
   if (!page.ok) throw page.error;

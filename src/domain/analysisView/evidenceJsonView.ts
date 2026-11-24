@@ -7,11 +7,11 @@ import { analysisViewInputError } from "./analysisViewErrors.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 /**
- * Default page of serialized Evidence, in UTF-16 code units. JSON-in-JSON
- * escaping grows a page by about a quarter for typical Evidence, so this
- * default stays inside the default agent result budget.
+ * Default page size when `limit` is omitted, in UTF-8 bytes of the page as an
+ * escaped JSON string. With the view Evidence around it the page stays inside
+ * the default agent result budget whatever characters it holds.
  */
-export const DEFAULT_EVIDENCE_JSON_PAGE_CODE_UNITS = 32_768;
+export const DEFAULT_EVIDENCE_JSON_PAGE_BYTES = 32_768;
 
 /**
  * Largest page. Escaping one code unit as `\uXXXX` takes six bytes, so a full
@@ -34,8 +34,10 @@ export const evidenceJsonViewRequestSchema = z.strictObject({
     .int()
     .positive()
     .max(MAXIMUM_EVIDENCE_JSON_PAGE_CODE_UNITS)
-    .default(DEFAULT_EVIDENCE_JSON_PAGE_CODE_UNITS)
-    .describe("UTF-16 code units in this page."),
+    .optional()
+    .describe(
+      "UTF-16 code units in this page. Omit for a page of at most 32768 escaped UTF-8 bytes. A surrogate pair is never split: a page that would end inside one ends before it, or after it when the pair alone exceeds the limit.",
+    ),
 });
 
 type EvidenceJsonViewRequest = z.output<typeof evidenceJsonViewRequestSchema>;
@@ -56,15 +58,56 @@ const serializeEvidence = (evidence: Evidence): string => {
   return text;
 };
 
-/** A page end that would split a surrogate pair moves back by one unit. */
-const pageEnd = (text: string, offset: number, limit: number): number => {
-  const end = Math.min(text.length, offset + limit);
-  if (end <= offset || end >= text.length) return end;
-  const last = text.charCodeAt(end - 1);
-  const next = text.charCodeAt(end);
-  const splitsPair =
-    last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
-  return splitsPair && end - 1 > offset ? end - 1 : end;
+const isHigh = (unit: number): boolean => unit >= 0xd800 && unit <= 0xdbff;
+const isLow = (unit: number): boolean => unit >= 0xdc00 && unit <= 0xdfff;
+
+/** Whether a page ending at `end` would separate a surrogate pair. */
+const splitsPair = (text: string, end: number): boolean =>
+  end > 0 &&
+  end < text.length &&
+  isHigh(text.charCodeAt(end - 1)) &&
+  isLow(text.charCodeAt(end));
+
+/** UTF-8 bytes one code unit takes inside an escaped JSON string. */
+const escapedUnitBytes = (text: string, index: number): number => {
+  const unit = text.charCodeAt(index);
+  if (unit === 0x22 || unit === 0x5c) return 2;
+  if (unit < 0x20)
+    return unit === 0x08 ||
+      unit === 0x09 ||
+      unit === 0x0a ||
+      unit === 0x0c ||
+      unit === 0x0d
+      ? 2
+      : 6;
+  if (unit < 0x80) return 1;
+  if (unit < 0x800) return 2;
+  // A paired surrogate is half of one four-byte character; a lone one is escaped.
+  if (isHigh(unit)) return isLow(text.charCodeAt(index + 1)) ? 2 : 6;
+  if (isLow(unit)) return isHigh(text.charCodeAt(index - 1)) ? 2 : 6;
+  return 3;
+};
+
+/** The end of the page that `limit`, or the default byte size, selects. */
+const pageEnd = (
+  text: string,
+  offset: number,
+  limit: number | undefined,
+): number => {
+  let end = offset;
+  if (limit === undefined) {
+    let bytes = 0;
+    while (end < text.length) {
+      const cost = escapedUnitBytes(text, end);
+      if (bytes + cost > DEFAULT_EVIDENCE_JSON_PAGE_BYTES && end > offset)
+        break;
+      bytes += cost;
+      end += 1;
+    }
+  } else end = Math.min(text.length, offset + limit);
+  if (!splitsPair(text, end)) return end;
+  // Keep the pair whole: end before it, or after it when it fills the page.
+  return end - 1 > offset ? end - 1 : end + 1;
 };
 
 /** Page the parent record's own JSON text without interpreting it. */

@@ -1,10 +1,10 @@
+import { z } from "zod";
 import {
   DEFAULT_AGENT_RESULT_BUDGET_BYTES,
   MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
   MINIMUM_AGENT_RESULT_BUDGET_BYTES,
 } from "./analysisResourceLimits.js";
 import { currentAnalysisSettingOverride } from "./analysisOperationSnapshot.js";
-import { DEFAULT_EVIDENCE_JSON_PAGE_CODE_UNITS } from "./analysisView/evidenceJsonView.js";
 import type { JsonValue } from "./jsonValue.js";
 import { jsonValueByteLength } from "./jsonValueByteLength.js";
 
@@ -19,18 +19,46 @@ export const AGENT_RESULT_BUDGET_SETTING =
  */
 export const ESTIMATED_JSON_BYTES_PER_TOKEN = 4;
 
+/** Launch seed for the agent result budget, for one-shot CLI callers too. */
+export const AGENT_RESULT_BUDGET_ENVIRONMENT = "REA_AGENT_RESULT_BUDGET_BYTES";
+
+const decimalInteger = /^[1-9]\d*$/u;
+const seedConstraint = `${AGENT_RESULT_BUDGET_ENVIRONMENT} must be a decimal integer from ${String(MINIMUM_AGENT_RESULT_BUDGET_BYTES)} to ${String(MAXIMUM_AGENT_RESULT_BUDGET_BYTES)} bytes; the default is ${String(DEFAULT_AGENT_RESULT_BUDGET_BYTES)}.`;
+
+/** Launch seed admission, shared with settings inspection and doctor. */
+export const agentResultBudgetBytesSchema = z
+  .string()
+  .regex(decimalInteger, { error: seedConstraint })
+  .transform(Number)
+  .pipe(
+    z
+      .int()
+      .min(MINIMUM_AGENT_RESULT_BUDGET_BYTES, { error: seedConstraint })
+      .max(MAXIMUM_AGENT_RESULT_BUDGET_BYTES, { error: seedConstraint }),
+  );
+
 /** The budget in force for this operation and where it came from. */
 export interface AgentResultBudget {
   readonly bytes: number;
-  readonly source: "default" | "runtime";
+  readonly source: "default" | "setting" | "runtime";
 }
 
-/** The accepted operation's override, or the built-in default. */
-export const currentAgentResultBudget = (): AgentResultBudget => {
+/**
+ * The accepted operation's override, then the launch seed, then the built-in
+ * default. An invalid seed is not replaced by the default: delivery is not
+ * budgeted (complete, as before the budget existed), and settings inspection
+ * and doctor report the seed. A delivery budget never refuses work.
+ */
+export const currentAgentResultBudget = (
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): AgentResultBudget | undefined => {
   const override = currentAnalysisSettingOverride(AGENT_RESULT_BUDGET_SETTING);
-  return override === undefined
-    ? { bytes: DEFAULT_AGENT_RESULT_BUDGET_BYTES, source: "default" }
-    : { bytes: override, source: "runtime" };
+  if (override !== undefined) return { bytes: override, source: "runtime" };
+  const seed = environment[AGENT_RESULT_BUDGET_ENVIRONMENT];
+  if (seed === undefined)
+    return { bytes: DEFAULT_AGENT_RESULT_BUDGET_BYTES, source: "default" };
+  const parsed = agentResultBudgetBytesSchema.safeParse(seed);
+  return parsed.success ? { bytes: parsed.data, source: "setting" } : undefined;
 };
 
 /** Estimated tokens for a JSON byte count; a label, never a measurement. */
@@ -49,38 +77,98 @@ export const agentBudgetOverflowBytes = (
     ? undefined
     : jsonValueByteLength(value);
 
-/** How the caller reaches the complete Evidence that a summary replaced. */
+/** Where the complete Evidence that a summary replaced can be read. */
 export type AgentBudgetRecovery =
-  | { readonly kind: "session"; readonly evidenceId: string }
-  | {
-      readonly kind: "evidence-file";
-      readonly evidenceId: string;
-      readonly path: string | undefined;
-    }
+  | { readonly kind: "session" }
+  | { readonly kind: "evidence-file"; readonly path: string | undefined }
   | { readonly kind: "not-retained" };
 
-const pageCall = (
-  command: string,
+/**
+ * Delivery facts for a result replaced by its summary. They describe the
+ * delivery, not the analysis, so they travel beside the summary record and
+ * never change its identity.
+ */
+export interface AgentBudgetDelivery {
+  readonly kind: "agent-budget-summary";
+  readonly setting: typeof AGENT_RESULT_BUDGET_SETTING;
+  readonly budget_bytes: number;
+  readonly budget_source: AgentResultBudget["source"];
+  readonly budget_minimum: number;
+  readonly budget_maximum: number;
+  readonly complete_bytes: number;
+  /** Estimated at ESTIMATED_JSON_BYTES_PER_TOKEN; not a tokenizer count. */
+  readonly estimated_complete_tokens: number;
+  readonly evidence_id: string;
+  readonly retained: AgentBudgetRecovery["kind"];
+  /** The view call that pages the complete record, when it was retained. */
+  readonly next?: {
+    readonly operation: "inspect_analysis_view";
+    readonly arguments: {
+      readonly source: Readonly<Record<string, string>>;
+      readonly view: { readonly kind: "evidence-json"; readonly offset: 0 };
+    };
+  };
+  readonly note: string;
+}
+
+const pageSource = (
   evidenceId: string,
-  source: string,
-): string =>
-  `${command} {"source":${source},"view":{"kind":"evidence-json","offset":0,"limit":${String(DEFAULT_EVIDENCE_JSON_PAGE_CODE_UNITS)}}} pages its exact JSON; follow coverage.next_offset. The producer's own views select facts from ${evidenceId} more cheaply`;
+  recovery: AgentBudgetRecovery,
+): Readonly<Record<string, string>> | undefined => {
+  if (recovery.kind === "session")
+    return { kind: "retained-evidence", evidence_id: evidenceId };
+  if (recovery.kind === "evidence-file" && recovery.path !== undefined)
+    return {
+      kind: "evidence-file",
+      path: recovery.path,
+      evidence_id: evidenceId,
+    };
+  return undefined;
+};
+
+const recoveryNote = (recovery: AgentBudgetRecovery): string => {
+  if (recovery.kind === "session")
+    return `It is retained in this session: next pages its exact JSON through inspect_analysis_view (follow coverage.next_offset); the producer's own views select facts more cheaply. Pass detail complete for all of it inline, or raise ${AGENT_RESULT_BUDGET_SETTING} with update_analysis_settings.`;
+  if (recovery.kind === "evidence-file")
+    return "It is in the --evidence_output bundle: rea inspect-analysis-view with next.arguments pages its exact JSON. Pass --detail complete for all of it inline.";
+  return "This invocation selected no --evidence_output, so it was not retained: rerun with --evidence_output PATH to keep it for inspect-analysis-view, or with --detail complete for all of it inline.";
+};
 
 /**
- * The limitation an over-budget delivery carries: the effective budget, the
+ * The delivery facts for one over-budget result: the effective budget, the
  * complete size, where the complete Evidence is and the call that reads it.
  */
-export const agentBudgetLimitation = (input: {
+export const agentBudgetDelivery = (input: {
   readonly operation: string;
+  readonly evidenceId: string;
   readonly completeBytes: number;
   readonly budget: AgentResultBudget;
   readonly recovery: AgentBudgetRecovery;
-}): string => {
-  const { budget, completeBytes, recovery } = input;
-  const sizes = `Complete ${input.operation} Evidence is ${String(completeBytes)} bytes (about ${String(estimatedJsonTokens(completeBytes))} tokens, estimated at ${String(ESTIMATED_JSON_BYTES_PER_TOKEN)} bytes per token), over the agent delivery budget of ${String(budget.bytes)} bytes (about ${String(estimatedJsonTokens(budget.bytes))} tokens; ${AGENT_RESULT_BUDGET_SETTING}, source ${budget.source}, range ${String(MINIMUM_AGENT_RESULT_BUDGET_BYTES)}..${String(MAXIMUM_AGENT_RESULT_BUDGET_BYTES)}), so this is its summary. Nothing was truncated.`;
-  if (recovery.kind === "session")
-    return `${sizes} The complete Evidence is retained in this session as ${recovery.evidenceId}: ${pageCall("inspect_analysis_view", recovery.evidenceId, `{"kind":"retained-evidence","evidence_id":"${recovery.evidenceId}"}`)}. Pass detail complete for all of it inline, or raise ${AGENT_RESULT_BUDGET_SETTING} with update_analysis_settings.`;
-  if (recovery.kind === "evidence-file")
-    return `${sizes} The complete Evidence ${recovery.evidenceId} is in the --evidence_output bundle${recovery.path === undefined ? "" : ` ${recovery.path}`}: rea ${pageCall("inspect-analysis-view", recovery.evidenceId, `{"kind":"evidence-file","path":${JSON.stringify(recovery.path ?? "<bundle path>")},"evidence_id":"${recovery.evidenceId}"}`)}. Pass --detail complete for all of it inline.`;
-  return `${sizes} This invocation selected no --evidence_output, so the complete Evidence was not retained: rerun with --evidence_output PATH to keep it for inspect-analysis-view, or with --detail complete for all of it inline.`;
+}): AgentBudgetDelivery => {
+  const { budget, completeBytes, evidenceId, recovery } = input;
+  const source = pageSource(evidenceId, recovery);
+  return {
+    kind: "agent-budget-summary",
+    setting: AGENT_RESULT_BUDGET_SETTING,
+    budget_bytes: budget.bytes,
+    budget_source: budget.source,
+    budget_minimum: MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+    budget_maximum: MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
+    complete_bytes: completeBytes,
+    estimated_complete_tokens: estimatedJsonTokens(completeBytes),
+    evidence_id: evidenceId,
+    retained: recovery.kind,
+    ...(source === undefined
+      ? {}
+      : {
+          next: {
+            operation: "inspect_analysis_view" as const,
+            arguments: {
+              source,
+              view: { kind: "evidence-json" as const, offset: 0 as const },
+            },
+          },
+        }),
+    note: `Complete ${input.operation} Evidence ${evidenceId} is ${String(completeBytes)} bytes (about ${String(estimatedJsonTokens(completeBytes))} tokens, estimated at ${String(ESTIMATED_JSON_BYTES_PER_TOKEN)} bytes per token), over the agent result budget of ${String(budget.bytes)} bytes (${AGENT_RESULT_BUDGET_SETTING}, source ${budget.source}), so its summary was delivered. Nothing was truncated. ${recoveryNote(recovery)}`,
+  };
 };

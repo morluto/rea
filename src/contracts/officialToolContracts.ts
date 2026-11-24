@@ -169,7 +169,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "list_names",
     evidenceEffects,
-    "List every analyzed memory and external symbol as address/value pairs. Provider metadata distinguishes Ghidra primary, dynamic, external, type, and source facts when available. Select detail summary for counts and retained native-inventory pages; complete remains the default.",
+    "List every analyzed memory and external symbol as address/value pairs. Provider metadata distinguishes Ghidra primary, dynamic, external, type, and source facts when available. Select detail summary for counts and retained native-inventory pages; omitted detail is complete within the agent result budget, else the retained summary.",
     z.object({
       document,
       address: optionalAddress,
@@ -180,7 +180,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "list_procedures",
     providerNetworkEvidenceEffects,
-    "List every analyzed procedure as address/value pairs after provider analysis. Ghidra metadata distinguishes thunks and external functions; use returned addresses in later function operations. Select detail summary for counts and retained native-inventory pages; complete remains the default.",
+    "List every analyzed procedure as address/value pairs after provider analysis. Ghidra metadata distinguishes thunks and external functions; use returned addresses in later function operations. Select detail summary for counts and retained native-inventory pages; omitted detail is complete within the agent result budget, else the retained summary.",
     z.object({ document, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),
@@ -193,7 +193,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "list_strings",
     providerNetworkEvidenceEffects,
-    "List every provider-reported string object or candidate, or filter to one address, as address/value pairs with encoding, terminator status, and byte length when available. Hopper reads complete typed objects and retains its original display text as provider_value; long literals may span adjacent unterminated objects. Kuna scans mapped printable sequences of at least five characters, including unterminated fragments; references are not computed. Select detail summary for counts and retained native-inventory pages; complete remains the default.",
+    "List every provider-reported string object or candidate, or filter to one address, as address/value pairs with encoding, terminator status, and byte length when available. Hopper reads complete typed objects and retains its original display text as provider_value; long literals may span adjacent unterminated objects. Kuna scans mapped printable sequences of at least five characters, including unterminated fragments; references are not computed. Select detail summary for counts and retained native-inventory pages; omitted detail is complete within the agent result budget, else the retained summary.",
     z.object({
       document,
       address: optionalAddress,
@@ -271,7 +271,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "procedure_pseudo_code",
     providerUiNetworkEvidenceEffects,
-    "Decompile one analyzed procedure by symbol or provider-normalized address. Returns provider-specific pseudocode or null, never original source; raw_result.pseudocode_absence distinguishes reported provider-failure from not-in-export, otherwise the cause is unknown. Use procedure_assembly for instruction precision. detail summary retains text for inspect_analysis_view native/pseudocode pages without another decompile; complete is default. analysis: independent_fresh requests a separate attempt only when binary_session advertises independent_decompile; it may use different analysis context. analysis: call_destination attempts standalone decompilation at an exact incoming direct call to an arm64 Mach-O address outside the procedure inventory when the capability declares call_destination_decompile. The result retains the call site and does not establish a discovered procedure. Ghidra accepts file-offset:0x... or unique file offsets when a 0x selector resolves to no procedure; existing analysis addresses take precedence, and space-qualified addresses avoid that fallback. Its terminal-call assumptions may truncate the analyzed body, as limitations report.",
+    "Decompile one analyzed procedure by symbol or provider-normalized address. Returns provider-specific pseudocode or null, never original source; raw_result.pseudocode_absence distinguishes reported provider-failure from not-in-export, otherwise the cause is unknown. Use procedure_assembly for instruction precision. detail summary retains text for inspect_analysis_view native/pseudocode pages without another decompile; omitted detail is complete within the agent result budget, else the retained summary. analysis: independent_fresh requests a separate attempt only when binary_session advertises independent_decompile; it may use different analysis context. analysis: call_destination attempts standalone decompilation at an exact incoming direct call to an arm64 Mach-O address outside the procedure inventory when the capability declares call_destination_decompile. The result retains the call site and does not establish a discovered procedure. Ghidra accepts file-offset:0x... or unique file offsets when a 0x selector resolves to no procedure; existing analysis addresses take precedence, and space-qualified addresses avoid that fallback. Its terminal-call assumptions may truncate the analyzed body, as limitations report.",
     z.object({
       procedure,
       document,

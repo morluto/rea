@@ -53,7 +53,9 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   schema: Schema,
 ): Schema => {
   const standard = schema["~standard"];
-  if (standard.vendor !== "zod") return schema;
+  // Zod issues feed field-level diagnostics; the delivery selection is
+  // captured for every vendor, since every admitted call has its own.
+  const zod = standard.vendor === "zod";
   return {
     ...schema,
     "~standard": {
@@ -63,12 +65,12 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
         const capture = (
           result: Awaited<ReturnType<typeof standard.validate>>,
         ) => {
-          if (context?.tool === tool && result.issues !== undefined)
+          if (zod && context?.tool === tool && result.issues !== undefined)
             context.validation = {
               issues: result.issues as readonly z.core.$ZodIssue[],
               input: value,
             };
-          if (result.issues === undefined)
+          if (zod && result.issues === undefined)
             context?.captureCallerParameters(tool, value, result.value);
           if (result.issues === undefined && context?.tool === tool)
             context.deliverySelection = {

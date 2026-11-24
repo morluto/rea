@@ -108,8 +108,13 @@ await withVerifierFixture(rootFixture, async () => {
           ? await cli(
               "analyze-javascript-application",
               result.analysis_input.input_path,
+              "--detail",
+              "complete",
             )
-          : await call("analyze_javascript_application", result.analysis_input);
+          : await call("analyze_javascript_application", {
+              ...result.analysis_input,
+              detail: "complete",
+            });
       assert.equal(analysis.normalized_result.statistics.parse_failures, 0);
       assert.equal(
         analysis.normalized_result.statistics.parsed_javascript_files,

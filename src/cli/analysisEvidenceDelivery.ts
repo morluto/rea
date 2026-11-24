@@ -20,9 +20,10 @@ import {
   type CliDeliveryDetail,
 } from "./analysisEvidenceDeliveryOptions.js";
 import {
-  agentBudgetLimitation,
+  agentBudgetDelivery,
   agentBudgetOverflowBytes,
   currentAgentResultBudget,
+  type AgentBudgetDelivery,
   type AgentBudgetRecovery,
 } from "../domain/agentResultBudget.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -179,25 +180,23 @@ export const publishCliAnalysisEvidence = async (
     inputError.retainPartialObservation(complete);
     return projectFailure(inputError);
   }
-  const overBudget = budgetLimitation(complete, input);
+  const overBudget = budgetDelivery(complete, input);
   if (evidenceOutput === undefined) {
     if (overBudget === undefined) return complete;
-    const summary = await overBudgetSummary(
-      complete,
-      overBudget({ kind: "not-retained" }),
-    );
-    return summary ?? complete;
+    const summary = await overBudgetSummary(complete);
+    return summary === undefined
+      ? complete
+      : {
+          summary,
+          delivery: deliveryJson(overBudget({ kind: "not-retained" })),
+        };
   }
   const outputPath = absoluteCallerPath(evidenceOutput);
   const published = await publishDeliveredEvidence(
     complete,
     evidenceOutput,
     closureInput,
-    overBudget?.({
-      kind: "evidence-file",
-      evidenceId: complete.evidence_id,
-      path: revealsSensitiveValue(outputPath, input) ? undefined : outputPath,
-    }),
+    overBudget !== undefined,
   );
   if (!published.ok) {
     const failure = projectFailure(published.error.error);
@@ -205,31 +204,47 @@ export const publishCliAnalysisEvidence = async (
       ? failure
       : withUndeliveredSourceClosure(failure, closureInput);
   }
+  const delivery =
+    published.value.budgeted && overBudget !== undefined
+      ? overBudget({
+          kind: "evidence-file",
+          path: revealsSensitiveValue(outputPath, input)
+            ? undefined
+            : outputPath,
+        })
+      : undefined;
   return published.value.summarized
     ? {
         summary: published.value.delivered,
         evidence_bundle: published.value.receipt,
+        ...(delivery === undefined ? {} : { delivery: deliveryJson(delivery) }),
       }
     : published.value.delivered;
 };
 
+/** Delivery facts are plain JSON by construction. */
+const deliveryJson = (delivery: AgentBudgetDelivery): JsonValue =>
+  delivery as unknown as JsonValue;
+
 /**
  * For a caller that left `--detail` to the agent result budget, the
- * limitation an over-budget delivery carries for each place the complete
+ * delivery facts an over-budget result carries for each place the complete
  * Evidence can be; undefined when complete Evidence fits or was chosen.
  */
-const budgetLimitation = (
+const budgetDelivery = (
   complete: Evidence,
   input: CliEvidencePublication,
-): ((recovery: AgentBudgetRecovery) => string) | undefined => {
+): ((recovery: AgentBudgetRecovery) => AgentBudgetDelivery) | undefined => {
   if (input.detail !== undefined) return undefined;
   const budget = currentAgentResultBudget();
+  if (budget === undefined) return undefined;
   const completeBytes = agentBudgetOverflowBytes(complete, budget);
   return completeBytes === undefined
     ? undefined
     : (recovery) =>
-        agentBudgetLimitation({
+        agentBudgetDelivery({
           operation: complete.operation,
+          evidenceId: complete.evidence_id,
           completeBytes,
           budget,
           recovery,
@@ -243,11 +258,10 @@ const budgetLimitation = (
  */
 const overBudgetSummary = async (
   complete: Evidence,
-  limitation: string,
 ): Promise<Evidence | undefined> => {
   const { summarizeOverBudgetEvidence } =
     await import("../application/analysisView/AnalysisViewService.js");
-  const summary = summarizeOverBudgetEvidence(complete, limitation);
+  const summary = summarizeOverBudgetEvidence(complete);
   if (!summary.ok) return undefined;
   return complete.caller_input_path !== undefined ||
     complete.caller_input_paths !== undefined
@@ -270,7 +284,7 @@ const publishDeliveredEvidence = async (
   complete: Evidence,
   evidenceOutput: string,
   input: CliEvidencePublication,
-  overBudgetLimitation?: string,
+  overBudget = false,
 ): Promise<
   Result<
     {
@@ -278,6 +292,8 @@ const publishDeliveredEvidence = async (
       readonly receipt: JsonValue;
       /** Whether `delivered` is a summary of the published complete record. */
       readonly summarized: boolean;
+      /** Whether that summary replaced over-budget complete Evidence. */
+      readonly budgeted: boolean;
     },
     {
       readonly error: AnalysisError;
@@ -287,10 +303,7 @@ const publishDeliveredEvidence = async (
     }
   >
 > => {
-  const budgeted =
-    overBudgetLimitation === undefined
-      ? undefined
-      : await overBudgetSummary(complete, overBudgetLimitation);
+  const budgeted = overBudget ? await overBudgetSummary(complete) : undefined;
   const summarized = input.detail === "summary" || budgeted !== undefined;
   const delivered =
     input.detail === "summary"
@@ -363,7 +376,12 @@ const publishDeliveredEvidence = async (
   const { path, bytes } = published.value.evidenceBundle;
   const receipt = bundleReceipt(path, bytes, input);
   recordCliEvidencePublication(receipt);
-  return ok({ delivered: published.value.delivered, receipt, summarized });
+  return ok({
+    delivered: published.value.delivered,
+    receipt,
+    summarized,
+    budgeted: budgeted !== undefined,
+  });
 };
 
 /** Whether a caller-selected path contains an excluded sensitive literal. */

@@ -655,6 +655,7 @@ export const ANALYSIS_SETTINGS = {
   },
   "delivery.agent_result_budget_bytes": {
     updateMode: "runtime",
+    environment: "REA_AGENT_RESULT_BUDGET_BYTES",
     defaultValue: DEFAULT_AGENT_RESULT_BUDGET_BYTES,
     minimum: MINIMUM_AGENT_RESULT_BUDGET_BYTES,
     maximum: MAXIMUM_AGENT_RESULT_BUDGET_BYTES,

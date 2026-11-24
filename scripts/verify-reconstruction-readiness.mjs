@@ -43,15 +43,25 @@ const environment = {
   ...process.env,
 };
 await access(nativePath);
-const nativeEvidence = await runCli(["inspect-artifact", nativePath, "--json"]);
+const nativeEvidence = await runCli([
+  "inspect-artifact",
+  nativePath,
+  "--detail",
+  "complete",
+  "--json",
+]);
 const javascriptCliEvidence = await runCli([
   "analyze-javascript-application",
   javascriptPath,
+  "--detail",
+  "complete",
   "--json",
 ]);
 const electronCliEvidence = await runCli([
   "analyze-javascript-application",
   electronPath,
+  "--detail",
+  "complete",
   "--json",
 ]);
 
@@ -190,7 +200,7 @@ async function runCli(arguments_) {
 async function analyzeMcp(client_, inputPath) {
   const response = await client_.callTool({
     name: "analyze_javascript_application",
-    arguments: { input_path: inputPath },
+    arguments: { input_path: inputPath, detail: "complete" },
   });
   assert.notEqual(response.structuredContent, undefined);
   return parseEvidence(

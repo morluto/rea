@@ -39,10 +39,7 @@ import {
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
 } from "../../domain/analysisView/analysisViewRequest.js";
-import {
-  prepareAnalysisViewProjection,
-  sealAnalysisView,
-} from "../../domain/analysisView/analysisView.js";
+import { prepareAnalysisViewProjection } from "../../domain/analysisView/analysisView.js";
 import type { AnalysisViewResult } from "../../domain/analysisView/analysisViewResult.js";
 import {
   immutableJsonSnapshotMember,
@@ -231,7 +228,6 @@ const projectResolvedAnalysisView = (
   projection: ReturnType<typeof prepareAnalysisViewProjection>,
   parent: Evidence,
   selectedTarget?: EvidenceSubjectTarget,
-  deliveryLimitation?: string,
 ): Result<Evidence, AnalysisError> => {
   const presentation =
     selectedTarget === undefined
@@ -263,38 +259,18 @@ const projectResolvedAnalysisView = (
     projected.value.artifact?.sha256,
   );
   if (!identity.ok) return identity;
-  return ok(
-    createAnalysisViewEvidence(
-      input,
-      presentation,
-      deliveryLimitation === undefined
-        ? projected.value
-        : withDeliveryLimitation(projected.value, deliveryLimitation),
-    ),
-  );
-};
-
-/** The delivery's own limitation joins the view it explains, under a new digest. */
-const withDeliveryLimitation = (
-  result: AnalysisViewResult,
-  limitation: string,
-): AnalysisViewResult => {
-  const { view_digest: _digest, ...unsigned } = result;
-  return sealAnalysisView({
-    ...unsigned,
-    limitations: [...unsigned.limitations, limitation],
-  } as Parameters<typeof sealAnalysisView>[0]);
+  return ok(createAnalysisViewEvidence(input, presentation, projected.value));
 };
 
 /**
  * The summary an over-budget delivery returns in place of complete Evidence
- * the caller can already reach, with the delivery's limitation. An
+ * the caller can already reach. It is the same record `detail: "summary"`
+ * delivers, so its identity holds wherever a summary is accepted. An
  * operation without a summary view fails here, and the caller keeps
  * delivering its complete Evidence.
  */
 export const summarizeOverBudgetEvidence = (
   evidence: Evidence,
-  limitation: string,
 ): Result<Evidence, AnalysisError> => {
   const view = { kind: "summary" } as const;
   const source = {
@@ -306,7 +282,6 @@ export const summarizeOverBudgetEvidence = (
     prepareAnalysisViewProjection(view),
     evidence,
     evidenceSubjectTarget(evidence.subject),
-    limitation,
   );
 };
 

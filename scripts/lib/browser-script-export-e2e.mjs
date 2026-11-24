@@ -64,6 +64,8 @@ export async function verifyBrowserScriptExport(
     await cli(
       "analyze-javascript-application",
       cliResult.analysis_input.input_path,
+      "--detail",
+      "complete",
     ).then((value) => assertExportedScriptAnalysis(value, 4, true));
     assert.deepEqual(
       site.counts,
@@ -85,7 +87,10 @@ export async function verifyBrowserScriptExport(
       site.assets,
     );
     assertExportedScriptAnalysis(
-      await call("analyze_javascript_application", mcpResult.analysis_input),
+      await call("analyze_javascript_application", {
+        ...mcpResult.analysis_input,
+        detail: "complete",
+      }),
       4,
       true,
     );
@@ -132,7 +137,10 @@ const verifyPassiveExport = async (attachment, { cli, call, save }) => {
     page,
   );
   assertExportedScriptAnalysis(
-    await call("analyze_javascript_application", exported.analysis_input),
+    await call("analyze_javascript_application", {
+      ...exported.analysis_input,
+      detail: "complete",
+    }),
     exported.scripts.length,
     false,
   );
@@ -157,6 +165,8 @@ const verifyPassiveExport = async (attachment, { cli, call, save }) => {
     await cli(
       "analyze-javascript-application",
       pageCliResult.analysis_input.input_path,
+      "--detail",
+      "complete",
     ),
     pageCliResult.scripts.length,
     false,

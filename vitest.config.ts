@@ -177,6 +177,9 @@ export default defineConfig({
   test: {
     env: {
       TMPDIR: CANONICAL_TEMPORARY_DIRECTORY,
+      // Semantic tests read complete Evidence; budget tests clear this seed
+      // to observe the default agent result budget.
+      REA_AGENT_RESULT_BUDGET_BYTES: String(10 * 1024 * 1024),
     },
     maxWorkers: MAX_TEST_WORKERS,
     projects,
