@@ -12,12 +12,14 @@ const uint = z.number().int().min(0).max(0xffffffff);
 const uint8 = z.number().int().min(0).max(255);
 const range = z.strictObject({ offset: uint, bytes: uint });
 const hex = z.string().regex(/^[0-9a-f]*$/u);
+const crc32Hex = z.string().regex(/^[0-9a-f]{8}$/u);
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_KERNEL_MODULE_FILE_BYTES = 536870912;
 /**
- * Hard ceiling on decoded .modinfo and __versions entries plus listed
- * file-backed __ksymtab* sections combined.
+ * Hard ceiling on decoded .modinfo, __versions, CONFIG_EXTENDED_MODVERSIONS,
+ * __ksymtab_strings, and __kcrctab* entries plus listed file-backed __ksymtab*
+ * sections combined.
  */
 export const MAX_INSPECT_KERNEL_MODULE_ENTRIES = 65536;
 /** Default per-field retention budgets; omission does not establish malformed syntax. */
@@ -58,6 +60,11 @@ export const MAX_KERNEL_MODULE_RAW_BYTES = 4096;
  * unsigned long and a 56-byte name.
  */
 export const KERNEL_MODULE_VERSION_ENTRY_BYTES = 64;
+/**
+ * Fixed CRC width in bytes for `__kcrctab`, `__kcrctab_gpl`, and
+ * `CONFIG_EXTENDED_MODVERSIONS` `__version_ext_crcs`.
+ */
+export const KERNEL_MODULE_CRC32_ENTRY_BYTES = 4;
 /** `struct module_signature` is 12 bytes, with sig_len big-endian. */
 export const MODULE_SIGNATURE_INFO_BYTES = 12;
 /** Trailer magic, including the trailing newline, from MODULE_SIG_STRING. */
@@ -94,6 +101,41 @@ export const KERNEL_MODULE_VERSION_SECTION_REASONS = [
 
 export const KERNEL_MODULE_KSYMTAB_SECTION_REASONS = [
   "ksymtab_name_exceeds_limit",
+] as const;
+
+export const KERNEL_MODULE_KSYMTAB_STRINGS_SECTION_REASONS = [
+  "ksymtab_strings_section_compressed",
+  "ksymtab_strings_section_not_file_backed",
+] as const;
+
+export const KERNEL_MODULE_KSYMTAB_STRING_ENTRY_REASONS = [
+  "ksymtab_string_unterminated",
+] as const;
+
+export const KERNEL_MODULE_KCRCTAB_SECTION_REASONS = [
+  "kcrctab_size_not_multiple",
+  "kcrctab_section_compressed",
+  "kcrctab_section_not_file_backed",
+] as const;
+
+export const KERNEL_MODULE_EXTENDED_VERSION_SECTION_META_REASONS = [
+  "version_ext_names_compressed",
+  "version_ext_names_not_file_backed",
+  "version_ext_crcs_compressed",
+  "version_ext_crcs_not_file_backed",
+  "version_ext_crcs_size_not_multiple",
+] as const;
+
+export const KERNEL_MODULE_EXTENDED_VERSIONS_REASONS = [
+  ...KERNEL_MODULE_EXTENDED_VERSION_SECTION_META_REASONS,
+  "version_ext_names_missing",
+  "version_ext_crcs_missing",
+  "version_ext_count_mismatch",
+] as const;
+
+export const KERNEL_MODULE_EXTENDED_VERSION_ENTRY_REASONS = [
+  "version_ext_name_unterminated",
+  "version_ext_empty_name",
 ] as const;
 
 export const KERNEL_MODULE_SIGNATURE_REASONS = [
@@ -169,6 +211,42 @@ const versionsSchema = z.strictObject({
   reason: z.enum(KERNEL_MODULE_VERSION_SECTION_REASONS).nullable(),
 });
 
+const extendedVersionSectionMetaSchema = z.strictObject({
+  status: sectionStatus,
+  location: range.nullable(),
+  sha256: digestSchema.nullable(),
+  count: uint.nullable(),
+  reason: z
+    .enum(KERNEL_MODULE_EXTENDED_VERSION_SECTION_META_REASONS)
+    .nullable(),
+});
+
+const extendedVersionEntrySchema = z.strictObject({
+  index: uint,
+  crc_hex: crc32Hex,
+  crc_location: range,
+  name: z.string().nullable(),
+  name_location: range,
+  name_sha256: digestSchema,
+  name_raw_hex: hex.nullable(),
+  status: entryStatus,
+  reason: z.enum(KERNEL_MODULE_EXTENDED_VERSION_ENTRY_REASONS).nullable(),
+  omitted: z
+    .boolean()
+    .describe(
+      "Whether name was omitted because it exceeded the inline byte retention limit, independently of structural status/reason",
+    ),
+});
+
+const extendedVersionsSchema = z.strictObject({
+  status: sectionStatus,
+  entry_crc_bytes: z.literal(KERNEL_MODULE_CRC32_ENTRY_BYTES),
+  names_section: extendedVersionSectionMetaSchema,
+  crcs_section: extendedVersionSectionMetaSchema,
+  entries: z.array(extendedVersionEntrySchema),
+  reason: z.enum(KERNEL_MODULE_EXTENDED_VERSIONS_REASONS).nullable(),
+});
+
 const thisModuleSchema = z.strictObject({
   status: z.enum(["present", "absent", "unknown", "unsupported"]),
   location: range.nullable(),
@@ -182,6 +260,44 @@ const sizedSectionSchema = z.strictObject({
   /** Observed file-backed size. Null when the section is not file-backed. */
   bytes: uint.nullable(),
   compressed: z.boolean().nullable(),
+});
+
+const ksymtabStringEntrySchema = z.strictObject({
+  index: uint,
+  location: range,
+  value: z.string().nullable(),
+  raw_sha256: digestSchema,
+  raw_hex: hex.nullable(),
+  status: entryStatus,
+  reason: z.enum(KERNEL_MODULE_KSYMTAB_STRING_ENTRY_REASONS).nullable(),
+  omitted: z
+    .boolean()
+    .describe(
+      "Whether value was omitted because it exceeded the inline byte retention limit, independently of structural status/reason",
+    ),
+});
+
+const ksymtabStringsSchema = z.strictObject({
+  status: sectionStatus,
+  location: range.nullable(),
+  sha256: digestSchema.nullable(),
+  entries: z.array(ksymtabStringEntrySchema),
+  reason: z.enum(KERNEL_MODULE_KSYMTAB_STRINGS_SECTION_REASONS).nullable(),
+});
+
+const kcrctabEntrySchema = z.strictObject({
+  index: uint,
+  location: range,
+  crc_hex: crc32Hex,
+});
+
+const kcrctabSectionSchema = z.strictObject({
+  status: sectionStatus,
+  entry_bytes: z.literal(KERNEL_MODULE_CRC32_ENTRY_BYTES),
+  location: range.nullable(),
+  sha256: digestSchema.nullable(),
+  entries: z.array(kcrctabEntrySchema),
+  reason: z.enum(KERNEL_MODULE_KCRCTAB_SECTION_REASONS).nullable(),
 });
 
 const ksymtabSchema = z.strictObject({
@@ -198,6 +314,9 @@ const ksymtabSchema = z.strictObject({
       reason: z.enum(KERNEL_MODULE_KSYMTAB_SECTION_REASONS).nullable(),
     }),
   ),
+  strings: ksymtabStringsSchema.exactOptional(),
+  kcrctab: kcrctabSectionSchema.exactOptional(),
+  kcrctab_gpl: kcrctabSectionSchema.exactOptional(),
 });
 
 const signatureInfoSchema = z.strictObject({
@@ -243,7 +362,7 @@ export const inspectKernelModuleInputSchema = z.strictObject({
     .max(MAX_INSPECT_KERNEL_MODULE_ENTRIES)
     .default(8192)
     .describe(
-      "Maximum .modinfo and __versions entries plus file-backed __ksymtab* sections to examine; exceeding the budget fails without partial success",
+      "Maximum decoded .modinfo, __versions, extended modversions, __ksymtab_strings, and __kcrctab* entries plus file-backed __ksymtab* sections; exceeding the budget fails without partial success",
     ),
   max_modinfo_key_bytes: z
     .int()
@@ -297,6 +416,7 @@ export const kernelModuleSchema = z.strictObject({
     .nullable(),
   modinfo: modinfoSchema.nullable(),
   versions: versionsSchema.nullable(),
+  extended_versions: extendedVersionsSchema.nullable().exactOptional(),
   this_module: thisModuleSchema.nullable(),
   ksymtab: ksymtabSchema.nullable(),
   init_text: sizedSectionSchema.nullable(),

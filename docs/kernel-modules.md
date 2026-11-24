@@ -2,11 +2,12 @@
 
 `inspect_kernel_module` / `inspect-kernel-module` reads metadata from one
 selected local ELF32/ELF64 relocatable object (`.ko`) without executing it.
-That metadata is the `.modinfo` key/value strings, the `__versions` symbol
-CRCs, the presence of `.gnu.linkonce.this_module` and `__ksymtab*` sections,
-the observed file sizes of `.init.text` and `.exit.text`, and an optional
-appended signature trailer. It does not require a Linux host or the `modinfo`
-program.
+That metadata is the `.modinfo` key/value strings, classic `__versions` and
+`CONFIG_EXTENDED_MODVERSIONS` (`__version_ext_names` and `__version_ext_crcs`)
+symbol CRCs, `.gnu.linkonce.this_module` and `__ksymtab*` section presence,
+decoded `__ksymtab_strings` and `__kcrctab` / `__kcrctab_gpl` entries, the
+observed file sizes of `.init.text` and `.exit.text`, and an optional appended
+signature trailer. It does not require a Linux host or the `modinfo` program.
 
 ```bash
 rea inspect-kernel-module /absolute/path/to/module.ko --json
@@ -26,8 +27,9 @@ requires an absolute filesystem path and preserves that exact selection:
 
 The inline Evidence result contains the artifact path, SHA-256, and byte
 length. `applicability` is `applicable` only for `ET_REL`. Other ELF types are
-`not_applicable`: header facts are filled and `.modinfo`, `__versions`, and
-the signature trailer are not examined.
+`not_applicable`: header facts are filled and `.modinfo`, `__versions`,
+`extended_versions`, `__ksymtab*`, `__kcrctab*`, and the signature trailer are
+not examined.
 
 `.modinfo` entries stay in file order. Duplicate keys such as `alias` and
 `parm` are preserved. Each entry keeps its key, value, file range, and
@@ -44,20 +46,34 @@ stores a 32-bit CRC and a 60-byte name. ELF64 stores a 64-bit unsigned long
 and a 56-byte name. CRCs are zero-padded lowercase hex, 8 or 16 characters,
 not a JavaScript number. The layout is reported from the ELF class even when
 the section is absent. Names use the same byte-preserving Latin1 projection
-as `.modinfo` keys and values. Only this classic `__versions` layout is
-decoded. `versions.status: "absent"` means no `__versions` section was found
-when section names were complete; it does not establish the absence of version
-metadata in `__version_ext_names` and `__version_ext_crcs`, which Linux uses
-with `CONFIG_EXTENDED_MODVERSIONS` and this workflow does not decode.
+as `.modinfo` keys and values. `versions.status: "absent"` means no `__versions`
+section was found when section names were complete.
+
+`extended_versions` decodes `CONFIG_EXTENDED_MODVERSIONS` metadata from
+`__version_ext_names` and `__version_ext_crcs`. `__version_ext_names` holds
+NUL-separated symbol names (with trailing NUL alignment padding accepted after
+the paired entries) paired 1:1 in order with `u32` CRCs in ELF byte order from
+`__version_ext_crcs` (`entry_crc_bytes: 4`, 8-character lowercase hex). Both
+sections' file ranges, SHA-256 digests, and counts are reported in
+`names_section` and `crcs_section`.
 
 `.gnu.linkonce.this_module` is reported as present, absent, unknown, or
 unsupported. `unsupported` means the section is stored `SHF_COMPRESSED`; its
 file range is reported and the payload is not inflated.
 `layout` is always `unknown` because `struct module` changes with the kernel
 version and is not decoded. File-backed `__ksymtab*` sections are listed in
-section-header order by name and file range; their records are not decoded.
-Sections that are `SHT_NOBITS` or leave the file are counted in one limitation
-without their names. `.init.text` and `.exit.text` report the
+section-header order by name and file range. Sections that are `SHT_NOBITS` or
+leave the file are counted in one limitation without their names.
+`ksymtab.strings` decodes NUL-terminated exported symbol and namespace strings
+from `__ksymtab_strings` in section order (skipping NUL padding), while
+`ksymtab.kcrctab` and `ksymtab.kcrctab_gpl` decode 4-byte `u32` CRC arrays in
+ELF byte order from `__kcrctab` and `__kcrctab_gpl`. Because
+`struct kernel_symbol` entries in `__ksymtab*` use kernel-version-specific
+PREL32 or pointer-sized ELF relocations that this workflow does not resolve,
+`ksymtab.strings` entries and `ksymtab.kcrctab` / `ksymtab.kcrctab_gpl` CRCs
+are not paired to each other or to symbol/namespace roles, and legacy
+`unsigned long` or pre-relocation placeholder values are not distinguished.
+`.init.text` and `.exit.text` report the
 observed file-backed size. A compressed payload reports the stored size and a
 limitation that the decoded size is unknown.
 
@@ -74,18 +90,21 @@ rather than `absent`. An empty file-backed section is present and empty.
 
 `coverage.status` is `partial` when supported facts cannot all be examined or
 interpreted, including incomplete section names, malformed or unsupported
-metadata, and omitted duplicate named sections. When multiple `.modinfo`,
-`__versions`, `.gnu.linkonce.this_module`, `.init.text`, or `.exit.text`
-sections exist, the first is examined and a limitation identifies the omission.
-`complete` covers the supported inspection described here; it does not claim
-that `struct module`, symbol-table records, or certificate chains were decoded.
+metadata, omitted string text, and omitted duplicate named sections. When
+multiple `.modinfo`, `__versions`, `__version_ext_names`, `__version_ext_crcs`,
+`.gnu.linkonce.this_module`, `__ksymtab_strings`, `__kcrctab`, `__kcrctab_gpl`,
+`.init.text`, or `.exit.text` sections exist, the first is examined and a
+limitation identifies the omission. `complete` covers the supported inspection
+described here; it does not claim that `struct module`, `struct kernel_symbol`
+relocations, or certificate chains were decoded.
 
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
-8192 `.modinfo` and `__versions` entries plus listed `__ksymtab*` sections are
-examined by default (65536 maximum); `coverage.examined_entries` counts all
-three. Exceeding that budget fails with no partial success. `.modinfo` keys
+8192 decoded `.modinfo`, `__versions`, `extended_versions`, `__ksymtab_strings`,
+and `__kcrctab` / `__kcrctab_gpl` entries plus listed `__ksymtab*` sections are
+examined by default (65536 maximum); `coverage.examined_entries` counts all of
+them. Exceeding that budget fails with no partial success. `.modinfo` keys
 retain at most 256 bytes and values at most 4096 bytes by default. A larger
 field becomes `null` and is named in the entry's `omitted_fields`; the field
 that fits is still copied. Structural `status` and `reason` remain independent:
@@ -103,8 +122,10 @@ input size. No restart is required; file, entry and raw-hex budgets do not
 change. These are per-call controls, not runtime settings.
 
 A `__ksymtab*` section name longer than
-256 bytes keeps its range with `name: null` and `ksymtab_name_exceeds_limit`. Inline raw hex stops at 4096 bytes and
-the SHA-256 remains.
+256 bytes keeps its range with `name: null` and `ksymtab_name_exceeds_limit`.
+Inline raw hex and inline `__ksymtab_strings` / `__version_ext_names` text stop
+at 4096 bytes while keeping the source range and SHA-256 (`omitted: true`,
+`coverage.status: "partial"` without marking valid syntax malformed).
 
 A `.modinfo` span with no trailing NUL is `unterminated_modinfo_entry` and
 earlier entries are kept. A string with no `=` is `modinfo_missing_separator`.
@@ -112,9 +133,22 @@ An empty key is `modinfo_empty_key`. A `__versions` name with no NUL is
 `version_name_unterminated`. A `__versions` section whose size is not a
 multiple of 64 bytes is closed with `versions_size_not_multiple` and no
 entries. `SHT_NOBITS` or a declared range that leaves the file is
-`modinfo_section_not_file_backed` or `versions_section_not_file_backed`.
+`modinfo_section_not_file_backed`, `versions_section_not_file_backed`,
+`ksymtab_strings_section_not_file_backed`, `kcrctab_section_not_file_backed`,
+`version_ext_names_not_file_backed`, or `version_ext_crcs_not_file_backed`.
 `SHF_COMPRESSED` payloads are not inflated
-(`modinfo_section_compressed`, `versions_section_compressed`).
+(`modinfo_section_compressed`, `versions_section_compressed`,
+`ksymtab_strings_section_compressed`, `kcrctab_section_compressed`,
+`version_ext_names_compressed`, `version_ext_crcs_compressed`). An unterminated
+entry in `__ksymtab_strings` is `ksymtab_string_unterminated`. A `__kcrctab` or
+`__kcrctab_gpl` section whose size is not a multiple of 4 bytes is closed with
+`kcrctab_size_not_multiple`. For `CONFIG_EXTENDED_MODVERSIONS`, a missing pair
+section is `version_ext_names_missing` or `version_ext_crcs_missing`, a CRC
+section not divisible by 4 is `version_ext_crcs_size_not_multiple`, a count
+mismatch between CRCs and names closes paired output with
+`version_ext_count_mismatch`, an unterminated symbol name is
+`version_ext_name_unterminated`, and an empty symbol name is
+`version_ext_empty_name`.
 
 `signature_trailer_truncated` is reserved for an appended magic with fewer
 than 12 preceding bytes. ELF admission requires at least 52 (ELF32) or 64

@@ -614,10 +614,13 @@ rea inspect-kernel-module /absolute/path/to/module.ko --json
 ```
 
 The workflow reports ordered `.modinfo` keys (duplicate `alias` and `parm`
-entries preserved), `__versions` symbol CRCs, presence of
-`.gnu.linkonce.this_module` and `__ksymtab` sections, observed `.init.text`
-and `.exit.text` sizes, and an appended signature trailer. `struct module` is
-not decoded and the signature is not validated. Other ELF types are not
+entries preserved), `__versions` and `CONFIG_EXTENDED_MODVERSIONS`
+(`__version_ext_names` and `__version_ext_crcs`) symbol CRCs, presence of
+`.gnu.linkonce.this_module` and `__ksymtab*` sections, decoded
+`__ksymtab_strings` and `__kcrctab` / `__kcrctab_gpl` `u32` CRCs, observed
+`.init.text` and `.exit.text` sizes, and an appended signature trailer.
+`struct module` is not decoded, `struct kernel_symbol` PREL32/pointer relocations
+are not resolved, and the signature is not validated. Other ELF types are not
 applicable. gzip, xz, and zstd containers are unsupported and name
 `external_decompression` as the next probe: decompress with an external
 utility, then inspect the decompressed file. See

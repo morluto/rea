@@ -5,6 +5,8 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   compressedKernelModuleContainer,
+  crc32Array,
+  extendedVersionSections,
   kernelModuleFixture,
 } from "../../src/native/elf/KernelModule.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -153,5 +155,120 @@ cliTest(
       modinfo: null,
     });
     expect(fileIdentity(evidence.subject).format).toBe("file");
+  },
+);
+
+cliTest(
+  "decodes __ksymtab_strings, __kcrctab*, and CONFIG_EXTENDED_MODVERSIONS through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kernel-module-ext-cli-");
+    const path = join(root, "ext.ko");
+    const longSym = `_RNvNt_${"ext_modversion_name_".repeat(4)}sym`;
+    const ext = extendedVersionSections(
+      [
+        { crc: 0x10203040, name: "printk" },
+        { crc: 0xa1b2c3d4, name: longSym },
+      ],
+      true,
+    );
+    await writeFile(
+      path,
+      kernelModuleFixture({
+        versions: null,
+        ksymtabStrings: Buffer.from("my_export\0MY_NS\0", "latin1"),
+        kcrctab: crc32Array([0xfeedface], true),
+        kcrctabGpl: crc32Array([0xcafebabe], true),
+        versionExtNames: ext.names,
+        versionExtCrcs: ext.crcs,
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-kernel-module", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_kernel_module").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.versions?.status).toBe("absent");
+    expect(evidence.normalized_result.extended_versions).toMatchObject({
+      status: "present",
+      entry_crc_bytes: 4,
+      entries: [
+        { index: 0, crc_hex: "10203040", name: "printk", status: "observed" },
+        { index: 1, crc_hex: "a1b2c3d4", name: longSym, status: "observed" },
+      ],
+    });
+    expect(
+      evidence.normalized_result.ksymtab?.strings?.entries.map(
+        (entry) => entry.value,
+      ),
+    ).toEqual(["my_export", "MY_NS"]);
+    expect(
+      evidence.normalized_result.ksymtab?.kcrctab?.entries.map(
+        (entry) => entry.crc_hex,
+      ),
+    ).toEqual(["feedface"]);
+    expect(
+      evidence.normalized_result.ksymtab?.kcrctab_gpl?.entries.map(
+        (entry) => entry.crc_hex,
+      ),
+    ).toEqual(["cafebabe"]);
+    expect(evidence.normalized_result.coverage).toEqual({
+      status: "complete",
+      examined_entries: 14,
+    });
+  },
+);
+
+cliTest(
+  "reports malformed extended modversions mismatches and refuses exceeded entry budgets via CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kernel-module-ext-err-");
+    const mismatchPath = join(root, "mismatch.ko");
+    await writeFile(
+      mismatchPath,
+      kernelModuleFixture({
+        versions: null,
+        versionExtNames: Buffer.from("only_one\0", "latin1"),
+        versionExtCrcs: crc32Array([0x11111111, 0x22222222], true),
+      }),
+    );
+    const mismatch = await cli.run({
+      arguments: ["inspect-kernel-module", mismatchPath, "--json"],
+    });
+    expect(mismatch.exitCode, mismatch.stderr).toBe(0);
+    const parsed = toolContract("inspect_kernel_module").outputSchema.parse(
+      mismatch.json,
+    );
+    expect(parsed.normalized_result.coverage.status).toBe("partial");
+    expect(parsed.normalized_result.extended_versions).toMatchObject({
+      status: "malformed",
+      reason: "version_ext_count_mismatch",
+      names_section: { status: "present", count: 1 },
+      crcs_section: { status: "present", count: 2 },
+      entries: [],
+    });
+
+    const overBudget = await cli.run({
+      arguments: [
+        "inspect-kernel-module",
+        mismatchPath,
+        "--max-entries",
+        "7",
+        "--json",
+      ],
+    });
+    expect(overBudget.exitCode, overBudget.stderr).toBe(1);
+    expect(overBudget.json).toMatchObject({
+      code: "resource_constraint",
+      remediation: {
+        action: expect.stringContaining("max_entries"),
+      },
+      details: {
+        operation: "inspect_kernel_module",
+        resource: "capacity",
+        reported_limits: { max_entries: 7 },
+      },
+    });
   },
 );

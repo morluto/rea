@@ -8,6 +8,8 @@ import {
 } from "../../domain/native/kernelModule.js";
 import {
   compressedKernelModuleContainer,
+  crc32Array,
+  extendedVersionSections,
   kernelModuleFixture,
   modversionEntry,
   moduleSignatureTrailer,
@@ -531,4 +533,378 @@ it("charges many sections sharing one huge __ksymtab name to the entry budget", 
     examined_entries: 8201,
   });
   expect(JSON.stringify(report).length).toBeLessThan(2 * 1024 * 1024);
+});
+
+it.each([
+  [64, true],
+  [64, false],
+  [32, true],
+  [32, false],
+] as const)(
+  "decodes __ksymtab_strings and __kcrctab / __kcrctab_gpl on ELF%s little=%s",
+  async (bits, little) => {
+    const strings = Buffer.from(
+      "\0exported_fn\0EXPORT_NS\0gpl_fn\0\0",
+      "latin1",
+    );
+    const kcrctab = crc32Array([0x12345678], little);
+    const kcrctabGpl = crc32Array([0xdeadbeef, 0x0000cafe], little);
+    const bytes = kernelModuleFixture({
+      bits,
+      little,
+      ksymtabStrings: strings,
+      kcrctab,
+      kcrctabGpl,
+    });
+    const report = await parse(bytes);
+    expect(report.coverage).toEqual({
+      status: "complete",
+      examined_entries: 16,
+    });
+    expect(report.ksymtab?.sections.map((section) => section.name)).toEqual([
+      "__ksymtab",
+      "__ksymtab_strings",
+    ]);
+    expect(report.ksymtab?.strings).toMatchObject({
+      status: "present",
+      sha256: createHash("sha256").update(strings).digest("hex"),
+      reason: null,
+    });
+    expect(
+      report.ksymtab?.strings?.entries.map((entry) => [
+        entry.value,
+        entry.status,
+        entry.omitted,
+      ]),
+    ).toEqual([
+      ["exported_fn", "observed", false],
+      ["EXPORT_NS", "observed", false],
+      ["gpl_fn", "observed", false],
+    ]);
+    expect(
+      report.ksymtab?.kcrctab?.entries.map((entry) => entry.crc_hex),
+    ).toEqual(["12345678"]);
+    expect(
+      report.ksymtab?.kcrctab_gpl?.entries.map((entry) => entry.crc_hex),
+    ).toEqual(["deadbeef", "0000cafe"]);
+    expect(report.limitations.join("\n")).toContain("PREL32");
+    expect(report.limitations.join("\n")).toContain("relocations");
+  },
+);
+
+it("handles malformed, oversized, compressed, unbacked, and over-budget __ksymtab_strings and __kcrctab*", async () => {
+  const longSym = "s".repeat(4097);
+  const strings = Buffer.from(`ok_sym\0${longSym}\0unterm`, "latin1");
+  const report = await parse(
+    kernelModuleFixture({
+      ksymtabStrings: strings,
+      kcrctab: Buffer.from([1, 2, 3]),
+      extraSections: [{ name: "__kcrctab_unused", body: Buffer.alloc(4) }],
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.ksymtab?.strings?.entries).toMatchObject([
+    {
+      index: 0,
+      value: "ok_sym",
+      status: "observed",
+      reason: null,
+      omitted: false,
+    },
+    {
+      index: 1,
+      value: null,
+      raw_hex: null,
+      raw_sha256: createHash("sha256")
+        .update(Buffer.from(`${longSym}\0`, "latin1"))
+        .digest("hex"),
+      status: "observed",
+      reason: null,
+      omitted: true,
+    },
+    {
+      index: 2,
+      value: null,
+      status: "malformed",
+      reason: "ksymtab_string_unterminated",
+      omitted: false,
+    },
+  ]);
+  expect(report.ksymtab?.kcrctab).toMatchObject({
+    status: "malformed",
+    reason: "kcrctab_size_not_multiple",
+    entries: [],
+  });
+  expect(report.limitations.join("\n")).toContain(
+    "Additional __kcrctab* sections",
+  );
+
+  const compressed = await parse(
+    kernelModuleFixture({
+      extraSections: [
+        { name: "__ksymtab_strings", flags: 0x800n, body: Buffer.from("a\0") },
+        { name: "__kcrctab_gpl", flags: 0x800n, body: Buffer.alloc(4) },
+      ],
+    }),
+  );
+  expect(compressed.coverage.status).toBe("partial");
+  expect(compressed.ksymtab?.strings).toMatchObject({
+    status: "unsupported",
+    reason: "ksymtab_strings_section_compressed",
+    entries: [],
+  });
+  expect(compressed.ksymtab?.kcrctab_gpl).toMatchObject({
+    status: "unsupported",
+    reason: "kcrctab_section_compressed",
+    entries: [],
+  });
+
+  const nobits = await parse(
+    kernelModuleFixture({
+      extraSections: [
+        { name: "__ksymtab_strings", type: 8, body: Buffer.alloc(0) },
+        { name: "__kcrctab", type: 8, body: Buffer.alloc(0) },
+      ],
+    }),
+  );
+  expect(nobits.coverage.status).toBe("partial");
+  expect(nobits.ksymtab?.strings).toMatchObject({
+    status: "malformed",
+    reason: "ksymtab_strings_section_not_file_backed",
+    location: null,
+  });
+  expect(nobits.ksymtab?.kcrctab).toMatchObject({
+    status: "malformed",
+    reason: "kcrctab_section_not_file_backed",
+    location: null,
+  });
+
+  await expect(
+    parse(
+      kernelModuleFixture({
+        ksymtabStrings: Buffer.from("a\0b\0c\0", "latin1"),
+      }),
+      { max_entries: 11 },
+    ),
+  ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+
+  await expect(
+    parse(
+      kernelModuleFixture({
+        kcrctab: crc32Array([1, 2, 3, 4], true),
+      }),
+      { max_entries: 11 },
+    ),
+  ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+});
+
+it.each([
+  [64, true],
+  [64, false],
+  [32, true],
+  [32, false],
+] as const)(
+  "decodes CONFIG_EXTENDED_MODVERSIONS with long symbol names on ELF%s little=%s",
+  async (bits, little) => {
+    const longRustName = `_RNvNtCs1234_${"long_module_segment_".repeat(6)}func`;
+    expect(longRustName.length).toBeGreaterThan(64);
+    const ext = extendedVersionSections(
+      [
+        { crc: 0x01020304, name: "printk" },
+        { crc: 0xdeadbeef, name: longRustName },
+      ],
+      little,
+    );
+    const bytes = kernelModuleFixture({
+      bits,
+      little,
+      versions: null,
+      versionExtNames: Buffer.concat([ext.names, Buffer.alloc(3)]),
+      versionExtCrcs: ext.crcs,
+    });
+    const report = await parse(bytes);
+    expect(report.coverage).toEqual({
+      status: "complete",
+      examined_entries: 9,
+    });
+    expect(report.versions?.status).toBe("absent");
+    expect(report.extended_versions).toMatchObject({
+      status: "present",
+      entry_crc_bytes: 4,
+      names_section: { status: "present", count: 2, reason: null },
+      crcs_section: { status: "present", count: 2, reason: null },
+      reason: null,
+    });
+    expect(
+      report.extended_versions?.entries.map((entry) => [
+        entry.crc_hex,
+        entry.name,
+        entry.status,
+      ]),
+    ).toEqual([
+      ["01020304", "printk", "observed"],
+      ["deadbeef", longRustName, "observed"],
+    ]);
+    expect(report.limitations.join("\n")).toContain(
+      "CONFIG_EXTENDED_MODVERSIONS",
+    );
+  },
+);
+
+it("handles missing pairs, count mismatches, truncation, empty/oversized names, and budgets for CONFIG_EXTENDED_MODVERSIONS", async () => {
+  const missingCrcs = await parse(
+    kernelModuleFixture({
+      versions: null,
+      versionExtNames: Buffer.from("printk\0", "latin1"),
+    }),
+  );
+  expect(missingCrcs.coverage.status).toBe("partial");
+  expect(missingCrcs.extended_versions).toMatchObject({
+    status: "malformed",
+    reason: "version_ext_crcs_missing",
+    entries: [],
+    names_section: { status: "present" },
+    crcs_section: { status: "absent" },
+  });
+
+  const missingNames = await parse(
+    kernelModuleFixture({
+      versions: null,
+      versionExtCrcs: crc32Array([0x11111111], true),
+    }),
+  );
+  expect(missingNames.extended_versions).toMatchObject({
+    status: "malformed",
+    reason: "version_ext_names_missing",
+    entries: [],
+    names_section: { status: "absent" },
+    crcs_section: { status: "present", count: 1 },
+  });
+
+  const unknownNames = kernelModuleFixture({
+    versions: null,
+    versionExtCrcs: crc32Array([0x11111111], true),
+  });
+  unknownNames.writeUInt16LE(0, 62);
+  const unknownExt = await parse(unknownNames);
+  expect(unknownExt.extended_versions?.status).toBe("unknown");
+  expect(unknownExt.extended_versions?.names_section.status).toBe("unknown");
+
+  const oddCrcs = await parse(
+    kernelModuleFixture({
+      versions: null,
+      versionExtNames: Buffer.from("printk\0", "latin1"),
+      versionExtCrcs: Buffer.from([1, 2, 3]),
+    }),
+  );
+  expect(oddCrcs.extended_versions).toMatchObject({
+    status: "malformed",
+    reason: "version_ext_crcs_size_not_multiple",
+    entries: [],
+  });
+
+  const fewerNames = await parse(
+    kernelModuleFixture({
+      versions: null,
+      versionExtNames: Buffer.from("printk\0", "latin1"),
+      versionExtCrcs: crc32Array([1, 2], true),
+    }),
+  );
+  expect(fewerNames.extended_versions).toMatchObject({
+    status: "malformed",
+    reason: "version_ext_count_mismatch",
+    entries: [],
+    names_section: { status: "present", count: 1 },
+    crcs_section: { status: "present", count: 2 },
+  });
+
+  const moreNames = await parse(
+    kernelModuleFixture({
+      versions: null,
+      versionExtNames: Buffer.from("printk\0extra_sym\0", "latin1"),
+      versionExtCrcs: crc32Array([1], true),
+    }),
+  );
+  expect(moreNames.extended_versions).toMatchObject({
+    status: "malformed",
+    reason: "version_ext_count_mismatch",
+    entries: [],
+    names_section: { status: "present", count: 2 },
+    crcs_section: { status: "present", count: 1 },
+  });
+
+  const unterminated = await parse(
+    kernelModuleFixture({
+      versions: null,
+      versionExtNames: Buffer.from("printk\0module_layout", "latin1"),
+      versionExtCrcs: crc32Array([1, 2], true),
+    }),
+  );
+  expect(unterminated.coverage.status).toBe("partial");
+  expect(unterminated.extended_versions?.entries).toMatchObject([
+    { index: 0, name: "printk", status: "observed", reason: null },
+    {
+      index: 1,
+      name: null,
+      status: "malformed",
+      reason: "version_ext_name_unterminated",
+      omitted: false,
+    },
+  ]);
+
+  const longSym = "r".repeat(4097);
+  const emptyAndLong = await parse(
+    kernelModuleFixture({
+      versions: null,
+      versionExtNames: Buffer.from(`\0${longSym}\0`, "latin1"),
+      versionExtCrcs: crc32Array([1, 2], true),
+    }),
+  );
+  expect(emptyAndLong.extended_versions?.entries).toMatchObject([
+    {
+      index: 0,
+      name: null,
+      status: "malformed",
+      reason: "version_ext_empty_name",
+      omitted: false,
+    },
+    {
+      index: 1,
+      name: null,
+      name_raw_hex: null,
+      status: "observed",
+      reason: null,
+      omitted: true,
+    },
+  ]);
+
+  const extBudget = extendedVersionSections(
+    [
+      { crc: 1, name: "a" },
+      { crc: 2, name: "b" },
+      { crc: 3, name: "c" },
+    ],
+    true,
+  );
+  await expect(
+    parse(
+      kernelModuleFixture({
+        versions: null,
+        versionExtNames: extBudget.names,
+        versionExtCrcs: extBudget.crcs,
+      }),
+      { max_entries: 9 },
+    ),
+  ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+
+  await expect(
+    parse(
+      kernelModuleFixture({
+        versions: null,
+        versionExtNames: Buffer.from("a\0b\0c\0d\0", "latin1"),
+        versionExtCrcs: crc32Array([1], true),
+      }),
+      { max_entries: 9 },
+    ),
+  ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
 });

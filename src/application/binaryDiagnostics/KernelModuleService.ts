@@ -7,6 +7,7 @@ import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
+  KERNEL_MODULE_CRC32_ENTRY_BYTES,
   KERNEL_MODULE_VERSION_ENTRY_BYTES,
   MAX_KERNEL_MODULE_RAW_BYTES,
   MODULE_SIGNATURE_INFO_BYTES,
@@ -93,10 +94,25 @@ const rangesOf = (report: KernelModule): Range[] => {
   for (const entry of report.modinfo?.entries ?? []) add(entry.location);
   add(report.versions?.location);
   for (const entry of report.versions?.entries ?? []) add(entry.location);
+  add(report.extended_versions?.names_section.location);
+  add(report.extended_versions?.crcs_section.location);
+  for (const entry of report.extended_versions?.entries ?? []) {
+    add(entry.crc_location);
+    add(entry.name_location);
+  }
   add(report.this_module?.location);
   add(report.init_text?.location);
   add(report.exit_text?.location);
   for (const section of report.ksymtab?.sections ?? []) add(section.location);
+  add(report.ksymtab?.strings?.location);
+  for (const entry of report.ksymtab?.strings?.entries ?? [])
+    add(entry.location);
+  add(report.ksymtab?.kcrctab?.location);
+  for (const entry of report.ksymtab?.kcrctab?.entries ?? [])
+    add(entry.location);
+  add(report.ksymtab?.kcrctab_gpl?.location);
+  for (const entry of report.ksymtab?.kcrctab_gpl?.entries ?? [])
+    add(entry.location);
   add(report.signature?.magic);
   add(report.signature?.info?.location);
   add(report.signature?.pkcs7?.location);
@@ -256,9 +272,210 @@ const sizedConsistent = (
   );
 };
 
+const rawHexMatches = (location: Range, rawHex: string | null): boolean => {
+  const rawFits = location.bytes <= MAX_KERNEL_MODULE_RAW_BYTES;
+  if (rawFits) return rawHex !== null && rawHex.length === location.bytes * 2;
+  return rawHex === null;
+};
+
+const ksymtabStringsConsistent = (
+  strings: NonNullable<NonNullable<KernelModule["ksymtab"]>["strings"]>,
+): boolean => {
+  const closed =
+    strings.status === "malformed" || strings.status === "unsupported";
+  if (closed) {
+    if (strings.reason === null || strings.entries.length !== 0) return false;
+  } else if (strings.reason !== null) return false;
+  if (strings.status === "absent" || strings.status === "unknown") {
+    if (
+      strings.location !== null ||
+      strings.sha256 !== null ||
+      strings.entries.length !== 0
+    )
+      return false;
+  }
+  if (
+    strings.status === "present" &&
+    (strings.location === null || strings.sha256 === null)
+  )
+    return false;
+  return strings.entries.every((entry, index) => {
+    if (entry.index !== index) return false;
+    if (!rawHexMatches(entry.location, entry.raw_hex)) return false;
+    if (entry.status === "observed")
+      return (
+        entry.reason === null &&
+        (entry.omitted
+          ? entry.value === null &&
+            entry.location.bytes > MAX_KERNEL_MODULE_RAW_BYTES
+          : entry.value !== null &&
+            entry.value.length > 0 &&
+            entry.value.length <= MAX_KERNEL_MODULE_RAW_BYTES)
+      );
+    return entry.reason !== null && entry.value === null && !entry.omitted;
+  });
+};
+
+const kcrctabConsistent = (
+  table: NonNullable<NonNullable<KernelModule["ksymtab"]>["kcrctab"]>,
+): boolean => {
+  if (table.entry_bytes !== KERNEL_MODULE_CRC32_ENTRY_BYTES) return false;
+  const closed = table.status === "malformed" || table.status === "unsupported";
+  if (closed) {
+    if (table.reason === null || table.entries.length !== 0) return false;
+  } else if (table.reason !== null) return false;
+  if (table.status === "absent" || table.status === "unknown") {
+    if (
+      table.location !== null ||
+      table.sha256 !== null ||
+      table.entries.length !== 0
+    )
+      return false;
+  }
+  const tableLocation = table.location;
+  if (
+    table.status === "present" &&
+    (tableLocation === null ||
+      table.sha256 === null ||
+      tableLocation.bytes !==
+        table.entries.length * KERNEL_MODULE_CRC32_ENTRY_BYTES)
+  )
+    return false;
+  return table.entries.every(
+    (entry, index) =>
+      entry.index === index &&
+      entry.location.bytes === KERNEL_MODULE_CRC32_ENTRY_BYTES &&
+      tableLocation !== null &&
+      entry.location.offset ===
+        tableLocation.offset + index * KERNEL_MODULE_CRC32_ENTRY_BYTES,
+  );
+};
+
+const extendedSectionMetaConsistent = (
+  meta: NonNullable<KernelModule["extended_versions"]>["names_section"],
+  isCrcs: boolean,
+): boolean => {
+  if (meta.status === "absent" || meta.status === "unknown")
+    return (
+      meta.location === null &&
+      meta.sha256 === null &&
+      meta.count === null &&
+      meta.reason === null
+    );
+  if (meta.status === "malformed" || meta.status === "unsupported") {
+    if (meta.reason === null || meta.count !== null) return false;
+    const expectedNotBacked = isCrcs
+      ? "version_ext_crcs_not_file_backed"
+      : "version_ext_names_not_file_backed";
+    const expectedCompressed = isCrcs
+      ? "version_ext_crcs_compressed"
+      : "version_ext_names_compressed";
+    if (meta.status === "malformed") {
+      if (meta.reason === expectedNotBacked)
+        return meta.location === null && meta.sha256 === null;
+      if (isCrcs && meta.reason === "version_ext_crcs_size_not_multiple")
+        return meta.location !== null && meta.sha256 !== null;
+      return false;
+    }
+    return (
+      meta.reason === expectedCompressed &&
+      meta.location !== null &&
+      meta.sha256 !== null
+    );
+  }
+  if (meta.location === null || meta.sha256 === null || meta.reason !== null)
+    return false;
+  if (
+    isCrcs &&
+    meta.count !== null &&
+    meta.location.bytes !== meta.count * KERNEL_MODULE_CRC32_ENTRY_BYTES
+  )
+    return false;
+  return true;
+};
+
+const extendedVersionsConsistent = (
+  ext: NonNullable<KernelModule["extended_versions"]>,
+): boolean => {
+  if (ext.entry_crc_bytes !== KERNEL_MODULE_CRC32_ENTRY_BYTES) return false;
+  if (
+    !extendedSectionMetaConsistent(ext.names_section, false) ||
+    !extendedSectionMetaConsistent(ext.crcs_section, true)
+  )
+    return false;
+  const closed = ext.status === "malformed" || ext.status === "unsupported";
+  if (closed) {
+    if (ext.reason === null || ext.entries.length !== 0) return false;
+  } else if (ext.reason !== null) return false;
+  if (ext.status === "absent")
+    return (
+      ext.names_section.status === "absent" &&
+      ext.crcs_section.status === "absent" &&
+      ext.entries.length === 0
+    );
+  if (ext.status === "unknown")
+    return (
+      (ext.names_section.status === "unknown" ||
+        ext.crcs_section.status === "unknown") &&
+      ext.entries.length === 0
+    );
+  if (ext.status === "malformed" && ext.reason === "version_ext_names_missing")
+    return (
+      ext.names_section.status === "absent" &&
+      ext.crcs_section.status === "present"
+    );
+  if (ext.status === "malformed" && ext.reason === "version_ext_crcs_missing")
+    return (
+      ext.crcs_section.status === "absent" &&
+      ext.names_section.status === "present"
+    );
+  if (ext.status === "malformed" && ext.reason === "version_ext_count_mismatch")
+    return (
+      ext.names_section.status === "present" &&
+      ext.crcs_section.status === "present" &&
+      ext.names_section.count !== null &&
+      ext.crcs_section.count !== null &&
+      ext.names_section.count !== ext.crcs_section.count
+    );
+  if (ext.status !== "present") return true;
+  const crcsLocation = ext.crcs_section.location;
+  if (
+    ext.names_section.status !== "present" ||
+    ext.crcs_section.status !== "present" ||
+    crcsLocation === null ||
+    ext.names_section.count !== ext.entries.length ||
+    ext.crcs_section.count !== ext.entries.length ||
+    crcsLocation.bytes !== ext.entries.length * KERNEL_MODULE_CRC32_ENTRY_BYTES
+  )
+    return false;
+  return ext.entries.every((entry, index) => {
+    if (
+      entry.index !== index ||
+      entry.crc_location.bytes !== KERNEL_MODULE_CRC32_ENTRY_BYTES ||
+      entry.crc_location.offset !==
+        crcsLocation.offset + index * KERNEL_MODULE_CRC32_ENTRY_BYTES
+    )
+      return false;
+    if (!rawHexMatches(entry.name_location, entry.name_raw_hex)) return false;
+    if (entry.status === "observed")
+      return (
+        entry.reason === null &&
+        (entry.omitted
+          ? entry.name === null &&
+            entry.name_location.bytes > MAX_KERNEL_MODULE_RAW_BYTES
+          : entry.name !== null &&
+            entry.name.length > 0 &&
+            entry.name.length <= MAX_KERNEL_MODULE_RAW_BYTES)
+      );
+    return entry.reason !== null && entry.name === null && !entry.omitted;
+  });
+};
+
 const metadataAbsent = (report: KernelModule): boolean =>
   report.modinfo === null &&
   report.versions === null &&
+  (report.extended_versions === null ||
+    report.extended_versions === undefined) &&
   report.this_module === null &&
   report.ksymtab === null &&
   report.init_text === null &&
@@ -311,6 +528,7 @@ const validReport = (
       report.coverage.status !== "partial") ||
     report.modinfo === null ||
     report.versions === null ||
+    report.extended_versions === null ||
     report.this_module === null ||
     report.this_module.layout !== "unknown" ||
     report.ksymtab === null ||
@@ -319,11 +537,31 @@ const validReport = (
     report.signature === null
   )
     return false;
+  const ksymtabStringEntries =
+    report.ksymtab.strings === undefined
+      ? 0
+      : report.ksymtab.strings.entries.length;
+  const kcrctabEntries =
+    report.ksymtab.kcrctab === undefined
+      ? 0
+      : report.ksymtab.kcrctab.entries.length;
+  const kcrctabGplEntries =
+    report.ksymtab.kcrctab_gpl === undefined
+      ? 0
+      : report.ksymtab.kcrctab_gpl.entries.length;
+  const extendedVersionEntries =
+    report.extended_versions === undefined
+      ? 0
+      : report.extended_versions.entries.length;
   if (
     report.coverage.examined_entries !==
     report.modinfo.entries.length +
       report.versions.entries.length +
-      report.ksymtab.sections.length
+      report.ksymtab.sections.length +
+      ksymtabStringEntries +
+      kcrctabEntries +
+      kcrctabGplEntries +
+      extendedVersionEntries
   )
     return false;
   if (
@@ -336,6 +574,14 @@ const validReport = (
   return (
     modinfoConsistent(report.modinfo, input) &&
     versionsConsistent(report.versions) &&
+    (report.extended_versions === undefined ||
+      extendedVersionsConsistent(report.extended_versions)) &&
+    (report.ksymtab.strings === undefined ||
+      ksymtabStringsConsistent(report.ksymtab.strings)) &&
+    (report.ksymtab.kcrctab === undefined ||
+      kcrctabConsistent(report.ksymtab.kcrctab)) &&
+    (report.ksymtab.kcrctab_gpl === undefined ||
+      kcrctabConsistent(report.ksymtab.kcrctab_gpl)) &&
     signatureConsistent(report.signature, report.artifact.bytes) &&
     sizedConsistent(report.init_text) &&
     sizedConsistent(report.exit_text)

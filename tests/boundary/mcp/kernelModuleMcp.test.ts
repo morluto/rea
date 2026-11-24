@@ -8,7 +8,11 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
+import {
+  crc32Array,
+  extendedVersionSections,
+  kernelModuleFixture,
+} from "../../../src/native/elf/KernelModule.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
@@ -166,6 +170,60 @@ mcpTest(
       expect(evidence.normalized_result.versions?.entries[1]?.crc_hex).toBe(
         "90abcdef",
       );
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "advertises and validates ksymtab strings, kcrctab, and CONFIG_EXTENDED_MODVERSIONS through MCP",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-kernel-module-ext-mcp-");
+      const path = join(root, "ext.ko");
+      const ext = extendedVersionSections(
+        [{ crc: 0xabcdef12, name: `rust_${"x".repeat(70)}` }],
+        false,
+      );
+      await writeFile(
+        path,
+        kernelModuleFixture({
+          bits: 64,
+          little: false,
+          versions: null,
+          ksymtabStrings: Buffer.from("exported_sym\0", "latin1"),
+          kcrctab: crc32Array([0x01020304], false),
+          versionExtNames: ext.names,
+          versionExtCrcs: ext.crcs,
+        }),
+      );
+      const response = await client.callTool({
+        name: "inspect_kernel_module",
+        arguments: { path },
+      });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      const outputSchema = canonicalOutputSchema("inspect_kernel_module");
+      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      expect(
+        ajv.compile(outputSchema as AnySchema)(response.structuredContent),
+      ).toBe(true);
+      const evidence = toolContract("inspect_kernel_module").outputSchema.parse(
+        response.structuredContent,
+      );
+      expect(
+        evidence.normalized_result.extended_versions?.entries[0],
+      ).toMatchObject({
+        crc_hex: "abcdef12",
+        status: "observed",
+      });
+      expect(
+        evidence.normalized_result.ksymtab?.kcrctab?.entries[0]?.crc_hex,
+      ).toBe("01020304");
+      expect(
+        evidence.normalized_result.ksymtab?.strings?.entries[0]?.value,
+      ).toBe("exported_sym");
     } finally {
       await session.close();
     }

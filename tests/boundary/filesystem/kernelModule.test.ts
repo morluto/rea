@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import { createKernelModuleService } from "../../../src/composition/binaryDiagnostics/kernelModule.js";
 import { kernelModuleSchema } from "../../../src/domain/native/kernelModule.js";
 import {
+  crc32Array,
+  extendedVersionSections,
   kernelModuleFixture,
   moduleSignatureTrailer,
 } from "../../../src/native/elf/KernelModule.fixture.js";
@@ -139,6 +141,55 @@ describe("kernel module stable filesystem boundary", () => {
       );
       if (cancelled.ok) throw new Error("Expected cancellation");
       expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("decodes __ksymtab_strings, __kcrctab*, and CONFIG_EXTENDED_MODVERSIONS through the service", async () => {
+    const root = await createTestTempDirectory("rea-kernel-module-ext-");
+    const path = join(root, "ext.ko");
+    const longSym = `_RNvCs_${"rust_symbol_".repeat(7)}fn`;
+    const ext = extendedVersionSections(
+      [
+        { crc: 0x11223344, name: "printk" },
+        { crc: 0x55667788, name: longSym },
+      ],
+      true,
+    );
+    await writeFile(
+      path,
+      kernelModuleFixture({
+        versions: null,
+        ksymtabStrings: Buffer.from("pub_sym\0NS_DEMO\0", "latin1"),
+        kcrctab: crc32Array([0xaabbccdd], true),
+        kcrctabGpl: crc32Array([0xeeff0011], true),
+        versionExtNames: ext.names,
+        versionExtCrcs: ext.crcs,
+      }),
+    );
+    const service = createKernelModuleService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      const report = kernelModuleSchema.parse(result.value.normalized_result);
+      expect(report.coverage).toEqual({
+        status: "complete",
+        examined_entries: 14,
+      });
+      expect(report.extended_versions?.entries).toMatchObject([
+        { index: 0, crc_hex: "11223344", name: "printk", status: "observed" },
+        { index: 1, crc_hex: "55667788", name: longSym, status: "observed" },
+      ]);
+      expect(
+        report.ksymtab?.strings?.entries.map((entry) => entry.value),
+      ).toEqual(["pub_sym", "NS_DEMO"]);
+      expect(
+        report.ksymtab?.kcrctab?.entries.map((entry) => entry.crc_hex),
+      ).toEqual(["aabbccdd"]);
+      expect(
+        report.ksymtab?.kcrctab_gpl?.entries.map((entry) => entry.crc_hex),
+      ).toEqual(["eeff0011"]);
     } finally {
       await service.close();
     }

@@ -212,3 +212,139 @@ it("retains a completed observation if the caller cancels while the provider com
     normalized_result: report,
   });
 });
+
+it("validates ksymtab strings, kcrctab, and extended_versions invariants and retains Evidence locations", async () => {
+  const validExtended: KernelModule = {
+    ...report,
+    extended_versions: {
+      status: "present",
+      entry_crc_bytes: 4,
+      names_section: {
+        status: "present",
+        location: { offset: 128, bytes: 7 },
+        sha256: digest,
+        count: 1,
+        reason: null,
+      },
+      crcs_section: {
+        status: "present",
+        location: { offset: 140, bytes: 4 },
+        sha256: digest,
+        count: 1,
+        reason: null,
+      },
+      entries: [
+        {
+          index: 0,
+          crc_hex: "12345678",
+          crc_location: { offset: 140, bytes: 4 },
+          name: "printk",
+          name_location: { offset: 128, bytes: 7 },
+          name_sha256: digest,
+          name_raw_hex: "7072696e746b00",
+          status: "observed",
+          reason: null,
+          omitted: false,
+        },
+      ],
+      reason: null,
+    },
+    ksymtab: {
+      status: "observed",
+      sections: [],
+      strings: {
+        status: "present",
+        location: { offset: 160, bytes: 4 },
+        sha256: digest,
+        entries: [
+          {
+            index: 0,
+            location: { offset: 160, bytes: 4 },
+            value: "sym",
+            raw_sha256: digest,
+            raw_hex: "73796d00",
+            status: "observed",
+            reason: null,
+            omitted: false,
+          },
+        ],
+        reason: null,
+      },
+      kcrctab: {
+        status: "present",
+        entry_bytes: 4,
+        location: { offset: 168, bytes: 4 },
+        sha256: digest,
+        entries: [
+          {
+            index: 0,
+            location: { offset: 168, bytes: 4 },
+            crc_hex: "abcdef01",
+          },
+        ],
+        reason: null,
+      },
+      kcrctab_gpl: {
+        status: "absent",
+        entry_bytes: 4,
+        location: null,
+        sha256: null,
+        entries: [],
+        reason: null,
+      },
+    },
+    coverage: { status: "complete", examined_entries: 3 },
+  };
+  const validResult = await new KernelModuleService({
+    identity,
+    inspect: () => Promise.resolve(ok(validExtended)),
+  }).inspect({ path: report.artifact.path });
+  expect(validResult.ok).toBe(true);
+  if (validResult.ok)
+    expect(validResult.value.locations).toEqual(
+      expect.arrayContaining([
+        { kind: "file-offset-range", start: 128, end: 135 },
+        { kind: "file-offset-range", start: 140, end: 144 },
+        { kind: "file-offset-range", start: 160, end: 164 },
+        { kind: "file-offset-range", start: 168, end: 172 },
+      ]),
+    );
+
+  const invalidCases: KernelModule[] = [
+    { ...validExtended, coverage: { status: "complete", examined_entries: 2 } },
+    {
+      ...validExtended,
+      ksymtab: {
+        ...validExtended.ksymtab!,
+        kcrctab: {
+          ...validExtended.ksymtab!.kcrctab!,
+          entries: [
+            {
+              index: 0,
+              location: { offset: 169, bytes: 4 },
+              crc_hex: "abcdef01",
+            },
+          ],
+        },
+      },
+    },
+    {
+      ...validExtended,
+      extended_versions: {
+        ...validExtended.extended_versions!,
+        names_section: {
+          ...validExtended.extended_versions!.names_section,
+          count: 2,
+        },
+      },
+    },
+  ];
+  for (const invalid of invalidCases) {
+    const outcome = await new KernelModuleService({
+      identity,
+      inspect: () => Promise.resolve(ok(invalid)),
+    }).inspect({ path: report.artifact.path });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toBeInstanceOf(AnalysisOutputError);
+  }
+});
