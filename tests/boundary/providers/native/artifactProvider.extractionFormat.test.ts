@@ -50,7 +50,11 @@ it.each(["plist", "pe"] as const)(
       error: {
         _tag: "AnalysisTargetFailureError",
         operation: "extract_artifact",
-        failure: { detail: expect.stringContaining( "Artifact format has no extraction reader:", ) },
+        failure: {
+          detail: expect.stringContaining(
+            "Artifact format has no extraction reader:",
+          ),
+        },
       },
     });
     await expect(access(output)).rejects.toThrow();

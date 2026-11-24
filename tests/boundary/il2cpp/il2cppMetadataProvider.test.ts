@@ -874,7 +874,11 @@ it.each([false, true])(
         ok: false,
         error: {
           _tag: "AnalysisTargetFailureError",
-          failure: { detail: expect.stringContaining( "generic method instances are not decoded for metadata version 39", ) },
+          failure: {
+            detail: expect.stringContaining(
+              "generic method instances are not decoded for metadata version 39",
+            ),
+          },
         },
       });
       const ordinary = await provider.inspect({ path, binary_path }, options);
