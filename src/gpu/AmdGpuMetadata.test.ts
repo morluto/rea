@@ -130,3 +130,20 @@ it("distinguishes an unsupported extension tag from a forbidden MessagePack toke
     expect.objectContaining({ kind: "malformed" }),
   );
 });
+it("admits unsigned integer map keys only for the schema that declares them", () => {
+  // {0x2c0a: 1}, as in PAL `.registers`.
+  const registers = Buffer.from("81cd2c0a01", "hex");
+  expect(() => readAmdMetadata(registers)).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
+  expect(readAmdMetadata(registers, "string-or-unsigned")).toEqual({
+    "11274": 1,
+  });
+  // {1: 0, 1: 0} repeats a key; {"1": 0, 1: 0} only collides when normalized.
+  expect(() =>
+    readAmdMetadata(Buffer.from("8201000100", "hex"), "string-or-unsigned"),
+  ).toThrow(expect.objectContaining({ kind: "malformed" }));
+  expect(() =>
+    readAmdMetadata(Buffer.from("82a131000100", "hex"), "string-or-unsigned"),
+  ).toThrow(expect.objectContaining({ kind: "unsupported" }));
+});

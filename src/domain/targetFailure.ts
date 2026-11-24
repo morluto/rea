@@ -110,7 +110,6 @@ export interface TargetFailureProjection {
   readonly code:
     | "invalid_request"
     | "unsupported_target"
-    | "artifact_integrity_mismatch"
     | "artifact_changed"
     | "access_denied"
     | "artifact_operation_failed"
@@ -172,7 +171,9 @@ export const TARGET_FAILURE_PROJECTIONS = {
   },
   integrity: {
     title: "Integrity-mismatched",
-    code: "artifact_integrity_mismatch",
+    // `artifact_integrity_mismatch` is reserved for a failure that names both
+    // declared and calculated digests; this kind need not carry them.
+    code: "artifact_operation_failed",
     category: "integrity_mismatch",
     retryable: false,
     recovery: "replace_or_record_integrity",

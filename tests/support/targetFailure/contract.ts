@@ -32,7 +32,7 @@ export const TARGET_FAILURE_CONTRACT = {
     retryable: false,
   },
   integrity: {
-    code: "artifact_integrity_mismatch",
+    code: "artifact_operation_failed",
     category: "integrity_mismatch",
     retryable: false,
   },
