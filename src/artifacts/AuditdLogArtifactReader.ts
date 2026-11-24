@@ -115,9 +115,13 @@ export class AuditdLogArtifactReader implements ArtifactReader {
 
   async #prepare(signal?: AbortSignal): Promise<void> {
     const image = await this.#decode(signal);
-    this.#metadata = auditdLogMetadataSchema.parse(image.metadata);
-    this.#limitations = image.limitations;
+    const metadata = auditdLogMetadataSchema.parse(image.metadata);
+    // The final read re-verifies the source; publishing the inventory before it
+    // succeeds would leave `formatMetadata()` returning facts whose source
+    // identity was never confirmed.
     await this.#source.read(signal);
+    this.#metadata = metadata;
+    this.#limitations = image.limitations;
   }
 
   async #decode(signal?: AbortSignal): Promise<AuditdLogInventory> {
