@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **delivery:** for these seven tools, an omitted detail on a result above 32 KiB now returns the retained summary instead of complete Evidence. Pass detail: "complete" to keep the previous shape.
 * **deps:** MCP callers that need every volume, file and section inline must pass detail: "complete" to inspect_uefi_firmware.
 * **limits:** an inspect_il2cpp_metadata refusal at the ELF pointer index reports reported_limits.boundary "virtual-pointer-index-bytes" and details.limit for max_native_index_bytes, and no longer carries a details.refusal fixed_ceiling.
 * **pe:** import and delay-import walks continue to the null descriptor past a short directory Size instead of stopping with a malformed_entry issue, and inspect-pe-resources reports an unsupported optional-header magic as unsupported_target.
@@ -47,6 +48,7 @@
 * **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
 * **cli:** add list-procedures to produce function-matching inventories ([#14241](https://github.com/morluto/rea/issues/14241)) ([e2c0071](https://github.com/morluto/rea/commit/e2c00712fd421fc77f335d7b9f87ce162808a437))
 * **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
+* **delivery:** size the default delivery of native inventories and traces ([59a7999](https://github.com/morluto/rea/commit/59a799931c13c9a8d89e490c20298882497d50d8))
 * **desktop:** recognise native releases and rank application probes first ([#14264](https://github.com/morluto/rea/issues/14264)) ([46b73f5](https://github.com/morluto/rea/commit/46b73f5b8116ac71333a0c37980f166c13bedd4e))
 * **elf:** inspect exports without section headers ([#9083](https://github.com/morluto/rea/issues/9083)) ([7e15884](https://github.com/morluto/rea/commit/7e158843b36c7cca8a8614687652d20e0f77e323))
 * **evidence:** find direct referrers by linked Evidence ID ([#11709](https://github.com/morluto/rea/issues/11709)) ([b57671c](https://github.com/morluto/rea/commit/b57671cb42ed16687d0b0ea8ff43d3643e045aef))
@@ -151,6 +153,7 @@
 * **contracts/mcp:** collapse Evidence wire schemas, project type lists, preserve discover_tools guidance ([#13752](https://github.com/morluto/rea/issues/13752)) ([f6a83f1](https://github.com/morluto/rea/commit/f6a83f1fcf6a1fa95a69ade0b0176f19516015fd))
 * **cutter/ghidra:** fix Cutter DAG limit rejection, guard Ghidra x86-32 SEH scan, and cache referenced address lookups ([#13478](https://github.com/morluto/rea/issues/13478)) ([ccdc887](https://github.com/morluto/rea/commit/ccdc887dc1b640b151e1cd594201a5406d72b8a2))
 * **cyclonedx:** keep recorded tool references unique ([#13425](https://github.com/morluto/rea/issues/13425)) ([7db00e8](https://github.com/morluto/rea/commit/7db00e8fd6306b880a7f25e5418de5a475761485))
+* **delivery:** summarize by size only where the summary can be paged ([89919c8](https://github.com/morluto/rea/commit/89919c836d690e62b178880fd0c65e0303a33f3f))
 * **desktop:** anchor draft text checks through reflow ([#13708](https://github.com/morluto/rea/issues/13708)) ([7add65d](https://github.com/morluto/rea/commit/7add65ddec97017d7a7d7ba83057aeb9eb529e4d))
 * **desktop:** avoid suggesting edits from incomparable views ([#13596](https://github.com/morluto/rea/issues/13596)) ([7673ab0](https://github.com/morluto/rea/commit/7673ab03a6cb26f045adcffe803801ee71102cb1))
 * **desktop:** bound positioned note guards ([#13711](https://github.com/morluto/rea/issues/13711)) ([b988006](https://github.com/morluto/rea/commit/b9880064fd36f26672fefc755bd28030dc6a6d29))
