@@ -50,7 +50,7 @@ import {
   ZipArtifactReader,
 } from "../resources/index.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import type { DoctorProviderCheck } from "../ports/DoctorProviderInspection.js";
+import type { DoctorFailureClassification } from "../ports/DoctorProviderInspection.js";
 import {
   JADX_JAR_CONFIGURATION_REMEDIATION,
   JADX_JAVA_PROBE_REMEDIATION,
@@ -141,7 +141,7 @@ const jadxFailureRemediation = (kind: JadxFailureKind): string => {
 export const jadxFailureClassification = (
   kind: JadxFailureKind | null,
   configured: boolean,
-): DoctorProviderCheck["classification"] => {
+): DoctorFailureClassification => {
   const drift = configured ? "config_drift" : "missing_analysis_engine";
   switch (kind) {
     case "windows_native_artifact":
@@ -317,6 +317,8 @@ const projectConfigurationFailure = (
     {
       cause,
       userMessage: cause.message,
+      // The configuration boundary owns the repair for each failure kind.
+      remediationAction: jadxFailureRemediation(cause.kind),
       diagnostics: {
         ...facts,
         failure_kind: cause.kind,
@@ -559,7 +561,7 @@ const resolveJar = async (
   if (jar === undefined)
     throw configurationFailure(
       "not_configured",
-      JADX_JAR_CONFIGURATION_REMEDIATION,
+      "REA_JADX_MCP_JAR is not set.",
       { jar_configured: false },
       "jar",
     );
