@@ -484,6 +484,7 @@ const readTls = async ({
 
   return {
     directory,
+    structure_location: { offset: directory.file_offset, bytes: structBytes },
     start_address_of_raw_data: hex(start),
     end_address_of_raw_data: hex(end),
     raw_data_size: rawSize,

@@ -45,7 +45,8 @@ The default [read allowance](reference/limits-and-recovery.md#static-reader-read
 whatever the file size. The default
 callback budget is 64 (`max_callbacks`, ceiling 4096). An exact-budget array is
 accepted if its next slot is null. A TLS directory `Size` below its structure is
-read at its RVA and reported in `header_anomalies`, and a zero directory RVA is
+read at its RVA, cited as `tls.structure_location`, and reported in
+`header_anomalies`, and a zero directory RVA is
 absent, as the loader treats them; see
 [PE header admission](guides/native/binary-diagnostics.md#pe-header-admission).
 Truncated, ambiguous or unmapped directory and

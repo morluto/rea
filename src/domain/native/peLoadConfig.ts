@@ -330,6 +330,12 @@ export const tlsAlignment = (characteristics: number): number | null =>
 const tlsSchema = z
   .strictObject({
     directory: directorySchema,
+    /**
+     * File span of the IMAGE_TLS_DIRECTORY read at the RVA; it exceeds
+     * `directory` when the declared Size is short. Evidence saved before this
+     * field existed omits it.
+     */
+    structure_location: range.optional(),
     start_address_of_raw_data: hexVa,
     end_address_of_raw_data: hexVa,
     raw_data_size: uint,

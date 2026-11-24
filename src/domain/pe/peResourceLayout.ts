@@ -23,10 +23,7 @@ import {
   readPeImageFromReader,
   type PeImage,
 } from "../native/peImage.js";
-import {
-  peDirectorySizeAnomaly,
-  type PeHeaderAnomaly,
-} from "../native/peHeaderAnomalies.js";
+import type { PeHeaderAnomaly } from "../native/peHeaderAnomalies.js";
 import {
   peFailure,
   type PeRangeReader,
@@ -108,33 +105,24 @@ const mapPeResourceLayout = (image: PeImage, fileSize: number) => {
   const declaredSize = resource?.size ?? 0;
   const headerAnomalies: PeHeaderAnomaly[] = [...image.pe_header_anomalies];
   // The loader locates the tree by RVA alone and walks it within the
-  // section's bytes; a missing directory has a zero RVA. An ambiguous or
+  // section's file-backed bytes, so Size bounds nothing it reads; a missing
+  // directory has a zero RVA. The walk records how far it read, and the
+  // inventory reports a Size that ends before that point. An ambiguous or
   // unmapped root is still refused through `map`.
   let size = 0;
   if (rva !== 0) {
     const run =
       index.prefix(base + BigInt(rva), RVA_SPACE - rva)?.size ??
       map(rva, PE_RESOURCE_DIRECTORY_BYTES);
-    if (declaredSize < PE_RESOURCE_DIRECTORY_BYTES) {
-      headerAnomalies.push(
-        peDirectorySizeAnomaly(
-          "resource",
-          PE_RESOURCE_DIRECTORY,
-          declaredSize,
-          PE_RESOURCE_DIRECTORY_BYTES,
-        ),
-      );
-      size = run;
-    } else if (
+    if (
       declaredSize > run &&
       tryMap(rva, Math.min(declaredSize, RVA_SPACE - rva)) === undefined
-    ) {
+    )
       headerAnomalies.push({
         code: "directory_size_past_file_backed_bytes",
         message: `Data directory 2 (resource) declares Size ${String(declaredSize)}, but only ${String(run)} bytes from its RVA are file-backed; the tree was read within those bytes.`,
       });
-      size = run;
-    } else size = declaredSize;
+    size = run;
   }
   return {
     format: image.bits === 64 ? ("pe32-plus" as const) : ("pe32" as const),
@@ -145,7 +133,10 @@ const mapPeResourceLayout = (image: PeImage, fileSize: number) => {
         ? null
         : image.pe_optional_header_file_offset + resource.offset,
     rva,
+    /** Bytes from the RVA the tree may be read within: the file-backed run. */
     size,
+    /** The directory's Size as stored. */
+    declaredSize,
     headerAnomalies,
     map,
   };
