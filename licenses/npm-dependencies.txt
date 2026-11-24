@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 972; runtime: 174.
+Locked package entries: 971; runtime: 173.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -2955,11 +2955,6 @@ import-meta-resolve@4.2.0 | development | MIT
   Package: https://www.npmjs.com/package/import-meta-resolve/v/4.2.0
   Archive: https://registry.npmjs.org/import-meta-resolve/-/import-meta-resolve-4.2.0.tgz
   Integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==
-imurmurhash@0.1.4 | runtime | MIT
-  Lockfile path: node_modules/imurmurhash
-  Package: https://www.npmjs.com/package/imurmurhash/v/0.1.4
-  Archive: https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz
-  Integrity: sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==
 indent-string@4.0.0 | development | MIT
   Lockfile path: node_modules/indent-string
   Package: https://www.npmjs.com/package/indent-string/v/4.0.0
@@ -4770,11 +4765,11 @@ wrappy@1.0.2 | runtime | ISC
   Package: https://www.npmjs.com/package/wrappy/v/1.0.2
   Archive: https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz
   Integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==
-write-file-atomic@7.0.0 | runtime | ISC
+write-file-atomic@8.0.0 | runtime | ISC
   Lockfile path: node_modules/write-file-atomic
-  Package: https://www.npmjs.com/package/write-file-atomic/v/7.0.0
-  Archive: https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-7.0.0.tgz
-  Integrity: sha512-YnlPC6JqnZl6aO4uRc+dx5PHguiR9S6WeoLtpxNT9wIG+BDya7ZNE1q7KOjVgaA73hKhKLpVPgJ5QA9THQ5BRg==
+  Package: https://www.npmjs.com/package/write-file-atomic/v/8.0.0
+  Archive: https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-8.0.0.tgz
+  Integrity: sha512-dYwyZredl67GyLLIHJnRM3h2PcOmN5SkcgC7eM5DPDEOEl6dLFqVrMg3F1Ea32usj4VSVZtd2H4MtKTNOf6nPg==
 ws@8.21.0 | runtime | MIT
   Lockfile path: node_modules/ws
   Package: https://www.npmjs.com/package/ws/v/8.21.0

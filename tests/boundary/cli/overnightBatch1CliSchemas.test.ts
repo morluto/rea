@@ -7,6 +7,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { z } from "zod";
 import { expect, it, vi } from "vitest";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok } from "../../../src/domain/result.js";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
@@ -55,14 +56,7 @@ const registry = () => {
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerSqliteCommands(cli, silentLogger, {});
   const serve = async (argv: readonly string[]): Promise<unknown> => {
-    let stdout = "";
-    await cli.serve([...argv, "--json"], {
-      env: {},
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => undefined,
-    });
+    const { stdout } = await serveInProcessCli(cli, [...argv, "--json"]);
     return JSON.parse(stdout);
   };
   return { cli, serve, adbExecute, apktoolExecute, runDirectAnalysis };
