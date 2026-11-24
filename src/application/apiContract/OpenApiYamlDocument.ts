@@ -161,6 +161,10 @@ export const decodeOpenApiYaml = (
           available_heap_bytes: available,
         },
         {
+          // The comparison is against the heap free at this moment, so the
+          // refusal reports an exhaustion this process observed rather than a
+          // bound the caller could select.
+          measuredExhaustion: true,
           remediationAction:
             "Select a smaller complete document or free parser memory; paging a reply does not reduce YAML composition work.",
         },
