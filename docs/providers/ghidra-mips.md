@@ -40,18 +40,25 @@ pin; combining the pinned profile with an environment override is a typed
 refusal. A header that declares an ABI field but carries no record is still
 refused. Two further boundaries apply: an inspection that could not examine
 every ABI declaration source does not establish the recordless admission
-(target opening already refuses a carved ELF whose section table extends past
-the captured bytes, as described below), and an `EF_MIPS_ARCH_1` or
-`EF_MIPS_ARCH_32` header that _declares_ an ABI is refused rather than
-relabeled, because the declared-ABI lane is verified for
-`EF_MIPS_ARCH_32R2` headers only. The recordless MIPS-I lane pins the same
-generic 32-bit language, which also decodes later MIPS32 instructions; the
-session states that conformance to the MIPS-I subset is not established from
+(target opening refuses a carved ELF whose section table extends past the
+captured bytes, except for the recordless legacy `ET_EXEC` carve described
+below), and an `EF_MIPS_ARCH_1` or `EF_MIPS_ARCH_32` header that _declares_ an
+ABI is refused rather than relabeled, because the declared-ABI lane is verified
+for `EF_MIPS_ARCH_32R2` headers only. One carved shape is the exception to the
+first boundary: when a recordless legacy `ET_EXEC` ELF's only limitation is a
+section header table that extends past the captured bytes, and the complete
+program header table carries no `PT_MIPS_ABIFLAGS` record, the file is admitted
+on this recordless lane. The unread section headers (including any uncaptured
+`SHT_GNU_ATTRIBUTES` or `SHT_MIPS_ABIFLAGS`) stay unknown and are recorded as a
+limitation in the profile and in Evidence, beside the o32 assumption. Any other
+limitation, alone or with that one, is refused. The recordless MIPS-I lane pins
+the same generic 32-bit language, which also decodes later MIPS32 instructions;
+the session states that conformance to the MIPS-I subset is not established from
 the header alone, and names the committed language when the caller selected a
-variant instead of the pin. A committed profile is bound to the current
-target's lane and captured ELF metadata before startup; reusing a profile
-resolved for the other recordless lane is refused rather than exporting
-attribution for a target it did not describe.
+variant instead of the pin. A committed profile is bound to the current target's
+lane and captured ELF metadata before startup; reusing a profile resolved for the
+other recordless lane is refused rather than exporting attribution for a target
+it did not describe.
 
 Explicit `EF_MIPS_FP64` and `EF_MIPS_NAN2008` declarations are refused. Their
 absence is insufficient: Clang can emit identical `e_flags` for FP32, FP64 and
@@ -78,16 +85,19 @@ argument ABI and unknown nonzero MSA values remain unsupported. Without a
 separate ABI flags record, FP attribute values are admitted only when absent,
 `ANY` (0), double precision (1), or FPXX (5), the values covered by the
 recordless profile. Parsed values are retained in the MIPS analysis profile.
-A carved ELF whose section header table extends beyond the captured file is
-refused when the target is opened, before provider selection, as is every ELF
-declaration beyond EOF ([installation](../getting-started/installation.md#ghidra)). The refusal
+Except for the recordless legacy `ET_EXEC` carve admitted above, a carved ELF
+whose section header table extends beyond the captured file is refused when the
+target is opened, before provider selection, as is every ELF declaration beyond
+EOF ([installation](../getting-started/installation.md#ghidra)). The refusal
 names the declared range and the file size. It applies even when a
-program-header ABI record was captured: an uncaptured section header could
-carry an unsupported or conflicting declaration, so the captured bytes are not
-analyzed as a complete smaller program. The provider also refuses any ABI
-declaration inspection that reports unexamined headers. A missing
-program-header record does not make ABI declarations in uncaptured sections
-absent or supply a default ABI.
+program-header ABI record was captured: an uncaptured section header could carry
+an unsupported or conflicting declaration, so the captured bytes are not
+analyzed as a complete smaller program. The provider also refuses any other
+incomplete ABI declaration inspection. A missing program-header record does not
+make ABI declarations or `SHT_GNU_ATTRIBUTES` in uncaptured sections absent or
+supply a default ABI: the recordless carve admitted above keeps them as an
+unknown, recorded limitation, and its o32 basis remains an assumption, not a
+declaration.
 The field layout follows
 [`Elf_MIPS_ABIFlags_v0`](https://github.com/bminor/glibc/blob/master/elf/elf.h).
 

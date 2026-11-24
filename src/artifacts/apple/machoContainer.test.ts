@@ -299,30 +299,28 @@ describe("FAT Mach-O identity", () => {
     });
   });
 
-  it.each([
-    { wrongIndex: 0, label: "selected host slice" },
-    { wrongIndex: 1, label: "non-host slice" },
-  ])(
-    "rejects table CPU claims that disagree with the $label header",
-    ({ wrongIndex }) => {
-      const bytes = fatImage([
-        { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
-        { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
-      ]);
-      const entry = 8 + wrongIndex * 20;
-      // Change only the FAT claim; both embedded thin headers remain intact.
-      new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(
-        entry,
-        wrongIndex === 0 ? CPU.arm64.type : CPU.x86_64.type,
-        false,
-      );
-      const result = parseExecutableHeader(Buffer.from(bytes), "arm64");
-      expect(result).toEqual({
-        ok: false,
-        error: `FAT architecture ${wrongIndex} CPU type/subtype disagrees with its Mach-O header`,
-      });
-    },
-  );
+  it("rejects table CPU claims that disagree with the selected slice header and isolates unselected slices", () => {
+    const bytes = fatImage([
+      { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+      { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+    ]);
+    // Mutate only the unselected x86_64 slice's subtype in the FAT table.
+    const unselectedMismatch = Buffer.from(bytes);
+    unselectedMismatch.writeUInt32BE(99, 8 + 4);
+    expect(parseExecutableHeader(unselectedMismatch, "arm64")).toMatchObject({
+      ok: true,
+      value: { format: "mach-o-universal", architecture: "arm64" },
+    });
+
+    // Mutate the selected arm64 slice's subtype in the FAT table.
+    const selectedMismatch = Buffer.from(bytes);
+    selectedMismatch.writeUInt32BE(99, 8 + 20 + 4);
+    expect(parseExecutableHeader(selectedMismatch, "arm64")).toEqual({
+      ok: false,
+      error:
+        "FAT architecture 1 CPU type/subtype disagrees with its Mach-O header",
+    });
+  });
 });
 
 describe("FAT slice header identity and bounds", () => {

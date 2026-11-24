@@ -8,7 +8,7 @@ import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   pageViewCoverage,
@@ -49,14 +49,8 @@ export const projectNativeInstructionReferencesView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "native-instruction-references")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Use native-instruction-references with this source.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Use native-instruction-references with this source.",
     );
   assertOwnedView<z.output<typeof nativeInstructionReferencesRequestSchema>>(
     view,

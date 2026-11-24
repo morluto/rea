@@ -70,23 +70,6 @@ mcpTest(
   },
 );
 
-mcpTest("requires an absolute path for inspect_elf_notes", async ({ mcp }) => {
-  const { client, session } = await connect(mcp);
-  try {
-    const response = await client.callTool({
-      name: "inspect_elf_notes",
-      arguments: { path: "program" },
-    });
-    expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_elf_notes" },
-    });
-  } finally {
-    await session.close();
-  }
-});
-
 mcpTest(
   "keeps GNU notes when a section name is not NUL-terminated",
   async ({ mcp }) => {

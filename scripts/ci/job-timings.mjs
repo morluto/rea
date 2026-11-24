@@ -19,6 +19,7 @@ const STEP_COSTS = [
       "Upload complete static diagnostics",
       "Upload complete deep static diagnostics",
       "Retain available reverse tools diagnostics",
+      "Record affected-test prediction before the full suite",
       "Publish successful timing history",
       "Retain the exact qualified release package",
     ]),
@@ -27,6 +28,7 @@ const STEP_COSTS = [
     key: "artifactDownload",
     pattern: /download.*artifact/iu,
     names: new Set([
+      "Download the classifier's affected-test prediction",
       "Download previous timing report",
       "Download the original qualified package",
     ]),
@@ -241,6 +243,7 @@ function normalizeJob(job) {
     url: stringOrNull(job.html_url),
     name: job.name,
     workflowName: stringOrNull(job.workflow_name),
+    runnerId: Number.isSafeInteger(job.runner_id) ? job.runner_id : null,
     status: job.status,
     conclusion: stringOrNull(job.conclusion),
     createdAt: stringOrNull(job.created_at),
@@ -263,6 +266,7 @@ function normalizeStep(step) {
   if (step.conclusion === "skipped")
     return {
       name: step.name,
+      conclusion: "skipped",
       costKey: null,
       duration: unknownDuration("step was skipped"),
     };
@@ -271,6 +275,7 @@ function normalizeStep(step) {
   );
   return {
     name: step.name,
+    conclusion: stringOrNull(step.conclusion),
     costKey: cost?.key ?? null,
     duration: duration(step.started_at, step.completed_at),
   };

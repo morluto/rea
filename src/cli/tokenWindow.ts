@@ -1,4 +1,4 @@
-import { estimateTokenCount } from "tokenx";
+import { estimateTokenCount, sliceByTokens } from "tokenx";
 
 export interface TokenWindow {
   readonly text: string;
@@ -7,31 +7,6 @@ export interface TokenWindow {
   readonly end: number;
   readonly truncated: boolean;
 }
-
-// tokenx 1.3.0 uses this split expression before estimating and slicing.
-// Its public API does not expose the segments, so retain the same boundaries
-// here while mapping both ends of each segment to a disjoint text range.
-const TOKEN_SPLIT_PATTERN = /(\s+|[.,!?;(){}[\]<>:/\\|@#$%^&*+=`~_-]+)/;
-
-const codePointSafeBoundary = (text: string, offset: number): number =>
-  offset > 0 &&
-  offset < text.length &&
-  text.charCodeAt(offset - 1)! >= 0xd800 &&
-  text.charCodeAt(offset - 1)! <= 0xdbff &&
-  text.charCodeAt(offset)! >= 0xdc00 &&
-  text.charCodeAt(offset)! <= 0xdfff
-    ? offset - 1
-    : offset;
-
-const segmentBoundary = (
-  segment: string,
-  tokenOffset: number,
-  tokenCount: number,
-): number =>
-  codePointSafeBoundary(
-    segment,
-    Math.floor((tokenOffset / tokenCount) * segment.length),
-  );
 
 /** Slice an approximate token range without overlapping pages or splitting a surrogate pair. */
 export const sliceTextByTokenWindow = (
@@ -54,33 +29,13 @@ export const sliceTextByTokenWindow = (
       truncated: true,
     };
 
-  const parts: string[] = [];
-  let tokenPosition = 0;
-  for (const segment of text.split(TOKEN_SPLIT_PATTERN).filter(Boolean)) {
-    if (tokenPosition >= actualEnd && actualEnd < total) break;
-    const tokenCount = estimateTokenCount(segment);
-    if (tokenCount === 0) {
-      if (
-        tokenPosition >= offset &&
-        (tokenPosition < actualEnd || actualEnd === total)
-      )
-        parts.push(segment);
-      continue;
-    }
-
-    const segmentEnd = tokenPosition + tokenCount;
-    if (tokenPosition < actualEnd && segmentEnd > offset) {
-      const localStart = Math.max(0, offset - tokenPosition);
-      const localEnd = Math.min(tokenCount, actualEnd - tokenPosition);
-      const charStart = segmentBoundary(segment, localStart, tokenCount);
-      const charEnd = segmentBoundary(segment, localEnd, tokenCount);
-      parts.push(segment.slice(charStart, charEnd));
-    }
-    tokenPosition = segmentEnd;
-  }
-
   return {
-    text: parts.join(""),
+    // An open end retains trailing whitespace priced at zero tokens.
+    text: sliceByTokens(
+      text,
+      offset,
+      actualEnd === total ? undefined : actualEnd,
+    ),
     total,
     start: offset,
     end: actualEnd,
