@@ -405,6 +405,56 @@ const rechecksum = (block: Buffer): Buffer => {
 const end = Buffer.alloc(1024);
 
 describe("tar header edge cases", () => {
+  it("skips an old GNU sparse member's map extension blocks and keeps later members", async () => {
+    const sparse = tarHeader(
+      { name: "holes.bin", type: "S", dialect: "gnu" },
+      512,
+    );
+    sparse[482] = 1;
+    const extension = Buffer.alloc(512);
+    extension[504] = 0;
+    const result = await read(
+      Buffer.concat([
+        rechecksum(sparse),
+        extension,
+        Buffer.alloc(512, 0x73),
+        tarMembers([{ name: "after.txt", data: "after" }]),
+        end,
+      ]),
+    );
+    expect(result.entries.map((entry) => entry.path)).toEqual(["after.txt"]);
+    expect(result.omissions).toEqual([
+      { path: "holes.bin", kind: "unsupported" },
+    ]);
+    expect(result.metadata?.end_state).toBe("end-marker");
+  });
+
+  it("decodes a non-UTF-8 name byte for byte as Latin-1", async () => {
+    const header = tarHeader({ name: "x" }, 1);
+    header[0] = 0x80;
+    const result = await read(
+      Buffer.concat([rechecksum(header), Buffer.alloc(512, 0x61), end]),
+    );
+    expect(result.entries[0]?.path).toBe("\u0080");
+    expect(result.entries[0]?.limitations).toEqual([
+      "tar name is not UTF-8; decoded as Latin-1; raw hex: 80.",
+    ]);
+  });
+
+  it("raises cancellation from a gzip read that is waiting for output", async () => {
+    // A descriptor whose reads never complete keeps the inflater waiting.
+    const handle = { read: () => new Promise<never>(() => undefined) };
+    const stream = new GzipTarStream(handle, 1024, () => undefined);
+    const controller = new AbortController();
+    try {
+      const pending = stream.read(1, controller.signal);
+      controller.abort(new Error("caller cancelled"));
+      await expect(pending).rejects.toMatchObject({ reason: "cancelled" });
+    } finally {
+      stream.close();
+    }
+  });
+
   it("stops as malformed at a pax size that is not a number, keeping earlier members", async () => {
     const pax = Buffer.from("12 size=abc\n");
     const result = await read(

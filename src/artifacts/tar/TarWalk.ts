@@ -75,8 +75,6 @@ export interface TarWalk {
   readonly limitations: readonly string[];
 }
 
-const LATIN1 = new TextDecoder("latin1");
-
 /** Decode a header string: UTF-8 when valid, otherwise Latin-1 with its raw bytes noted. */
 const decodeName = (
   bytes: Uint8Array,
@@ -87,7 +85,9 @@ const decodeName = (
   limitations.push(
     `tar ${field} is not UTF-8; decoded as Latin-1; raw hex: ${Buffer.from(bytes).toString("hex")}.`,
   );
-  return LATIN1.decode(bytes);
+  // Buffer's latin1 maps each byte to the same code point; the WHATWG
+  // "latin1" label is Windows-1252 and would rewrite bytes 0x80-0x9f.
+  return Buffer.from(bytes).toString("latin1");
 };
 
 const safeNumber = (value: bigint): number | null =>
@@ -101,6 +101,26 @@ const paxSeconds = (value: string | undefined): bigint | undefined =>
   value !== undefined && /^-?[0-9]+(?:\.[0-9]+)?$/u.test(value)
     ? BigInt(value.split(".")[0]!)
     : undefined;
+
+/** GNU tar manual "Old GNU Format": the header's isextended byte. */
+const GNU_SPARSE_HEADER_EXTENDED_OFFSET = 482;
+/** Each sparse extension block: 21 map entries, then its isextended byte. */
+const GNU_SPARSE_EXTENSION_EXTENDED_OFFSET = 504;
+
+/** Skip the sparse-map extension blocks that follow an old GNU sparse header. */
+const skipGnuSparseExtensions = async (
+  header: Buffer,
+  stream: TarByteStream,
+  signal: AbortSignal | undefined,
+): Promise<"complete" | "truncated"> => {
+  let extended = header[GNU_SPARSE_HEADER_EXTENDED_OFFSET] !== 0;
+  while (extended) {
+    const block = await stream.read(TAR_BLOCK_BYTES, signal);
+    if (block.length < TAR_BLOCK_BYTES) return "truncated";
+    extended = block[GNU_SPARSE_EXTENSION_EXTENDED_OFFSET] !== 0;
+  }
+  return "complete";
+};
 
 /** The first recognized numeric pax keyword whose value does not parse. */
 const invalidPaxNumber = (records: TarPaxRecords): string | undefined => {
@@ -344,6 +364,19 @@ export const walkTar = async (
       local = undefined;
       longName = undefined;
       longLink = undefined;
+      // An old GNU sparse header continues its sparse map in extension
+      // blocks before the stored data; skip them so the next header aligns.
+      if (typeflag === TAR_TYPEFLAGS.gnuSparse && header.dialect === "gnu") {
+        const extensions = await skipGnuSparseExtensions(block, stream, signal);
+        if (extensions === "truncated") {
+          stop(
+            "truncated",
+            headerOffset,
+            `Tar GNU sparse member at offset ${String(headerOffset)} is cut off inside its sparse map; the archive is truncated.`,
+          );
+          break;
+        }
+      }
       const skipped = await stream.skip(size, signal);
       if (skipped < size) {
         stop(

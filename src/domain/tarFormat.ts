@@ -287,6 +287,7 @@ export const TAR_TYPEFLAGS = {
   gnuLongName: 0x4c,
   gnuLongLink: 0x4b,
   gnuVolumeLabel: 0x56,
+  gnuSparse: 0x53,
 } as const;
 
 export type TarPaxRecords = ReadonlyMap<string, string>;

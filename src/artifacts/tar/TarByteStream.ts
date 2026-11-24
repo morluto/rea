@@ -210,8 +210,14 @@ export class GzipTarStream implements TarByteStream {
         throw gzipStreamFailure(state.failure, this.#position);
       }
       this.#output.resume();
+      // Cancellation wakes the wait too; the loop then raises it.
       await new Promise<void>((resolve) => {
-        this.#wake = resolve;
+        const onAbort = (): void => resolve();
+        signal?.addEventListener("abort", onAbort, { once: true });
+        this.#wake = () => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        };
       });
     }
   }
