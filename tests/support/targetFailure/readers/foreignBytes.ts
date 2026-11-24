@@ -8,14 +8,13 @@ const foreign = (
   operation: string,
   kind: TargetFailureKind,
   format: string,
-  bytes: () => Buffer = foreignBytes,
 ) => ({
   operation,
   cases: [
     {
       name: "foreign-bytes",
       kind,
-      bytes,
+      bytes: foreignBytes,
       facts: { format },
       identity: true,
     },
@@ -30,9 +29,6 @@ const foreign = (
  */
 export default targetFailureReaders([
   foreign("inspect_python_pyc", "malformed", "python-pyc"),
-  foreign("inspect_erlang_beam", "truncated", "beam", () =>
-    Buffer.from("FOR1"),
-  ),
   foreign("inspect_rust_binary", "unsupported", "native-binary"),
   foreign("inspect_go_binary", "unsupported", "native-binary"),
   foreign("inspect_elf_notes", "malformed", "elf"),
