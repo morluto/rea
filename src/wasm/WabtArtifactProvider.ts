@@ -50,6 +50,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   wasmArtifactSchema,
   WABT_SOURCE_COMMIT,
+  WABT_RELEASE_LINE,
   WABT_VERSION,
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   wasmResourceLimits,
@@ -66,11 +67,7 @@ import {
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
 import { WabtRuntime } from "./WabtRuntime.js";
-import {
-  WABT_PROVIDER_IDENTITY,
-  admitWabtVersion,
-  wabtReleaseLine,
-} from "./WabtRelease.js";
+import { WABT_PROVIDER_IDENTITY, admitWabtVersion } from "./WabtRelease.js";
 import {
   wabtFailureDialect,
   wabtConfigurationRecoveryAction,
@@ -438,7 +435,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           executable_path: command.path,
           tool: command.tool,
           expected_version: WABT_VERSION,
-          accepted_releases: wabtReleaseLine(),
+          accepted_releases: WABT_RELEASE_LINE,
         };
         const version = await execute(command, ["--version"]);
         const admission =
@@ -459,13 +456,13 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           );
         }
         if (admission === undefined || admission.status === "unsupported") {
-          const reason = `${admission?.message ?? `Unsupported ${command.tool} version banner`}; expected stdout from ${wabtReleaseLine()} with empty stderr.`;
+          const reason = `${admission?.message ?? `Unsupported ${command.tool} version banner`}; expected stdout from ${WABT_RELEASE_LINE} with empty stderr.`;
           rejectVersion(reason);
         }
         // All three tools come from one directory, so admit only banners that agree.
         if (observedRelease === undefined) observedRelease = admission.version;
         if (observedRelease !== admission.version) {
-          const reason = `Configured WABT tools report different releases (${observedRelease} and ${admission.version}); select one complete ${wabtReleaseLine()} installation.`;
+          const reason = `Configured WABT tools report different releases (${observedRelease} and ${admission.version}); select one complete ${WABT_RELEASE_LINE} installation.`;
           rejectVersion(reason);
         }
         if (admission.status === "compatible")

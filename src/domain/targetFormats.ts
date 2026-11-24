@@ -38,6 +38,10 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   plist: "artifact",
   javascript: "artifact",
   uefi: "artifact",
+  sqlite: "artifact",
+  "windows-shortcut": "artifact",
+  "python-pyc": "artifact",
+  devicetree: "artifact",
   "source-map": "artifact",
 } as const;
 

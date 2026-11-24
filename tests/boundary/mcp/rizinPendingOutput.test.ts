@@ -82,7 +82,7 @@ test.each([
       };
       expect(reply.structuredContent).toMatchObject({
         normalized_result: expected,
-        raw_result: expected,
+        raw_result: null,
       });
     } finally {
       injected.control.exit();
@@ -211,7 +211,7 @@ test.each([
           output_truncated: true,
           completion_status: "unknown",
         },
-        raw_result: { output: expected, output_truncated: true },
+        raw_result: null,
       });
       if (invalid)
         expect(evidence).toMatchObject({
@@ -289,7 +289,7 @@ test.each(["_", "__REA_", "marker-prefix"])(
       if (!result.ok) throw result.error;
       expect(result.value.evidence).toMatchObject({
         normalized_result: { output: expected, completion_status: "unknown" },
-        raw_result: { output: expected },
+        raw_result: null,
       });
       expect(result.value.evidence.limitations).toContainEqual(
         expect.stringMatching(
@@ -386,7 +386,7 @@ test.each(["cancel", "overflow", "cancel-overflow"] as const)(
           output_truncated: mode.includes("overflow"),
           completion_status: "unknown",
         },
-        raw_result: { output: expected },
+        raw_result: null,
       });
       expect(manager.status(started.value.session_id)?.state).toBe("closed");
     } finally {

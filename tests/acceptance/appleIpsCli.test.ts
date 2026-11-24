@@ -210,7 +210,7 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated IPS as invalid input", async ({ cli }) => {
+cliTest("reports a truncated IPS as a malformed target", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-apple-ips-cli-bad-");
   const path = join(root, "broken.ips");
   await writeFile(path, appleIpsBytes({ truncateBody: true }));
@@ -219,7 +219,11 @@ cliTest("reports a truncated IPS as invalid input", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_apple_ips" },
+    code: "unsupported_target",
+    details: {
+      operation: "inspect_apple_ips",
+      path,
+      format_failure: "malformed",
+    },
   });
 });
