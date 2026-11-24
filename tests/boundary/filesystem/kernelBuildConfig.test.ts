@@ -10,6 +10,7 @@ import {
   plainIkcfgStringFixture,
 } from "../../../src/native/elf/KernelBuildConfig.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("kernel build config stable filesystem boundary", () => {
   it("reports non-file selections as caller input errors", async () => {
@@ -20,20 +21,11 @@ describe("kernel build config stable filesystem boundary", () => {
     await symlink(path, alias);
     const service = createKernelBuildConfigService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_kernel_build_config",
-          issues: [{ path: ["path"], reason, message: expect.any(String) }],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_kernel_build_config", {
+        root,
+        alias,
+        path,
+      });
     } finally {
       await service.close();
     }
