@@ -90,9 +90,9 @@ it.each(
       ),
     ).toBe(host);
     expect(returned.precision).toBe(depth > 512 ? "widened" : "exact");
-    expect(index.bindings.valueResourceLimits.has("alias-selections")).toBe(
-      depth > 512,
-    );
+    expect(
+      index.bindings.observations.valueResourceLimits.has("alias-selections"),
+    ).toBe(depth > 512);
     if (depth > 512) expect(returned.unresolvedInvocation).toBe(true);
   },
 );

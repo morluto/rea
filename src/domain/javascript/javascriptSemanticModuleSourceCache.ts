@@ -1,4 +1,5 @@
 import type * as t from "@babel/types";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueTypes.js";
 
@@ -13,10 +14,8 @@ type QueriesByRead<Match> = Map<
   Map<string, CachedSemanticModuleSourceMatch<Match>>
 >;
 
-const matchesByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, QueriesByRead<unknown>>
->();
+const matchesByState =
+  semanticConsumerMemo<WeakMap<t.Node, QueriesByRead<unknown>>>();
 
 /**
  * Queries for one source node, keyed by read site and options. Callers use it
