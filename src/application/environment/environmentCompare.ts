@@ -1,3 +1,5 @@
+import { isSuccessfulHttpStatus } from "../../domain/httpResponseStatus.js";
+import { boundedList } from "../../domain/boundedList.js";
 import {
   ownMember,
   decodedSegment,
@@ -36,7 +38,6 @@ import {
 import {
   probeRequests,
   requestBody,
-  sendsBodies,
   type ProbeStep,
   type UnobservedRecord,
 } from "./environmentCompareProbe.js";
@@ -138,9 +139,6 @@ const emptyNormalised = (): Normalised => ({
   large_bodies: 0,
   unobserved_bodies: 0,
 });
-
-const isSuccess = (status: number | null): boolean =>
-  status !== null && status >= 200 && status < 300;
 
 /** Where a call's answer holds its own entities, and the collection they belong to: a read view's entity or list pointer, a write's response pointer, else the root. A write that answers with only the new id learns that scalar. */
 const entityOf = (
@@ -274,16 +272,16 @@ interface ProbeRun {
   readonly served: ReadonlyMap<string, InputCheck>;
   /** The served tools that take a body their method does not, as a bulk delete names its entities. */
   readonly bodies: ReadonlySet<string>;
+  readonly requestBodies: boolean;
   readonly map: IdMap;
   readonly normalised: Normalised;
 }
 
+const EMPTY_HELD_IDS: ReadonlySet<string> = new Set();
+
 const heldIds = (
   store: EnvironmentStateStore | undefined,
-): ReadonlySet<string> =>
-  new Set(
-    store?.snapshot().rea_state.entities.map((entity) => entity.id) ?? [],
-  );
+): ReadonlySet<string> => store?.entityIds() ?? EMPTY_HELD_IDS;
 
 const stepOf = (
   base: Pick<CompareStep, "ordinal" | "method" | "path" | "live_status">,
@@ -291,8 +289,10 @@ const stepOf = (
   outcome: { env_status: number | null; differences: Difference[] },
 ): CompareStep => {
   const categories = [...new Set(outcome.differences.map((d) => d.category))];
-  const differences = outcome.differences.slice(0, STEP_DIFFERENCE_LIMIT);
-  const omitted = outcome.differences.length - differences.length;
+  const { items: differences, omitted } = boundedList(
+    outcome.differences,
+    STEP_DIFFERENCE_LIMIT,
+  );
   return {
     ...base,
     tool: call?.tool.name ?? null,
@@ -302,21 +302,27 @@ const stepOf = (
       (difference) => difference.category === "order",
     ),
     categories,
-    differences,
+    differences: [...differences],
     differences_total: outcome.differences.length,
     differences_omitted: omitted,
     differences_truncated: omitted > 0,
+    // optional-fact-default: with no matched call (tool null) no query was mapped.
     ignored_query: [...(call?.ignoredQuery ?? [])],
   };
 };
+
+const PROBE_BODY_REQUIRED =
+  "a browser probe that makes POST, PUT or PATCH calls, or calls a served tool with a body argument, needs capture.network.request_body selected, or those calls would be made without their bodies.";
 
 /** Answer one probe request as the environment would and compare it with the application's answer; one without an answer is only made. */
 const compareStep = (
   run: ProbeRun,
   manifest: EnvironmentSource["manifest"],
   probe: ProbeStep,
-): CompareStep | undefined => {
+): Result<CompareStep | undefined, string> => {
   const { request, live } = probe;
+  if (!run.requestBodies && ["POST", "PUT", "PATCH"].includes(request.method))
+    return err(PROBE_BODY_REQUIRED);
   const base = {
     ordinal: probe.ordinal,
     method: request.method,
@@ -326,8 +332,8 @@ const compareStep = (
   const report = (
     call: ProbeToolCall | undefined,
     outcome: { env_status: number | null; differences: Difference[] },
-  ): CompareStep | undefined =>
-    live === undefined ? undefined : stepOf(base, call, outcome);
+  ): Result<CompareStep | undefined, string> =>
+    ok(live === undefined ? undefined : stepOf(base, call, outcome));
   // Matched in the environment's terms, so a tool whose path holds a seeded id literally still matches. Scopes and
   // literals come from the live path: translating a parent id first would name a different collection than learning did.
   const liveSegments = request.path.slice(1).split("/");
@@ -356,6 +362,9 @@ const compareStep = (
       env_status: null,
       differences: [{ category: "not-served", pointer: "" }],
     });
+  // The translated route selects the served tool whose schema owns the body.
+  if (!run.requestBodies && run.bodies.has(call.tool.name))
+    return err(PROBE_BODY_REQUIRED);
   const held = heldIds(run.store);
   const unknownPath = call.pathArguments.some((name) => {
     const value = ownMember(call.args, name);
@@ -363,7 +372,7 @@ const compareStep = (
     const id = decodedSegment(value);
     return !run.map.hasEnv(id) && !held.has(id);
   });
-  const refusedWith = (message: string): CompareStep | undefined =>
+  const refusedWith = (message: string) =>
     report(call, {
       env_status: null,
       differences: [
@@ -377,7 +386,7 @@ const compareStep = (
     return refusedWith(`Invalid arguments: ${problem}`);
   const answered = run.answer(call.tool, args, call.observedQuery);
   if (!answered.ok) return refusedWith(answered.error.message);
-  if (live === undefined) return undefined;
+  if (live === undefined) return ok(undefined);
   const env: Answer = {
     status: answered.value.status,
     body: envBody(run, answered.value),
@@ -395,9 +404,13 @@ const compareStep = (
   for (const key of NORMALISED_KEYS)
     run.normalised[key] += compared.normalised[key];
   const differences = [...compared.differences];
-  if (unknownPath && isSuccess(live.status) && !isSuccess(env.status))
+  if (
+    unknownPath &&
+    isSuccessfulHttpStatus(live.status) &&
+    !isSuccessfulHttpStatus(env.status)
+  )
     differences.unshift({ category: "unmapped-id", pointer: "" });
-  return stepOf(base, call, { env_status: env.status, differences });
+  return ok(stepOf(base, call, { env_status: env.status, differences }));
 };
 
 const probeReport = (
@@ -508,29 +521,25 @@ export const compareEnvironment = (input: {
   );
   const probes: CompareProbeReport[] = [];
   for (const [index, probe] of input.probes.entries()) {
-    // A probe's request bodies are its call arguments, which a replay projection of a browser capture drops.
-    const capture = parseCaptureEvidence(operation, probe.value, "manifest");
-    // Without response bodies only statuses would compare, and without request bodies writes would be made empty.
-    const problem = !capture.ok
-      ? capture.error.message
-      : !capture.value.responseBodies
-        ? "a browser probe needs capture.network.response_body selected, or only statuses would compare."
-        : !capture.value.requestBodies && sendsBodies(capture.value.records)
-          ? "a browser probe that makes POST, PUT or PATCH calls needs capture.network.request_body selected, or those calls would be made without their bodies."
-          : undefined;
-    if (!capture.ok || problem !== undefined)
-      return err(
+    const probeError = (message: string) =>
+      err(
         inputError(
           operation,
           [
             {
               path: ["probe", index],
               reason: "invalid_value",
-              message: `${probe.label}: ${problem}`,
+              message: `${probe.label}: ${message}`,
             },
           ],
           "A probe file cannot be compared.",
         ),
+      );
+    const capture = parseCaptureEvidence(operation, probe.value, "manifest");
+    if (!capture.ok) return probeError(capture.error.message);
+    if (!capture.value.responseBodies)
+      return probeError(
+        "a browser probe needs capture.network.response_body selected, or only statuses would compare.",
       );
     const store =
       state === undefined ? undefined : new EnvironmentStateStore(state);
@@ -541,13 +550,17 @@ export const compareEnvironment = (input: {
       store,
       served,
       bodies,
+      requestBodies: capture.value.requestBodies,
       map: new IdMap(),
       normalised: emptyNormalised(),
     };
     const { steps, unobserved } = probeRequests(capture.value.records);
-    const results = steps.flatMap(
-      (step) => compareStep(run, source.manifest, step) ?? [],
-    );
+    const results: CompareStep[] = [];
+    for (const step of steps) {
+      const compared = compareStep(run, source.manifest, step);
+      if (!compared.ok) return probeError(compared.error);
+      if (compared.value !== undefined) results.push(compared.value);
+    }
     probes.push(
       probeReport(
         { label: probe.label, evidenceId: capture.value.evidenceId },

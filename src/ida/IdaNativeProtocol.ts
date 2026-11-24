@@ -82,32 +82,6 @@ export const nativeXrefsSchema = z
   .array(modernXrefsSchema.element.extend({ error: nativeErrorSchema }))
   .length(1);
 
-/**
- * Native regexes fold bytes, while REA's insensitive literal search uses
- * ECMAScript Unicode simple case folding. Non-ASCII patterns can match ASCII
- * values (for example long s matches S), so leave those queries unfiltered.
- * For ASCII patterns include every non-ASCII value, then apply REA's predicate.
- * Ill-formed UTF-16 cannot cross upstream JSON/UTF-8.
- */
-export const nativeLiteralSearchPattern = (
-  pattern: string,
-  caseSensitive: boolean,
-): string | undefined => {
-  if (/[\uD800-\uDFFF]/u.test(pattern)) return undefined;
-  if (!caseSensitive && /[\u0080-\u{10ffff}]/u.test(pattern)) return undefined;
-  let literal = (caseSensitive ? pattern : pattern.toLowerCase()).replace(
-    /[.*+?^${}()|[\]\\]/gu,
-    "\\$&",
-  );
-  // Spell ASCII variants explicitly rather than depending on an upstream locale.
-  if (!caseSensitive)
-    literal = literal.replace(
-      /[a-z]/gu,
-      (char) => `[${char}${char.toUpperCase()}]`,
-    );
-  return caseSensitive ? literal : `(?:${literal})|[\\x80-\\xff]`;
-};
-
 /** Read-only tools required from the native bridge; GUI lifecycle tools are excluded. */
 export const nativeTools = [
   "list_funcs",

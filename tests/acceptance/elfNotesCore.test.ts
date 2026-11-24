@@ -7,8 +7,10 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   coreAuxvNote,
   coreFileNote,
+  elf32ProcessIdentityFixture,
   corePrpsinfoNote,
   coreSiginfoNote,
+  elfNote,
   elfNoteFixture,
 } from "../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -44,7 +46,7 @@ const buildCoreNotes = (): Buffer =>
         {
           start: 0x7ffff7dc0000n,
           end: 0x7ffff7de0000n,
-          file_ofs: 0n,
+          file_ofs: 10n,
           path: "/lib/x86_64-linux-gnu/libc.so.6",
         },
       ],
@@ -57,6 +59,7 @@ const buildCoreNotes = (): Buffer =>
       [
         [6, 4096n],
         [3, 0x555555554040n],
+        [999, 0x1234n],
       ],
       64,
       true,
@@ -64,7 +67,6 @@ const buildCoreNotes = (): Buffer =>
   ]);
 
 const assertCoreEntries = (entries: unknown[]): void => {
-  expect(entries).toHaveLength(4);
   expect(entries[0]).toMatchObject({
     owner: "CORE",
     type: 3,
@@ -82,6 +84,9 @@ const assertCoreEntries = (entries: unknown[]): void => {
         filename: "target-service",
         psargs: "/opt/target-service --worker 1",
       },
+      file: null,
+      siginfo: null,
+      auxv: null,
     },
   });
   expect(entries[1]).toMatchObject({
@@ -104,7 +109,7 @@ const assertCoreEntries = (entries: unknown[]): void => {
           {
             start_address: "0x7ffff7dc0000",
             end_address: "0x7ffff7de0000",
-            file_offset_pages: "0x0",
+            file_offset_pages: "0xa",
             path: "/lib/x86_64-linux-gnu/libc.so.6",
             path_hex: Buffer.from("/lib/x86_64-linux-gnu/libc.so.6").toString(
               "hex",
@@ -112,6 +117,9 @@ const assertCoreEntries = (entries: unknown[]): void => {
           },
         ],
       },
+      prpsinfo: null,
+      siginfo: null,
+      auxv: null,
     },
   });
   expect(entries[2]).toMatchObject({
@@ -121,6 +129,9 @@ const assertCoreEntries = (entries: unknown[]): void => {
     gnu: null,
     core: {
       siginfo: { signo: 11, errno: 0, code: 1 },
+      prpsinfo: null,
+      file: null,
+      auxv: null,
     },
   });
   expect(entries[3]).toMatchObject({
@@ -132,7 +143,11 @@ const assertCoreEntries = (entries: unknown[]): void => {
       auxv: [
         { type: 6, type_name: "AT_PAGESZ", value: "0x1000" },
         { type: 3, type_name: "AT_PHDR", value: "0x555555554040" },
+        { type: 999, type_name: null, value: "0x1234" },
       ],
+      prpsinfo: null,
+      file: null,
+      siginfo: null,
     },
   });
 };
@@ -142,7 +157,13 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-core-notes-");
     const path = join(root, "core.elf");
-    const notes = buildCoreNotes();
+    const mappingsWithoutPaths = Buffer.alloc(16 + 40 * 24);
+    mappingsWithoutPaths.writeBigUInt64LE(40n, 0);
+    mappingsWithoutPaths.writeBigUInt64LE(4096n, 8);
+    const notes = Buffer.concat([
+      elfNote("CORE", 0x46494c45, mappingsWithoutPaths),
+      buildCoreNotes(),
+    ]);
     const bytes = elfNoteFixture({
       bits: 64,
       little: true,
@@ -152,7 +173,7 @@ cliTest(
     });
     await writeFile(path, bytes);
 
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: ["inspect-elf-notes", path, "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);
@@ -166,7 +187,7 @@ cliTest(
       const evidence = schema.parse(raw);
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256: descriptorHash(bytes) },
+        identity: { sha256: descriptorHash(bytes) },
       });
       const report = evidence.normalized_result;
       expect(report).toMatchObject({
@@ -176,10 +197,68 @@ cliTest(
         coverage: {
           status: "complete",
           examined_tables: 1,
-          examined_entries: 4,
+          examined_entries: 5,
         },
       });
-      assertCoreEntries(report.entries);
+      expect(report.entries[0]).toMatchObject({
+        type_name: "core_file",
+        descriptor: {
+          bytes: mappingsWithoutPaths.length,
+          sha256: descriptorHash(mappingsWithoutPaths),
+        },
+        core: null,
+      });
+      assertCoreEntries(report.entries.slice(1));
+    }
+  },
+);
+
+cliTest.for([
+  { name: "MIPS big", machine: 8, little: false, idWidth: 4 },
+  { name: "SuperH little", machine: 42, little: true, idWidth: 2 },
+] as const)(
+  "decodes Linux ELF32 process identity through CLI and MCP ($name)",
+  async ({ machine, little, idWidth }, { cli }) => {
+    const root = await createTestTempDirectory("rea-elf-prpsinfo32-core-");
+    const path = join(root, "core.elf");
+    const { bytes, shortened, expected } = elf32ProcessIdentityFixture(
+      machine,
+      little,
+      idWidth,
+    );
+    await writeFile(path, bytes);
+
+    const output = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_elf_notes", { path });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+
+    const schema = toolContract("inspect_elf_notes").outputSchema;
+    for (const raw of [output.json, response.structuredContent]) {
+      const evidence = schema.parse(raw);
+      expect(evidence.subject).toMatchObject({
+        local_path: path,
+        identity: { sha256: descriptorHash(bytes) },
+      });
+      const report = evidence.normalized_result;
+      expect(report).toMatchObject({
+        format: "elf32",
+        byte_order: little ? "little" : "big",
+        machine,
+        coverage: { status: "complete", examined_entries: 2 },
+      });
+      expect(report.entries[0]?.core?.prpsinfo).toEqual(expected);
+      expect(report.entries[1]).toMatchObject({
+        type_name: "core_prpsinfo",
+        descriptor: {
+          bytes: shortened.length,
+          sha256: descriptorHash(shortened),
+        },
+        core: null,
+      });
     }
   },
 );

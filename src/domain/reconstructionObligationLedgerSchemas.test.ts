@@ -13,7 +13,7 @@ import {
 const digest = "a".repeat(64);
 
 describe("reconstruction obligation ledger schemas", () => {
-  it("accepts manifests and ledgers above the former count ceilings", () => {
+  it("accepts manifests and ledgers with more than 10,000 entries", () => {
     const binding = {
       obligation_id: "obligation-1",
       owner: {

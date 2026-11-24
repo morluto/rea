@@ -6,23 +6,25 @@ import { runtimeNativeMatchingAllowance } from "./runtimeAnalysisSettings.js";
 import {
   DEFAULT_NATIVE_MATCHING_ALLOWANCE,
   NATIVE_MATCHING_ALLOWANCE_SETTING,
-  nativeMatchingRepresentationBytesConstraint,
   parseNativeMatchingAllowance,
 } from "./nativeMatchingAllowance.js";
 import { launchAnalysisSetting } from "./analysisSettings.js";
 import { explicitSetupRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
+import { DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES } from "../domain/analysisResourceLimits.js";
 
-it("keeps the 96 MiB allowance when the launch setting is unset", () => {
+it("keeps the shipped allowance when the launch setting is unset", () => {
   expect(parseNativeMatchingAllowance({})).toEqual({
     ok: true,
     value: DEFAULT_NATIVE_MATCHING_ALLOWANCE,
   });
-  expect(DEFAULT_NATIVE_MATCHING_ALLOWANCE.maximumBytes).toBe(96 * 1024 * 1024);
   expect(
     launchAnalysisSetting("native.matching_representation_bytes", {}),
   ).toEqual({
     ok: true,
-    value: { value: 96 * 1024 * 1024, source: "default" },
+    value: {
+      value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+      source: "default",
+    },
   });
 });
 
@@ -56,9 +58,19 @@ it("refuses invalid launch values instead of falling back to the default", () =>
     expect(parsed.ok).toBe(false);
     if (parsed.ok) continue;
     expect(parsed.error).toBeInstanceOf(ConfigurationError);
-    expect(parsed.error.message).toBe(
-      nativeMatchingRepresentationBytesConstraint,
+    expect(parsed.error.message).toContain(NATIVE_MATCHING_ALLOWANCE_SETTING);
+    expect(parsed.error.message).toMatch(/positive decimal integer/i);
+    expect(parsed.error.message).toContain("1073741824");
+    expect(parsed.error.message).toContain(
+      String(DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES),
     );
+    expect(parsed.error.message).toMatch(/bytes/i);
+    expect(parsed.error.settings).toEqual([
+      {
+        setting: NATIVE_MATCHING_ALLOWANCE_SETTING,
+        constraint: parsed.error.message,
+      },
+    ]);
     expect(
       launchAnalysisSetting("native.matching_representation_bytes", environment)
         .ok,

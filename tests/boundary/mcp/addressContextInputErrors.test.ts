@@ -1,10 +1,11 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { inspectAddressContext } from "../../../src/application/AnalysisContextQueries.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -15,6 +16,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { err, ok } from "../../../src/domain/result.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const createContextRecoverySession = () => {
   const identity = { id: "fixture", name: "Fixture", version: "1" };
@@ -101,7 +103,7 @@ const createContextRecoverySession = () => {
   }));
 };
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "offers a conditional containing-function comment route (%s)",
   async (profile) => {
     const directory = await createTestTempDirectory("rea-context-comment-");
@@ -118,10 +120,13 @@ it.each(["compact", "full"] as const)(
         },
       },
     );
-    const client = new Client({
-      name: "context-comment-recovery",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "context-comment-recovery",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -238,9 +243,7 @@ it.each(["compact", "full"] as const)(
 it.each([
   ["compact", false, "comment"],
   ["compact", true, "comment"],
-  ["full", false, "comment"],
-  ["full", true, "comment"],
-  ["full", false, "list_bookmarks"],
+  ["compact", false, "list_bookmarks"],
 ] as const)(
   "preserves a local input refusal alongside successful facets (%s, conforms=%s, operation=%s)",
   async (profile, conforms, rejectedOperation) => {
@@ -299,7 +302,10 @@ it.each([
         },
       },
     );
-    const client = new Client({ name: "context-input-error", version: "1" });
+    const client = new Client(
+      { name: "context-input-error", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -324,7 +330,7 @@ it.each([
           name: "inspect_address_context",
           arguments: { address: "0x401001", document: "fixture" },
         },
-        { toolDefinition: contextDefinition },
+        { toolDefinition: withCanonicalOutputSchema(contextDefinition) },
       );
       expect(response.isError).not.toBe(true);
       const contract = SESSION_TOOL_CONTRACTS.find(

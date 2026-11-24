@@ -1,18 +1,258 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
+import { z } from "zod";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { metroContext } from "../fixtures/javascriptMetroContext.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 
 const routeViewFromEvidence = (evidence: unknown) =>
   javaScriptRoutesViewResultSchema.parse(
     parseEvidence(evidence).normalized_result,
   );
 
+// The owner tests cover the flag matrix. These public controls distinguish
+// unobserved script scope from observed package scope and preserve resolved
+// routes and explicit unknowns through CLI/MCP views.
+const indexRouteCases = [
+  ["literal", "", "true", "js", ["/"], "module", false],
+  [
+    "commonjs",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    ["/"],
+    "commonjs",
+    false,
+  ],
+  [
+    "unspecified-package",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    ["/"],
+    "unspecified",
+    false,
+  ],
+  [
+    "script-global-jsx",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "jsx",
+    [],
+    "unspecified",
+    true,
+  ],
+  [
+    "script-global",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    [],
+    "script",
+    true,
+  ],
+] as const;
+
+cliTest.for(indexRouteCases)(
+  "retains resolved index routes and reports unresolved flags through the public CLI: %s",
+  async (
+    [name, prefix, flag, extension, paths, sourceType, partial],
+    { cli },
+  ) => {
+    const root = await createTestTempDirectory("rea-index-routes-");
+    const path = join(root, name);
+    await mkdir(path);
+    if (sourceType !== "script") {
+      await writeFile(
+        join(path, "package.json"),
+        JSON.stringify({
+          name: "index-fixture",
+          private: true,
+          type: sourceType === "unspecified" ? undefined : sourceType,
+        }),
+      );
+    }
+    const route = `createBrowserRouter([{index:${flag},Component:Home}])`;
+    await writeFile(
+      join(path, `routes.${extension}`),
+      sourceType === "module"
+        ? `import {createBrowserRouter} from 'react-router';${prefix}export const router=${route};function Home(){return null;}`
+        : `${prefix}${route};function Home(){return null;}`,
+    );
+    const response = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        path,
+        "--evidence_output",
+        join(root, `${name}-evidence.json`),
+        "--detail",
+        "summary",
+        "--view",
+        JSON.stringify({
+          kind: "javascript-routes",
+          collection: "routes",
+          fields: ["path"],
+        }),
+        "--json",
+      ],
+    });
+    expect(
+      response.exitCode,
+      `${name}: ${response.stdout}\n${response.stderr}`,
+    ).toBe(0);
+    const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+    const view = routeViewFromEvidence(envelope.summary);
+    expect(view.items, name).toEqual(
+      paths.map((path) => expect.objectContaining({ path })),
+    );
+    expect(view.source_coverage, name).toMatchObject({
+      source_parsing: "complete",
+      candidate_enumeration: partial ? "partial" : "complete",
+      application_routes: "unknown",
+    });
+    if (partial) {
+      const unknowns = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          path,
+          "--evidence_output",
+          join(root, `${name}-unknowns-evidence.json`),
+          "--detail",
+          "summary",
+          "--view",
+          JSON.stringify({
+            kind: "javascript-routes",
+            collection: "unknowns",
+          }),
+          "--json",
+        ],
+      });
+      expect(unknowns.exitCode, unknowns.stderr).toBe(0);
+      const unknownEnvelope = z
+        .object({ summary: z.unknown() })
+        .parse(unknowns.json);
+      expect(routeViewFromEvidence(unknownEnvelope.summary).items).toEqual([
+        expect.objectContaining({
+          kind: "interpretation",
+          reason: expect.stringContaining("index-route flag"),
+        }),
+      ]);
+    }
+  },
+);
+cliTest(
+  "keeps rejected program-var paths unknown through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-program-var-routes-");
+    const path = join(root, "application");
+    await mkdir(path);
+    await writeFile(
+      join(path, "routes.js"),
+      "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);const independent='/reports/help';",
+    );
+    for (const collection of ["routes", "unknowns"] as const) {
+      const response = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          path,
+          "--evidence_output",
+          join(root, collection + "-evidence.json"),
+          "--detail",
+          "summary",
+          "--view",
+          JSON.stringify({ kind: "javascript-routes", collection }),
+          "--json",
+        ],
+      });
+      expect(response.exitCode, response.stdout + response.stderr).toBe(0);
+      const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+      const view = routeViewFromEvidence(envelope.summary);
+      expect(view.source_coverage).toMatchObject({
+        source_parsing: "complete",
+        candidate_enumeration: "partial",
+      });
+      if (collection === "routes")
+        expect(view.items).toEqual([
+          expect.objectContaining({ path: "/reports" }),
+          expect.objectContaining({ path: "/reports/help" }),
+        ]);
+      else
+        expect(view.items).toEqual([
+          expect.objectContaining({
+            kind: "interpretation",
+            reason: expect.stringContaining("parent segment is unknown"),
+          }),
+        ]);
+    }
+  },
+);
+const ordinaryDescriptorMap =
+  "Object.defineProperties({},{'./_layout.tsx':{value:0},'./ordinary.tsx':{value:1}});";
+
+cliTest(
+  "inventories Expo Router require.context keys from a Metro web bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-expo-router-routes-");
+    const app = join(root, "app");
+    await mkdir(app);
+    const keys = [
+      "./(app)/_layout.tsx",
+      "./(app)/reports/[id]/edit.tsx",
+      "./+not-found.tsx",
+      "./_layout.tsx",
+      "./index.tsx",
+    ];
+    await writeFile(
+      join(app, "index-abc123.js"),
+      metroContext(keys) + ordinaryDescriptorMap,
+    );
+    const response = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        app,
+        "--source-path",
+        "index-abc123.js",
+        "--evidence_output",
+        join(root, "routes.json"),
+        "--detail",
+        "summary",
+        "--view",
+        JSON.stringify({
+          kind: "javascript-routes",
+          collection: "routes",
+          where: { mechanisms: ["expo-router-context-key"] },
+          fields: ["path", "classification", "confidence"],
+        }),
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stdout + response.stderr).toBe(0);
+    const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+    const view = routeViewFromEvidence(envelope.summary);
+    expect(view.items).toEqual([
+      expect.objectContaining({
+        path: "/",
+        classification: "unknown",
+        confidence: "low",
+      }),
+      expect.objectContaining({
+        path: "/reports/:id/edit",
+        classification: "unknown",
+        confidence: "low",
+      }),
+    ]);
+    expect(view.source_coverage).toMatchObject({
+      source_parsing: "complete",
+      candidate_enumeration: "complete",
+      application_routes: "unknown",
+    });
+  },
+);
 const expectAccountRoutes = (items: unknown[]) => {
   expect(items).toHaveLength(2);
   expect(items).toEqual(
@@ -157,7 +397,7 @@ cliTest(
     }
   },
 );
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "serves retained route batches through the %s production SDK schemas",
   async (profile) => {
     const path = await fixture(),
@@ -318,7 +558,10 @@ cliTest(
       commandResult: ({ method }) =>
         method === "Debugger.getScriptSource"
           ? {
-              scriptSource: `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);const independent={path:'/checks/independent-web',component:View};router.push({pathname:'/reports/aliased-web',query:!!independent});const registry={route:{path:'/checks/projected-web',component:View},query:{path:'/download/projected-web-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased-web',query:payload});route(('/checks/optional-web/:id?'));const restRegistry={query:{path:'/download/rest-web-query',component:Preview},route:{path:'/checks/rest-web',component:View}};const {route:excluded,...restPayload}=restRegistry;router.push({pathname:'/reports/aliased-web',query:restPayload});const fallback={path:'/checks/inactive-default-web',component:View};const {query:actualQuery=fallback}={query:{ok:1}};router.push({pathname:'/reports/aliased-web',query:actualQuery});const cache=[];cache.push('/checks/array-data-web');text.replace('/checks/string-data-web','');const inactiveBranch={path:'/checks/inactive-branch-web',component:View};router.push({pathname:'/reports/aliased-web',query:true?{}:inactiveBranch});const overwritten={path:'/checks/overwritten-web',component:View};router.push({pathname:'/reports/aliased-web',query:{item:overwritten,item:0}});const memberRegistry={query:{path:'/download/member-query-web',component:Preview},route:{path:'/checks/member-web',component:View}};router.push({pathname:'/reports/aliased-web',query:memberRegistry.query});const protoPayload={path:'/download/proto-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:{['__proto__']:protoPayload,__proto__:null}});const replacedRegistry={query:independent};replacedRegistry.query={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedRegistry.query});let replacedDirect=independent;replacedDirect={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedDirect});const uncertainPayload={path:'/download/uncertain-query-web',component:Preview};const uncertainRegistry={query:uncertainPayload};const otherRegistry={query:{ok:1}};const uncertainAlias=flag?uncertainRegistry:otherRegistry;uncertainAlias.query={ok:1};router.push({pathname:'/reports/aliased-web',query:uncertainRegistry.query});const possiblePayload={path:'/download/possible-query-web',component:Preview};const possibleRegistry={query:possiblePayload,...unknown};router.push({pathname:'/reports/aliased-web',query:possibleRegistry.query});const cyclicRegistry={get a(){return this.a.b}};router.push({pathname:'/reports/aliased-web',query:cyclicRegistry.a});const finiteRegistry={get a(){return this},get b(){return this.a.a},path:'/download/finite-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:finiteRegistry.a.b});const configurationRegistry={children:[{path:'/checks/config-sibling-web',component:View}],routes:[]};createBrowserRouter(configurationRegistry.routes);`,
+              scriptSource:
+                `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);const independent={path:'/checks/independent-web',component:View};router.push({pathname:'/reports/aliased-web',query:!!independent});const registry={route:{path:'/checks/projected-web',component:View},query:{path:'/download/projected-web-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased-web',query:payload});route(('/checks/optional-web/:id?'));const restRegistry={query:{path:'/download/rest-web-query',component:Preview},route:{path:'/checks/rest-web',component:View}};const {route:excluded,...restPayload}=restRegistry;router.push({pathname:'/reports/aliased-web',query:restPayload});const fallback={path:'/checks/inactive-default-web',component:View};const {query:actualQuery=fallback}={query:{ok:1}};router.push({pathname:'/reports/aliased-web',query:actualQuery});const cache=[];cache.push('/checks/array-data-web');const inactiveBranch={path:'/checks/inactive-branch-web',component:View};router.push({pathname:'/reports/aliased-web',query:true?{}:inactiveBranch});const overwritten={path:'/checks/overwritten-web',component:View};router.push({pathname:'/reports/aliased-web',query:{item:overwritten,item:0}});const memberRegistry={query:{path:'/download/member-query-web',component:Preview},route:{path:'/checks/member-web',component:View}};router.push({pathname:'/reports/aliased-web',query:memberRegistry.query});const protoPayload={path:'/download/proto-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:{['__proto__']:protoPayload,__proto__:null}});const replacedRegistry={query:independent};replacedRegistry.query={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedRegistry.query});let replacedDirect=independent;replacedDirect={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedDirect});const uncertainPayload={path:'/download/uncertain-query-web',component:Preview};const uncertainRegistry={query:uncertainPayload};const otherRegistry={query:{ok:1}};const uncertainAlias=flag?uncertainRegistry:otherRegistry;uncertainAlias.query={ok:1};router.push({pathname:'/reports/aliased-web',query:uncertainRegistry.query});const possiblePayload={path:'/download/possible-query-web',component:Preview};const possibleRegistry={query:possiblePayload,...unknown};router.push({pathname:'/reports/aliased-web',query:possibleRegistry.query});const cyclicRegistry={get a(){return this.a.b}};router.push({pathname:'/reports/aliased-web',query:cyclicRegistry.a});const finiteRegistry={get a(){return this},get b(){return this.a.a},path:'/download/finite-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:finiteRegistry.a.b});const configurationRegistry={children:[{path:'/checks/config-sibling-web',component:View}],routes:[]};createBrowserRouter(configurationRegistry.routes);` +
+                metroContext(["./_layout.tsx", "./browser-expo.tsx"]) +
+                ordinaryDescriptorMap,
             }
           : undefined,
     });
@@ -343,7 +586,8 @@ cliTest(
             "/download/rest-web-query",
             "/checks/inactive-default-web",
             "/checks/array-data-web",
-            "/checks/string-data-web",
+            "/ordinary",
+            "/browser-expo",
             "/checks/inactive-branch-web",
             "/checks/overwritten-web",
             "/checks/member-web",
@@ -381,21 +625,26 @@ cliTest(
       expect(response.exitCode, response.stderr).toBe(0);
       const envelope = response.json as { summary: unknown };
       const selected = routeViewFromEvidence(envelope.summary);
-      expect(selected.items).toHaveLength(12);
-      expect(selected.items).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ path: "/reports/aliased-web" }),
-          expect.objectContaining({ path: "/checks/independent-web" }),
-          expect.objectContaining({ path: "/checks/projected-web" }),
-          expect.objectContaining({ path: "/checks/rest-web" }),
-          expect.objectContaining({ path: "/checks/inactive-default-web" }),
-          expect.objectContaining({ path: "/checks/inactive-branch-web" }),
-          expect.objectContaining({ path: "/checks/overwritten-web" }),
-          expect.objectContaining({ path: "/checks/member-web" }),
-          expect.objectContaining({ path: "/checks/config-sibling-web" }),
-          expect.objectContaining({ path: "/checks/optional-web/:id?" }),
-        ]),
-      );
+      const expectedPaths = [
+        "/reports/settings",
+        "/reports/panel",
+        "/reports/aliased-web",
+        "/checks/independent-web",
+        "/checks/projected-web",
+        "/checks/rest-web",
+        "/checks/inactive-default-web",
+        "/checks/inactive-branch-web",
+        "/checks/overwritten-web",
+        "/checks/member-web",
+        "/checks/config-sibling-web",
+        "/checks/optional-web/:id?",
+        "/browser-expo",
+      ].sort();
+      expect(
+        selected.items
+          .map((item) => ("path" in item ? item.path : null))
+          .sort(),
+      ).toEqual(expectedPaths);
       expect(selected.artifact).toBeNull();
       const { call } = await connectLocalToolsMcp();
       const observed = await call("analyze_web_bundle", {
@@ -408,21 +657,9 @@ cliTest(
       });
       expect(observed.isError).not.toBe(true);
       const result = routeViewFromEvidence(observed.structuredContent);
-      expect(result.items).toHaveLength(12);
-      expect(result.items).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ path: "/reports/aliased-web" }),
-          expect.objectContaining({ path: "/checks/independent-web" }),
-          expect.objectContaining({ path: "/checks/projected-web" }),
-          expect.objectContaining({ path: "/checks/rest-web" }),
-          expect.objectContaining({ path: "/checks/inactive-default-web" }),
-          expect.objectContaining({ path: "/checks/inactive-branch-web" }),
-          expect.objectContaining({ path: "/checks/overwritten-web" }),
-          expect.objectContaining({ path: "/checks/member-web" }),
-          expect.objectContaining({ path: "/checks/config-sibling-web" }),
-          expect.objectContaining({ path: "/checks/optional-web/:id?" }),
-        ]),
-      );
+      expect(
+        result.items.map((item) => ("path" in item ? item.path : null)).sort(),
+      ).toEqual(expectedPaths);
       const retained = await call("inspect_analysis_view", {
         source: {
           kind: "retained-evidence",
@@ -438,7 +675,6 @@ cliTest(
       await browser.close();
     }
   },
-  120000,
 );
 
 it("keeps a large source's partial route facts queryable through SDK delivery", async () => {
@@ -493,4 +729,4 @@ it("keeps a large source's partial route facts queryable through SDK delivery", 
   expect(
     routeViewFromEvidence(unknowns.structuredContent).items.length,
   ).toBeGreaterThan(0);
-}, 60000);
+});

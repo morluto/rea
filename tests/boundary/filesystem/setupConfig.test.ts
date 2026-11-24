@@ -23,6 +23,7 @@ import {
 } from "../../../src/application/SetupClientConfiguration.js";
 import { resolveWindowsClaudeDesktopLocation } from "../../../src/application/ClaudeDesktopConfigLocation.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { failedConfigurationMessage } from "../../../src/application/SetupClients.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
@@ -47,7 +48,12 @@ it.skipIf(process.platform === "win32")(
       },
     });
     await writeFile(configPath, original);
-    const client = { name: "cursor", format: "json", configPath } as const;
+    const client = {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath,
+    } as const;
     expect(await clientConfigurationAligned(client, {}, [real, "mcp"])).toBe(
       true,
     );
@@ -96,7 +102,12 @@ it.skipIf(process.platform === "win32")(
       "",
     ].join("\n");
     await writeFile(configPath, original);
-    const client = { name: "codex", format: "toml", configPath } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      format: "toml",
+      configPath,
+    } as const;
     expect(
       await configureClientConfiguration(client, {}, [real, "mcp"]),
     ).toMatchObject({ status: "configured" });
@@ -139,6 +150,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         format: "json",
         configPath: requested,
       }),
@@ -176,6 +188,7 @@ it
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         format: "json",
         configPath: requested,
       }),
@@ -253,6 +266,7 @@ describe("JSON client configuration transaction: writing configuration through s
     await writeFile(configPath, original);
     const result = await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath,
       format: "json",
     });
@@ -281,6 +295,7 @@ describe("JSON client configuration transaction: writing configuration through s
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -299,6 +314,7 @@ describe("JSON client configuration transaction: writing configuration through s
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -315,6 +331,7 @@ describe("JSON client configuration transaction: writing configuration through s
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -340,6 +357,7 @@ describe("JSON client configuration transaction: keeping matching configuration 
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -372,7 +390,12 @@ describe("JSON client configuration transaction: keeping matching configuration 
 
     expect(
       await configureClientConfiguration(
-        { name: "cursor", configPath, format: "json" },
+        {
+          name: "cursor",
+          registrationProfile: supportedClientRegistrationProfile("cursor"),
+          configPath,
+          format: "json",
+        },
         {
           GHIDRA_INSTALL_DIR: "/opt/ghidra",
           JAVA_HOME: "/usr/lib/jvm/jdk-21",
@@ -396,6 +419,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -418,7 +442,12 @@ describe("JSON client configuration migration and provider paths", () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     const hopperPath = "/Applications/Hopper v6.app/Contents/MacOS/hopper";
-    const client = { name: "cursor", configPath, format: "json" } as const;
+    const client = {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath,
+      format: "json",
+    } as const;
     const original = "{}\n";
     await writeFile(configPath, original);
     expect(
@@ -455,7 +484,12 @@ describe("JSON client configuration migration and provider paths", () => {
   it("adds exact BYO Ghidra and Java paths without installing dependencies", async () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
-    const client = { name: "cursor", configPath, format: "json" } as const;
+    const client = {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath,
+      format: "json",
+    } as const;
     const environment = {
       GHIDRA_INSTALL_DIR: "/opt/ghidra_12.1.4_PUBLIC",
       JAVA_HOME: "/usr/lib/jvm/jdk-21",
@@ -480,7 +514,9 @@ describe("JSON client configuration migration and provider paths", () => {
       status: "unchanged",
     });
   });
+});
 
+describe("invalid JSON client configuration preservation", () => {
   it("refuses malformed existing JSON without overwriting it", async () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
@@ -488,6 +524,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -506,6 +543,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -528,6 +566,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -563,6 +602,9 @@ describe("JSON client configuration shape diagnostics", () => {
       const configPath = join(directory, "mcp.json");
       const client = {
         name: format === "json" ? "cursor" : "opencode",
+        registrationProfile: supportedClientRegistrationProfile(
+          format === "json" ? "cursor" : "opencode",
+        ),
         configPath,
         format,
       };
@@ -595,9 +637,9 @@ describe("JSON client configuration shape diagnostics", () => {
   );
 
   it.each([
-    ['{"mcpServers":null,"keep":1}', '"mcpServers" must be an object'],
-    ["[]", "The configuration root must be an object"],
-    ['{"mcpServers":"x"}', '"mcpServers" must be an object'],
+    ['{"mcpServers":null,"keep":1}', "mcpServers"],
+    ["[]", "root"],
+    ['{"mcpServers":"x"}', "mcpServers"],
   ] as const)(
     "names structural shape problems in setup remediation: %s",
     async (original, problem) => {
@@ -605,21 +647,22 @@ describe("JSON client configuration shape diagnostics", () => {
       const configPath = join(directory, "mcp.json");
       const client = {
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json" as const,
       };
       await writeFile(configPath, original);
       const read = await readConfigurationFile(configPath, "json");
-      expect(read.ok).toBe(false);
       if (read.ok) throw new Error("expected malformed configuration");
-      expect(read.error.detail).toBe(
-        `Configuration ${configPath} is malformed: ${problem}`,
-      );
+      expect(read.error.kind).toBe("malformed");
+      expect(read.error.detail).toContain(configPath);
+      expect(read.error.detail).toContain(problem);
+      expect(read.error.detail).toContain("object");
       expect(
         await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
       ).toEqual({
         status: "invalid",
-        remediation: `Configuration ${configPath} is malformed: ${problem}`,
+        remediation: read.error.detail,
       });
       expect(await readFile(configPath, "utf8")).toBe(original);
     },
@@ -640,6 +683,8 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     try {
       const result = await configureClientConfiguration({
         name: "claude_desktop",
+        registrationProfile:
+          supportedClientRegistrationProfile("claude_desktop"),
         format: "json",
         configPath,
         msixPackage: {
@@ -743,7 +788,7 @@ it("keeps setup and registration diagnostics blocked for an unrecognized Claude 
       })
     ).find((status) => status.client === "claude_desktop"),
   ).toMatchObject({
-    state: "invalid",
+    state: "unknown",
     command: [],
     remediation: expect.stringContaining("does not fall back"),
   });

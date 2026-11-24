@@ -3,14 +3,14 @@ import { z } from "zod";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import { browserScenarioCompletenessSchema } from "./browserScenarioCaptureValues.js";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
-import { localPathStringSchema } from "./localPath.js";
+import { absoluteLocalPathStringSchema } from "./localPath.js";
 
 /** Export already captured scripts into one absent, caller-selected directory. */
 export const exportWebScriptsInputSchema = z.strictObject({
-  capture_path: localPathStringSchema.describe(
+  capture_path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to saved inspect_web_page or capture_browser_scenario JSON, normalized result or complete Evidence",
   ),
-  output_directory: localPathStringSchema.describe(
+  output_directory: absoluteLocalPathStringSchema.describe(
     "Absolute absent filesystem directory for verified scripts and manifest; parent directory must exist",
   ),
 });

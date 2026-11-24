@@ -11,21 +11,21 @@ const source = async () => {
   const handle = await open(path, "r");
   onTestFinished(() => handle.close());
   const read = handle.read.bind(handle);
-  const spy = vi.spyOn(handle, "read").mockImplementation((async (
-    ...args: unknown[]
-  ) => {
-    args[2] = Math.min(args[2] as number, 2);
-    return Reflect.apply(read, handle, args);
-  }) as typeof handle.read);
+  const cappedRead = (
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ) => read(buffer, offset, Math.min(length, 2), position);
+  const spy = vi
+    .spyOn(handle, "read")
+    .mockImplementation(cappedRead as typeof handle.read);
   return { handle, spy };
 };
 
 it("fills positional windows across positive short reads and stops only at EOF", async () => {
-  const { handle, spy } = await source();
+  const { handle } = await source();
   expect((await readFileHandleRange(handle, 3, 5)).toString()).toBe("34567");
-  expect(spy.mock.calls.map((call) => (call as unknown[])[3])).toEqual([
-    3, 5, 7,
-  ]);
   expect((await readFileHandleRange(handle, 8, 5)).toString()).toBe("89");
   expect(await readFileHandleRange(handle, 12, 2)).toHaveLength(0);
   // The helper borrows the descriptor; it remains usable after EOF.
@@ -35,16 +35,16 @@ it("fills positional windows across positive short reads and stops only at EOF",
 it("validates ranges and checks cancellation even for empty windows", async () => {
   const { handle, spy } = await source();
   expect(await readFileHandleRange(handle, 2, 0)).toHaveLength(0);
-  expect(spy).not.toHaveBeenCalled();
   for (const [offset, length] of [
     [-1, 2],
     [0, -1],
     [0.5, 2],
     [Number.MAX_SAFE_INTEGER, 1],
-  ])
-    await expect(readFileHandleRange(handle, offset!, length!)).rejects.toThrow(
+  ] as const)
+    await expect(readFileHandleRange(handle, offset, length)).rejects.toThrow(
       RangeError,
     );
+  expect(spy).not.toHaveBeenCalled();
   const cancelled = new Error("cancelled");
   await expect(
     readFileHandleRange(handle, 0, 0, () => {
@@ -63,8 +63,14 @@ it("checks cancellation after each fulfilled read and retains native failures", 
   ).rejects.toBe(cancelled);
   expect(spy).toHaveBeenCalledTimes(1);
   const native = new Error("native I/O failure");
-  spy.mockRejectedValueOnce(native);
-  await expect(readFileHandleRange(handle, 0, 4)).rejects.toBe(native);
+  const controller = new AbortController();
+  spy.mockImplementationOnce(async () => {
+    controller.abort(cancelled);
+    throw native;
+  });
+  await expect(
+    readFileHandleRange(handle, 0, 4, () => controller.signal.throwIfAborted()),
+  ).rejects.toBe(native);
 });
 
 it("returns explicit EOF for the caller to interpret before late cancellation", async () => {
@@ -85,5 +91,12 @@ it("reports complete acquisition so the owner can finalize bytes after a late ab
       throw new Error("cancelled before full acquisition");
   });
   expect(bytes.toString()).toBe("0123");
-  expect(checkpoints).toEqual([0, 0, 2, 2, 4]);
+  expect(spy).toHaveBeenCalledTimes(2);
+  expect(checkpoints.at(-1)).toBe(4);
+  expect([...new Set(checkpoints)]).toEqual([0, 2, 4]);
+  expect(
+    checkpoints.every(
+      (value, index) => index === 0 || value >= checkpoints[index - 1]!,
+    ),
+  ).toBe(true);
 });

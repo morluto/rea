@@ -1,4 +1,6 @@
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { selectArtifactCommandPath } from "../../process/ArtifactCommandPath.js";
+import type { HostPlatform } from "../../platform/HostPlatform.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
@@ -8,12 +10,21 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { prlimitArgumentVector } from "../../process/LinuxResourceLimits.js";
+import {
+  processInspectionCancellationError,
+  retainProcessInspectionCleanup,
+} from "../../providers/OwnedCommandCleanup.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
@@ -25,13 +36,13 @@ import {
   checkRecoveryDeadline,
   inventoryRecoveryFiles,
   fingerprintRecoveryFile,
-  recoveryFailureMessage,
 } from "./RecoveryFiles.js";
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "recover_javascript_sources";
 const WAKARU_REQUIREMENT =
-  "Provide an absolute REA_WAKARU_COMMAND pointing to a Wakaru ^1.13.0 Linux x64 binary (verified with 1.14.0); no tool is installed by REA. See docs/javascript-recovery.md#install-wakaru.";
+  "Provide an absolute REA_WAKARU_COMMAND pointing to a Wakaru ^1.13.0 Linux x64 binary (verified with 1.14.0); no tool is installed by REA. See docs/guides/javascript/javascript-recovery.md#install-wakaru.";
 
 /** Wakaru recovery runs only on Linux x64; discovery and execution share this check. */
 export const wakaruHostSupported = (
@@ -64,7 +75,14 @@ export class WakaruCleanupFailure extends ProviderCleanupError {
         exit_code: snapshot.exitCode ?? null,
         signal: snapshot.signal ?? null,
       },
-      { operation: OPERATION, cause: previousError },
+      {
+        operation: OPERATION,
+        cause: previousError,
+        ...(previousError instanceof AnalysisError
+          ? { cleanupPrimary: previousError }
+          : {}),
+        capturedOutput: capturedProviderOutput(snapshot),
+      },
     );
   }
 }
@@ -72,12 +90,14 @@ export class WakaruCleanupFailure extends ProviderCleanupError {
 /** Resolve and fingerprint explicitly configured tools; acquire nothing at startup. */
 export const resolveWakaruCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
+  /** The host Wakaru runs on; it is admitted on Linux x64 only. */
+  host: HostPlatform,
   resources?: ArtifactResourceScope,
   signal?: AbortSignal,
 ) => {
   const configured = environment.REA_WAKARU_COMMAND;
   if (
-    !wakaruHostSupported(process.platform, process.arch) ||
+    !wakaruHostSupported(host.platform, host.architecture) ||
     configured === undefined ||
     !isAbsolute(configured)
   )
@@ -113,7 +133,7 @@ export const resolveWakaruCommand = async (
         (cause.cleanup !== undefined || cause.reason === "cancelled"))
     )
       throw cause;
-    const reason = `Configured Wakaru or util-linux prlimit is unavailable: ${recoveryFailureMessage(cause)}`;
+    const reason = `Configured Wakaru or util-linux prlimit is unavailable: ${errorMessage(cause)}`;
     throw new AnalysisCapabilityUnavailableError("wakaru", OPERATION, reason, {
       cause,
       userMessage: reason,
@@ -131,7 +151,7 @@ type WakaruCommandContext = {
   signal?: AbortSignal;
   launcher?: WakaruLauncher;
   staging?: string;
-  resources?: ArtifactResourceScope;
+  resources: ArtifactResourceScope;
 };
 
 /** Run one bounded command and verify cleanup before consuming its output. */
@@ -158,18 +178,34 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
     ...(context.signal === undefined ? {} : { signal: context.signal }),
     env: { TMPDIR: context.cwd, RAYON_NUM_THREADS: "1", NO_COLOR: "1" },
   }).catch((cause: unknown) => {
-    if (context.signal?.aborted === true)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: context.signal.reason,
+    const cancellation = processInspectionCancellationError(cause, OPERATION);
+    let primary: AnalysisError;
+    if (cancellation !== undefined) {
+      primary = cancellation;
+    } else {
+      const physical = new ProviderAdapterError("wakaru", OPERATION, {
+        cause,
+        diagnostics: {
+          reason:
+            "Failed to launch configured Wakaru through util-linux prlimit",
+          command: context.command,
+          detail: errorMessage(cause),
+        },
       });
-    throw new ProviderAdapterError("wakaru", OPERATION, {
+      primary =
+        context.signal?.aborted === true
+          ? analysisErrorWithCancellation(
+              physical,
+              cancelledBy(OPERATION, context.signal),
+            )
+          : physical;
+    }
+    throw retainProcessInspectionCleanup(
       cause,
-      diagnostics: {
-        reason: "Failed to launch configured Wakaru through util-linux prlimit",
-        command: context.command,
-        detail: recoveryFailureMessage(cause),
-      },
-    });
+      primary,
+      context.resources,
+      OPERATION,
+    );
   });
   let oversized = false;
   const supervisor = new ProviderProcessSupervisor(
@@ -180,6 +216,10 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
         spawned.cleanup ?? (() => cleanupOwnedProcessGroup(spawned.ownership)),
     },
     {
+      maxDiagnosticBytes: {
+        stdout: RECOVERY_LIMITS.reportBytes,
+        stderr: RECOVERY_LIMITS.reportBytes,
+      },
       onDiagnostic: (event) => {
         if (
           event.type === "output" &&
@@ -222,6 +262,13 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
   }
   const stopped = await supervisor.stop();
   const snapshot = supervisor.snapshot();
+  if (context.signal?.aborted === true) {
+    const cancelled = cancelledBy(OPERATION, context.signal);
+    if (failure === undefined || failure instanceof AnalysisError)
+      failure = analysisErrorWithCancellation(failure, cancelled);
+  }
+  const captured = capturedProviderOutput(snapshot);
+  if (failure instanceof AnalysisError) failure.retainCapturedOutput(captured);
   if (stopped.status === "incomplete")
     throw new WakaruCleanupFailure(
       supervisor,
@@ -232,15 +279,11 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
       snapshot,
     );
   if (failure !== undefined) throw failure;
-  if (context.signal?.aborted === true)
-    throw new AnalysisCancelledError(OPERATION, {
-      cause: context.signal.reason,
-    });
   return {
-    exit_code: snapshot.exitCode ?? null,
-    signal: snapshot.signal ?? null,
-    stdout: snapshot.stdout.text,
-    stderr: snapshot.stderr.text,
+    exit_code: captured.exit_code ?? null,
+    signal: captured.signal ?? null,
+    stdout: captured.stdout,
+    stderr: captured.stderr,
     command: context.command,
     arguments: [...context.arguments],
     resource_limiter: context.limiter,

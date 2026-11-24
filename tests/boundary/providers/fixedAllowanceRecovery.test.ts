@@ -46,12 +46,16 @@ it.each([
       remediationAction: undefined,
       retryable: false,
     });
-    expect(projectAnalysisError(copied)).toMatchObject({
+    const projected = projectAnalysisError(copied);
+    expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      remediation: { action: fixedAllowanceRemediation(allowance, "parser") },
+      remediation: { action: expect.stringContaining(allowance) },
       details: { reported_limits: { maximum_decoded_bytes: 64 } },
     });
+    expect(projected.remediation.action).toBe(
+      fixedAllowanceRemediation(allowance, "parser"),
+    );
   },
 );
 

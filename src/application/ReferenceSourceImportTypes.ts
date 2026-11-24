@@ -1,13 +1,12 @@
+import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import {
-  projectAnalysisError,
-  type AnalysisErrorProjection,
-} from "../domain/analysisErrorProjection.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
@@ -25,6 +24,7 @@ export interface ReferenceSourceImportError {
   readonly cleanup?: AnalysisCleanupObservation;
   readonly partial?: ReferenceSourceRead;
   readonly cause?: unknown;
+  readonly secondaryCancellation?: { readonly cause: unknown };
 }
 
 const IMPORT_FAILURE_GUIDANCE = {
@@ -39,10 +39,10 @@ const IMPORT_FAILURE_GUIDANCE = {
     "Reference source could not be indexed. Check that the source tree is readable, then try again.",
 } satisfies Record<ReferenceSourceImportError["code"], string>;
 
-/** Canonical CLI/MCP projection, retaining source facts under diagnostic details. */
-export const projectReferenceSourceImportError = (
+/** Preserve import failure semantics for shared execution and cleanup owners. */
+export const referenceSourceImportAnalysisError = (
   error: ReferenceSourceImportError,
-): AnalysisErrorProjection => {
+): AnalysisError => {
   const guidance =
     error.remediationAction ?? IMPORT_FAILURE_GUIDANCE[error.code];
   const message = `${error.message} ${guidance}`;
@@ -73,9 +73,14 @@ export const projectReferenceSourceImportError = (
   };
   let primary: AnalysisError;
   switch (error.code) {
-    case "cancelled":
-      primary = new AnalysisCancelledError("import_reference_source", options);
+    case "cancelled": {
+      const { cause: reason, ...rest } = options;
+      primary = cancelledBy("import_reference_source", carriedReason(reason), {
+        ...rest,
+        userMessage: message,
+      });
       break;
+    }
     case "invalid-root":
       primary = new AnalysisInputError(
         "import_reference_source",
@@ -102,13 +107,23 @@ export const projectReferenceSourceImportError = (
       primary = new AnalysisOutputError(
         "import_reference_source",
         error.message,
-        { ...options, userMessage: message, remediationAction: guidance },
+        {
+          ...options,
+          userMessage: message,
+          remediationAction: guidance,
+        },
       );
       break;
   }
-  // Cancellation uses a shared fixed message; the producing boundary's reason
-  // is caller evidence and remains useful for every category.
-  return { ...projectAnalysisError(primary), message };
+  return error.secondaryCancellation === undefined
+    ? primary
+    : analysisErrorWithCancellation(
+        primary,
+        cancelledBy(
+          "import_reference_source",
+          carriedReason(error.secondaryCancellation.cause),
+        ),
+      );
 };
 
 /** Import a caller-selected local source tree as historical reference. */
@@ -120,13 +135,15 @@ export interface ReferenceSourceImportOptions {
   readonly importer?: string;
   readonly importerVersion?: string | null;
   readonly excludePaths?: readonly string[];
+  /** Accepted member-mutation work allowance; absent means the default. */
+  readonly memberMutationAllowance?: JavaScriptMemberMutationAllowance;
 }
 
 export const DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS = [
+  // The last matching rule supplies provenance, so directories must match ".git/" last.
+  ".git",
   ".git/",
   ".git/hooks/",
-  // Match pointer files after directory rules to preserve their provenance.
-  ".git",
   "node_modules/",
   "dist/",
   "build/",

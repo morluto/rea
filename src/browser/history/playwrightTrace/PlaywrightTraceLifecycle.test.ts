@@ -1,14 +1,16 @@
 import { createDeferred } from "../../../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { readFile, rename, copyFile } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
-import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
+import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
 import { PlaywrightTraceService } from "../../../application/playwrightTrace/PlaywrightTraceService.js";
+import { projectAnalysisError } from "../../../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../domain/evidence.js";
 import { playwrightTraceSchema } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { playwrightTraceFixture } from "../../../../tests/fixtures/playwrightTrace.js";
 import { OwnedFileHandle } from "../../../filesystem/OwnedFileHandle.js";
+import { ZipArtifactReader } from "../../../resources/index.js";
 
 it("preserves only fully verified streams when cancellation arrives before the network member", async () => {
   const fixture = await playwrightTraceFixture();
@@ -26,7 +28,6 @@ it("preserves only fully verified streams when cancellation arrives before the n
     const result = await new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     ).inspect({ path: fixture.path }, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -61,7 +62,6 @@ it("retains complete Evidence and the exact failed reader owner when abort arriv
     const result = await new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     ).inspect({ path: fixture.path }, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected composed failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupPrimary?._tag).toBe("AnalysisCancelledError");
@@ -101,7 +101,6 @@ it("keeps completed Evidence on cancellation during the outer descriptor close",
     const result = await new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     ).inspect({ path: fixture.path }, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -117,35 +116,57 @@ it("keeps completed Evidence on cancellation during the outer descriptor close",
   }
 });
 
-it("keeps an existing unsupported-version failure ahead of cancellation during cleanup", async () => {
-  const fixture = await playwrightTraceFixture({
-    trace: '{"type":"context-options","version":11}\n',
-    network: "",
-  });
-  const resources = new ArtifactResourceScope();
-  const controller = new AbortController();
-  const realClose = ZipArtifactReader.prototype.close;
-  const closed = vi
-    .spyOn(ZipArtifactReader.prototype, "close")
-    .mockImplementationOnce(async function (this: ZipArtifactReader) {
-      await realClose.call(this);
-      controller.abort("late cleanup abort");
+it.each([false, true])(
+  "keeps an unsupported-version refusal and late cancellation through reader close (fails: %s)",
+  async (closeFails) => {
+    const fixture = await playwrightTraceFixture({
+      trace: '{"type":"context-options","version":11}\n',
+      network: "",
     });
-  try {
-    const result = await new PlaywrightTraceDecoder(resources).inspect(
-      fixture.path,
-      controller.signal,
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected version refusal");
-    expect(controller.signal.aborted).toBe(true);
-    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
-    expect(resources.hasPending).toBe(false);
-  } finally {
-    closed.mockRestore();
-    await resources.close();
-  }
-});
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { stage: "late reader close" };
+    const realClose = ZipArtifactReader.prototype.close;
+    let allowClose = !closeFails;
+    const close = vi
+      .spyOn(ZipArtifactReader.prototype, "close")
+      .mockImplementation(async function (this: ZipArtifactReader) {
+        controller.abort(reason);
+        if (!allowClose) throw new Error("Injected reader close failure");
+        await realClose.call(this);
+      });
+    try {
+      const result = await new PlaywrightTraceDecoder(resources).inspect(
+        fixture.path,
+        controller.signal,
+      );
+      if (result.ok) throw new Error("Expected version refusal");
+      const primary = result.error.cleanupPrimary ?? result.error;
+      expect(primary._tag).toBe("AnalysisUnsupportedTargetError");
+      expect(primary.secondaryFailures).toHaveLength(1);
+      expect(primary.secondaryFailures[0]?._tag).toBe("AnalysisCancelledError");
+      expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+      expect(
+        projectAnalysisError(result.error).details?.secondary_failures,
+      ).toEqual([expect.objectContaining({ code: "cancelled" })]);
+      expect(result.error.cleanupIncomplete).toBe(closeFails);
+      expect(resources.cleanupResources).toEqual(
+        closeFails ? [`Playwright ZIP reader for ${fixture.path}`] : [],
+      );
+      allowClose = true;
+      await resources.retryCleanup();
+      expect(resources.hasPending).toBe(false);
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      allowClose = true;
+      try {
+        await resources.close();
+      } finally {
+        close.mockRestore();
+      }
+    }
+  },
+);
 
 it("retains independent reader and file owners until both cleanup retries complete", async () => {
   const fixture = await playwrightTraceFixture();
@@ -166,7 +187,6 @@ it("retains independent reader and file owners until both cleanup retries comple
     const result = await new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
     ).inspect({ path: fixture.path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cleanup failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(resources.cleanupResources).toHaveLength(2);
@@ -216,7 +236,6 @@ it.skipIf(process.platform === "win32")(
       const result = await new PlaywrightTraceDecoder(resources).inspect(
         fixture.path,
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected source identity refusal");
       expect(result.error._tag).toBe("AnalysisArtifactChangedError");
       expect((await readFile(held)).equals(original)).toBe(true);
@@ -246,9 +265,8 @@ it("bounds active imports without an unbounded queue and releases admission afte
     );
   const first = port.inspect(fixture.path);
   try {
-    await reached.promise;
+    await awaitAcknowledgement(reached.promise, first, "trace import");
     const second = await port.inspect(fixture.path);
-    expect(second.ok).toBe(false);
     if (second.ok) throw new Error("Expected capacity refusal");
     expect(second.error._tag).toBe("AnalysisResourceConstraintError");
     release.resolve();

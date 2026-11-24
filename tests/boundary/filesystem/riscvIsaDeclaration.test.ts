@@ -11,14 +11,26 @@ const SECTION_TABLE = 128;
 // Deliberately outside BinaryTargetResolver's 4 KiB probe.
 const PAYLOADS = 8192;
 
-const attributes = (arch: string | null, vendor = "riscv"): Buffer => {
+const attributes = (
+  arch: string | null,
+  {
+    vendor = "riscv",
+    scope = 1,
+    extra = [],
+  }: {
+    readonly vendor?: string;
+    readonly scope?: number;
+    readonly extra?: readonly number[];
+  } = {},
+): Buffer => {
   const list = [
     4,
     16, // Tag_RISCV_stack_align
     ...(arch === null ? [] : [5, ...Buffer.from(`${arch}\0`, "latin1")]),
+    ...extra,
   ];
   const scoped = Buffer.alloc(5 + list.length);
-  scoped[0] = 1; // Tag_File
+  scoped[0] = scope;
   scoped.writeUInt32LE(scoped.length, 1);
   scoped.set(list, 5);
   const name = Buffer.from(`${vendor}\0`, "latin1");
@@ -79,25 +91,37 @@ const resolveIsa = async (bytes: Buffer) => {
 const C3_ARCH = "rv32i2p1_m2p0_c2p0_zicsr2p0_zifencei2p0_zmmul1p0";
 
 describe("RISC-V ISA declarations at target resolution", () => {
-  it("reads Tag_RISCV_arch beyond the header probe and admits the ilp32 lane", async () => {
-    expect(
-      await resolveIsa(
-        elf([
-          { type: 1, payload: Buffer.from([0x13, 0, 0, 0]) },
-          { type: SHT_RISCV_ATTRIBUTES, payload: attributes(C3_ARCH) },
-        ]),
-      ),
-    ).toEqual({
-      isa: {
-        status: "declared",
-        arch: C3_ARCH,
-        xlen: 32,
-        base: "i",
-        extensions: ["m", "c", "zicsr", "zifencei", "zmmul"],
-      },
-      refusal: null,
-    });
-  });
+  it.each([
+    { tail: "known attributes", extra: [] },
+    {
+      tail: "an unknown optional tag in a later tag block",
+      extra: [0xc0, 0x01, 0],
+    },
+  ])(
+    "reads Tag_RISCV_arch beyond the header probe with $tail",
+    async ({ extra }) => {
+      expect(
+        await resolveIsa(
+          elf([
+            { type: 1, payload: Buffer.from([0x13, 0, 0, 0]) },
+            {
+              type: SHT_RISCV_ATTRIBUTES,
+              payload: attributes(C3_ARCH, { extra }),
+            },
+          ]),
+        ),
+      ).toEqual({
+        isa: {
+          status: "declared",
+          arch: C3_ARCH,
+          xlen: 32,
+          base: "i",
+          extensions: ["m", "c", "zicsr", "zifencei", "zmmul"],
+        },
+        refusal: null,
+      });
+    },
+  );
 
   it.each([
     ["no attribute section", [], { status: "absent" }, "declares none"],
@@ -109,13 +133,61 @@ describe("RISC-V ISA declarations at target resolution", () => {
     ],
     [
       "another vendor's attributes",
-      [{ type: SHT_RISCV_ATTRIBUTES, payload: attributes(C3_ARCH, "gnu") }],
+      [
+        {
+          type: SHT_RISCV_ATTRIBUTES,
+          payload: attributes(C3_ARCH, { vendor: "gnu" }),
+        },
+      ],
       {
         status: "unavailable",
-        reason:
-          "RISC-V ELF declares non-riscv vendor attributes that REA does not inspect",
+        reason: expect.stringMatching(
+          /non-riscv vendor attributes.*not inspect/i,
+        ),
       },
       "readable Tag_RISCV_arch declaration",
+    ],
+    [
+      "an unknown mandatory integer tag",
+      [
+        {
+          type: SHT_RISCV_ATTRIBUTES,
+          payload: attributes(C3_ARCH, { extra: [40, 0] }),
+        },
+      ],
+      {
+        status: "unavailable",
+        reason: "unknown mandatory RISC-V attribute tag 40",
+      },
+      "unknown mandatory RISC-V attribute tag 40",
+    ],
+    [
+      "an unknown mandatory string tag in a later tag block",
+      [
+        {
+          type: SHT_RISCV_ATTRIBUTES,
+          payload: attributes(C3_ARCH, { extra: [0x81, 0x01, 0] }),
+        },
+      ],
+      {
+        status: "unavailable",
+        reason: "unknown mandatory RISC-V attribute tag 129",
+      },
+      "unknown mandatory RISC-V attribute tag 129",
+    ],
+    [
+      "an unknown subsection scope",
+      [
+        {
+          type: SHT_RISCV_ATTRIBUTES,
+          payload: attributes(C3_ARCH, { scope: 64 }),
+        },
+      ],
+      {
+        status: "unavailable",
+        reason: "unknown RISC-V attribute scope tag 64",
+      },
+      "unknown RISC-V attribute scope tag 64",
     ],
     [
       "two attribute sections",
@@ -125,7 +197,9 @@ describe("RISC-V ISA declarations at target resolution", () => {
       ],
       {
         status: "unavailable",
-        reason: "the image has more than one RISC-V attribute section",
+        reason: expect.stringMatching(
+          /more than one RISC-V attribute section/i,
+        ),
       },
       "more than one RISC-V attribute section",
     ],
@@ -134,8 +208,9 @@ describe("RISC-V ISA declarations at target resolution", () => {
       [{ type: SHT_RISCV_ATTRIBUTES, payload: Buffer.alloc(4097, 0x41) }],
       {
         status: "unavailable",
-        reason:
-          "RISC-V attribute section size 4097 is outside REA's inspected bound of 4096 bytes",
+        reason: expect.stringMatching(
+          /RISC-V attribute section.*4097.*4096 bytes/i,
+        ),
       },
       "inspected bound",
     ],

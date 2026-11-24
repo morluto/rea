@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { failedInspectionDescriptor } from "../../fixtures/processInspectionCleanup.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
 import {
@@ -24,6 +25,7 @@ import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.j
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import { expectUnverifiedHostCleanup } from "../../support/hostCleanup.js";
 import {
+  PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
   ProcessCaptureResourceScope,
   type ProcessCaptureCleanupHost,
   observeLaunchedExecutable,
@@ -154,6 +156,8 @@ itWithCaptureCapability(
         idle_timeout_ms: 5_000,
         settle_ms: 100,
       }),
+      undefined,
+      process.platform,
     );
     if (!result.ok) throw result.error;
     expect(result.value.exit).toMatchObject({ code: 0, reason: "exited" });
@@ -184,7 +188,7 @@ itWithCaptureCapability(
     onTestFinished(async () => {
       now.mockRestore();
       await resources.close();
-    }, 10_000);
+    });
     try {
       const result = await captureProcessScenario(
         processScenarioSchema.parse({
@@ -246,14 +250,15 @@ itWithCaptureCapability(
           },
         },
       );
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(result.value.frames.length).toBeGreaterThan(0);
       expect(Date.parse(result.value.manifest.completed_at)).toBeLessThan(
         Date.parse(result.value.manifest.started_at),
       );
-      expect(result.value.limitations).toContain(
-        "Wall-clock completion time precedes start time; elapsed capture timing is recorded separately and remains monotonic.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /completion time precedes start time.*elapsed.*monotonic/iu,
+        ),
       );
       expect(
         result.value.frames.map(({ at_ms }) => at_ms),
@@ -291,6 +296,8 @@ itWithCaptureCapability(
           idle_timeout_ms: 5_000,
           limits: { processes: 1 },
         }),
+        undefined,
+        process.platform,
       );
       const { capture, cleanupIncomplete } = captureObservations(result);
       const parsed: unknown = JSON.parse(await readFile(pidMarker, "utf8"));
@@ -312,10 +319,15 @@ itWithCaptureCapability(
       );
       if (cleanupIncomplete)
         expect(capture.settlement.cleanup_outcome).toBe("failed");
-      else
+      else {
         expect(result.ok && result.value.cleanup.owned_process_group).toBe(
           "verified",
         );
+        expect(capture.settlement.cleanup_outcome).toBe("cleaned");
+        expect(capture.residual_unknowns).toContainEqual(
+          PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
+        );
+      }
       await waitForProcessExit(ownedPid);
       const unownedState = await processState(unownedPid);
       expect(unownedState).toBeDefined();
@@ -451,8 +463,9 @@ itWithCaptureCapability(
     );
     expect(observations.filesystem_snapshots.after).toEqual({
       state: "unavailable",
-      reason:
-        "Final filesystem snapshot failed: fixture final snapshot failure",
+      reason: expect.stringMatching(
+        /final.*snapshot.*fixture final snapshot failure/i,
+      ),
     });
     expect(observations.event_journal.state).toBe("available");
     if (observations.event_journal.state !== "available")
@@ -510,6 +523,8 @@ itWithCaptureCapability(
           timeout_ms: 1_500,
           idle_timeout_ms: 5_000,
         }),
+        undefined,
+        process.platform,
       );
       const deadline = Date.now() + 2_000;
       let ready = false;
@@ -535,8 +550,10 @@ itWithCaptureCapability(
         },
       });
       expect(capture.exit.reason).toBe("timeout");
-      expect(capture.limitations).toContain(
-        "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
+      expect(capture.limitations).toContainEqual(
+        expect.stringMatching(
+          /digest.*prelaunch.*path metadata.*does not prove.*atomic.*image binding/iu,
+        ),
       );
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -557,6 +574,8 @@ itWithCaptureCapability(
           working_directory: root,
           filesystem_observation_paths: [root],
         }),
+        undefined,
+        process.platform,
       );
       const { capture } = captureObservations(result);
       const escaped = capture.files_after.find((file) =>
@@ -596,6 +615,8 @@ itWithCaptureCapability(
         timeout_ms: 50,
         idle_timeout_ms: 5_000,
       }),
+      undefined,
+      process.platform,
     );
     const timedOutCapture = captureObservations(timedOut);
     expect(timedOutCapture.capture.exit.reason).toBe("timeout");
@@ -685,6 +706,7 @@ const captureFinalizationFixture = async (
       ...scenario,
     }),
     signal,
+    process.platform,
   );
   return { result, root };
 };
@@ -873,6 +895,10 @@ itWithCaptureCapability(
       partial.observations.exit,
       "no SIGTERM interval ran, so no finalization record exists",
     ).not.toHaveProperty("value.finalization");
+    expect(partial.observations.finalization).toMatchObject({
+      state: "unavailable",
+      reason: expect.stringMatching(/\S/u),
+    });
     expect(
       Date.now() - started,
       "cancellation does not wait for either deadline",
@@ -951,19 +977,194 @@ itWithCaptureCapability(
 );
 
 itWithCaptureCapability(
-  "keeps the attempts when the escalation cannot be delivered through the retained identity",
+  "joins the launch identity read before a cancelled capture returns",
   async () => {
-    const calls: string[] = [];
-    let observedAt: number | undefined;
-    let firstSignalAt: number | undefined;
+    const controller = new AbortController();
+    let readSettledAt: number | undefined;
     const finalizationHost: FinalizationHost = {
       observe: async () => {
-        observedAt ??= performance.now();
+        // Cancel while the launch identity read is still pending, then let
+        // the read finish only afterwards.
+        controller.abort();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        readSettledAt = performance.now();
         return { state: "readable" as const, identity: "launch" };
       },
-      signal: async (_pid, identity, signal) => {
+      signal: async () => "signaled" as const,
+    };
+    const root = await createTestTempDirectory("rea-root-identity-join-");
+    const result = await captureProcessScenario(
+      processScenarioSchema.parse({
+        executable: process.execPath,
+        arguments: ["-e", "setTimeout(() => {}, 20000)"],
+        working_directory: root,
+        timeout_ms: 20_000,
+        idle_timeout_ms: 20_000,
+      }),
+      controller.signal,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      finalizationHost,
+    );
+    const returnedAt = performance.now();
+
+    if (result.ok) throw new Error("expected cancellation");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    if (result.error.cleanupIncomplete)
+      expectUnverifiedHostCleanup(result.error);
+    expect(
+      readSettledAt,
+      "the capture does not return while its identity read is still running",
+    ).toBeDefined();
+    expect(readSettledAt!).toBeLessThanOrEqual(returnedAt);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "fails the capture and keeps the descriptor a failed launch identity read could not close",
+  async () => {
+    const root = await createTestTempDirectory("rea-root-identity-owner-");
+    const file = await failedInspectionDescriptor(root);
+    const finalizationHost: FinalizationHost = {
+      observe: async () => {
+        throw file.failure;
+      },
+      signal: async () => "signaled" as const,
+    };
+    const resources = new ProcessCaptureResourceScope();
+    // A failed assertion must still release the capture's retained resources.
+    onTestFinished(async () => {
+      file.allow();
+      await resources.close();
+    });
+    const result = await captureProcessScenario(
+      processScenarioSchema.parse({
+        executable: process.execPath,
+        arguments: ["-e", ""],
+        working_directory: root,
+        timeout_ms: 5_000,
+        idle_timeout_ms: 5_000,
+      }),
+      undefined,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      undefined,
+      resources,
+      finalizationHost,
+    );
+
+    if (result.ok)
+      throw new Error("expected the unclosed identity descriptor to fail");
+    expect(
+      result.error.cleanupResources,
+      "the failure names the descriptor the identity read left open",
+    ).toContain(file.path);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(file.handle.fd, "the descriptor stays owned").not.toBe(-1);
+    file.allow();
+    await resources.close();
+    expect(file.handle.fd, "a cleanup retry closes it").toBe(-1);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+itWithCaptureCapability(
+  "fails the capture and keeps the descriptor a finalization signal's identity check could not close",
+  async () => {
+    const root = await createTestTempDirectory("rea-signal-identity-owner-");
+    const file = await failedInspectionDescriptor(root);
+    const finalizationHost: FinalizationHost = {
+      observe: async () => ({ state: "readable" as const, identity: "launch" }),
+      signal: async (pid, _identity, signal) => {
+        if (signal === "SIGTERM") throw file.failure;
+        process.kill(pid, signal);
+        return "signaled" as const;
+      },
+    };
+    const resources = new ProcessCaptureResourceScope();
+    // A failed assertion must still release the capture's retained resources.
+    onTestFinished(async () => {
+      file.allow();
+      await resources.close();
+    });
+    const result = await captureProcessScenario(
+      processScenarioSchema.parse({
+        executable: process.execPath,
+        arguments: [finalizationFixture, "ignoring", root],
+        working_directory: root,
+        idle_timeout_ms: 10_000,
+        timeout_ms: 300,
+        finalization_ms: 300,
+      }),
+      undefined,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      undefined,
+      resources,
+      finalizationHost,
+    );
+
+    if (result.ok)
+      throw new Error("expected the unclosed signal descriptor to fail");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    expect(
+      result.error.cleanupResources,
+      "the failure names the descriptor the signal's identity check left open",
+    ).toContain(file.path);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(file.handle.fd, "the descriptor stays owned").not.toBe(-1);
+    const partial = result.error.partialObservation;
+    if (partial === undefined || !("capture" in partial))
+      throw new Error("expected the completed capture observations");
+    expect(
+      partial.capture.exit.finalization,
+      "the failed delivery stays recorded as unverified",
+    ).toMatchObject({
+      signals: [
+        {
+          signal: "SIGTERM",
+          delivery: "unverified",
+          reason: file.failure.message,
+        },
+        { signal: "SIGKILL", delivery: "signaled" },
+      ],
+    });
+    file.allow();
+    await resources.close();
+    expect(file.handle.fd, "a cleanup retry closes it").toBe(-1);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+itWithCaptureCapability(
+  "keeps the attempts when the escalation cannot be delivered through the retained identity",
+  async () => {
+    const calls: { pid: number; identity: string; signal: string }[] = [];
+    let observedPid: number | undefined;
+    let observedAt: number | undefined;
+    let firstSignalAt: number | undefined;
+    let identityReads = 0;
+    const finalizationHost: FinalizationHost = {
+      observe: async (pid) => {
+        observedPid = pid;
+        observedAt ??= performance.now();
+        return {
+          state: "readable" as const,
+          identity: `read-${++identityReads}`,
+        };
+      },
+      signal: async (pid, identity, signal) => {
         firstSignalAt ??= performance.now();
-        calls.push(`${identity}:${signal}`);
+        calls.push({ pid, identity, signal });
         return signal === "SIGTERM" ? "signaled" : "unverified";
       },
     };
@@ -992,10 +1193,15 @@ itWithCaptureCapability(
     if (!(result.error instanceof ProcessCaptureError)) throw result.error;
     if (result.error.cleanupIncomplete)
       expectUnverifiedHostCleanup(result.error);
+    expect(observedPid).toEqual(expect.any(Number));
     expect(
       calls,
       "both finalization signals went through the identity-checked host",
-    ).toEqual(["launch:SIGTERM", "launch:SIGKILL"]);
+    ).toEqual([
+      { pid: observedPid, identity: "read-1", signal: "SIGTERM" },
+      { pid: observedPid, identity: "read-1", signal: "SIGKILL" },
+    ]);
+    expect(identityReads).toBe(1);
     expect(
       (firstSignalAt ?? 0) - (observedAt ?? Number.POSITIVE_INFINITY),
       "the start identity was read at launch, well before the 500 ms deadline signalled",
@@ -1034,13 +1240,10 @@ itWithCaptureCapability(
     await writeFile(path, "observed\n");
     const controller = new AbortController();
     const { signal } = controller;
-    const throwIfAborted = signal.throwIfAborted.bind(signal);
-    Object.defineProperty(signal, "throwIfAborted", {
-      value: () => {
-        controller.abort();
-        throwIfAborted();
-      },
-    });
+    const captureSnapshot: typeof snapshotRoots = async (...args) => {
+      controller.abort();
+      return snapshotRoots(...args);
+    };
 
     const result = await captureProcessScenario(
       processScenarioSchema.parse({
@@ -1049,6 +1252,9 @@ itWithCaptureCapability(
         filesystem_observation_paths: [path],
       }),
       signal,
+      process.platform,
+      process.env,
+      captureSnapshot,
     );
 
     if (result.ok) throw new Error("expected initial snapshot cancellation");
@@ -1162,6 +1368,8 @@ itWithCaptureCapability(
         timeout_ms: 20_000,
         idle_timeout_ms: 10_000,
       }),
+      undefined,
+      process.platform,
     );
     const { capture } = captureObservations(result);
     const output = capture.frames.map(({ data }) => data).join("");
@@ -1196,6 +1404,8 @@ itWithCaptureCapability(
         timeout_ms: 2_000,
         idle_timeout_ms: 2_000,
       }),
+      undefined,
+      process.platform,
     );
     const { capture } = captureObservations(result);
     expect(capture.interaction_events).toMatchObject([
@@ -1224,6 +1434,8 @@ itWithCaptureCapability(
         timeout_ms: 20_000,
         idle_timeout_ms: 20_000,
       }),
+      undefined,
+      process.platform,
     );
     const { capture } = captureObservations(result);
     expect(capture.frames.map(({ data }) => data).join("")).toContain(
@@ -1258,6 +1470,8 @@ itWithCaptureCapability(
         timeout_ms: 20_000,
         idle_timeout_ms: 20_000,
       }),
+      undefined,
+      process.platform,
     );
     const { capture } = captureObservations(result);
     expect(capture.exit).toMatchObject({ code: 0, reason: "exited" });

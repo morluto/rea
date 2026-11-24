@@ -1,3 +1,4 @@
+import type { SessionLimitationDelivery } from "../application/binary/SessionLimitationContext.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { isAppleDispatchMetadataTarget } from "../domain/native/objcSwiftMetadata.js";
@@ -6,30 +7,39 @@ import type { AppConfig } from "../config/types.js";
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
+import { createIdaMcpConnection } from "../ida/IdaMcpConnection.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { KunaProvider } from "../kuna/KunaProvider.js";
 import type { Logger } from "pino";
-import { auxiliaryAnalysisProviderDeclarations } from "./auxiliaryAnalysisProviders.js";
+import {
+  auxiliaryAnalysisProviderDeclarations,
+  managedStaticProviderDeclaration,
+} from "./auxiliaryAnalysisProviders.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
+import { LINUX_HOPPER_LAUNCHER_VERIFICATION } from "../application/LinuxHopper.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
-import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { combineBundleResourceClients } from "../application/binary/BundleResourceSession.js";
 import {
   BUNDLE_ARTIFACT_RESOURCE_OPERATIONS,
   BUNDLE_NATIVE_RESOURCE_OPERATIONS,
-  combineBundleResourceClients,
-} from "../application/binary/BundleResourceSession.js";
+} from "../ports/BundleResourceOperations.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
  * This is the sole production wiring point, so both adapters share identical
- * provider selection, profile, lifecycle, and Evidence semantics.
+ * provider selection, profile, lifecycle, and Evidence semantics. Only the
+ * session's lifetime differs: a persistent session states shared provider
+ * limitations once and references them (`sessionLimitations: "reference"`),
+ * while a one-call session keeps them inline.
  */
 export const createBinarySession = (
   config: AppConfig,
   logger: Logger,
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   settings?: AnalysisSettingsReader,
+  sessionLimitations?: SessionLimitationDelivery,
 ): BinarySession =>
   composeDeepBinarySession(
     runtimeAnalysisConfig(config, settings),
@@ -37,6 +47,7 @@ export const createBinarySession = (
     selectedEnvironment,
     undefined,
     settings,
+    sessionLimitations,
   );
 
 /** Prefer byte-backed dispatch inspection while retaining deep symbol fallback. */
@@ -46,7 +57,7 @@ export const createNativeDispatchBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
 ): BinarySession =>
   composeDeepBinarySession(
-    config,
+    runtimeAnalysisConfig(config),
     logger,
     selectedEnvironment,
     "inspect_native_dispatch_metadata",
@@ -58,18 +69,28 @@ const composeDeepBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   inspection?: "inspect_native_dispatch_metadata",
   settings?: AnalysisSettingsReader,
+  sessionLimitations?: SessionLimitationDelivery,
 ): BinarySession => {
-  const environment = snapshotEnvironment(selectedEnvironment);
-  const hopper = new HopperProvider(config, logger, environment);
+  const platform = HOST_PLATFORM.platform;
+  const environment = snapshotEnvironment(selectedEnvironment, platform);
+  const hopper = new HopperProvider(
+    config,
+    logger,
+    environment,
+    platform,
+    LINUX_HOPPER_LAUNCHER_VERIFICATION,
+  );
   const ghidra = new GhidraProvider(config, logger, environment);
-  const ida = new IdaProvider(config, environment);
+  const ida = new IdaProvider(config, environment, (registration, selected) =>
+    createIdaMcpConnection(registration, selected, { platform }),
+  );
   const kuna = new KunaProvider(environment, {
     regexMatchingDeadline: config.regexMatchingDeadline,
     regexWorkerHeapRequest: config.regexWorkerHeapRequest,
   });
   const auxiliaryDeclarations = auxiliaryAnalysisProviderDeclarations(
     environment,
-    process.platform,
+    platform,
     settings,
   );
   const nativeInspectionAvailable =
@@ -88,7 +109,8 @@ const composeDeepBinarySession = (
     auxiliaryDeclarations.map(
       (declaration) => new LazyAnalysisProvider(declaration),
     ),
-    createBundleResourceFactory(environment, process.platform, settings),
+    createBundleResourceFactory(environment, platform, settings),
+    sessionLimitations,
   );
 };
 
@@ -99,7 +121,7 @@ const createBundleResourceFactory = (
 ) => {
   return {
     createClient: async (
-      root: import("../application/AppBundleExecutable.js").ResolvedAppBundleResourceRoot,
+      root: import("../domain/apple/bundleResourceRoot.js").ResolvedAppBundleResourceRoot,
     ) => {
       const [{ ArtifactProvider }, { NativeMacOSProvider }] = await Promise.all(
         [
@@ -135,13 +157,13 @@ const createBundleResourceFactory = (
 /** Compose an execution-free managed session without native provider selection. */
 export const createManagedBinarySession = (): BinarySession =>
   composeBinarySession(new AnalysisProviderRegistry([]), [
-    new ManagedStaticProvider(),
+    new LazyAnalysisProvider(managedStaticProviderDeclaration()),
   ]);
 
 /** Compose the artifact operations without candidates for deep analysis engines. */
 export const createArtifactBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<BinarySession> =>
   import("../artifacts/ArtifactProvider.js").then(({ ArtifactProvider }) =>
     composeBinarySession(
@@ -162,7 +184,7 @@ export const createArtifactBinarySession = (
 /** Compose native inspection utilities without candidates for deep analysis. */
 export const createNativeBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<BinarySession> =>
   import("../native/NativeMacOSProvider.js").then(({ NativeMacOSProvider }) =>
     composeBinarySession(

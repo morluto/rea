@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "./evidence.js";
@@ -101,7 +102,7 @@ describe("WebMCP discovery consequential annotation", () => {
       consequential: true,
       autosubmit: null,
     });
-    const evidence = createEvidence(undefined, PROVIDER, {
+    const evidence = createEvidence(unknownTarget("not-observed"), PROVIDER, {
       predicateType: "rea.webmcp-discovery",
       operation: "discover_webmcp_tools",
       parameters: {},

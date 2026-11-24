@@ -1,4 +1,6 @@
+import { completeOrUnknownCoverageSchema } from "./coverage.js";
 import {
+  artifactCrc32PairSchema,
   artifactDfuCrc32PairSchema,
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
@@ -6,8 +8,10 @@ import {
 } from "./artifactIntegrity.js";
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
+import { artifactReaderLimitsSchema } from "./artifactReaderLimits.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { inesInventorySchema } from "./inesContainer.js";
+import { ZIP_APPLICATION_PACKAGE_FORMATS } from "./zipPackageFormat.js";
 
 /** Entry kinds or subtrees deliberately excluded by an artifact traversal. */
 export const artifactTraversalOmissionKindSchema = z.enum([
@@ -60,6 +64,7 @@ const artifactKindSchema = z.enum([
 export const ARTIFACT_FORMAT_IDS = [
   "dotnet-bundle",
   "bun-standalone",
+  "deno-standalone",
   "dmg",
   "zip",
   "pkg",
@@ -68,7 +73,15 @@ export const ARTIFACT_FORMAT_IDS = [
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "tar",
+  "dds",
+  "glb",
+  "ktx",
+  "ktx2",
   "uimage",
+  "android-boot-image",
+  "android-ota-payload",
+  "uefi",
   "javascript-bundle",
   "source-map",
   "mach-o-universal",
@@ -81,13 +94,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "gamecube-dol",
   "hopper",
   "analysis-database",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
+  ...ZIP_APPLICATION_PACKAGE_FORMATS,
   "plist",
   "entitlements",
   "directory",
@@ -101,6 +108,11 @@ export const ARTIFACT_FORMAT_IDS = [
   "dfuse",
   "esp-flash-image",
   "fit",
+  "ntfs-mft",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "unknown",
 ] as const;
 
@@ -115,19 +127,32 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "tar",
+  "dds",
+  "glb",
+  "ktx",
+  "ktx2",
   "uimage",
+  "android-boot-image",
+  "android-ota-payload",
+  "uefi",
   "intel-hex",
   "srec",
   "esp-image",
   "uf2",
   "dfuse",
   "fit",
+  "ntfs-mft",
   "mach-o-universal",
   "mach-o",
   "elf",
   "pe",
   "dos-mz",
   "plist",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "directory",
   "file",
   "unknown",
@@ -169,6 +194,8 @@ export const artifactOccurrenceSchema = z.object({
   occurrence_id: occurrenceIdSchema,
   artifact_id: artifactIdSchema.nullable(),
   parent_occurrence_id: occurrenceIdSchema.nullable(),
+  /** Producer coverage of this occurrence's modeled relationships. Historical omission is unknown. */
+  relationship_coverage: completeOrUnknownCoverageSchema.exactOptional(),
   logical_path: boundedRelativePathSchema,
   entry_kind: z.enum(["file", "directory", "symlink", "slice", "metadata"]),
   artifact_kind: artifactKindSchema,
@@ -206,6 +233,7 @@ export const integrityContradictionSchema = z.union([
   integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
+  integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
 ]);
 
 /**
@@ -244,7 +272,7 @@ export const artifactGraphManifestSchema = z.object({
 /** Producer-owned traversal coverage; content certainty remains on each occurrence. */
 export const artifactInventoryCoverageSchema = z.strictObject({
   scope: z.enum(["root", "container-entries"]),
-  status: z.enum(["complete", "unknown"]),
+  status: completeOrUnknownCoverageSchema,
 });
 export type ArtifactInventoryCoverage = z.infer<
   typeof artifactInventoryCoverageSchema
@@ -252,6 +280,11 @@ export type ArtifactInventoryCoverage = z.infer<
 
 /** Current inventory observation containing the stable artifact graph. */
 export const artifactInventoryResultSchema = z.strictObject({
+  effective_limits: artifactReaderLimitsSchema
+    .exactOptional()
+    .describe(
+      "Accepted resource policy when selected; each format group applies only if that format is encountered. Not measured process memory or confirmation every reader ran.",
+    ),
   manifest: artifactGraphManifestSchema,
   nodes: z.array(artifactNodeSchema),
   occurrences: z.array(artifactOccurrenceSchema),
@@ -283,6 +316,7 @@ const artifactExtractionManifestSchema = z.object({
 
 /** Safe extraction observation with containment and cleanup verification. */
 export const artifactExtractionResultSchema = z.object({
+  effective_limits: artifactReaderLimitsSchema.exactOptional(),
   manifest: artifactGraphManifestSchema,
   extraction_manifest: artifactExtractionManifestSchema,
   output_root: z.string().min(1),
@@ -307,6 +341,12 @@ export type ArtifactEdge = z.infer<typeof artifactEdgeSchema>;
 
 /** Parsed artifact occurrence. */
 export type ArtifactOccurrence = z.infer<typeof artifactOccurrenceSchema>;
+
+/** Read relationship coverage without changing authenticated historical rows. */
+export const artifactOccurrenceRelationshipCoverage = (
+  occurrence: ArtifactOccurrence,
+) => occurrence.relationship_coverage ?? "unknown";
+
 export type IntegrityContradiction = z.infer<
   typeof integrityContradictionSchema
 >;

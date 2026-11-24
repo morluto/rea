@@ -1,13 +1,28 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { isAborted } from "../domain/analysisErrorCore.js";
 import fs from "node:fs";
-import { join } from "node:path";
-import { locateReferenceSourceGitDirectory } from "./ReferenceSourceGitDirectory.js";
+import { join, sep } from "node:path";
+import {
+  locateReferenceSourceGitDirectory,
+  ReferenceSourceGitDirectoryCancelled,
+} from "./ReferenceSourceGitDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFile, retryRegularFileCleanup } from "./RegularFileRead.js";
-import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
+import {
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+} from "../filesystem/OwnedRegularFile.js";
+import {
+  readRegularFile,
+  RegularFileReadFailure,
+  retryRegularFileCleanup,
+} from "../process/RegularFileRead.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { referenceSourceResourceFailure } from "../reference/ReferenceSourceFailureBuilders.js";
 
 export type ReferenceSourceVcsInfo =
   | {
@@ -39,7 +54,12 @@ export const readReferenceSourceVcs = async (
     });
   } catch (cause: unknown) {
     if (!(cause instanceof ArtifactReaderFailure)) throw cause;
-    return err(referenceSourceResourceFailure(cause));
+    return err({
+      ...referenceSourceResourceFailure(cause),
+      ...(cause.reason !== "cancelled" && signal?.aborted === true
+        ? { secondaryCancellation: { cause: signal.reason } }
+        : {}),
+    });
   }
 };
 
@@ -56,20 +76,52 @@ const resolveSourceVcs = async (
 ): Promise<ReferenceSourceVcsInfo> => {
   // isomorphic-git is loaded on first use so CLI and MCP startup skip it.
   const { resolveRef } = await import("isomorphic-git");
-  let failedRead: { readonly cause: unknown } | undefined;
-  const cleanupFailures: ArtifactReaderFailure[] = [];
+  let firstReadFailure: { readonly cause: unknown } | undefined;
   const readMetadataBytes = async (path: string): Promise<Buffer> => {
     try {
-      return await readRegularFile(path, { signal });
+      return await readRegularFile(path, {
+        signal,
+        cancellationFailure: (reason) =>
+          new ArtifactReaderFailure(
+            "cancelled",
+            "Git metadata read cancelled",
+            {
+              cause: reason,
+            },
+          ),
+      });
     } catch (cause: unknown) {
-      if (signal?.aborted === true && cause === signal.reason) throw cause;
-      if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+      if (cause instanceof ArtifactReaderFailure) throw cause;
+      if (!(cause instanceof RegularFileCleanupFailure)) {
+        if (
+          signal?.aborted === true &&
+          regularFileCancellation(cause) === undefined
+        ) {
+          const physical =
+            cause instanceof RegularFileReadFailure
+              ? cause.operationCause
+              : cause;
+          // The Git directory owner interprets absence of optional metadata.
+          if (errorCode(physical) === "ENOENT") throw physical;
+          firstReadFailure ??= { cause: physical };
+          throw new ArtifactReaderFailure(
+            "io",
+            `Git metadata could not be read safely: ${errorMessage(physical)}`,
+            { cause: physical },
+          );
+        }
+        throw cause instanceof RegularFileReadFailure
+          ? cause.operationCause
+          : cause;
+      }
+      const cancellation = regularFileCancellation(cause);
       const retry = await retryRegularFileCleanup(cause, resources, signal);
       if (
         retry.outcome.kind === "failed" &&
+        cancellation === undefined &&
         errorCode(retry.outcome.cause) !== "ENOENT"
       )
-        failedRead ??= { cause: retry.outcome.cause };
+        firstReadFailure ??= { cause: retry.outcome.cause };
       if (
         retry.cleanup === undefined &&
         retry.outcome.kind === "failed" &&
@@ -81,52 +133,23 @@ const resolveSourceVcs = async (
           ? retry.outcome.cause
           : cause.cleanupCause;
       throw new ArtifactReaderFailure(
-        isAborted(signal) ? "cancelled" : "io",
+        cancellation === undefined ? "io" : "cancelled",
         `Git metadata could not be read safely: ${errorMessage(primary)}`,
         {
-          cause: primary,
+          cause: cancellation === undefined ? primary : cancellation.reason,
           ...(retry.cleanup === undefined ? {} : { cleanup: retry.cleanup }),
         },
       );
     }
   };
   const readMetadataText = async (path: string): Promise<string> =>
-    (await readMetadataBytes(path)).toString("utf8");
-  const throwCleanupFailures = (primary: unknown): never => {
-    const observations = cleanupFailures.flatMap((failure) =>
-      failure.cleanup === undefined ? [] : [failure.cleanup],
-    );
-    throw new ArtifactReaderFailure(
-      isAborted(signal) ? "cancelled" : "io",
-      `Git metadata could not be read safely: ${errorMessage(primary)}`,
-      {
-        cause: new AggregateError(
-          [primary, ...cleanupFailures],
-          "Git metadata reads and cleanup failed",
-          { cause: primary },
-        ),
-        ...(observations.length === 0
-          ? {}
-          : {
-              cleanup: {
-                reason: observations.map(({ reason }) => reason).join("; "),
-                resources: [
-                  ...new Set(
-                    observations.flatMap(({ resources }) => resources),
-                  ),
-                ],
-              },
-            }),
-      },
-    );
-  };
+    decodeStrictUtf8(await readMetadataBytes(path), "preserve");
   const referenceFs = {
     ...fs,
     promises: {
       ...fs.promises,
-      // Let isomorphic-git continue from a failed loose ref to packed-refs,
-      // then report the original read failure after resolution. This preserves
-      // both observations when packed metadata also fails cleanup.
+      // Ref lookup may skip a directory-shaped candidate. Retain its physical
+      // read failure even if a later candidate resolves or fails cleanup.
       readFile: async (
         path: string | undefined,
         options:
@@ -139,7 +162,8 @@ const resolveSourceVcs = async (
         if (path === undefined)
           throw new TypeError("Git metadata path is required");
         try {
-          const bytes = await readMetadataBytes(path);
+          // Keep filesystem reads and cleanup resources in host spelling.
+          const bytes = await readMetadataBytes(path.replaceAll("/", sep));
           const encoding =
             typeof options === "string"
               ? options
@@ -153,9 +177,11 @@ const resolveSourceVcs = async (
             throw new TypeError("Unsupported Git metadata text encoding");
           return bytes.toString(encoding);
         } catch (cause: unknown) {
-          if (cause instanceof ArtifactReaderFailure) {
-            cleanupFailures.push(cause);
-          } else if (errorCode(cause) !== "ENOENT") failedRead ??= { cause };
+          if (
+            !(cause instanceof ArtifactReaderFailure) &&
+            errorCode(cause) !== "ENOENT"
+          )
+            firstReadFailure ??= { cause };
           throw cause;
         }
       },
@@ -169,23 +195,57 @@ const resolveSourceVcs = async (
     try {
       head = await resolveRef({ fs: referenceFs, dir: root, ...options });
     } catch (cause: unknown) {
-      if (cleanupFailures.length > 0)
-        throwCleanupFailures(failedRead?.cause ?? cause);
-      if (failedRead !== undefined) throw failedRead.cause;
-      throw cause;
+      if (!(cause instanceof ArtifactReaderFailure)) {
+        if (firstReadFailure !== undefined) throw firstReadFailure.cause;
+        throw cause;
+      }
+      const primary =
+        firstReadFailure?.cause ??
+        (cause.reason === "cancelled" ? cause : (cause.cause ?? cause));
+      throw new ArtifactReaderFailure(
+        primary instanceof ArtifactReaderFailure &&
+          primary.reason === "cancelled"
+          ? "cancelled"
+          : "io",
+        `Git metadata could not be read safely: ${errorMessage(primary)}`,
+        {
+          cause: new AggregateError(
+            [primary, cause],
+            "Git metadata reads and cleanup failed",
+            {
+              cause: primary,
+            },
+          ),
+          ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
+        },
+      );
     }
-    if (cleanupFailures.length > 0)
-      throwCleanupFailures(failedRead?.cause ?? cleanupFailures[0]?.cause);
     signal?.throwIfAborted();
-    if (failedRead !== undefined) throw failedRead.cause;
+    if (firstReadFailure !== undefined) throw firstReadFailure.cause;
     return head;
   };
-  const locations = await locateReferenceSourceGitDirectory(
-    root,
-    readMetadataText,
-    signal,
-  );
+  let locations;
+  try {
+    locations = await locateReferenceSourceGitDirectory(
+      root,
+      readMetadataText,
+      signal,
+    );
+  } catch (cause: unknown) {
+    if (
+      signal?.aborted === true &&
+      !(cause instanceof ReferenceSourceGitDirectoryCancelled) &&
+      !(cause instanceof ArtifactReaderFailure)
+    )
+      throw new ArtifactReaderFailure(
+        "io",
+        `Git directory could not be resolved: ${errorMessage(cause)}`,
+        { cause },
+      );
+    throw cause;
+  }
   if (locations === undefined) return { kind: "none", head: null, dirty: null };
+  if (isAborted(signal)) return unknownVcs();
   const { gitDirectory, commonDirectory } = locations;
   if (gitDirectory === commonDirectory) {
     const head = await readRef({ gitdir: gitDirectory, ref: "HEAD" });
@@ -212,8 +272,3 @@ const errorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" && cause !== null && "code" in cause
     ? String(cause.code)
     : undefined;
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;

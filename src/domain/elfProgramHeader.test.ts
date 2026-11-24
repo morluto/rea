@@ -17,7 +17,11 @@ it.each(formats)(
     const wide = bits === 64;
     const length = wide ? 56 : 32;
     const backing = Buffer.alloc(length + 19, 0xa5);
-    const bytes = backing.subarray(7, 7 + length);
+    const bytes = new Uint8Array(
+      backing.buffer,
+      backing.byteOffset + 7,
+      length,
+    );
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const values = wide
       ? [
@@ -45,7 +49,7 @@ it.each(formats)(
     });
     const before = Buffer.from(backing);
     const parsed = readElfProgramHeader(
-      backing.subarray(7),
+      new Uint8Array(backing.buffer, bytes.byteOffset, length + 5),
       bits,
       littleEndian,
     );
@@ -83,7 +87,7 @@ it.each(formats)(
         ok: false,
         error: {
           kind: "malformed",
-          message: "ELF program header is truncated",
+          message: expect.stringContaining("truncated"),
         },
       });
   },

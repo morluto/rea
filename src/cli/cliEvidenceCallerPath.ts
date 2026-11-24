@@ -2,18 +2,23 @@ import {
   parseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
+  type CallerInputPaths,
 } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 import { ZodError } from "zod";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
-/** Bind the CLI selection before final cleanup or publication can retain it. */
+/**
+ * Bind the CLI selection before final cleanup or publication can retain it.
+ * An omitted `callerPath` keeps the Evidence's own, binding only the named
+ * auxiliary paths.
+ */
 export const bindCliEvidenceCallerPath =
   (
-    callerPath: string,
+    callerPath: string | undefined,
     run: () => Promise<Result<Evidence, AnalysisError>>,
-    additionalPaths?: Readonly<Record<string, string>>,
+    additionalPaths?: CallerInputPaths,
   ): (() => Promise<Result<Evidence, AnalysisError>>) =>
   async () => {
     const result = await run();
@@ -49,9 +54,10 @@ export const finishCliEvidenceCommand = (
   providerId: string,
   operation: string,
   signal: AbortSignal,
+  additionalPaths?: CallerInputPaths,
 ) =>
   finishAnalysisCommand(
-    bindCliEvidenceCallerPath(callerPath, run),
+    bindCliEvidenceCallerPath(callerPath, run, additionalPaths),
     service,
     providerId,
     operation,

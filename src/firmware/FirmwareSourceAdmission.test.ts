@@ -1,28 +1,13 @@
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { firmwareRequestSchema } from "../domain/firmware/firmwareAnalysis.js";
 import { FirmwareFileAccess } from "./FirmwareFiles.js";
 
-const roots: string[] = [];
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
-
 const workspace = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-firmware-source-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-firmware-source-");
   const staging = join(root, "stage");
   await mkdir(staging);
   return { root, staging };

@@ -10,6 +10,7 @@ import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js
 import { probeProcessCaptureCapability } from "../../../src/process/capture/ProcessCaptureCapability.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("the CLI takes its environment as an input", () => {
   it("resolves from injected PATH and inherits injected env with scenario overrides", async ({
@@ -21,46 +22,42 @@ describe("the CLI takes its environment as an input", () => {
       return;
     }
 
-    const root = await mkdtemp(join(tmpdir(), "rea-cli-env-process-"));
+    const root = await createTestTempDirectory("rea-cli-env-process-");
     const bin = join(root, "bin");
     const executable = join(bin, "rea-injected-process-probe");
     const scenarioPath = join(root, "scenario.json");
-    try {
-      await mkdir(bin);
-      await writeFile(
-        executable,
-        [
-          "#!/bin/sh",
-          'printf "%s|%s\\n" "$REA_CAPTURE_INJECTED_MARKER" "$REA_CAPTURE_SCENARIO_OVERRIDE"',
-        ].join("\n"),
-      );
-      await chmod(executable, 0o755);
-      await writeFile(
-        scenarioPath,
-        JSON.stringify({
-          executable: "rea-injected-process-probe",
-          working_directory: root,
-          environment: { REA_CAPTURE_SCENARIO_OVERRIDE: "scenario-value" },
-        }),
-      );
+    await mkdir(bin);
+    await writeFile(
+      executable,
+      [
+        "#!/bin/sh",
+        'printf "%s|%s\\n" "$REA_CAPTURE_INJECTED_MARKER" "$REA_CAPTURE_SCENARIO_OVERRIDE"',
+      ].join("\n"),
+    );
+    await chmod(executable, 0o755);
+    await writeFile(
+      scenarioPath,
+      JSON.stringify({
+        executable: "rea-injected-process-probe",
+        working_directory: root,
+        environment: { REA_CAPTURE_SCENARIO_OVERRIDE: "scenario-value" },
+      }),
+    );
 
-      const result = await captureProcessScenarioFile(scenarioPath, {
-        PATH: bin,
-        REA_CAPTURE_INJECTED_MARKER: "injected-value",
-        REA_CAPTURE_SCENARIO_OVERRIDE: "host-value",
-      });
-      if (isCliOperationFailure(result))
-        throw new Error(
-          `Process capture returned an error: ${JSON.stringify(result)}`,
-        );
-      const evidence = parseEvidence(result);
-      const capture = parseProcessCapture(evidence.normalized_result);
-      expect(capture.frames.map(({ data }) => data).join("")).toContain(
-        "injected-value|scenario-value",
+    const result = await captureProcessScenarioFile(scenarioPath, {
+      PATH: bin,
+      REA_CAPTURE_INJECTED_MARKER: "injected-value",
+      REA_CAPTURE_SCENARIO_OVERRIDE: "host-value",
+    });
+    if (isCliOperationFailure(result))
+      throw new Error(
+        `Process capture returned an error: ${JSON.stringify(result)}`,
       );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    const evidence = parseEvidence(result);
+    const capture = parseProcessCapture(evidence.normalized_result);
+    expect(capture.frames.map(({ data }) => data).join("")).toContain(
+      "injected-value|scenario-value",
+    );
   });
 
   it("reports session status from a supplied environment", async () => {

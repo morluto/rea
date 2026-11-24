@@ -1,26 +1,32 @@
 import { GhidraAdmissionError } from "../GhidraAdmissionError.js";
-import { createHash } from "node:crypto";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { realpath, mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../../domain/coverage.js";
 import type { AppConfig } from "../../config/types.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  type ArtifactResourceScope,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,
-  ghidraFileFailure,
+  ghidraFileDialect,
 } from "../GhidraFileArtifacts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { nativeAotAdapter } from "./nativeaot/NativeAotAdapter.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import { ZIP_LOCAL_HEADER_SIGNATURE } from "../../domain/zip/zipLocalHeader.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 /** Exact executable extension artifact committed before the session starts. */
@@ -41,8 +47,7 @@ export const ghidraExtensionResultSchema = z.strictObject({
   id: z.string().min(1),
   sha256: digest,
   status: z.enum([
-    "complete",
-    "partial",
+    ...knownCoverageStatusSchema.options,
     "not_applicable",
     "unsupported",
     "failed",
@@ -86,7 +91,11 @@ const readJar = (
     resources,
     signal,
     (bytes) => {
-      if (bytes.length < 4 || bytes.readUInt32LE(0) !== 0x04034b50)
+      if (
+        bytes.length < 4 ||
+        new BinaryReader(bytes, true, "jar").u32(0) !==
+          ZIP_LOCAL_HEADER_SIGNATURE
+      )
         throw new GhidraAdmissionError("not_jar", { path });
       return bytes;
     },
@@ -104,10 +113,7 @@ export const resolveGhidraExtensions = async (
     .run(async () => {
       const extensions: GhidraExtension[] = [];
       for (const adapter of adapters) {
-        if (signal?.aborted)
-          return err(
-            new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-          );
+        if (signal?.aborted) return err(cancelledBy("open_binary", signal));
         const configured = adapter.configuredPath(config);
         if (configured === undefined) continue;
         const refusal = adapter.unsupportedReason(target, platform);
@@ -120,27 +126,32 @@ export const resolveGhidraExtensions = async (
             id: adapter.id,
             path,
             configured_path: configured,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
+            sha256: sha256Hex(bytes),
             entry_class: adapter.entryClass,
             integration_api: 1,
           });
         } catch (cause: unknown) {
           return err(
-            ghidraFileFailure(cause, "resolve_analysis_profile", {
-              extension: adapter.id,
-              path: configured,
-            }),
+            classifyProviderFailure(
+              cause,
+              ghidraFileDialect("resolve_analysis_profile", {
+                extension: adapter.id,
+                path: configured,
+              }),
+            ),
           );
         }
       }
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-        );
+      if (signal?.aborted) return err(cancelledBy("open_binary", signal));
       return ok(extensions);
     })
     .catch((cause: unknown) =>
-      err(ghidraFileFailure(cause, "resolve_analysis_profile")),
+      err(
+        classifyProviderFailure(
+          cause,
+          ghidraFileDialect("resolve_analysis_profile"),
+        ),
+      ),
     );
 
 /** Require explicit local configuration before admitting executable code from a profile. */
@@ -227,9 +238,7 @@ export const snapshotGhidraExtensions = async (
       const result: GhidraExtension[] = [];
       for (const extension of extensions) {
         const bytes = await readJar(extension.path, resources, signal);
-        if (
-          createHash("sha256").update(bytes).digest("hex") !== extension.sha256
-        )
+        if (sha256Hex(bytes) !== extension.sha256)
           throw new GhidraAdmissionError("digest_differs", {
             id: extension.id,
             path: extension.path,
@@ -241,7 +250,7 @@ export const snapshotGhidraExtensions = async (
       return result;
     })
     .catch((cause: unknown) => {
-      throw ghidraFileFailure(cause, "open_binary");
+      throw classifyProviderFailure(cause, ghidraFileDialect("open_binary"));
     });
 
 /** Require every configured producer result to match its artifact and registered ABI. */

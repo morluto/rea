@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
 import {
   parseEvidenceBundle,
-  serializeEvidenceBundle,
+  referencedEvidenceIds,
+  serializeValidatedEvidenceBundle,
   type EvidenceBundle,
 } from "./evidenceBundle.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
@@ -12,6 +11,7 @@ import type { ResidualUnknown } from "./residualUnknown.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { comparisonStatusSchema } from "./comparisonStatus.js";
 import { localPathStringSchema } from "./localPath.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const classificationSchema = z.enum([
@@ -29,7 +29,7 @@ export const bundleComparisonInputSchema = z.strictObject({
   right_bundle_path: localPathStringSchema,
   record_pairs: z
     .array(
-      z.object({
+      z.strictObject({
         left_evidence_id: evidenceIdSchema,
         right_evidence_id: evidenceIdSchema,
       }),
@@ -301,19 +301,10 @@ const histories = (unknowns: readonly ResidualUnknown[]) => {
 };
 
 const historyEvidenceIds = (history: readonly ResidualUnknown[]): string[] =>
-  [
-    ...new Set(
-      history.flatMap((item) => [
-        ...item.supporting_evidence_ids,
-        ...item.contradicting_evidence_ids,
-        ...item.mutation_evidence_ids,
-        ...(item.resolution?.evidence_ids ?? []),
-      ]),
-    ),
-  ].sort(ascii);
+  [...new Set(history.flatMap(referencedEvidenceIds))].sort(ascii);
 
 const bundleDigest = (bundle: EvidenceBundle): string =>
-  createHash("sha256").update(serializeEvidenceBundle(bundle)).digest("hex");
+  sha256Hex(serializeValidatedEvidenceBundle(bundle));
 
 const same = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length &&

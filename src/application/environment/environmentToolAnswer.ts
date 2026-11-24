@@ -14,7 +14,7 @@ import { answerFromState, refused } from "./environmentStateAnswer.js";
 import { answerBulk } from "./environmentStateBulkAnswer.js";
 import type { EnvironmentStateStore } from "./environmentStateStore.js";
 import { answerWrite } from "./environmentStateWriteAnswer.js";
-import { pinnedRequest } from "./environmentStateWriteQuery.js";
+import { admitWriteQuery } from "./environmentStateWriteQuery.js";
 import { withQueryText } from "./environmentTools.js";
 
 /** How a served environment answers one tool call. */
@@ -49,7 +49,7 @@ export const environmentToolAnswer = (
               `Tool ${tool.name} requires a known write clock; this state's capture completion timing is unknown. Capture complete timing and derive the state again before calling this tool.`,
             ),
           );
-        const request = pinnedRequest(
+        const request = admitWriteQuery(
           { source, store },
           {
             tool,

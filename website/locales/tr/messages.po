@@ -3647,13 +3647,9 @@ msgstr "Ghidra’yı Windows’a bağlayın"
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
-"applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
-"12.1.x installation and a 64-bit JDK 21 or newer:"
+"applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
-"Windows x64, sabit yerel NTFS sürücülerindeki native x86 ve x64 PE "
-"uygulamaları ve DLL'ler için deneysel, salt okunur desteğe sahiptir. Mevcut "
-"bir Ghidra 12.1.x kurulumu ve 64 bit JDK 21 veya daha yeni bir sürüm "
-"kullanın:"
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -5187,10 +5183,8 @@ msgstr "REA, yerel programları okumak için bunlardan birine ihtiyaç duyar:"
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
-"{ph0} Ghidra{ph1} (macOS veya Linux; Windows üzerinde deneysel): ücretsiz, "
-"ancak mevcut bir Ghidra 12.1.x kurulumu ve 64 bit JDK 21 veya daha yenisi."
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -5700,6 +5694,11 @@ msgstr ""
 msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr "İşlenenleri adlandırın ve her iki operatör yolunu da kontrol edin."
+
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "Bilgisayarda düşünen bir analist"
 
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
@@ -11728,7 +11727,8 @@ msgctxt "runtime"
 msgid "Switch to dark mode"
 msgstr "Koyu temaya geç"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/web-network-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-
 #. captures.md" >
 #. {ph1}: </a >
 #: website/public/guides/browser/index.html:487
@@ -13395,8 +13395,8 @@ msgstr "Claude Desktop · masaüstü sohbetini kullanın"
 
 #. {ph0}: <a href="https://claude.ai/download">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#claude-desktop" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#claude-desktop" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:597
 #, python-brace-format
@@ -13443,12 +13443,11 @@ msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "Kurulum kimliği"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md" >
 #. {ph1}: </a >
-#. {ph2}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
-#. package-and-main" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#released-package-and-main" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:757
 #, python-brace-format
@@ -13476,8 +13475,8 @@ msgstr ""
 "Grok Bot’un sohbetinde, Bot’un bilgisayarında şu komutu kullanarak {ph0} "
 "adlı özel bir MCP sunucusu eklemesini isteyin:"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#other-client-settings" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#other-client-settings" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:788
 #, python-brace-format
@@ -13748,9 +13747,8 @@ msgstr ""
 "Otomasyon bölümünde REA’yı başlatan uygulamaya izin verin, ardından yeniden "
 "deneyin."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#hopper" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1099
 #, python-brace-format
@@ -13766,22 +13764,18 @@ msgstr "Ghidra · ücretsiz analiz aracını ve Java’yı kurun"
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
 msgstr ""
-"Java derleyicisini de içeren 64 bit JDK 21 veya daha yeni bir sürüm kurun. "
-"Bilgisayarınızın mimarisine uygun paketi seçin."
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
-"Ghidra 12.1.4’ü sürümün Assets listesinden indirin ve {ph0} arşivini açın. "
-"“Source code” yerine sürüm arşivini seçin."
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -13796,17 +13790,17 @@ msgstr ""
 "Açılan dosyalar arasında {ph0} veya {ph1} içeren klasörü bulun. {ph2} için "
 "bu klasörü kullanın."
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-msgstr "{ph0}JDK indirin{ph1} · {ph2}Ghidra 12.1.4’ü indirin{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
+msgstr ""
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
@@ -13831,11 +13825,11 @@ msgstr ""
 " kurulumu yeniden çalıştırın, güncellenen istemci yapılandırmasını onaylayın"
 " ve ajanınızı yeniden başlatın."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#ghidra"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#ghidra" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1258
@@ -13886,7 +13880,8 @@ msgstr ""
 "Sağlayıcı kılavuzuyla hazırladığınız JSON bağlantı kayıt dosyasını kullanın,"
 " ardından kurulumu yeniden çalıştırın ve ajanınızı yeniden başlatın."
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/ida-
 #. provider.md" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1376
@@ -14036,13 +14031,16 @@ msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "Süreç davranışı"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/flutter-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/flutter-
 #. analysis.md" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/javascript-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-
 #. artifact-reconstruction.md" >
 #. {ph3}: </a >
-#. {ph4}: <a href="https://github.com/morluto/rea/blob/main/docs/evm-
+#. {ph4}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-
 #. bytecode.md" >
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
@@ -14145,9 +14143,8 @@ msgstr ""
 "Genel CLI kurulumu yaptıysanız {ph0} ile güncelleyin. REA’nın istemci "
 "yapılandırmasını ve becerisini kaldırmak için {ph1} kullanın."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
-#. update-and-remove" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#diagnose-update-and-remove" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1812
 #, python-brace-format
@@ -14377,9 +14374,8 @@ msgstr ""
 "macOS’ta derleme için Xcode Command Line Tools, make ve bison gerekir. "
 "Bilgisayarınıza uygun kılavuzu kullanın:"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
-#. macos-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#missing-macos-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1216
 #, python-brace-format
@@ -14387,9 +14383,8 @@ msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
 msgstr "{ph0}macOS · Intel{ph1}"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
-#. arm64-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#macos-arm64-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1222
 #, python-brace-format
@@ -14398,7 +14393,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr "{ph0}macOS · Apple Silicon{ph1}"
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228
@@ -14947,15 +14942,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "Katkıda bulunan birini bul"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "{ph0}GitHub katkıda bulunanlar listesi{ph1} · Güncelleme: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -15031,6 +15017,50 @@ msgstr "Değerlendir"
 msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr "Ortam oluşturma rehberi"
+
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}Masaüstü uygulaması için ortam oluşturun{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "Masaüstü uygulaması için ortam oluşturun"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"Ajanın bir Linux masaüstü uygulamasında denemesini istediğiniz görevi tarif "
+"edin. Örneğin, alışveriş listesine zeytinyağı ekleyeceği bir Gnote ortamı "
+"oluşturmasını isteyin. Ajan uygulamayı yerel derleme bilgisayarına kurar, "
+"görevi yazar, ortamı dışa aktarır ve temiz bir bilgisayarda ekran "
+"görüntüleri, fare ve klavyeyle kontrol eder."
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"Derleme bilgisayarında amd64 veya arm64 üzerinde Linux, Docker ve belirtilen"
+" AgentEnv sürümü gerekir. Kurulum ve hazırlık kontrolleri için {ph0}masaüstü"
+" derleme kurulum kılavuzunu{ph1} izleyin."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -15629,48 +15659,24 @@ msgctxt "page:index.html"
 msgid "Methods and reconstruction notes."
 msgstr "Yöntemler ve yeniden oluşturma notları."
 
-#: website/public/blog/index.html:83 website/public/blog/index.html:96
-#: website/public/blog/reverse-engineering-models/index.html:83
-#: website/public/blog/reverse-engineering-models/index.html:96
-#: website/public/blog/touhou-reconstruction/index.html:83
-#: website/public/blog/touhou-reconstruction/index.html:96
-#: website/public/contributors/index.html:83
-#: website/public/contributors/index.html:96
-#: website/public/examples/dino-lab/index.html:83
-#: website/public/examples/dino-lab/index.html:96
-#: website/public/faq/index.html:83 website/public/faq/index.html:96
-#: website/public/first-investigation/index.html:83
-#: website/public/first-investigation/index.html:96
-#: website/public/get-started/index.html:83
-#: website/public/get-started/index.html:96
-#: website/public/guides/browser/index.html:83
-#: website/public/guides/browser/index.html:96
-#: website/public/guides/index.html:83 website/public/guides/index.html:96
-#: website/public/guides/javascript/index.html:83
-#: website/public/guides/javascript/index.html:96
-#: website/public/guides/native/index.html:83
-#: website/public/guides/native/index.html:96
-#: website/public/guides/rl-environments/index.html:83
-#: website/public/guides/rl-environments/index.html:96
-#: website/public/index.html:83 website/public/index.html:96
-#: website/public/showcase/aegis/index.html:83
-#: website/public/showcase/aegis/index.html:96
-#: website/public/showcase/ctf/index.html:83
-#: website/public/showcase/ctf/index.html:96
-#: website/public/showcase/dx-ball/index.html:83
-#: website/public/showcase/dx-ball/index.html:96
-#: website/public/showcase/index.html:83 website/public/showcase/index.html:96
-#: website/public/showcase/notion/index.html:83
-#: website/public/showcase/notion/index.html:96
-#: website/public/showcase/th04/index.html:83
-#: website/public/showcase/th04/index.html:96
+#: website/public/blog/index.html:105 website/public/blog/index.html:118
+#: website/public/blog/reverse-engineering-models/index.html:105
+#: website/public/blog/reverse-engineering-models/index.html:118
+#: website/public/contributors/index.html:105
+#: website/public/contributors/index.html:118
+#: website/public/examples/dino-lab/index.html:105
+#: website/public/examples/dino-lab/index.html:118
+#: website/public/faq/index.html:105 website/public/faq/index.html:118
+#: website/public/first-investigation/index.html:105
+#: website/public/first-investigation/index.html:118
+#: website/public/get-started/index.html:105
+#: website/public/get-started/index.html:118 website/public/index.html:105
+#: website/public/index.html:118
 msgctxt "shared"
-msgid ""
-"REA: Find out how software works. Reverse engineering with your coding "
-"agent."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
 msgstr ""
-"REA - Yazılımın nasıl çalıştığını öğrenin. Kodlama ajanınızla tersine "
-"mühendislik yapın."
+"Ayrıştırılmış kodun, onaltılık verilerin ve bir ajanın iş akışının yanında "
+"mavi REA yazısı."
 
 #: website/public/index.html:357
 msgctxt "page:index.html"
@@ -15793,7 +15799,8 @@ msgstr ""
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/android-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/android-
 #. analysis.md" >
 #. {ph3}: </a >
 #: website/public/showcase/aegis/index.html:714
@@ -17505,3 +17512,27 @@ msgstr ""
 #~ msgctxt "page:showcase/th04/index.html"
 #~ msgid "{ph0}Angle and velocity · source excerpt{ph1}"
 #~ msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
+#~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
+#~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+#~ "Windows x64, sabit yerel NTFS sürücülerindeki native x86 ve x64 PE "
+#~ "uygulamaları ve DLL'ler için deneysel, salt okunur desteğe sahiptir. Mevcut "
+#~ "bir Ghidra 12.1.x kurulumu ve 64 bit JDK 21 veya daha yeni bir sürüm "
+#~ "kullanın:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "{ph0}GitHub katkıda bulunanlar listesi{ph1} · Güncelleme: {ph2}."
+
+#~ msgctxt "shared"
+#~ msgid ""
+#~ "REA: Find out how software works. Reverse engineering with your coding "
+#~ "agent."
+#~ msgstr ""
+#~ "REA - Yazılımın nasıl çalıştığını öğrenin. Kodlama ajanınızla tersine "
+#~ "mühendislik yapın."

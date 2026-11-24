@@ -1,0 +1,213 @@
+{
+  "producer": "safetensors==0.7.0 (Rust serialize + deserialize)",
+  "file_base64": "IAYAAAAAAAB7Il9fbWV0YWRhdGFfXyI6eyJwcm9kdWNlci9+77u/IjoiUnVzdCBzYWZldGVuc29ycyAwLjcuMDsgbGl0ZXJhbCDvu78gbWV0YWRhdGEifSwidGVuc29yL3VpbnQ2NH4xMiI6eyJkdHlwZSI6IlU2NCIsInNoYXBlIjpbMiwzXSwiZGF0YV9vZmZzZXRzIjpbMCw0OF19LCJ0ZW5zb3IvaW50NjR+MTEiOnsiZHR5cGUiOiJJNjQiLCJzaGFwZSI6WzIsM10sImRhdGFfb2Zmc2V0cyI6WzQ4LDk2XX0sInRlbnNvci9mbG9hdDY0fjgiOnsiZHR5cGUiOiJGNjQiLCJzaGFwZSI6WzIsM10sImRhdGFfb2Zmc2V0cyI6Wzk2LDE0NF19LCJ0ZW5zb3IvY29tcGxleDY0fjEzIjp7ImR0eXBlIjoiQzY0Iiwic2hhcGUiOlsyLDNdLCJkYXRhX29mZnNldHMiOlsxNDQsMTkyXX0sInNjYWxhciI6eyJkdHlwZSI6IkYzMiIsInNoYXBlIjpbXSwiZGF0YV9vZmZzZXRzIjpbMTkyLDE5Nl19LCJ0ZW5zb3IvZmxvYXQzMn43Ijp7ImR0eXBlIjoiRjMyIiwic2hhcGUiOlsyLDNdLCJkYXRhX29mZnNldHMiOlsxOTYsMjIwXX0sInRlbnNvci91aW50MzJ+MTAiOnsiZHR5cGUiOiJVMzIiLCJzaGFwZSI6WzIsM10sImRhdGFfb2Zmc2V0cyI6WzIyMCwyNDRdfSwidGVuc29yL2ludDMyfjkiOnsiZHR5cGUiOiJJMzIiLCJzaGFwZSI6WzIsM10sImRhdGFfb2Zmc2V0cyI6WzI0NCwyNjhdfSwiZW1wdHkiOnsiZHR5cGUiOiJCRjE2Iiwic2hhcGUiOlswLDddLCJkYXRhX29mZnNldHMiOlsyNjgsMjY4XX0sInRlbnNvci9iZmxvYXQxNn41Ijp7ImR0eXBlIjoiQkYxNiIsInNoYXBlIjpbMiwzXSwiZGF0YV9vZmZzZXRzIjpbMjY4LDI4MF19LCJ0ZW5zb3IvZmxvYXQxNn42Ijp7ImR0eXBlIjoiRjE2Iiwic2hhcGUiOlsyLDNdLCJkYXRhX29mZnNldHMiOlsyODAsMjkyXX0sInRlbnNvci91aW50MTZ+MyI6eyJkdHlwZSI6IlUxNiIsInNoYXBlIjpbMiwzXSwiZGF0YV9vZmZzZXRzIjpbMjkyLDMwNF19LCJ0ZW5zb3IvaW50MTZ+NCI6eyJkdHlwZSI6IkkxNiIsInNoYXBlIjpbMiwzXSwiZGF0YV9vZmZzZXRzIjpbMzA0LDMxNl19LCJ0ZW5zb3IvZmxvYXQ4X2U4bTBmbnV+MTYiOnsiZHR5cGUiOiJGOF9FOE0wIiwic2hhcGUiOlsyLDNdLCJkYXRhX29mZnNldHMiOlszMTYsMzIyXX0sInRlbnNvci9mbG9hdDhfZTRtM2ZufjE0Ijp7ImR0eXBlIjoiRjhfRTRNMyIsInNoYXBlIjpbMiwzXSwiZGF0YV9vZmZzZXRzIjpbMzIyLDMyOF19LCJ0ZW5zb3IvZmxvYXQ4X2U1bTJ+MTUiOnsiZHR5cGUiOiJGOF9FNU0yIiwic2hhcGUiOlsyLDNdLCJkYXRhX29mZnNldHMiOlszMjgsMzM0XX0sInRlbnNvci9pbnQ4fjIiOnsiZHR5cGUiOiJJOCIsInNoYXBlIjpbMiwzXSwiZGF0YV9vZmZzZXRzIjpbMzM0LDM0MF19LCJ0ZW5zb3IvdWludDh+MSI6eyJkdHlwZSI6IlU4Iiwic2hhcGUiOlsyLDNdLCJkYXRhX29mZnNldHMiOlszNDAsMzQ2XX0sInRlbnNvci9mbG9hdDRfZTJtMWZuX3gyfjE3Ijp7ImR0eXBlIjoiRjQiLCJzaGFwZSI6WzIsNl0sImRhdGFfb2Zmc2V0cyI6WzM0NiwzNTJdfSwidGVuc29yL2Jvb2x+MCI6eyJkdHlwZSI6IkJPT0wiLCJzaGFwZSI6WzIsM10sImRhdGFfb2Zmc2V0cyI6WzM1MiwzNThdfX0gICAgIMzZ5vMADRonNEFOW2h1go+cqbbD0N3q9wQRHis4RVJfbHmGk6CtusfU4e77CBUiL7vI1eLv/AkWIzA9SldkcX6LmKWyv8zZ5vMADRonNEFOW2h1go+cqbbD0N3q9wQRHoiVoq+8ydbj8P0KFyQxPktYZXJ/jJmms8DN2uf0AQ4bKDVCT1xpdoOQnaq3xNHe693q9wQRHis4RVJfbHmGk6CtusfU4e77CBUiLzxJVmNwfYqXpLG+y9jl8v8MGSYzQAAAgD93hJGeq7jF0t/s+QYTIC06R1RhbnuIlaKqt8TR3uv4BRIfLDlGU2BteoeUoa67yNWZprPAzdrn9AEOGyg1Qk9caXaDkJ2qt8RVYm98iZajsL3K1+Rmc4CNmqe0wc7b6PUzQE1aZ3SBjpuotcJEUV5reIWSn6y5xtMQHSo3RFHu+wgVIi//DBkmM0AiLzxJVmMRHis4RVIhLjtIVWIADRonNEE=",
+  "file_size": 1934,
+  "sha256": "5fb44d541cd95db65982fb252a957a0b4acc6910a964ec0157af5edc8947a6a4",
+  "header_sha256": "14d0e34758aecc59cb692a79bd55032fbfd71acffbb3e63741ea943e8c7a7fd7",
+  "tensor_data_offset": 1576,
+  "metadata": {
+    "producer/~\ufeff": "Rust safetensors 0.7.0; literal \ufeff metadata"
+  },
+  "tensors": [
+    {
+      "name": "empty",
+      "type": "BF16",
+      "shape": ["0", "7"],
+      "json_pointer": "/empty",
+      "parameter_count": "0",
+      "data_offset": 268,
+      "file_offset": 1844,
+      "byte_length": 0
+    },
+    {
+      "name": "scalar",
+      "type": "F32",
+      "shape": [],
+      "json_pointer": "/scalar",
+      "parameter_count": "1",
+      "data_offset": 192,
+      "file_offset": 1768,
+      "byte_length": 4
+    },
+    {
+      "name": "tensor/bfloat16~5",
+      "type": "BF16",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1bfloat16~05",
+      "parameter_count": "6",
+      "data_offset": 268,
+      "file_offset": 1844,
+      "byte_length": 12
+    },
+    {
+      "name": "tensor/bool~0",
+      "type": "BOOL",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1bool~00",
+      "parameter_count": "6",
+      "data_offset": 352,
+      "file_offset": 1928,
+      "byte_length": 6
+    },
+    {
+      "name": "tensor/complex64~13",
+      "type": "C64",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1complex64~013",
+      "parameter_count": "6",
+      "data_offset": 144,
+      "file_offset": 1720,
+      "byte_length": 48
+    },
+    {
+      "name": "tensor/float16~6",
+      "type": "F16",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1float16~06",
+      "parameter_count": "6",
+      "data_offset": 280,
+      "file_offset": 1856,
+      "byte_length": 12
+    },
+    {
+      "name": "tensor/float32~7",
+      "type": "F32",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1float32~07",
+      "parameter_count": "6",
+      "data_offset": 196,
+      "file_offset": 1772,
+      "byte_length": 24
+    },
+    {
+      "name": "tensor/float4_e2m1fn_x2~17",
+      "type": "F4",
+      "shape": ["2", "6"],
+      "json_pointer": "/tensor~1float4_e2m1fn_x2~017",
+      "parameter_count": "12",
+      "data_offset": 346,
+      "file_offset": 1922,
+      "byte_length": 6
+    },
+    {
+      "name": "tensor/float64~8",
+      "type": "F64",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1float64~08",
+      "parameter_count": "6",
+      "data_offset": 96,
+      "file_offset": 1672,
+      "byte_length": 48
+    },
+    {
+      "name": "tensor/float8_e4m3fn~14",
+      "type": "F8_E4M3",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1float8_e4m3fn~014",
+      "parameter_count": "6",
+      "data_offset": 322,
+      "file_offset": 1898,
+      "byte_length": 6
+    },
+    {
+      "name": "tensor/float8_e5m2~15",
+      "type": "F8_E5M2",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1float8_e5m2~015",
+      "parameter_count": "6",
+      "data_offset": 328,
+      "file_offset": 1904,
+      "byte_length": 6
+    },
+    {
+      "name": "tensor/float8_e8m0fnu~16",
+      "type": "F8_E8M0",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1float8_e8m0fnu~016",
+      "parameter_count": "6",
+      "data_offset": 316,
+      "file_offset": 1892,
+      "byte_length": 6
+    },
+    {
+      "name": "tensor/int16~4",
+      "type": "I16",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1int16~04",
+      "parameter_count": "6",
+      "data_offset": 304,
+      "file_offset": 1880,
+      "byte_length": 12
+    },
+    {
+      "name": "tensor/int32~9",
+      "type": "I32",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1int32~09",
+      "parameter_count": "6",
+      "data_offset": 244,
+      "file_offset": 1820,
+      "byte_length": 24
+    },
+    {
+      "name": "tensor/int64~11",
+      "type": "I64",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1int64~011",
+      "parameter_count": "6",
+      "data_offset": 48,
+      "file_offset": 1624,
+      "byte_length": 48
+    },
+    {
+      "name": "tensor/int8~2",
+      "type": "I8",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1int8~02",
+      "parameter_count": "6",
+      "data_offset": 334,
+      "file_offset": 1910,
+      "byte_length": 6
+    },
+    {
+      "name": "tensor/uint16~3",
+      "type": "U16",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1uint16~03",
+      "parameter_count": "6",
+      "data_offset": 292,
+      "file_offset": 1868,
+      "byte_length": 12
+    },
+    {
+      "name": "tensor/uint32~10",
+      "type": "U32",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1uint32~010",
+      "parameter_count": "6",
+      "data_offset": 220,
+      "file_offset": 1796,
+      "byte_length": 24
+    },
+    {
+      "name": "tensor/uint64~12",
+      "type": "U64",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1uint64~012",
+      "parameter_count": "6",
+      "data_offset": 0,
+      "file_offset": 1576,
+      "byte_length": 48
+    },
+    {
+      "name": "tensor/uint8~1",
+      "type": "U8",
+      "shape": ["2", "3"],
+      "json_pointer": "/tensor~1uint8~01",
+      "parameter_count": "6",
+      "data_offset": 340,
+      "file_offset": 1916,
+      "byte_length": 6
+    }
+  ]
+}
