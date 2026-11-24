@@ -154,10 +154,16 @@ export const qualifyReconstructionProof = (
   return outcomes.every((passed) => passed) ? ok(null) : err("failed-proof");
 };
 
-/** Check that Evidence observes the original at the required boundary. */
+/**
+ * Check that Evidence observes the original at the required boundary. A
+ * caller that already parses captures passes its parser so each is parsed once.
+ */
 export const evidenceSupportsOriginalAuthority = (
   evidence: Evidence,
   authority: OriginalAuthority,
+  parseCapture: (evidence: Evidence) => {
+    readonly ok: boolean;
+  } = parseProcessCaptureEvidence,
 ): boolean => {
   if (evidence.confidence !== "observed") return false;
   if (authority === "static") return evidence.authority === "shipped-artifact";
@@ -167,8 +173,7 @@ export const evidenceSupportsOriginalAuthority = (
     );
   if (authority === "process")
     return (
-      evidence.authority === "controlled-replay" &&
-      parseProcessCaptureEvidence(evidence).ok
+      evidence.authority === "controlled-replay" && parseCapture(evidence).ok
     );
   return evidence.authority === "external-service";
 };

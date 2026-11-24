@@ -52,19 +52,24 @@ export interface ReconstructionObligationCandidateSet {
   readonly limitations: readonly string[];
 }
 
-/** Derive conservative candidates from graph, process, and reviewed inputs. */
+/**
+ * Derive conservative candidates from graph, process, and reviewed inputs.
+ * Each capture is parsed once per request with `parseCaptureEvidence`.
+ */
 export const deriveReconstructionObligationCandidates = (
   request: Pick<
     ResolvedReconstructionObligationRequest,
     "sources" | "reviewedObligations"
   >,
+  parseCaptureEvidence: ProcessCaptureParser = parseProcessCaptureEvidence,
 ): ReconstructionObligationCandidateSet => {
   const { bundle, records } = request.sources;
   const candidates = new Map<string, ReconstructionObligationCandidate>();
   const limitations = new Set<string>();
+  const parseCapture = processCaptureParserForRequest(parseCaptureEvidence);
   for (const evidence of bundle.records) {
     deriveApplicationCandidates(evidence, records, candidates, limitations);
-    deriveProcessCandidate(evidence, candidates, limitations);
+    deriveProcessCandidate(evidence, candidates, limitations, parseCapture);
   }
   // Reviewed records merge in a canonical order so competing definitions of
   // one ID do not depend on the order the caller listed them.
@@ -81,7 +86,12 @@ export const deriveReconstructionObligationCandidates = (
       candidates.get(obligation.obligation_id)?.target ?? obligation.target;
     addCandidate(
       candidates,
-      reviewedCandidate(obligation, records, target.artifact_sha256),
+      reviewedCandidate(
+        obligation,
+        records,
+        target.artifact_sha256,
+        parseCapture,
+      ),
       reviewCounts.get(obligation.obligation_id) === 1,
     );
   }
@@ -90,6 +100,26 @@ export const deriveReconstructionObligationCandidates = (
       compareUnicodeCodePoints(left.obligation_id, right.obligation_id),
     ),
     limitations: [...limitations].sort(),
+  };
+};
+
+type ProcessCaptureParse = ReturnType<typeof parseProcessCaptureEvidence>;
+type ProcessCaptureParser = (evidence: Evidence) => ProcessCaptureParse;
+
+/**
+ * Parse each capture once per request: bundle Evidence IDs are unique, so a
+ * capture cited by many reviews reuses the facts parsed for its first use.
+ */
+const processCaptureParserForRequest = (
+  parse: ProcessCaptureParser,
+): ProcessCaptureParser => {
+  const parsed = new Map<string, ProcessCaptureParse>();
+  return (evidence) => {
+    const cached = parsed.get(evidence.evidence_id);
+    if (cached !== undefined) return cached;
+    const result = parse(evidence);
+    parsed.set(evidence.evidence_id, result);
+    return result;
   };
 };
 
@@ -216,8 +246,9 @@ const deriveProcessCandidate = (
   input: Evidence,
   candidates: Map<string, ReconstructionObligationCandidate>,
   limitations: Set<string>,
+  parseCapture: ProcessCaptureParser,
 ): void => {
-  const parsed = parseProcessCaptureEvidence(input);
+  const parsed = parseCapture(input);
   if (!parsed.ok) {
     switch (parsed.error.kind) {
       case "wrong-workflow":
@@ -410,6 +441,7 @@ const reviewedCandidate = (
   obligation: ReviewedReconstructionObligation,
   records: ReadonlyMap<string, Evidence>,
   artifactSha256: string | null,
+  parseCapture: ProcessCaptureParser,
 ): ReconstructionObligationCandidate => {
   const { definition, reviewEvidenceIds, disposition, dispositionReason } =
     splitReviewedObligation(obligation);
@@ -425,7 +457,7 @@ const reviewedCandidate = (
       return {
         evidence_id: evidenceId,
         authority: evidence.authority,
-        state: reviewedEvidenceState(evidence, artifactSha256),
+        state: reviewedEvidenceState(evidence, artifactSha256, parseCapture),
         location: `/evidence/${evidenceId}`,
       };
     }),
@@ -479,15 +511,16 @@ const graphReference = (
 const reviewedEvidenceState = (
   evidence: Evidence,
   artifactSha256: string | null,
+  parseCapture: ProcessCaptureParser,
 ): ReconstructionObligation["authority_references"][number]["state"] => {
   const observed =
-    evidenceSupportsOriginalAuthority(evidence, "process") ||
+    evidenceSupportsOriginalAuthority(evidence, "process", parseCapture) ||
     (evidence.authority === "external-service" &&
       evidence.confidence === "observed");
   if (observed || evidence.authority === "controlled-replay") {
     if (
       artifactSha256 !== null &&
-      observedArtifactSha256(evidence) !== artifactSha256
+      observedArtifactSha256(evidence, parseCapture) !== artifactSha256
     )
       return "other-artifact";
     return observed ? "observed" : "reviewed";
@@ -497,8 +530,11 @@ const reviewedEvidenceState = (
 };
 
 /** The artifact an Evidence record observes, when it names one. */
-const observedArtifactSha256 = (evidence: Evidence): string | null => {
-  const capture = parseProcessCaptureEvidence(evidence);
+const observedArtifactSha256 = (
+  evidence: Evidence,
+  parseCapture: ProcessCaptureParser,
+): string | null => {
+  const capture = parseCapture(evidence);
   if (capture.ok) return capture.value.capture.manifest.executable_sha256;
   const { identity } = evidence.subject;
   return identity.kind === "file" ? identity.sha256 : null;
