@@ -47,9 +47,12 @@ const admitPeHeaderEvidence = (
   if (!evidence.declarations.ok)
     throw new BinaryFormatFailure("malformed", evidence.declarations.error);
   const { windowsHeader } = evidence;
+  // A pointer whose bytes name no Windows header is unresolved while the DOS
+  // module is valid, since a DOS program may hold data there. With an invalid
+  // DOS module, the bytes form neither image and are damaged.
   if (windowsHeader.state === "candidate")
     throw new BinaryFormatFailure(
-      "unsupported",
+      evidence.dos.ok ? "unsupported" : "malformed",
       "MZ Windows new-header candidate is unresolved",
     );
   if (windowsHeader.state !== "declared") {

@@ -255,8 +255,13 @@ ignores or caps. Every reader except hardening reports them in
 | `directory_size_below_structure`        | A directory `Size` below the structure read at its RVA (export, import, delay import, TLS, resource) | The structure at its RVA; import descriptors to the null terminator; the resource tree within its file-backed bytes |
 | `directory_size_past_file_backed_bytes` | A resource directory `Size` past its file-backed bytes                                               | The tree within those bytes                                                                                         |
 
-DOS page, relocation and load-module fields do not affect PE admission; a
-`PE\0\0` signature at `e_lfanew` declares the image. A data directory with a
+DOS page and load-module fields do not affect PE admission, and a `PE\0\0`
+signature at `e_lfanew` declares the image. One exception: a valid DOS
+relocation table (starting at or after byte 28, with valid page fields) that
+covers `e_lfanew` owns those bytes as DOS data, even when they point at a PE
+signature. A table that describes no DOS load module does not. A pointer whose
+bytes name no Windows header is `unsupported_target` while the DOS module is
+valid and a malformed target otherwise. A data directory with a
 zero RVA is absent. Section raw bytes that overlap the headers or other
 sections are layout facts, and every reader maps RVAs through the same
 file-backed section content. A read is refused only when the operation needs
