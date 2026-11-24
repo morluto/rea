@@ -177,7 +177,7 @@ jobs:
           restore-keys: rea-static-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - name: Validate workflow syntax and expressions
         if: needs.changes.outputs.workflows == 'true'
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes=
       # Code tiers run this source-only policy test in their existing shards.
       # Workflow-only changes need the guard, without preparing runtime artifacts.
       - name: Check action pins for workflow-only changes
