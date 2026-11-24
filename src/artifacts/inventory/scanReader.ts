@@ -13,16 +13,20 @@ import {
   annotateEnglishUnicodeCaseCollisions,
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../ArtifactPaths.js";
-import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
-import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
-import { DirectoryArtifactEntryAccessDenied } from "../DirectoryArtifactReader.js";
+  abortIfNeeded,
+  DirectoryArtifactEntryAccessDenied,
+  DirectoryArtifactReader,
+} from "../../resources/index.js";
+import {
+  ArtifactTraversalObservation,
+  declaredArtifactEntries,
+} from "../ArtifactTraversalObservation.js";
+import type { ArtifactInventoryOptions } from "./types.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   InesArtifactReader,
@@ -31,16 +35,22 @@ import {
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
 import {
   classifyArtifactContent,
-  classifyArtifactBytes,
+  classifyArtifactHeader,
   createArtifactNode,
   createOccurrence,
   noteUnreadContainerSuffix,
   indexDestinationOccurrencesByPath,
   resolveOccurrenceParents,
+  type ArtifactParentResolution,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
-import { abortIfNeeded, hashReadable } from "../ArtifactHash.js";
+import { hashReadable } from "../ArtifactHash.js";
+import {
+  DirectoryTreeDigestBuilder,
+  type DirectoryRootDigest,
+} from "../../domain/directoryTreeDigest.js";
 
 export interface PendingIntegrityContradiction {
   readonly occurrence: MutableOccurrence;
@@ -56,6 +66,9 @@ const emptyScan = (): {
 } => ({ nodes: new Map(), occurrences: [], pendingContradictions: [] });
 
 interface ScanContext {
+  readonly acquisitionLimits: ArtifactInventoryOptions["acquisitionLimits"];
+  entriesExamined: number;
+  bytesRead: number;
   readonly reader: ArtifactReader;
   readonly signal: AbortSignal | undefined;
   readonly integrity: ArtifactIntegrityPolicyName;
@@ -75,7 +88,17 @@ interface ScanContext {
       }
     | undefined;
   readonly traversal: ArtifactTraversalObservation;
+  /** The root directory's tree digest, collected from its own walk only. */
+  readonly tree: DirectoryTreeDigestBuilder | undefined;
 }
+
+/** Special members the tree records without reading them. */
+const RECORDED_SPECIAL_KINDS: ReadonlySet<string> = new Set([
+  "fifo",
+  "socket",
+  "block-device",
+  "character-device",
+]);
 
 export const scanReader = async (
   reader: ArtifactReader | undefined,
@@ -83,16 +106,19 @@ export const scanReader = async (
   signal?: AbortSignal,
   integrity: ArtifactIntegrityPolicyName = "fail",
   asarHeaderAdmission?: AsarHeaderAdmission,
+  acquisitionLimits?: ArtifactInventoryOptions["acquisitionLimits"],
 ): Promise<{
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
   readonly caseCollisionLimitation: string | undefined;
   readonly inesRegionScan: InesRegionScan | undefined;
-  readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
+  readonly parentResolution: ArtifactParentResolution;
   readonly traversal: ArtifactReaderTraversal;
   /** A recorded disagreement between the root's own checksum and its bytes. */
   readonly rootContradiction: ArtifactContainerIntegrityPair | undefined;
+  /** A directory root's tree digest; absent for every other root. */
+  readonly rootDigest: DirectoryRootDigest | undefined;
 }> => {
   const { nodes, occurrences, pendingContradictions } = emptyScan();
   if (reader === undefined)
@@ -102,11 +128,26 @@ export const scanReader = async (
       pendingContradictions,
       caseCollisionLimitation: undefined,
       inesRegionScan: undefined,
-      unknownParentOccurrences: new Set(),
+      parentResolution: {
+        unknownParentOccurrences: new Set(),
+        limitations: [],
+      },
       traversal: { status: "complete", limitations: [] },
       rootContradiction: undefined,
+      rootDigest: undefined,
     };
+  const maximumEntries = acquisitionLimits?.maximumEntries;
+  if (
+    maximumEntries !== undefined &&
+    (!Number.isSafeInteger(maximumEntries) || maximumEntries < 0)
+  )
+    throw invariantViolation(
+      "Artifact inventory maximumEntries must be a nonnegative safe integer",
+    );
   const context: ScanContext = {
+    acquisitionLimits,
+    entriesExamined: 0,
+    bytesRead: 0,
     reader,
     signal,
     integrity,
@@ -123,6 +164,10 @@ export const scanReader = async (
         ? { hash: createHash("sha256"), regionOrder: [], bytes: 0 }
         : undefined,
     traversal: new ArtifactTraversalObservation(),
+    tree:
+      reader instanceof DirectoryArtifactReader
+        ? new DirectoryTreeDigestBuilder()
+        : undefined,
   };
   await visitArtifactEntries(context, reader, "");
   const rootContradiction = containerContradiction(reader, integrity);
@@ -134,11 +179,6 @@ export const scanReader = async (
     byPath,
     context.expandedContainerIds,
   );
-  const structuralLimitations = [...parentResolution.limitations];
-  context.traversal.onCoverage({
-    status: structuralLimitations.length === 0 ? "complete" : "unknown",
-    limitations: structuralLimitations,
-  });
   return {
     nodes,
     occurrences,
@@ -152,9 +192,10 @@ export const scanReader = async (
             bytes: context.reconstruction.bytes,
             sha256: context.reconstruction.hash.digest("hex"),
           },
-    unknownParentOccurrences: parentResolution.unknownParentOccurrences,
+    parentResolution,
     traversal: context.traversal.snapshot(),
     rootContradiction,
+    rootDigest: context.tree?.finish(),
   };
 };
 
@@ -170,28 +211,75 @@ const containerContradiction = (
     throw new ArtifactReaderFailure(
       "integrity",
       "Artifact integrity metadata disagrees with content: .",
-      undefined,
+      { integrityCheck: "declared-digest" },
       artifactContainerIntegrityDetails(".", pair),
     );
   return pair;
+};
+
+class InventoryAcquisitionLimit extends ArtifactReaderFailure {
+  constructor() {
+    super(
+      "limit",
+      "Artifact inventory acquisition allowance exhausted; member coverage is incomplete.",
+    );
+  }
+}
+
+const admitExaminedEntry = (context: ScanContext): void => {
+  if (context.acquisitionLimits === undefined) return;
+  if (context.entriesExamined >= context.acquisitionLimits.maximumEntries)
+    throw new InventoryAcquisitionLimit();
+  context.entriesExamined += 1;
 };
 
 const inventoryEntries = (
   context: ScanContext,
   reader: ArtifactReader,
   prefix: string,
-): AsyncIterator<ArtifactEntry> =>
-  reader
-    .entries(context.signal, {
-      onCoverage: context.traversal.onCoverage,
-      onOmission: (omission) =>
-        context.traversal.onOmission({
-          ...omission,
-          path:
-            prefix.length === 0 ? omission.path : `${prefix}/${omission.path}`,
-        }),
-    })
-    [Symbol.asyncIterator]();
+): AsyncIterator<ArtifactEntry> => {
+  // Only the root directory's own walk feeds its tree digest.
+  const tree = reader === context.reader ? context.tree : undefined;
+  return declaredArtifactEntries(reader, context.signal, {
+    onCoverage: (coverage) => {
+      context.traversal.record(coverage);
+      if (coverage.status !== "complete")
+        for (const limitation of coverage.limitations.length === 0
+          ? ["The directory walk did not declare complete coverage."]
+          : coverage.limitations)
+          tree?.incomplete(limitation);
+    },
+    ...(reader instanceof DirectoryArtifactReader &&
+    context.acquisitionLimits !== undefined
+      ? {
+          admitExaminedEntry: () => admitExaminedEntry(context),
+        }
+      : {}),
+    onOmission: (omission) => {
+      context.traversal.omit({
+        ...omission,
+        path:
+          prefix.length === 0 ? omission.path : `${prefix}/${omission.path}`,
+      });
+      if (tree === undefined) return;
+      // The tree records each name's exact bytes, never a normalized form.
+      const path = omission.path;
+      if (RECORDED_SPECIAL_KINDS.has(omission.kind))
+        tree.add({
+          kind: omission.kind as
+            | "fifo"
+            | "socket"
+            | "block-device"
+            | "character-device",
+          path,
+        });
+      else
+        tree.incomplete(
+          `The walk omitted ${omission.kind} at ${JSON.stringify(path)}.`,
+        );
+    },
+  })[Symbol.asyncIterator]();
+};
 
 const visitArtifactEntries = async (
   context: ScanContext,
@@ -222,18 +310,22 @@ const visitArtifactEntries = async (
         continue;
       }
       const entry = next.value;
+      if (!(frame.reader instanceof DirectoryArtifactReader))
+        admitExaminedEntry(context);
       const logicalPath = normalizeArtifactPath(
         frame.prefix.length === 0
           ? entry.path
           : `${frame.prefix}/${entry.path}`,
       );
       const expandableAsar = isExpandableAsar(entry, logicalPath);
-      // PyInstaller rows and Bun modules are source-distinct even when their logical
-      // destinations collide. Inventory retains those observations; the
-      // extraction path registry remains the authority for materialization.
+      // PyInstaller rows, Bun modules, and Deno virtual files are
+      // source-distinct even when their logical destinations collide.
+      // Inventory retains those observations; the extraction path registry
+      // remains the authority for materialization.
       if (
         frame.reader.format !== "pyinstaller" &&
-        frame.reader.format !== "bun-standalone"
+        frame.reader.format !== "bun-standalone" &&
+        frame.reader.format !== "deno-standalone"
       )
         context.registry.add(
           logicalPath,
@@ -278,7 +370,7 @@ const visitArtifactEntries = async (
           cause instanceof ArtifactEntryContentUnavailable
             ? cause.traversal
             : { status: "unknown" as const, limitations: [limitation] };
-        if (traversal !== undefined) context.traversal.onCoverage(traversal);
+        if (traversal !== undefined) context.traversal.record(traversal);
         occurrence.hash_status = "unavailable";
         occurrence.limitations.push(limitation);
       }
@@ -304,6 +396,8 @@ const visitArtifactEntries = async (
           );
       }
       context.occurrences.push(occurrence);
+      if (frame.reader === context.reader && context.tree !== undefined)
+        recordTreeMember(context.tree, entry, entry.path, digested?.node);
       if (
         expandableAsar &&
         digested !== undefined &&
@@ -329,7 +423,13 @@ const visitArtifactEntries = async (
       }
     }
   } catch (cause: unknown) {
-    failure = { cause };
+    if (cause instanceof InventoryAcquisitionLimit) {
+      context.traversal.record({
+        status: "unknown",
+        limitations: [cause.message],
+      });
+      context.tree?.incomplete(cause.message);
+    } else failure = { cause };
   } finally {
     // Readers remain owned by the inventory until its complete observation is built.
     for (const { iterator, prefix, reader } of stack.reverse()) {
@@ -351,6 +451,24 @@ const visitArtifactEntries = async (
   if (failure !== undefined) throw failure.cause;
 };
 
+/** Record one root-directory member, or why it leaves the tree digest partial. */
+const recordTreeMember = (
+  tree: DirectoryTreeDigestBuilder,
+  entry: ArtifactEntry,
+  path: string,
+  node: ArtifactNode | undefined,
+): void => {
+  if (entry.kind === "directory") tree.add({ kind: "directory", path });
+  else if (entry.kind === "file" && node !== undefined)
+    tree.add({ kind: "file", path, sha256: node.sha256 });
+  else if (entry.kind === "symlink" && entry.linkTarget !== undefined)
+    tree.add({ kind: "symlink", path, targetHex: entry.linkTarget.hex });
+  else
+    tree.incomplete(
+      `The ${entry.kind} at ${JSON.stringify(path)} was not read, so its content is unknown.`,
+    );
+};
+
 const digestArtifactEntry = async (
   context: ScanContext,
   currentReader: ArtifactReader,
@@ -367,21 +485,37 @@ const digestArtifactEntry = async (
 > => {
   if ((entry.kind !== "file" && entry.kind !== "slice") || entry.encrypted)
     return undefined;
+  if (
+    context.acquisitionLimits !== undefined &&
+    entry.declaredSize !== null &&
+    entry.declaredSize >
+      context.acquisitionLimits.maximumBytes - context.bytesRead
+  )
+    throw new InventoryAcquisitionLimit();
   const reconstruction =
     currentReader === context.reader ? context.reconstruction : undefined;
   if (reconstruction !== undefined && entry.byteOffset !== reconstruction.bytes)
-    throw new ArtifactReaderFailure("integrity", "Noncontiguous iNES regions");
+    throw new ArtifactReaderFailure("integrity", "Noncontiguous iNES regions", {
+      integrityCheck: "reconstruction",
+    });
   const digest = await hashReadable(
     await currentReader.open(entry, context.signal),
     context.signal,
     entry.declaredIntegrity?.algorithm,
     context.asarHeaderAdmission,
-    reconstruction === undefined
-      ? undefined
-      : (chunk) => {
-          reconstruction.hash.update(chunk);
-          reconstruction.bytes += chunk.length;
-        },
+    (chunk) => {
+      if (
+        context.acquisitionLimits !== undefined &&
+        chunk.length >
+          context.acquisitionLimits.maximumBytes - context.bytesRead
+      )
+        throw new InventoryAcquisitionLimit();
+      context.bytesRead += chunk.length;
+      if (reconstruction !== undefined) {
+        reconstruction.hash.update(chunk);
+        reconstruction.bytes += chunk.length;
+      }
+    },
   );
   reconstruction?.regionOrder.push(entry.path);
   const claim = entry.declaredIntegrity;
@@ -390,6 +524,7 @@ const digestArtifactEntry = async (
     throw new ArtifactReaderFailure(
       "integrity",
       "The selected integrity digest was not computed",
+      { integrityCheck: "declared-digest" },
     );
   const mismatched = claim !== null && claim.digest !== observed;
   if (mismatched && claim !== null && observed !== undefined) {
@@ -397,7 +532,7 @@ const digestArtifactEntry = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact integrity metadata disagrees with content: ${logicalPath}`,
-        undefined,
+        { integrityCheck: "declared-digest" },
         artifactIntegrityDetails(logicalPath, claim, observed, entry.unpacked),
       );
     context.pendingContradictions.push({
@@ -407,12 +542,17 @@ const digestArtifactEntry = async (
       unpacked: entry.unpacked,
     });
   }
-  const classified =
+  const sliceHeader =
     entry.kind === "slice"
+      ? classifyArtifactHeader(digest, digest.bytes)
+      : undefined;
+  const classified =
+    sliceHeader !== undefined
       ? {
           kind: "universal-slice" as const,
           format: "mach-o" as const,
-          contentFormat: classifyArtifactBytes(digest, digest.bytes),
+          contentFormat: sliceHeader.format,
+          contentArchitecture: sliceHeader.architecture,
         }
       : classifyArtifactContent(logicalPath, digest, digest.bytes);
   return {
@@ -420,6 +560,7 @@ const digestArtifactEntry = async (
       sha256: digest.sha256,
       size: digest.bytes,
       format: classified.contentFormat,
+      architecture: classified.contentArchitecture,
       contentState: "embedded",
     }),
     mismatched,

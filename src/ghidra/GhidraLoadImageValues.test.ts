@@ -12,10 +12,7 @@ import {
 } from "../domain/native/nativeLoadImage.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 import { parseGhidraInventoryResult } from "./GhidraInventoryValues.js";
-import {
-  GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
-  prepareGhidraDosLoadImage,
-} from "./GhidraLoadImageValues.js";
+import { prepareGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
 
 it("retains the provider symbol without claiming DOS verification of it", () => {
   const fixture = fixtureDosLoadImage();
@@ -31,7 +28,7 @@ it("retains the provider symbol without claiming DOS verification of it", () => 
     "provider_name",
   );
   expect(result.value.limitations).toContain(
-    GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
+    "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.",
   );
 });
 
@@ -42,6 +39,7 @@ it("preserves Ghidra relocation symbol values at the inventory boundary", () => 
     const parsed = parseGhidraInventoryResult(
       "inspect_native_load_image",
       jsonValueSchema.parse(observation),
+      null,
     );
     expect(parsed).toMatchObject({
       ok: true,
@@ -115,13 +113,13 @@ const damage: ReadonlyArray<
   [
     "modified source",
     (x) => {
-      x.source_files[0] && (x.source_files[0].modified_sha256 = "f".repeat(64));
+      x.source_files[0]!.modified_sha256 = "f".repeat(64);
     },
   ],
   [
     "original source",
     (x) => {
-      x.source_files[0] && (x.source_files[0].original_sha256 = "f".repeat(64));
+      x.source_files[0]!.original_sha256 = "f".repeat(64);
     },
   ],
   [
@@ -348,6 +346,7 @@ it.each(malformedCoordinates)(
       provider: parseGhidraInventoryResult(
         "inspect_native_load_image",
         jsonValueSchema.parse(observation),
+        null,
       ).ok,
     }).toEqual({ shared: false, provider: false });
   },
@@ -366,8 +365,8 @@ it("preserves zero-padded, qualified, and large observation addresses", () => {
   const parsed = parseGhidraInventoryResult(
     "inspect_native_load_image",
     jsonValueSchema.parse(observation),
+    null,
   );
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual(observation);
 });
@@ -379,7 +378,7 @@ it("rejects malformed coordinates in completed load-image checks and entries", (
     fixture.sha256,
     fixture.observation,
   );
-  if (!compared.ok || compared.value.status === "unsupported")
+  if (!compared.ok || !("load_segment" in compared.value))
     throw new Error("Expected a completed DOS load-image result");
   const malformedResults = [
     {
@@ -420,6 +419,20 @@ describe("independent DOS MZ import verification", () => {
     });
     if (!result.ok || result.value.status === "unsupported")
       throw new Error("Expected measured MZ checks");
+    expect(result.value.checks).toEqual(
+      expect.arrayContaining(
+        [
+          "original_file_sha256",
+          "modified_file_sha256",
+          "entry_points",
+          "relocation_records",
+          "mapping[0].memory_sha256",
+          "mapping[1].memory_sha256",
+          "initialized_file_coverage_end",
+          "initialized_unbacked_mappings",
+        ].map((name) => expect.objectContaining({ name, matched: true })),
+      ),
+    );
     expect(result.value.checks.every((check) => check.matched)).toBe(true);
     expect(result.value.observations).toEqual(fixture.observation);
     expect(result.value.limitations.join(" ")).toMatch(
@@ -531,75 +544,45 @@ describe("independent DOS MZ import verification", () => {
   });
 });
 
-it("applies duplicate aliases and overlapping DOS fixups in declared order with original/final byte evidence", () => {
+it("derives duplicate and aliased DOS records from the same original word", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ");
   bytes.writeUInt16LE(128, 2);
   bytes.writeUInt16LE(1, 4);
-  bytes.writeUInt16LE(4, 6);
+  bytes.writeUInt16LE(3, 6);
   bytes.writeUInt16LE(4, 8);
   bytes.writeUInt16LE(28, 24);
-  bytes.writeUInt16LE(0, 28);
-  bytes.writeUInt16LE(1, 30);
-  bytes.writeUInt16LE(16, 32);
-  bytes.writeUInt16LE(0, 34);
-  bytes.writeUInt16LE(16, 36);
-  bytes.writeUInt16LE(0, 38);
-  bytes.writeUInt16LE(17, 40);
-  bytes.writeUInt16LE(0, 42);
+  bytes.writeUInt32LE(0x10000, 28); // 0001:0000
+  bytes.writeUInt32LE(0x10, 32); // 0000:0010
+  bytes.writeUInt32LE(0x10, 36);
   bytes.set([1, 0, 2], 80);
   const before = Buffer.from(bytes);
   const prepared = prepareGhidraDosLoadImage(
     bytes,
     parseMzHeaderEvidence(bytes),
   );
-  if (!prepared.ok) throw new Error(prepared.error);
+  if (!prepared.ok || prepared.value.kind !== "exact")
+    throw new Error("Expected agreeing fixups");
   expect(bytes.equals(before)).toBe(true);
-  expect(
-    prepared.value.modified
-      .subarray(80, 83)
-      .equals(Buffer.from([1, 0x30, 0x12])),
-  ).toBe(true);
+  expect(prepared.value.modified.subarray(80, 83).toString("hex")).toBe(
+    "011002",
+  );
+  const record = {
+    address: "0x10010",
+    status: "APPLIED",
+    type: 0,
+    original_bytes_hex: "0100",
+    memory_bytes_hex: "0110",
+  };
+  const duplicate = {
+    ...record,
+    segment: 0x1000,
+    offset: 16,
+    values: [0, 16, 0x1001],
+  };
   expect(prepared.value.expectedRelocations).toEqual([
-    {
-      address: "0x10010",
-      segment: 0x1001,
-      offset: 0,
-      status: "APPLIED",
-      type: 0,
-      values: [1, 0, 0x1001],
-      original_bytes_hex: "0100",
-      memory_bytes_hex: "0130",
-    },
-    {
-      address: "0x10010",
-      segment: 0x1000,
-      offset: 16,
-      status: "APPLIED",
-      type: 0,
-      values: [0, 16, 0x2001],
-      original_bytes_hex: "0110",
-      memory_bytes_hex: "0130",
-    },
-    {
-      address: "0x10010",
-      segment: 0x1000,
-      offset: 16,
-      status: "APPLIED",
-      type: 0,
-      values: [0, 16, 0x3001],
-      original_bytes_hex: "0120",
-      memory_bytes_hex: "0130",
-    },
-    {
-      address: "0x10011",
-      segment: 0x1000,
-      offset: 17,
-      status: "APPLIED",
-      type: 0,
-      values: [0, 17, 0x1230],
-      original_bytes_hex: "3002",
-      memory_bytes_hex: "3012",
-    },
+    { ...record, segment: 0x1001, offset: 0, values: [1, 0, 0x1001] },
+    duplicate,
+    duplicate,
   ]);
 });

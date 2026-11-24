@@ -1,7 +1,7 @@
-import { createCatalogIdentity } from "../../../src/catalogIdentity.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { createCatalogIdentity } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
 import { promptsForToolFamilies } from "../../../src/contracts/promptToolFamilyScope.js";
-import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
 import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";
 import { registerUtilityCommands } from "../../../src/cli/utilityCommands.js";
@@ -32,7 +32,7 @@ it.each(["capabilities", "providers"])(
     const close = vi
       .spyOn(session, "close")
       .mockResolvedValueOnce(err(cleanup));
-    const cli = Cli.create({ name: "rea" });
+    const cli = createCommandCli();
     registerUtilityCommands(
       cli,
       silentLogger,
@@ -116,7 +116,7 @@ it.each(["capabilities", "providers"])(
       promptContracts: promptsForToolFamilies(families),
       outputSchemaProfile: "compact",
     });
-    const cli = Cli.create({ name: "rea" });
+    const cli = createCommandCli();
     registerUtilityCommands(
       cli,
       silentLogger,
@@ -127,7 +127,6 @@ it.each(["capabilities", "providers"])(
             readConfiguration: () =>
               parseConfig({
                 REA_MCP_TOOL_FAMILIES: " session,session ",
-                REA_MCP_INPUT_SCHEMA_PROFILE: "full",
                 REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
               }),
             createBinarySession: () => session,
@@ -146,5 +145,116 @@ it.each(["capabilities", "providers"])(
     expect(JSON.parse(stdout)).toMatchObject({
       server_identity: { catalog: expected },
     });
+  },
+);
+
+it.each(["capabilities", "providers"])(
+  "exposes each candidate's selection source and rejections through %s",
+  async (command) => {
+    const session = createStatusSession();
+    const status = vi.spyOn(session, "status").mockResolvedValueOnce({
+      open: false,
+      capabilities: [],
+      analysis_provider_binding: null,
+      analysis_provider_candidates: [
+        {
+          provider: { id: "fixture", name: "Fixture", version: "1" },
+          availability: {
+            status: "available",
+            code: null,
+            reason: null,
+            diagnostics: {},
+          },
+          target_support: {
+            status: "unknown",
+            code: null,
+            reason: "No target is open.",
+            diagnostics: {},
+          },
+          selected: true,
+          selection_source: "auto-single-candidate",
+          rejections: [],
+          capabilities: [],
+        },
+        {
+          provider: { id: "other", name: "Other", version: null },
+          availability: {
+            status: "unavailable",
+            code: "not_configured",
+            reason: "OTHER_HOME is not set.",
+            remediation: "Set OTHER_HOME.",
+            diagnostics: { checks: [] },
+          },
+          target_support: {
+            status: "unknown",
+            code: null,
+            reason: "No target is open.",
+            diagnostics: {},
+          },
+          selected: false,
+          selection_source: null,
+          rejections: [
+            {
+              provider_id: "other",
+              origin: "availability",
+              code: "not_configured",
+              reason: "OTHER_HOME is not set.",
+              remediation: "Set OTHER_HOME.",
+              diagnostics: { checks: [] },
+            },
+          ],
+          capabilities: [],
+        },
+      ],
+    });
+    const cli = createCommandCli();
+    registerUtilityCommands(
+      cli,
+      silentLogger,
+      {},
+      {
+        runSessionStatus: () =>
+          runSessionStatus({
+            readConfiguration: () => parseConfig({}),
+            createBinarySession: () => session,
+          }),
+        runProviderAnalysis: async () => ({ ok: false, error: null }),
+      },
+    );
+    let stdout = "";
+    try {
+      await cli.serve([command, "--json"], {
+        env: {},
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
+      });
+      expect(JSON.parse(stdout)).toMatchObject({
+        analysis_provider_candidates: [
+          {
+            provider: { id: "fixture" },
+            selection_source: "auto-single-candidate",
+            rejections: [],
+          },
+          {
+            provider: { id: "other" },
+            selection_source: null,
+            rejections: [
+              {
+                provider_id: "other",
+                origin: "availability",
+                code: "not_configured",
+                reason: "OTHER_HOME is not set.",
+                remediation: "Set OTHER_HOME.",
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      status.mockRestore();
+      await session.close();
+    }
   },
 );

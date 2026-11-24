@@ -1,13 +1,13 @@
 import { buildManagedNestedTypeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedPeLayout } from "../../src/dotnet/ManagedPeReader.js";
+import { readManagedPeLayout } from "../../src/domain/managed/managedPeReader.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "../../src/dotnet/ManagedMetadataLayout.js";
+} from "../../src/domain/managed/managedMetadataLayout.js";
 import {
   metadataRowCursor,
   readMetadataBlob,
-} from "../../src/dotnet/ManagedMetadataHeaps.js";
+} from "../../src/domain/managed/managedMetadataHeaps.js";
 import { readMethodDefinitionRow } from "../../src/dotnet/ManagedMethodDefinitionRows.js";
 
 /** Two nested Inner declarations, one with its own Fixture namespace. */
@@ -43,20 +43,14 @@ export const distinctSelectedNestedOwners = () => {
     const method = readMethodDefinitionRow(bytes, layout, 1);
     if (index === 1) {
       bytes.writeUInt16LE(3, metadataRowOffset(layout, 41, 1) + 2);
-      readMetadataBlob(
-        bytes,
-        layout,
-        method.signatureIndex,
-        layout.blob!.size,
-      )[2] = 0x0a;
+      readMetadataBlob(bytes, layout, method.signatureIndex)[2] = 0x0a;
       const field = metadataRowCursor(bytes, layout, 4, 1);
-      field.readUInt16();
+      field.u16();
       field.readIndex(layout.stringIndexSize);
       readMetadataBlob(
         bytes,
         layout,
         field.readIndex(layout.blobIndexSize),
-        layout.blob!.size,
       )[1] = 0x0a;
     }
     // All three MethodDefs share this fixture body and signature. Tiny bodies

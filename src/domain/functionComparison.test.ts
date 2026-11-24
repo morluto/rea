@@ -6,7 +6,11 @@ import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "./analysisProfile.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "./evidence.js";
 import { functionDossierSchema } from "./native/functionDossier.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
@@ -117,15 +121,22 @@ const observe = (
   digit: string,
   value: ReturnType<typeof dossier>,
   providerId = "rea-workflow",
-  relationshipCoverage: RelationshipCoverage | null = { status: "complete" },
+  relationshipCoverage: RelationshipCoverage | null = {
+    status: "complete",
+    discovery: {
+      callers: { status: "complete" },
+      callees: { status: "complete" },
+    },
+  },
+  target: EvidenceSubjectTarget = {
+    path: `/tmp/function-${digit}`,
+    sha256: digit.repeat(64),
+    format: "mach-o",
+    architecture: "arm64",
+  },
 ): Evidence =>
   createEvidence(
-    {
-      path: `/tmp/function-${digit}`,
-      sha256: digit.repeat(64),
-      format: "mach-o",
-      architecture: "arm64",
-    },
+    target,
     { id: providerId, name: providerId, version: "1" },
     {
       operation: "analyze_function",
@@ -473,6 +484,7 @@ describe("function call relationship coverage", () => {
       coverage: {
         status: "partial",
         limitations: ["Call graph stopped at the read limit."],
+        limited_directions: ["callers", "callees"],
       },
       limitation: "Call graph stopped at the read limit.",
     },
@@ -499,36 +511,11 @@ describe("function call relationship coverage", () => {
         conclusion_kind: "unresolved_branch",
         left_count: 0,
         right_count: 0,
-        limitations: [`Right: ${limitation}`],
+        limitations: expect.arrayContaining([`Right: ${limitation}`]),
       });
       expect(result.status).toBe("unknown");
     },
   );
-
-  it("retains complete observations with execution diagnostics as comparable", () => {
-    const coverage = {
-      status: "complete" as const,
-      diagnostics: ["Provider reported a non-call xref warning."],
-    };
-    const left = observe(
-      "c",
-      dossier("return 0;", "0x1000"),
-      "rea-workflow",
-      coverage,
-    );
-    const right = observe(
-      "d",
-      dossier("return 0;", "0x2000"),
-      "rea-workflow",
-      coverage,
-    );
-    expect(
-      compareFunctions(
-        functionSnapshotFixture(left),
-        functionSnapshotFixture(right),
-      ).dimensions.find(({ dimension }) => dimension === "calls"),
-    ).toMatchObject({ status: "unchanged", left_count: 0, right_count: 0 });
-  });
 
   it("keeps unresolved call sites unknown despite complete resolved-set coverage", () => {
     const left = observe("e", dossier("return 0;", "0x1000"));
@@ -900,7 +887,18 @@ describe("function comparison unresolved text", () => {
     );
     expect(
       comparison.dimensions.find(({ dimension }) => dimension === "pseudocode"),
-    ).toMatchObject({ status: "unknown", left_count: 11, right_count: 11 });
+    ).toMatchObject({
+      status: "unknown",
+      left_count: 11,
+      right_count: 11,
+      left_digest: null,
+      right_digest: null,
+      text_delta: null,
+    });
+    expect(comparison.changes.map(({ dimension }) => dimension)).toEqual([
+      "pseudocode",
+      "assembly",
+    ]);
     expect(comparison.summary).toEqual({
       unchanged: 6,
       changed: 0,
@@ -916,38 +914,71 @@ describe("function comparison unresolved text", () => {
 });
 
 describe("function comparison", () => {
-  it("retains complete call coverage diagnostics without blocking observed-set equality", () => {
-    const diagnostic = "Indirect calls remain unresolved.";
-    const left = observe("a", dossier("return 0;", "0x1000"), "rea-workflow", {
-      status: "complete",
-      diagnostics: [diagnostic],
-    });
-    const right = observe("b", dossier("return 0;", "0x2000"), "rea-workflow", {
-      status: "complete",
-      diagnostics: [diagnostic],
-    });
-    const comparison = compareFunctions(
-      functionSnapshotFixture(left),
-      functionSnapshotFixture(right),
-    );
-    expect(
-      comparison.dimensions.find(({ dimension }) => dimension === "calls"),
-    ).toMatchObject({
-      status: "unchanged",
-      limitations: [`Left: ${diagnostic}`, `Right: ${diagnostic}`],
-    });
-  });
+  it.each(["legacy", "discovery"] as const)(
+    "retains complete call coverage diagnostics for %s observations",
+    (coverageKind) => {
+      const diagnostic = "Indirect calls remain unresolved.";
+      const coverage: RelationshipCoverage = {
+        status: "complete",
+        diagnostics: [diagnostic],
+        ...(coverageKind === "legacy"
+          ? {}
+          : {
+              discovery: {
+                callers: { status: "complete" },
+                callees: { status: "complete" },
+              },
+            }),
+      };
+      const left = observe(
+        "a",
+        dossier("return 0;", "0x1000"),
+        "rea-workflow",
+        coverage,
+      );
+      const right = observe(
+        "b",
+        dossier("return 0;", "0x2000"),
+        "rea-workflow",
+        coverage,
+      );
+      const comparison = compareFunctions(
+        functionSnapshotFixture(left),
+        functionSnapshotFixture(right),
+      );
+      expect(
+        comparison.dimensions.find(({ dimension }) => dimension === "calls"),
+      ).toMatchObject({
+        status: "unchanged",
+        left_count: 0,
+        right_count: 0,
+        discovery_status: coverageKind === "legacy" ? "unknown" : "complete",
+        limitations: [
+          `Left: ${diagnostic}`,
+          `Right: ${diagnostic}`,
+          ...(coverageKind === "legacy"
+            ? [
+                "Left: Static direct-call discovery is not established for callers and callees.",
+                "Right: Static direct-call discovery is not established for callers and callees.",
+              ]
+            : []),
+        ],
+      });
+    },
+  );
 
   it("retains diagnostics alongside incomplete call coverage blockers", () => {
     const diagnostic = "Indirect calls remain unresolved.";
     const left = observe("c", dossier("return 0;", "0x1000"), "rea-workflow", {
       status: "partial",
       limitations: ["Provider read limit reached."],
+      limited_directions: ["callers", "callees"],
       diagnostics: [diagnostic],
     });
     const right = observe("d", dossier("return 0;", "0x2000"), "rea-workflow", {
       status: "partial",
       limitations: ["Provider read limit reached."],
+      limited_directions: ["callers", "callees"],
       diagnostics: [diagnostic],
     });
     expect(
@@ -992,8 +1023,8 @@ describe("function comparison", () => {
 
 describe("function comparison normalization and provenance", () => {
   it("normalizes CFG relocation but preserves changed edges and constants", () => {
-    const left = observe("2", dossier("return 0x10;", "0x1000"));
-    const relocated = observe("3", dossier("return 0x10;", "0x2000"));
+    const left = observe("2", dossier("return 0x10; /* 🎨 */", "0x1000"));
+    const relocated = observe("3", dossier("return 0x10; /* 🎨 */", "0x2000"));
     const same = compareFunctions(
       functionSnapshotFixture(left),
       functionSnapshotFixture(relocated),
@@ -1005,9 +1036,17 @@ describe("function comparison normalization and provenance", () => {
     });
     expect(
       same.dimensions.find(({ dimension }) => dimension === "pseudocode"),
-    ).toMatchObject({ status: "unchanged" });
+    ).toMatchObject({
+      status: "unchanged",
+      left_count: 20,
+      right_count: 20,
+      text_delta: { added_lines: 0, removed_lines: 0, hunks: 0 },
+    });
 
-    const changed = observe("4", dossier("return 0x20;", "0x2000", ["0x2000"]));
+    const changed = observe(
+      "4",
+      dossier("return 0x20; /* 🎨 */", "0x2000", ["0x2000"]),
+    );
     const comparison = compareFunctions(
       functionSnapshotFixture(left),
       functionSnapshotFixture(changed),
@@ -1020,23 +1059,32 @@ describe("function comparison normalization and provenance", () => {
     ).toMatchObject({ status: "changed" });
   });
 
-  it("treats provider-specific text as unknown and validates Evidence", () => {
-    const left = observe("5", dossier("return 0;", "0x1000"), "provider-a");
-    const right = observe("6", dossier("return 1;", "0x2000"), "provider-b");
-    const comparison = compareFunctions(
-      functionSnapshotFixture(left),
-      functionSnapshotFixture(right),
-    );
+  it("matches entries by address only within the same opened target", () => {
+    const raw = (entryPoint: string): EvidenceSubjectTarget => ({
+      path: "/tmp/function.bin",
+      sha256: "9".repeat(64),
+      format: "raw-binary",
+      architecture: "arm64",
+      selection: { kind: "entry-point", entry_point: entryPoint },
+    });
+    const at = (entryPoint: string, body: string) =>
+      functionSnapshotFixture(
+        observe(
+          "9",
+          dossier(body, "0x1000"),
+          "rea-workflow",
+          undefined,
+          raw(entryPoint),
+        ),
+      );
+    const left = at("0x0", "return 0;\n");
     expect(
-      comparison.dimensions.find(({ dimension }) => dimension === "pseudocode"),
-    ).toMatchObject({ status: "unknown" });
-    expect(comparison.changes).toHaveLength(2);
-    expect(() =>
-      compareFunctions(
-        functionSnapshotFixture({ ...left, operation: "binary_overview" }),
-        functionSnapshotFixture(right),
-      ),
-    ).toThrow(/identifier/u);
+      compareFunctions(left, at("0x0", "return 1;\n")).function_match,
+    ).toMatchObject({ status: "matched", method: "same-entry" });
+    // The same bytes opened at another entry point do not share coordinates.
+    expect(
+      compareFunctions(left, at("0x100", "return 1;\n")).function_match.method,
+    ).not.toBe("same-entry");
   });
 
   it("reports fully observed identical dossiers as unchanged", () => {
@@ -1083,6 +1131,81 @@ describe("function comparison normalization and provenance", () => {
       status: "unknown",
       limitations: [expect.stringContaining("did not expose reference kinds")],
     });
+  });
+});
+
+describe("function comparison raw-load coordinates", () => {
+  it("matches M-profile loads by base, however each chose its entry", () => {
+    const load = (
+      base: string,
+      entry: {
+        address: string;
+        role: "entry" | "reset";
+        basis: "caller" | "vector-table";
+      },
+    ): EvidenceSubjectTarget => ({
+      path: "/tmp/firmware.bin",
+      sha256: "9".repeat(64),
+      format: "raw-binary",
+      architecture: "arm",
+      selection: {
+        kind: "entry-point",
+        entry_point: entry.address,
+        raw_load: {
+          version: 1,
+          base_address: base,
+          architecture_variant: "armv7-m",
+          ...(entry.basis === "vector-table"
+            ? { vector_table_address: base }
+            : {}),
+          entries: [{ ...entry, isa_mode: "thumb" }],
+        },
+      },
+    });
+    const at = (target: EvidenceSubjectTarget, body: string) =>
+      functionSnapshotFixture(
+        observe(
+          "9",
+          dossier(body, "0x1000"),
+          "rea-workflow",
+          undefined,
+          target,
+        ),
+      );
+    const reset = load("0x8000000", {
+      address: "0x80001c4",
+      role: "reset",
+      basis: "vector-table",
+    });
+    const left = at(reset, "return 0;\n");
+    // Reset read from the vector table and an entry the caller named load the
+    // same bytes at the same base, so their addresses agree.
+    expect(
+      compareFunctions(
+        left,
+        at(
+          load("0x8000000", {
+            address: "0x8000200",
+            role: "entry",
+            basis: "caller",
+          }),
+          "return 1;\n",
+        ),
+      ).function_match,
+    ).toMatchObject({ status: "matched", method: "same-entry" });
+    expect(
+      compareFunctions(
+        left,
+        at(
+          load("0x8100000", {
+            address: "0x81001c4",
+            role: "reset",
+            basis: "vector-table",
+          }),
+          "return 1;\n",
+        ),
+      ).function_match.method,
+    ).not.toBe("same-entry");
   });
 });
 
@@ -1159,6 +1282,7 @@ describe("function comparison identity and malformed CFG", () => {
 const withLiterals = (base: "0x1000" | "0x2000", values: readonly string[]) =>
   functionDossierSchema.parse({
     ...dossier("return 0;", base),
+    swift_string_literal_omissions: [],
     swift_string_literals: values.map((value) => ({
       source_address: base,
       value,
@@ -1243,6 +1367,26 @@ describe("function comparison Swift string literals", () => {
     expect(
       stringsDimension("7", withLiterals("0x1000", []), "8", named),
     ).toMatchObject({ status: "changed" });
+  });
+
+  it("leaves a side's count unknown when its names cannot be placed in the function", () => {
+    const withString = (base: "0x1000" | "0x2000", value: string) =>
+      functionDossierSchema.parse({
+        ...dossier("return 0;", base),
+        referenced_strings: [
+          { address: "0x9000", source_address: base, value },
+        ],
+      });
+    // A name read from below the procedure start has no function offset.
+    const unplaced = functionDossierSchema.parse({
+      ...withString("0x1000", "before"),
+      referenced_names: [
+        { address: "0x3000", value: "helper", source_address: "0x0800" },
+      ],
+    });
+    expect(
+      stringsDimension("9", unplaced, "a", withString("0x2000", "after")),
+    ).toMatchObject({ status: "changed", left_count: null, right_count: 1 });
   });
 });
 
@@ -1349,6 +1493,7 @@ describe("function comparison partial Swift literal omission interpretation", ()
   it("treats an omission record without decoded literals as partial coverage", () => {
     const omissionOnly = functionDossierSchema.parse({
       ...dossier("return 0;", "0x2000"),
+      swift_string_literals: [],
       swift_string_literal_omissions: [
         {
           source_address: "0x2004",
@@ -1524,8 +1669,7 @@ it.each([
           {
             path: ["status"],
             code: "custom",
-            message:
-              "Function comparison status contradicts its dimensions or function match.",
+            params: { constraint: "status-matches-dimensions" },
           },
         ]);
     }

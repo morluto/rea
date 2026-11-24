@@ -222,14 +222,14 @@ class CatalogEvaluationTests(unittest.TestCase):
             catalog.write_json(root / 'dist/mcp-catalog.json', {
                 'tools': [{'name': 'one', 'inputSchema': {}, 'outputSchema': {}, 'description': 'one'},
                           {'name': 'two', 'inputSchema': {}, 'outputSchema': {}, 'description': 'two'}]})
-            one = catalog.catalog_receipt(root, 'compact', ['one'])
-            both = catalog.catalog_receipt(root, 'compact', ['one', 'two'])
+            one = catalog.catalog_receipt(root, ['one'])
+            both = catalog.catalog_receipt(root, ['one', 'two'])
             self.assertEqual(one['bytes'], both['bytes'])
             self.assertEqual(one['tool_count'], 2)
             self.assertEqual(one['sha256'], both['sha256'])
             for selected in [[], ['missing'], ['one', 'one']]:
                 with self.assertRaises(ValueError):
-                    catalog.catalog_receipt(root, 'compact', selected)
+                    catalog.catalog_receipt(root, selected)
 
 
 if __name__ == '__main__':

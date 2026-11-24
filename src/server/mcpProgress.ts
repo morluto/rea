@@ -1,9 +1,9 @@
 import type { ServerContext } from "@modelcontextprotocol/server";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import {
   createProgressReporter,
   silentProgressReporter,
-} from "../application/ProgressReporter.js";
+} from "../ports/ProgressReporter.js";
 
 export interface McpProgressContext {
   readonly mcpReq: Pick<ServerContext["mcpReq"], "_meta" | "notify">;

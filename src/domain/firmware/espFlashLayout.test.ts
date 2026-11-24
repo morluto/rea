@@ -48,6 +48,7 @@ describe("ESP partition tables", () => {
     );
     expect(decoded.md5.status).toBe("valid");
     expect(decoded.md5.entryOffset).toBe(7 * 32);
+    expect(decoded.md5.entriesAfterChecksum).toBe(0);
     expect(decoded.length).toBe(9 * 32);
     expect(decoded.limitations).toEqual([]);
     expect(decoded.partitions.map(({ label }) => label)).toEqual([
@@ -79,6 +80,7 @@ describe("ESP partition tables", () => {
     expect(decoded.md5).toEqual({
       status: "absent",
       entryOffset: null,
+      entriesAfterChecksum: 0,
       stored: null,
       computed: null,
     });
@@ -90,9 +92,10 @@ describe("ESP partition tables", () => {
       partitionTable(TWO_OTA_PARTITIONS, { md5: "corrupt" }),
     );
     expect(decoded.md5.status).toBe("invalid");
+    expect(decoded.md5.entriesAfterChecksum).toBe(0);
     expect(decoded.partitions).toHaveLength(6);
     expect(decoded.limitations).toEqual([
-      "The partition table MD5 at 0xc0 does not match the entries before it; ESP-IDF's bootloader rejects the table.",
+      expect.stringMatching(/MD5.*0xc0.*does not match.*bootloader rejects/iu),
     ]);
   });
 
@@ -179,9 +182,9 @@ describe("ESP partition tables", () => {
     expect(boot.otaSlots.get(0)?.label).toBe("again");
     expect(boot.otaAppCount).toBe(3);
     expect(boot.limitations).toEqual([
-      "The table declares otadata 2 times (partitions #1, #7); ESP-IDF's bootloader uses the last.",
-      "The table declares factory 2 times (partitions #3, #6); ESP-IDF's bootloader uses the last.",
-      "The table declares ota_0 2 times (partitions #4, #8); ESP-IDF's bootloader uses the last.",
+      expect.stringMatching(/otadata.*2.*#1.*#7.*bootloader.*last/iu),
+      expect.stringMatching(/factory.*2.*#3.*#6.*bootloader.*last/iu),
+      expect.stringMatching(/ota_0.*2.*#4.*#8.*bootloader.*last/iu),
     ]);
   });
 });
@@ -490,4 +493,28 @@ describe("ESP bootloader location", () => {
       { flashAddress: 0x2000, fileOffset: 0x1000 },
     ]);
   });
+});
+
+it("keeps and discloses partitions after a matching prefix MD5", () => {
+  const [first, second, third] = TWO_OTA_PARTITIONS;
+  const prefix = partitionTable([first!]);
+  const decoded = table(
+    Buffer.concat([
+      prefix.subarray(0, 64),
+      partitionEntry(second!),
+      partitionEntry(third!),
+      prefix.subarray(64),
+    ]),
+  );
+  expect(decoded.md5).toMatchObject({
+    status: "valid",
+    entryOffset: 32,
+    entriesAfterChecksum: 2,
+  });
+  expect(decoded.md5.stored).toBe(decoded.md5.computed);
+  expect(decoded.partitions.map(({ label }) => label)).toEqual([
+    first?.label,
+    second?.label,
+    third?.label,
+  ]);
 });

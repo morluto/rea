@@ -8,7 +8,11 @@ import {
 import { buildCallPath } from "./callPath.js";
 import { combineFunctionRelationshipCoverage } from "./functionCallCoverage.js";
 import { callPathResultSchema, type CallPathInput } from "./callPathSchemas.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "./evidence.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { RelationshipCoverage } from "./relationshipCoverage.js";
 import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
@@ -23,6 +27,7 @@ const observe = (
     readonly relationshipCoverage?: RelationshipCoverage;
     readonly calleeUnavailable?: string;
     readonly analysisProfile?: AnalysisProfileCommitment;
+    readonly target?: EvidenceSubjectTarget;
   } = {},
 ): Evidence => {
   const value = {
@@ -69,7 +74,11 @@ const observe = (
         }),
   } satisfies JsonValue;
   return createEvidence(
-    { path: "/tmp/a", sha256: "a".repeat(64), format: "mach-o" },
+    options.target ?? {
+      path: "/tmp/a",
+      sha256: "a".repeat(64),
+      format: "mach-o",
+    },
     { id: provider, name: provider, version: "1" },
     {
       operation: "analyze_function",
@@ -196,7 +205,15 @@ describe("call path reconstruction", () => {
   });
 
   it("only reports not_found for exhaustive closure", () => {
-    const notFound = run([observe("0x1000", []), observe("0x4000", [])]);
+    const notFound = run([
+      observe("0x1000", [], "rea-workflow", {
+        relationshipCoverage: {
+          status: "complete",
+          discovery: { callees: { status: "complete" } },
+        },
+      }),
+      observe("0x4000", []),
+    ]);
     expect(notFound.status).toBe("not_found");
     expect(
       callPathResultSchema.safeParse({
@@ -206,8 +223,8 @@ describe("call path reconstruction", () => {
     ).toBe(false);
     const unknown = run([observe("0x1000", ["0x2000"])]);
     expect(unknown.status).toBe("unknown");
-    expect(unknown.limitations).toContain(
-      "No analyze_function Evidence covers reachable function 0x2000",
+    expect(unknown.limitations).toContainEqual(
+      expect.stringMatching(/no analyze_function.*0x2000/iu),
     );
 
     const limitedEmpty = run([
@@ -227,12 +244,6 @@ describe("call path reconstruction", () => {
     );
   });
 
-  it("searches the complete supplied graph", () => {
-    expect(
-      run([observe("0x1000", ["0x2000"]), observe("0x2000", [])]).status,
-    ).toBe("not_found");
-  });
-
   it("returns all shortest paths inline without paging", () => {
     const result = run([
       observe("0x1000", ["0x2000", "0x3000"]),
@@ -243,6 +254,19 @@ describe("call path reconstruction", () => {
       "0x2000",
       "0x3000",
     ]);
+  });
+});
+
+it("keeps an exhaustive supplied graph distinct from unknown discovery", () => {
+  expect(
+    run([observe("0x1000", ["0x2000"]), observe("0x2000", [])]),
+  ).toMatchObject({
+    status: "unknown",
+    search_scope: {
+      exhaustive: true,
+      discovery: "unknown",
+      observed_status: "not_found",
+    },
   });
 });
 
@@ -260,7 +284,7 @@ describe("call path topology and capacity", () => {
     expect(result.status).toBe("unknown");
     expect(result.search_scope.exhaustive).toBe(false);
     expect(result.limitations).toEqual(limitations);
-  }, 30_000);
+  });
 
   it("retains every shortest path through merging branches and cycles", () => {
     const result = run([
@@ -430,6 +454,7 @@ describe("directional call relationship coverage", () => {
         status: "partial",
         limitations: [limitation],
         limited_directions: directions,
+        discovery: { callees: { status: "complete" } },
       };
       const result = run([
         observe("0x1000", ["0x2000"], "rea-workflow", { relationshipCoverage }),
@@ -514,14 +539,14 @@ describe("call path search extent", () => {
       label: "expanded cycle without the goal",
       graph: { "0x1000": ["0x2000"], "0x2000": ["0x1000", "0x2000"] },
       goal: "0x4000",
-      status: "not_found",
+      status: "unknown",
       explored: { nodes: 2, edges: 3, depth_reached: 1 },
     },
     {
       label: "unreachable goal with its own dossier",
       graph: { "0x1000": ["0x2000"], "0x2000": [], "0x4000": ["0x5000"] },
       goal: "0x4000",
-      status: "not_found",
+      status: "unknown",
       explored: { nodes: 2, edges: 1, depth_reached: 1 },
     },
     {
@@ -564,6 +589,7 @@ describe("explicit call relationship coverage", () => {
         relationshipCoverage: {
           status: "partial",
           limitations: Array<string>(150_000).fill("omitted"),
+          limited_directions: ["callees"],
         },
         evidenceLimitations: [],
         dossierLimitations: [],
@@ -596,7 +622,11 @@ describe("explicit call relationship coverage", () => {
     const limitation = "Other callees were omitted by the provider cap.";
     const result = run([
       observe("0x1000", ["0x4000"], "rea-workflow", {
-        relationshipCoverage: { status: "partial", limitations: [limitation] },
+        relationshipCoverage: {
+          status: "partial",
+          limitations: [limitation],
+          limited_directions: ["callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -614,7 +644,11 @@ describe("explicit call relationship coverage", () => {
         relationshipCoverage: { status: "complete" },
       }),
       observe("0x4000", ["0x5000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -630,10 +664,20 @@ describe("explicit call relationship coverage", () => {
       "Callers: Upstream xrefs do not establish direct caller relationships.";
     const result = run([
       observe("0x1000", ["0x2000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callers"],
+          discovery: { callees: { status: "complete" } },
+        },
       }),
       observe("0x2000", [], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callers"],
+          discovery: { callees: { status: "complete" } },
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -648,10 +692,18 @@ describe("explicit call relationship coverage", () => {
       "Callees: Upstream callees capped results at 500; additional callees remain unknown.";
     const result = run([
       observe("0x1000", ["0x2000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callees"],
+        },
       }),
       observe("0x2000", [], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -666,10 +718,18 @@ describe("explicit call relationship coverage", () => {
       "Callers: Upstream xrefs do not establish direct caller relationships. Callees: Upstream callees are not observed.";
     const result = run([
       observe("0x1000", ["0x2000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callers", "callees"],
+        },
       }),
       observe("0x2000", [], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callers", "callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -683,10 +743,17 @@ describe("explicit call relationship coverage", () => {
     const reason = "An unrelated function's callees were not observed.";
     const result = run([
       observe("0x1000", [], "rea-workflow", {
-        relationshipCoverage: { status: "complete" },
+        relationshipCoverage: {
+          status: "complete",
+          discovery: { callees: { status: "complete" } },
+        },
       }),
       observe("0x2000", ["0x5000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          limited_directions: ["callees"],
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -704,12 +771,14 @@ describe("IDA-capped callee coverage beside unknown callers", () => {
       {
         status: "unknown",
         reason: "Upstream xrefs do not establish direct caller relationships.",
+        limited_directions: ["callers"],
       },
       {
         status: "partial",
         limitations: [
           "Upstream callees capped results at 500; additional callees remain unknown.",
         ],
+        limited_directions: ["callees"],
       },
     );
     expect(combined.status).toBe("unknown");
@@ -732,7 +801,11 @@ describe("call path evidence admission", () => {
       run([observe("0x001000", [])], {
         start: { address: "0X00001000" },
       }),
-    ).toMatchObject({ status: "not_found", start: "0x1000" });
+    ).toMatchObject({
+      status: "unknown",
+      start: "0x1000",
+      search_scope: { observed_status: "not_found" },
+    });
     expect(() =>
       run([observe("0x1000", [])], { start: { address: "1000" } }),
     ).toThrow();
@@ -761,6 +834,88 @@ describe("call path evidence admission", () => {
         goal: { address: "overlay%ZZ:0x4000" },
       }),
     ).toThrow();
+  });
+
+  it("refuses functions from the same bytes opened at different entry points", () => {
+    const raw = (entryPoint: string): EvidenceSubjectTarget => ({
+      path: "/tmp/a.bin",
+      sha256: "a".repeat(64),
+      format: "raw-binary",
+      architecture: "arm64",
+      selection: { kind: "entry-point", entry_point: entryPoint },
+    });
+    const start = observe("0x1000", ["0x4000"], "rea-workflow", {
+      target: raw("0x0"),
+    });
+    expect(
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", { target: raw("0x0") }),
+      ]).status,
+    ).toBe("found");
+    let refused: unknown;
+    try {
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", { target: raw("0x100") }),
+      ]);
+    } catch (cause: unknown) {
+      refused = cause;
+    }
+    expect(refused).toBeInstanceOf(AnalysisInputError);
+    expect(JSON.stringify((refused as AnalysisInputError).issues)).toContain(
+      "Call-path Evidence mixes artifact subjects",
+    );
+  });
+
+  it("joins M-profile loads with one base, however each chose its entry", () => {
+    const load = (
+      base: string,
+      entry: string,
+      basis: "caller" | "vector-table",
+    ): EvidenceSubjectTarget => ({
+      path: "/tmp/firmware.bin",
+      sha256: "a".repeat(64),
+      format: "raw-binary",
+      architecture: "arm",
+      selection: {
+        kind: "entry-point",
+        entry_point: entry,
+        raw_load: {
+          version: 1,
+          base_address: base,
+          architecture_variant: "armv7-m",
+          ...(basis === "vector-table" ? { vector_table_address: base } : {}),
+          entries: [
+            {
+              address: entry,
+              isa_mode: "thumb",
+              role: basis === "vector-table" ? "reset" : "entry",
+              basis,
+            },
+          ],
+        },
+      },
+    });
+    const start = observe("0x1000", ["0x4000"], "rea-workflow", {
+      target: load("0x0", "0x1c4", "vector-table"),
+    });
+    expect(
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", {
+          target: load("0x0", "0x200", "caller"),
+        }),
+      ]).status,
+    ).toBe("found");
+    expect(() =>
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", {
+          target: load("0x100000", "0x1001c4", "vector-table"),
+        }),
+      ]),
+    ).toThrow(AnalysisInputError);
   });
 
   it("requires an observed start function", () => {

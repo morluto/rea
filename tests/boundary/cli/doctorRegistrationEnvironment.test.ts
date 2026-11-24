@@ -25,7 +25,7 @@ const writeAdmittedGhidra = async (root: string) => {
     await mkdir(path, { recursive: true });
   await writeFile(
     join(install, "Ghidra/application.properties"),
-    "application.version=12.1.4\napplication.java.min=21\n",
+    "application.version=12.2\napplication.java.min=25\n",
   );
   await writeFile(
     join(install, "support/analyzeHeadless"),
@@ -40,7 +40,7 @@ const writeAdmittedGhidra = async (root: string) => {
   );
   await chmod(native, 0o700);
   const properties = [
-    "java.version = 21.0.11",
+    "java.version = 25.0.1",
     `java.home = ${jdk}`,
     "sun.arch.data.model = 64",
     `os.arch = ${process.arch === "arm64" ? "aarch64" : "amd64"}`,
@@ -60,7 +60,8 @@ const writeAdmittedGhidra = async (root: string) => {
 
 const reportSchema = z.object({
   healthy: z.boolean(),
-  scope_checks: z.array(z.object({ name: z.string() }).loose()),
+  // Absent from an audit-wide report, whose checks are all in scope.
+  scope_checks: z.array(z.object({ name: z.string() }).loose()).optional(),
   informational_checks: z.array(z.object({ name: z.string() }).loose()),
   identity: z.object({
     registrations: z.array(z.object({ client: z.string() }).loose()),
@@ -75,7 +76,6 @@ const run = async (
   const result = await cli.run({
     arguments: [...arguments_, "--json"],
     environment,
-    timeoutMs: 30_000,
   });
   return { result, report: reportSchema.safeParse(result.json) };
 };
@@ -90,14 +90,15 @@ const doctor = async (
   return { exitCode: result.exitCode, report: report.data };
 };
 
-const names = (checks: readonly { readonly name: string }[]) =>
-  checks.map(({ name }) => name);
+const names = (checks: readonly { readonly name: string }[] | undefined) => {
+  if (checks === undefined) throw new Error("Expected scoped doctor checks");
+  return checks.map(({ name }) => name);
+};
 
 const CHECK = "registration_environment:claude_code";
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "doctor does not let a configured terminal stand in for an unconfigured registration",
-  { timeout: 120_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-doctor-registration-env-");
     const home = join(root, "home");

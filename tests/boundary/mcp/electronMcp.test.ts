@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
 import { electronActiveObservationInputSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
@@ -15,8 +16,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { ElectronActiveObservationPort } from "../../../src/application/javascript/ElectronActiveObservationPort.js";
-import type { ElectronObservationPort } from "../../../src/application/javascript/ElectronObservationPort.js";
+import type { ElectronActiveObservationPort } from "../../../src/ports/javascript/ElectronActiveObservationPort.js";
+import type { ElectronObservationPort } from "../../../src/ports/javascript/ElectronObservationPort.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -35,6 +36,13 @@ import { toolAvailabilityInventory } from "../../../src/contracts/toolOutputSche
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { emptyElectronPageCoverage } from "../../../src/domain/javascript/electronPageInspection.fixture.js";
 import type { ElectronPageInspection } from "../../../src/domain/javascript/electronObservation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const testClient = (name: string) =>
+  new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
 
 const browsers: FakeCdpBrowser[] = [];
 const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -47,7 +55,7 @@ it("retains failed JavaScript inventory cleanup through server shutdown retries"
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "javascript-cleanup-owner", version: "1" });
+  const client = testClient("javascript-cleanup-owner");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const originalClose = AsarArtifactReader.prototype.close;
@@ -118,7 +126,7 @@ it("records completed Electron facts after final detach as server Evidence", asy
       file_path: "/tmp/index.html",
       attached: true,
     },
-    ...emptyElectronPageCoverage(1),
+    ...emptyElectronPageCoverage(0),
   };
   const provider: ElectronObservationPort = {
     identity: () => ({
@@ -150,7 +158,7 @@ it("records completed Electron facts after final detach as server Evidence", asy
       electronObservation: provider,
     },
   );
-  const client = new Client({ name: "electron-final-detach", version: "1" });
+  const client = testClient("electron-final-detach");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -195,7 +203,7 @@ it("lets MCP JavaScript analysis continue only with recorded untrusted ASAR byte
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "asar-integrity-policy", version: "1" });
+  const client = testClient("asar-integrity-policy");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -240,10 +248,13 @@ it("advertises owned JavaScript analysis effects without foreign target executio
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "javascript-analysis-effects",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "javascript-analysis-effects",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -321,7 +332,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
       }),
     },
   );
-  const client = new Client({ name: "electron-mcp-test", version: "1" });
+  const client = testClient("electron-mcp-test");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -343,7 +354,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
       isolation: "none",
     },
     limitations: expect.arrayContaining([
-      "Browser host platform and architecture were not observed.",
+      expect.stringMatching(/platform.*architecture.*not observed/iu),
     ]),
     normalized_result: {
       targets: [{ target_id: "electron-page" }],
@@ -421,7 +432,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
       ],
     },
   });
-}, 20_000);
+});
 
 /** Create the selected-path aliases and retained IPC-gap capture for the public workflow. */
 const activeElectronScenarioFixture = async () => {
@@ -489,13 +500,17 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     { kind: "session", session },
     {
       electronActiveObservation: provider,
+      environment: {
+        ...process.env,
+        REA_MCP_TOOL_FAMILIES: "electron",
+      },
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         investigationInputRoots: 0,
       }),
     },
   );
-  const client = new Client({ name: "electron-active-mcp-test", version: "1" });
+  const client = testClient("electron-active-mcp-test");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -505,12 +520,12 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   const advertised = (await client.listTools()).tools.find(
     ({ name }) => name === "capture_electron_scenario",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Active Electron output schema was not advertised");
   const validateOutput = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(z.record(z.string(), z.unknown()).parse(advertised.outputSchema));
+  }).compile(canonicalOutputSchema(advertised.name));
   const captured = await client.callTool({
     name: "capture_electron_scenario",
     arguments: {
@@ -610,7 +625,7 @@ it("runs active Electron scenarios with selected paths and inferred working dire
       ],
     },
   });
-}, 20_000);
+});
 
 it("exposes the target-free static JavaScript application workflow", async () => {
   const root = await createTestTempDirectory("rea-electron-static-mcp-");
@@ -629,10 +644,13 @@ it("exposes the target-free static JavaScript application workflow", async () =>
       }),
     },
   );
-  const client = new Client({
-    name: "electron-static-mcp-test",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "electron-static-mcp-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -731,10 +749,13 @@ it.skipIf(process.platform === "win32")(
       );
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({
-      name: "application-source-admission",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "application-source-admission",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(client, server, session);
@@ -795,7 +816,7 @@ const activePathAdmissionClient = async (
       },
     },
   );
-  const client = new Client({ name: "electron-path-test", version: "1" });
+  const client = testClient("electron-path-test");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -833,6 +854,37 @@ it("reports every unresolved Electron path without starting a provider", async (
   await client.ping();
 });
 
+it("refuses an Electron wait longer than Node can schedule", async () => {
+  const capture = vi.fn();
+  const client = await activePathAdmissionClient(capture);
+  // A delay above the Node timer range returns after 1 ms.
+  const result = await client.callTool({
+    name: "capture_electron_scenario",
+    arguments: {
+      executable_path: process.execPath,
+      application_path: process.execPath,
+      actions: [{ step_id: "settle", kind: "wait", duration_ms: 2 ** 31 }],
+    },
+  });
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["actions", 0, "duration_ms"],
+            reason: "out_of_range",
+            maximum: 2_147_483_647,
+          }),
+        ]),
+      },
+    },
+  });
+  expect(capture).not.toHaveBeenCalled();
+  await client.ping();
+});
+
 it.skipIf(process.platform === "win32")(
   "refuses obstructed Electron selections and admits native symlink traversal through MCP",
   async () => {
@@ -849,10 +901,18 @@ it.skipIf(process.platform === "win32")(
     );
     await symlink("application/child", join(root, "link"));
     const capture = vi.fn<ElectronActiveObservationPort["capture"]>(
-      async (input) =>
-        resultOk(
-          createElectronActiveObservationFixtureResult(input.application_path),
-        ),
+      async (input) => {
+        const report = createElectronActiveObservationFixtureResult(
+          input.application_path,
+        );
+        return resultOk({
+          ...report,
+          application: {
+            ...report.application,
+            executable_path: input.executable_path,
+          },
+        });
+      },
     );
     const client = await activePathAdmissionClient(capture);
     const selected = {

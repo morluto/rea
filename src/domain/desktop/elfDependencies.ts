@@ -1,22 +1,72 @@
-import { readElfDynamicEntry } from "../elfDynamicEntry.js";
-import { readElfFixedHeader } from "../elfFixedHeader.js";
 import {
+  desktopLibraryLimit,
+  desktopLibraryPolicy,
+  type DesktopLibraryPolicy,
+} from "./libraryPolicy.js";
+import {
+  DT_NEEDED,
+  DT_RPATH,
+  DT_RUNPATH,
+  DT_STRTAB,
+  DT_STRSZ,
+  walkElfDynamicTable,
+} from "../elfDynamicEntry.js";
+import {
+  admitElfFixedHeaderFacts,
+  readElfHeaderFacts,
+} from "../elfFixedHeader.js";
+import {
+  admitElfLoadSegment,
+  elfLoadSpans,
+  elfProgramHeaderWidth,
   readElfProgramHeader,
   type ElfProgramHeader,
 } from "../elfProgramHeader.js";
-import {
-  elfStringTableText,
-  observeElfStringTableEntry,
-} from "../elfStringTable.js";
+import { readElfRawTableDeclarations } from "../elfRawTableDeclarations.js";
+import { observeElfStringTableEntry } from "../elfStringTable.js";
+import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { err, ok, type Result } from "../result.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
+import {
+  resolveMappedFileOffset,
+  type FileMapping,
+  type ZeroFillMapping,
+} from "../virtualFileMapping.js";
 
 /** Read up to `length` bytes at `offset`; fewer at the end of the file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
 
-/** What the dynamic linker needs to load an ELF image's dependencies. */
-export interface ElfDependencies {
+/** Fixed-header identity needed before selecting a library candidate. */
+export interface ElfLibraryIdentity {
   readonly machine: number;
   readonly bits: 32 | 64;
+  readonly byte_order: "little" | "big";
+}
+
+/** A readable identity survives later header or dependency-table admission failures. */
+export type ElfDependenciesFailure =
+  | {
+      readonly kind: "incompatible";
+      readonly identity: ElfLibraryIdentity;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: "unreadable";
+      readonly identity: ElfLibraryIdentity | null;
+      readonly reason: string;
+    };
+
+/** The same ABI identity is required before dependency tables can select a library. */
+export const elfLibraryIdentityMatches = (
+  expected: ElfLibraryIdentity,
+  observed: ElfLibraryIdentity,
+): boolean =>
+  expected.machine === observed.machine &&
+  expected.bits === observed.bits &&
+  expected.byte_order === observed.byte_order;
+
+/** What the dynamic linker needs to load an ELF image's dependencies. */
+export interface ElfDependencies extends ElfLibraryIdentity {
   /** Distinct DT_NEEDED sonames in order. */
   readonly needed: readonly string[];
   /** DT_RUNPATH directories as written; undefined without DT_RUNPATH. */
@@ -27,77 +77,72 @@ export interface ElfDependencies {
 
 const PT_LOAD = 1;
 const PT_DYNAMIC = 2;
-const DT_NEEDED = 1n;
-const DT_STRTAB = 5n;
-const DT_STRSZ = 10n;
-const DT_RPATH = 15n;
-const DT_RUNPATH = 29n;
-const MAX_PROGRAM_HEADER_BYTES = 1024 * 1024;
-const MAX_DYNAMIC_BYTES = 1024 * 1024;
-const MAX_STRING_BYTES = 4096;
-/** Distinct strings decoded per image: the library walk's own limit, and a few search path entries. */
-const MAX_NEEDED = 512;
-const MAX_SEARCH_PATHS = 16;
+const DEPENDENCY_SINGLETONS = new Set([
+  DT_STRTAB,
+  DT_STRSZ,
+  DT_RPATH,
+  DT_RUNPATH,
+]);
 
-const readExactly = async (
+const readBoundedExtent = async (
   read: ReadAt,
-  offset: bigint,
-  length: bigint,
-  size: number,
-): Promise<Buffer | undefined> => {
-  if (offset + length > BigInt(size)) return undefined;
+  {
+    offset,
+    length,
+    fileSize,
+  }: { offset: bigint; length: bigint; fileSize: number },
+  label: string,
+  tablePolicy?: DesktopLibraryPolicy,
+): Promise<Result<Buffer, string>> => {
+  if (offset + length > BigInt(fileSize)) return err(`${label} is truncated`);
+  if (tablePolicy !== undefined && length > BigInt(tablePolicy.table_bytes))
+    return err(desktopLibraryLimit(tablePolicy, "table_bytes", label));
   const bytes = await read(Number(offset), Number(length));
-  return bytes.byteLength === Number(length) ? Buffer.from(bytes) : undefined;
-};
-
-/** The file offset of a virtual address inside a file-backed PT_LOAD segment. */
-const fileOffset = (
-  loads: readonly ElfProgramHeader[],
-  address: bigint,
-): bigint | undefined => {
-  const load = loads.find(
-    (segment) =>
-      address >= segment.virtualAddress &&
-      address < segment.virtualAddress + segment.fileSize,
-  );
-  return load === undefined
-    ? undefined
-    : load.offset + address - load.virtualAddress;
+  return bytes.byteLength === Number(length)
+    ? ok(Buffer.from(bytes))
+    : err(`${label} is truncated`);
 };
 
 const programHeaders = async (
   read: ReadAt,
   header: Buffer,
   size: number,
-  bits: 32 | 64,
+  { bits, byte_order: byteOrder }: ElfLibraryIdentity,
+  policy: DesktopLibraryPolicy,
 ): Promise<Result<readonly ElfProgramHeader[], string>> => {
-  const little = header[5] === 1;
-  const view = new DataView(header.buffer, header.byteOffset, header.length);
-  const offset =
-    bits === 64
-      ? view.getBigUint64(32, little)
-      : BigInt(view.getUint32(28, little));
-  const entrySize = view.getUint16(bits === 64 ? 54 : 42, little);
-  const count = view.getUint16(bits === 64 ? 56 : 44, little);
-  if (entrySize < (bits === 64 ? 56 : 32) || count === 0xffff)
+  const little = byteOrder === "little";
+  const declaration = readElfRawTableDeclarations(header, {
+    elfClass: bits,
+    byteOrder,
+  });
+  if (!declaration.ok) return err(declaration.error.message);
+  const { offset, width: entrySize, count } = declaration.value.programs;
+  if (entrySize < elfProgramHeaderWidth(bits) || count === 0xffff)
     return err("unsupported ELF program header table");
-  if (entrySize * count > MAX_PROGRAM_HEADER_BYTES)
-    return err("ELF program header table is too large");
-  const table = await readExactly(
+  const table = await readBoundedExtent(
     read,
-    offset,
-    BigInt(entrySize * count),
-    size,
+    { offset, length: BigInt(entrySize * count), fileSize: size },
+    "ELF program header table",
+    policy,
   );
-  if (table === undefined) return err("ELF program header table is truncated");
+  if (!table.ok) return table;
   const headers: ElfProgramHeader[] = [];
   for (let index = 0; index < count; index += 1) {
     const parsed = readElfProgramHeader(
-      table.subarray(index * entrySize, (index + 1) * entrySize),
+      table.value.subarray(index * entrySize, (index + 1) * entrySize),
       bits,
       little,
     );
     if (!parsed.ok) return err(parsed.error.message);
+    if (parsed.value.type === PT_LOAD) {
+      const admitted = admitElfLoadSegment(parsed.value, bits);
+      if (!admitted.ok) return err(admitted.error.message);
+      if (
+        parsed.value.fileSize > 0n &&
+        parsed.value.offset + parsed.value.fileSize > BigInt(size)
+      )
+        return err("ELF load segment is truncated");
+    }
     headers.push(parsed.value);
   }
   return ok(headers);
@@ -108,6 +153,7 @@ const dynamicTags = (
   table: Buffer,
   bits: 32 | 64,
   little: boolean,
+  policy: DesktopLibraryPolicy,
 ): Result<
   {
     readonly needed: ReadonlySet<bigint>;
@@ -118,7 +164,6 @@ const dynamicTags = (
   },
   string
 > => {
-  const width = bits === 64 ? 16 : 8;
   const found = {
     needed: new Set<bigint>(),
     runpath: new Set<bigint>(),
@@ -127,30 +172,63 @@ const dynamicTags = (
     strsz: undefined as bigint | undefined,
   };
   const lists = new Map([
-    [DT_NEEDED, { offsets: found.needed, limit: MAX_NEEDED }],
-    [DT_RUNPATH, { offsets: found.runpath, limit: MAX_SEARCH_PATHS }],
-    [DT_RPATH, { offsets: found.rpath, limit: MAX_SEARCH_PATHS }],
+    [
+      DT_NEEDED,
+      {
+        offsets: found.needed,
+        limit: policy.libraries,
+        key: "libraries" as const,
+      },
+    ],
+    [
+      DT_RUNPATH,
+      {
+        offsets: found.runpath,
+        limit: policy.search_path_entries,
+        key: "search_path_entries" as const,
+      },
+    ],
+    [
+      DT_RPATH,
+      {
+        offsets: found.rpath,
+        limit: policy.search_path_entries,
+        key: "search_path_entries" as const,
+      },
+    ],
   ]);
-  for (let at = 0; at + width <= table.length; at += width) {
-    const entry = readElfDynamicEntry(
-      table.subarray(at, at + width),
-      bits,
-      little,
+  const walked = walkElfDynamicTable(
+    table,
+    { bits, littleEndian: little },
+    DEPENDENCY_SINGLETONS,
+    ({ tag, value }) => {
+      const list = lists.get(tag);
+      if (list !== undefined) {
+        list.offsets.add(value);
+        if (list.offsets.size > list.limit)
+          return err(
+            desktopLibraryLimit(
+              policy,
+              list.key,
+              `ELF dynamic table ${tag === DT_NEEDED ? "needed libraries" : "search path entries"}`,
+            ),
+          );
+      } else if (tag === DT_STRTAB) found.strtab = value;
+      else if (tag === DT_STRSZ) found.strsz = value;
+      return undefined;
+    },
+  );
+  if (!walked.ok)
+    return err(
+      walked.error.kind === "visitor"
+        ? walked.error.error
+        : `Duplicate dynamic tag 0x${walked.error.tag.toString(16)}`,
     );
-    if (!entry.ok) return err(entry.error.message);
-    const { tag, value } = entry.value;
-    if (tag === 0n) return ok(found);
-    const list = lists.get(tag);
-    if (list !== undefined) {
-      list.offsets.add(value);
-      if (list.offsets.size > list.limit)
-        return err(
-          `ELF dynamic table names more than ${String(list.limit)} distinct ${tag === DT_NEEDED ? "needed libraries" : "search paths"}`,
-        );
-    } else if (tag === DT_STRTAB) found.strtab = value;
-    else if (tag === DT_STRSZ) found.strsz = value;
-  }
-  return err("ELF dynamic table has no DT_NULL terminator");
+  if (walked.value.trailingBytes !== 0)
+    return err("ELF PT_DYNAMIC size is not a whole number of entries");
+  return walked.value.terminatorOffset === null
+    ? err("ELF dynamic table has no DT_NULL terminator")
+    : ok(found);
 };
 
 /** The strings at the given offsets of the dynamic string table at file offset `at`, `bytes` long. */
@@ -158,24 +236,47 @@ const dynamicStrings = async (
   read: ReadAt,
   file: { readonly size: number; readonly at: bigint; readonly bytes: bigint },
   offsets: ReadonlySet<bigint>,
+  policy: DesktopLibraryPolicy,
 ): Promise<Result<readonly string[], string>> => {
   const values: string[] = [];
   for (const offset of offsets) {
     if (offset >= file.bytes)
       return err("ELF dynamic string lies outside its table");
     const length =
-      BigInt(MAX_STRING_BYTES) < file.bytes - offset
-        ? BigInt(MAX_STRING_BYTES)
+      BigInt(policy.string_bytes) < file.bytes - offset
+        ? BigInt(policy.string_bytes)
         : file.bytes - offset;
-    const window = await readExactly(read, file.at + offset, length, file.size);
-    const value =
-      window === undefined
-        ? null
-        : elfStringTableText(
-            observeElfStringTableEntry(window, 0, MAX_STRING_BYTES),
-          );
-    if (value === null) return err("ELF dynamic string is truncated");
-    values.push(value);
+    const window = await readBoundedExtent(
+      read,
+      { offset: file.at + offset, length, fileSize: file.size },
+      "ELF dynamic string",
+    );
+    if (!window.ok) return window;
+    const observed = observeElfStringTableEntry(
+      window.value,
+      0,
+      policy.string_bytes,
+    );
+    if (observed.state !== "terminated")
+      return err(
+        length < file.bytes - offset
+          ? desktopLibraryLimit(
+              policy,
+              "string_bytes",
+              "ELF dynamic string read",
+            )
+          : "ELF dynamic string is truncated",
+      );
+    // These strings become Node filesystem paths, not byte-preserving display
+    // labels. Only admit bytes that UTF-8 string paths can address exactly.
+    try {
+      values.push(decodeStrictUtf8(observed.bytes, "preserve"));
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return err(
+        "ELF dynamic lookup string is not valid UTF-8; its filesystem identity is unresolved",
+      );
+    }
   }
   return ok(values);
 };
@@ -194,47 +295,108 @@ const directories = (paths: readonly string[]): readonly string[] => [
 export const readElfDependencies = async (
   read: ReadAt,
   size: number,
-): Promise<Result<ElfDependencies, string>> => {
+  policy: DesktopLibraryPolicy = desktopLibraryPolicy(),
+  expected?: ElfLibraryIdentity,
+): Promise<Result<ElfDependencies, ElfDependenciesFailure>> => {
   const header = Buffer.from(await read(0, 64));
-  const fixed = readElfFixedHeader(header, size);
-  if (!fixed.ok) return fixed;
-  const { elfClass: bits, machine } = fixed.value;
-  const little = fixed.value.byteOrder === "little";
-  const headers = await programHeaders(read, header, size, bits);
+  const facts = readElfHeaderFacts(header, size);
+  if (!facts.ok)
+    return err({ kind: "unreadable", identity: null, reason: facts.error });
+  const identity: ElfLibraryIdentity = {
+    machine: facts.value.machine,
+    bits: facts.value.elfClass,
+    byte_order: facts.value.byteOrder,
+  };
+  if (expected !== undefined && !elfLibraryIdentityMatches(expected, identity))
+    return err({
+      kind: "incompatible",
+      identity,
+      reason: `Incompatible ELF library: expected machine ${expected.machine}, ELF${expected.bits}, ${expected.byte_order}-endian; observed machine ${identity.machine}, ELF${identity.bits}, ${identity.byte_order}-endian`,
+    });
+  const fixed = admitElfFixedHeaderFacts(facts.value, size);
+  if (!fixed.ok)
+    return err({ kind: "unreadable", identity, reason: fixed.error });
+  const dependencies = await readDependencyTables(
+    read,
+    header,
+    size,
+    identity,
+    policy,
+  );
+  return dependencies.ok
+    ? ok({ ...identity, ...dependencies.value })
+    : err({ kind: "unreadable", identity, reason: dependencies.error });
+};
+
+/** Parse dependency tables only after their candidate identity has been retained. */
+const readDependencyTables = async (
+  read: ReadAt,
+  header: Buffer,
+  size: number,
+  identity: ElfLibraryIdentity,
+  policy: DesktopLibraryPolicy,
+): Promise<
+  Result<Pick<ElfDependencies, "needed" | "runpath" | "rpath">, string>
+> => {
+  const { bits } = identity;
+  const little = identity.byte_order === "little";
+  const headers = await programHeaders(read, header, size, identity, policy);
   if (!headers.ok) return headers;
-  const none = { machine, bits, needed: [], runpath: undefined, rpath: [] };
-  const dynamic = headers.value.find((program) => program.type === PT_DYNAMIC);
+  const none = { needed: [], runpath: undefined, rpath: [] };
+  // The ELF gABI allows one PT_DYNAMIC; a repeat leaves the table ambiguous.
+  const programs = keyedBy(headers.value, ({ type }) => type);
+  const dynamicProgram = uniqueKeyed(programs, PT_DYNAMIC);
+  if (!dynamicProgram.ok)
+    return err(
+      `ELF image declares ${String(dynamicProgram.error.ordinals.length)} PT_DYNAMIC program headers`,
+    );
+  const dynamic = dynamicProgram.value;
   if (dynamic === undefined) return ok(none);
-  if (dynamic.fileSize > BigInt(MAX_DYNAMIC_BYTES))
-    return err("ELF dynamic table is too large");
-  const table = await readExactly(read, dynamic.offset, dynamic.fileSize, size);
-  if (table === undefined) return err("ELF dynamic table is truncated");
-  const tags = dynamicTags(table, bits, little);
+  const table = await readBoundedExtent(
+    read,
+    { offset: dynamic.offset, length: dynamic.fileSize, fileSize: size },
+    "ELF dynamic table",
+    policy,
+  );
+  if (!table.ok) return table;
+  const tags = dynamicTags(table.value, bits, little, policy);
   if (!tags.ok) return tags;
   const { strtab, strsz, needed, runpath, rpath } = tags.value;
-  const stringsAt =
-    strtab === undefined
-      ? undefined
-      : fileOffset(
-          headers.value.filter((program) => program.type === PT_LOAD),
-          strtab,
-        );
-  if (stringsAt === undefined || strsz === undefined)
-    return needed.size + runpath.size + rpath.size === 0
-      ? ok(none)
-      : err("ELF dynamic string table is not mapped from the file");
-  const strings = { size, at: stringsAt, bytes: strsz };
-  const names = await dynamicStrings(read, strings, needed);
+  if (needed.size + runpath.size + rpath.size === 0) return ok(none);
+  if (strtab === undefined || strsz === undefined)
+    return err("ELF dynamic string table is not mapped from the file");
+  if (strsz > BigInt(size))
+    return err("ELF dynamic string table is not mapped from the file");
+  const fileBacked: FileMapping[] = [];
+  const zeroFills: ZeroFillMapping[] = [];
+  for (const load of allKeyed(programs, PT_LOAD)) {
+    const span = elfLoadSpans(load);
+    if (span.fileBacked !== undefined) fileBacked.push(span.fileBacked);
+    if (span.zeroFill !== undefined) zeroFills.push(span.zeroFill);
+  }
+  const stringsAt = resolveMappedFileOffset(
+    fileBacked,
+    strtab,
+    Number(strsz),
+    zeroFills,
+  );
+  if (!stringsAt.ok)
+    return err(
+      stringsAt.error.reason === "ambiguous"
+        ? "ELF dynamic string table has ambiguous file mappings"
+        : "ELF dynamic string table is not mapped from the file",
+    );
+  const strings = { size, at: BigInt(stringsAt.value), bytes: strsz };
+  const names = await dynamicStrings(read, strings, needed, policy);
   if (!names.ok) return names;
   const search = await dynamicStrings(
     read,
     strings,
     runpath.size > 0 ? runpath : rpath,
+    policy,
   );
   if (!search.ok) return search;
   return ok({
-    machine,
-    bits,
     needed: [...new Set(names.value)],
     runpath: runpath.size > 0 ? directories(search.value) : undefined,
     rpath: runpath.size > 0 ? [] : directories(search.value),

@@ -1,5 +1,11 @@
+import type { AnalysisDatabaseEngine } from "./analysisDatabase.js";
 import type { DolHeader } from "./gamecubeDol.js";
-import type { ZipPackageFormat } from "./zipPackageFormat.js";
+import type {
+  ArchitectureVariant,
+  RawEntryIsaMode,
+} from "./architectureVariant.js";
+import type { TargetFormatsOfKind } from "./targetFormats.js";
+import type { BundleExecutableSelection } from "./apple/bundleExecutableProvenance.js";
 
 /** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
 export const BINARY_ARCHITECTURES = [
@@ -14,6 +20,7 @@ export const BINARY_ARCHITECTURES = [
   "powerpc",
   "m68k",
   "hexagon",
+  "xtensa",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
 
@@ -37,15 +44,63 @@ export interface ElfFamilyMetadata {
   readonly byteOrder: "little" | "big";
   readonly type: number;
   readonly flags: number;
+  readonly hasInterpreter?: boolean;
 }
 
+/**
+ * Admitted headerless load. File offset 0 maps at `baseAddress` and analysis
+ * starts at `entryPoint`; consumers read each role here instead of deriving
+ * one from the other.
+ */
+export interface RawBinaryLoad {
+  /** Canonical address of file offset 0. */
+  readonly baseAddress: string;
+  /** Caller-named profile variant; absent for the family's generic decoder. */
+  readonly architectureVariant?: ArchitectureVariant;
+  /** Canonical code entry. */
+  readonly entryPoint: string;
+  /** Instruction set at the entry, when the variant fixes one. */
+  readonly entryIsaMode?: RawEntryIsaMode;
+  readonly entrySource: RawBinaryEntrySource;
+}
+
+/**
+ * Whether the caller chose the entry or it was read from a vector table.
+ * Only canonical values are kept: caller spellings are not facts about the
+ * load, and a session reused across spellings must report the same load.
+ */
+export type RawBinaryEntrySource =
+  | { readonly kind: "caller" }
+  | {
+      readonly kind: "vector-table";
+      /** Canonical address of word 0. */
+      readonly address: string;
+      /** Word 1 as read, including its Thumb bit. */
+      readonly resetVector: string;
+      /** Word 0 as read; observed and not validated. */
+      readonly initialStackPointer: string;
+    };
+
+/** Prefix shared by CodeView RVA mapping and both payload readers. */
+export const PE_CODEVIEW_PREFIX_BYTES = 4096;
+
+export type PeCodeViewPath =
+  | {
+      readonly pdbPath: string;
+      readonly pdbFileName: string;
+    }
+  | {
+      readonly pdbPath: null;
+      readonly pdbFileName: null;
+      /** Exact bytes before the record's NUL terminator, with unknown text decoding. */
+      readonly pdbPathBytesHex: string;
+    };
+
 /** Referenced CodeView debug symbols from a PE debug directory. */
-export interface PeCodeViewRecord {
-  readonly pdbPath: string;
-  readonly pdbFileName: string;
+export type PeCodeViewRecord = PeCodeViewPath & {
   readonly guid: string | null;
   readonly age: number;
-}
+};
 
 /** Families whose parsed target variant carries `ElfFamilyMetadata`. */
 export const ELF_METADATA_ARCHITECTURES = [
@@ -53,20 +108,74 @@ export const ELF_METADATA_ARCHITECTURES = [
   "riscv",
   "powerpc",
 ] as const satisfies readonly BinaryArchitecture[];
-export type ElfMetadataArchitecture =
-  (typeof ELF_METADATA_ARCHITECTURES)[number];
 
-/** Families whose ISA and ABI need a separate ELF declaration to be admitted. */
-export const isElfMetadataArchitecture = (
-  architecture: BinaryArchitecture,
-): architecture is ElfMetadataArchitecture =>
-  (ELF_METADATA_ARCHITECTURES as readonly string[]).includes(architecture);
+/** Families that require a specialized target variant instead of generic headers. */
+export const HEADER_ARCHITECTURE_EXCLUSIONS = [
+  ...ELF_METADATA_ARCHITECTURES,
+  ...RAW_ONLY_ARCHITECTURES,
+  "hexagon",
+  "xtensa",
+  "arm64_32",
+] as const satisfies readonly BinaryArchitecture[];
 
-/** Recognized family with no ELF metadata member; the header alone is the fact. */
+/** Recognized family with no specialized target member; the header alone is the fact. */
 export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
-  ElfMetadataArchitecture | RawOnlyArchitecture | "hexagon" | "arm64_32"
+  (typeof HEADER_ARCHITECTURE_EXCLUSIONS)[number]
 >;
+
+/** Typed declaration-inspection limitation; consumers switch on `kind`, never prose. */
+export type MipsElfLimitation =
+  | {
+      readonly kind: "truncated_section_table";
+      readonly offset: number;
+      readonly examined: number;
+      readonly declared: number;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "unexamined_declarations";
+      readonly message: string;
+    };
+
+/** Extract human-readable messages from typed MIPS ELF inspection limitations. */
+export const mipsLimitationMessages = (
+  limitations?: readonly MipsElfLimitation[],
+): readonly string[] =>
+  (limitations ?? []).map((limitation) => limitation.message);
+
+const MIPS_ET_EXEC = 2;
+const MIPS_ARCH_1 = 0x00000000;
+const MIPS_ARCH_32 = 0x50000000;
+const MIPS_ARCH_32R2 = 0x70000000;
+
+/**
+ * Whether an ELF header has the recordless legacy ELF32 MIPS ET_EXEC shape:
+ * MIPS-I / MIPS32 / MIPS32r2 with unspecified ABI and no ASE, machine,
+ * FP64, NAN2008, n32, or 32bitmode flags. Does not by itself establish lane
+ * admission (ABI flags, GNU attributes, and limitations are checked by the
+ * provider profile).
+ */
+export const isRecordlessLegacyMipsExecHeader = (
+  metadata: ElfFamilyMetadata,
+): boolean => {
+  const { flags } = metadata;
+  const arch = flags & 0xf0000000;
+  return (
+    metadata.elfClass === 32 &&
+    metadata.type === MIPS_ET_EXEC &&
+    (arch === MIPS_ARCH_1 ||
+      arch === MIPS_ARCH_32 ||
+      arch === MIPS_ARCH_32R2) &&
+    (flags & 0x0f000000) === 0 &&
+    (flags & 0x00ff0000) === 0 &&
+    (flags & 0x0000f000) === 0 &&
+    (flags & 0x20) === 0 &&
+    (flags & 0x40) === 0 &&
+    (flags & 0x100) === 0 &&
+    (flags & 0x600) === 0
+  );
+};
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
 export interface MipsElfMetadata extends ElfFamilyMetadata {
@@ -75,14 +184,23 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
   /** Undefined until inspected; null means no GNU attribute section was observed. */
   readonly gnuAttributes?: MipsGnuAttributes | null;
   /** Unavailable declaration sources; missing records there remain unknown. */
-  readonly limitations?: readonly string[];
+  readonly limitations?: readonly MipsElfLimitation[];
   /** Complete dynamic REL declarations, or the reason they could not be inspected. */
   readonly sharedLoad?:
     | {
         readonly status: "complete";
         readonly relocationCount: number;
+        /** The dynamic table declares DF_1_PIE. */
+        readonly declaresPie?: true;
         readonly relocationTypes: readonly number[];
         readonly symbolRelativeCount: number;
+        /** Every PT_LOAD virtual address with its program-header index, in header order. */
+        readonly loadAddresses: readonly {
+          readonly headerIndex: number;
+          readonly virtualAddress: number;
+        }[];
+        /** Android prelink trailer base; null when the file has no trailer. */
+        readonly prelinkBase: number | null;
       }
     | { readonly status: "unavailable"; readonly reason: string };
 }
@@ -91,7 +209,45 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
 export interface RiscvElfMetadata extends ElfFamilyMetadata {
   /** Undefined until `.riscv.attributes` is inspected. */
   readonly isa?: RiscvIsaDeclaration;
+  /** Undefined until the section table is inspected; read for ET_EXEC and ET_DYN. */
+  readonly sectionOverlap?: ElfSectionOverlap;
 }
+
+/** One allocated section as its header declares it; values are lowercase 0x-hex. */
+export interface ElfSectionExtent {
+  readonly index: number;
+  /** Display only; null when the section-name table was not read. */
+  readonly name: string | null;
+  readonly address: string;
+  readonly size: string;
+}
+
+/** A section that takes part in an overlap of another shape. */
+export interface ElfSectionWitness extends ElfSectionExtent {
+  readonly nobits: boolean;
+  readonly executable: boolean;
+}
+
+/**
+ * Allocated address ranges that an executable section of a fixed-address image
+ * shares with another section. `code-reservation` is the one verified shape: a
+ * NOBITS section that starts with an executable PROGBITS section and covers it,
+ * with no other section overlapping either, as ESP-IDF's `.flash_rodata_dummy`
+ * reserves `.flash.text`.
+ */
+export type ElfSectionOverlap =
+  | { readonly status: "none" }
+  | {
+      readonly status: "code-reservation";
+      readonly code: ElfSectionExtent & { readonly offset: string };
+      readonly reservation: ElfSectionExtent;
+    }
+  /** The two sections whose overlap departs from that shape. */
+  | {
+      readonly status: "unsupported";
+      readonly witnesses: readonly [ElfSectionWitness, ElfSectionWitness];
+    }
+  | { readonly status: "unavailable"; readonly reason: string };
 
 /** The ISA an image declares in `.riscv.attributes`; not proof of every instruction. */
 export type RiscvIsaDeclaration =
@@ -151,10 +307,13 @@ export interface UniversalMachOSliceIdentity extends UniversalMachOSlice {
 interface BinaryTargetIdentity {
   readonly path: string;
   readonly sourcePath?: string;
+  /** Verbatim selected spelling when it differs from the inspected file path. */
+  readonly callerInputPath?: string;
   /** Selected artifact spelling determines name-based format hints and external companions. */
   readonly artifactSelectedPath?: string;
-  /** Info.plist of the app bundle the target was resolved from. */
+  /** Info.plist of the Apple bundle the target was resolved from. */
   readonly bundleInfoPlist?: string;
+  readonly bundleExecutableSelection?: BundleExecutableSelection;
   readonly sha256: string;
 }
 
@@ -214,6 +373,14 @@ export type BinaryTarget =
     })
   | (BinaryTargetIdentity & {
       readonly kind: "executable";
+      readonly format: "elf";
+      readonly architecture: "xtensa";
+      readonly availableArchitectures: readonly "xtensa"[];
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
       readonly format: "mach-o";
       readonly architecture: "arm64_32";
       readonly availableArchitectures: readonly "arm64_32"[];
@@ -233,6 +400,8 @@ export type BinaryTarget =
       readonly universalSlice: UniversalMachOSlice;
       /** Exact validated FAT declarations, when supplied by target admission. */
       readonly universalSlices?: readonly UniversalMachOSliceIdentity[];
+      /** Physical FAT table width observed at target admission. */
+      readonly universalContainerKind?: "fat32" | "fat64";
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -244,8 +413,7 @@ export type BinaryTarget =
         | HeaderArchitecture
         | RawOnlyArchitecture
       )[];
-      readonly entryPoint: string;
-      readonly entryPointSource: string;
+      readonly rawLoad: RawBinaryLoad;
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -283,26 +451,16 @@ export type BinaryTarget =
       NonExecutableMetadata & {
         readonly kind: "database";
         readonly format: "analysis-database";
+        /** Engine identified at admission; null when the database is unidentified. */
+        readonly databaseEngine: AnalysisDatabaseEngine | null;
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
         readonly kind: "archive";
-        readonly format:
-          | ZipPackageFormat
-          | "asar"
-          | "ines"
-          | "godot-pck"
-          | "unityfs"
-          | "wxapkg"
-          | "uimage"
-          | "dmg"
-          | "pkg"
-          | "intel-hex"
-          | "srec"
-          | "esp-image"
-          | "uf2"
-          | "dfuse"
-          | "fit";
+        readonly format: Exclude<
+          TargetFormatsOfKind<"archive">,
+          "esp-flash-image"
+        >;
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
@@ -314,7 +472,7 @@ export type BinaryTarget =
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
         readonly kind: "artifact";
-        readonly format: "plist" | "javascript" | "source-map";
+        readonly format: TargetFormatsOfKind<"artifact">;
       });
 
 /** Caller inputs that select how an ESP flash dump is read. */

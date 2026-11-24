@@ -1,4 +1,4 @@
-import { scanBinaryPlistScalars } from "../../src/artifacts/apple/PlistScalars.js";
+import { scanBinaryPlistScalars } from "../../src/domain/apple/plistScalars.js";
 import {
   readBinaryPlistObjectOffset,
   readBinaryPlistObjectTableLayout,

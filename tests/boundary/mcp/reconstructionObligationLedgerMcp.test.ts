@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { reconstructionProofApplicabilityCases } from "../../fixtures/reconstructionProofApplicability.js";
 import { reconstructionObligationLedgerSchema } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
 import type { ReconstructionObligationManifest } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
@@ -8,9 +9,11 @@ import { describe, expect, it } from "vitest";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.js";
 import {
   createEvidence,
   evidenceSchema,
+  evidenceSubjectInput,
 } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import {
@@ -26,6 +29,7 @@ import {
   reviewedObligation,
 } from "../../../src/application/ReconstructionObligationLedger.fixture.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 type LedgerRequest = (
   evidenceBundle: unknown,
@@ -41,7 +45,10 @@ const withLedgerClient = async (
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "obligation-ledger-test", version: "1" });
+  const client = new Client(
+    { name: "obligation-ledger-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -90,7 +97,7 @@ describe("reconstruction obligation ledger residual graph input", () => {
       relationships: [],
     });
     const mutation = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         predicateType: "rea.residual-unknown-mutation",
@@ -136,7 +143,7 @@ describe("reconstruction obligation ledger residual graph input", () => {
             : [],
       });
       const mutation = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           predicateType: "rea.residual-unknown-mutation",
@@ -202,14 +209,18 @@ describe("reconstruction obligation ledger process provider admission", () => {
     "preserves process provider admission for %s",
     async (_, provider, admitted) => {
       const source = processEvidence();
-      const record = createEvidence(undefined, provider, {
-        predicateType: source.predicate_type,
-        operation: source.operation,
-        parameters: source.parameters,
-        result: source.normalized_result,
-        confidence: source.confidence,
-        authority: source.authority,
-      });
+      const record = createEvidence(
+        evidenceSubjectInput(source.subject),
+        provider,
+        {
+          predicateType: source.predicate_type,
+          operation: source.operation,
+          parameters: source.parameters,
+          result: source.normalized_result,
+          confidence: source.confidence,
+          authority: source.authority,
+        },
+      );
       await withLedgerClient(async (request) => {
         const response = await request(createEvidenceBundle([record]));
         expect(response.isError).not.toBe(true);
@@ -243,11 +254,29 @@ describe("reconstruction obligation ledger process provider admission", () => {
   );
 });
 
+it("reports unmarked and later Evidence bundle formats on one MCP connection", async () => {
+  const { evidence_format: revision, ...unmarked } = createEvidenceBundle([]);
+  await withLedgerClient(async (request) => {
+    for (const [bundle, reason] of [
+      [unmarked, "This Evidence bundle predates format revision"],
+      [{ ...unmarked, evidence_format: revision + 1 }, "is not format"],
+    ] as const) {
+      const result = await request(bundle);
+      expect(result.isError).toBe(true);
+      const projected = parseMcpToolError(result);
+      expect(projected).toMatchObject(integrityError(reason));
+      expect(projected).toMatchObject(
+        integrityError(RECREATE_EVIDENCE_GUIDANCE),
+      );
+    }
+  });
+});
+
 describe("reconstruction obligation ledger MCP parity", () => {
   it("rejects noncanonical source bundles before ledger generation", async () => {
     const records = ["first", "second"].map((label) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           operation: "observe",
@@ -257,26 +286,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
       ),
     );
     const canonical = createEvidenceBundle(records);
-    const session = createTestBinarySession(() => ({
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "obligation-ledger-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const request = (evidenceBundle: unknown) =>
-        client.callTool({
-          name: "build_reconstruction_obligation_ledger",
-          arguments: {
-            evidence_bundle: evidenceBundle,
-            reviewed_obligations: [],
-            manifest: { bindings: [], contradictions: [] },
-          },
-        });
+    await withLedgerClient(async (request) => {
       const valid = await request(canonical);
       expect(valid.isError).not.toBe(true);
       expect(valid.structuredContent).toMatchObject({
@@ -288,18 +298,14 @@ describe("reconstruction obligation ledger MCP parity", () => {
       });
       expect(result.isError).toBe(true);
       expect(parseMcpToolError(result)).toMatchObject(
-        integrityError("Evidence bundle manifests are not canonical"),
+        integrityError("Evidence bundle sections are not canonical: records"),
       );
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-    }
+    });
   });
 
   it("distinguishes corrupt source bundles from missing caller-selected review references", async () => {
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "observe", parameters: {}, result: {} },
     );
@@ -342,35 +348,31 @@ describe("reconstruction obligation ledger MCP parity", () => {
         input.reviewed_obligations,
       );
       expect(result.isError).not.toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        normalized_result: { summary: MIXED_AUTHORITY_SUMMARY },
+      const ledger = reconstructionObligationLedgerSchema.parse(
+        evidenceSchema.parse(result.structuredContent).normalized_result,
+      );
+      expect(ledger.summary).toMatchObject(MIXED_AUTHORITY_SUMMARY);
+      const authorities = Object.fromEntries(
+        ledger.obligations.map(({ obligation_id, authority_references }) => [
+          obligation_id,
+          authority_references.map(
+            ({ authority, state }) => `${authority}/${state}`,
+          ),
+        ]),
+      );
+      expect(authorities).toEqual({
+        "review.mixed": expect.arrayContaining([
+          "shipped-artifact/candidate",
+          "controlled-replay/reviewed",
+        ]),
+        "review.shipped": ["shipped-artifact/candidate"],
       });
     });
   });
 
   it("returns the complete Evidence-backed ledger inline", async () => {
-    const session = createTestBinarySession(() => ({
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "obligation-ledger-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: "build_reconstruction_obligation_ledger",
-        arguments: {
-          evidence_bundle: createEvidenceBundle([]),
-          reviewed_obligations: [],
-          manifest: {
-            bindings: [],
-            contradictions: [],
-          },
-        },
-      });
+    await withLedgerClient(async (request) => {
+      const result = await request(createEvidenceBundle([]));
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
         evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
@@ -380,11 +382,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
           summary: { total: 0 },
         },
       });
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-    }
+    });
   });
 });
 

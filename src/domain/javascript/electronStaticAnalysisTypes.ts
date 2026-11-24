@@ -33,15 +33,36 @@ export type ElectronBrowserWindowPreload =
       readonly preload_resolution_context: null;
     };
 
-/** Statically visible BrowserWindow construction and preference surface. */
+/**
+ * Constructors that create a window-like Electron surface. Each one is read
+ * through the capability table in `electronWindowConstructorSurfaces.ts`,
+ * because they do not all expose the same ones.
+ */
+export type ElectronWindowConstructor =
+  | "BrowserWindow"
+  | "BaseWindow"
+  | "BrowserView"
+  | "WebContentsView";
+
+/** Statically visible window construction and preference surface. */
 export type ElectronBrowserWindowFinding = ElectronBrowserWindowPreload & {
+  /**
+   * Constructor that produced this surface. Absent means `BrowserWindow`; the
+   * others are named so the construction site is never read as a window API.
+   */
+  readonly window_constructor?: Exclude<
+    ElectronWindowConstructor,
+    "BrowserWindow"
+  >;
   readonly options_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences: readonly ElectronWebPreference[];
   /** Object syntax supporting constant substitution, separate from construction. */
   readonly resolution_sources?: readonly JavaScriptSourceRange[];
+  /** Electron identity is conditional on an unproved loader. */
+  readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 };
@@ -60,8 +81,10 @@ export type ElectronContextBridgeFinding = ElectronContextBridgeApiKey & {
   readonly api_status: "object-literal" | "dynamic" | "missing";
   readonly members: readonly string[];
   readonly unknown_members: number;
+  /** Electron identity is conditional on an unproved loader. */
+  readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 };
@@ -124,8 +147,10 @@ interface ElectronIpcFindingContext {
   readonly receiver?: ElectronIpcReceiver;
   /** Absent on direct syntax observations; wrappers require inferred evidence. */
   readonly resolution_basis?: "wrapper-substitution";
+  /** Electron identity is conditional on an unproved loader. */
+  readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
   /** Outer syntax invocation when a wrapper produced this underlying IPC call. */
@@ -137,7 +162,11 @@ export type ElectronIpcFinding = ElectronIpcDescriptor &
   ElectronIpcHandler &
   ElectronIpcFindingContext &
   (
-    | { readonly channel: string; readonly channel_expression: null }
+    | {
+        readonly channel: string;
+        readonly channel_expression: null;
+        readonly channel_basis?: "static-value";
+      }
     | {
         readonly channel: null;
         readonly channel_expression: string;
@@ -168,16 +197,20 @@ export interface ElectronSenderValidationFinding {
   readonly mechanism: string;
   readonly expected: ElectronStaticValue;
   readonly enforcement: "unknown";
+  /** Electron identity is conditional on an unproved loader. */
+  readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
 
 interface ElectronUtilityProcessFindingState {
   readonly service_name: string | null;
+  /** Electron identity is conditional on an unproved loader. */
+  readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -207,8 +240,10 @@ export interface ElectronNativeAddonBindingFinding {
   /** Omitted in legacy findings; omission means unknown, not false. */
   readonly namespace_access?: boolean;
   readonly dynamic_member_access?: boolean;
+  /** Electron identity is conditional on an unproved loader. */
+  readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -237,8 +272,50 @@ export interface ElectronProtocolFinding {
   readonly session: "default-protocol" | "default-session";
   /** Privilege keys with a literal `true`; null unless `role` is `privileged-scheme` with a literal object. */
   readonly enabled_privileges: readonly string[] | null;
+  /** Electron identity is conditional on an unproved loader. */
+  readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
+  readonly module_runtime?: string;
+  readonly location: JavaScriptSourceRange;
+}
+
+/** Source of a script's bytes: an inert path expression or dynamic syntax. */
+export type ElectronDynamicCodeSource =
+  | {
+      readonly source_path: string;
+      readonly source_path_base?:
+        | "source-directory"
+        | "literal-path"
+        | undefined;
+      readonly source_resolution_context: JavaScriptStaticPathContext;
+      readonly source_expression: null;
+    }
+  | {
+      readonly source_path: null;
+      readonly source_resolution_context: null;
+      readonly source_expression: string;
+    };
+
+/**
+ * Source syntax for one node:vm compilation. Cache declaration does not establish
+ * accepted bytes or runtime execution.
+ */
+export interface ElectronDynamicCodeFinding {
+  readonly api: "vm.Script" | "vm.compileFunction";
+  /**
+   * Whether cachedData is declared, proven absent, or unresolved in options.
+   */
+  readonly cached_data_status: "declared" | "absent" | "unknown";
+  /** The option or positional argument naming the backing cache artifact. */
+  readonly cached_data: ElectronDynamicCodeSource;
+  /**
+   * The source text argument when it is inert syntax, which is the case a
+   * bytecode-cache handoff replaces at runtime.
+   */
+  readonly source_text: ElectronStaticValue;
+  readonly module_key: string | null;
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -254,12 +331,16 @@ export interface ElectronStaticFindings {
   readonly utility_processes: readonly ElectronUtilityProcessFinding[];
   readonly native_addon_bindings: readonly ElectronNativeAddonBindingFinding[];
   readonly protocols: readonly ElectronProtocolFinding[];
+  /** `node:vm` compilations whose code may come from an opaque bytecode cache. */
+  readonly dynamic_code?: readonly ElectronDynamicCodeFinding[];
   /** Source-bound candidate paths through bundled exports and IPC closures. */
   readonly call_paths?: readonly ElectronCallPath[];
 }
 
 /** An Electron application path setter invocation or bound delegate capture. */
 export interface ElectronAppPathChangeFinding {
+  /** Electron identity is conditional on an unproved loader. */
+  readonly loader_authority?: "candidate";
   readonly module_key: string | null;
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
@@ -281,6 +362,8 @@ export interface ElectronCallPathStep {
 
 /** A statically substituted candidate, never a runtime reachability claim. */
 export interface ElectronCallPath {
+  /** One or more Electron identities depend on an unproved loader. */
+  readonly loader_authority?: "candidate";
   readonly entry_kind: "bridge-member" | "ipc-handler";
   readonly entry: string;
   /** Exact bridge API and property segments; `entry` remains display text. */

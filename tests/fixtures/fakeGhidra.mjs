@@ -1,6 +1,15 @@
 import { rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 
+import {
+  FAKE_GHIDRA_SHUTDOWN_ACK,
+  fakeGhidraAddressNameReply,
+  fakeGhidraFileOffsetReply,
+  fakeGhidraInventoryReply,
+  fakeGhidraSessionInfo,
+  fakeGhidraStringItem,
+} from "./fakeGhidraReplies.mjs";
+
 const configuration = JSON.parse(
   process.env.REA_GHIDRA_FIXTURE_CONFIG ?? "null",
 );
@@ -182,7 +191,11 @@ const handleRequest = (socket, server, request, state) => {
     if (request.method === "set_address_name") {
       state.checkpointDirty = true;
       socket.write(
-        JSON.stringify({ id: request.id, ok: true, result: "renamed" }) + "\n",
+        JSON.stringify({
+          id: request.id,
+          ok: true,
+          result: fakeGhidraAddressNameReply(request.params),
+        }) + "\n",
       );
       return;
     }
@@ -332,15 +345,79 @@ const handleRequest = (socket, server, request, state) => {
   }
   if (request.method === "address_to_file_offset") {
     socket.write(
-      `${JSON.stringify({ id: request.id, ...fileOffsetReply(request.params.address) })}\n`,
+      `${JSON.stringify({ id: request.id, ...fakeGhidraFileOffsetReply(request.params.address) })}\n`,
+    );
+    return;
+  }
+  if (["valid_then_invalid", "valid_then_invalid_split"].includes(state.mode)) {
+    if (request.method === "list_procedures") return;
+    if (request.method === "list_strings") {
+      const valid = Buffer.from(
+        `${JSON.stringify({ id: request.id, ok: true, result: "completed" })}\n`,
+      );
+      const invalid = Buffer.concat([
+        Buffer.from(`{"id":${request.id + 1},"ok":true,"result":"`),
+        Buffer.from([0xff]),
+        Buffer.from('"}\n'),
+      ]);
+      if (state.mode === "valid_then_invalid")
+        socket.write(Buffer.concat([valid, invalid]));
+      else {
+        socket.write(valid);
+        setTimeout(() => socket.write(invalid), 5);
+      }
+      return;
+    }
+  }
+  if (request.method === "list_strings" && state.mode === "valid_utf8_end") {
+    socket.end(JSON.stringify({ id: request.id, ok: true, result: "�雪🦊" }));
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8_end") {
+    socket.end(
+      Buffer.concat([
+        Buffer.from(`{"id":${request.id},"ok":true,"result":"`),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    return;
+  }
+  if (
+    request.method === "list_strings" &&
+    state.mode === "invalid_utf8_split"
+  ) {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    setTimeout(
+      () =>
+        socket.write(Buffer.from([0x28, 0xa1, 0x22, 0x7d, 0x5d, 0x7d, 0x0a])),
+      5,
+    );
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8") {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xff]),
+        Buffer.from('"}]}\n'),
+      ]),
     );
     return;
   }
   const inventory =
     request.method === "list_strings" && state.mode === "fragmented"
-      ? [stringItem("0x2000", "fixture 雪🦊")]
+      ? [fakeGhidraStringItem("0x2000", "fixture �雪🦊")]
       : request.method === "list_strings" && state.mode === "oversized_result"
-        ? [stringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
+        ? [fakeGhidraStringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
         : state.mode === "unicode_search" &&
             ["search_procedures", "search_strings"].includes(request.method)
           ? [
@@ -349,7 +426,7 @@ const handleRequest = (socket, server, request, state) => {
               { address: "0x1002", value: "İource" },
               { address: "0x1003", value: "unrelated" },
             ]
-          : inventoryResultFor(request.method, request.params);
+          : fakeGhidraInventoryReply(request.method, request.params);
   if (inventory !== undefined) {
     const response = `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`;
     if (state.mode === "fragmented") {
@@ -376,10 +453,10 @@ const handleRequest = (socket, server, request, state) => {
             }
           : {
               ok: true,
-              result: {
-                shutdown: state.mode !== "invalid_shutdown_ack",
-                project_ephemeral: true,
-              },
+              result:
+                state.mode === "invalid_shutdown_ack"
+                  ? { ...FAKE_GHIDRA_SHUTDOWN_ACK, shutdown: false }
+                  : FAKE_GHIDRA_SHUTDOWN_ACK,
             }),
       })}\n`,
     );
@@ -509,8 +586,9 @@ const handlePing = (socket, request, state) => {
   }
   if (state.mode === "hang_after_start" && state.pings.value > 1) return;
   const result = {
-    ...sessionInfo({
+    ...fakeGhidraSessionInfo({
       runId: state.runId,
+      transport,
       providerVersion:
         state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
       profileDigest: state.profileDigest,
@@ -526,260 +604,5 @@ const handlePing = (socket, request, state) => {
     setTimeout(() => socket.write(response.slice(split)), 5);
   } else socket.write(response);
 };
-
-const sessionInfo = ({
-  runId: sessionRunId,
-  providerVersion: version,
-  profileDigest: digest,
-  targetSha256: sha256,
-  timedOut,
-}) => ({
-  name: "REA Ghidra bridge",
-  run_id: sessionRunId,
-  profile_digest: digest,
-  provider: { id: "ghidra", version },
-  read_only: transport !== "unix-socket",
-  analysis_complete: !timedOut,
-  analysis_timed_out: timedOut,
-  capabilities: [
-    "read_binary_inventory_summary",
-    "ping",
-    "shutdown",
-    "inspect_native_load_image",
-    "read_bytes",
-    "search_bytes",
-    "address_to_file_offset",
-    "address_name",
-    "list_documents",
-    "list_names",
-    "list_procedures",
-    "list_segments",
-    "list_strings",
-    "procedure_address",
-    "resolve_containing_procedure",
-    "search_procedures",
-    "search_strings",
-    "set_address_name",
-    "set_addresses_names",
-    "annotate_native_function",
-    "inspect_native_data_type",
-    "inspect_native_instruction",
-    "resolve_native_call_targets",
-    "analyze_function",
-    "procedure_assembly",
-    "procedure_callees",
-    "procedure_callers",
-    "procedure_info",
-    "procedure_pseudo_code",
-    "read_function_instructions",
-    "procedure_references",
-    "xrefs",
-  ].filter(
-    (value) =>
-      transport === "unix-socket" ||
-      ![
-        "annotate_native_function",
-        "set_address_name",
-        "set_addresses_names",
-      ].includes(value),
-  ),
-  target: {
-    name: "fixture",
-    language_id: "x86:LE:64:default",
-    compiler_spec_id: "gcc",
-    image_base: "0x1000",
-    default_address_space: "ram",
-    sha256,
-  },
-});
-
-const inventoryResultFor = (method, params) => {
-  switch (method) {
-    case "read_binary_inventory_summary":
-      return {
-        document: "fixture",
-        segments: inventoryResultFor("list_segments", {}),
-        procedure_count: inventoryResultFor("list_procedures", {}).length,
-        string_count: inventoryResultFor("list_strings", {}).length,
-      };
-    case "search_bytes": {
-      const continued = params.cursor === "fixture-second-page";
-      const paged = params.limit === 1 && !continued;
-      const addresses = continued
-        ? ["0x1005"]
-        : paged
-          ? ["0x1000"]
-          : ["0x1000", "0x1005"];
-      return {
-        matches: addresses.map((address) => ({
-          address,
-          segment: ".text",
-          file_offset: address === "0x1000" ? 0 : 5,
-          procedure: { address: "0x1000", name: "fixture_main" },
-        })),
-        searched: {
-          blocks: [
-            {
-              segment: ".text",
-              start: continued ? "0x1005" : "0x1000",
-              end: "0x1009",
-              bytes: continued ? 5 : 10,
-            },
-          ],
-          bytes: continued ? 5 : 10,
-          skipped_uninitialized: [
-            {
-              segment: BSS_BLOCK.name,
-              start: hex(BSS_BLOCK.start),
-              end: hex(BSS_BLOCK.start + BSS_BLOCK.size - 1n),
-              bytes: Number(BSS_BLOCK.size),
-            },
-          ],
-          skipped_not_loaded: [],
-        },
-        complete: !paged,
-        next_cursor: paged ? "fixture-second-page" : null,
-      };
-    }
-    case "address_name":
-      return "fixture_main";
-    case "list_documents":
-      return ["fixture"];
-    case "list_names":
-      return [nameItem()];
-    case "list_procedures":
-      return [procedureItem()];
-    case "list_segments":
-      return [segmentItem()];
-    case "list_strings":
-      return [stringItem("0x2000", "fixture value")];
-    case "procedure_address":
-      return "0x1000";
-    case "resolve_containing_procedure":
-      return containingProcedureResult();
-    case "search_procedures":
-      return [procedureSearchItem()];
-    case "search_strings":
-      return [stringSearchItem()];
-    default:
-      return undefined;
-  }
-};
-
-// One owner for the fixture's memory blocks. Each reply uses the production
-// bridge's end convention: list_segments reports an exclusive end, byte-search
-// coverage an inclusive one, and address_to_file_offset tests containment.
-const TEXT_BLOCK = {
-  name: ".text",
-  start: 0x1000n,
-  size: 0x100n,
-  fileOffset: 0n,
-};
-const BSS_BLOCK = {
-  name: ".bss",
-  start: 0x2000n,
-  size: 0x10n,
-  fileOffset: null,
-};
-const FIXTURE_BLOCKS = [TEXT_BLOCK, BSS_BLOCK];
-const hex = (value) => `0x${value.toString(16)}`;
-
-const fileOffsetReply = (address) => {
-  const digits = /^(?:0[xX])?([0-9a-fA-F]+)$/u.exec(address)?.[1];
-  const failure = (code, message) => ({ ok: false, error: { code, message } });
-  if (digits === undefined)
-    return failure("invalid_request", `Invalid address: ${address}`);
-  const value = BigInt(`0x${digits}`);
-  const at = hex(value);
-  const block = FIXTURE_BLOCKS.find(
-    ({ start, size }) => value >= start && value < start + size,
-  );
-  if (block === undefined)
-    return failure(
-      "address_unmapped",
-      `Address ${at} is outside every Ghidra memory block`,
-    );
-  if (block.fileOffset === null)
-    return failure(
-      "address_uninitialized",
-      `Address ${at} is in uninitialized Ghidra memory block ${block.name}`,
-    );
-  return {
-    ok: true,
-    result: {
-      address: at,
-      file_offset: Number(block.fileOffset + value - block.start),
-    },
-  };
-};
-
-const nameItem = () => ({
-  address: "0x1000",
-  value: "fixture_main",
-  symbol: {
-    primary: true,
-    dynamic: false,
-    external: false,
-    type: "function",
-    source: "analysis",
-  },
-});
-
-const procedureItem = () => ({
-  address: "0x1000",
-  value: "fixture_main",
-  procedure: { external: false, thunk: false, thunk_target: null },
-});
-
-const segmentItem = () => ({
-  name: TEXT_BLOCK.name,
-  start: hex(TEXT_BLOCK.start),
-  end: hex(TEXT_BLOCK.start + TEXT_BLOCK.size),
-  readable: true,
-  writable: false,
-  executable: true,
-  permissions: { available: true, source: "ghidra-memory-block" },
-  provenance: "ghidra-memory-block",
-  address_space: "ram",
-  image_base: "0x1000",
-  initialized: true,
-  overlay: false,
-  sections: [],
-});
-
-const stringItem = (address, value) => ({
-  address,
-  value,
-  string: {
-    encoding: "UTF-8",
-    termination: "present_or_not_required",
-    byte_length: Buffer.byteLength(value, "utf8") + 1,
-  },
-});
-
-const containingProcedureResult = () => ({
-  query_address: "0x1001",
-  found: true,
-  procedure: {
-    address: "0x1000",
-    name: "fixture_main",
-    classification: {
-      external: false,
-      thunk: false,
-      thunk_target: null,
-      provenance: "ghidra-function-manager",
-    },
-  },
-});
-
-const procedureSearchItem = () => ({
-  address: "0x1000",
-  value: "fixture_main",
-});
-
-const stringSearchItem = () => ({
-  address: "0x2000",
-  value: "fixture value",
-});
 
 await endpointPublication;

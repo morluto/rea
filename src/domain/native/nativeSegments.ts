@@ -16,6 +16,37 @@ export interface SegmentSummary {
   readonly address_space?: string;
 }
 
+const availableMemoryPermissions = z.object({
+  available: z.literal(true),
+  source: z.literal("ghidra-memory-block"),
+});
+
+/** One reported memory region with its permission availability and provenance. */
+const nativeMemoryRegionSchema = z.object({
+  name: z.string(),
+  start: z.string(),
+  end: z.string(),
+  readable: z.boolean().nullable(),
+  writable: z.boolean().nullable(),
+  executable: z.boolean().nullable(),
+  permissions: z.discriminatedUnion("available", [
+    z.object({ available: z.literal(false), reason: z.string() }),
+    availableMemoryPermissions,
+  ]),
+  provenance: z.enum(["hopper-public-python-api", "ghidra-memory-block"]),
+  address_space: z.string().optional(),
+  image_base: z.string().optional(),
+  initialized: z.boolean().optional(),
+  overlay: z.boolean().optional(),
+});
+
+/** Provider segment list with nested sections, as delivered by list_segments. */
+export const nativeSegmentListSchema = z.array(
+  nativeMemoryRegionSchema.extend({
+    sections: z.array(nativeMemoryRegionSchema),
+  }),
+);
+
 const segmentSchema = z.object({
   name: z.string(),
   start: z.string(),

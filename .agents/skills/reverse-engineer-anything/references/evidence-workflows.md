@@ -47,7 +47,7 @@ member comparison CLI still takes two assembly paths; process comparison takes
 two capture Evidence JSON paths. Check command help for the installed version.
 An input bundle grants no implicit file lookup: `evidence-file` and historical
 graph file selectors are accepted only by contracts advertising them. See the
-[CLI reuse guide](https://github.com/morluto/rea/blob/main/docs/cli.md#import-export-and-compare-evidence).
+[CLI reuse guide](https://github.com/morluto/rea/blob/main/docs/getting-started/cli.md#import-export-and-compare-evidence).
 
 Completed `inspect_artifact` inventory also supports a summary and
 `view: {kind: "inventory", collection: "occurrences", logical_paths: ["package.json", "main.js"]}`.
@@ -174,3 +174,20 @@ coverage describes selected retained rows; `summary.coverage` or `exports.covera
 still describes the source table, so an empty partial page does not prove absence.
 CLI `inspect-native-exports --detail summary --evidence_output PATH` saves the
 complete bundle for later `inspect-analysis-view --evidence-bundle PATH` requests.
+
+For an ELF load-time dependency question, `inspect_elf_dependencies` accepts
+`detail: "summary"` and retains the complete inventory. Query
+`inspect_analysis_view` with `view: {kind: "elf-dependencies", collection:
+"needed" | "versions" | "definitions" | "maxima" | "imports", names:
+["selected_name"], fields: ["name"], offset: 0, limit: 32}` and the reported
+parent Evidence ID. Collection `"maxima"` matches `names` against namespaces
+such as `GLIBC` and selects `fields` from `namespace`, `maximum`, and
+`evidence_kind`, for example `fields: ["namespace", "maximum"]`. Collection
+`"issues"` takes only `indices`, `offset`, and `limit`.
+Duplicate `DT_NEEDED` names survive; use `source_index` with the parent ID for
+stable identity. Page coverage describes selected retained rows;
+`summary.coverage` or `dependencies.coverage` still describes the source
+tables, so an empty partial page does not prove absence. CLI
+`inspect-elf-dependencies --detail summary --evidence_output PATH` saves the
+complete bundle for later `inspect-analysis-view --evidence-bundle PATH`
+requests.

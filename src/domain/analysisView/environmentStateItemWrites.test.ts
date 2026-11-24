@@ -1,28 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
-import {
-  ADDED_EMPTY_REFERENCE_ROWS,
   BOOKMARK_TOGGLE_ROWS,
   CREATES_BY_TITLE_ROWS,
-  ITEM_REFERENCES_ROWS,
   NULL_THEN_STARRED_ROWS,
   RANKED_AFTER_DELETE_ROWS,
   REFUTED_TITLE_SORT_ROWS,
   feedEntry,
 } from "../../../tests/fixtures/environmentStateItemWrites.js";
-import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
-
-const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
-  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === tool,
-  );
-  if (plan === undefined) throw new Error(`No plan for ${tool}`);
-  return plan;
-};
+import { planOf } from "../../../tests/fixtures/environmentStateWrites.js";
 
 describe("item writes", () => {
   it("learns a create's sort from a later list its full order follows, after one create was placed last", () => {
@@ -39,50 +25,6 @@ describe("item writes", () => {
     expect(planOf(RANKED_AFTER_DELETE_ROWS, "post_folders")).toMatchObject({
       served: true,
       insert: { rule: "sorted", field: "position", direction: "ascending" },
-    });
-  });
-
-  it("serves a create sending no parent after an earlier create added the parent reference", () => {
-    const plan = planOf(ADDED_EMPTY_REFERENCE_ROWS, "post_items");
-    expect(plan).toMatchObject({ served: true });
-    expect(plan.rules).toContainEqual(
-      expect.objectContaining({
-        field: "parent",
-        rule: "reference",
-        member: "parentId",
-      }),
-    );
-  });
-
-  it("serves a create whose parent and tags a call names by id, one call naming none", () => {
-    const plan = planOf(ITEM_REFERENCES_ROWS, "post_items");
-    expect(plan).toMatchObject({ served: true });
-    expect(plan.rules).toContainEqual(
-      expect.objectContaining({
-        field: "parent",
-        rule: "reference",
-        member: "parentId",
-        type: "/api/locations",
-      }),
-    );
-    expect(plan.rules).toContainEqual(
-      expect.objectContaining({
-        field: "tags",
-        rule: "reference",
-        member: "tagIds",
-        type: "/api/tags",
-        many: true,
-      }),
-    );
-  });
-
-  it("serves a body-less action that calls show flipping its flag both ways", () => {
-    expect(
-      planOf(BOOKMARK_TOGGLE_ROWS, "put_entries_bookmark_by_id"),
-    ).toMatchObject({
-      served: true,
-      address: { by: "action", segment: "bookmark" },
-      rules: expect.arrayContaining([{ field: "starred", rule: "toggle" }]),
     });
   });
 

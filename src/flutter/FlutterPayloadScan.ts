@@ -9,32 +9,31 @@ import { Buffer } from "node:buffer";
  * looked up externally.
  */
 
-/** First index of `needle` in `haystack` at or after `from`, or -1. */
-const findBytes = (
-  haystack: Uint8Array,
-  needle: Uint8Array,
-  from: number,
-): number => {
-  if (needle.length === 0) return from;
-  const last = haystack.length - needle.length;
-  for (let index = from; index <= last; index += 1) {
-    let matched = true;
-    for (let probe = 0; probe < needle.length; probe += 1) {
-      if (haystack[index + probe] !== needle[probe]) {
-        matched = false;
-        break;
-      }
-    }
-    if (matched) return index;
-  }
-  return -1;
-};
-
 /** Magic starting every Dart VM and isolate snapshot section. */
 export const DART_SNAPSHOT_MAGIC = Uint8Array.from([0xf5, 0xf5, 0xdc, 0xdc]);
+const DART_SNAPSHOT_MAGIC_BUFFER = Buffer.from(DART_SNAPSHOT_MAGIC);
 export const SNAPSHOT_HASH_OFFSET = 20;
 export const SNAPSHOT_HASH_LENGTH = 32;
-export const SNAPSHOT_HASH_PATTERN = /^[0-9a-f]{32}$/u;
+const SNAPSHOT_RECORD_BYTES = SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH;
+const SNAPSHOT_HASH_PATTERN = /^[0-9a-f]{32}$/u;
+
+const asBuffer = (bytes: Uint8Array): Buffer =>
+  Buffer.isBuffer(bytes)
+    ? bytes
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+export const readDartSnapshotHash = (
+  bytes: Uint8Array,
+  snapshotOffset: number,
+): string | null => {
+  const start = snapshotOffset + SNAPSHOT_HASH_OFFSET;
+  const candidate = asBuffer(bytes).toString(
+    "latin1",
+    start,
+    start + SNAPSHOT_HASH_LENGTH,
+  );
+  return SNAPSHOT_HASH_PATTERN.test(candidate) ? candidate : null;
+};
 
 export interface SnapshotHashScan {
   /** Snapshot sections found. */
@@ -57,43 +56,80 @@ export class SnapshotHashScanner {
   #capped = false;
   private readonly candidates: string[] = [];
   private readonly candidateSet = new Set<string>();
-  #buffer = new Uint8Array(0);
+  #buffer: Buffer = Buffer.alloc(0);
+
+  #recordCandidate(candidate: string | null): void {
+    if (candidate === null) return;
+    if (!this.candidateSet.has(candidate)) {
+      if (this.candidates.length === MAX_SNAPSHOT_HASH_CANDIDATES)
+        this.#capped = true;
+      else {
+        this.candidateSet.add(candidate);
+        this.candidates.push(candidate);
+      }
+    }
+    // Only valid hash records count toward source agreement; a complete
+    // magic record whose field is not lowercase hex is not a source.
+    this.#sources += 1;
+  }
 
   push(chunk: Uint8Array): void {
-    const joined = new Uint8Array(this.#buffer.length + chunk.length);
-    joined.set(this.#buffer, 0);
-    joined.set(chunk, this.#buffer.length);
-    // Carried bytes are an unprocessed pending magic or too short to hold a
-    // magic, so rescanning them never counts a record twice. Within a chunk
-    // the scan resumes after each magic, so a magic inside a previous
-    // record's span is found wherever the chunk boundaries fall.
-    let offset = 0;
+    if (chunk.length === 0) return;
+    const chunkBuf = asBuffer(chunk);
+    // For small chunks (including bytewise streaming), scan the tiny joined
+    // buffer directly with Buffer.indexOf; for large chunks, scan a bounded
+    // seam across the boundary and then scan chunkBuf zero-copy.
+    if (this.#buffer.length > 0 && chunkBuf.length < SNAPSHOT_RECORD_BYTES) {
+      const joined = Buffer.concat(
+        [this.#buffer, chunkBuf],
+        this.#buffer.length + chunkBuf.length,
+      );
+      let offset = 0;
+      let pendingMagic: number | null = null;
+      for (;;) {
+        const magic = joined.indexOf(DART_SNAPSHOT_MAGIC_BUFFER, offset);
+        if (magic === -1) break;
+        if (magic + SNAPSHOT_RECORD_BYTES > joined.length) {
+          pendingMagic = magic;
+          break;
+        }
+        this.#recordCandidate(readDartSnapshotHash(joined, magic));
+        offset = magic + DART_SNAPSHOT_MAGIC.length;
+      }
+      const keepFrom =
+        pendingMagic ??
+        Math.max(0, joined.length - (DART_SNAPSHOT_MAGIC.length - 1));
+      this.#buffer = Buffer.from(joined.subarray(keepFrom));
+      return;
+    }
+
+    let chunkStart = 0;
+    if (this.#buffer.length > 0) {
+      const seamTail = SNAPSHOT_RECORD_BYTES - 1;
+      const seam = Buffer.allocUnsafe(this.#buffer.length + seamTail);
+      this.#buffer.copy(seam, 0);
+      chunkBuf.copy(seam, this.#buffer.length, 0, seamTail);
+      let offset = 0;
+      while (offset < this.#buffer.length) {
+        const magic = seam.indexOf(DART_SNAPSHOT_MAGIC_BUFFER, offset);
+        if (magic === -1 || magic >= this.#buffer.length) break;
+        this.#recordCandidate(readDartSnapshotHash(seam, magic));
+        offset = magic + DART_SNAPSHOT_MAGIC.length;
+      }
+      if (offset > this.#buffer.length)
+        chunkStart = offset - this.#buffer.length;
+    }
+
+    let offset = chunkStart;
     let pendingMagic: number | null = null;
     for (;;) {
-      const magic = findBytes(joined, DART_SNAPSHOT_MAGIC, offset);
+      const magic = chunkBuf.indexOf(DART_SNAPSHOT_MAGIC_BUFFER, offset);
       if (magic === -1) break;
-      if (magic + SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH > joined.length) {
+      if (magic + SNAPSHOT_RECORD_BYTES > chunkBuf.length) {
         pendingMagic = magic;
         break;
       }
-      const candidate = Buffer.from(
-        joined.slice(
-          magic + SNAPSHOT_HASH_OFFSET,
-          magic + SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH,
-        ),
-      ).toString("latin1");
-      const isValidHash = SNAPSHOT_HASH_PATTERN.test(candidate);
-      if (isValidHash && !this.candidateSet.has(candidate)) {
-        if (this.candidates.length === MAX_SNAPSHOT_HASH_CANDIDATES)
-          this.#capped = true;
-        else {
-          this.candidateSet.add(candidate);
-          this.candidates.push(candidate);
-        }
-      }
-      // Only valid hash records count toward source agreement; a complete
-      // magic record whose field is not lowercase hex is not a source.
-      if (isValidHash) this.#sources += 1;
+      this.#recordCandidate(readDartSnapshotHash(chunkBuf, magic));
       offset = magic + DART_SNAPSHOT_MAGIC.length;
     }
     // Keep a pending magic for the next chunk; otherwise keep only the
@@ -101,8 +137,8 @@ export class SnapshotHashScanner {
     // streams never accumulate.
     const keepFrom =
       pendingMagic ??
-      Math.max(0, joined.length - (DART_SNAPSHOT_MAGIC.length - 1));
-    this.#buffer = joined.slice(keepFrom);
+      Math.max(chunkStart, chunkBuf.length - (DART_SNAPSHOT_MAGIC.length - 1));
+    this.#buffer = Buffer.from(chunkBuf.subarray(keepFrom));
   }
 
   result(): SnapshotHashScan {
@@ -152,21 +188,22 @@ export class LabeledStringScanner {
   #dartVersion: string | null = null;
   #dartVersionCapped = false;
   private readonly toolchainLines: string[] = [];
-  private carry = "";
+  readonly #carry = Buffer.allocUnsafe(CARRY_BYTES);
+  #carryLength = 0;
   private overflowed = false;
   #ended = false;
   #toolchainCapped = false;
 
   push(chunk: Uint8Array): void {
-    for (const byte of chunk) {
+    const length = chunk.length;
+    for (let i = 0; i < length; i += 1) {
+      const byte = chunk[i]!;
       if (byte >= 0x20 && byte < 0x7f) {
-        if (this.carry.length < CARRY_BYTES)
-          this.carry += String.fromCharCode(byte);
+        if (this.#carryLength < CARRY_BYTES)
+          this.#carry[this.#carryLength++] = byte;
         else this.overflowed = true;
-      } else {
-        this.#consider(this.carry);
-        this.carry = "";
-        this.overflowed = false;
+      } else if (this.#carryLength > 0) {
+        this.#flushCarry();
       }
     }
   }
@@ -175,8 +212,22 @@ export class LabeledStringScanner {
   end(): void {
     if (this.#ended) return;
     this.#ended = true;
-    this.#consider(this.carry);
-    this.carry = "";
+    if (this.#carryLength > 0) this.#flushCarry();
+  }
+
+  #flushCarry(): void {
+    const len = this.#carryLength;
+    const first = this.#carry[0]!;
+    this.#carryLength = 0;
+    // Fast pre-filter: all accepted patterns begin with 'D', 'A', 'b', or '0'..'9'.
+    if (
+      first === 0x44 || // 'D' ("Dart VM version:")
+      first === 0x41 || // 'A' ("Android (")
+      first === 0x62 || // 'b' ("based on LLVM ")
+      (first >= 0x30 && first <= 0x39) // '0'..'9' (embedded Dart version)
+    ) {
+      this.#consider(this.#carry.toString("latin1", 0, len));
+    }
     this.overflowed = false;
   }
 

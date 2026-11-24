@@ -2,7 +2,7 @@ import { parseAnalysisInput } from "./AnalysisInput.js";
 import type {
   AnalysisOperationPort,
   ExecutionOptions,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -57,30 +57,19 @@ export const executeFunctionAnalysisEvidence = async (
       : {}),
   };
   const dossier = parseFunctionDossier(execution.value.result);
+  const evidence = createAnalysisExecutionEvidence(
+    "analyze_function",
+    arguments_,
+    dossier.ok ? { ...observation, result: dossier.value } : observation,
+    "observed",
+    { callerTarget: target },
+  );
   if (!dossier.ok) {
-    dossier.error.retainPartialObservation(
-      createAnalysisExecutionEvidence(
-        "analyze_function",
-        arguments_,
-        observation,
-        "observed",
-      ),
-    );
+    dossier.error.retainPartialObservation(evidence);
     return withEvidenceSources(dossier, sources);
   }
   return withEvidenceSources(
-    completeProviderEvidence(
-      createAnalysisExecutionEvidence(
-        "analyze_function",
-        arguments_,
-        {
-          ...observation,
-          result: dossier.value,
-        },
-        "observed",
-      ),
-      options?.signal,
-    ),
+    completeProviderEvidence(evidence, options?.signal),
     sources,
   );
 };
