@@ -9,7 +9,11 @@ import {
   namedArtifactFormat,
 } from "../domain/artifactNameSelection.js";
 import { createCachedPrefixReader } from "../filesystem/readFileHandleRange.js";
-import { hasDosMzMagic, observeMzWindowsHeader } from "../domain/dosMz.js";
+import {
+  hasDosMzMagic,
+  mzWindowsHeaderLayoutLimitation,
+  observeMzWindowsHeader,
+} from "../domain/dosMz.js";
 import { hasXarMagic } from "../domain/binaryContainer.js";
 import {
   readExecutableMetadata,
@@ -869,7 +873,7 @@ const declaresNeHeader = async (
   return (
     header.state === "declared" &&
     header.signature === "NE" &&
-    header.offset >= 64
+    mzWindowsHeaderLayoutLimitation(header) === undefined
   );
 };
 

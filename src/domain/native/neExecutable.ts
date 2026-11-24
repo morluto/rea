@@ -17,6 +17,12 @@ const identity = z.discriminatedUnion("kind", [
 ]);
 const exportedName = z.strictObject({ ...name.shape, ordinal: u16 });
 
+/** Smallest and default caller-selected input read budgets. */
+export const MIN_INSPECT_NE_FILE_BYTES = 64;
+export const DEFAULT_INSPECT_NE_FILE_BYTES = 67108864;
+/** Smallest and default caller-selected table-row budgets. */
+export const MIN_INSPECT_NE_TABLE_ROWS = 1;
+export const DEFAULT_INSPECT_NE_TABLE_ROWS = 131072;
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_NE_FILE_BYTES = 536870912;
 /**
@@ -33,16 +39,16 @@ export const inspectNeExecutableInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(64)
+    .min(MIN_INSPECT_NE_FILE_BYTES)
     .max(MAX_INSPECT_NE_FILE_BYTES)
-    .default(67108864)
+    .default(DEFAULT_INSPECT_NE_FILE_BYTES)
     .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
   max_rows: z
     .number()
     .int()
-    .min(1)
+    .min(MIN_INSPECT_NE_TABLE_ROWS)
     .max(MAX_INSPECT_NE_TABLE_ROWS)
-    .default(131072)
+    .default(DEFAULT_INSPECT_NE_TABLE_ROWS)
     .describe(
       "Maximum segment, resource, name, module-reference and entry rows to examine; exceeding the budget fails without partial success",
     ),

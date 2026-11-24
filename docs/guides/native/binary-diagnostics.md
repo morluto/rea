@@ -369,7 +369,8 @@ count and SHA-256 and reports, each with its original file offset and length:
   without file data). Lengths are stored in alignment units, so a final
   resource may declare up to one unit past the end of the file, as VB3
   executables do; its range then covers only the bytes present and a
-  limitation says so. Overrunning by a whole unit or more is malformed;
+  limitation says so. Overrunning by a whole unit or more fails as a
+  truncated target;
 - resident and non-resident exported names with ordinals;
 - referenced module names, in module-reference order;
 - entries: ordinal, fixed or movable, segment and offset.
@@ -380,6 +381,7 @@ not decoded, so imported function names, which only relocation records
 reference, are not reported. Malformed headers, tables leaving the file,
 unterminated name tables, entry bundles that overrun the entry table and movable
 entries without their `INT 3Fh` thunk fail as malformed or truncated targets,
+and an NE header that overlaps the 64-byte DOS header is an unsupported target,
 rather than returning partial inventories. A refusal after the read keeps the
 read file's path, byte count and SHA-256.
 

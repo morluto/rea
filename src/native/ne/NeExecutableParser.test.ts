@@ -253,6 +253,37 @@ describe("portable NE executable parsing edge cases", () => {
     });
   });
 
+  it("refuses an NE header that overlaps the DOS header", async () => {
+    const bytes = Buffer.alloc(0x200);
+    bytes.write("MZ", 0, "ascii");
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt32LE(0x20, 0x3c);
+    bytes.write("NE", 0x20, "ascii");
+    const failure = await rejection(bytes);
+    expect(failure.failure).toMatchObject({
+      kind: "unsupported",
+      format: "ne",
+      offset: 0x20,
+    });
+  });
+
+  it("walks a long table of empty resource types", async () => {
+    const fixture = neFixture();
+    const types = 4096;
+    const table = Buffer.alloc(2 + types * 8 + 2);
+    table.writeUInt16LE(4, 0);
+    for (let index = 0; index < types; index++) {
+      table.writeUInt16LE(0x8000 | (index + 1), 2 + index * 8);
+      table.writeUInt16LE(0, 4 + index * 8);
+    }
+    // Append the table and point the resource table at it.
+    const bytes = Buffer.concat([fixture.bytes, table]);
+    const offset = fixture.bytes.length - fixture.ne;
+    bytes.writeUInt16LE(offset, fixture.ne + 0x24);
+    const result = await parse(bytes);
+    expect(result.resources).toEqual([]);
+  });
+
   it("honors cancellation", async () => {
     const controller = new AbortController();
     controller.abort();

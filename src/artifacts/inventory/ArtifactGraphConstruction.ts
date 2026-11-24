@@ -34,7 +34,11 @@ import {
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
-import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import {
+  hasDosMzMagic,
+  mzWindowsHeaderLayoutLimitation,
+  parseMzHeaderEvidence,
+} from "../../domain/dosMz.js";
 import { classifyFatContainerEvidence } from "../../domain/apple/machoContainer.js";
 import {
   parsePeRecordFacts,
@@ -707,7 +711,10 @@ export const classifyArtifactHeader = (
           };
         }
       }
-      if (windowsHeader.signature === "NE" && windowsOffset >= 64)
+      if (
+        windowsHeader.signature === "NE" &&
+        mzWindowsHeaderLayoutLimitation(windowsHeader) === undefined
+      )
         return only("ne");
       return only("unknown");
     }

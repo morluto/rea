@@ -5,8 +5,12 @@ import {
   decodeLimit,
   malformedInput,
   truncatedInput,
+  unsupportedInput,
 } from "../../domain/parseFailure.js";
-import { observeMzWindowsHeader } from "../../domain/dosMz.js";
+import {
+  mzWindowsHeaderLayoutLimitation,
+  observeMzWindowsHeader,
+} from "../../domain/dosMz.js";
 import { jsonParts } from "../../domain/jsonSerialization.js";
 import type {
   InspectNeExecutableInput,
@@ -55,6 +59,7 @@ const jsonBytes = (value: unknown, maximum: number): number => {
 class NeReader {
   rows = 0;
   #metadataBytes = 0;
+  #paced = 0;
   readonly #binary: BinaryReader;
 
   constructor(
@@ -122,6 +127,18 @@ class NeReader {
       );
     this.rows += count;
     if (this.rows % 1024 < count) {
+      await setImmediate();
+      assertArtifactReadActive(this.signal);
+    }
+  }
+
+  /**
+   * Yield and check cancellation every 1024 structures that are not rows,
+   * such as empty resource types, so a long table cannot run unobserved.
+   */
+  async pace(): Promise<void> {
+    this.#paced++;
+    if (this.#paced % 1024 === 0) {
       await setImmediate();
       assertArtifactReadActive(this.signal);
     }
@@ -280,6 +297,7 @@ const readResources = async (
     reader.require(cursor, 2, "resource type");
     const typeId = reader.u16(cursor);
     if (typeId === 0) return { resources, truncated };
+    await reader.pace();
     reader.require(cursor, 8, "resource type");
     const count = reader.u16(cursor + 2);
     reader.require(cursor + 8, count * 12, "resource entries");
@@ -412,6 +430,12 @@ export const parseNeExecutable = async (
   const windows = observeMzWindowsHeader(bytes);
   if (windows.state !== "declared" || windows.signature !== "NE")
     return neFailure("Expected an MZ image declaring an NE header.");
+  const overlapping = mzWindowsHeaderLayoutLimitation(windows);
+  if (overlapping !== undefined)
+    throw unsupportedInput(NE_FORMAT, overlapping, {
+      offset: windows.offset,
+      field: "header",
+    });
   const reader = new NeReader(bytes, windows.offset, input.max_rows, signal);
   reader.require(reader.ne, HEADER_BYTES, "header");
   const header = readHeader(reader);

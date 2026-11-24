@@ -12,7 +12,10 @@ import type { AnalysisControlLimit } from "../../domain/analysisSettings.js";
 import {
   MAX_INSPECT_NE_FILE_BYTES,
   MAX_INSPECT_NE_TABLE_ROWS,
-  inspectNeExecutableInputSchema,
+  MIN_INSPECT_NE_FILE_BYTES,
+  MIN_INSPECT_NE_TABLE_ROWS,
+  DEFAULT_INSPECT_NE_FILE_BYTES,
+  DEFAULT_INSPECT_NE_TABLE_ROWS,
   type InspectNeExecutableInput,
 } from "../../domain/native/neExecutable.js";
 import { err, ok } from "../../domain/result.js";
@@ -97,12 +100,16 @@ const BUDGETS = {
   "file-size": {
     parameter: "max_file_bytes",
     unit: "bytes",
+    minimum: MIN_INSPECT_NE_FILE_BYTES,
     maximum: MAX_INSPECT_NE_FILE_BYTES,
+    default_value: DEFAULT_INSPECT_NE_FILE_BYTES,
   },
   capacity: {
     parameter: "max_rows",
     unit: "count",
+    minimum: MIN_INSPECT_NE_TABLE_ROWS,
     maximum: MAX_INSPECT_NE_TABLE_ROWS,
+    default_value: DEFAULT_INSPECT_NE_TABLE_ROWS,
   },
 } as const;
 
@@ -111,19 +118,15 @@ const budgetLimit = (
   boundary: "file-size" | "capacity",
   input: InspectNeExecutableInput,
 ): { readonly limit?: AnalysisControlLimit } => {
-  const { parameter, unit, maximum } = BUDGETS[boundary];
-  const shape = inspectNeExecutableInputSchema.shape[parameter];
+  const { parameter, ...control } = BUDGETS[boundary];
   const value = input[parameter];
-  return value < maximum
+  return value < control.maximum
     ? {
         limit: {
           control_kind: "parameter",
           parameter,
           effective_value: value,
-          unit,
-          minimum: shape.unwrap().minValue ?? 1,
-          maximum,
-          default_value: shape.parse(undefined),
+          ...control,
           applies_at: "next_call",
         },
       }

@@ -91,6 +91,14 @@ describe("MZ artifact classification", () => {
         bytes.length,
       ),
     ).toEqual({ kind: "unknown", format: "unknown" });
+    const overlapping = Buffer.alloc(0x200);
+    overlapping.write("MZ", 0, "ascii");
+    overlapping.writeUInt16LE(4, 8);
+    overlapping.writeUInt32LE(0x20, 0x3c);
+    overlapping.write("NE", 0x20, "ascii");
+    expect(classifyArtifactBytesAtPath("OVERLAP.DLL", overlapping).format).toBe(
+      "unknown",
+    );
     for (const signature of ["LE", "LX"]) {
       const other = Buffer.from(bytes);
       other.write(signature, ne, "latin1");

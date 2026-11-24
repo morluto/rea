@@ -71,6 +71,20 @@ describe("executable format refusal diagnostics", () => {
     },
   );
 
+  it("keeps an NE header that overlaps the DOS header out of NE inspection", async () => {
+    const directory = await createTestTempDirectory("rea-target-ne-overlap-");
+    const path = join(directory, "overlap.dll");
+    const bytes = Buffer.alloc(0x80 + 0x40);
+    bytes.write("MZ", 0, "ascii");
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt32LE(0x20, 0x3c);
+    bytes.write("NE", 0x20, "ascii");
+    await writeFile(path, bytes);
+
+    const result = await parseBinaryTarget(path);
+    expect(result.ok && result.value.format === "ne").toBe(false);
+  });
+
   it.each(["LE", "LX"] as const)(
     "reports unsupported %s executables without path advice",
     async (signature) => {
