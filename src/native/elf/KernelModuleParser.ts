@@ -35,7 +35,13 @@ type Limitations = string[];
 
 const MAGIC = Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1");
 const SIGNATURE_HASH_CHUNK_BYTES = 1 << 20;
+const STRING_SCAN_CHECKPOINT_BYTES = 1 << 16;
 const MODULE_CODECS = ["gzip", "xz", "zstd"] as const;
+
+interface EntryBudget {
+  scanned: number;
+  returned: number;
+}
 
 const exceeds = (examined: number, maxEntries: number): void => {
   if (examined > maxEntries)
@@ -174,7 +180,7 @@ const parseModinfoStored = (
   location: { offset: number; bytes: number },
   compressed: boolean,
   use: SectionUse,
-  examined: { count: number },
+  examined: EntryBudget,
   input: InspectKernelModuleInput,
 ): NonNullable<Report["modinfo"]> => {
   if (compressed)
@@ -199,8 +205,9 @@ const parseModinfoStored = (
     const stop = terminated ? end : stored.length;
     const record = stored.subarray(at, stop);
     const raw = stored.subarray(at, terminated ? end + 1 : stored.length);
-    examined.count += 1;
-    exceeds(examined.count, input.max_entries);
+    examined.scanned += 1;
+    examined.returned += 1;
+    exceeds(examined.scanned, input.max_entries);
     const separator = record.indexOf(0x3d);
     let key: string | null = null;
     let value: string | null = null;
@@ -268,7 +275,7 @@ const parseVersionsStored = (
   compressed: boolean,
   bits: 32 | 64,
   little: boolean,
-  examined: { count: number },
+  examined: EntryBudget,
   maxEntries: number,
 ): NonNullable<Report["versions"]> => {
   const layout =
@@ -298,7 +305,7 @@ const parseVersionsStored = (
   const crcBytes = bits === 64 ? 8 : 4;
   const reader = new BinaryReader(stored, little, "elf");
   const count = stored.length / entryBytes;
-  exceeds(examined.count + count, maxEntries);
+  exceeds(examined.scanned + count, maxEntries);
   const entries: NonNullable<Report["versions"]>["entries"] = [];
   for (let index = 0; index < count; index += 1) {
     const start = index * entryBytes;
@@ -315,7 +322,8 @@ const parseVersionsStored = (
       reason: end < 0 ? "version_name_unterminated" : null,
     });
   }
-  examined.count += count;
+  examined.scanned += count;
+  examined.returned += count;
   return {
     status: "present",
     layout,
@@ -691,13 +699,35 @@ const decodeU32CrcEntries = (
   return entries;
 };
 
+const advancePastNulPadding = async (
+  bytes: Buffer,
+  start: number,
+  checkpoint: { next: number },
+  pause: () => Promise<void>,
+): Promise<number> => {
+  let at = start;
+  while (at < bytes.length && bytes[at] === 0) {
+    if (at >= checkpoint.next) {
+      await pause();
+      checkpoint.next = at + STRING_SCAN_CHECKPOINT_BYTES;
+    }
+    at += 1;
+  }
+  if (at >= checkpoint.next) {
+    await pause();
+    checkpoint.next = at + STRING_SCAN_CHECKPOINT_BYTES;
+  }
+  return at;
+};
+
 const parseKsymtabStrings = async (
   source: ByteSource,
   section: ElfSection | undefined,
   fileLength: number,
   use: SectionUse,
-  examined: { count: number },
+  examined: EntryBudget,
   maxEntries: number,
+  pause: () => Promise<void>,
 ): Promise<NonNullable<NonNullable<Report["ksymtab"]>["strings"]>> => {
   const desc = describeSection(section, fileLength, use.namesComplete);
   if (desc.state === "missing")
@@ -740,21 +770,27 @@ const parseKsymtabStrings = async (
   const entries: NonNullable<
     NonNullable<Report["ksymtab"]>["strings"]
   >["entries"] = [];
+  const checkpoint = { next: STRING_SCAN_CHECKPOINT_BYTES };
   let omittedCount = 0;
   let unterminated = false;
   let at = 0;
   while (at < stored.length) {
+    if (at >= checkpoint.next) {
+      await pause();
+      checkpoint.next = at + STRING_SCAN_CHECKPOINT_BYTES;
+    }
     if (stored[at] === 0) {
-      at += 1;
-      continue;
+      at = await advancePastNulPadding(stored, at, checkpoint, pause);
+      if (at >= stored.length) break;
     }
     const end = stored.indexOf(0, at);
     const terminated = end >= 0;
     const stop = terminated ? end : stored.length;
     const textBytes = stored.subarray(at, stop);
     const raw = stored.subarray(at, terminated ? end + 1 : stored.length);
-    examined.count += 1;
-    exceeds(examined.count, maxEntries);
+    examined.scanned += 1;
+    examined.returned += 1;
+    exceeds(examined.scanned, maxEntries);
     const omitted =
       terminated && textBytes.length > MAX_KERNEL_MODULE_RAW_BYTES;
     if (omitted) omittedCount += 1;
@@ -793,7 +829,7 @@ const parseKcrctabSection = async (
   fileLength: number,
   little: boolean,
   use: SectionUse,
-  examined: { count: number },
+  examined: EntryBudget,
   maxEntries: number,
 ): Promise<NonNullable<NonNullable<Report["ksymtab"]>["kcrctab"]>> => {
   const entryBytes = KERNEL_MODULE_CRC32_ENTRY_BYTES;
@@ -821,7 +857,7 @@ const parseKcrctabSection = async (
     };
   }
   if (!desc.compressed && desc.location.bytes % entryBytes === 0)
-    exceeds(examined.count + desc.location.bytes / entryBytes, maxEntries);
+    exceeds(examined.scanned + desc.location.bytes / entryBytes, maxEntries);
   const stored = await readSourceRange(
     source,
     desc.location.offset,
@@ -852,7 +888,8 @@ const parseKcrctabSection = async (
     };
   }
   const entries = decodeU32CrcEntries(stored, desc.location.offset, little);
-  examined.count += entries.length;
+  examined.scanned += entries.length;
+  examined.returned += entries.length;
   return {
     status: "present",
     entry_bytes: entryBytes,
@@ -877,8 +914,9 @@ const parseExtendedVersions = async (
   fileLength: number,
   little: boolean,
   use: SectionUse,
-  examined: { count: number },
+  examined: EntryBudget,
   maxEntries: number,
+  pause: () => Promise<void>,
 ): Promise<NonNullable<Report["extended_versions"]>> => {
   const entryCrcBytes = KERNEL_MODULE_CRC32_ENTRY_BYTES;
   const namesDesc = describeSection(
@@ -912,7 +950,7 @@ const parseExtendedVersions = async (
     crcsDesc.location.bytes % entryCrcBytes === 0
   ) {
     exceeds(
-      examined.count + crcsDesc.location.bytes / entryCrcBytes,
+      examined.scanned + crcsDesc.location.bytes / entryCrcBytes,
       maxEntries,
     );
   }
@@ -1081,10 +1119,15 @@ const parseExtendedVersions = async (
     };
   }
   const crcCount = crcsStored.length / entryCrcBytes;
-  exceeds(examined.count + crcCount, maxEntries);
+  exceeds(examined.scanned + crcCount, maxEntries);
+  const checkpoint = { next: STRING_SCAN_CHECKPOINT_BYTES };
   const spans: ScannedExtNameSpan[] = [];
   let at = 0;
   while (spans.length < crcCount && at < namesStored.length) {
+    if (at >= checkpoint.next) {
+      await pause();
+      checkpoint.next = at + STRING_SCAN_CHECKPOINT_BYTES;
+    }
     const end = namesStored.indexOf(0, at);
     const terminated = end >= 0;
     const stop = terminated ? end : namesStored.length;
@@ -1098,18 +1141,24 @@ const parseExtendedVersions = async (
   }
   let extraNames = 0;
   while (at < namesStored.length) {
+    if (at >= checkpoint.next) {
+      await pause();
+      checkpoint.next = at + STRING_SCAN_CHECKPOINT_BYTES;
+    }
     if (namesStored[at] === 0) {
-      at += 1;
-      continue;
+      at = await advancePastNulPadding(namesStored, at, checkpoint, pause);
+      if (at >= namesStored.length) break;
     }
     const end = namesStored.indexOf(0, at);
     extraNames += 1;
-    exceeds(examined.count + crcCount + extraNames, maxEntries);
+    exceeds(examined.scanned + crcCount + extraNames, maxEntries);
     if (end < 0) break;
     at = end + 1;
   }
   const nameCount = spans.length + extraNames;
   if (nameCount !== crcCount) {
+    examined.scanned += Math.max(crcCount, nameCount);
+    exceeds(examined.scanned, maxEntries);
     use.limitations.push(
       `CONFIG_EXTENDED_MODVERSIONS count mismatch: __version_ext_names has ${String(nameCount)} entry/entries while __version_ext_crcs has ${String(crcCount)} u32 CRC(s); paired entries were withheld.`,
     );
@@ -1126,13 +1175,20 @@ const parseExtendedVersions = async (
   const entries: NonNullable<Report["extended_versions"]>["entries"] = [];
   let omittedCount = 0;
   let malformedCount = 0;
+  let hashedBytes = 0;
+  let nextHashedCheckpoint = STRING_SCAN_CHECKPOINT_BYTES;
   for (let index = 0; index < crcCount; index += 1) {
+    const span = spans[index]!;
+    hashedBytes += span.raw.length;
+    if (hashedBytes >= nextHashedCheckpoint) {
+      await pause();
+      nextHashedCheckpoint = hashedBytes + STRING_SCAN_CHECKPOINT_BYTES;
+    }
     const crcOffset = crcsLoc.offset + index * entryCrcBytes;
     const crcHex = crcReader
       .u32(index * entryCrcBytes)
       .toString(16)
       .padStart(8, "0");
-    const span = spans[index]!;
     const omitted =
       span.terminated &&
       span.content.length > 0 &&
@@ -1163,7 +1219,8 @@ const parseExtendedVersions = async (
       omitted,
     });
   }
-  examined.count += entries.length;
+  examined.scanned += entries.length;
+  examined.returned += entries.length;
   omittedTextLimitation(use.limitations, "__version_ext_names", omittedCount);
   if (malformedCount > 0)
     use.limitations.push(
@@ -1185,7 +1242,7 @@ interface KernelModulePrepared {
   readonly namesComplete: boolean;
   readonly limitations: Limitations;
   readonly use: SectionUse;
-  readonly examined: { count: number };
+  readonly examined: EntryBudget;
   readonly duplicateSections: () => boolean;
   readonly modinfoSection: ElfSection | undefined;
   readonly versionsSection: ElfSection | undefined;
@@ -1211,7 +1268,7 @@ const prepareKernelModule = (
   if (image.section_names_limitation !== undefined)
     limitations.push(image.section_names_limitation);
   const use = { namesComplete, limitations };
-  const examined = { count: 0 };
+  const examined: EntryBudget = { scanned: 0, returned: 0 };
   let duplicateSections = false;
   const byName = keyedBy(sections, ({ name }) => name);
   const firstNamedSection = (name: string): ElfSection | undefined => {
@@ -1305,8 +1362,9 @@ const finalizeKernelModule = (
     ];
   });
   // Each listed section repeats its name, so the list shares the entry budget.
-  examined.count += ksymtab.length;
-  exceeds(examined.count, input.max_entries);
+  examined.scanned += ksymtab.length;
+  examined.returned += ksymtab.length;
+  exceeds(examined.scanned, input.max_entries);
   const otherKcrctab = sections.some(
     (section) =>
       section.name?.startsWith("__kcrctab") === true &&
@@ -1394,7 +1452,7 @@ const finalizeKernelModule = (
     signature,
     coverage: {
       status: coveragePartial ? "partial" : "complete",
-      examined_entries: examined.count,
+      examined_entries: examined.returned,
     },
     limitations,
   };
@@ -1406,6 +1464,7 @@ export const parseKernelModuleFromHandle = async (
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
   signal?: AbortSignal,
+  pause: () => Promise<void> = () => yieldArtifactRead(signal),
 ): Promise<Report> => {
   assertArtifactReadActive(signal);
   const magicProbe = await readSourceRange(source, 0, Math.min(source.size, 8));
@@ -1414,7 +1473,7 @@ export const parseKernelModuleFromHandle = async (
   const image = await readElfImageFromReader(
     source,
     "inspect_kernel_module",
-    () => yieldArtifactRead(signal),
+    pause,
   );
   const facts = headerFacts(image);
   if (facts.type !== 1) return notApplicable(artifact, facts);
@@ -1469,6 +1528,7 @@ export const parseKernelModuleFromHandle = async (
     prepared.use,
     prepared.examined,
     input.max_entries,
+    pause,
   );
   const ksymtabStrings = await parseKsymtabStrings(
     source,
@@ -1477,6 +1537,7 @@ export const parseKernelModuleFromHandle = async (
     prepared.use,
     prepared.examined,
     input.max_entries,
+    pause,
   );
   const kcrctab = await parseKcrctabSection(
     source,

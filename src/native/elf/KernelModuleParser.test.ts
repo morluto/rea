@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
+import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
+import { createDeferred } from "../../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { yieldArtifactRead } from "../../resources/index.js";
 import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
@@ -908,3 +912,160 @@ it("handles missing pairs, count mismatches, truncation, empty/oversized names, 
     ),
   ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
 });
+
+it("charges mismatched CONFIG_EXTENDED_MODVERSIONS work against max_entries before later sections", async () => {
+  const moreNamesBytes = kernelModuleFixture({
+    modinfo: null,
+    versions: null,
+    ksymtab: null,
+    versionExtNames: Buffer.from("a\0b\0c\0d\0", "latin1"),
+    versionExtCrcs: crc32Array([1, 2, 3], true),
+    kcrctab: crc32Array([10, 20, 30, 40], true),
+  });
+  for (const max_entries of [4, 7]) {
+    await expect(parse(moreNamesBytes, { max_entries })).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+    });
+  }
+  const withinBudget = await parse(moreNamesBytes, { max_entries: 8 });
+  expect(withinBudget.extended_versions).toMatchObject({
+    status: "malformed",
+    reason: "version_ext_count_mismatch",
+    names_section: { count: 4 },
+    crcs_section: { count: 3 },
+    entries: [],
+  });
+  expect(withinBudget.ksymtab?.kcrctab?.entries).toHaveLength(4);
+  expect(withinBudget.coverage).toEqual({
+    status: "partial",
+    examined_entries: 4,
+  });
+
+  const fewerNamesBytes = kernelModuleFixture({
+    modinfo: null,
+    versions: null,
+    ksymtab: null,
+    versionExtNames: Buffer.from("a\0b\0c\0", "latin1"),
+    versionExtCrcs: crc32Array([1, 2, 3, 4], true),
+    kcrctab: crc32Array([10, 20, 30, 40], true),
+  });
+  await expect(
+    parse(fewerNamesBytes, { max_entries: 7 }),
+  ).rejects.toMatchObject({
+    reason: "limit",
+    boundary: "capacity",
+  });
+  const fewerWithinBudget = await parse(fewerNamesBytes, { max_entries: 8 });
+  expect(fewerWithinBudget.ksymtab?.kcrctab?.entries).toHaveLength(4);
+  expect(fewerWithinBudget.coverage).toEqual({
+    status: "partial",
+    examined_entries: 4,
+  });
+});
+
+it.each(["__ksymtab_strings", "__version_ext_names"] as const)(
+  "checkpoints and honors abort signals while scanning NUL padding in %s",
+  async (sectionName) => {
+    const padding = Buffer.alloc(131_072);
+    const bytes = kernelModuleFixture({
+      modinfo: null,
+      versions: null,
+      ksymtab: null,
+      ...(sectionName === "__ksymtab_strings"
+        ? {
+            ksymtabStrings: Buffer.concat([
+              padding,
+              Buffer.from("exported\0", "latin1"),
+            ]),
+          }
+        : {
+            versionExtNames: Buffer.concat([
+              Buffer.from("printk\0", "latin1"),
+              padding,
+            ]),
+            versionExtCrcs: crc32Array([0xdeadbeef], true),
+          }),
+      kcrctab: crc32Array([0x12345678], true),
+    });
+
+    const runWithPause = async (abortAtCheckpoint: boolean) => {
+      const controller = new AbortController();
+      const abortReason = new Error(`cancelled in ${sectionName} padding`);
+      const checkpoint = createDeferred<void>();
+      const release = createDeferred<void>();
+      let reads = 0;
+      let checkpoints = 0;
+      const pending = parseKernelModuleFromHandle(
+        {
+          size: bytes.length,
+          prefix: bytes.subarray(0, 4096),
+          readRange: async (offset, length) => {
+            reads += 1;
+            return bytes.subarray(offset, offset + length);
+          },
+        },
+        {
+          path: artifactPath,
+          sha256: "ab".repeat(32),
+          bytes: bytes.length,
+        },
+        inspectKernelModuleInputSchema.parse({ path: artifactPath }),
+        controller.signal,
+        async () => {
+          checkpoints += 1;
+          if (checkpoints === 1) {
+            checkpoint.resolve();
+            await release.promise;
+          }
+          await yieldArtifactRead(controller.signal);
+        },
+      );
+      try {
+        await awaitAcknowledgement(
+          checkpoint.promise,
+          pending,
+          `${sectionName} padding checkpoint`,
+        );
+        const pausedReads = reads;
+        await expect(
+          Promise.race([pending, setImmediate("waiting")]),
+        ).resolves.toBe("waiting");
+        expect(reads).toBe(pausedReads);
+        expect(checkpoints).toBe(1);
+        if (abortAtCheckpoint) {
+          controller.abort(abortReason);
+          release.resolve();
+          await expect(pending).rejects.toMatchObject({
+            reason: "cancelled",
+            cancellation: { reason: abortReason },
+          });
+          expect(reads).toBe(pausedReads);
+          return null;
+        }
+        release.resolve();
+        const report = kernelModuleSchema.parse(await pending);
+        expect(checkpoints).toBeGreaterThanOrEqual(2);
+        return report;
+      } finally {
+        release.resolve();
+        await pending.catch(() => undefined);
+      }
+    };
+
+    await runWithPause(true);
+    const completed = await runWithPause(false);
+    expect(
+      completed?.ksymtab?.kcrctab?.entries.map((entry) => entry.crc_hex),
+    ).toEqual(["12345678"]);
+    if (sectionName === "__ksymtab_strings") {
+      expect(
+        completed?.ksymtab?.strings?.entries.map((entry) => entry.value),
+      ).toEqual(["exported"]);
+    } else {
+      expect(
+        completed?.extended_versions?.entries.map((entry) => entry.name),
+      ).toEqual(["printk"]);
+    }
+  },
+);

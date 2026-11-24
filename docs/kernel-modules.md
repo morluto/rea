@@ -103,8 +103,10 @@ relocations, or certificate chains were decoded.
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 8192 decoded `.modinfo`, `__versions`, `extended_versions`, `__ksymtab_strings`,
 and `__kcrctab` / `__kcrctab_gpl` entries plus listed `__ksymtab*` sections are
-examined by default (65536 maximum); `coverage.examined_entries` counts all of
-them. Exceeding that budget fails with no partial success. `.modinfo` keys
+scanned by default (65536 maximum, including mismatched `extended_versions`
+records whose paired rows are withheld); `coverage.examined_entries` counts
+returned rows and sections. Exceeding that budget fails with no partial success.
+`.modinfo` keys
 retain at most 256 bytes and values at most 4096 bytes by default. A larger
 field becomes `null` and is named in the entry's `omitted_fields`; the field
 that fits is still copied. Structural `status` and `reason` remain independent:

@@ -338,6 +338,60 @@ it("validates ksymtab strings, kcrctab, and extended_versions invariants and ret
         },
       },
     },
+    {
+      ...validExtended,
+      extended_versions: {
+        ...validExtended.extended_versions!,
+        entries: [
+          {
+            ...validExtended.extended_versions!.entries[0]!,
+            name_location: { offset: 200, bytes: 7 },
+          },
+        ],
+      },
+    },
+    {
+      ...validExtended,
+      extended_versions: {
+        ...validExtended.extended_versions!,
+        entries: [
+          {
+            ...validExtended.extended_versions!.entries[0]!,
+            name_location: { offset: 130, bytes: 7 },
+          },
+        ],
+      },
+    },
+    {
+      ...validExtended,
+      ksymtab: {
+        ...validExtended.ksymtab!,
+        strings: {
+          ...validExtended.ksymtab!.strings!,
+          entries: [
+            {
+              ...validExtended.ksymtab!.strings!.entries[0]!,
+              location: { offset: 200, bytes: 4 },
+            },
+          ],
+        },
+      },
+    },
+    {
+      ...validExtended,
+      ksymtab: {
+        ...validExtended.ksymtab!,
+        strings: {
+          ...validExtended.ksymtab!.strings!,
+          entries: [
+            {
+              ...validExtended.ksymtab!.strings!.entries[0]!,
+              location: { offset: 162, bytes: 4 },
+            },
+          ],
+        },
+      },
+    },
   ];
   for (const invalid of invalidCases) {
     const outcome = await new KernelModuleService({

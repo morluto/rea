@@ -272,6 +272,17 @@ const sizedConsistent = (
   );
 };
 
+const insideRange =
+  (parent: Range) =>
+  (child: Range): boolean => {
+    if (child.offset < parent.offset) return false;
+    const relativeOffset = child.offset - parent.offset;
+    return (
+      relativeOffset <= parent.bytes &&
+      child.bytes <= parent.bytes - relativeOffset
+    );
+  };
+
 const rawHexMatches = (location: Range, rawHex: string | null): boolean => {
   const rawFits = location.bytes <= MAX_KERNEL_MODULE_RAW_BYTES;
   if (rawFits) return rawHex !== null && rawHex.length === location.bytes * 2;
@@ -294,13 +305,19 @@ const ksymtabStringsConsistent = (
     )
       return false;
   }
+  const sectionLocation = strings.location;
   if (
     strings.status === "present" &&
-    (strings.location === null || strings.sha256 === null)
+    (sectionLocation === null || strings.sha256 === null)
   )
     return false;
   return strings.entries.every((entry, index) => {
     if (entry.index !== index) return false;
+    if (
+      sectionLocation === null ||
+      !insideRange(sectionLocation)(entry.location)
+    )
+      return false;
     if (!rawHexMatches(entry.location, entry.raw_hex)) return false;
     if (entry.status === "observed")
       return (
@@ -346,6 +363,7 @@ const kcrctabConsistent = (
       entry.index === index &&
       entry.location.bytes === KERNEL_MODULE_CRC32_ENTRY_BYTES &&
       tableLocation !== null &&
+      insideRange(tableLocation)(entry.location) &&
       entry.location.offset ===
         tableLocation.offset + index * KERNEL_MODULE_CRC32_ENTRY_BYTES,
   );
@@ -438,10 +456,12 @@ const extendedVersionsConsistent = (
       ext.names_section.count !== ext.crcs_section.count
     );
   if (ext.status !== "present") return true;
+  const namesLocation = ext.names_section.location;
   const crcsLocation = ext.crcs_section.location;
   if (
     ext.names_section.status !== "present" ||
     ext.crcs_section.status !== "present" ||
+    namesLocation === null ||
     crcsLocation === null ||
     ext.names_section.count !== ext.entries.length ||
     ext.crcs_section.count !== ext.entries.length ||
@@ -451,6 +471,8 @@ const extendedVersionsConsistent = (
   return ext.entries.every((entry, index) => {
     if (
       entry.index !== index ||
+      !insideRange(crcsLocation)(entry.crc_location) ||
+      !insideRange(namesLocation)(entry.name_location) ||
       entry.crc_location.bytes !== KERNEL_MODULE_CRC32_ENTRY_BYTES ||
       entry.crc_location.offset !==
         crcsLocation.offset + index * KERNEL_MODULE_CRC32_ENTRY_BYTES
