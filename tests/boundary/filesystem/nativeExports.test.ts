@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
-import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
@@ -94,12 +93,6 @@ describe("native export stable filesystem boundary", () => {
               unit: "bytes",
             },
           });
-          expect(result.error.message).toContain(
-            "16777216-byte retained-text allowance",
-          );
-          const action = analysisErrorRemediationAction(result.error);
-          expect(action).toContain("fixed byte allowance");
-          expect(action).not.toContain("fixed count");
         }
       }
     } finally {
@@ -396,18 +389,15 @@ describe("native export entry allowance", () => {
         expect(result.error).toMatchObject({
           _tag: "AnalysisResourceConstraintError",
           resource: "capacity",
-          reportedLimits: { boundary: "rows", maximum: 262144 },
+          reportedLimits: { boundary: "rows", maximum: MAX_NATIVE_EXPORT_ROWS },
           retryable: false,
           fixedAllowance: {
             name: "The native export inventory allowance",
             kind: "count",
-            limit: 262144,
+            limit: MAX_NATIVE_EXPORT_ROWS,
             unit: "entries",
           },
         });
-        const action = analysisErrorRemediationAction(result.error);
-        expect(action).toContain("fixed count");
-        expect(action).not.toContain("fixed byte allowance");
       } finally {
         await service.close();
       }

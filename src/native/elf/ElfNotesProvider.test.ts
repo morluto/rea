@@ -167,7 +167,6 @@ describe("ELF note provider failures", () => {
       boundary: "note_text_bytes",
       maximum: bytes.length,
     });
-    expect(error.message).toMatch(/byte budget/u);
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
     // The ceiling is the image length plus decoded section names; this
@@ -198,8 +197,10 @@ describe("ELF note provider failures", () => {
     expect(error.resource).toBe("file-size");
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
-    expect(projected.remediation.action).toContain("max_file_bytes");
-    expect(projected.remediation.action).not.toMatch(/available host memory/u);
+    expect(projected.details?.reported_limits).toEqual({
+      boundary: "max_file_bytes",
+      maximum: 64,
+    });
   });
 
   it("reports and admits compressed names through max_file_bytes", async () => {
@@ -227,9 +228,6 @@ describe("ELF note provider failures", () => {
       },
       retryable: false,
     });
-    expect(projectAnalysisError(refused.error).remediation.action).toContain(
-      "max_file_bytes",
-    );
 
     const admitted = await inspect(path, {
       max_file_bytes: minimumMaxFileBytes,

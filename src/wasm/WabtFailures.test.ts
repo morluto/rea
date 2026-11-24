@@ -224,11 +224,11 @@ it.each([
     expect(projected).toMatchObject({
       code: "capability_unavailable",
       retryable: false,
+      // No structured fact names the setting or distinguishes these
+      // refusals, so each keeps the setting and its errno-specific repair.
       remediation: { action: expect.stringContaining(action) },
     });
     expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
-    expect(projected.remediation.action).toContain("restart");
-    expect(projected.remediation.action).toContain("Do not repeat");
   },
 );
 
@@ -262,9 +262,6 @@ it.each([false, true])(
       },
     });
     if (!cleanup) {
-      expect(projected.remediation.action).toContain("max_input_bytes");
-      expect(projected.remediation.action).not.toContain("evidence reply");
-      expect(projected.remediation.action).not.toContain("--");
       expect(projected.details?.limit).toMatchObject({
         control_kind: "parameter",
         parameter: "max_input_bytes",
@@ -351,6 +348,7 @@ it("keeps setup guidance when a version probe's output cannot be collected", () 
     wabtFailure(cause, "configuration", "/module.wasm"),
   );
   expect(projected).toMatchObject({ code: "capability_unavailable" });
+  // The setting name has no structured field on this refusal.
   expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
 });
 

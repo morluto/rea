@@ -4,6 +4,7 @@ import { scheduler } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
+import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../../../src/domain/go/goBinary.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
@@ -108,7 +109,7 @@ it("preserves the actual build-info byte guard as a resource failure", async () 
   expect(result.error.reason).toContain(path);
   expect(result.error.reportedLimits).toEqual({
     boundary: "build-info",
-    maximum: 1024 * 1024,
+    maximum: GO_ANALYSIS_BUDGET_DEFAULTS.max_build_info_bytes,
   });
   const projected = projectAnalysisError(result.error);
   expect(projected.details?.limit).toMatchObject({
@@ -117,10 +118,6 @@ it("preserves the actual build-info byte guard as a resource failure", async () 
     unit: "bytes",
   });
   expect(projected.retryable).toBe(false);
-  expect(projected.remediation.action).toContain(
-    "Go build-info string allowance",
-  );
-  expect(projected.remediation.action).not.toMatch(/available host memory/u);
 });
 
 it("keeps the header-search budget distinct from a worker CPU limit", async () => {
@@ -136,12 +133,10 @@ it("keeps the header-search budget distinct from a worker CPU limit", async () =
       resource: "cpu",
       reported_limits: {
         boundary: "search",
-        maximum: 256 * 1024 * 1024,
+        maximum: GO_ANALYSIS_BUDGET_DEFAULTS.max_header_search_bytes,
       },
     },
   });
-  expect(projected.remediation.action).toContain("header-search allowance");
-  expect(projected.remediation.action).not.toMatch(/observed signal/u);
 });
 
 it("reports unreadable ELF names alongside the no-record limitation", async () => {
@@ -296,7 +291,6 @@ it.each([
             unit: "bytes",
           },
         },
-        remediation: { action: expect.stringContaining(parameter) },
       });
       const recovered = await service.inspect({ path, [parameter]: raised });
       if (!recovered.ok) throw recovered.error;
