@@ -1,0 +1,268 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { Readable } from "node:stream";
+
+import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { inventoryArtifact } from "../../../tests/fixtures/artifactInventory.js";
+import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
+import type {
+  ArtifactEntry,
+  ArtifactReaderTraversal,
+} from "../../resources/index.js";
+import {
+  GpuAssetArtifactReader,
+  type GpuAssetFormat,
+} from "./GpuAssetArtifactReader.js";
+import {
+  ddsBc7Fixture,
+  GLB_IMAGE,
+  glbFixture,
+  ktx2Fixture,
+  ktxFixture,
+} from "./gpuAsset.fixture.js";
+
+const collect = async (stream: Readable): Promise<Buffer> => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks);
+};
+
+const write = async (name: string, bytes: Buffer): Promise<string> => {
+  const directory = await createTestTempDirectory("rea-gpu-asset-");
+  const path = join(directory, name);
+  await writeFile(path, bytes);
+  return path;
+};
+
+const read = async (format: GpuAssetFormat, bytes: Buffer) => {
+  const reader = new GpuAssetArtifactReader(
+    await write(`asset.${format}`, bytes),
+    format,
+  );
+  const coverage: ArtifactReaderTraversal[] = [];
+  const entries: ArtifactEntry[] = [];
+  try {
+    for await (const entry of reader.entries(undefined, {
+      onCoverage: (value) => coverage.push(value),
+    }))
+      entries.push(entry);
+    const contents = new Map<string, Buffer>();
+    for (const entry of entries)
+      contents.set(entry.path, await collect(await reader.open(entry)));
+    return { entries, coverage, contents, metadata: reader.formatMetadata() };
+  } finally {
+    await reader.close();
+  }
+};
+
+const regions = (entries: readonly ArtifactEntry[]) =>
+  entries.map(({ path, byteOffset, declaredSize }) => ({
+    path,
+    byteOffset,
+    declaredSize,
+  }));
+
+describe("GPU asset recognition", () => {
+  it.each([
+    ["dds", ddsBc7Fixture()],
+    ["glb", glbFixture()],
+    ["ktx", ktxFixture()],
+    ["ktx2", ktx2Fixture()],
+  ] as const)("recognizes %s from its leading bytes", (format, bytes) => {
+    expect(
+      recognizeArtifactFormat({
+        prefix: bytes.subarray(0, 4096),
+        fileSize: bytes.length,
+      }),
+    ).toMatchObject({ state: "recognized", format });
+  });
+
+  it("does not claim a DDS magic without a 124-byte header", () => {
+    const bytes = ddsBc7Fixture();
+    bytes.writeUInt32LE(100, 4);
+    expect(
+      recognizeArtifactFormat({
+        prefix: bytes.subarray(0, 4096),
+        fileSize: bytes.length,
+      })?.format,
+    ).not.toBe("dds");
+  });
+});
+
+describe("DDS headers", () => {
+  it("reports DX10 facts and a payload matching the derived size", async () => {
+    const result = await read("dds", ddsBc7Fixture());
+    expect(result.metadata).toMatchObject({
+      kind: "dds",
+      width: 256,
+      height: 256,
+      mip_map_count: 1,
+      four_cc: "DX10",
+      dx10: {
+        dxgi_format: 98,
+        dxgi_format_name: "BC7_UNORM",
+        resource_dimension: 3,
+        array_size: 1,
+      },
+      payload_offset: 148,
+      payload_bytes: 65_536,
+      expected_payload_bytes: 65_536,
+      extent_check: "consistent",
+    });
+    expect(regions(result.entries)).toEqual([
+      { path: "payload.bin", byteOffset: 148, declaredSize: 65_536 },
+    ]);
+    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+  });
+
+  it("reports a truncated payload as a size mismatch, not a refusal", async () => {
+    const result = await read("dds", ddsBc7Fixture(1000));
+    expect(result.metadata).toMatchObject({
+      payload_bytes: 1000,
+      expected_payload_bytes: 65_536,
+      extent_check: "truncated",
+    });
+    expect(result.coverage[0]).toEqual({
+      status: "unknown",
+      limitations: [
+        "DDS payload holds 1000 byte(s) but its declared dimensions, mips and format need 65536; the file is truncated.",
+      ],
+    });
+  });
+
+  it("refuses a pixel-format block of the wrong size as malformed DDS", async () => {
+    const bytes = ddsBc7Fixture();
+    bytes.writeUInt32LE(31, 76);
+    await expect(read("dds", bytes)).rejects.toMatchObject({
+      parseFailure: { kind: "malformed", format: "dds", offset: 76 },
+    });
+  });
+});
+
+describe("GLB headers", () => {
+  it("lists JSON and BIN chunks, counts and the embedded image", async () => {
+    const result = await read("glb", glbFixture());
+    expect(result.metadata).toMatchObject({
+      kind: "glb",
+      version: 2,
+      asset_version: "2.0",
+      asset_generator: "rea fixture",
+      counts: {
+        accessors: 1,
+        buffers: 1,
+        bufferViews: 2,
+        images: 1,
+        meshes: 1,
+        extensionsUsed: 1,
+      },
+      extensions_used: ["KHR_materials_unlit"],
+      json_status: "parsed",
+      extent_check: "consistent",
+    });
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "chunks/0.json",
+      "chunks/1.bin",
+      "images/0.png",
+    ]);
+    expect(result.contents.get("images/0.png")).toEqual(GLB_IMAGE);
+  });
+
+  it("reports a declared length past the file as truncated", async () => {
+    const whole = glbFixture();
+    const result = await read("glb", whole.subarray(0, whole.length - 4));
+    expect(result.metadata?.extent_check).toBe("truncated");
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "chunks/0.json",
+    ]);
+    expect(result.coverage[0]?.status).toBe("unknown");
+  });
+
+  it("refuses a GLB whose first chunk is not JSON", async () => {
+    const bytes = glbFixture();
+    bytes.write("JSOX", 16, "latin1");
+    await expect(read("glb", bytes)).rejects.toMatchObject({
+      parseFailure: { kind: "malformed", format: "glb", offset: 12 },
+    });
+  });
+});
+
+describe("KTX headers", () => {
+  it("reads KTX 1.1 fields, key/value data and mip levels", async () => {
+    const result = await read("ktx", ktxFixture());
+    expect(result.metadata).toMatchObject({
+      kind: "ktx",
+      endianness: "little",
+      gl_internal_format: 0x8058,
+      pixel_width: 4,
+      pixel_height: 4,
+      faces: 1,
+      mip_levels: 1,
+      key_value_bytes: 8,
+      levels_read: 1,
+      extent_check: "consistent",
+    });
+    expect(regions(result.entries)).toEqual([
+      { path: "key-value-data.bin", byteOffset: 64, declaredSize: 8 },
+      { path: "levels/0.bin", byteOffset: 76, declaredSize: 64 },
+    ]);
+  });
+
+  it("reports a KTX cut inside its last mip level as truncated", async () => {
+    const result = await read("ktx", ktxFixture().subarray(0, 100));
+    expect(result.metadata?.extent_check).toBe("truncated");
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "key-value-data.bin",
+    ]);
+  });
+
+  it("refuses an unknown endianness marker as malformed KTX", async () => {
+    const bytes = ktxFixture();
+    bytes.writeUInt32LE(0x11223344, 12);
+    await expect(read("ktx", bytes)).rejects.toMatchObject({
+      parseFailure: { kind: "malformed", format: "ktx", offset: 12 },
+    });
+  });
+
+  it("reads KTX 2.0 header, index and level ranges", async () => {
+    const result = await read("ktx2", ktx2Fixture());
+    expect(result.metadata).toMatchObject({
+      kind: "ktx2",
+      vk_format: 37,
+      pixel_width: 4,
+      level_count: 1,
+      supercompression_scheme: 2,
+      supercompression_name: "Zstandard",
+      dfd: { offset: 104, length: 44 },
+      levels: [{ offset: 148, length: 64, uncompressed_length: 64 }],
+      extent_check: "consistent",
+    });
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "dfd.bin",
+      "levels/0.bin",
+    ]);
+  });
+
+  it("reports a KTX2 level past the end of the file as truncated", async () => {
+    const result = await read("ktx2", ktx2Fixture().subarray(0, 180));
+    expect(result.metadata?.extent_check).toBe("truncated");
+    expect(result.entries.map((entry) => entry.path)).toEqual(["dfd.bin"]);
+  });
+});
+
+describe("GPU asset root inventory", () => {
+  it("inventories a GLB root with its regions hashed and classified", async () => {
+    const graph = await inventoryArtifact(
+      await write("model.glb", glbFixture()),
+    );
+    expect(graph.manifest.root_format).toBe("glb");
+    expect(graph.coverage.status).toBe("complete");
+    expect(
+      graph.occurrences.find((row) => row.logical_path === "images/0.png"),
+    ).toMatchObject({
+      hash_status: "verified",
+      format_metadata: { kind: "gpu-asset-region", role: "image", index: 0 },
+    });
+  });
+});
