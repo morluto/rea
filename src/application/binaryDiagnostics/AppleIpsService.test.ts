@@ -1,16 +1,13 @@
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { createHash } from "node:crypto";
 import { parseAppleIps } from "../../native/apple/AppleIpsParser.js";
 import { inspectAppleIpsInputSchema } from "../../domain/native/appleIps.js";
-import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { AppleIpsService } from "./AppleIpsService.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import type { AppleIps } from "../../domain/native/appleIps.js";
 import { ok } from "../../domain/result.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 
 const identity = APPLE_IPS_PROVIDER;
 const bytes = Buffer.from(
@@ -204,23 +201,12 @@ it.each([
 );
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late AppleIps cancellation" };
-  const service = new AppleIpsService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late AppleIps cancellation",
+    (inspect) => new AppleIpsService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_apple_ips",
     normalized_result: report,
   });
