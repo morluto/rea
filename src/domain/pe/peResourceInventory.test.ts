@@ -74,13 +74,16 @@ describe("word-aligned PE resource records", () => {
         expect(result.resources[0]?.payload.location.offset).toBe(
           fixture.bytes.readUInt32LE(dataOffset) - 0x1c00,
         );
+        // A Size that ends inside the tree bounds nothing the loader reads.
         fixture.bytes.writeUInt32LE(
           dataOffset - 0x400 + 15,
           fixture.directoryAt + 4,
         );
-        await expect(parse(fixture.bytes)).rejects.toMatchObject({
-          kind: "malformed",
-        });
+        const short = await parse(fixture.bytes);
+        expect(short.resources).toEqual(result.resources);
+        expect(short.header_anomalies?.map(({ code }) => code)).toEqual([
+          "directory_size_below_structure",
+        ]);
       }
     },
   );
@@ -190,11 +193,6 @@ describe("portable PE resource parsing", () => {
   );
 
   it.each([
-    [
-      "truncated directory",
-      (fixture: ReturnType<typeof peResourceFixture>) =>
-        fixture.bytes.writeUInt32LE(17, fixture.directoryAt + 4),
-    ],
     [
       "cycle",
       (fixture: ReturnType<typeof peResourceFixture>) =>
@@ -456,6 +454,26 @@ describe("PE resource header admission shared with every PE reader", () => {
     expect(report.coverage).toMatchObject({ status: "complete", resources: 5 });
     expect(report.header_anomalies?.map(({ code }) => code)).toEqual([
       "size_of_headers_inconsistent",
+    ]);
+  });
+
+  it("walks the whole file-backed tree when Size covers only its root header", async () => {
+    // A Size of 17 covers the 16-byte root header and one byte.
+    const baseline = await parse(peResourceFixture().bytes);
+    const fixture = peResourceFixture();
+    fixture.bytes.writeUInt32LE(17, fixture.directoryAt + 4);
+    const report = await parse(fixture.bytes);
+    expect(report.resources).toEqual(baseline.resources);
+    // The cited range is the tree bytes the walk read, past the stated Size.
+    expect(report.directory?.location.offset).toBe(
+      baseline.directory?.location.offset,
+    );
+    expect(report.directory?.location.bytes).toBeGreaterThan(17);
+    expect(report.header_anomalies).toEqual([
+      {
+        code: "directory_size_below_structure",
+        message: expect.stringContaining("declares Size 17"),
+      },
     ]);
   });
 
@@ -843,13 +861,11 @@ it("distinguishes a backed directory beyond the budget from a truncated director
   const [root, , languages] = fixture.directoryOffsets;
   if (root === undefined || languages === undefined)
     throw new Error("Missing resource fixture directories");
-  // Keep the language directory header but exclude the first row from the resource interval.
+  // A Size that excludes the language rows does not bound the walk.
   fixture.bytes.writeUInt32LE(languages - root + 16, fixture.directoryAt + 4);
   await expect(
-    payloadsOf(fixture.bytes, "NODE_SEA_BLOB", 2),
-  ).rejects.toMatchObject({
-    kind: "malformed",
-  });
+    payloadsOf(fixture.bytes, "NODE_SEA_BLOB", 3),
+  ).resolves.toHaveLength(1);
 });
 
 it("keeps an out-of-interval name unresolved beside a confirmed resource", async () => {

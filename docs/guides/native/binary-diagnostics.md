@@ -247,13 +247,13 @@ the Windows loader does instead of refusing the declarations the loader
 ignores or caps. Every reader except hardening reports them in
 `header_anomalies`:
 
-| `code`                                  | Declaration                                                                                          | Read as                                                                     |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `optional_header_size_below_fields`     | `SizeOfOptionalHeader` ends before the fixed fields or data directories                              | Fields at their fixed offsets; the value only locates the section table     |
-| `directory_count_above_maximum`         | `NumberOfRvaAndSizes` above 16                                                                       | The first 16 directories                                                    |
-| `size_of_headers_inconsistent`          | `SizeOfHeaders` before the section table end or past the file                                        | Headers at their declared offsets; only file-backed header bytes are mapped |
-| `directory_size_below_structure`        | A directory `Size` below the structure read at its RVA (export, import, delay import, TLS, resource) | The structure at its RVA; import descriptors to the null terminator         |
-| `directory_size_past_file_backed_bytes` | A resource directory `Size` past its file-backed bytes                                               | The tree within those bytes                                                 |
+| `code`                                  | Declaration                                                                                          | Read as                                                                                                             |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `optional_header_size_below_fields`     | `SizeOfOptionalHeader` ends before the fixed fields or data directories                              | Fields at their fixed offsets; the value only locates the section table                                             |
+| `directory_count_above_maximum`         | `NumberOfRvaAndSizes` above 16                                                                       | The first 16 directories                                                                                            |
+| `size_of_headers_inconsistent`          | `SizeOfHeaders` before the section table end or past the file                                        | Headers at their declared offsets; only file-backed header bytes are mapped                                         |
+| `directory_size_below_structure`        | A directory `Size` below the structure read at its RVA (export, import, delay import, TLS, resource) | The structure at its RVA; import descriptors to the null terminator; the resource tree within its file-backed bytes |
+| `directory_size_past_file_backed_bytes` | A resource directory `Size` past its file-backed bytes                                               | The tree within those bytes                                                                                         |
 
 DOS page, relocation and load-module fields do not affect PE admission; a
 `PE\0\0` signature at `e_lfanew` declares the image. A data directory with a
