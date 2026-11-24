@@ -40,8 +40,8 @@ const SHT_NOBITS = 8;
 const MACHO_DWARF_SEGMENT = "__DWARF,";
 const MACHO_ZERO_FILL_TYPES = new Set([0x1, 0xc, 0x12]);
 const SPLIT_DEBUG_INFO = ".debug_info.dwo";
-const MAX_PE_SECTION_NAME_BYTES = 65536;
-const MAX_PE_DECODED_NAME_BYTES = 16 * 1024 * 1024;
+export const MAX_PE_SECTION_NAME_BYTES = 65536;
+export const MAX_PE_DECODED_NAME_BYTES = 16 * 1024 * 1024;
 const DUPLICATE_SECTION =
   "Duplicate section; the first file-backed copy was read";
 

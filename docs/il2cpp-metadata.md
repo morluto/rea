@@ -156,8 +156,8 @@ identity. Slices are selected as for the other native inspectors: a CPU family
 with one slice is read by its family name, and when several slices share a
 family the value must name one slice's subtype exactly, so `arm64` reads the
 `arm64` slice beside an `arm64e` one. Selection problems are invalid
-`binary_architecture` requests, and a damaged FAT table is an invalid
-`binary_path`. `arm64e` is not a `binary_architecture` value: when the
+`binary_architecture` requests, and a damaged FAT table or slice is a
+malformed target at the binary's path (see [failures](#failures)). `arm64e` is not a `binary_architecture` value: when the
 intended slice is the only arm64e slice among several arm64-family slices, use
 `lipo -info` to enumerate exact subtypes on macOS, extract the slice into a
 separate file, for example `lipo universal -thin arm64e -output thin-arm64e`,
@@ -465,20 +465,41 @@ Il2CppType byref flag in different bits, so a rendered name could gain or lose
 | --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
 | `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section).            |
 | `unsupported-pointer-encoding`          | unsupported | Mach-O chained fixups or Android packed (APS2) ELF relocations; pointers not decoded.                        |
-| `malformed-container`                   | input error | The container headers are damaged.                                                                           |
-| `code-gen-modules-not-found`            | input error | An image has no module record; often a binary from a different build.                                        |
-| `ambiguous-code-gen-module`             | input error | More than one module record matches an image.                                                                |
-| `code-registration-not-found`           | input error | No unique module table or executable-byte array candidate was resolved.                                      |
-| `invalid-method-token`                  | input error | A token is outside its module's method-pointer rows, or a MethodDef row is reused within one image.          |
-| `invalid-method-pointer`                | input error | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                     |
-| `metadata-registration-not-found`       | input error | No single MetadataRegistration or code-loaded type-table candidate was resolved.                             |
-| `invalid-type`                          | input error | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                  |
+| `malformed-container`                   | malformed   | The container headers are damaged.                                                                           |
+| `code-gen-modules-not-found`            | conflict    | An image has no module record; often a binary from a different build.                                        |
+| `ambiguous-code-gen-module`             | conflict    | More than one module record matches an image.                                                                |
+| `code-registration-not-found`           | conflict    | No unique module table or executable-byte array candidate was resolved.                                      |
+| `invalid-method-token`                  | conflict    | A metadata MethodDef row is past its module's method-pointer rows.                                           |
+| `invalid-method-pointer`                | conflict    | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                     |
+| `metadata-registration-not-found`       | conflict    | No single MetadataRegistration or code-loaded type-table candidate was resolved.                             |
+| `invalid-type`                          | conflict    | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                  |
 | `unsupported-type-kind`                 | unsupported | A valid type kind has no implemented rendering.                                                              |
 | `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39, or a build lacks either static registration. |
-| `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
-| `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
+| `generic-method-registration-not-found` | conflict    | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
+| `ambiguous-generic-method-registration` | conflict    | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
 
-Format failures name `binary_path` and slice-selection failures name `binary_architecture`; capacity refusals remain typed resource errors whose `reported_limits` name the exceeded budget (`boundary`, the capacity reason) and its `maximum`, with `details.refusal.unit` naming the unit the budget counts (`"entries"`, `"bytes"` or `"frames"`). Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB. The virtual-pointer index has the same 1 GiB estimated representation allowance ([#14175](https://github.com/morluto/rea/issues/14175) reports a real Unity 6 arm64 build that exceeds it), reserving 2 KiB per distinct virtual destination before insertion for retained Maps and finish-time lookup storage. Repeated declarations of one destination share that reservation. This conservative allocation accounting is separate from actual process RSS and the report allowance; exhaustion returns a typed `native-index-capacity` refusal before another destination is retained.
+Each category says which selected file is at fault:
+
+- **unsupported**: an `unsupported_target` refusal whose `details.path` is
+  `binary_path`. The binary's form is outside coverage.
+- **malformed**: an `unsupported_target` refusal with `details.format_failure`
+  `malformed` or `truncated`, whose `details.path` is `binary_path`. The
+  binary's own bytes are damaged. A damaged universal Mach-O container,
+  including a slice that ends inside its header or disagrees with its FAT
+  table entry, is reported the same way with `details.format` `macho`.
+- **conflict**: both files parsed but do not agree. They may come from
+  different builds, either file may be damaged, or the binary's registration
+  layout may be outside coverage; nothing establishes which. The refusal is an
+  `invalid_request` with an `invalid_value` issue for each of `path` and
+  `binary_path` (`--binary` in the CLI) and no `inspect_input_contract`
+  recovery. Neither file is called malformed.
+
+A token that is not a MethodDef row, or a row reused within one image, is
+the metadata's own fault, so linking refuses it as malformed metadata with
+`invalid-method-definition-token` (see [failures](#failures)), not
+as a conflict. Rows may repeat across images, since each image numbers its own.
+
+Slice-selection failures name `binary_architecture`: an architecture the universal file does not hold, an ambiguous one, or one given for a thin file. A metadata failure found while linking names the metadata's path, not the binary's. Capacity refusals remain typed resource errors whose `reported_limits` name the exceeded budget (`boundary`, the capacity reason) and its `maximum`, with `details.refusal.unit` naming the unit the budget counts (`"entries"`, `"bytes"` or `"frames"`). Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB. The ELF virtual-pointer index has its own per-call allowance, `max_native_index_bytes` (CLI `--max-native-index-bytes`, needs `binary_path`), which defaults to 1 GiB of estimated representation and reserves 2 KiB per distinct virtual destination before insertion for retained Maps and finish-time lookup storage. The default admits 524,288 destinations; a build with more, such as the Unity 6 arm64 `libil2cpp.so` with 559,802 relocations in [#14175](https://github.com/morluto/rea/issues/14175), needs a larger value on the next call. Repeated declarations of one destination share that reservation. This conservative allocation accounting is separate from actual process RSS, host memory and the report allowance; exhaustion returns a typed `native-index-capacity` refusal before another destination is retained, with `reported_limits.boundary` `virtual-pointer-index-bytes` and `details.limit` naming `max_native_index_bytes`, its effective value, its default and its range (1 to `Number.MAX_SAFE_INTEGER`).
 
 Scans yield cooperatively in bounded batches. Name-address retention and reverse-trie construction are each limited to 65,536 entries/nodes and fallback module-array candidates to 64 (`native-index-capacity`); exceeding capacity does not prove absence. Rendered type text has a 64 MiB UTF-8 cache-workspace guard, separate from the 64 MiB encoded-report admission, and 64 nested rendering frames (`native-type-text-capacity` / `type-nesting-capacity`). Genuine cycles are malformed; unsupported type kinds are explicit coverage failures. Native row/text admission runs before allocation or retention. Unused generic parameter names are read on demand from the same stable metadata snapshot. There is no cross-inspection file cache; validated immutable Evidence is reused for session views.
 
@@ -538,22 +559,26 @@ A file whose magic is not `0xFAB11BAF` fails as an unsupported target with
 A version other than 24, 27, 29, 31 or 39 fails as an unsupported target with
 `unsupported-version`.
 
-Damaged metadata returns an input error (`invalid_format`) whose
-message names one reason:
+Damaged metadata is refused as a malformed target: an `unsupported_target`
+refusal whose `details.path` is the metadata file, `details.format` is
+`il2cpp-metadata`, `details.format_failure` is `truncated` for
+`truncated-header` and `malformed` otherwise, and `details.reason` names one
+reason. The request is not at fault, so no input recovery is offered:
 
-| Reason                    | Meaning                                                                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `truncated-header`        | The file is shorter than the header.                                                                             |
-| `unexpected-header-size`  | `stringLiterals.offset` is not the header size: 264 bytes for version 24, 256 for 27, 29 and 31, 380 for 39.     |
-| `section-out-of-bounds`   | A section extends beyond the file, or a non-empty section starts inside the header.                              |
-| `section-overlap`         | Two sections overlap. Zero-size sections are exempt and gaps are allowed.                                        |
-| `record-size-mismatch`    | A section size does not divide into its records, or the record size differs from the one the index widths imply. |
-| `type-index-width`        | The record used to derive the type index width implies no 1, 2 or 4 byte width.                                  |
-| `index-out-of-range`      | A serialized index or range points outside its target collection.                                                |
-| `nested-type-conflict`    | A type is listed as nested in two types, in itself, or in a cycle of declaring types.                            |
-| `declaring-type-mismatch` | A method inside a type's method range names a different type, or a method lies outside its type's range.         |
-| `image-range-overlap`     | Two images claim the same type definitions.                                                                      |
-| `invalid-string`          | A name index is outside the strings section, its string is unterminated, or it is not valid UTF-8.               |
+| Reason                            | Meaning                                                                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `truncated-header`                | The file is shorter than the header.                                                                                                       |
+| `unexpected-header-size`          | `stringLiterals.offset` is not the header size: 264 bytes for version 24, 256 for 27, 29 and 31, 380 for 39.                               |
+| `section-out-of-bounds`           | A section extends beyond the file, or a non-empty section starts inside the header.                                                        |
+| `section-overlap`                 | Two sections overlap. Zero-size sections are exempt and gaps are allowed.                                                                  |
+| `record-size-mismatch`            | A section size does not divide into its records, or the record size differs from the one the index widths imply.                           |
+| `type-index-width`                | The record used to derive the type index width implies no 1, 2 or 4 byte width.                                                            |
+| `index-out-of-range`              | A serialized index or range points outside its target collection.                                                                          |
+| `nested-type-conflict`            | A type is listed as nested in two types, in itself, or in a cycle of declaring types.                                                      |
+| `declaring-type-mismatch`         | A method inside a type's method range names a different type, or a method lies outside its type's range.                                   |
+| `image-range-overlap`             | Two images claim the same type definitions.                                                                                                |
+| `invalid-string`                  | A name index is outside the strings section, its string is unterminated, or it is not valid UTF-8.                                         |
+| `invalid-method-definition-token` | Read only when linking a binary: a method an image owns has no nonzero MethodDef token, or two methods in one image share a MethodDef row. |
 
 Record extents are checked for the decoded images, types, methods, fields,
 properties, events, parameters, string literals, nested types, generic

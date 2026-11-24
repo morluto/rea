@@ -523,10 +523,19 @@ When the selected source changes during acquisition or no longer matches its
 admitted digest, inspection and comparison report retryable `artifact_changed`;
 any completed hash retains the observed digest and byte count. Retry against a
 stable source. This differs from corrupted retained Evidence, which remains an
-Evidence-integrity failure. Malformed selected PE input has the same input-format
-classification in inspection and comparison. Its issue identifies the selected
-filename and argument: `path` for inspection, or `leftPath` / `rightPath` for CLI
-comparison. A failed right-side comparison retains the completed left observation.
+Evidence-integrity failure. Malformed selected PE/CLI bytes are a target refusal,
+not an input error, in inspection and comparison: `unsupported_target` with
+`details.format` `pe-cli`, `details.format_failure` `malformed`, and
+`details.path` naming the file whose bytes are at fault, so a comparison names
+the malformed side by its own path. `details.field` and `details.offset` give
+the reader's structure and byte offset when known. The arguments are not at
+fault, so no input recovery is offered. A metadata layout or signature form
+outside decoder coverage is `unsupported_target` without `format_failure`.
+Inventory status follows the same split: when a reader stops on such a form
+(`unsupported-metadata` or `unsupported-signature`), `metadata.status` is
+`partial` and an artifact's `classification.status` stays `managed`; only a
+broken rule makes them `malformed`. A failed right-side comparison retains the
+completed left observation.
 
 ## Member comparison
 

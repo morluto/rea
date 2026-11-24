@@ -6,6 +6,11 @@ import { expect } from "vitest";
 import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "../../src/contracts/releaseExposureToolContracts.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { pe } from "../../src/domain/binaryTarget.fixture.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 const PLANTED_SOURCE = "release-exposure-planted-secret-7c2e9a";
 const releaseExposureContract = RELEASE_EXPOSURE_TOOL_CONTRACTS.find(
@@ -127,12 +132,14 @@ cliTest("exits 3 when a shipped source map embeds sources", async ({ cli }) => {
   expect(
     report.checks.find((check) => check.id === "electron.run_as_node")?.status,
   ).toBe("unknown");
+  expect(report.coverage.inapplicable_checks).toEqual(
+    expect.arrayContaining(["native.pdb_path", "go.build_paths"]),
+  );
   expect(
-    report.checks.find((check) => check.id === "native.pdb_path")?.status,
-  ).toBe("not_applicable");
-  expect(
-    report.checks.find((check) => check.id === "go.build_paths")?.status,
-  ).toBe("not_applicable");
+    report.checks.filter(({ id }) =>
+      report.coverage.inapplicable_checks.includes(id),
+    ),
+  ).toEqual([]);
   expect(JSON.stringify(evidence)).not.toContain(PLANTED_SOURCE);
   const gated = await cli.run({
     arguments: ["audit-release-exposure", root, "--fail_on", "high", "--json"],
@@ -191,7 +198,8 @@ cliTest(
     expect(result.exitCode, result.stderr).toBe(0);
     const report = outputSchema.parse(result.json).normalized_result;
     expect(report.summary.no_exposure_observed_in_assessed_checks).toBe(true);
-    expect(report.summary.by_status.not_assessed).toBe(3);
+    expect(report.summary.by_status.not_assessed).toBe(1);
+    expect(report.checks.map(({ id }) => id)).toContain("android.manifest");
   },
 );
 
@@ -267,5 +275,50 @@ cliTest(
       counts: { companions: 0 },
       samples: [],
     });
+  },
+);
+
+cliTest(
+  "omits checks that cannot apply to a single PE through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-release-exposure-pe-");
+    const image = join(root, "app.exe");
+    await writeFile(
+      image,
+      pe(0x8664, 64, 2, false, { pdbPath: Buffer.from("C:\\b\\app.pdb") }),
+    );
+    const result = await cli.run({
+      arguments: ["audit-release-exposure", image, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = outputSchema.parse(result.json);
+    const report = evidence.normalized_result;
+    expect(report.target).toMatchObject({ kind: "executable", format: "pe" });
+    expect(report.coverage.inapplicable_checks).toEqual(
+      expect.arrayContaining([
+        "electron.run_as_node",
+        "electron.asar_integrity",
+        "electron.only_load_from_asar",
+        "electron.node_cli_inspect",
+        "macho.hardened_runtime",
+        "android.manifest",
+      ]),
+    );
+    const reported = report.checks.map(({ id }) => id);
+    expect(reported).toContain("native.pdb_path");
+    expect(reported).toContain("native.hardening");
+    expect(
+      reported.filter((id) => report.coverage.inapplicable_checks.includes(id)),
+    ).toEqual([]);
+    expect(report.checks.map(({ next_probe }) => next_probe)).not.toContain(
+      "inspect_electron_fuses",
+    );
+    expect(report.checks.map(({ next_probe }) => next_probe)).not.toContain(
+      "inspect_signature",
+    );
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("audit_release_exposure", { path: image });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expectCliMcpEvidenceParity(evidence, response.structuredContent, image);
   },
 );

@@ -46,8 +46,9 @@ const sourceSpan = (source: ByteSource): ByteSpan => ({
     const bytes = await source.readRange(offset, clamped);
     if (bytes.length !== clamped)
       throw new ArtifactReaderFailure(
-        "format",
+        "integrity",
         "Kernel image ended before the admitted file range.",
+        { integrityCheck: "read-coverage" },
       );
     return bytes;
   },

@@ -30,6 +30,7 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
   "AnalysisUnsupportedTargetError",
+  "AnalysisMalformedTargetError",
   "AnalysisCancelledError",
   "AnalysisTimeoutError",
   "AnalysisResourceConstraintError",

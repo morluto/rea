@@ -928,7 +928,7 @@ it("retains the descriptor owner when admission cleanup fails", async () => {
     await expect(
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "path",
       message: expect.stringContaining(directory),
       cleanup: {
         reason: closeFailure.message,

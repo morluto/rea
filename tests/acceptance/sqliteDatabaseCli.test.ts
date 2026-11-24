@@ -324,9 +324,6 @@ cliTest(
           observed_sqlite_snapshot_input_bytes: String(maximum + 1),
         },
       },
-      remediation: {
-        action: expect.stringContaining("supported export workflow"),
-      },
     };
     expect(cliResult.exitCode).toBe(1);
     expect(cliResult.json).toMatchObject(expectedError);
@@ -384,14 +381,11 @@ cliTest.skipIf(process.platform === "win32" || !SQLITE_NATIVE_LIMITS_AVAILABLE)(
       code: "capability_unavailable",
       category: "unsupported_provider",
       retryable: false,
-      message: expect.stringContaining("supported consistent offline export"),
       details: {
         provider_id: "sqlite",
         operation: "inspect_sqlite_database",
+        // The system code is the fact that rules out a malformed database.
         reason: expect.stringContaining("ENAMETOOLONG"),
-      },
-      remediation: {
-        action: expect.stringContaining("supported consistent offline export"),
       },
     };
     expect(cliResult.exitCode).toBe(1);
@@ -1042,7 +1036,20 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(ambiguous.exitCode).toBe(1);
-    expect(ambiguous.stdout).toContain("shadow table");
+    // An unresolved kind and an absent table share this issue shape, so
+    // the issue message is what distinguishes the unknown kind.
+    expect(ambiguous.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["table"],
+            reason: "invalid_format",
+            message: expect.stringContaining("shadow table"),
+          },
+        ],
+      },
+    });
     expect(
       (
         await call("inspect_sqlite_database", {
@@ -1062,7 +1069,18 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(missing.exitCode).toBe(1);
-    expect(missing.stdout).toContain("absent");
+    expect(missing.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["table"],
+            reason: "invalid_format",
+            message: expect.stringContaining("absent"),
+          },
+        ],
+      },
+    });
     expect(
       (await call("inspect_sqlite_database", { path: valid, table: "absent" }))
         .isError,
