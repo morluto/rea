@@ -55,6 +55,7 @@ import {
   UefiAnalysisProvider,
   buildUefiEntryPointScaffolding,
   detectPeTeMachineWidth,
+  parsePeTeHeader,
   phaseFromFfsTypeName,
   sanitizeCComment,
 } from "./UefiAnalysisProvider.js";
@@ -8945,6 +8946,100 @@ it("truncates batch decompilation input staging and omits Ghidra launch when sta
     } else {
       delete process.env.GHIDRA_INSTALL_DIR;
     }
+    await provider.close();
+  }
+});
+
+it("rejects truncated PE headers during parsePeTeHeader and directory candidate discovery", async () => {
+  // 136-byte file with eLfanew: 128 (only 8 bytes after eLfanew, truncated 20-byte COFF header)
+  const truncatedMz = Buffer.alloc(136, 0);
+  truncatedMz[0] = 0x4d;
+  truncatedMz[1] = 0x5a;
+  truncatedMz.writeUInt32LE(128, 0x3c);
+  truncatedMz.set(Buffer.from("PE\0\0"), 128);
+  truncatedMz.writeUInt16LE(0x8664, 132); // machine: x86_64
+  truncatedMz.writeUInt16LE(1, 134); // numSections: 1
+
+  // Direct parsePeTeHeader must reject truncated COFF header
+  expect(parsePeTeHeader(truncatedMz)).toBeUndefined();
+
+  // Direct PE with truncated COFF header (< 24 bytes) must also be rejected
+  const truncatedDirectPe = Buffer.alloc(16, 0);
+  truncatedDirectPe.set(Buffer.from("PE\0\0"), 0);
+  truncatedDirectPe.writeUInt16LE(0x8664, 4);
+  expect(parsePeTeHeader(truncatedDirectPe)).toBeUndefined();
+
+  // Directory candidate discovery must not admit truncated PE files
+  const directory = await createTestTempDirectory("rea-uefi-trunc-pe-disc-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "truncated.efi"), truncatedMz);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(0);
+    expect(result.total_modules_decompiled).toBe(0);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("records malformed manifest rows as omitted candidates and marks coverage partial", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-malformed-manifest-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const manifest = {
+    parser: { name: "rea-uefi", version: "1.0.0" },
+    modules: [
+      { payload_file: 42, name: "NonStringPayload" },
+      "not an object row",
+      { payload_file: "", name: "EmptyPayload" },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    const writtenManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(writtenManifest.source_coverage).toBe("partial");
+    expect(writtenManifest.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Manifest module entry at index 1 is not an object"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("has non-string payload_file"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) => lim.includes("has empty payload_file")),
+    ).toBe(true);
+  } finally {
     await provider.close();
   }
 });

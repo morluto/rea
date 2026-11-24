@@ -1,6 +1,7 @@
 import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
 import { decodePeMachine, peOptionalHeaderMagic } from "../domain/peMachine.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
+import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import type { UefiDecodeFormat } from "./FfsSections.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
@@ -218,47 +219,52 @@ export const parsePeTeHeader = (bytes: Buffer): PeTeHeaderInfo | undefined => {
     }
     // 2. Direct PE/COFF header ("PE\0\0")
     if (
-      bytes.length >= 6 &&
+      bytes.length >= 4 &&
       bytes[0] === 0x50 &&
       bytes[1] === 0x45 &&
       bytes[2] === 0x00 &&
       bytes[3] === 0x00
     ) {
-      const machine = reader.u16(4);
-      const numSections = bytes.length >= 8 ? reader.u16(6) : 0;
+      const coffRes = readPeCoffHeader(bytes.subarray(4));
+      if (!coffRes.ok) return undefined;
+      const { machine, sectionCount, optionalHeaderSize } = coffRes.value;
       let optionalHeaderMagic: number | undefined;
-      if (bytes.length >= 26) {
-        const sizeOfOpt = reader.u16(20);
-        if (sizeOfOpt >= 2) {
-          optionalHeaderMagic = reader.u16(24);
-        }
+      if (bytes.length >= 26 && optionalHeaderSize >= 2) {
+        optionalHeaderMagic = reader.u16(24);
       }
       if (machine !== 0) {
-        return { kind: "pe", machine, numSections, optionalHeaderMagic };
+        return {
+          kind: "pe",
+          machine,
+          numSections: sectionCount,
+          optionalHeaderMagic,
+        };
       }
     }
     // 3. PE with DOS stub ("MZ")
     if (bytes[0] === 0x4d && bytes[1] === 0x5a && bytes.length >= 64) {
       const eLfanew = reader.u32(0x3c);
-      if (eLfanew + 6 <= bytes.length) {
+      if (eLfanew >= 64 && eLfanew + 4 <= bytes.length) {
         if (
           bytes[eLfanew] === 0x50 &&
           bytes[eLfanew + 1] === 0x45 &&
           bytes[eLfanew + 2] === 0x00 &&
           bytes[eLfanew + 3] === 0x00
         ) {
-          const machine = reader.u16(eLfanew + 4);
-          const numSections =
-            eLfanew + 8 <= bytes.length ? reader.u16(eLfanew + 6) : 0;
+          const coffRes = readPeCoffHeader(bytes.subarray(eLfanew + 4));
+          if (!coffRes.ok) return undefined;
+          const { machine, sectionCount, optionalHeaderSize } = coffRes.value;
           let optionalHeaderMagic: number | undefined;
-          if (eLfanew + 26 <= bytes.length) {
-            const sizeOfOpt = reader.u16(eLfanew + 20);
-            if (sizeOfOpt >= 2) {
-              optionalHeaderMagic = reader.u16(eLfanew + 24);
-            }
+          if (eLfanew + 26 <= bytes.length && optionalHeaderSize >= 2) {
+            optionalHeaderMagic = reader.u16(eLfanew + 24);
           }
           if (machine !== 0) {
-            return { kind: "pe", machine, numSections, optionalHeaderMagic };
+            return {
+              kind: "pe",
+              machine,
+              numSections: sectionCount,
+              optionalHeaderMagic,
+            };
           }
         }
       }
@@ -3472,7 +3478,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   signal.throwIfAborted();
                 }
                 const m = parsed.modules[mIdx];
-                if (!m || typeof m !== "object") continue;
+                if (!m || typeof m !== "object") {
+                  isCoveragePartial = true;
+                  omittedCandidates.push({
+                    identityRelPath: `firmware_manifest.json#row_${mIdx}`,
+                    reason: "malformed_row",
+                  });
+                  if (limitations.length < 50) {
+                    limitations.push(
+                      `Manifest module entry at index ${mIdx} is not an object; ignored.`,
+                    );
+                  }
+                  continue;
+                }
                 if (m.payload_file === null || m.payload_file === undefined) {
                   isCoveragePartial = true;
                   const label =
@@ -3492,14 +3510,34 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   m.payload_file.length === 0 ||
                   m.payload_file.length > 4096
                 ) {
-                  if (
-                    typeof m.payload_file === "string" &&
-                    m.payload_file.length > 4096 &&
-                    limitations.length < 50
-                  ) {
-                    limitations.push(
-                      `Manifest module at index ${mIdx} has excessive payload_file path length (> 4096 bytes); ignored.`,
-                    );
+                  isCoveragePartial = true;
+                  const label =
+                    typeof m.name === "string" &&
+                    m.name.length > 0 &&
+                    m.name.length <= 256
+                      ? m.name
+                      : `module_${mIdx}`;
+                  omittedCandidates.push({
+                    identityRelPath: `firmware_manifest.json#${label}`,
+                    reason: "malformed_payload",
+                  });
+                  if (limitations.length < 50) {
+                    if (
+                      typeof m.payload_file === "string" &&
+                      m.payload_file.length > 4096
+                    ) {
+                      limitations.push(
+                        `Manifest module at index ${mIdx} has excessive payload_file path length (> 4096 bytes); ignored.`,
+                      );
+                    } else if (typeof m.payload_file !== "string") {
+                      limitations.push(
+                        `Manifest module at index ${mIdx} has non-string payload_file; ignored.`,
+                      );
+                    } else {
+                      limitations.push(
+                        `Manifest module at index ${mIdx} has empty payload_file; ignored.`,
+                      );
+                    }
                   }
                   continue;
                 }
