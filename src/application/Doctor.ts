@@ -108,6 +108,7 @@ export interface DoctorHost {
   readonly runtime: JavaScriptRuntime;
   readonly homeDirectory: string;
   readonly configuredHopperPath?: string;
+  readonly configuredHopperStartupTimeout?: string;
   readonly configuredIlspyCmdPath?: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
@@ -523,6 +524,12 @@ export const systemDoctorHost = (
     ...(environment.HOPPER_LAUNCHER_PATH === undefined
       ? {}
       : { configuredHopperPath: environment.HOPPER_LAUNCHER_PATH }),
+    ...(environment.REA_HOPPER_STARTUP_TIMEOUT_MS === undefined
+      ? {}
+      : {
+          configuredHopperStartupTimeout:
+            environment.REA_HOPPER_STARTUP_TIMEOUT_MS,
+        }),
     ...(environment.REA_ILSPY_CMD_PATH === undefined
       ? {}
       : { configuredIlspyCmdPath: environment.REA_ILSPY_CMD_PATH }),

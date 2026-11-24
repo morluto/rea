@@ -2,6 +2,7 @@ import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
 } from "../domain/runtimeVersion.js";
+import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import {
   linuxHopperLauncherCandidates,
   systemLinuxHopperLauncherCandidates,
@@ -34,6 +35,8 @@ export const collectDoctorDiagnostics = async (
 
   const hopperPath = await findHopper(host);
   checks.push(hopperCheck(host, hopperPath));
+  const hopperTimeoutCheck = optionalHopperStartupTimeoutCheck(host);
+  if (hopperTimeoutCheck !== undefined) checks.push(hopperTimeoutCheck);
   const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 
@@ -80,6 +83,8 @@ export const doctorHealthy = (
     .every(({ ok }) => ok);
   const configuredProvidersHealthy = providerChecks
     .filter(({ name }) => {
+      // Validate the supplied setting independently of provider discovery.
+      if (name === "hopper-startup-timeout") return true;
       if (name.startsWith("hopper")) return providers.hopperConfigured;
       return providers.providerInspections?.some(
         (inspection) =>
@@ -203,6 +208,27 @@ const hopperCheck = (
           : "config_drift",
     },
   );
+
+const optionalHopperStartupTimeoutCheck = (
+  host: DoctorHost,
+): DoctorCheck | undefined => {
+  if (host.configuredHopperStartupTimeout === undefined) return undefined;
+  const parsed = providerStartupTimeoutSchema.safeParse(
+    host.configuredHopperStartupTimeout,
+  );
+  return check(
+    "hopper-startup-timeout",
+    parsed.success,
+    parsed.success
+      ? `REA_HOPPER_STARTUP_TIMEOUT_MS=${String(parsed.data)}`
+      : `REA_HOPPER_STARTUP_TIMEOUT_MS: ${parsed.error.issues.map(({ message }) => message).join("; ")}`,
+    {
+      classification: "config_drift",
+      remediation:
+        "Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to 2147483647 milliseconds.",
+    },
+  );
+};
 
 const optionalHopperVersionCheck = async (
   host: DoctorHost,
