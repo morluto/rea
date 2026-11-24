@@ -11,7 +11,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
-import { createPeRichHeaderService } from "../dist/composition/binaryDiagnostics.js";
+import { createPeRichHeaderService } from "../dist/composition/binaryDiagnostics/peRichHeader.js";
 import { MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES } from "../dist/domain/native/peRichHeader.js";
 
 const PE_EXTENSIONS = new Set([

@@ -47,13 +47,22 @@ const counts = {
   reference_count: z.int().nonnegative(),
   unresolved_reference_count: z.int().nonnegative(),
 };
-export const devicetreeSummarySchema = devicetreeSchema
-  .pick({ artifact: true, header: true, summary: true, coverage: true })
-  .extend(counts);
+const { artifact, header, summary, coverage } = devicetreeSchema.shape;
+export const devicetreeSummarySchema = z.strictObject({
+  artifact,
+  header,
+  summary,
+  coverage,
+  ...counts,
+});
 /** Fixed-size page context; unbounded summary strings stay in the summary view. */
-export const devicetreePageContextSchema = devicetreeSchema
-  .pick({ artifact: true, header: true, coverage: true })
-  .extend({ ...counts, alias_count: z.int().nonnegative() });
+export const devicetreePageContextSchema = z.strictObject({
+  artifact,
+  header,
+  coverage,
+  ...counts,
+  alias_count: z.int().nonnegative(),
+});
 const readReport = createAnalysisViewResultReader(devicetreeSchema);
 export const projectDevicetreeView = (
   parent: AnalysisViewParent,

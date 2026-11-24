@@ -3,7 +3,7 @@ import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
   type ParsedCliOutputArguments,
-} from "../cliOutput.js";
+} from "./cliOutput.js";
 import { estimateTokenCount } from "tokenx";
 import { formatCliOutput } from "./cliOutputFormatter.js";
 import type { CliArgvFailure, CliFieldError } from "./argvParser.js";
@@ -48,7 +48,7 @@ export const cliArgumentFailure = (
   command: string,
   failure: CliArgvFailure,
 ): CliCommandFailure => {
-  if (failure.kind === "dry_run")
+  if (failure.kind === "dry_run" || failure.kind === "flag_spelling")
     return { code: "PARSE_ERROR", message: failure.message, retryable: false };
   if (failure.kind !== "validation")
     return {

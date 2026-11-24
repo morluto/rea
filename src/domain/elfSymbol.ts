@@ -18,6 +18,28 @@ export interface ElfSymbol extends ElfSymbolFields {
   readonly size: bigint;
 }
 
+const EXPORT_BINDINGS: Readonly<
+  Partial<Record<number, "global" | "weak" | "unique">>
+> = {
+  1: "global",
+  2: "weak",
+  10: "unique",
+};
+const EXPORT_VISIBILITIES: Readonly<
+  Partial<Record<number, "default" | "protected">>
+> = {
+  0: "default",
+  3: "protected",
+};
+
+/** Lookup eligibility of a dynamic symbol binding, independent of definition ownership. */
+export const elfSymbolExportBinding = (binding: number) =>
+  EXPORT_BINDINGS[binding];
+
+/** The low two bits of st_other encode visibility independently of processor flags. */
+export const elfSymbolExportVisibility = (other: number) =>
+  EXPORT_VISIBILITIES[other & 3];
+
 export const ELF_SYMBOL_TRUNCATED_MESSAGE = "ELF symbol record is truncated";
 
 const TRUNCATED_SYMBOL = Object.freeze(
@@ -50,6 +72,17 @@ export const readElfSymbolFieldsAt = (
     section_index: readUint16At(bytes, attributes + 2, littleEndian),
   };
 };
+
+/** Decode only the `st_value` word of a symbol already bounds-checked by `readElfSymbolFieldsAt`. */
+export const readElfSymbolValueAt = (
+  bytes: Uint8Array,
+  offset: number,
+  bits: 32 | 64,
+  littleEndian: boolean,
+): bigint =>
+  bits === 64
+    ? readUint64At(bytes, offset + 8, littleEndian)
+    : BigInt(readUint32At(bytes, offset + 4, littleEndian));
 
 /** Decode one fixed ELF32/ELF64 symbol record without slicing its bytes. */
 export const readElfSymbolAt = (

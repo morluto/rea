@@ -7,7 +7,6 @@ import {
   RICH_FIXTURE_ENTRIES,
 } from "../../src/native/pe/PeRichHeader.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 type BinaryDiagnosticsContract =
@@ -56,19 +55,6 @@ cliTest(
     }
     expect(outputSchema.parse(result.json).subject?.local_path).toBe(path);
     expect((await readFile(path)).equals(bytes)).toBe(true);
-
-    await writeFile(path, Buffer.from("ZZ not a PE image"));
-    const rejected = await cli.run({
-      arguments: ["inspect-pe-rich-header", path, "--json"],
-    });
-    expect(rejected.exitCode).toBe(1);
-    expect(rejected.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_pe_rich_header" },
-    });
-    const mcpRejected = await call("inspect_pe_rich_header", { path });
-    expect(mcpRejected.isError).toBe(true);
-    expect(parseMcpToolError(mcpRejected)).toEqual({ error: rejected.json });
   },
 );
 

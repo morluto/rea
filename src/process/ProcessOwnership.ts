@@ -863,18 +863,22 @@ const classifyUnlinkedExitRows = async (
         isExitRefreshCandidate(process, ownership, initialRelations),
     );
   }
-  const livePids = new Set(current.map(({ pid }) => pid));
-  const stillMatched = matched.filter((process) => livePids.has(process.pid));
+  const currentByPid = new Map(
+    current.map((process) => [process.pid, process]),
+  );
+  const stillMatched = matched.filter((process) =>
+    currentByPid.has(process.pid),
+  );
   if (stillMatched.length === 0) return { kind: "clear", processes: current };
   const matchedPids = new Set(stillMatched.map(({ pid }) => pid));
   const groupIds = new Set<number>();
   for (const process of stillMatched) {
-    const leader = current.find(
-      (candidate) =>
-        candidate.pid === process.processGroupId &&
-        candidate.processGroupId === process.processGroupId,
-    );
-    if (leader === undefined || !matchedPids.has(leader.pid))
+    const leader = currentByPid.get(process.processGroupId);
+    if (
+      leader === undefined ||
+      leader.processGroupId !== process.processGroupId ||
+      !matchedPids.has(leader.pid)
+    )
       return {
         kind: "uncertain",
         reason:
@@ -1068,6 +1072,7 @@ const createOwnedCleanupPlan = async (
               : { sampledProcessGroupIds: [...sampledProcessGroupIds] }),
           },
           exitSettlement,
+          relationSnapshot.identities,
         )
       : { owned: [], failures: [], unverified: [], identities: new Map() };
   const listedPids = new Set(processes.map(({ pid }) => pid));
@@ -1141,14 +1146,19 @@ const createOwnedCleanupPlan = async (
     processGroupIds.add(processGroupId);
   for (const processGroupId of escapedProcessGroupIds)
     processGroupIds.add(processGroupId);
+  const relationsByPid = new Map(
+    relationSnapshot.currentRelations.map((process) => [process.pid, process]),
+  );
   const signalableGroups = new Set<number>();
   const unverifiableSampledGroups = new Set<number>();
   for (const processGroupId of processGroupIds) {
     if (processGroupId === ownership.processGroupId) continue;
-    const groupLeader = relationSnapshot.currentRelations.find(
-      ({ pid, processGroupId: observedGroupId }) =>
-        pid === processGroupId && observedGroupId === processGroupId,
-    );
+    const candidateLeader = relationsByPid.get(processGroupId);
+    const groupLeader =
+      candidateLeader !== undefined &&
+      candidateLeader.processGroupId === processGroupId
+        ? candidateLeader
+        : undefined;
     const provenGroup =
       tokenOwnedGroupIds.has(processGroupId) ||
       escapedProcessGroupIds.has(processGroupId);
@@ -1168,15 +1178,23 @@ const createOwnedCleanupPlan = async (
     )
       unverifiableSampledGroups.add(processGroupId);
   }
-  const liveMembers = relationSnapshot.currentRelations.filter(
-    ({ processGroupId }) => processGroupIds.has(processGroupId),
-  );
+  const liveMembersByGroup = new Map<
+    number,
+    (typeof relationSnapshot.currentRelations)[number][]
+  >();
+  for (const relation of relationSnapshot.currentRelations) {
+    if (!processGroupIds.has(relation.processGroupId)) continue;
+    let bucket = liveMembersByGroup.get(relation.processGroupId);
+    if (bucket === undefined) {
+      bucket = [];
+      liveMembersByGroup.set(relation.processGroupId, bucket);
+    }
+    bucket.push(relation);
+  }
+  const tokenFailurePids = new Set(tokenOwned.failures.map(({ pid }) => pid));
   for (const processGroupId of processGroupIds) {
-    const members = liveMembers.filter(
-      ({ processGroupId: observedGroupId }) =>
-        observedGroupId === processGroupId,
-    );
-    if (members.length === 0) continue;
+    const members = liveMembersByGroup.get(processGroupId);
+    if (members === undefined || members.length === 0) continue;
     const { failures, validatedMembers } = await processOwnershipFailures(
       members,
       ownership,
@@ -1198,15 +1216,18 @@ const createOwnedCleanupPlan = async (
           });
       }
     }
-    const memberPids = new Set(members.map(({ pid }) => pid));
-    const scanFailures = tokenOwned.failures.filter(({ pid }) =>
-      memberPids.has(pid),
-    );
+    let hasScanFailure = false;
+    for (const member of members) {
+      if (tokenFailurePids.has(member.pid)) {
+        hasScanFailure = true;
+        break;
+      }
+    }
     for (const failure of failures)
       mergeProcessOwnershipFailure(unresolved, failure);
     if (
       failures.length === 0 &&
-      scanFailures.length === 0 &&
+      !hasScanFailure &&
       !unverifiableSampledGroups.has(processGroupId)
     )
       signalableGroups.add(processGroupId);
@@ -1621,16 +1642,21 @@ const recheckOwnershipFailures = async (
   try {
     let processes = await host.listProcesses();
     const isDarwin = (host.platform ?? HOST_PLATFORM.platform) === "darwin";
+    const retryableFailurePids = isDarwin
+      ? new Set(
+          failures
+            .filter((failure) => failure.reason !== "run-token-mismatch")
+            .map((failure) => failure.pid),
+        )
+      : undefined;
     for (
       let attempt = 0;
-      isDarwin &&
+      retryableFailurePids !== undefined &&
+      retryableFailurePids.size > 0 &&
       attempt < TOKEN_READ_RETRY_ATTEMPTS &&
       processes.some(
         ({ pid, state }) =>
-          failures.some(
-            (failure) =>
-              failure.pid === pid && failure.reason !== "run-token-mismatch",
-          ) && state.slice(1).includes("E"),
+          retryableFailurePids.has(pid) && state.slice(1).includes("E"),
       );
       attempt += 1
     ) {
@@ -1713,6 +1739,7 @@ const scanTokenOwnedProcesses = async (
   captureBaseline: ProcessOwnershipBaseline | undefined,
   relation: OwnershipSweepRelation | undefined,
   exitSettlement: ProcessExitSettlementBudget,
+  initialIdentities?: ReadonlyMap<number, ProcessIdentityObservation>,
 ): Promise<TokenOwnedProcessScan> => {
   if (host.processIdentities !== undefined)
     return scanWithOwnershipEvidence(
@@ -1722,6 +1749,7 @@ const scanTokenOwnedProcesses = async (
       captureBaseline,
       relation,
       exitSettlement,
+      initialIdentities,
     );
 
   const candidates = processes;
@@ -1815,6 +1843,7 @@ const scanWithOwnershipEvidence = async (
   captureBaseline: ProcessOwnershipBaseline | undefined,
   relation: OwnershipSweepRelation | undefined,
   exitSettlement: ProcessExitSettlementBudget,
+  initialIdentities?: ReadonlyMap<number, ProcessIdentityObservation>,
 ): Promise<TokenOwnedProcessScan> => {
   const evidenceOwner =
     relation === undefined
@@ -1840,10 +1869,22 @@ const scanWithOwnershipEvidence = async (
     (captureBaseline ?? []).map(({ pid, identity }) => [pid, identity]),
   );
   const retainedPids = new Set(evidenceOwner.candidates.map(({ pid }) => pid));
-  const firstIdentities = await readNativeProcessIdentityMap(
-    observationRows,
-    host,
-  );
+  let firstIdentities: ReadonlyMap<number, ProcessIdentityObservation>;
+  if (initialIdentities !== undefined && initialIdentities.size > 0) {
+    const missingRows = observationRows.filter(
+      ({ pid }) => !initialIdentities.has(pid),
+    );
+    if (missingRows.length === 0) {
+      firstIdentities = initialIdentities;
+    } else {
+      const fetched = await readNativeProcessIdentityMap(missingRows, host);
+      const merged = new Map(initialIdentities);
+      for (const [pid, observation] of fetched) merged.set(pid, observation);
+      firstIdentities = merged;
+    }
+  } else {
+    firstIdentities = await readNativeProcessIdentityMap(observationRows, host);
+  }
   const candidates = observationRows.filter((process) => {
     if (retainedPids.has(process.pid)) return true;
     if (!baseline.has(process.pid)) return true;

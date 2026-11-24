@@ -215,25 +215,23 @@ export class ReleaseExposureService {
       ),
     );
     const fuseImages: CollectedFuseImage[] = [];
+    const seenFusePaths = new Set<string>();
     for (const candidate of prepared.scan.fuse_candidates) {
-      if (
-        fuseImages.some(
-          (image) => image.inventoriedBundleFile === candidate.path,
-        )
-      )
-        continue;
-      fuseImages.push(
-        await settle(
-          () => this.#fuseImage(candidate, digests, options),
-          {
-            kind: "failed",
-            role: candidate.role,
-            path: candidate.path,
-            reason: OWNER_NOT_RUN,
-          },
-          (value) => fuseImageFact(candidate, digests, value),
-        ),
+      if (seenFusePaths.has(candidate.path)) continue;
+      seenFusePaths.add(candidate.path);
+      const image = await settle(
+        () => this.#fuseImage(candidate, digests, options),
+        {
+          kind: "failed",
+          role: candidate.role,
+          path: candidate.path,
+          reason: OWNER_NOT_RUN,
+        },
+        (value) => fuseImageFact(candidate, digests, value),
       );
+      fuseImages.push(image);
+      if (image.inventoriedBundleFile !== undefined)
+        seenFusePaths.add(image.inventoriedBundleFile);
     }
     const family = fuseImagesRuleOutElectron(
       desktop.family,
@@ -814,18 +812,18 @@ const limitNativeSample = (
   readonly electronHostPaths: readonly string[];
 } => {
   const ranked = electronExecutableRank(scan.native_images, basisPaths);
-  const preferred = scan.native_images
-    .filter((image) => ranked.has(image.path))
-    .sort(
-      (left, right) =>
-        (ranked.get(left.path) ?? 0) - (ranked.get(right.path) ?? 0),
-    );
-  const preferredPaths = new Set(preferred.map((image) => image.path));
+  const preferred: ReleaseExposureNativeImage[] = [];
+  const remaining: ReleaseExposureNativeImage[] = [];
+  for (const image of scan.native_images) {
+    if (ranked.has(image.path)) preferred.push(image);
+    else remaining.push(image);
+  }
+  preferred.sort(
+    (left, right) =>
+      (ranked.get(left.path) ?? 0) - (ranked.get(right.path) ?? 0),
+  );
   const { items: kept, omitted: omittedNative } = boundedList(
-    [
-      ...preferred,
-      ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
-    ],
+    [...preferred, ...remaining],
     MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
   );
   const keptPaths = new Set(kept.map((image) => image.path));
@@ -833,13 +831,15 @@ const limitNativeSample = (
   const hostsAmong = (
     images: readonly ReleaseExposureNativeImage[],
   ): ReleaseExposureNativeImage[] => {
-    const named = images.filter(
-      (image) =>
-        (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
-    );
-    return named.length > 0
-      ? named
-      : images.filter((image) => ranked.has(image.path));
+    const named: ReleaseExposureNativeImage[] = [];
+    const rankedImages: ReleaseExposureNativeImage[] = [];
+    for (const image of images) {
+      const rank = ranked.get(image.path);
+      if (rank === undefined) continue;
+      rankedImages.push(image);
+      if (rank < ANY_SIBLING_RANK) named.push(image);
+    }
+    return named.length > 0 ? named : rankedImages;
   };
   // A layout is read only when every host it could have was sampled: one with
   // both `a.exe` and `electron.exe` is not settled by reading one of them.
@@ -857,45 +857,56 @@ const limitNativeSample = (
     );
   };
   // Each ASAR layout has its own host, so one read host covers only its own.
-  const layouts = [
-    ...new Set(
-      basisPaths
-        .filter((basis) => basis.electronArchive)
-        .map((basis) => nativeDirname(nativeDirname(basis.path))),
-    ),
-  ];
-  // A bundle or selected-executable read settles only its own layout: an app
-  // that embeds another Electron app still needs that app's host read. The
-  // layout is named by the owner's relative path, which carries no caller
-  // spelling, and looked up by the owner's resolved folder.
-  const selectedRead = kept.some(
-    (image) => image.path === scan.target.selected_path,
-  );
+  const selectedRead = keptPaths.has(scan.target.selected_path);
   const bundleRead =
     scan.target.kind === "app" ||
     scan.fuse_candidates.some((candidate) => candidate.role === "app-bundle");
-  const settledLayouts = new Set(
-    basisPaths
-      .filter(
-        (basis) =>
-          basis.electronArchive &&
-          ((bundleRead && basis.layout === "Contents") ||
-            (selectedRead && basis.layout === ".")),
-      )
-      .map((basis) => nativeDirname(nativeDirname(basis.path))),
-  );
-  // An asar: false build names no layout, so a native image outside every
-  // found layout that the sample dropped may be another build's unread host.
-  // Its name does not rule it out: a host can be named `My.App`. An incomplete
-  // inventory may have stopped before listing such an image, even when the
-  // read root is itself a found layout: a build nested below it is outside it.
-  const missedOutsideHost =
-    scan.coverage === "unknown" ||
-    scan.native_images.some(
-      (image) =>
-        !keptPaths.has(image.path) &&
-        !layouts.some((folder) => inLayout(folder, image.path)),
-    );
+  const layoutSet = new Set<string>();
+  const settledLayouts = new Set<string>();
+  for (const basis of basisPaths) {
+    if (!basis.electronArchive) continue;
+    const folder = nativeDirname(nativeDirname(basis.path));
+    layoutSet.add(folder);
+    if (
+      (bundleRead && basis.layout === "Contents") ||
+      (selectedRead && basis.layout === ".")
+    )
+      settledLayouts.add(folder);
+  }
+  const layouts = [...layoutSet];
+  const keptByLayout = new Map<string, ReleaseExposureNativeImage[]>();
+  for (const folder of layouts) {
+    keptByLayout.set(folder, []);
+  }
+  let missedOutsideHost = scan.coverage === "unknown";
+  const outside: ReleaseExposureNativeImage[] = [];
+  if (layouts.length === 0) {
+    if (!missedOutsideHost)
+      missedOutsideHost = scan.native_images.some(
+        (image) => !keptPaths.has(image.path),
+      );
+    outside.push(...kept);
+  } else {
+    for (const image of kept) {
+      let inAnyLayout = false;
+      for (const folder of layouts) {
+        if (inLayout(folder, image.path)) {
+          inAnyLayout = true;
+          keptByLayout.get(folder)!.push(image);
+        }
+      }
+      if (!inAnyLayout) outside.push(image);
+    }
+    if (!missedOutsideHost && omittedNative > 0) {
+      for (const image of scan.native_images) {
+        if (keptPaths.has(image.path)) continue;
+        if (!layouts.some((folder) => inLayout(folder, image.path))) {
+          missedOutsideHost = true;
+          break;
+        }
+      }
+    }
+  }
   // A bundle read with no layout settles only the root build: a nested
   // asar: false build's host may be one the sample or inventory missed.
   const electronExecutableIncluded =
@@ -909,9 +920,6 @@ const limitNativeSample = (
             settledLayouts.has(folder) ||
             hostRead(preferred.filter((image) => inLayout(folder, image.path))),
         );
-  const outside = kept.filter(
-    (image) => !layouts.some((folder) => inLayout(folder, image.path)),
-  );
   const outsideHosts = hostsAmong(outside);
   // A build without an ASAR names no host, so any sampled image outside the
   // discovered layouts may carry another build's fuses and none settles
@@ -925,9 +933,7 @@ const limitNativeSample = (
   const hosts = [
     ...unnamedHosts,
     ...layouts.flatMap((folder) => {
-      const found = hostsAmong(
-        kept.filter((image) => inLayout(folder, image.path)),
-      );
+      const found = hostsAmong(keptByLayout.get(folder)!);
       // A bundle's framework carries its fuses, so a launcher beside it is
       // sampled but is not a fuse host.
       const framework = found.filter((image) =>

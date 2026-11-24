@@ -2,6 +2,17 @@ import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type { CdpResponseFacts } from "./CdpNetworkEventFacts.js";
 import { structuredFieldToken } from "./StructuredFieldToken.js";
+import { trimEdges } from "../kernel/trimEdges.js";
+
+const isInfraAsciiWhitespace = (character: string): boolean =>
+  character === "\t" ||
+  character === "\n" ||
+  character === "\f" ||
+  character === "\r" ||
+  character === " ";
+
+const isHttpWhitespace = (character: string): boolean =>
+  character === "\t" || character === " ";
 
 type ResponseMetadata = WebPageInspection["metadata"]["responses"][number];
 type LinkMetadata = ResponseMetadata["links"][number];
@@ -126,9 +137,10 @@ const parseCsp = (
     for (const rawDirective of policy.split(";")) {
       // CSP3 rejects non-ASCII directives and uses Infra ASCII whitespace.
       if (/[^\x00-\x7f]/u.test(rawDirective)) continue;
-      const [rawName, ...tokens] = rawDirective
-        .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu, "")
-        .split(/[\t\n\f\r ]+/u);
+      const [rawName, ...tokens] = trimEdges(
+        rawDirective,
+        isInfraAsciiWhitespace,
+      ).split(/[\t\n\f\r ]+/u);
       const name = (rawName ?? "").toLowerCase();
       if (!/^[a-z][a-z0-9\x2d]*$/u.test(name) || names.has(name)) continue;
       names.add(name);
@@ -307,7 +319,7 @@ const splitLinkHeader = (
 
 // HTTP OWS/BWS never includes Unicode or HTML-only whitespace.
 const trimHttpWhitespace = (value: string): string =>
-  value.replace(/^[\t ]+|[\t ]+$/gu, "");
+  trimEdges(value, isHttpWhitespace);
 
 const linkParameters = (value: string): readonly LinkParameter[] => {
   const parameters: LinkParameter[] = [];

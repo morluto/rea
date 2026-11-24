@@ -66,10 +66,11 @@ it("classifies a valid DOS target as unsupported for the PE Rich header", async 
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     await writeFile(path, Buffer.from("MZ"));
     const malformed = await provider.inspect(input);
-    if (malformed.ok) throw new Error("Expected malformed input");
+    if (malformed.ok) throw new Error("Expected malformed target");
     expect(projectAnalysisError(malformed.error)).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
+      code: "unsupported_target",
+      category: "unsupported_target",
+      details: { format_failure: "malformed" },
     });
   } finally {
     await provider.close();

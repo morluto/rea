@@ -275,7 +275,11 @@ to `tools/list` and an advertised operation instead of repeating the unknown
 name.
 
 `get_call_graph` returns a `graph` keyed by traversal depth and a top-level
-`limitations` array with deduplicated execution caveats. Each node keeps its
+`limitations` array with deduplicated execution caveats. Both `get_call_graph`
+and `trace_call_path` accept optional `max_depth` and `max_nodes` bounds to
+cap traversal work and reply size; when a bound stops expansion, discovery is
+marked partial and the remaining frontier is reported in `limitations` or
+`residual_unknowns`. Each node keeps its
 relationship coverage and read-specific `limitations`, alongside observed
 `calls`. When a provider does not classify its caveats, they remain on that
 node and coverage is `unknown`. An empty call list with partial or unknown
@@ -931,6 +935,19 @@ coverage is unknown. An inventory view selects `nodes`,
 `occurrences`, `edges`, or `integrity_contradictions`, with `offset` and `limit`
 defaulting to 0 and 64. For occurrences, optional `logical_paths` matches exact
 recorded strings: omission selects all available records; `[]` selects none.
+Optional `entry_kinds` and `artifact_kinds` match exact recorded kinds with the
+same omission and `[]` rules, for example `artifact_kinds: ["native-addon"]`;
+Optional `path_globs` match whole recorded paths, any glob sufficing: `*` and
+`?` stay within one segment, and a `**` segment spans zero or more segments, or
+every path below when last, so `lib/*/*.so` selects native libraries one ABI
+directory deep, `*` selects root entries, and `assets/**` selects everything
+under `assets/`. Other characters are literal and case-sensitive; `.` names the
+container itself and never matches. All supplied selectors intersect.
+Unrecognized bytes keep kind `unknown`. Optional `order_by`, with `field`
+`declared_size` or `compressed_size` and `direction` `ascending` or
+`descending`, orders the selected rows before paging; unknown sizes come last
+and ties keep inventory order. The container's own `.` row has a size, so add
+`path_globs: ["**"]` to rank only its entries.
 These selectors do not reopen the artifact or resolve filesystem paths.
 `source_complete` records whether the available inventory passes the complete
 graph checks. Exhausting a page from a partial source does not establish that
@@ -1225,9 +1242,7 @@ inputs `expected_package_version`, `expected_catalog_digest`, and
 `server_identity.catalog` contains catalog counts and schema digests. Grouped
 tool availability carries the name set and current per-tool facts; `tools/list`
 is the canonical source for complete tool definitions, including input and
-output schemas. Clients that previously read `server_identity.catalog.tools`
-should expand `tool_availability.groups` and use `tools/list` for schemas. The
-same catalog identity summary is returned by CLI `capabilities` and `providers`;
+output schemas. The same catalog identity summary is returned by CLI `capabilities` and `providers`;
 MCP tool definitions remain available through `tools/list`.
 
 Provider capabilities are grouped by provider identity and shared facts.
@@ -2066,9 +2081,7 @@ output destination. New ASAR file occurrences explicitly record the boolean
 `unpacked`: `true` identifies a companion file and `false` identifies a packed
 entry. This field describes archive storage, independently of whether the bytes
 were available or passed integrity verification. Older occurrences may omit it;
-omission remains unknown and must not be defaulted to `false`. Consumers that
-previously accepted only literal `true` must also accept `false`, while retaining
-support for omitted historical values.
+omission remains unknown and must not be defaulted to `false`.
 `compare_artifacts` reports a metadata change when both storage values are
 known and differ. If only one value is known, storage comparison is unknown;
 when both are omitted, storage is not compared.
@@ -2209,9 +2222,8 @@ such as kimi-cli have reported failures with the full catalog attached
 every advertised input schema within a 13,312-byte budget, measured to sit below
 Moonshot's observed cap (community measurements: a 13.7 KB schema is accepted
 while a ~15 KB one is rejected). This compact presentation is the only input
-advertisement. `REA_MCP_INPUT_SCHEMA_PROFILE` accepts only `compact`; the former
-`full` profile was removed, and a registration that still selects it fails at
-startup with a configuration error naming the setting. Remove the setting, or
+advertisement. `REA_MCP_INPUT_SCHEMA_PROFILE` accepts only `compact`; a registration that
+selects `full` fails at startup with a configuration error naming the setting. Remove the setting, or
 set it to `compact`. Compact presentation
 also reduces schemas whose expanded JSON tree exceeds ten levels, the limit
 reported by strict-depth MCP clients in [#2813](https://github.com/morluto/rea/issues/2813).
@@ -2431,9 +2443,9 @@ validation, and complete output schemas were about 92% of a default
 `tools/list` (4.3 of 4.6 MB). Some clients also reject a large `tools/list`
 frame or HTTP SSE event before they load any tools (the measured pi-web-ui
 failure is in [#2512](https://github.com/morluto/rea/issues/2512)). Select
-`compact` to bound every advertised output schema to 4,096 bytes. The former
-`full` output profile was removed; a registration that still selects it fails
-at startup with a configuration error naming the setting. Both profiles keep the same named canonical tool contract for server-side result
+`compact` to bound every advertised output schema to 4,096 bytes. A registration
+that selects `full` fails at startup with a configuration error naming the
+setting. Both profiles keep the same named canonical tool contract for server-side result
 validation and still returns complete `structuredContent` and text results;
 the MCP specification does not require an output schema for
 `structuredContent`.

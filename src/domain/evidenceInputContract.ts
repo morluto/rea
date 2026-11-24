@@ -18,6 +18,15 @@ const borrowedDeclarations = new WeakMap<object, z.ZodType>();
 export const isDeclaredEvidenceInput = (schema: z.ZodType): boolean =>
   declarations.get(schema) !== undefined;
 
+/** Distinguish one Evidence carrier from a borrowed container of carriers. */
+export const isDeclaredEvidenceRecord = (schema: z.core.$ZodType): boolean => {
+  const declaration = declarations.get(schema);
+  if (declaration?.kind === "evidence") return true;
+  if (declaration?.kind !== "borrowed") return false;
+  const owner = borrowedDeclarations.get(declaration.owner);
+  return owner !== undefined && declarations.get(owner)?.kind === "evidence";
+};
+
 /** Mark the canonical logical Evidence input, independently of its JSON shape. */
 export const declareEvidenceInput = <Schema extends z.ZodType>(
   schema: Schema,

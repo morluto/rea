@@ -7,8 +7,12 @@ import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
 import {
-  parseXmlDocumentWithinNodeLimit,
+  isXmlElement,
   opensLikeXml,
+  parseXmlDocumentWithinNodeLimit,
+  xmlChildElements,
+  xmlChildrenNamed,
+  xmlFirstChildNamed,
 } from "../domain/xmlDocument.js";
 import {
   MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
@@ -34,35 +38,28 @@ const BASE_LIMITATIONS = [
 
 const GRADLE_MODULE_METADATA_VERSION = "1.1";
 
-const isElement = (node: Node | null): node is Element =>
-  node !== null && node.nodeType === 1;
-
-const childElements = (element: Element): Element[] => {
-  const children: Element[] = [];
+const soleNamed = (element: Element, local: string): Element | undefined => {
+  const ns = element.namespaceURI ?? "";
+  let found: Element | undefined;
   for (
     let child = element.firstChild;
     child !== null;
     child = child.nextSibling
-  )
-    if (isElement(child)) children.push(child);
-  return children;
-};
-
-const childrenNamed = (element: Element, ...names: string[]): Element[] =>
-  childElements(element).filter(
-    (child) =>
-      (child.namespaceURI ?? "") === (element.namespaceURI ?? "") &&
-      child.localName !== null &&
-      names.includes(child.localName),
-  );
-
-const soleNamed = (element: Element, local: string): Element | undefined => {
-  const matches = childrenNamed(element, local);
-  if (matches.length <= 1) return matches[0];
-  throw malformedInput(
-    MAVEN_GRADLE_METADATA_FORMAT,
-    `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
-  );
+  ) {
+    if (
+      isXmlElement(child) &&
+      (child.namespaceURI ?? "") === ns &&
+      child.localName === local
+    ) {
+      if (found !== undefined)
+        throw malformedInput(
+          MAVEN_GRADLE_METADATA_FORMAT,
+          `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
+        );
+      found = child;
+    }
+  }
+  return found;
 };
 
 const MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0";
@@ -73,11 +70,12 @@ const MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0";
  * `project` vocabularies declare neither and are not POMs.
  */
 const isMavenProjectRoot = (root: Node | null): root is Element => {
-  if (!isElement(root) || root.localName !== "project") return false;
+  if (!isXmlElement(root) || root.localName !== "project") return false;
   if (root.namespaceURI === MAVEN_POM_NAMESPACE) return true;
   return (
     (root.namespaceURI === null || root.namespaceURI === "") &&
-    childrenNamed(root, "modelVersion", "artifactId").length > 0
+    (xmlFirstChildNamed(root, "modelVersion", "") !== undefined ||
+      xmlFirstChildNamed(root, "artifactId", "") !== undefined)
   );
 };
 
@@ -98,7 +96,7 @@ const mavenText = (element: Element): string | null => {
     child !== null;
     child = child.nextSibling
   ) {
-    if (isElement(child))
+    if (isXmlElement(child))
       throw malformedInput(
         MAVEN_GRADLE_METADATA_FORMAT,
         `Maven POM <${element.tagName}> must contain text without nested elements.`,
@@ -224,7 +222,9 @@ const requestedFromGradle = (
 /** The `<exclusion>` elements of one POM dependency row. */
 const mavenExclusionElements = (element: Element): Element[] => {
   const container = soleNamed(element, "exclusions");
-  return container === undefined ? [] : childrenNamed(container, "exclusion");
+  return container === undefined
+    ? []
+    : xmlChildrenNamed(container, "exclusion", container.namespaceURI ?? "");
 };
 
 const parseMavenDependency = <
@@ -348,7 +348,7 @@ const parsePom = (
   const properties =
     propertiesElement === undefined
       ? []
-      : childElements(propertiesElement).map((property) => {
+      : xmlChildElements(propertiesElement).map((property) => {
           // A property may hold a repository URL; its userinfo never leaves the parser.
           const {
             url: value,
@@ -365,12 +365,20 @@ const parsePom = (
   const managedElements =
     managedContainer === undefined
       ? []
-      : childrenNamed(managedContainer, "dependency");
+      : xmlChildrenNamed(
+          managedContainer,
+          "dependency",
+          managedContainer.namespaceURI ?? "",
+        );
   const dependenciesContainer = soleNamed(root, "dependencies");
   const dependencyElements =
     dependenciesContainer === undefined
       ? []
-      : childrenNamed(dependenciesContainer, "dependency");
+      : xmlChildrenNamed(
+          dependenciesContainer,
+          "dependency",
+          dependenciesContainer.namespaceURI ?? "",
+        );
   admit(
     "dependency_rows",
     MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,

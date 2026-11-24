@@ -45,9 +45,9 @@ it("collects the latest attempt for recent completed CI and Release runs into a 
         },
       ],
     },
-    completedJobs("Release lane", "success", recent, 50),
-    completedJobs("Failed lane", "failure", recent, 55),
-    completedJobs("Cancelled lane", "cancelled", recent, 30),
+    completedJobs(43, 2, "Release lane", "success", recent, 50),
+    completedJobs(42, 3, "Failed lane", "failure", recent, 55),
+    completedJobs(41, 1, "Cancelled lane", "cancelled", recent, 30),
   ]);
   const result = await runBatch(fixture);
   const manifest = JSON.parse(
@@ -212,6 +212,8 @@ it("retains a partial manifest when its collection budget is exhausted", async (
 });
 
 function completedJobs(
+  runId: number,
+  attempt: number,
   name: string,
   conclusion: string,
   startedAt: string,
@@ -221,6 +223,8 @@ function completedJobs(
     {
       jobs: [
         {
+          run_id: runId,
+          run_attempt: attempt,
           name,
           status: "completed",
           conclusion,

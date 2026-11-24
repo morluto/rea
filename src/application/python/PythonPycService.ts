@@ -1,16 +1,14 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { PythonPycPort } from "../../ports/python/PythonPycPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPythonPycInputSchema,
   PYTHON_PYC_HEADER_BYTES,
   pythonPycSchema,
 } from "../../domain/python/pythonPyc.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_python_pyc";
 
@@ -22,64 +20,56 @@ export class PythonPycService {
     return this.provider.close();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectPythonPycInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = pythonPycSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      report.data.artifact.bytes > input.value.max_file_bytes ||
-      report.data.coverage.objects > input.value.max_objects ||
-      report.data.coverage.marshal_depth > input.value.max_depth
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectPythonPycInputSchema,
+        outputSchema: pythonPycSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "Python pyc provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "file",
-          sha256: value.artifact.sha256,
-        },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations: [
-            { kind: "artifact-path", path: value.artifact.path },
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          report.artifact.bytes <= parameters.max_file_bytes &&
+          report.coverage.objects <= parameters.max_objects &&
+          report.coverage.marshal_depth <= parameters.max_depth,
+        buildEvidence: (value, identity, parameters) =>
+          createEvidence(
             {
-              kind: "file-offset-range",
-              start: 0,
-              end: PYTHON_PYC_HEADER_BYTES,
+              path: value.artifact.path,
+              format: "file",
+              sha256: value.artifact.sha256,
             },
+            identity,
             {
-              kind: "file-offset-range",
-              start: PYTHON_PYC_HEADER_BYTES,
-              end: value.artifact.bytes,
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations: [
+                { kind: "artifact-path", path: value.artifact.path },
+                {
+                  kind: "file-offset-range",
+                  start: 0,
+                  end: PYTHON_PYC_HEADER_BYTES,
+                },
+                {
+                  kind: "file-offset-range",
+                  start: PYTHON_PYC_HEADER_BYTES,
+                  end: value.artifact.bytes,
+                },
+              ],
             },
-          ],
-        },
-      ),
-      options?.signal,
+          ),
+      },
+      rawInput,
+      options,
     );
   }
 }

@@ -286,9 +286,11 @@ it.each(["malformed zlib", "declared plaintext overrun"] as const)(
       const list = async () => {
         for await (const entry of reader.entries()) void entry;
       };
-      await expect(list()).rejects.toMatchObject({
-        reason: fault === "malformed zlib" ? "format" : "limit",
-      });
+      await expect(list()).rejects.toMatchObject(
+        fault === "malformed zlib"
+          ? { reason: "format" }
+          : { reason: "integrity", integrityCheck: "declared-size" },
+      );
     });
   },
 );
@@ -1323,7 +1325,7 @@ it("retains multipackage references as distinct unresolved declarations", async 
           dependency_member: index < 2 ? "assets/x:y" : null,
         });
         await expect(reader.open(entry)).rejects.toMatchObject({
-          reason: "format",
+          reason: "path",
         });
       }
     },

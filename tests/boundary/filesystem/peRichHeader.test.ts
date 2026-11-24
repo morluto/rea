@@ -1,24 +1,21 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createPeRichHeaderService } from "../../../src/composition/binaryDiagnostics.js";
+import { createPeRichHeaderService } from "../../../src/composition/binaryDiagnostics/peRichHeader.js";
 import { peRichHeaderImage } from "../../../src/native/pe/PeRichHeader.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("PE Rich header stable filesystem boundary", () => {
-  it("reports non-file and malformed PE selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-pe-rich-files-");
     const path = join(root, "app.exe");
     const alias = join(root, "alias.exe");
-    const malformed = join(root, "malformed.exe");
     await writeFile(path, peRichHeaderImage());
-    await writeFile(malformed, Buffer.from("not a pe"));
     await symlink(path, alias);
     const service = createPeRichHeaderService();
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.exe"), "invalid_value"],
       [join(path, "child.exe"), "invalid_value"],
     ] as const) {

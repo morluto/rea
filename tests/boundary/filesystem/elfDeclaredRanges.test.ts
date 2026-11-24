@@ -103,7 +103,10 @@ it.each([
 
       expect(readNativeHeaderFormat(fixture.bytes)).toEqual({
         ok: true,
-        value: "elf",
+        value: {
+          format: "elf",
+          architecture: supported ? "powerpc" : null,
+        },
       });
       expect(readElfFixedHeader(fixture.bytes)).toMatchObject({
         ok: true,

@@ -1,4 +1,7 @@
-import { AnalysisInputError } from "../analysisErrorCore.js";
+import {
+  AnalysisMalformedTargetError,
+  AnalysisUnsupportedTargetError,
+} from "../analysisErrorCore.js";
 import type { ManagedParseIssue } from "./managedArtifact.js";
 
 /** Header facts admitted before an unsupported table layout was identified. */
@@ -33,23 +36,46 @@ export const managedMetadataFailureStatus = (
     ? "partial"
     : "malformed";
 
-/** Malformed selected metadata is input failure for every inspection workflow. */
-export const managedInspectionInputFailure = (
+/** The ParseFailure format of a managed PE/CLI image and its ECMA-335 metadata. */
+export const MANAGED_PE_CLI_FORMAT = "pe-cli";
+
+/**
+ * The selected file's refusal when a managed reader stopped on its bytes.
+ * The issue code is the reader's own classification: a layout or signature
+ * form outside decoder coverage is an unsupported target, so a newer valid
+ * file is never called corrupt, and every other code names a rule the bytes
+ * broke, a malformed target. The request that selected the file is not at
+ * fault either way. A resource limit names a budget only its producer knows,
+ * so it and any other cause return `undefined`.
+ */
+export const managedInspectionTargetFailure = (
   operation: string,
   path: string,
   cause: unknown,
-  inputField: "path" | "leftPath" | "rightPath" = "path",
-): AnalysisInputError | undefined =>
-  cause instanceof ManagedReaderFailure &&
-  managedMetadataFailureStatus(cause.issue) === "malformed"
-    ? new AnalysisInputError(operation, { cause }, [
-        {
-          path: [inputField],
-          reason: "invalid_format",
-          message: `Selected artifact ${path}: ${cause.issue.detail}`,
-        },
-      ])
-    : undefined;
+):
+  | AnalysisMalformedTargetError
+  | AnalysisUnsupportedTargetError
+  | undefined => {
+  if (!(cause instanceof ManagedReaderFailure)) return undefined;
+  const { code, scope, offset, detail } = cause.issue;
+  if (code === "resource-limit") return undefined;
+  if (code === "unsupported-metadata" || code === "unsupported-signature")
+    return new AnalysisUnsupportedTargetError(operation, path, detail, {
+      cause,
+    });
+  return new AnalysisMalformedTargetError(
+    operation,
+    path,
+    {
+      kind: "malformed",
+      format: MANAGED_PE_CLI_FORMAT,
+      detail,
+      field: scope,
+      ...(offset === null ? {} : { offset }),
+    },
+    { cause },
+  );
+};
 
 /** Construct a typed managed parse failure at an exact byte location. */
 export const managedFailure = (

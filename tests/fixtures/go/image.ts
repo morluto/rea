@@ -2,6 +2,22 @@ import { dosMz } from "../../../src/domain/binaryTarget.fixture.js";
 import { lstat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  readGoBinaryImageFromHandle,
+  type ReadGoBinaryImageOptions,
+} from "../../../src/go/GoBinaryImage.js";
+import { bufferByteSource } from "../../../src/domain/byteSource.js";
+
+export const readGoFixture = (
+  bytes: Buffer,
+  options?: ReadGoBinaryImageOptions,
+) =>
+  readGoBinaryImageFromHandle(
+    bufferByteSource(bytes, 4096),
+    options,
+    async () => {},
+  );
+
 /** Actual filesystem paths that fail before Go artifact acquisition begins. */
 export const createGoBinaryPathFailureFixture = async (
   root: string,
@@ -449,10 +465,10 @@ export const createGoBinaryDiagnosticFixtures = () => {
       ...shortOptionalHeaders,
     ].map((fixture) => ({
       ...fixture,
-      code: "invalid_request" as const,
+      code: "unsupported_target" as const,
       details: {
         operation: "inspect_go_binary",
-        issues: [{ path: ["path"], reason: "invalid_format" }],
+        format_failure: "malformed",
       },
     })),
   ];

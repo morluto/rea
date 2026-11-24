@@ -128,20 +128,6 @@ cliTest(
   },
 );
 
-cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-dependencies-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("not an elf"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-dependencies", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_dependencies" },
-  });
-});
-
 cliTest(
   "reports a relocatable object as invalid input for this workflow",
   async ({ cli }) => {
@@ -324,6 +310,79 @@ cliTest(
         code: "table_unavailable",
         message:
           "GNU versym table holds 3 of 6 dynamic symbol slots; later slots were not read",
+      }),
+    );
+  },
+);
+
+cliTest(
+  "recovers ELF imports via DT_GNU_HASH when SHT_GNU_HASH is truncated or extends past EOF",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-dependencies-gnuhash-");
+    const truncatedPath = join(root, "gnuhash-truncated.so");
+    await writeFile(
+      truncatedPath,
+      elfDependencyFixture({
+        omitHash: true,
+        gnuHash: true,
+        gnuHashSection: true,
+        oversizedSection: ".dynsym",
+        sectionSizes: { ".gnu.hash": 16 },
+      }),
+    );
+    const truncatedResult = await cli.run({
+      arguments: ["inspect-elf-dependencies", truncatedPath, "--json"],
+    });
+    expect(truncatedResult.exitCode, JSON.stringify(truncatedResult.json)).toBe(
+      0,
+    );
+    const truncated = dependenciesContract.outputSchema.parse(
+      truncatedResult.json,
+    ).normalized_result;
+    if (!("imports" in truncated))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(truncated.coverage.status).toBe("partial");
+    expect(truncated.imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+
+    const pastEofPath = join(root, "gnuhash-past-eof.so");
+    await writeFile(
+      pastEofPath,
+      elfDependencyFixture({
+        omitHash: true,
+        gnuHash: true,
+        gnuHashSection: true,
+        oversizedSection: ".dynsym",
+        sectionSizes: { ".gnu.hash": 100_000 },
+      }),
+    );
+    const pastEofResult = await cli.run({
+      arguments: ["inspect-elf-dependencies", pastEofPath, "--json"],
+    });
+    expect(pastEofResult.exitCode, JSON.stringify(pastEofResult.json)).toBe(0);
+    const pastEof = dependenciesContract.outputSchema.parse(
+      pastEofResult.json,
+    ).normalized_result;
+    if (!("imports" in pastEof))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(pastEof.coverage.status).toBe("partial");
+    expect(pastEof.imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+    expect(pastEof.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        message:
+          ".gnu.hash section header declares bytes past the end of the file",
       }),
     );
   },

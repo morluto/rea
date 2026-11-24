@@ -441,7 +441,9 @@ export const changesState = (method: string, path: string): boolean =>
   WRITE_METHODS.has(method) && !isQueryPost(method, path);
 
 /** Whether a record may change state: a successful or unanswered request that `changesState` names. */
-export const isStateWrite = (record: StateRecordFacts): boolean =>
+export const isStateWrite = (
+  record: Pick<StateRecordFacts, "method" | "path" | "status">,
+): boolean =>
   changesState(record.method, record.path) &&
   (record.status === null || (record.status >= 200 && record.status < 400));
 

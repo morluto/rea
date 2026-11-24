@@ -4,17 +4,40 @@ import {
   HOPPER_DIAGNOSTIC_TYPES,
   HopperProtocolError,
   HopperRemoteError,
+  type HopperSelectorResolution,
 } from "./HopperErrors.js";
 import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import type { JsonLineBridgeEnvelope } from "../process/JsonLineBridgeReader.js";
 
+const hopperAddressSchema = z.string().regex(/^0x[0-9a-f]+$/u);
+
+/** How the bridge resolved a selector that named no procedure. */
+const selectorResolutionSchema = z.discriminatedUnion("source", [
+  z.object({ value: z.string(), source: z.literal("unresolved") }).strict(),
+  z
+    .object({
+      value: z.string(),
+      source: z.enum(["symbol", "address"]),
+      address: hopperAddressSchema,
+    })
+    .strict(),
+  z
+    .object({
+      value: z.null(),
+      source: z.literal("cursor"),
+      address: hopperAddressSchema,
+    })
+    .strict(),
+]) satisfies z.ZodType<HopperSelectorResolution>;
+
 const remoteErrorSchema = z
   .object({
     code: z.int(),
     message: z.string(),
     type: z.enum(HOPPER_DIAGNOSTIC_TYPES).default("remote"),
+    selector: selectorResolutionSchema.optional(),
   })
   .strict();
 
@@ -105,6 +128,7 @@ const hopperRemoteError = (
 ): HopperRemoteError =>
   new HopperRemoteError(error.code, error.message, {
     diagnosticType: error.type,
+    ...(error.selector === undefined ? {} : { selector: error.selector }),
   });
 
 /** Project a parsed response into its result or expected remote failure. */
