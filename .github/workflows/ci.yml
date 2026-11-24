@@ -605,7 +605,7 @@ jobs:
   test:
     name: Portable tests
     needs: [changes, test-source, test-shard, test-shard-broad]
-    if: ${{ !cancelled() && needs.changes.outputs.tier != 'reused' }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

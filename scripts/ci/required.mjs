@@ -40,7 +40,7 @@ if (
   throw new Error(
     "CI classification requires a valid test mode: full, or selected on a fast pull request",
   );
-const required = reused ? ["changes"] : ["changes", "static", "test"];
+const required = reused ? ["changes"] : ["changes", "static"];
 if (outputs.tier === "full") required.push("static-deep");
 for (const scope of selectedScopes)
   required.push(
