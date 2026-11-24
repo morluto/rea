@@ -701,6 +701,7 @@
 * **dwarf:** prune superseded whole-buffer locateDwarfSections wrapper ([#13993](https://github.com/morluto/rea/issues/13993)) ([27eef47](https://github.com/morluto/rea/commit/27eef4712206affa51850b1254d05d59eefbdd19))
 * **elf:** consolidate fixed record decoding proofs ([#13753](https://github.com/morluto/rea/issues/13753)) ([d0b562c](https://github.com/morluto/rea/commit/d0b562c682ace93cc22068b374c4a3bf427a248a))
 * **elf:** consolidate kernel module checks on positional reads ([be32625](https://github.com/morluto/rea/commit/be32625b29101fc6b482a38798a6ef22e68f9e94))
+* **elf:** decouple structural admission from lane policies and type MIPS limitations ([#14356](https://github.com/morluto/rea/issues/14356)) ([782c274](https://github.com/morluto/rea/commit/782c2742003dec56eed33faefb4f2a10f8cc871d)), refs [#14343](https://github.com/morluto/rea/issues/14343)
 * **elf:** prune superseded whole-buffer parseKernelBuildConfig wrapper ([#13996](https://github.com/morluto/rea/issues/13996)) ([0c303ef](https://github.com/morluto/rea/commit/0c303efb0e611f98f34a3ea2d1a176c74cef9dd3))
 * **elf:** read GNU property words through BinaryReader ([add4faf](https://github.com/morluto/rea/commit/add4faf2ad7aeb38d6d8c0e8619e238f01e6a5c1)), refs [#11865](https://github.com/morluto/rea/issues/11865)
 * **elf:** remove obsolete debug-link buffer parsers ([#13971](https://github.com/morluto/rea/issues/13971)) ([2352fab](https://github.com/morluto/rea/commit/2352fab0f6011bd91d46f8426939cf7619168ca4))
