@@ -231,15 +231,28 @@ it("selects affected CodeQL languages on pull requests and fails closed on share
       "src/process/ExecFileOutput.test.ts",
       "docs/development/testing.md",
       "bridge/ghidra/ReaGhidraBridge.java",
+      "scripts/verify/advertised-schemas/engines.py",
+      "scripts/verify-real-browser.mjs",
+      "scripts/verify-qwen-client.mjs",
     ]),
   ).toMatchObject({ run: false, languages: [] });
   expect(
-    selectPr(["src/process/ExecFileOutput.ts", "docs/.vitepress/config.ts"]),
+    selectPr([
+      "src/process/ExecFileOutput.ts",
+      "docs/.vitepress/config.ts",
+      "scripts/verify/advertised-schemas/engines.py",
+    ]),
   ).toMatchObject({
     run: true,
     languages: ["javascript-typescript"],
   });
-  expect(selectPr(["bridge/pwndbg/launch.py"])).toMatchObject({
+  expect(
+    selectPr([
+      "bridge/pwndbg/launch.py",
+      "scripts/verify-real-browser.mjs",
+      "scripts/verify-qwen-client.mjs",
+    ]),
+  ).toMatchObject({
     run: true,
     languages: ["python"],
   });
