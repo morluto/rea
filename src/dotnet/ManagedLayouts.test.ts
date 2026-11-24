@@ -379,8 +379,9 @@ it("preserves admitted member facts when layout declaration capacity is exhauste
   expect(comparison.limitations).toContainEqual(
     expect.stringContaining("left layout declarations exceeded capacity"),
   );
+  const memberLimit = "left managed member observation exceeded capacity";
   expect(comparison.limitations).not.toContainEqual(
-    expect.stringContaining("left managed member observation exceeded capacity"),
+    expect.stringContaining(memberLimit),
   );
 });
 
