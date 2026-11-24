@@ -2448,22 +2448,28 @@ it.each([
   },
 );
 
-it("reads a Git blob whose path contains a line break alongside an ordinary blob", async ({
+it("reads blobs at the requested revision with tabs and newlines in their paths", async ({
   skip,
 }) => {
   skip(
     process.platform === "win32",
-    "Windows paths cannot contain line breaks",
+    "Windows paths cannot contain tabs or line breaks",
   );
   const { directory } = await fixture();
-  const path = "src/two\nlines.test.ts";
+  const path = "src/tab\ttwo\nlines.test.ts";
   const head = await change(directory, [path], "multiline path\n");
-  expect(gitRepository(directory).readFiles(head, [path, "README.md"])).toEqual(
+  await change(directory, [path], "later revision\n");
+  const repository = gitRepository(directory);
+  expect(repository.readFiles(head, [path, "README.md"])).toEqual(
     new Map([
       [path, "multiline path\n"],
       ["README.md", "Initial fixture content\n"],
     ]),
   );
+  for (const missing of ["src", "missing.ts"])
+    expect(() => repository.readFiles(head, [path, missing])).toThrow(
+      `Git could not read ${head}:${missing}`,
+    );
 });
 
 it("outputs only changed, tracked JS and TS paths for fast PR typed lint", async () => {
