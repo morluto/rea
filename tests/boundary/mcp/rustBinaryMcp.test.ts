@@ -188,10 +188,10 @@ mcpTest(
         arguments: { path },
       });
       expect(parseMcpToolError(truncated).error).toMatchObject({
-        code: "invalid_request",
+        code: "unsupported_target",
         details: {
           operation: "inspect_rust_binary",
-          issues: [{ path: ["path"], reason: "invalid_format" }],
+          format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
         },
       });
     } finally {

@@ -104,6 +104,10 @@ export const ARTIFACT_FORMAT_IDS = [
   "fit",
   "ntfs-mft",
   "systemd-journal",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "unknown",
 ] as const;
 
@@ -136,6 +140,10 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "pe",
   "dos-mz",
   "plist",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "directory",
   "file",
   "unknown",

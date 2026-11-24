@@ -4,10 +4,11 @@ import {
   isJSONRPCRequest,
   isJSONRPCResultResponse,
   type JSONRPCMessage,
-  type Transport,
+  type MessageExtraInfo,
   type TransportSendOptions,
 } from "@modelcontextprotocol/server";
 
+import { ForwardingTransport } from "../ForwardingTransport.js";
 import {
   carriesTargetContentMarker,
   TARGET_CONTENT_RESULT_META,
@@ -19,60 +20,35 @@ const requestId = (value: unknown): RequestId | undefined =>
   typeof value === "string" || typeof value === "number" ? value : undefined;
 
 /** Marks every tools/call result as target content, including errors the SDK builds before a replay callback runs. */
-export class TargetContentTransport implements Transport {
-  onclose: Transport["onclose"];
-  onerror: Transport["onerror"];
-  onmessage: Transport["onmessage"];
-  readonly hasPerRequestStream?: boolean;
+export class TargetContentTransport extends ForwardingTransport {
   readonly #calls = new Set<RequestId>();
 
-  constructor(private readonly transport: Transport) {
-    if (transport.hasPerRequestStream !== undefined)
-      this.hasPerRequestStream = transport.hasPerRequestStream;
-    transport.onmessage = (message, extra) => {
-      if (isJSONRPCRequest(message) && message.method === "tools/call")
-        this.#calls.add(message.id);
-      // The SDK sends no reply after a cancellation, so release the id here.
-      if (
-        isJSONRPCNotification(message) &&
-        message.method === "notifications/cancelled"
-      ) {
-        const id = requestId(message.params?.["requestId"]);
-        if (id !== undefined) this.#calls.delete(id);
-      }
-      this.onmessage?.(message, extra);
-    };
-    transport.onerror = (error) => this.onerror?.(error);
-    transport.onclose = () => {
-      this.#calls.clear();
-      this.onclose?.();
-    };
+  protected override receive(
+    message: JSONRPCMessage,
+    extra?: MessageExtraInfo,
+  ): void {
+    if (isJSONRPCRequest(message) && message.method === "tools/call")
+      this.#calls.add(message.id);
+    // The SDK sends no reply after a cancellation, so release the id here.
+    if (
+      isJSONRPCNotification(message) &&
+      message.method === "notifications/cancelled"
+    ) {
+      const id = requestId(message.params?.["requestId"]);
+      if (id !== undefined) this.#calls.delete(id);
+    }
+    super.receive(message, extra);
   }
 
-  get sessionId(): string | undefined {
-    return this.transport.sessionId;
-  }
-  set sessionId(value: string | undefined) {
-    this.transport.sessionId = value;
+  protected override closed(): void {
+    this.#calls.clear();
+    super.closed();
   }
 
-  start(): Promise<void> {
-    return this.transport.start();
-  }
-
-  close(): Promise<void> {
-    return this.transport.close();
-  }
-
-  setProtocolVersion(version: string): void {
-    this.transport.setProtocolVersion?.(version);
-  }
-
-  setSupportedProtocolVersions(versions: string[]): void {
-    this.transport.setSupportedProtocolVersions?.(versions);
-  }
-
-  send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
+  override send(
+    message: JSONRPCMessage,
+    options?: TransportSendOptions,
+  ): Promise<void> {
     const id = "id" in message ? requestId(message.id) : undefined;
     const call = id !== undefined && this.#calls.delete(id);
     if (
@@ -81,7 +57,7 @@ export class TargetContentTransport implements Transport {
       isCallToolResult(message.result) &&
       !carriesTargetContentMarker(message.result)
     )
-      return this.transport.send(
+      return super.send(
         {
           ...message,
           result: {
@@ -91,6 +67,6 @@ export class TargetContentTransport implements Transport {
         },
         options,
       );
-    return this.transport.send(message, options);
+    return super.send(message, options);
   }
 }

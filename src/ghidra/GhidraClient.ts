@@ -45,7 +45,11 @@ import {
   JsonLineBridgeReader,
   type JsonLineBridgeFailure,
 } from "../process/JsonLineBridgeReader.js";
-import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import {
+  AbortedWait,
+  waitForAbortable,
+  waitForRetainedResult,
+} from "../process/AbortablePromise.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
@@ -392,10 +396,10 @@ export class GhidraClient {
     attempt: GhidraStartupAttempt,
     signal: AbortSignal | undefined,
   ): Promise<GhidraStartResult> {
-    const signalAborted = (): boolean => signal?.aborted === true;
-    if (signalAborted()) return err(this.#startupWaitCancellation(signal));
-    const waited = await waitForAbortable(attempt.promise, signal);
-    if (waited instanceof AbortedWait || (waited.ok && signalAborted()))
+    if (signal?.aborted === true)
+      return err(this.#startupWaitCancellation(signal));
+    const waited = await waitForRetainedResult(attempt.promise, signal);
+    if (waited instanceof AbortedWait)
       return err(this.#startupWaitCancellation(signal));
     if (waited.ok || waited.error.cleanupFailure !== undefined) return waited;
     return this.start(signal);
@@ -928,7 +932,7 @@ export class GhidraClient {
   async #startupFailure(
     primary: GhidraSessionError,
     deadline?: ProviderStartupDeadline,
-  ): Promise<GhidraStartResult> {
+  ): Promise<Result<never, GhidraSessionError>> {
     const finalization = deadline?.finalize();
     await this.#drainOutputBounded(
       finalization?.signal,
@@ -1057,16 +1061,17 @@ export class GhidraClient {
           "admission",
           startupTimeout.error.message,
           startupTimeout.error,
+          { configurationFailure: startupTimeout.error },
         ),
       );
     const deadline = new ProviderStartupDeadline(startupTimeout.value, signal, {
       finalizeMs: OUTPUT_DRAIN_MS,
     });
     try {
-      const result = await this.#startWithin(deadline);
-      return result.ok && deadline.signal.aborted
-        ? await this.#startupInterrupted(deadline)
-        : result;
+      return await deadline.finishStartup(
+        () => this.#startWithin(deadline),
+        () => this.#startupInterrupted(deadline),
+      );
     } catch (cause: unknown) {
       if (cause instanceof GhidraSessionError) return err(cause);
       throw cause;
@@ -1705,7 +1710,7 @@ export class GhidraClient {
 
   async #startupInterrupted(
     deadline: ProviderStartupDeadline,
-  ): Promise<GhidraStartResult> {
+  ): Promise<Result<never, GhidraSessionError>> {
     const failure = this.#interruptionFailure(deadline);
     return this.#startupFailure(failure, deadline);
   }

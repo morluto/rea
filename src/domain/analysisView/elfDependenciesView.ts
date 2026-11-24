@@ -12,6 +12,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
+import { namePrefixesSchema, startsWithAny } from "./namePrefixFilter.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -59,6 +60,7 @@ export const elfDependenciesViewRequestSchema = z.discriminatedUnion(
         .describe(
           "Exact DT_NEEDED names. Omitted includes all names; [] matches none.",
         ),
+      name_prefixes: namePrefixesSchema("DT_NEEDED names"),
       indices: z.array(z.int().nonnegative()).optional(),
       fields: z.array(neededRow.keyof()).optional(),
     }),
@@ -71,6 +73,7 @@ export const elfDependenciesViewRequestSchema = z.discriminatedUnion(
         .describe(
           "Exact version names. Omitted includes all names; [] matches none.",
         ),
+      name_prefixes: namePrefixesSchema("version names"),
       indices: z.array(z.int().nonnegative()).optional(),
       fields: z.array(versionRowSchema.keyof()).optional(),
     }),
@@ -83,6 +86,7 @@ export const elfDependenciesViewRequestSchema = z.discriminatedUnion(
         .describe(
           "Exact GNU version-definition names. Omitted includes all names; [] matches none.",
         ),
+      name_prefixes: namePrefixesSchema("GNU version-definition names"),
       indices: z.array(z.int().nonnegative()).optional(),
       fields: z.array(definitionRow.keyof()).optional(),
     }),
@@ -95,6 +99,7 @@ export const elfDependenciesViewRequestSchema = z.discriminatedUnion(
         .describe(
           "Exact version namespaces, such as GLIBC. Omitted includes all namespaces; [] matches none.",
         ),
+      name_prefixes: namePrefixesSchema("version namespaces"),
       indices: z.array(z.int().nonnegative()).optional(),
       fields: z.array(maximumRow.keyof()).optional(),
     }),
@@ -107,6 +112,7 @@ export const elfDependenciesViewRequestSchema = z.discriminatedUnion(
         .describe(
           "Exact undefined-symbol names. Omitted includes all names; [] matches none.",
         ),
+      name_prefixes: namePrefixesSchema("undefined-symbol names"),
       indices: z.array(z.int().nonnegative()).optional(),
       fields: z.array(importRow.keyof()).optional(),
     }),
@@ -271,6 +277,7 @@ export const projectElfDependenciesView = (
     });
   }
   const names = view.names === undefined ? undefined : new Set(view.names);
+  const prefixes = view.name_prefixes;
   const pageRows = <Row extends Record<string, unknown>>(
     rows: readonly Row[],
     allowed: readonly string[],
@@ -289,11 +296,15 @@ export const projectElfDependenciesView = (
       source_index,
     });
     const matchesName =
-      names === undefined
+      names === undefined && prefixes === undefined
         ? undefined
         : (row: Row) => {
             const name = nameOf(row);
-            return name !== null && names.has(name);
+            return (
+              name !== null &&
+              (names === undefined || names.has(name)) &&
+              (prefixes === undefined || startsWithAny(name, prefixes))
+            );
           };
     const selected =
       indices !== undefined

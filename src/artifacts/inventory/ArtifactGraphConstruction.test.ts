@@ -567,6 +567,7 @@ it("keeps byte content format separate from path-specific package role", () => {
     kind: "container",
     format: "apk",
     contentFormat: "zip",
+    contentArchitecture: null,
   });
 });
 
@@ -680,15 +681,18 @@ it("classifies a FIT by a /images node within the first 4 KiB", () => {
       kind: "container",
       format: "fit",
     });
-  for (const bytes of [
-    devicetreeFixture(),
-    fitFixture({ images, version: 15 }),
-    late,
-  ])
+  for (const bytes of [devicetreeFixture(), late])
     expect(classifyArtifactBytesAtPath("firmware/board.dtb", bytes)).toEqual({
       kind: "resource",
-      format: "file",
+      format: "devicetree",
     });
+  // The devicetree header owner refuses FDT v15, so those bytes stay a file.
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/board.dtb",
+      fitFixture({ images, version: 15 }),
+    ),
+  ).toEqual({ kind: "resource", format: "file" });
 });
 
 describe("FAT prefix observation coverage", () => {

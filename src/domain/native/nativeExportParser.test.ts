@@ -363,6 +363,13 @@ const peExportNameAcrossSections = (overlapAtRva?: number): Buffer => {
   return bytes;
 };
 
+/** PE rows without their stored RVA, which a separate test pins. */
+const withoutRva = (rows: readonly object[]) =>
+  rows.map((row) => {
+    const { rva: _rva, ...rest } = row as { readonly rva?: number };
+    return rest;
+  });
+
 describe("PE export name coverage", () => {
   it.each([
     ["with no conflicting mapping", undefined],
@@ -520,7 +527,7 @@ describe("PE export directories", () => {
         },
         issues: [],
       });
-      expect(result.exports).toEqual([
+      expect(withoutRva(result.exports)).toEqual([
         {
           name: "Alias",
           ordinal: 5,
@@ -1682,4 +1689,30 @@ describe("positional native export parser", () => {
         .map(([, size]) => size),
     ).toEqual([4096]);
   });
+});
+
+it("reports each PE export's stored RVA, including a forwarder's string RVA", () => {
+  const result = parseNativeExports(
+    peExportImage({
+      ordinalBase: 5,
+      functions: [
+        { rva: 0x2000 },
+        { rva: 0x2010 },
+        null,
+        { forwarder: "OTHER.Target" },
+      ],
+      names: [
+        { name: "Primary", index: 0 },
+        { name: "Forwarded", index: 3 },
+      ],
+    }),
+    artifact,
+  );
+  if (result.format !== "pe") throw new Error("Expected PE exports");
+  // The fixture stores forwarder strings inside the export directory.
+  expect(result.exports.map(({ name, rva }) => [name, rva])).toEqual([
+    ["Primary", 0x2000],
+    [null, 0x2010],
+    ["Forwarded", 0x1100],
+  ]);
 });

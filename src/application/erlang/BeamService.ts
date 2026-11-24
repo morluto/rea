@@ -30,6 +30,7 @@ export class BeamService {
         inputSchema: inspectErlangBeamInputSchema,
         outputSchema: erlangBeamSchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "BEAM provider returned malformed output or changed artifact identity.",
         toParameters: (input) => input,

@@ -101,9 +101,12 @@ its address when selecting the containing function. `search_procedures` matches
 the same names, in leaf or qualified spelling: the function appears once with
 its primary name as `value`, and `matched_aliases` lists the qualified names of
 the secondary symbols that matched.
-For Ghidra case-insensitive literal searches of procedures or strings,
-`raw_result` contains bridge candidates before REA applies Unicode-aware
-matching. Use `normalized_result` for matches; a raw candidate need not match.
+For Ghidra case-insensitive literal searches of procedures or strings, use
+`normalized_result` for matches. REA applies Unicode-aware matching to the
+bridge's candidates. When that removes a candidate or a matched secondary
+name, `raw_result` contains the bridge candidates, which need not match, and
+`limitations` says so. When it removes nothing, the candidates are the matches
+and `raw_result` is `null`; that is not missing evidence.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 
@@ -1634,12 +1637,11 @@ projection; these estimates are not a hard process-memory bound. Keyed-archive
 object identities always come from their original `$objects` table indices.
 Authored `objectID`, `object-id`, `archiveUID` and `id` fields remain ordinary
 object data and do not change inventory, reference, connector or hierarchy
-identity. This changes keyed-archive graph IDs that previously used authored
-`objectID` or `object-id` values: `interface_builder_object_id` and linked node
-IDs now use the decimal table UID, while the authored values remain in attributes.
-For example, an authored `objectID: "2"` on table entry 1 now identifies object
-`"1"`; its graph node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs
-and native NIBArchive IDs keep their existing source-specific meaning.
+identity: `interface_builder_object_id` and linked node IDs use the decimal
+table UID, and the authored values remain in attributes. For example, an
+authored `objectID: "2"` on table entry 1 identifies object `"1"`; its graph
+node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs and native
+NIBArchive IDs keep their source-specific meaning.
 Connector endpoints require encoded UID references to archived objects; strings
 and dictionaries that merely resemble resolved reference stubs do not establish
 identity. Inline hierarchy dictionaries have no table identity and count as

@@ -31,6 +31,11 @@ import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascr
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSourceSelection } from "../../domain/javascript/javascriptSourceSelection.js";
 import {
+  JAVASCRIPT_ABSENT_INPUT_OPERATIONS,
+  javaScriptAbsentInputDiagnostics,
+  javaScriptApplicationInputPresence,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
+import {
   parseOwnedJavaScriptApplicationAnalysisSteps,
   type AnalyzeJavaScriptApplicationInput,
   type ElectronBoundarySummary,
@@ -170,6 +175,18 @@ export const reconstructJavaScriptArtifact = async (
           kind: "artifact-inventory",
           inventory: snapshot,
         });
+      if (javaScriptApplicationInputPresence(files, snapshot) === "absent")
+        throw new AnalysisUnsupportedTargetError(
+          OPERATION,
+          path,
+          "the complete inventory has entries but no JavaScript, HTML, package.json, source map, or nested ASAR inputs",
+          {
+            diagnostics: javaScriptAbsentInputDiagnostics(files, snapshot),
+            remediationAction:
+              "Route by details.diagnostics.entries_by_format. For a native build or installation directory, call inspect_desktop_application or audit_release_exposure with the directory, or select one member file with inspect_artifact or open_binary.",
+            related: { operations: [...JAVASCRIPT_ABSENT_INPUT_OPERATIONS] },
+          },
+        );
       await reportPhase(
         "parse_javascript_sources",
         `Processing ${String(files.files.length - (files.source_selection?.unselected_files ?? 0))} selected application files`,
@@ -262,6 +279,7 @@ export const reconstructJavaScriptArtifact = async (
           },
           preloads.paths,
           preloads.limitations,
+          input.semantic_analysis === "structure-only",
         );
       } catch (cause: unknown) {
         analysisFailure = { cause };

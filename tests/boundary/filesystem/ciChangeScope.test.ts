@@ -446,6 +446,23 @@ it("does not credit a fixture test as coverage for an unrelated shared script", 
   });
 });
 
+it("traces an exact template import alongside an unrelated changed test", async () => {
+  const { directory } = await fixture();
+  const source = "src/example/Probe.ts";
+  const test = "tests/boundary/filesystem/templateImport.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [test],
+    "await import(`../../../src/example/Probe.js`);\n",
+  );
+  const base = await change(directory, [source, unrelated]);
+  const head = await change(directory, [source, unrelated], "changed\n");
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: { mode: "selected", files: [test, unrelated] },
+  });
+});
+
 it("selects the tests a pull request affects and runs everything when it cannot decide", async () => {
   const { directory } = await fixture();
   // The entrypoint's output file is not part of the change.
@@ -2423,4 +2440,52 @@ it("reads a Git blob whose path contains a line break alongside an ordinary blob
       ["README.md", "Initial fixture content\n"],
     ]),
   );
+});
+
+it("outputs only changed, tracked JS and TS paths for fast PR typed lint", async () => {
+  const { directory, base } = await fixture();
+  await git(directory, ["rm", "src/provider.ts"]);
+  const selected = ["scripts/ci/helper.mjs", "src/has spaces.ts"];
+  const head = await change(directory, [...selected, "docs/guide.md"]);
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    typedLintFiles: selected,
+  });
+  expect(await readFile(join(directory, "scope-output"), "utf8")).toContain(
+    `typed_lint_files=${JSON.stringify(selected)}\n`,
+  );
+  expect(
+    await classify(directory, base, head, "pull_request", true),
+  ).toMatchObject({ typedLintFiles: [] });
+  expect(await classify(directory, base, head, "push")).toMatchObject({
+    typedLintFiles: [],
+  });
+});
+
+it("requests full typed lint when changed paths exceed the CI output budget", () => {
+  const files = Array.from(
+    { length: 200 },
+    (_, index) => `src/${"長".repeat(40)}-${index}.ts`,
+  );
+  const plan = planChanges(
+    {
+      event: "pull_request",
+      full: false,
+      skipFull: false,
+      base: PATH_BASE,
+      head: PATH_HEAD,
+    },
+    {
+      mergeBase: () => PATH_BASE,
+      isAncestor: () => true,
+      changedFiles: () => files,
+      readFile: () => "{}",
+      listFiles: () => files,
+      readFiles: () => new Map(),
+    },
+  );
+  expect(plan).toMatchObject({
+    tier: "fast",
+    code: true,
+    typedLintFiles: null,
+  });
 });

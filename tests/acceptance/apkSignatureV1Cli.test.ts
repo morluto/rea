@@ -37,12 +37,12 @@ import {
   zipEntryOffsets,
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
-import { apkFixtureReader } from "../fixtures/apkSignature/randomAccess.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestMcp } from "../support/mcp/mcpFixture.js";
+import { bufferByteSource } from "../../src/domain/byteSource.js";
 
 const completeEvidence = (value: unknown) => {
   const evidence = toolContract("inspect_apk_signature").outputSchema.parse(
@@ -687,7 +687,7 @@ cliTest(
       stored: true,
     }));
     const bytes = await zipWith(entries, { dataDescriptor: false });
-    const reader = apkFixtureReader(bytes);
+    const reader = bufferByteSource(bytes, 4);
     const tail = await parseZipTailFromReader(reader);
     if (!tail.ok) throw new Error("Expected a framed ZIP tail");
     const { centralDirectoryOffset, centralDirectorySize, totalEntries } =

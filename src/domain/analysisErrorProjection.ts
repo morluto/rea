@@ -22,10 +22,12 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
+  AnalysisMalformedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  type MalformedTargetFailure,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
@@ -615,6 +617,19 @@ const errorDetails = (
   providerErrorDetails(error) ??
   lifecycleErrorDetails(error);
 
+/** The public facts of a format owner's malformed or truncated parse. */
+const parseFailureDetails = ({
+  kind,
+  format,
+  offset,
+  field,
+}: MalformedTargetFailure) => ({
+  format_failure: kind,
+  format,
+  ...(offset === undefined ? {} : { offset }),
+  ...(field === undefined ? {} : { field }),
+});
+
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
@@ -623,6 +638,13 @@ const requestErrorDetails = (
       operation: error.operation,
       path: error.path,
       reason: error.reason,
+    };
+  if (error instanceof AnalysisMalformedTargetError)
+    return {
+      operation: error.operation,
+      path: error.path,
+      reason: error.failure.detail,
+      ...parseFailureDetails(error.failure),
     };
   if (error instanceof AnalysisResourceConstraintError)
     return {
@@ -729,6 +751,9 @@ const artifactStateErrorDetails = (
       ...(error.integrityCheck === undefined
         ? {}
         : { integrity_check: error.integrityCheck }),
+      ...(error.parseFailure === undefined
+        ? {}
+        : parseFailureDetails(error.parseFailure)),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),

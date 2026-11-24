@@ -1,4 +1,8 @@
-import type { Devicetree, InspectDevicetreeInput } from "./devicetree.js";
+import {
+  DEVICETREE_PROPERTY_PREVIEW_BYTES,
+  type Devicetree,
+  type InspectDevicetreeInput,
+} from "./devicetree.js";
 import { BinaryFormatFailure, BinaryReader } from "../binaryContainer.js";
 import { readDevicetreeHeader } from "./devicetreeHeader.js";
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
@@ -202,7 +206,11 @@ export const parseDevicetree = (
       const propertyMap = propertiesByPath.get(owner.node.path);
       if (!name || propertyMap?.has(name))
         malformed("Empty or duplicate FDT property name");
-      admit(name.length * 2 + Math.min(length, 256) * 2 + 256);
+      admit(
+        name.length * 2 +
+          Math.min(length, DEVICETREE_PROPERTY_PREVIEW_BYTES) * 2 +
+          256,
+      );
       const raw = bytes.subarray(cursor, cursor + length);
       // Only binding-independent standard strings and single-cell declarations are decoded.
       const stringProperty =
@@ -238,8 +246,8 @@ export const parseDevicetree = (
         name,
         offset: cursor,
         bytes: length,
-        hex: raw.subarray(0, 256).toString("hex"),
-        truncated: length > 256,
+        hex: raw.subarray(0, DEVICETREE_PROPERTY_PREVIEW_BYTES).toString("hex"),
+        truncated: length > DEVICETREE_PROPERTY_PREVIEW_BYTES,
         derived: { confidence: "derived" as const, strings, cells, reg: null },
       };
       owner.node.properties.push(property);
@@ -271,7 +279,7 @@ export const parseDevicetree = (
         ];
   const limitations = [
     ...structureLimitations,
-    "Raw property previews are limited to 256 bytes; offsets and lengths identify complete values in the hashed artifact.",
+    `Raw property previews are limited to ${String(DEVICETREE_PROPERTY_PREVIEW_BYTES)} bytes; offsets and lengths identify complete values in the hashed artifact.`,
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
   for (const node of nodes) {
