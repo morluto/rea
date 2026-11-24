@@ -8,7 +8,6 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
@@ -918,16 +917,20 @@ it("refuses duplicate MethodDef tokens before publishing linked Evidence or Ghid
       { path, binary_path: binaryPath, detail: "complete" },
       { path: duplicateSeeds },
     );
-    expect(refused.ok).toBe(false);
     if (refused.ok)
       throw new Error("Duplicate MethodDef identity was accepted");
-    if (!(refused.error instanceof AnalysisInputError))
-      throw new Error("Duplicate MethodDef identity was not an input refusal");
-    expect(refused.error.issues[0]?.message).toContain("invalid-method-token");
-    expect(refused.error.issues[0]?.message).toContain("share MethodDef token");
-    expect(refused.error.partialObservation).toMatchObject({
-      normalized_result: { artifact: { path } },
+    // The reused row is in the metadata's own records, so the metadata alone
+    // is malformed; the binary is not named.
+    expect(projectAnalysisError(refused.error)).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        path,
+        format: "il2cpp-metadata",
+        format_failure: "malformed",
+        reason: expect.stringMatching(/^invalid-method-definition-token:/u),
+      },
     });
+    expect(projectAnalysisError(refused.error)).not.toHaveProperty("recovery");
     await expect(readFile(duplicateSeeds)).rejects.toMatchObject({
       code: "ENOENT",
     });
