@@ -788,11 +788,20 @@ allowed: Vitest's skip state does not establish whether a skipped module was
 required on that runner. Review the listed skips against platform and provider
 prerequisites; the inventory alone does not prove every required case ran.
 
-Scheduled qualification is admitted every six hours at minute 23 (03:23, 09:23,
-15:23, and 21:23 UTC). A forced full run at
-03:23 UTC refreshes runner and dependency drift every day. Other scheduled runs
-can reuse a successful full-qualification receipt for the exact source SHA
-from the same repository's trusted CI workflow on its default branch. Both the
+Scheduled full qualification is admitted every six hours at minute 23 (03:23,
+09:23, 15:23, and 21:23 UTC). A forced full run at
+03:23 UTC refreshes runner and dependency drift every day. Scheduled fast main
+sweeps run on the intervening two-hour slots (01:23, 05:23, 07:23, 11:23,
+13:23, 17:23, 19:23, and 23:23 UTC), running the complete portable suite,
+publishing `test-timings-fast`, and running changed host/provider lanes since
+the last verified scheduled ancestor. Pushes to `main` default to the `warm`
+tier (running `static`, `build`, advertised-schema verification, and refreshing
+shared caches without replaying the 12-shard portable suite); setting
+`REA_CI_FULL_ON_PUSH=true` restores per-push fast verification. Other scheduled
+runs can reuse a successful receipt for the exact source SHA
+from the same repository's trusted CI workflow on its default branch (full
+qualification requires `ci-full-qualification-v1`; fast sweeps accept either
+`ci-full-qualification-v1` or `ci-fast-sweep-v1`). Both the
 receipt and original workflow run must be less than 24 hours old, so retrying an
 old gate cannot renew stale proof. Missing, expired, failed, foreign, or uncertain proof runs full
 validation; API lookup failure also runs full. Lookups examine at most 100 named
