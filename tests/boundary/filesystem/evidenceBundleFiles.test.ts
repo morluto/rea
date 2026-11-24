@@ -23,6 +23,7 @@ import { createArtifactInspection } from "../../../src/domain/artifactInspection
 import {
   readEvidenceBundle,
   readImmutableEvidenceBundle,
+  readStandaloneEvidenceRecord,
   writeEvidenceBundle,
 } from "../../../src/application/EvidenceBundleFiles.js";
 import { publishEvidenceDelivery } from "../../../src/application/EvidenceBundleCommands.js";
@@ -1141,6 +1142,56 @@ describe("standalone Evidence bundle inputs", () => {
         userMessage: expect.stringContaining(
           "does not match the bundle schema",
         ),
+      },
+    });
+  });
+});
+
+describe("standalone Evidence record intake", () => {
+  it("authenticates standalone Evidence and enforces heap headroom and issue bounds", async () => {
+    const directory = await createTestTempDirectory("rea-standalone-record-");
+    const record = bundle().records[0];
+    if (record === undefined) throw new Error("Expected fixture record");
+    const recordPath = join(directory, "record.json");
+    await writeFile(recordPath, JSON.stringify(record));
+
+    const loaded = await readStandaloneEvidenceRecord(recordPath);
+    if (!loaded.ok) throw loaded.error;
+    expect(loaded.value).toEqual(record);
+
+    const heapSpy = vi.mocked(getHeapStatistics);
+    const actual = heapSpy();
+    heapSpy.mockReturnValue({ ...actual, total_available_size: 0 });
+    let constrained: Awaited<ReturnType<typeof readStandaloneEvidenceRecord>>;
+    try {
+      constrained = await readStandaloneEvidenceRecord(recordPath);
+    } finally {
+      heapSpy.mockReset();
+    }
+    expect(constrained).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "pack_evidence_bundle",
+        resource: "memory",
+      },
+    });
+
+    const bloatedNonEvidence = join(directory, "bloated.json");
+    await writeFile(
+      bloatedNonEvidence,
+      JSON.stringify({
+        not_evidence: true,
+        extra: Array.from({ length: 100 }, (_unused, index) => index),
+      }),
+    );
+    const wrongKind = await readStandaloneEvidenceRecord(bloatedNonEvidence);
+    expect(wrongKind).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceFileError",
+        reason: "wrong-kind",
+        path: bloatedNonEvidence,
       },
     });
   });

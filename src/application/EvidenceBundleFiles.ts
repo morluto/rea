@@ -1,17 +1,26 @@
+import type { z } from "zod";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { EvidenceBundleExportReceipt } from "../domain/investigationLifecycle.js";
 import { jsonValueValidationIssue } from "../domain/jsonValue.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 import { describeValidationFailure } from "../domain/validationFailure.js";
+import type { Evidence } from "../domain/evidence.js";
 import {
   safeParseImmutableEvidenceBundle,
   safeParseEvidenceBundle,
   isImmutableEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
+import {
+  safeParseImmutableEvidence,
+  unsupportedEvidenceFormatError,
+  validationIssueOptions,
+} from "../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../domain/evidenceFormat.js";
 import {
   EvidenceFileError,
   EvidenceIntegrityError,
@@ -20,9 +29,11 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import {
   AnalysisCancelledError,
+  type AnalysisInputIssue,
   type AnalysisResourceConstraintError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
+import { projectInputIssuesBounded } from "../domain/inputIssueProjection.js";
 import { safeParseProcessCapture } from "../domain/process/processCaptureParsing.js";
 import {
   bufferedJsonParts,
@@ -124,6 +135,109 @@ const readBundle = async (
   });
 };
 
+/**
+ * Budget for projected field-level diagnostics. A malformed file can carry tens
+ * of thousands of issues, and projecting all of them pushes the error past the
+ * MCP response budget, which then hides the typed file error and its path. Keep
+ * the leading issues that fit and say how many were omitted.
+ */
+const EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES = 65_536;
+
+/** Project schema issues inside a bounded byte budget with an explicit omission note. */
+export const boundedEvidenceContentIssues = (
+  issues: readonly z.core.$ZodIssue[],
+  input: unknown,
+): readonly AnalysisInputIssue[] => {
+  const bounded = projectInputIssuesBounded(
+    issues,
+    input,
+    EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES,
+  );
+  if (bounded.omittedIssueCount === 0) return bounded.issues;
+  return [
+    ...bounded.issues,
+    {
+      path: [],
+      reason: "invalid_value",
+      message: `${String(bounded.omittedIssueCount)} of ${String(issues.length)} validator issues were omitted because they do not fit the response budget; repair the reported fields and retry.`,
+    },
+  ];
+};
+
+/** Read and authenticate one standalone Evidence JSON record at the caller-supplied path. */
+export const readStandaloneEvidenceRecord = async (
+  path: string,
+  signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
+  operation = "pack_evidence_bundle",
+): Promise<Result<Evidence, EvidenceBundleFileFailure>> => {
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
+  const loaded = await readJsonFile(path, signal, resources, operation);
+  if (!loaded.ok) return loaded;
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
+  return authenticateStandaloneEvidenceValue(loaded.value, path, operation);
+};
+
+const authenticateStandaloneEvidenceValue = (
+  value: unknown,
+  path: string,
+  operation: string,
+): Result<Evidence, EvidenceBundleFileFailure> => {
+  const callerPath = absoluteCallerPath(path);
+  const kind = evidenceFileEnvelopeKind(value);
+  if (kind === "analysis-snapshot")
+    return err(snapshotWrongEvidenceKind(path, operation, "record"));
+  if (kind === "evidence-bundle") {
+    const bundle = authenticateEvidenceBundleValue(value, path, {
+      operation,
+      immutable: true,
+    });
+    if (!bundle.ok) return bundle;
+    return err(
+      new EvidenceFileError("read", "wrong-kind", {
+        path: callerPath,
+        detectedKind: "evidence-bundle",
+        userMessage:
+          "Expected a standalone Evidence record JSON file, but this JSON is an Evidence bundle. Supply standalone Evidence JSON files, or export an existing bundle directly.",
+      }),
+    );
+  }
+  const headroom = requireAuthenticationHeadroom(value, {
+    operation,
+    path: callerPath,
+    description:
+      "Insufficient heap headroom to authenticate the Evidence record",
+  });
+  if (!headroom.ok) return headroom;
+  const parsed = safeParseImmutableEvidence(value);
+  if (!parsed.ok) {
+    if (isUnsupportedEvidenceFormat(parsed.error))
+      return err(unsupportedEvidenceFormatError(parsed.error));
+    if (isRecord(value) && Object.hasOwn(value, "evidence_id")) {
+      const message = `Evidence validation failed ${describeValidationFailure(parsed.error)}`;
+      return err(
+        new EvidenceIntegrityError(message, {
+          cause: parsed.error,
+          userMessage: `${message}. Recreate or repair the Evidence file at ${callerPath}, then try again.`,
+          diagnostics: { path: callerPath },
+          ...validationIssueOptions(parsed.error, []),
+        }),
+      );
+    }
+    return err(
+      new EvidenceFileError("read", "wrong-kind", {
+        path: callerPath,
+        cause: parsed.error,
+        contentIssues: boundedEvidenceContentIssues(parsed.error.issues, value),
+        userMessage:
+          "The selected file does not contain a valid standalone Evidence record. Repair or recreate the file and try again.",
+      }),
+    );
+  }
+  const validated = validateRecordsPayloads([parsed.value], path, operation);
+  return validated.ok ? ok(parsed.value) : validated;
+};
+
 /** Authenticate a loaded bundle once, preserving file-reader failure and process-capture semantics. */
 export const authenticateEvidenceBundleValue = (
   value: unknown,
@@ -172,7 +286,16 @@ const validateBundlePayloads = (
   EvidenceBundle,
   EvidenceIntegrityError | AnalysisResourceConstraintError
 > => {
-  for (const record of bundle.records) {
+  const validated = validateRecordsPayloads(bundle.records, path, operation);
+  return validated.ok ? ok(bundle) : validated;
+};
+
+const validateRecordsPayloads = (
+  records: readonly Evidence[],
+  path: string,
+  operation: string,
+): Result<void, EvidenceIntegrityError | AnalysisResourceConstraintError> => {
+  for (const record of records) {
     if (record.predicate_type !== "rea.process-capture") continue;
     // A sealed bundle borrows records, but this typed parser still allocates a
     // capture copy. Admit its actual working set against current headroom.
@@ -192,7 +315,7 @@ const validateBundlePayloads = (
       );
     }
   }
-  return ok(bundle);
+  return ok(undefined);
 };
 
 /** Atomically write deterministic evidence JSON at the caller-supplied path. */

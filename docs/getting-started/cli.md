@@ -955,10 +955,12 @@ checks its binding to the target, provider and profile.
 ## Import, export and compare Evidence
 
 Evidence records retain artifact identity, source locations, observations,
-inferences and unresolved findings. Validate an existing bundle, export its
-canonical form, or compare two supplied bundles:
+inferences and unresolved findings. Pack standalone Evidence records into a
+canonical bundle, validate an existing bundle, export its canonical form, or
+compare two supplied bundles:
 
 ```bash
+rea evidence-pack /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/record-1.json /absolute/path/to/evidence/record-2.json
 rea evidence-import /absolute/path/to/evidence/bundle.json
 rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
 rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/right.json
@@ -966,6 +968,16 @@ rea compare left.json right.json --record_pairs '[{"left_evidence_id":"ev_<left-
 ```
 
 `rea compare` is the CLI form of the MCP `compare_bundles` tool.
+
+`rea evidence-pack <output> <sources...>` reads one or more standalone `Evidence`
+JSON files (for example, outputs saved from one-shot CLI `--json` commands),
+authenticates each record under the JSON read and heap-headroom budgets,
+deduplicates identical records with the same `evidence_id`, fails on invalid
+Evidence or conflicting metadata for an `evidence_id`, builds a canonical
+`EvidenceBundle`, and atomically writes canonical JSON to `<output>`. The
+resulting bundle works directly with `rea evidence-export`, `rea compare`,
+`rea inspect-evidence-bundle`, `--evidence-bundle` workflows such as
+`reconcile-javascript-runtime`, and `build-reconstruction-obligation-ledger`.
 
 `rea evidence-import` performs process-local bundle authentication and
 validation, reporting record and Unknown-revision counts. `unknowns_added`
@@ -989,7 +1001,7 @@ Pair IDs must exist on their named sides and be one-to-one. Without pairs,
 one-sided membership remains unknown; REA does not infer correspondence from
 position or display names.
 
-Exports preserve an existing destination unless `--overwrite` is explicit.
+Exports and packs preserve an existing destination unless `--overwrite` is explicit.
 
 To discover records in a saved bundle without returning their payloads, page
 its metadata with `inspect-evidence-bundle`:

@@ -13,6 +13,7 @@
   "inspect-evidence-bundle: no contract inspect_evidence_bundle",
   "evidence-import: no contract evidence_import",
   "evidence-export: no contract evidence_export",
+  "evidence-pack: no contract evidence_pack",
   "environment-export: no contract environment_export",
   "environment-compare: no contract environment_compare",
   "environment-serve: no contract environment_serve",
