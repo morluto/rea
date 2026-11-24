@@ -105,7 +105,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   enhanced(
     "find_xrefs_to_name",
     evidenceEffects,
-    "Find references to an exact analyzed symbol name: resolves the name, then returns its address and referencing addresses. name_not_found means lookup is unresolved, not that a reference search found none or the target lacks the symbol. Use limit and offset to page observed addresses in provider order. A provider cap or unknown completeness leaves total_xrefs unknown. Use inspect_native_instruction for typed incoming references where supported. Kuna lacks the required general name inventory; xrefs can resolve names its inventory knows.",
+    "Find references to an analyzed symbol name: resolves an exact observed name, then an import by its imported or library-qualified name (resolved_name reports the provider's spelling), then the provider's procedure lookup, and returns the address and referencing addresses. A library-qualified name the provider reports without its library stays unresolved with candidates. name_not_found means lookup is unresolved, not that a reference search found none or the target lacks the symbol. Use limit and offset to page observed addresses in provider order. A provider cap or unknown completeness leaves total_xrefs unknown. Use inspect_native_instruction for typed incoming references where supported. Kuna lacks a general name inventory, so names resolve through its procedure lookup.",
     enhancedInputSchemas.find_xrefs_to_name,
   ),
   enhanced(

@@ -55,7 +55,15 @@ const fixture = (
           );
         if (operation === "procedure_address")
           return Promise.resolve(
-            observed(parameters.procedure === "main" ? "0x5000" : null),
+            parameters.procedure === "main"
+              ? observed("0x5000")
+              : err(
+                  new AnalysisInputError(
+                    "procedure_address",
+                    { conformsToInputContract: true },
+                    [{ path: ["procedure"], reason: "invalid_value" }],
+                  ),
+                ),
           );
         if (operation === "xrefs") {
           if (options.xrefsError !== undefined)
@@ -198,7 +206,7 @@ describe("direct CLI cross-reference name resolution", () => {
     expect(missing).toMatchObject({
       code: "invalid_request",
       remediation: {
-        action: expect.stringContaining("use different address coordinates"),
+        action: expect.stringContaining("search_procedures or list_names"),
       },
       details: { operation: "xrefs", issues: [{ path: ["address"] }] },
     });

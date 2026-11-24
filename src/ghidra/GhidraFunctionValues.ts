@@ -2,6 +2,8 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
 import { addressDistance } from "../domain/native/addressCoordinate.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
+import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
+import { unavailableNativeFactSchema } from "../domain/native/nativeFactAvailability.js";
 import { z } from "zod";
 import {
   ghidraNativeApiBoundary,
@@ -146,9 +148,21 @@ const referenceEdge = z
     kind: referenceKind,
   })
   .strict();
+/**
+ * The target of incoming references selected by an explicit address outside
+ * every function, such as an import address-table slot: its primary symbol
+ * when one exists, and no function classification or body.
+ */
+const nonFunctionTarget = z.strictObject({
+  address: nativeAddressObservationSchema,
+  name: z.string().min(1),
+  symbol: nativeSymbolMetadataSchema.nullable(),
+  classification: z.null(),
+  body: unavailableNativeFactSchema,
+});
 const procedureReferences = z
   .object({
-    procedure: procedureIdentity,
+    procedure: z.union([procedureIdentity, nonFunctionTarget]),
     direction: z.enum(["incoming", "outgoing"]),
     references: z.array(referenceEdge),
     reference_kinds_available: z.boolean(),

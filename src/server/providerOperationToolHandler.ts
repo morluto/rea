@@ -5,6 +5,7 @@ import type {
 import type { Logger } from "pino";
 
 import { completedOperationEvidence } from "../application/binary/SessionEvidenceReuse.js";
+import { executeWithNativeSymbolSelection } from "../application/NativeSymbolSelection.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
@@ -112,16 +113,24 @@ export const createProviderOperationToolHandler =
           const executionParameters =
             options.parametersForExecution?.(operation, providerParameters) ??
             providerParameters;
+          const executionOptions = {
+            signal: context.mcpReq.signal,
+            progress,
+            isOperationAdvertised: (advertised: AnalysisOperation) =>
+              server.advertisesTool(advertised),
+          };
           const execution = await logToolExecution(
             dependencies.logger,
             contract.name,
             () =>
-              analysis.execute(operation, executionParameters, {
-                signal: context.mcpReq.signal,
-                progress,
-                isOperationAdvertised: (advertised) =>
-                  server.advertisesTool(advertised),
-              }),
+              executeWithNativeSymbolSelection(
+                analysis,
+                operation,
+                executionParameters,
+                (parameters) =>
+                  analysis.execute(operation, parameters, executionOptions),
+                context.mcpReq.signal,
+              ),
           );
           if (!execution.ok)
             return progress.complete(
