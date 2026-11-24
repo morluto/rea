@@ -6,6 +6,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
 
+import { createMcpSchemaValidation } from "../../tests/fixtures/mcpSchemaValidation.js";
 import { waitFor } from "../../tests/support/testWait.js";
 import { ok, err } from "../domain/result.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
@@ -41,7 +42,10 @@ it("keeps networking opt-in", () => {
 
 const receivedNotices = new WeakMap<Client, unknown[]>();
 const createClient = (options?: ConstructorParameters<typeof Client>[1]) => {
-  const client = new Client({ name: "update-test", version: "1" }, options);
+  const client = new Client(
+    { name: "update-test", version: "1" },
+    { ...options, jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const notices: unknown[] = [];
   client.setNotificationHandler("notifications/message", (message) => {
     notices.push(message.params);
