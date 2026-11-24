@@ -65,11 +65,9 @@ cliTest.for([
     if (operation === "inspect_plist")
       await writeFile(join(contents, "Info.plist"), changedPlist);
     const stale = await call(operation, parameters);
+    // Bytes replaced after the open are a changed target for every operation.
     expect(parseMcpToolError(stale).error).toMatchObject({
-      code:
-        operation === "inspect_plist"
-          ? "artifact_changed"
-          : "artifact_operation_failed",
+      code: "artifact_changed",
       category: "integrity_mismatch",
     });
 
