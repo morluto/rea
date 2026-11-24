@@ -15,6 +15,7 @@ import { setImmediate } from "node:timers/promises";
 import {
   ArtifactReaderFailure,
   malformedArtifact,
+  truncatedArtifact,
   assertArtifactReadActive,
   artifactReaderLimitFailure,
 } from "../resources/index.js";
@@ -351,7 +352,15 @@ class PckCursor {
   }
   requireBytes(length: number): void {
     if (length > this.end - this.position)
-      throw formatFailure("directory entry exceeds the pack");
+      throw truncatedArtifact(
+        "godot-pck",
+        "Godot PCK is malformed: directory entry exceeds the pack",
+        {
+          offset: this.position,
+          availableBytes: Math.max(0, this.end - this.position),
+          requiredBytes: length,
+        },
+      );
   }
   async bytes(length: number): Promise<Buffer> {
     if (length > DIRECTORY_CHUNK_BYTES) {

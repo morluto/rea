@@ -26,6 +26,7 @@ import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   artifactFormatFailure,
+  malformedArtifact,
   truncatedArtifact,
   copyArtifactEntry,
   sameArtifactEntry,
@@ -277,19 +278,28 @@ export class AsarArtifactReader implements ArtifactReader {
           false,
         ),
       );
+    // An absent, negative, padded or unsafe offset declaration is malformed;
+    // only a valid range that runs past the archive is truncated.
     if (
       archiveSize === undefined ||
       start === undefined ||
-      !Number.isSafeInteger(start) ||
-      start > archiveSize ||
-      facts.size > archiveSize - start
+      !Number.isSafeInteger(start)
     )
+      throw malformedArtifact(
+        "asar",
+        `ASAR entry declares an invalid offset: ${producedEntry.path}`,
+        { field: "offset" },
+      );
+    if (start > archiveSize || facts.size > archiveSize - start)
       throw truncatedArtifact(
         "asar",
         `ASAR entry range is outside its container: ${producedEntry.path}`,
-        start === undefined || !Number.isSafeInteger(start)
-          ? { field: "offset" }
-          : { offset: start, field: "offset" },
+        {
+          offset: start,
+          field: "offset",
+          availableBytes: Math.max(0, archiveSize - start),
+          requiredBytes: facts.size,
+        },
       );
     const snapshotPath = this.#snapshotPath();
     if (facts.size === 0) return Readable.from([]);

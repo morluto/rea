@@ -11,6 +11,7 @@ import {
   normalizeArtifactPath,
   ArtifactReaderFailure,
   malformedArtifact,
+  truncatedArtifact,
   artifactFixedLimitFailure,
   artifactReaderLimitFailure,
   abortIfNeeded,
@@ -270,7 +271,16 @@ class BundleCursor {
 
   #requireRemaining(length: number): number {
     const remaining = this.remainingBytes;
-    if (length > remaining) fail("Truncated .NET bundle manifest");
+    if (length > remaining)
+      throw truncatedArtifact(
+        "dotnet-bundle",
+        "Truncated .NET bundle manifest",
+        {
+          offset: this.#position,
+          availableBytes: remaining,
+          requiredBytes: length,
+        },
+      );
     return remaining;
   }
 
@@ -305,7 +315,14 @@ class BundleCursor {
           cacheOffset + read,
         );
         abortIfNeeded(this.signal);
-        if (reply.bytesRead === 0) fail("Truncated .NET bundle manifest");
+        // The read stays inside the measured remainder, so a short read
+        // means the file changed underneath it.
+        if (reply.bytesRead === 0)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            ".NET bundle manifest ended before the measured file size",
+            { integrityCheck: "read-coverage" },
+          );
         read += reply.bytesRead;
       }
       this.#cache = new BinaryReader(bytes, true, "dotnet-bundle");
@@ -369,7 +386,7 @@ class BundleCursor {
         throw malformedArtifact(
           "dotnet-bundle",
           "Invalid UTF-8 in .NET bundle manifest",
-          { cause, offset: at, field: "manifest-string" },
+          { cause, offset: this.#cacheOffset + at, field: "manifest-string" },
         );
       }
     }

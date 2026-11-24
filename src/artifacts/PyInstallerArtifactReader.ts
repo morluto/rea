@@ -67,6 +67,7 @@ const carrierPathDialect = async (
   signal?: AbortSignal,
 ): Promise<CarrierPathDialect> => {
   const prefixRead = await readPyInstallerBytes(handle, {
+    measuredEnd: fileSize,
     position: 0,
     length: Math.min(fileSize, ARTIFACT_CLASSIFICATION_PREFIX_BYTES),
     label: "carrier header",
@@ -77,6 +78,7 @@ const carrierPathDialect = async (
   let windowsHeader = observeMzWindowsHeader(prefix, fileSize);
   if (windowsHeader.state === "signature-needed") {
     const signatureRead = await readPyInstallerBytes(handle, {
+      measuredEnd: fileSize,
       position: windowsHeader.offset,
       length: 4,
       label: "PE signature",

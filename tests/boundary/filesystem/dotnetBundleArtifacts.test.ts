@@ -27,15 +27,18 @@ import { writeMinimalElfHeader } from "../../fixtures/nativeHeaders.js";
 it.each([
   {
     length: [0x80, 0x80, 0x80, 0x80, 0x08],
+    reason: "malformed",
     message: "Invalid .NET bundle string length",
   },
   {
+    // A valid length that runs past the file is a truncated manifest.
     length: [0xff, 0xff, 0xff, 0xff, 0x07],
+    reason: "truncated",
     message: "Truncated .NET bundle manifest",
   },
 ])(
-  "reports malformed bundle ID length $length as a format failure",
-  async ({ length, message }) => {
+  "reports bundle ID length $length as a $reason manifest",
+  async ({ length, reason, message }) => {
     const root = await createTestTempDirectory("rea-dotnet-invalid-string-");
     const path = join(root, "host.exe");
     const fixture = dotnetBundleFixture([
@@ -48,7 +51,7 @@ it.each([
     try {
       await expect(
         readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
-      ).rejects.toMatchObject({ reason: "malformed", message });
+      ).rejects.toMatchObject({ reason, message });
     } finally {
       await handle.close();
     }
@@ -75,7 +78,7 @@ it("reports a truncated manifest before the metadata budget", async () => {
         metadata_bytes: rowStart - fixture.headerOffset,
       }),
     ).rejects.toMatchObject({
-      reason: "malformed",
+      reason: "truncated",
       message: "Truncated .NET bundle manifest",
     });
   } finally {
@@ -107,7 +110,7 @@ it.each(["bundle ID", "entry path"] as const)(
         : fixture.fields.entries[1]!.offset;
     for (const [content, reason] of [
       [fixture.bytes, "limit"],
-      [fixture.bytes.subarray(0, end), "malformed"],
+      [fixture.bytes.subarray(0, end), "truncated"],
     ] as const) {
       await writeFile(path, content);
       const handle = await open(path, "r");
@@ -541,7 +544,7 @@ it.each([
       ]).bytes,
     "malformed",
   ],
-  ["truncated", () => dotnetBundleFixture().bytes.subarray(0, -2), "malformed"],
+  ["truncated", () => dotnetBundleFixture().bytes.subarray(0, -2), "truncated"],
   ...(["count", "config-offset", "member-size"] as const).map(
     (field) =>
       [

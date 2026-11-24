@@ -330,8 +330,9 @@ it("does not cache an incomplete tail read as an absent cookie and can retry", a
       });
     try {
       await expect(probes.pyInstaller()).rejects.toMatchObject({
-        reason: "truncated",
-        parseFailure: { kind: "truncated", format: "pyinstaller" },
+        // The tail lies inside the measured size: the file changed.
+        reason: "integrity",
+        integrityCheck: "read-coverage",
       });
       expect(calls).toBe(2);
       expect(Object.hasOwn(probes.completedFacts(), "pyInstaller")).toBe(false);

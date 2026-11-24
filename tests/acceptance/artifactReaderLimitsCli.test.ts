@@ -142,7 +142,8 @@ test("rejects malformed directory dimensions before suggesting a budget increase
     code: "unsupported_target",
     retryable: false,
     details: {
-      reason: "malformed",
+      reason: "truncated",
+      failure_kind: "truncated",
     },
   });
   const failure = result.json as {

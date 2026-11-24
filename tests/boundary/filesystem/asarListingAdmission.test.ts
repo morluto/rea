@@ -291,8 +291,8 @@ it("retains inventory facts for members with unreadable packed offsets", async (
         declaredIntegrity: { algorithm: "sha256", digest },
       });
       await expect(reader.open(entry)).rejects.toMatchObject({
-        reason: "truncated",
-        parseFailure: { kind: "truncated", format: "asar", field: "offset" },
+        reason: "malformed",
+        parseFailure: { kind: "malformed", format: "asar", field: "offset" },
       });
     }
     expect(seen).toEqual(Object.keys(offsets));

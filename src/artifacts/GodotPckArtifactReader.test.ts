@@ -342,12 +342,13 @@ describe("GodotPckArtifactReader", () => {
     });
   });
 
-  it("reports an oversized path that cannot fit in the pack as malformed", async () => {
+  it("reports an oversized path that cannot fit in the pack as truncated", async () => {
     const bytes = buildGodotPck(2, members);
     bytes.writeUInt32LE(0xffff_ffff, 100);
     await withReader(bytes, async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({
-        reason: "malformed",
+        reason: "truncated",
+        parseFailure: { kind: "truncated", format: "godot-pck" },
       });
     });
   });

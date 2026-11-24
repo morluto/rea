@@ -14,6 +14,12 @@ export const readPyInstallerBytes = async (
     readonly length: number;
     readonly label: string;
     readonly signal?: AbortSignal | undefined;
+    /**
+     * The end the caller measured for this range's file. A zero-byte read
+     * before it means the file changed during the read; without it, EOF is
+     * the format's truncation.
+     */
+    readonly measuredEnd?: number;
   },
 ): Promise<Result<Buffer, PyInstallerFailure>> => {
   abortIfNeeded(input.signal);
@@ -51,10 +57,20 @@ export const readPyInstallerBytes = async (
       );
     }
     abortIfNeeded(input.signal);
-    if (count === 0)
+    if (count === 0) {
+      if (
+        input.measuredEnd !== undefined &&
+        input.position + input.length <= input.measuredEnd
+      )
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `${input.label} ended before the measured file size`,
+          { integrityCheck: "read-coverage" },
+        );
       return err(
         pyInstallerFailure("truncated", `${input.label} is truncated`),
       );
+    }
     offset += count;
   }
   return ok(bytes);
