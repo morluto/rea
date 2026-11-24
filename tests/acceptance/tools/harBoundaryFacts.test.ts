@@ -49,7 +49,10 @@ cliTest(
     const capture = await cli.run({
       arguments: ["inspect-web-network-capture", path, "har", "--json"],
     });
-    expect(capture.exitCode, capture.stderr).toBe(0);
+    expect(
+      capture.exitCode,
+      capture.stderr || JSON.stringify(capture.json),
+    ).toBe(0);
     const evidence = parseEvidence(capture.json);
     const { call } = await connectLocalToolsMcp();
     for (const detail of ["preview", "complete"] as const) {
@@ -253,7 +256,7 @@ cliTest(
     const evidence = parseEvidence(output.json);
     const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
     expect(capture.decoder.version).toBe(
-      "har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@3.3.1;lossless-json@4.3.1",
+      "har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@3.3.1;lossless-json@4.3.3",
     );
     expect(capture.artifact).toMatchObject({
       path,

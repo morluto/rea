@@ -1,6 +1,8 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { analysisTextPage } from "./analysisViewText.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { FunctionDossier } from "../native/functionDossier.js";
 import { jsonValueSchema } from "../jsonValue.js";
@@ -18,11 +20,6 @@ import {
 } from "./analysisViewCoverage.js";
 
 type Artifact = { readonly path: string; readonly sha256: string };
-
-const viewError = (message: string): AnalysisError =>
-  analysisViewInputError([
-    { path: ["view"], reason: "invalid_value", message },
-  ]);
 
 const parentFields = (
   parent: AnalysisViewParent,
@@ -228,8 +225,8 @@ export const projectNativeFunctionView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "native" && view.kind !== "summary")
-    return err(
-      viewError("analyze_function Evidence requires a native or summary view."),
+    return invalidAnalysisView(
+      "analyze_function Evidence requires a native or summary view.",
     );
   assertOwnedView<SummaryAnalysisView | NativeFacetAnalysisView>(
     view,
@@ -268,7 +265,7 @@ export const projectNativeFunctionView = (
     view.facet === "value_flow_summary"
   ) {
     if (view.offset !== 0)
-      return err(viewError("Singleton native facets require offset 0."));
+      return invalidAnalysisView("Singleton native facets require offset 0.");
     if (view.facet === "procedure") return ok(singleton(dossier.procedure));
     if (view.facet === "native_api")
       return ok(

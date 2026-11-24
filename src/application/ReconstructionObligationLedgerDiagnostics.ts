@@ -6,32 +6,7 @@ import type { Evidence } from "../domain/evidence.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
-type Binding = NonNullable<ReconstructionObligation["binding"]>;
 type Contradiction = ReconstructionObligationManifest["contradictions"][number];
-
-export const groupManifestBindings = (
-  manifest: ReconstructionObligationManifest,
-): ReadonlyMap<string, readonly Binding[]> => {
-  const grouped = new Map<string, Binding[]>();
-  for (const binding of manifest.bindings)
-    grouped.set(binding.obligation_id, [
-      ...(grouped.get(binding.obligation_id) ?? []),
-      binding,
-    ]);
-  return grouped;
-};
-
-export const groupManifestContradictions = (
-  manifest: ReconstructionObligationManifest,
-): ReadonlyMap<string, readonly Contradiction[]> => {
-  const grouped = new Map<string, Contradiction[]>();
-  for (const contradiction of manifest.contradictions)
-    grouped.set(contradiction.obligation_id, [
-      ...(grouped.get(contradiction.obligation_id) ?? []),
-      contradiction,
-    ]);
-  return grouped;
-};
 
 export const addObligationDiagnostic = (
   diagnostics: Diagnostic[],

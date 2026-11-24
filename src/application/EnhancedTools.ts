@@ -1,4 +1,5 @@
 import { boundedList } from "../domain/boundedList.js";
+import { withRequiredLimitedDirections } from "../domain/relationshipCoverage.js";
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { withOverviewInventoryCoverage } from "../domain/native/inventoryCoverage.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
@@ -77,7 +78,7 @@ import {
 import type { DirectEnhancedToolName } from "./oneShotOperationInput.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
-import { resolveXrefsName } from "./XrefsAddressResolution.js";
+import { resolveNativeSymbol } from "./NativeSymbolSelection.js";
 import {
   parseProcedureAddress,
   resolveProcedureAddress,
@@ -596,10 +597,16 @@ export class EnhancedTools {
       for (const limitation of execution.limitations)
         limitations.add(limitation);
       const reportedCoverage = execution.relationshipCoverage;
-      const coverage = reportedCoverage ?? {
-        status: "unknown" as const,
-        reason: "Provider did not report relationship coverage.",
-      };
+      const directionFallback: ["callers"] | ["callees"] =
+        input.direction === "backward" ? ["callers"] : ["callees"];
+      const coverage =
+        reportedCoverage === undefined
+          ? {
+              status: "unknown" as const,
+              reason: "Provider did not report relationship coverage.",
+              limited_directions: directionFallback,
+            }
+          : withRequiredLimitedDirections(reportedCoverage, directionFallback);
       const relationshipLimitations =
         reportedCoverage === undefined
           ? [
@@ -687,19 +694,28 @@ export class EnhancedTools {
     signal?: AbortSignal,
   ): EnhancedResult {
     const { name, limit, offset } = input;
-    const resolved = await resolveXrefsName(
+    const resolved = await resolveNativeSymbol(
       this.analysis,
       name,
-      signal,
       "find_xrefs_to_name",
+      signal,
+      { procedureLookup: true },
     );
     if (!resolved.ok) return resolved;
-    if (resolved.value === null)
-      return ok({ status: "unresolved", name, reason: "name_not_found" });
+    const resolution = resolved.value;
+    if (resolution.status === "unresolved")
+      return ok({
+        status: "unresolved",
+        name,
+        reason: "name_not_found",
+        ...(resolution.candidates.length === 0
+          ? {}
+          : { candidates: resolution.candidates.map((item) => ({ ...item })) }),
+      });
 
     const observed = await this.#observe(
       "xrefs",
-      { address: resolved.value },
+      { address: resolution.address },
       signal,
     );
     if (!observed.ok) return observed;
@@ -719,7 +735,8 @@ export class EnhancedTools {
     return ok({
       status: "resolved",
       name,
-      address: resolved.value,
+      ...(resolution.name === name ? {} : { resolved_name: resolution.name }),
+      address: resolution.address,
       xrefs: page,
       ...(hasPaging
         ? {

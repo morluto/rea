@@ -68,10 +68,6 @@ const workspaceFixture = await VerifierFixture.open({
   throw cause;
 });
 const workspace = workspaceFixture.path;
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 let primaryFailure;
 let unrelatedHopperSurvived = false;
 let summary;
@@ -636,7 +632,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Hopper command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -652,7 +648,7 @@ const completedVerifierRun = await completeVerifierRun(verifierRun);
 try {
   assertVerifierCleanupComplete(completedVerifierRun.process_lineage);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -666,7 +662,7 @@ try {
   );
 }
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Real-Hopper verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );

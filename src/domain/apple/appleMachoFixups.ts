@@ -1360,10 +1360,7 @@ function* readBindStreamSteps(
       };
     }
     const previous = binds.at(-1);
-    const sameBinding = (
-      left: BindRun["binding"],
-      right: BindRun["binding"],
-    ) =>
+    const sameBinding = (left: BindRun["binding"], right: BindRun["binding"]) =>
       left.kind === "unsupported" && right.kind === "unsupported"
         ? left.reason === right.reason &&
           (left.binding === undefined || right.binding === undefined

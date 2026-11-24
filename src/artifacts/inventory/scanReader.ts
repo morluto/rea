@@ -47,6 +47,10 @@ import {
 import { invariantViolation } from "../../domain/internalInvariant.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
 import { hashReadable } from "../ArtifactHash.js";
+import {
+  DirectoryTreeDigestBuilder,
+  type DirectoryRootDigest,
+} from "../../domain/directoryTreeDigest.js";
 
 export interface PendingIntegrityContradiction {
   readonly occurrence: MutableOccurrence;
@@ -84,7 +88,17 @@ interface ScanContext {
       }
     | undefined;
   readonly traversal: ArtifactTraversalObservation;
+  /** The root directory's tree digest, collected from its own walk only. */
+  readonly tree: DirectoryTreeDigestBuilder | undefined;
 }
+
+/** Special members the tree records without reading them. */
+const RECORDED_SPECIAL_KINDS: ReadonlySet<string> = new Set([
+  "fifo",
+  "socket",
+  "block-device",
+  "character-device",
+]);
 
 export const scanReader = async (
   reader: ArtifactReader | undefined,
@@ -103,6 +117,8 @@ export const scanReader = async (
   readonly traversal: ArtifactReaderTraversal;
   /** A recorded disagreement between the root's own checksum and its bytes. */
   readonly rootContradiction: ArtifactContainerIntegrityPair | undefined;
+  /** A directory root's tree digest; absent for every other root. */
+  readonly rootDigest: DirectoryRootDigest | undefined;
 }> => {
   const { nodes, occurrences, pendingContradictions } = emptyScan();
   if (reader === undefined)
@@ -118,6 +134,7 @@ export const scanReader = async (
       },
       traversal: { status: "complete", limitations: [] },
       rootContradiction: undefined,
+      rootDigest: undefined,
     };
   const maximumEntries = acquisitionLimits?.maximumEntries;
   if (
@@ -147,6 +164,10 @@ export const scanReader = async (
         ? { hash: createHash("sha256"), regionOrder: [], bytes: 0 }
         : undefined,
     traversal: new ArtifactTraversalObservation(),
+    tree:
+      reader instanceof DirectoryArtifactReader
+        ? new DirectoryTreeDigestBuilder()
+        : undefined,
   };
   await visitArtifactEntries(context, reader, "");
   const rootContradiction = containerContradiction(reader, integrity);
@@ -174,6 +195,7 @@ export const scanReader = async (
     parentResolution,
     traversal: context.traversal.snapshot(),
     rootContradiction,
+    rootDigest: context.tree?.finish(),
   };
 };
 
@@ -215,22 +237,49 @@ const inventoryEntries = (
   context: ScanContext,
   reader: ArtifactReader,
   prefix: string,
-): AsyncIterator<ArtifactEntry> =>
-  declaredArtifactEntries(reader, context.signal, {
-    onCoverage: context.traversal.record,
+): AsyncIterator<ArtifactEntry> => {
+  // Only the root directory's own walk feeds its tree digest.
+  const tree = reader === context.reader ? context.tree : undefined;
+  return declaredArtifactEntries(reader, context.signal, {
+    onCoverage: (coverage) => {
+      context.traversal.record(coverage);
+      if (coverage.status !== "complete")
+        for (const limitation of coverage.limitations.length === 0
+          ? ["The directory walk did not declare complete coverage."]
+          : coverage.limitations)
+          tree?.incomplete(limitation);
+    },
     ...(reader instanceof DirectoryArtifactReader &&
     context.acquisitionLimits !== undefined
       ? {
           admitExaminedEntry: () => admitExaminedEntry(context),
         }
       : {}),
-    onOmission: (omission) =>
+    onOmission: (omission) => {
       context.traversal.omit({
         ...omission,
         path:
           prefix.length === 0 ? omission.path : `${prefix}/${omission.path}`,
-      }),
+      });
+      if (tree === undefined) return;
+      // The tree records each name's exact bytes, never a normalized form.
+      const path = omission.path;
+      if (RECORDED_SPECIAL_KINDS.has(omission.kind))
+        tree.add({
+          kind: omission.kind as
+            | "fifo"
+            | "socket"
+            | "block-device"
+            | "character-device",
+          path,
+        });
+      else
+        tree.incomplete(
+          `The walk omitted ${omission.kind} at ${JSON.stringify(path)}.`,
+        );
+    },
   })[Symbol.asyncIterator]();
+};
 
 const visitArtifactEntries = async (
   context: ScanContext,
@@ -347,6 +396,8 @@ const visitArtifactEntries = async (
           );
       }
       context.occurrences.push(occurrence);
+      if (frame.reader === context.reader && context.tree !== undefined)
+        recordTreeMember(context.tree, entry, entry.path, digested?.node);
       if (
         expandableAsar &&
         digested !== undefined &&
@@ -372,12 +423,13 @@ const visitArtifactEntries = async (
       }
     }
   } catch (cause: unknown) {
-    if (cause instanceof InventoryAcquisitionLimit)
+    if (cause instanceof InventoryAcquisitionLimit) {
       context.traversal.record({
         status: "unknown",
         limitations: [cause.message],
       });
-    else failure = { cause };
+      context.tree?.incomplete(cause.message);
+    } else failure = { cause };
   } finally {
     // Readers remain owned by the inventory until its complete observation is built.
     for (const { iterator, prefix, reader } of stack.reverse()) {
@@ -397,6 +449,24 @@ const visitArtifactEntries = async (
     }
   }
   if (failure !== undefined) throw failure.cause;
+};
+
+/** Record one root-directory member, or why it leaves the tree digest partial. */
+const recordTreeMember = (
+  tree: DirectoryTreeDigestBuilder,
+  entry: ArtifactEntry,
+  path: string,
+  node: ArtifactNode | undefined,
+): void => {
+  if (entry.kind === "directory") tree.add({ kind: "directory", path });
+  else if (entry.kind === "file" && node !== undefined)
+    tree.add({ kind: "file", path, sha256: node.sha256 });
+  else if (entry.kind === "symlink" && entry.linkTarget !== undefined)
+    tree.add({ kind: "symlink", path, targetHex: entry.linkTarget.hex });
+  else
+    tree.incomplete(
+      `The ${entry.kind} at ${JSON.stringify(path)} was not read, so its content is unknown.`,
+    );
 };
 
 const digestArtifactEntry = async (

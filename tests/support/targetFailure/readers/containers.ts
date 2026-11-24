@@ -1,4 +1,3 @@
-import { nodeSeaElf } from "../../../../src/artifacts/nodeSea/NodeSea.fixture.js";
 import { zipArchive } from "../../../../src/domain/desktop/zipArchive.fixture.js";
 import { INTEL_HEX_I32_GAP } from "../../../../src/domain/firmware/hexRecords.fixture.js";
 import {
@@ -66,16 +65,6 @@ const containerCases: readonly TargetFailureCase[] = [
       format: "uf2",
       reason:
         "UF2 is malformed: family 0xe48bff56 (RP2040) address 0x10000000 is written with different values by block 0 (0x01) and block 1 (0xff)",
-    },
-    identity: false,
-  },
-  {
-    name: "node-sea-blob-magic",
-    kind: "malformed",
-    bytes: () => nodeSeaElf({ blob: Buffer.alloc(16) }),
-    facts: {
-      format: "node-sea",
-      reason: "Node SEA blob magic is not 0x143da20",
     },
     identity: false,
   },

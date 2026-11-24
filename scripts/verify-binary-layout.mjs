@@ -581,12 +581,9 @@ try {
       overflowingTablePath,
       "unsupported_target",
     );
-    assert.equal(error.code, "invalid_request");
-    assert.ok(
-      error.details.issues.some(
-        ({ path, reason }) => path[0] === "path" && reason === "invalid_format",
-      ),
-    );
+    assert.equal(error.code, "unsupported_target");
+    assert.equal(error.details.failure_kind, "malformed");
+    assert.equal(error.details.format, "elf");
     cases++;
   }
   assert.deepEqual(await readFile(overflowingTablePath), overflowingTable);
@@ -775,7 +772,7 @@ try {
           : await inspect(
               mode,
               path,
-              fixture.expectation === "invalid_input"
+              fixture.expectation === "malformed"
                 ? "unsupported_target"
                 : undefined,
             );

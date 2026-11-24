@@ -23,6 +23,16 @@ authority are validated independently before selection and connection.
 
 - `list_browser_targets` / `rea list-browser-targets` discovers all eligible page targets at the endpoint by default, with an optional exact-origin filter.
 - `inspect_web_page` / `rea inspect-web-page` captures DOM structure, accessibility nodes, scripts, resources, safe response/DOM metadata, attach-window network and console metadata, WebSocket frame sizes, workers, quota, and optionally selected storage key names, redacted storage-content fingerprints, or script sources.
+  An MCP call that omits `detail` returns the capture inline when its Evidence
+  is at most 32 KiB. A larger capture is retained, and the call returns a
+  summary with the small sections and counts. On a local page with 2,000 list
+  rows, 200 buttons and three libraries, the complete result was 4.6 MB, mostly
+  6,423 DOM nodes and 10,614 accessibility nodes; the summary was 12.5 KB.
+  Page `dom` (`node_names`), `accessibility` (`roles`), `console` (`types`),
+  `network` (`methods`), `scripts` or `resources` with
+  `inspect_analysis_view` view `{"kind":"web-page","collection":...}`.
+  `compare_web_captures` needs the complete `normalized_result` inline, so
+  request `detail: "complete"` for a capture you will compare.
 - `analyze_web_bundle` / `rea analyze-web-bundle` parses selected script artifacts without execution and derives chunk edges, route and endpoint candidates, vendor fingerprints, static WebMCP declarations, and optionally source-map/original-source evidence.
   Sources reported as JavaScript use JavaScript grammar even when the script
   has no URL or its URL ends in a different source extension.

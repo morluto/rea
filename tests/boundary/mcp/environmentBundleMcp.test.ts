@@ -1,5 +1,6 @@
+import { listFixtureFiles } from "../../support/workspace/listFixtureFiles.js";
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
@@ -51,17 +52,6 @@ const connect = async () => {
   await client.connect(clientTransport);
   return { client, session };
 };
-
-const listFiles = async (root: string): Promise<string[]> =>
-  (await readdir(root, { recursive: true, withFileTypes: true }))
-    .filter((entry) => entry.isFile())
-    .map((entry) =>
-      join(entry.parentPath, entry.name)
-        .slice(root.length + 1)
-        .split(sep)
-        .join("/"),
-    )
-    .sort();
 
 const loopbackCapture = (): Evidence =>
   analysisViewCaptureEvidence(
@@ -155,8 +145,8 @@ it("writes the bundle environment-build writes from retained capture Evidence", 
     dryRun: false,
   });
   if (!reference.ok) throw reference.error;
-  const files = await listFiles(input.output_directory);
-  expect(files).toEqual(await listFiles(join(root, "reference")));
+  const files = await listFixtureFiles(input.output_directory);
+  expect(files).toEqual(await listFixtureFiles(join(root, "reference")));
   for (const path of files)
     expect(
       Buffer.compare(

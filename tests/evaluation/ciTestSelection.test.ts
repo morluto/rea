@@ -157,6 +157,8 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
           "scripts/lib/module-layers.baseline.json",
           ".git-blame-ignore-revs",
           "scripts/verify/baselines/some-guard.json",
+          "scripts/verify/fixed-ceiling-registry.json",
+          "scripts/verify/untyped-budget-refusal-baseline.json",
           "scripts/verify/advertised-schemas/tools/tool.json",
         ],
         sources,
@@ -224,6 +226,206 @@ it("selects tests under shared-boundary directories and declared fixture owners,
     mode: "full",
     reason:
       "Missing test owner tests/boundary/cli/cliParityGoldens.test.ts for tests/fixtures/cli-parity/error-unknown-command.txt",
+  });
+});
+
+it("selects adapter and packaging tests for every owned bridge group and fails closed otherwise", () => {
+  const packagedTests = [
+    "tests/boundary/process/packageTarListing.test.ts",
+    "tests/boundary/process/packedBridgeVerification.test.ts",
+    "tests/conformance/package/packedTarListing.test.ts",
+  ];
+  const sources: Record<string, string> = {
+    "src/ghidra/GhidraRawProfileDigest.test.ts": "",
+    "tests/boundary/providers/ghidra/ghidraLauncher.test.ts": "",
+    "tests/boundary/filesystem/ghidraBridgeSources.test.ts": "",
+    "tests/boundary/providers/hopper/hopperBridgeFacade.test.ts": "",
+    "tests/boundary/providers/hopper/hopperBookmarks.test.ts": "",
+    "src/ida/IdaHexRaysProtocol.test.ts": "",
+    "tests/boundary/providers/ida/idaQuery.test.ts": "",
+    "src/cutter/CutterBridge.test.ts": "",
+    "tests/boundary/providers/CutterBridgeClient.test.ts": "",
+    "src/android/AndroidMetadata.test.ts": "",
+    "tests/boundary/android/jadxBridge.test.ts": "",
+    "src/desktop/BuildComputerController.test.ts": "",
+    "tests/boundary/providers/agentEnvCapture.test.ts": "",
+    "tests/boundary/web/mitmproxyCapture.test.ts": "",
+    "src/native/NativeUi.test.ts": "",
+    "tests/boundary/native/lldbTracer.test.ts": "",
+    "tests/boundary/process/darwinProcessRunTokenReader.test.ts": "",
+    "tests/boundary/native/PwndbgCoreContext.test.ts": "",
+    "tests/boundary/mcp/recordedCrashMcp.test.ts": "",
+    "tests/boundary/binaryDiagnostics/pwntoolsDecoderOwnership.test.ts": "",
+    "tests/boundary/binaryDiagnostics/binaryLayoutCli.test.ts": "",
+    "tests/evaluation/package/nativeAotDiagnostics.test.ts": "",
+    "tests/boundary/process/packedBridgeVerification.test.ts": "",
+    "tests/boundary/process/packageTarListing.test.ts": "",
+    "tests/conformance/package/packedTarListing.test.ts": "",
+    "tests/boundary/providers/adb/adbBugreport.test.ts": "",
+  };
+  const cases: ReadonlyArray<readonly [string, readonly string[]]> = [
+    [
+      "bridge/ghidra/ReaGhidraBridge.java",
+      [
+        ...packagedTests,
+        "src/ghidra/GhidraRawProfileDigest.test.ts",
+        "tests/boundary/filesystem/ghidraBridgeSources.test.ts",
+        "tests/boundary/providers/ghidra/ghidraLauncher.test.ts",
+      ],
+    ],
+    [
+      "bridge/hopper_bridge.py",
+      [
+        ...packagedTests,
+        "tests/boundary/providers/hopper/hopperBookmarks.test.ts",
+        "tests/boundary/providers/hopper/hopperBridgeFacade.test.ts",
+      ],
+    ],
+    [
+      "bridge/test_hopper_bridge.py",
+      [
+        "tests/boundary/providers/hopper/hopperBookmarks.test.ts",
+        "tests/boundary/providers/hopper/hopperBridgeFacade.test.ts",
+      ],
+    ],
+    [
+      "bridge/ida/hexrays_queries.py",
+      [
+        ...packagedTests,
+        "src/ida/IdaHexRaysProtocol.test.ts",
+        "tests/boundary/providers/ida/idaQuery.test.ts",
+      ],
+    ],
+    [
+      "bridge/cutter/rea_bridge.py",
+      [
+        ...packagedTests,
+        "src/cutter/CutterBridge.test.ts",
+        "tests/boundary/providers/CutterBridgeClient.test.ts",
+      ],
+    ],
+    [
+      "bridge/android/ReaJadxBridge.java",
+      [
+        ...packagedTests,
+        "src/android/AndroidMetadata.test.ts",
+        "tests/boundary/android/jadxBridge.test.ts",
+      ],
+    ],
+    [
+      "bridge/agentenv/capture.py",
+      [
+        ...packagedTests,
+        "src/desktop/BuildComputerController.test.ts",
+        "tests/boundary/providers/agentEnvCapture.test.ts",
+      ],
+    ],
+    [
+      "bridge/mitmproxy/capture.py",
+      [...packagedTests, "tests/boundary/web/mitmproxyCapture.test.ts"],
+    ],
+    [
+      "bridge/native/ReaNativeUI.swift",
+      [
+        ...packagedTests,
+        "src/native/NativeUi.test.ts",
+        "tests/boundary/native/PwndbgCoreContext.test.ts",
+        "tests/boundary/native/lldbTracer.test.ts",
+        "tests/evaluation/package/nativeAotDiagnostics.test.ts",
+      ],
+    ],
+    [
+      "bridge/native/rea_lldb_tracer.py",
+      [
+        ...packagedTests,
+        "src/native/NativeUi.test.ts",
+        "tests/boundary/native/PwndbgCoreContext.test.ts",
+        "tests/boundary/native/lldbTracer.test.ts",
+        "tests/evaluation/package/nativeAotDiagnostics.test.ts",
+      ],
+    ],
+    [
+      "bridge/process/ProcessRunTokenReader.swift",
+      [
+        ...packagedTests,
+        "tests/boundary/process/darwinProcessRunTokenReader.test.ts",
+      ],
+    ],
+    [
+      "bridge/pwndbg/core_context.py",
+      [
+        ...packagedTests,
+        "tests/boundary/mcp/recordedCrashMcp.test.ts",
+        "tests/boundary/native/PwndbgCoreContext.test.ts",
+      ],
+    ],
+    [
+      "bridge/pwntools/layout.py",
+      [
+        ...packagedTests,
+        "tests/boundary/binaryDiagnostics/binaryLayoutCli.test.ts",
+        "tests/boundary/binaryDiagnostics/pwntoolsDecoderOwnership.test.ts",
+        "tests/boundary/mcp/recordedCrashMcp.test.ts",
+      ],
+    ],
+    [
+      "bridge/nativeaot/NativeAotDirectory.java",
+      [
+        "tests/boundary/filesystem/ghidraBridgeSources.test.ts",
+        "tests/boundary/providers/ghidra/ghidraLauncher.test.ts",
+        "tests/evaluation/package/nativeAotDiagnostics.test.ts",
+      ],
+    ],
+  ];
+  for (const [bridgeFile, expected] of cases)
+    expect(selectedFiles(plan([bridgeFile], sources)), bridgeFile).toEqual(
+      [...expected].toSorted(),
+    );
+
+  const omit = (target: string) =>
+    Object.fromEntries(
+      Object.entries(sources).filter(([path]) => path !== target),
+    );
+  // Missing a declared packaging owner fails closed to the full suite.
+  expect(
+    plan(
+      ["bridge/ghidra/ReaGhidraBridge.java"],
+      omit("tests/boundary/process/packedBridgeVerification.test.ts"),
+    ),
+  ).toMatchObject({
+    mode: "full",
+    reason:
+      "Missing test owner tests/boundary/process/packedBridgeVerification.test.ts for bridge/ghidra/ReaGhidraBridge.java",
+  });
+  // Missing a declared non-packaging owner also fails closed to the full suite.
+  expect(
+    plan(
+      ["bridge/process/ProcessRunTokenReader.swift"],
+      omit("tests/boundary/process/darwinProcessRunTokenReader.test.ts"),
+    ),
+  ).toMatchObject({
+    mode: "full",
+    reason:
+      "Missing test owner tests/boundary/process/darwinProcessRunTokenReader.test.ts for bridge/process/ProcessRunTokenReader.swift",
+  });
+  expect(
+    plan(
+      ["bridge/cutter/rea_bridge.py"],
+      omit("tests/boundary/providers/CutterBridgeClient.test.ts"),
+    ),
+  ).toMatchObject({
+    mode: "full",
+    reason:
+      "Missing test owner tests/boundary/providers/CutterBridgeClient.test.ts for bridge/cutter/rea_bridge.py",
+  });
+  // Unowned or non-code bridge inputs remain untraced and fail closed.
+  expect(plan(["bridge/ghidra/notes.txt"], sources)).toMatchObject({
+    mode: "full",
+    reason: "Input is not traced to tests: bridge/ghidra/notes.txt",
+  });
+  expect(plan(["bridge/unknown/helper.py"], sources)).toMatchObject({
+    mode: "full",
+    reason: "Input is not traced to tests: bridge/unknown/helper.py",
   });
 });
 
@@ -460,7 +662,22 @@ it("parses only well-formed plans and derives the selected shard count", () => {
   expect(plan(Object.keys(overCapFiles), overCapFiles)).toMatchObject({
     mode: "full",
     reason: "401 affected test files exceed the 400-file selection cap",
+    shadowFiles: Object.keys(overCapFiles).sort(),
   });
+  for (const count of [600, 601]) {
+    const paths = Array.from(
+      { length: count },
+      (_, i) => `src/feature-${String(i)}.test.ts`,
+    );
+    const result = plan(
+      paths,
+      Object.fromEntries(paths.map((path) => [path, ""])),
+    );
+    expect(result.mode).toBe("full");
+    expect("shadowFiles" in result).toBe(count === 600);
+  }
+  const unknown = { ...overCapFiles, "tests/no-owner/extra.test.ts": "" };
+  expect(plan(Object.keys(unknown), unknown)).not.toHaveProperty("shadowFiles");
   const full = { version: 3, mode: "full", reason: "Shared" };
   expect(testShards("fast", parseTestSelection(full))).toHaveLength(12);
   expect(testShards("full", parseTestSelection(full))).toHaveLength(12);

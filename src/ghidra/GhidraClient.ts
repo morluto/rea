@@ -204,6 +204,15 @@ export class GhidraClient {
   #outputDrainIncomplete = false;
   #lastDiagnostics: Readonly<Record<string, JsonValue>> = {};
   #startupAttempt: GhidraStartupAttempt | undefined;
+  /**
+   * The last startup that ran out its deadline, with that deadline. Another
+   * import of the same target and profile under the same deadline would run
+   * it out again, so a later start returns this failure until the deadline
+   * changes or the client is closed.
+   */
+  #elapsedStartup:
+    | { readonly timeoutMs: number; readonly failure: GhidraSessionError }
+    | undefined;
   #closePromise: Promise<void> | undefined;
   readonly #failure = bindGhidraSessionFailure(
     (scope) => this.#diagnostics(scope),
@@ -357,6 +366,8 @@ export class GhidraClient {
         return this.#retryAfterAbortedStartup(current, signal);
       return this.#waitForStartup(current, signal);
     }
+    const elapsed = this.#repeatedElapsedStartup();
+    if (elapsed !== undefined) return Promise.resolve(err(elapsed));
     const attempt = new SharedStartupAttempt((signal) => this.#start(signal));
     const { promise } = attempt;
     this.#startupAttempt = attempt;
@@ -366,8 +377,16 @@ export class GhidraClient {
           !result.ok &&
           this.#startupAttempt === attempt &&
           result.error.cleanupFailure === undefined
-        )
+        ) {
           this.#startupAttempt = undefined;
+          const { kind, timeoutMs, message } = result.error;
+          if (
+            kind === "timeout" &&
+            timeoutMs !== undefined &&
+            message === GHIDRA_STARTUP_DEADLINE_ELAPSED
+          )
+            this.#elapsedStartup = { timeoutMs, failure: result.error };
+        }
       },
       (cause: unknown) => {
         this.#logger.debug(
@@ -378,6 +397,27 @@ export class GhidraClient {
       },
     );
     return this.#waitForStartup(attempt, signal);
+  }
+
+  /** The startup deadline in effect now: a runtime update, else the launch seed. */
+  #readStartupTimeout() {
+    return readRuntimeSetting(
+      () =>
+        this.#options.readStartupTimeoutMs?.() ??
+        this.#options.startupTimeoutMs,
+    );
+  }
+
+  /** The recorded deadline failure, while the effective deadline is unchanged. */
+  #repeatedElapsedStartup(): GhidraSessionError | undefined {
+    const elapsed = this.#elapsedStartup;
+    if (elapsed === undefined) return undefined;
+    // An unreadable setting is reported by the next startup attempt itself.
+    const current = this.#readStartupTimeout();
+    if (current.ok && current.value === elapsed.timeoutMs)
+      return elapsed.failure;
+    this.#elapsedStartup = undefined;
+    return undefined;
   }
 
   /** Preserve cleanup failures for the last caller leaving shared startup. */
@@ -877,6 +917,11 @@ export class GhidraClient {
       return ok(null);
     } catch (cause: unknown) {
       return err(this.#cleanupError(cause));
+    } finally {
+      // Closing is the caller's explicit retry: the next start imports again.
+      // Cleared after close settles, since a startup it waited for may have
+      // recorded its elapsed deadline meanwhile.
+      this.#elapsedStartup = undefined;
     }
   }
 
@@ -1050,11 +1095,7 @@ export class GhidraClient {
     this.#activeOutputCheckpoint = undefined;
     this.#outputDrainPromise = undefined;
     this.#outputDrainIncomplete = false;
-    const startupTimeout = readRuntimeSetting(
-      () =>
-        this.#options.readStartupTimeoutMs?.() ??
-        this.#options.startupTimeoutMs,
-    );
+    const startupTimeout = this.#readStartupTimeout();
     if (!startupTimeout.ok)
       return err(
         this.#failure(

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 import {
   BINARY_ARCHITECTURES,
@@ -31,7 +32,9 @@ export const inspectBinaryHardeningInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_BINARY_HARDENING_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
 });
 export type InspectBinaryHardeningInput = z.infer<
   typeof inspectBinaryHardeningInputSchema
@@ -154,6 +157,8 @@ const imageSchema = z.strictObject({
   byte_order: z.enum(["little", "big"]).nullable(),
   machine: uint.nullable(),
   slice: sliceSchema.nullable(),
+  /** PE images only. */
+  image_base: peImageBaseSchema,
   rows: z.array(rowSchema),
 });
 export type BinaryHardeningImage = z.infer<typeof imageSchema>;

@@ -237,7 +237,7 @@ it.runIf(!unsupportedHost).each(["completed", "malformed-reply"] as const)(
             request.reply_path,
             JSON.stringify({
               ok: true,
-              version: "0.9.3",
+              version: "0.9.4",
               bytecode: {
                 sha256: createHash("sha256").update(bytes).digest("hex"),
                 bytes: bytes.length,
@@ -348,7 +348,7 @@ it.runIf(!unsupportedHost).each([1048576, 1048577])(
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: "0.9.4",
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -457,7 +457,7 @@ it
                     : {
                         ok: true,
                         version:
-                          scenario === "wrong-version" ? "0.0.0" : "0.9.3",
+                          scenario === "wrong-version" ? "0.0.0" : "0.9.4",
                         bytecode: {
                           sha256: createHash("sha256")
                             .update(bytes)
@@ -570,7 +570,7 @@ it.runIf(!unsupportedHost)(
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: "0.9.4",
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -856,7 +856,7 @@ it
           request.reply_path,
           JSON.stringify({
             ok: true,
-            version: "0.9.3",
+            version: "0.9.4",
             bytecode: {
               sha256: createHash("sha256").update(bytes).digest("hex"),
               bytes: bytes.length,
