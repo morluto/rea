@@ -19,7 +19,6 @@ import {
 import {
   readElfDirectoryFromBuffer,
   readElfDirectoryFromReader,
-  type NativeByteSource,
   type NativeSection,
 } from "./nativeSectionDirectory.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
@@ -48,6 +47,7 @@ import {
   type ElfExportTableSelection,
   type ElfExportTables,
 } from "./elfDynamicExportTables.js";
+import type { ByteSource } from "../byteSource.js";
 
 type Artifact = NativeExports["artifact"];
 
@@ -556,7 +556,7 @@ const finishExports = (
 
 const CSTRING_WINDOW_BYTES = 4096;
 
-const createSourceReaders = (source: NativeByteSource) => {
+const createSourceReaders = (source: ByteSource) => {
   const readRange = (offset: number, length: number): Promise<Buffer> => {
     if (offset < 0 || length <= 0 || offset >= source.size)
       return Promise.resolve(Buffer.alloc(0));
@@ -810,11 +810,11 @@ function* parsePeExportSteps(
     if (exportNames !== undefined)
       for (const name of exportNames) {
         retain.row(target.forwarder);
-        exports.push({ name, ordinal, ...target });
+        exports.push({ name, ordinal, rva, ...target });
       }
     else if (!namedFunctions.has(index)) {
       retain.row(target.forwarder);
-      exports.push({ name: null, ordinal, ...target });
+      exports.push({ name: null, ordinal, rva, ...target });
     }
   }
   return {
@@ -862,7 +862,7 @@ function* parsePeExports(
 }
 
 const parsePeExportsFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Artifact,
   pause: ZstandardFramePause,
 ): Promise<NativeExports> => {
@@ -1344,7 +1344,7 @@ function* readElfSectionExportTableSteps(
 }
 
 const parseElfExportsFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Artifact,
   pause: ZstandardFramePause,
 ): Promise<Extract<NativeExports, { format: "elf" }>> => {
@@ -1405,7 +1405,7 @@ const parseElfExportsFromHandle = async (
 
 /** Same PE/ELF export inspection over a random-access handle without buffering the full image. */
 export const parseNativeExportsFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Artifact,
   pause: ZstandardFramePause,
 ): Promise<NativeExports> => {

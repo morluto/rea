@@ -30,6 +30,7 @@ import type {
 } from "../ports/AnalysisProvider.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import { withSecondaryCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   isMachOFormat,
   type BinaryArchitecture,
@@ -462,9 +463,7 @@ const readHopperProfileFile = async <Value>(
         { cause, operation: "resolve_analysis_profile" },
       );
       closeLease?.bindCleanupError(cleanupFailure);
-      failure
-        .retainSecondaryFailure(cleanupFailure)
-        .bindCleanupDependencies([cleanupFailure]);
+      withSecondaryCleanupFailure(failure, cleanupFailure);
     }
     return err(failure);
   }

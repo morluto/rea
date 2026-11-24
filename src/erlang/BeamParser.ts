@@ -360,70 +360,19 @@ const buildErlangBeamReport = (
   };
 };
 
-/** Decode one FOR1/BEAM IFF container into bounded chunk and table facts. */
-export const parseErlangBeam = (
-  bytes: Buffer,
-  artifact: ErlangBeam["artifact"],
-  input: InspectErlangBeamInput,
-): ErlangBeam => {
-  requireRange(bytes.length, 0, 12);
-  if (bytes.subarray(0, 4).toString("latin1") !== "FOR1")
-    fail("Expected a FOR1 IFF container.");
-  const carrier = new BinaryReader(bytes, false, "beam");
-  const formSize = carrier.u32(4);
-  if (formSize < 4) fail("BEAM form size is shorter than the BEAM tag.");
-  requireRange(bytes.length, 8, formSize);
-  if (bytes.subarray(8, 12).toString("latin1") !== "BEAM")
-    fail("Expected a BEAM form type.");
-  const formEnd = 8 + formSize;
-  const form = new BinaryReader(
-    carrier.range(0, formEnd, "BEAM form"),
-    false,
-    "beam",
-  );
-  const chunks: ErlangBeam["chunks"] = [];
-  const payloads = new Map<string, RetainedBeamChunk>();
-  let at = 12;
-  while (at < formEnd) {
-    if (formEnd - at < 8) fail("BEAM chunk header is truncated.");
-    const size = form.u32(at + 4);
-    const payloadOffset = at + 8;
-    if (size > formEnd - payloadOffset)
-      fail("BEAM chunk payload exceeds the form.");
-    const padded = payloadOffset + size + ((4 - (size % 4)) % 4);
-    if (padded > formEnd) fail("BEAM chunk padding exceeds the form.");
-    if (chunks.length >= input.max_chunks)
-      throw decodeLimit(
-        "beam",
-        `BEAM form exceeds the ${String(input.max_chunks)}-chunk budget.`,
-        { name: "max_chunks", maximum: input.max_chunks },
-      );
-    const name = form.range(at, 4, "BEAM chunk name").toString("latin1");
-    const payload = form.range(payloadOffset, size, "BEAM chunk payload");
-    chunks.push({
-      index: chunks.length,
-      name,
-      location: { offset: at, bytes: padded - at },
-      payload: {
-        location: { offset: payloadOffset, bytes: size },
-        bytes: size,
-        sha256: sha256Hex(payload),
-      },
-    });
-    // OTP's loader replaces the selected payload on each matching chunk.
-    // Keep every occurrence above; decode the last occurrence of each name.
-    payloads.set(name, { payload, payloadLength: size, offset: at });
-    at = padded;
-  }
-  return buildErlangBeamReport(
-    bytes.length,
-    formSize,
-    formEnd,
-    chunks,
-    payloads,
-    artifact,
-    input,
-  );
+const readAdmittedRange = async (
+  handle: StableArtifactHandle,
+  offset: number,
+  length: number,
+): Promise<Buffer> => {
+  const bytes = await handle.readRange(offset, length);
+  if (bytes.length !== length)
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `BEAM read at offset ${String(offset)} ended before its ${String(length)} admitted bytes.`,
+      { integrityCheck: "read-coverage" },
+    );
+  return bytes;
 };
 
 const streamChunkDigest = async (
@@ -436,13 +385,11 @@ const streamChunkDigest = async (
   const prefix = Buffer.alloc(Math.min(size, retainPrefixBytes));
   for (let offset = 0; offset < size; offset += STREAM_CHUNK_BYTES) {
     const length = Math.min(STREAM_CHUNK_BYTES, size - offset);
-    const part = await handle.readRange(payloadOffset + offset, length);
-    if (part.length !== length)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        "BEAM payload ended before its admitted extent.",
-        { integrityCheck: "read-coverage" },
-      );
+    const part = await readAdmittedRange(
+      handle,
+      payloadOffset + offset,
+      length,
+    );
     hash.update(part);
     if (offset < prefix.length)
       part.copy(
@@ -469,7 +416,7 @@ export const parseErlangBeamFromHandle = async (
   const header =
     handle.prefix.length >= 12
       ? handle.prefix.subarray(0, 12)
-      : await handle.readRange(0, 12);
+      : await readAdmittedRange(handle, 0, 12);
   if (header.subarray(0, 4).toString("latin1") !== "FOR1")
     fail("Expected a FOR1 IFF container.");
   const formSize = new BinaryReader(header, false, "beam").u32(4);
@@ -483,7 +430,7 @@ export const parseErlangBeamFromHandle = async (
   let at = 12;
   while (at < formEnd) {
     if (formEnd - at < 8) fail("BEAM chunk header is truncated.");
-    const chunkHeader = await handle.readRange(at, 8);
+    const chunkHeader = await readAdmittedRange(handle, at, 8);
     const size = new BinaryReader(chunkHeader, false, "beam").u32(4);
     const payloadOffset = at + 8;
     if (size > formEnd - payloadOffset)
@@ -502,7 +449,7 @@ export const parseErlangBeamFromHandle = async (
       const payload =
         size === 0
           ? Buffer.alloc(0)
-          : await handle.readRange(payloadOffset, size);
+          : await readAdmittedRange(handle, payloadOffset, size);
       sha256 = sha256Hex(payload);
       payloads.set(name, { payload, payloadLength: size, offset: at });
     } else if (name === "Code") {

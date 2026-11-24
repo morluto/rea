@@ -1,3 +1,4 @@
+import { err, ok } from "../domain/result.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ProviderStartupDeadline } from "./ProviderDeadline.js";
 
@@ -85,6 +86,29 @@ it("classifies elapsed time before a delayed timer callback and a later abort", 
     deadline.dispose();
   }
 });
+
+it.each([true, false])(
+  "uses the final monotonic cutoff for startup readiness (successful reply: %s)",
+  async (succeeded) => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(0);
+    const deadline = new ProviderStartupDeadline(1000);
+    const refusal = err(new Error("startup refusal already observed"));
+    const interrupted = err(new Error("startup deadline elapsed"));
+    const interrupt = vi.fn(async () => interrupted);
+    try {
+      const result = await deadline.finishStartup(async () => {
+        // The handshake settles before the timer callback can observe expiry.
+        now.mockReturnValue(1001);
+        return succeeded ? ok("ready") : refusal;
+      }, interrupt);
+      expect(deadline.signal.aborted).toBe(false);
+      expect(result).toBe(succeeded ? interrupted : refusal);
+      expect(interrupt).toHaveBeenCalledTimes(succeeded ? 1 : 0);
+    } finally {
+      deadline.dispose();
+    }
+  },
+);
 
 it("keeps remaining milliseconds integral for downstream request budgets", () => {
   const now = vi.spyOn(performance, "now").mockReturnValue(10.25);

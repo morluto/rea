@@ -16,8 +16,8 @@ import {
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 interface ByteSpan {
   readonly size: number;
@@ -35,7 +35,7 @@ const bufferSpan = (bytes: Buffer): ByteSpan => ({
   },
 });
 
-const sourceSpan = (source: NativeByteSource): ByteSpan => ({
+const sourceSpan = (source: ByteSource): ByteSpan => ({
   size: source.size,
   readRange: async (offset, length) => {
     if (offset < 0 || length <= 0 || offset >= source.size)
@@ -1157,7 +1157,7 @@ const parseKernelBuildConfigCore = async (
  * runs to its output bound once started.
  */
 export const parseKernelBuildConfigFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Report["artifact"],
   input: InspectKernelBuildConfigInput,
   signal?: AbortSignal,

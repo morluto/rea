@@ -1,5 +1,5 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import type { AnalysisViewRetention } from "../analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../analysisView/AnalysisViewRetention.js";
 import type { UnrealPakPort } from "../../ports/unreal/UnrealPakPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";

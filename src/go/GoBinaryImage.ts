@@ -13,7 +13,6 @@ import {
   isZeroFilledSpan,
   type BinaryContainer,
 } from "../domain/binaryContainer.js";
-import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import { readBinaryContainerFromReader } from "../domain/native/readBinaryContainer.js";
 import {
@@ -28,6 +27,7 @@ import {
   type GoBuildInfoSearchRange,
 } from "./GoBuildInfoSearch.js";
 import { recoverGoStringLiteralsFromReader } from "./GoStringLiterals.js";
+import type { ByteSource } from "../domain/byteSource.js";
 
 const SEARCH_CHUNK_BYTES = 64 * 1024;
 const MAGIC = Buffer.from("ff20476f206275696c64696e663a", "hex");
@@ -59,7 +59,7 @@ export interface ReadGoBinaryImageOptions {
 
 /** Stream Go build-info and optional string-literal inspection over a bounded FileHandle. */
 export const readGoBinaryImageFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   options: ReadGoBinaryImageOptions | undefined,
   pause: ZstandardFramePause,
 ): Promise<GoBinaryImage> => {
@@ -382,7 +382,7 @@ const assertAggregateContentLimit = (
 };
 
 const readExactSlice = async (
-  source: NativeByteSource,
+  source: ByteSource,
   offset: number,
   size: number,
   format: BinaryContainer["format"],

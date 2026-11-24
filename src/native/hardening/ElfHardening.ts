@@ -79,9 +79,9 @@ import {
   readElfDirectoryFromBuffer,
   readElfDirectoryFromReader,
   type ElfProgramDeclaration,
-  type NativeByteSource,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;
@@ -227,7 +227,7 @@ export const readElfHardening = (
 
 /** Same ELF hardening read over a random-access handle without buffering the full image. */
 export const readElfHardeningFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   signal?: AbortSignal,
 ): Promise<BinaryHardeningImage> => {
   assertArtifactReadActive(signal);

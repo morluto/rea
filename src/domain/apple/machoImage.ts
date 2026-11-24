@@ -25,7 +25,7 @@ import {
   machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
-import type { NativeByteSource } from "../native/nativeSectionDirectory.js";
+import type { ByteSource } from "../byteSource.js";
 
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
 export const readMachoImage = (
@@ -35,7 +35,7 @@ export const readMachoImage = (
 
 /** Same thin Mach-O header and section read over a random-access source without buffering the full image. */
 export const readMachoImageFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
 ): Promise<Extract<BinaryContainer, { format: "macho" }>> => {
   const readSlice = (offset: number, length: number): Promise<Buffer> => {
     if (length <= 0 || offset >= source.size)

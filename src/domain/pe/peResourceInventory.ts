@@ -27,20 +27,8 @@ import {
   readPeResourceLayout,
   readPeResourceLayoutAt,
 } from "./peResourceLayout.js";
-
-/** Random-access byte source for streaming PE resource inventory parsing. */
-export interface PeResourceByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readonly readRange: (offset: number, length: number) => Promise<Buffer>;
-}
-
-const bufferSource = (bytes: Buffer): PeResourceByteSource => ({
-  size: bytes.length,
-  prefix: bytes,
-  readRange: (offset, length) =>
-    Promise.resolve(bytes.subarray(offset, offset + length)),
-});
+import type { PrefixedByteSource } from "../byteSource.js";
+import { bufferByteSource } from "../byteSource.js";
 
 type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
 type PeResourceInventory = Omit<PeResources, "artifact">;
@@ -89,7 +77,7 @@ export const parsePeResources = async (
     {
       artifact,
       ...(await parsePeResourceInventory(
-        bufferSource(bytes),
+        bufferByteSource(bytes),
         input.max_entries,
         signal,
         readPeResourceLayout(bytes),
@@ -103,7 +91,7 @@ export const parsePeResources = async (
  * the full PE image in memory.
  */
 export const parsePeResourcesFromSource = async (
-  source: PeResourceByteSource,
+  source: PrefixedByteSource,
   artifact: PeResources["artifact"],
   input: InspectPeResourcesInput,
   signal?: AbortSignal,
@@ -137,7 +125,7 @@ export const readPeResourceEntries = async (
 ): Promise<PeResources["resources"]> =>
   boundedResourceResult(
     await parsePeResourceInventory(
-      bufferSource(bytes),
+      bufferByteSource(bytes),
       maxEntries,
       signal,
       layout,
@@ -152,7 +140,7 @@ export const readPeResourceEntries = async (
  * caller's cancellation rethrows `signal.reason`.
  */
 const parsePeResourceInventory = async (
-  source: PeResourceByteSource,
+  source: PrefixedByteSource,
   maxEntries: number,
   signal: AbortSignal | undefined,
   layout: PeResourceLayout,

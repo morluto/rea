@@ -582,7 +582,9 @@ cliTest(
           available: SQLITE_NATIVE_LIMITS_AVAILABLE,
           reason: SQLITE_NATIVE_LIMITS_AVAILABLE
             ? null
-            : expect.stringContaining("Node.js 24.x >=24.15 or 26+"),
+            : expect.stringContaining(
+                "supported Node.js 24.x and 26.x runtimes",
+              ),
           availability_code: SQLITE_NATIVE_LIMITS_AVAILABLE
             ? null
             : "unsupported_version",
@@ -618,7 +620,9 @@ cliTest(
           available: SQLITE_NATIVE_LIMITS_AVAILABLE,
           remediation: SQLITE_NATIVE_LIMITS_AVAILABLE
             ? null
-            : expect.stringContaining("Node.js 24.x >=24.15 or 26+"),
+            : expect.stringContaining(
+                "supported Node.js 24.x and 26.x runtimes",
+              ),
         }),
       ]),
     );

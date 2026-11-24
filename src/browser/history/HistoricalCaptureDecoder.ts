@@ -35,7 +35,6 @@ import {
   completedStableArtifactObservation,
   type ArtifactReaderFailure,
   ArtifactResourceScope,
-  type ArtifactCleanupAttempt,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../../resources/index.js";
@@ -46,12 +45,11 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
   fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
+import { finalizedResult, runOwned } from "../../providers/runOwned.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
@@ -156,419 +154,413 @@ export class HistoricalCaptureDecoder {
     const runtimeResources = new ArtifactResourceScope();
     let processLease: AnalysisCleanupLease | undefined;
     let sourceObservation: FileSnapshotPartialObservation | undefined;
-    let result: Result<WebNetworkCapture, AnalysisError>;
     let phase: "capture-read" | "decoder" = "capture-read";
     let encodedReplyBytes = 0;
     let reportedHeap = this.#heap;
     let replyFinalization: ArtifactReaderFailure | undefined;
-    try {
-      const selectedAdapter = this.adapters.find(
-        (candidate) => candidate.format === input.format,
-      );
-      const adapter =
-        selectedAdapter?.snapshotConfiguration?.() ?? selectedAdapter;
-      reportedHeap = this.#reportedHeap(adapter);
-      if (adapter === undefined)
-        throw new AnalysisCapabilityUnavailableError(
-          input.format,
-          OPERATION,
-          "No adapter is configured for the selected capture format.",
-        );
-      const snapshot = await readStableArtifact(
-        input.capture_path,
-        captureBudgets().inputBytes,
-        options?.signal,
-        undefined,
-        this.#resources,
-      );
-      sourceObservation = {
-        kind: "file-snapshot-hash",
-        path: input.capture_path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
-      };
-      phase = "decoder";
-      runtime = await this.createRuntime();
-      const snapshotPath = join(runtime.path, "capture.snapshot");
-      const requestPath = join(runtime.path, "request.json");
-      const replyPath = join(runtime.path, "reply.json");
-      await writeFile(snapshotPath, snapshot.bytes, {
-        mode: 0o600,
-        flag: "wx",
-        ...(options?.signal === undefined ? {} : { signal: options.signal }),
-      });
-      await writeFile(
-        requestPath,
-        JSON.stringify({
-          snapshot_path: snapshotPath,
-          reply_path: replyPath,
-          sensitive_values: input.sensitive_values,
-          budgets: captureBudgets(),
-        }),
-        { mode: 0o600, flag: "wx" },
-      );
-      const command = await adapter.command(requestPath, runtime.path);
-      const environment: NodeJS.ProcessEnv = {
-        ...selectedEnvironment,
-        UV_THREADPOOL_SIZE: "1",
-      };
-      delete environment.NODE_OPTIONS;
-      const completed = await runOwnedCommand(
-        {
-          ...command,
-          runId: `rea-web-capture-${randomUUID()}`,
-          cwd: runtime.path,
-          hostEnvironment: environment,
-        },
-        {
-          timeoutMs: selectedWebNetworkCaptureTimeoutMs(
-            input.capture_timeout_ms,
-          ),
-          diagnosticBytes: 1024 * 1024,
-          // Node adapters declare their V8 heap; the mitmproxy decoder is Python.
-          ...(adapter.heap === undefined ? {} : { runtime: "v8" as const }),
-        },
-        options?.signal === undefined ? {} : { signal: options.signal },
-      );
-      // A decoder that survived a failed allocation may still reply; its
-      // reply is not trusted as complete once the limit was reached.
-      if (completed.memoryLimitReached === true)
-        throw captureMemoryFailure(
-          input,
-          CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
-          undefined,
-          reportedHeap,
-        );
-      const decodedReply = await readHistoricalCaptureReply(
-        replyPath,
-        input.capture_path,
-        runtimeResources,
-        options?.signal,
-        input.sensitive_values,
-      );
-      const reply = decodedReply.value;
-      encodedReplyBytes = decodedReply.bytes;
-      replyFinalization = decodedReply.finalization;
-      if (!reply.ok) {
-        if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, undefined, [
-            {
-              path: ["capture_path", reply.pointer],
-              reason: "invalid_format",
-              message: reply.message,
-            },
-          ]);
-        // No capture budget raises a ceiling the decoder's reader named.
-        if (reply.reason === "fixed-limit")
-          throw fixedCeilingConstraint(
-            OPERATION,
-            reply.boundary,
-            reply.message,
-            reply.ceiling,
+    let closeFailed = false;
+    const finalized = await runOwned<WebNetworkCapture>(
+      async () => {
+        let result: Result<WebNetworkCapture, AnalysisError>;
+        try {
+          const selectedAdapter = this.adapters.find(
+            (candidate) => candidate.format === input.format,
           );
-        const limit = captureLimitForReply(reply.reason);
-        if (limit !== undefined) {
-          const { parameter, expected } = CAPTURE_LIMITS[limit];
-          const budget = webNetworkCaptureBudgetFacts(input, parameter);
-          throw new AnalysisInputError(
-            OPERATION,
+          const adapter =
+            selectedAdapter?.snapshotConfiguration?.() ?? selectedAdapter;
+          reportedHeap = this.#reportedHeap(adapter);
+          if (adapter === undefined)
+            throw new AnalysisCapabilityUnavailableError(
+              input.format,
+              OPERATION,
+              "No adapter is configured for the selected capture format.",
+            );
+          const snapshot = await readStableArtifact(
+            input.capture_path,
+            captureBudgets().inputBytes,
+            options?.signal,
+            undefined,
+            this.#resources,
+          );
+          sourceObservation = {
+            kind: "file-snapshot-hash",
+            path: input.capture_path,
+            sha256: snapshot.sha256,
+            bytes: snapshot.bytes.length,
+          };
+          phase = "decoder";
+          runtime = await this.createRuntime();
+          const snapshotPath = join(runtime.path, "capture.snapshot");
+          const requestPath = join(runtime.path, "request.json");
+          const replyPath = join(runtime.path, "reply.json");
+          await writeFile(snapshotPath, snapshot.bytes, {
+            mode: 0o600,
+            flag: "wx",
+            ...(options?.signal === undefined
+              ? {}
+              : { signal: options.signal }),
+          });
+          await writeFile(
+            requestPath,
+            JSON.stringify({
+              snapshot_path: snapshotPath,
+              reply_path: replyPath,
+              sensitive_values: input.sensitive_values,
+              budgets: captureBudgets(),
+            }),
+            { mode: 0o600, flag: "wx" },
+          );
+          const command = await adapter.command(requestPath, runtime.path);
+          const environment: NodeJS.ProcessEnv = {
+            ...selectedEnvironment,
+            UV_THREADPOOL_SIZE: "1",
+          };
+          delete environment.NODE_OPTIONS;
+          const completed = await runOwnedCommand(
             {
-              diagnostics: { budget },
+              ...command,
+              runId: `rea-web-capture-${randomUUID()}`,
+              cwd: runtime.path,
+              hostEnvironment: environment,
+            },
+            {
+              timeoutMs: selectedWebNetworkCaptureTimeoutMs(
+                input.capture_timeout_ms,
+              ),
+              diagnosticBytes: 1024 * 1024,
+              // Node adapters declare their V8 heap; the mitmproxy decoder is Python.
+              ...(adapter.heap === undefined ? {} : { runtime: "v8" as const }),
+            },
+            options?.signal === undefined ? {} : { signal: options.signal },
+          );
+          // A decoder that survived a failed allocation may still reply; its
+          // reply is not trusted as complete once the limit was reached.
+          if (completed.memoryLimitReached === true)
+            throw captureMemoryFailure(
+              input,
+              CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
+              undefined,
+              reportedHeap,
+            );
+          const decodedReply = await readHistoricalCaptureReply(
+            replyPath,
+            input.capture_path,
+            runtimeResources,
+            options?.signal,
+            input.sensitive_values,
+          );
+          const reply = decodedReply.value;
+          encodedReplyBytes = decodedReply.bytes;
+          replyFinalization = decodedReply.finalization;
+          if (!reply.ok) {
+            if (reply.reason === "format")
+              throw new AnalysisInputError(OPERATION, undefined, [
+                {
+                  path: ["capture_path", reply.pointer],
+                  reason: "invalid_format",
+                  message: reply.message,
+                },
+              ]);
+            // No capture budget raises a ceiling the decoder's reader named.
+            if (reply.reason === "fixed-limit")
+              throw fixedCeilingConstraint(
+                OPERATION,
+                reply.boundary,
+                reply.message,
+                reply.ceiling,
+              );
+            const limit = captureLimitForReply(reply.reason);
+            if (limit !== undefined) {
+              const { parameter, expected } = CAPTURE_LIMITS[limit];
+              const budget = webNetworkCaptureBudgetFacts(input, parameter);
+              throw new AnalysisInputError(
+                OPERATION,
+                {
+                  diagnostics: { budget },
+                  remediationAction: webNetworkCaptureBudgetRecovery(
+                    input,
+                    parameter,
+                  ),
+                },
+                [
+                  {
+                    path: ["capture_path", reply.pointer],
+                    reason: "out_of_range",
+                    message: reply.message,
+                    expected: { [expected]: budget.effective_value },
+                  },
+                ],
+              );
+            }
+            if (reply.reason === "resource-limit")
+              throw captureMemoryFailure(
+                input,
+                reply.message,
+                undefined,
+                reportedHeap,
+              );
+            if (reply.reason === "decoder")
+              throw new ProviderAdapterError(input.format, OPERATION, {
+                diagnostics: {
+                  phase: "decoder",
+                  failure_kind: reply.reason,
+                  reason: reply.message,
+                  pointer: reply.pointer,
+                },
+              });
+            if (reply.reason === "unsupported")
+              throw new AnalysisCapabilityUnavailableError(
+                input.format,
+                OPERATION,
+                reply.message,
+                {
+                  userMessage: reply.message,
+                  remediationAction:
+                    "Meet the reported capture format or decoder requirement before retrying.",
+                  ...(reply.pointer === ""
+                    ? {}
+                    : { diagnostics: { pointer: reply.pointer } }),
+                },
+              );
+            throw new AnalysisOutputError(OPERATION, reply.message, {
+              userMessage: `The capture decoder refused a complete reply exceeding ${String(captureBudgets().outputBytes)} bytes: ${reply.message}`,
               remediationAction: webNetworkCaptureBudgetRecovery(
                 input,
-                parameter,
+                "max_reply_bytes",
               ),
-            },
-            [
-              {
-                path: ["capture_path", reply.pointer],
-                reason: "out_of_range",
-                message: reply.message,
-                expected: { [expected]: budget.effective_value },
+              diagnostics: {
+                maximum_reply_bytes: captureBudgets().outputBytes,
+                boundary: "historical-capture-reply",
+                budget: webNetworkCaptureBudgetFacts(input, "max_reply_bytes"),
               },
-            ],
-          );
-        }
-        if (reply.reason === "resource-limit")
-          throw captureMemoryFailure(
-            input,
-            reply.message,
-            undefined,
-            reportedHeap,
-          );
-        if (reply.reason === "decoder")
-          throw new ProviderAdapterError(input.format, OPERATION, {
-            diagnostics: {
-              phase: "decoder",
-              failure_kind: reply.reason,
-              reason: reply.message,
-              pointer: reply.pointer,
-            },
-          });
-        if (reply.reason === "unsupported")
-          throw new AnalysisCapabilityUnavailableError(
-            input.format,
-            OPERATION,
-            reply.message,
-            {
-              userMessage: reply.message,
-              remediationAction:
-                "Meet the reported capture format or decoder requirement before retrying.",
-              ...(reply.pointer === ""
-                ? {}
-                : { diagnostics: { pointer: reply.pointer } }),
-            },
-          );
-        throw new AnalysisOutputError(OPERATION, reply.message, {
-          userMessage: `The capture decoder refused a complete reply exceeding ${String(captureBudgets().outputBytes)} bytes: ${reply.message}`,
-          remediationAction: webNetworkCaptureBudgetRecovery(
-            input,
-            "max_reply_bytes",
-          ),
-          diagnostics: {
-            maximum_reply_bytes: captureBudgets().outputBytes,
-            boundary: "historical-capture-reply",
-            budget: webNetworkCaptureBudgetFacts(input, "max_reply_bytes"),
-          },
-        });
-      }
-      if (
-        reply.value.decoder.id !== adapter.identity.id ||
-        reply.value.decoder.name !== adapter.identity.name ||
-        reply.value.decoder.version !== adapter.identity.version
-      )
-        throw new AnalysisOutputError(
-          OPERATION,
-          "Capture decoder changed the selected upstream profile identity.",
-        );
-      const common = {
-        artifact: {
-          path: input.capture_path,
-          sha256: snapshot.sha256,
-          bytes: snapshot.bytes.length,
-        },
-
-        runtime_attribution: "unknown" as const,
-        limitations: [
-          ...(adapter.limitations ?? []),
-          "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
-          "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
-          "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
-          `Complete evidence is bounded by a ${String(captureBudgets().inputBytes)}-byte input budget, a ${String(captureBudgets().outputBytes)}-byte reply budget, and a ${String(captureBudgets().depth)}-level nesting cap. Set max_input_bytes, max_reply_bytes or max_nesting_depth explicitly for the next call to change those budgets without restarting REA. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation(reportedHeap)} Mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
-        ],
-      };
-      if (input.format === "qlog") {
-        if (!("qlog" in reply.value))
-          throw new AnalysisOutputError(
-            OPERATION,
-            "Capture decoder omitted qlog transport facts.",
-          );
-        result = ok({ ...reply.value, ...common, format: "qlog" });
-      } else {
-        if ("qlog" in reply.value)
-          throw new AnalysisOutputError(
-            OPERATION,
-            "Capture decoder supplied inapplicable qlog transport facts.",
-          );
-        result = ok({ ...reply.value, ...common, format: input.format });
-      }
-      if (result.ok) {
-        let safePartialSource = false;
-        try {
-          const prepared = await prepareCaptureProtobuf(
-            result.value,
-            input,
-            options?.signal,
-          );
-          safePartialSource = true;
-          await decodeCaptureProtobuf(
-            result.value,
-            input,
-            this.#resources,
-            prepared,
-            options?.signal,
-            encodedReplyBytes + Buffer.byteLength(JSON.stringify(common)) + 16,
-          );
-        } catch (cause) {
-          const error =
-            cause instanceof CaptureFormatError
-              ? protobufCaptureFailure(input, cause)
-              : historicalCaptureFailure(
-                  input,
-                  cause,
-                  phase,
-                  options,
-                  reportedHeap,
-                );
-          if (safePartialSource) error.retainPartialObservation(result.value);
-          throw error;
-        }
-        if (replyFinalization !== undefined) {
-          const error = historicalCaptureFailure(
-            input,
-            replyFinalization,
-            phase,
-            options,
-            reportedHeap,
-          );
-          error.retainPartialObservation(result.value);
-          throw error;
-        }
-      }
-    } catch (cause: unknown) {
-      if (
-        cause instanceof OwnedCommandFailure &&
-        cause.cleanupOwner !== undefined
-      ) {
-        const supervisor = cause.cleanupOwner;
-        processLease = new AnalysisCleanupLease(async () => {
-          const stopped = await supervisor.stop();
-          if (stopped.status === "incomplete")
-            throw new ProviderCleanupError(
-              input.format,
-              cause.resources,
-              {
-                reason: stopped.reason,
-              },
-              { operation: OPERATION, cause: stopped },
+            });
+          }
+          if (
+            reply.value.decoder.id !== adapter.identity.id ||
+            reply.value.decoder.name !== adapter.identity.name ||
+            reply.value.decoder.version !== adapter.identity.version
+          )
+            throw new AnalysisOutputError(
+              OPERATION,
+              "Capture decoder changed the selected upstream profile identity.",
             );
-        }, cause.resources);
-        runtimeResources.retain({
-          kind: "lease",
-          resource: runtime?.path ?? input.capture_path,
-          lease: processLease,
-        });
-      }
-      // Preparation transfers independent helper/descriptor owners. Keep that
-      // typed stage separate from the decoder supervisor lease above: its
-      // historical error already follows the post-launch completion owner.
-      const effectiveCpuSeconds = await recordedDecoderCpuSeconds(
-        runtime?.path,
-        cause,
-        runtimeResources,
-      );
-      const error = retainProcessInspectionCleanup(
-        processInspectionFailure(cause),
-        historicalCaptureFailure(
-          input,
-          cause,
-          phase,
-          options,
-          reportedHeap,
-          processLease,
-          effectiveCpuSeconds,
-        ),
-        runtimeResources,
-        OPERATION,
-      );
-      if (
-        replyFinalization?.reason === "cancelled" &&
-        !(error instanceof AnalysisCancelledError)
-      ) {
-        const cancellation = historicalCaptureFailure(
-          input,
-          replyFinalization,
-          phase,
-          options,
-          reportedHeap,
-        );
-        error.retainSecondaryFailure(cancellation, {
-          reply_finalization_error: projectAnalysisError(cancellation),
-        });
-      }
-      const failure = withCaptureReaderCleanup(
-        error,
-        replyFinalization ?? cause,
-      );
-      if (processLease !== undefined)
-        new AnalysisCleanupLeaseGroup(failure, [processLease]);
-      if (phase === "capture-read") {
-        const snapshot = completedStableArtifactObservation(
-          cause,
-          input.capture_path,
-        );
-        if (snapshot !== undefined) failure.retainPartialObservation(snapshot);
-      }
-      if (
-        failure.partialObservation === undefined &&
-        sourceObservation !== undefined
-      )
-        failure.retainPartialObservation(sourceObservation);
-      result = err(redactExplicitFailure(failure, input.sensitive_values));
-    }
-    const completedCapture = result.ok ? result.value : undefined;
-    let cleanupFailure:
-      | Extract<ArtifactCleanupAttempt, { readonly kind: "failed" }>
-      | undefined;
-    if (runtime !== undefined) {
-      const root = runtime;
-      const lease = new AnalysisCleanupLease(
-        async () => {
-          await runtimeResources.close();
-          await root.close();
-        },
-        {
-          get cleanupResources() {
-            return [
-              ...new Set([root.path, ...runtimeResources.cleanupResources]),
-            ];
-          },
-        },
-      );
-      const owner = { kind: "lease" as const, resource: root.path, lease };
-      if (runtimeResources.hasPending) {
-        // Failed child cleanup is retried by the service owner, after active peers settle.
-        this.#resources.retain(owner);
-        cleanupFailure = {
-          kind: "failed",
-          owner,
-          lease,
-          cause: new ProviderCleanupError(
-            input.format,
-            lease.cleanupResources ?? [root.path],
-            {
-              reason:
-                "Capture decoder resources must be released before runtime removal.",
+          const common = {
+            artifact: {
+              path: input.capture_path,
+              sha256: snapshot.sha256,
+              bytes: snapshot.bytes.length,
             },
-            { operation: OPERATION },
-          ),
-        };
-      } else {
-        const cleanup = await this.#resources.release(owner);
-        if (cleanup.kind === "failed") cleanupFailure = cleanup;
-      }
-    }
-    if (result.ok && options?.signal?.aborted)
-      result = err(cancelledBy(OPERATION, options.signal));
-    if (cleanupFailure !== undefined) {
-      const cleanupError = new ProviderCleanupError(
-        input.format,
-        [cleanupFailure.owner.resource],
-        {
-          capture_path: input.capture_path,
-          reason: errorMessage(cleanupFailure.cause),
-        },
-        {
-          operation: OPERATION,
-          cause: cleanupFailure.cause,
-        },
-      );
-      const failure = result.ok
-        ? cleanupError
-        : analysisErrorWithCleanupDependencies(
-            result.error,
-            cleanupError,
+
+            runtime_attribution: "unknown" as const,
+            limitations: [
+              ...(adapter.limitations ?? []),
+              "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
+              "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
+              "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
+              `Complete evidence is bounded by a ${String(captureBudgets().inputBytes)}-byte input budget, a ${String(captureBudgets().outputBytes)}-byte reply budget, and a ${String(captureBudgets().depth)}-level nesting cap. Set max_input_bytes, max_reply_bytes or max_nesting_depth explicitly for the next call to change those budgets without restarting REA. capture_timeout_ms is ${String(selectedWebNetworkCaptureTimeoutMs(input.capture_timeout_ms))} ms (omitted means ${String(WEB_NETWORK_CAPTURE_LIMITS.timeoutMs)}). ${nodeMemoryLimitation(reportedHeap)} Mitmproxy decoding uses a 768 MiB Linux address-space limit.`,
+            ],
+          };
+          if (input.format === "qlog") {
+            if (!("qlog" in reply.value))
+              throw new AnalysisOutputError(
+                OPERATION,
+                "Capture decoder omitted qlog transport facts.",
+              );
+            result = ok({ ...reply.value, ...common, format: "qlog" });
+          } else {
+            if ("qlog" in reply.value)
+              throw new AnalysisOutputError(
+                OPERATION,
+                "Capture decoder supplied inapplicable qlog transport facts.",
+              );
+            result = ok({ ...reply.value, ...common, format: input.format });
+          }
+          if (result.ok) {
+            let safePartialSource = false;
+            try {
+              const prepared = await prepareCaptureProtobuf(
+                result.value,
+                input,
+                options?.signal,
+              );
+              safePartialSource = true;
+              await decodeCaptureProtobuf(
+                result.value,
+                input,
+                this.#resources,
+                prepared,
+                options?.signal,
+                encodedReplyBytes +
+                  Buffer.byteLength(JSON.stringify(common)) +
+                  16,
+              );
+            } catch (cause) {
+              const error =
+                cause instanceof CaptureFormatError
+                  ? protobufCaptureFailure(input, cause)
+                  : historicalCaptureFailure(
+                      input,
+                      cause,
+                      phase,
+                      options,
+                      reportedHeap,
+                    );
+              if (safePartialSource)
+                error.retainPartialObservation(result.value);
+              throw error;
+            }
+            if (replyFinalization !== undefined) {
+              const error = historicalCaptureFailure(
+                input,
+                replyFinalization,
+                phase,
+                options,
+                reportedHeap,
+              );
+              error.retainPartialObservation(result.value);
+              throw error;
+            }
+          }
+        } catch (cause: unknown) {
+          if (
+            cause instanceof OwnedCommandFailure &&
+            cause.cleanupOwner !== undefined
+          ) {
+            const supervisor = cause.cleanupOwner;
+            processLease = new AnalysisCleanupLease(async () => {
+              const stopped = await supervisor.stop();
+              if (stopped.status === "incomplete")
+                throw new ProviderCleanupError(
+                  input.format,
+                  cause.resources,
+                  {
+                    reason: stopped.reason,
+                  },
+                  { operation: OPERATION, cause: stopped },
+                );
+            }, cause.resources);
+            runtimeResources.retain({
+              kind: "lease",
+              resource: runtime?.path ?? input.capture_path,
+              lease: processLease,
+            });
+          }
+          // Preparation transfers independent helper/descriptor owners. Keep that
+          // typed stage separate from the decoder supervisor lease above: its
+          // historical error already follows the post-launch completion owner.
+          const effectiveCpuSeconds = await recordedDecoderCpuSeconds(
+            runtime?.path,
+            cause,
+            runtimeResources,
+          );
+          const error = retainProcessInspectionCleanup(
+            processInspectionFailure(cause),
+            historicalCaptureFailure(
+              input,
+              cause,
+              phase,
+              options,
+              reportedHeap,
+              processLease,
+              effectiveCpuSeconds,
+            ),
+            runtimeResources,
             OPERATION,
           );
-      if (completedCapture !== undefined)
-        failure.retainPartialObservation(completedCapture);
-      new AnalysisCleanupLeaseGroup(cleanupError, [cleanupFailure.lease]);
-      new AnalysisCleanupLeaseGroup(failure, [cleanupFailure.lease]);
-      return err(redactExplicitFailure(failure, input.sensitive_values));
-    }
-    if (!result.ok && completedCapture !== undefined)
-      result.error.retainPartialObservation(completedCapture);
-    return result;
+          if (
+            replyFinalization?.reason === "cancelled" &&
+            !(error instanceof AnalysisCancelledError)
+          ) {
+            const cancellation = historicalCaptureFailure(
+              input,
+              replyFinalization,
+              phase,
+              options,
+              reportedHeap,
+            );
+            error.retainSecondaryFailure(cancellation, {
+              reply_finalization_error: projectAnalysisError(cancellation),
+            });
+          }
+          const failure = withCaptureReaderCleanup(
+            error,
+            replyFinalization ?? cause,
+          );
+          if (processLease !== undefined)
+            new AnalysisCleanupLeaseGroup(failure, [processLease]);
+          if (phase === "capture-read") {
+            const snapshot = completedStableArtifactObservation(
+              cause,
+              input.capture_path,
+            );
+            if (snapshot !== undefined)
+              failure.retainPartialObservation(snapshot);
+          }
+          if (
+            failure.partialObservation === undefined &&
+            sourceObservation !== undefined
+          )
+            failure.retainPartialObservation(sourceObservation);
+          result = err(redactExplicitFailure(failure, input.sensitive_values));
+        }
+        return result;
+      },
+      {
+        providerId: input.format,
+        operation: OPERATION,
+        signal: options?.signal,
+        partial: (capture) => capture,
+        close: async () => {
+          if (runtime === undefined) return;
+          const root = runtime;
+          const lease = new AnalysisCleanupLease(
+            async () => {
+              await runtimeResources.close();
+              await root.close();
+            },
+            {
+              get cleanupResources() {
+                return [
+                  ...new Set([root.path, ...runtimeResources.cleanupResources]),
+                ];
+              },
+            },
+          );
+          const owner = { kind: "lease" as const, resource: root.path, lease };
+          let cause: unknown;
+          if (runtimeResources.hasPending) {
+            // Failed child cleanup is retried by the service owner, after active peers settle.
+            this.#resources.retain(owner);
+            cause = new ProviderCleanupError(
+              input.format,
+              lease.cleanupResources ?? [root.path],
+              {
+                reason:
+                  "Capture decoder resources must be released before runtime removal.",
+              },
+              { operation: OPERATION },
+            );
+          } else {
+            const cleanup = await this.#resources.release(owner);
+            if (cleanup.kind !== "failed") return;
+            cause = cleanup.cause;
+          }
+          const failure = new ProviderCleanupError(
+            input.format,
+            [root.path],
+            { capture_path: input.capture_path, reason: errorMessage(cause) },
+            { operation: OPERATION, cause },
+          );
+          new AnalysisCleanupLeaseGroup(failure, [lease]);
+          closeFailed = true;
+          throw failure;
+        },
+      },
+    );
+    const result = finalizedResult(finalized);
+    return !result.ok && closeFailed
+      ? err(redactExplicitFailure(result.error, input.sensitive_values))
+      : result;
   }
 }
 

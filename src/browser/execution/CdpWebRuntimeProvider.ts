@@ -5,13 +5,10 @@ import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisOutputError,
-  cancelledBy,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { finalizedResult, runOwned } from "../../providers/runOwned.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   webExecutionObservationSchema,
@@ -93,53 +90,49 @@ export class CdpWebRuntimeProvider implements WebRuntimePort {
     group?: string,
   ): Promise<Result<Completed, AnalysisError>> {
     let session: CdpRuntimeSession | undefined;
-    let result: Result<T, AnalysisError>;
-    try {
-      session = await CdpRuntimeSession.open(
-        input,
-        operation,
-        options,
-        this.#owner,
-      );
-      result = ok(schema.parse(await capture(new CdpRuntimeSources(session))));
-    } catch (cause: unknown) {
-      result = err(
-        cause instanceof AnalysisError
-          ? cause
-          : cause instanceof z.ZodError
-            ? new AnalysisOutputError(operation, cause.message)
-            : new ProviderAdapterError(this.identity().id, operation, {
-                cause,
-              }),
-      );
-    }
-    if (session !== undefined) {
-      const failure = await session.close(
-        result.ok ? undefined : result.error,
-        group,
-      );
-      if (failure !== undefined)
-        return err(
-          result.ok
-            ? options.signal?.aborted === true
-              ? analysisErrorWithCleanupFailure(
-                  cancelledBy(operation, options.signal, {
-                    partialObservation: result.value,
+    let primary: AnalysisError | undefined;
+    let cleanupConfirmed = false;
+    const outcome = await runOwned<T>(
+      async () => {
+        try {
+          session = await CdpRuntimeSession.open(
+            input,
+            operation,
+            options,
+            this.#owner,
+          );
+          return ok(
+            schema.parse(await capture(new CdpRuntimeSources(session))),
+          );
+        } catch (cause: unknown) {
+          return err(
+            cause instanceof AnalysisError
+              ? cause
+              : cause instanceof z.ZodError
+                ? new AnalysisOutputError(operation, cause.message)
+                : new ProviderAdapterError(this.identity().id, operation, {
+                    cause,
                   }),
-                  failure,
-                  operation,
-                )
-              : failure.retainPartialObservation(result.value)
-            : analysisErrorWithCleanupFailure(result.error, failure, operation),
-        );
-    }
-    const completed = result.ok ? ok(confirmCleanup(result.value)) : result;
-    if (completed.ok && options.signal?.aborted === true)
-      return err(
-        cancelledBy(operation, options.signal, {
-          partialObservation: completed.value,
-        }),
-      );
-    return completed;
+          );
+        }
+      },
+      {
+        providerId: this.identity().id,
+        operation,
+        signal: options.signal,
+        inspectPrimary: (result) => {
+          if (!result.ok) primary = result.error;
+        },
+        close: async () => {
+          const failure = await session?.close(primary, group);
+          if (failure !== undefined) throw failure;
+          cleanupConfirmed = true;
+        },
+        partial: (observation) =>
+          cleanupConfirmed ? confirmCleanup(observation) : observation,
+      },
+    );
+    const result = finalizedResult(outcome);
+    return result.ok ? ok(confirmCleanup(result.value)) : result;
   }
 }

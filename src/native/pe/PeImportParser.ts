@@ -34,6 +34,7 @@ import {
   PEFILE_MAX_IMPORT_SYMBOLS,
   pefileImphash,
 } from "./pefileImphash.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 type Artifact = PeImports["artifact"];
 
@@ -135,13 +136,6 @@ const WINDOW_READ_BYTES = 4096;
 // The lookup table, address table, and names can occupy different file ranges.
 const RETAINED_WINDOWS = 3;
 
-/** Random-access source for streaming PE import inspection without buffering the whole image. */
-export interface PeImportByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
-
 interface PeImportReader {
   readonly fileSize: number;
   readRange(offset: number, length: number): Promise<Buffer>;
@@ -166,7 +160,7 @@ const createBufferPeImportReader = (bytes: Buffer): PeImportReader => {
 };
 
 const createHandlePeImportReader = (
-  source: PeImportByteSource,
+  source: PrefixedByteSource,
 ): PeImportReader => {
   const prefix = new BinaryReader(source.prefix, true, "pe");
   const windows: Array<{
@@ -717,7 +711,7 @@ export const parsePeImports = async (
 
 /** Read PE import and delay-load directories positionally over a bounded file handle. */
 export const parsePeImportsFromHandle = async (
-  source: PeImportByteSource,
+  source: PrefixedByteSource,
   artifact: Artifact,
   input: InspectPeImportsInput,
   signal?: AbortSignal,

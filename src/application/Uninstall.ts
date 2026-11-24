@@ -27,7 +27,6 @@ import {
   retryClientConfigurationCleanup,
 } from "./ClientConfigurationCleanup.js";
 import {
-  ClientConfigurationShapeError,
   clientConfigurationServersKey,
   clientConfigurationSyntaxName,
   parseClientConfiguration,
@@ -340,14 +339,10 @@ const hasOwnershipEvidence = async (
       if (typeof completed !== "string") continue;
       original = completed;
     }
-    let parsed: ClientConfigurationDocument;
-    try {
-      parsed = parseClientConfiguration(original, client.format);
-    } catch {
-      // Malformed shared data is retained, never ownership evidence.
-      continue;
-    }
-    const removal = clientRegistrationRemoval(parsed, original, client);
+    const parsed = parseClientConfiguration(original, client.format);
+    // Malformed shared data is retained and cannot prove ownership.
+    if (!parsed.ok) continue;
+    const removal = clientRegistrationRemoval(parsed.value, original, client);
     // Refusing the edit never retracts the owned-row fact: an effective
     // REA-owned row shadowed by a foreign duplicate still proves ownership,
     // so later read failures stay blocking instead of softening to retained.
@@ -626,10 +621,11 @@ export const systemUninstallHost = (
       redirection = appDataRedirection(supported);
       if (projectDirectory !== undefined) {
         const directory =
-          await requireProjectUninstallDirectory(projectDirectory);
+          await resolveProjectUninstallDirectory(projectDirectory);
+        if (!directory.ok) throw directory.error;
         return resolveProjectUninstallClients(
           supported,
-          directory,
+          directory.value,
           projectTargets,
           fileSystem,
           resources,
@@ -1072,19 +1068,21 @@ const readClientConfiguration = async (
     configurationFailure,
   });
   if (typeof original !== "string") return original;
-  try {
-    const parsed = parseClientConfiguration(original, format);
-    return { kind: "configuration", transactionPath, original, parsed };
-  } catch (cause: unknown) {
-    return configurationFailure(
-      cause instanceof ClientConfigurationShapeError ||
-        cause instanceof ConfigurationError
-        ? `Configuration was not changed: ${cause.message}. Repair it, then rerun uninstall.`
-        : format === undefined
-          ? "This client's configuration syntax is unknown, so its configuration was not changed."
-          : `Configuration is not valid ${clientConfigurationSyntaxName(format)} and was not changed. Repair it, then rerun uninstall.`,
-    );
-  }
+  const parsed = parseClientConfiguration(original, format);
+  if (parsed.ok)
+    return {
+      kind: "configuration",
+      transactionPath,
+      original,
+      parsed: parsed.value,
+    };
+  return configurationFailure(
+    parsed.error.kind === "shape" || parsed.error.kind === "document"
+      ? `Configuration was not changed: ${parsed.error.detail}. Repair it, then rerun uninstall.`
+      : format === undefined
+        ? "This client's configuration syntax is unknown, so its configuration was not changed."
+        : `Configuration is not valid ${clientConfigurationSyntaxName(format)} and was not changed. Repair it, then rerun uninstall.`,
+  );
 };
 
 const itemRead = (result: UninstallItem): ClientConfigurationRead => ({
@@ -1116,20 +1114,22 @@ interface ProjectUninstallPlan {
   readonly pending: Map<string, ProjectRemovalFile>;
 }
 
-const requireProjectUninstallDirectory = async (
+const resolveProjectUninstallDirectory = async (
   path: string,
-): Promise<string> => {
+): Promise<Result<string, ConfigurationError>> => {
   try {
     const directory = await realpath(path);
-    if ((await lstat(directory)).isDirectory()) return directory;
+    if ((await lstat(directory)).isDirectory()) return ok(directory);
   } catch (cause: unknown) {
-    throw new ConfigurationError(
-      `Could not resolve the selected project directory ${path}. Select an existing directory before running uninstall.`,
-      { cause },
+    return err(
+      new ConfigurationError(
+        `Could not resolve the selected project directory ${path}. Select an existing directory before running uninstall.`,
+        { cause },
+      ),
     );
   }
-  throw new ConfigurationError(
-    `The selected project ${path} is not a directory.`,
+  return err(
+    new ConfigurationError(`The selected project ${path} is not a directory.`),
   );
 };
 
@@ -1537,31 +1537,26 @@ const removeClient = async (
     ...(removeNative ? [clientServerPath(parsed, name)] : []),
     ...(legacyPath === undefined ? [] : [legacyPath]),
   ];
-  let serialized: ReturnType<typeof serializeClientConfiguration>;
-  try {
-    serialized = serializeClientConfiguration(
-      candidate.document,
-      client.format,
-      original,
-      editedPaths,
-      // clientRegistrationRemoval admitted only names whose repeats REA owns.
-      { removeShadowedMembersAt: editedPaths },
-    );
-  } catch (cause: unknown) {
+  const serialized = serializeClientConfiguration(
+    candidate.document,
+    client.format,
+    original,
+    editedPaths,
+    // clientRegistrationRemoval admitted only names whose repeats REA owns.
+    { removeShadowedMembersAt: editedPaths },
+  );
+  if (!serialized.ok) {
+    const failure = serialized.error;
     return item(
       client.name,
       "failed",
-      cause instanceof ConfigurationError
-        ? `Configuration could not be updated, so no change was made. ${cause.message}.`
-        : "Configuration could not be updated, so no change was made. Repair the configuration, then rerun uninstall.",
+      failure.kind === "shadowed_member"
+        ? `Configuration repeats the member at ${JSON.stringify(failure.path)}; removing the registration the client reads would activate an earlier duplicate, so no change was made. Remove the duplicate members manually, then rerun uninstall.`
+        : failure.kind === "document"
+          ? `Configuration could not be updated, so no change was made. ${failure.detail}.`
+          : "Configuration could not be updated, so no change was made. Repair the configuration, then rerun uninstall.",
     );
   }
-  if (!serialized.ok)
-    return item(
-      client.name,
-      "failed",
-      `Configuration repeats the member at ${JSON.stringify(serialized.error.path)}; removing the registration the client reads would activate an earlier duplicate, so no change was made. Remove the duplicate members manually, then rerun uninstall.`,
-    );
   const backupPath = await backupClientConfiguration(
     client,
     transactionPath,
@@ -1596,33 +1591,37 @@ const removeClient = async (
     try {
       const text = await fileSystem.readText(publication.path);
       await publication.assertCurrent(text);
-      const readback = parseClientConfiguration(text, client.format);
-      if (
-        (removeNative && Object.hasOwn(readback.servers, name)) ||
-        (readback.dialect === "dsh" &&
-          dshDocument(readback.document).carriesEntry) ||
-        (removeLegacy && Object.hasOwn(readback.legacyServers, name))
-      )
-        throw new Error("registration readback mismatch");
-      return item(
-        client.name,
-        "removed",
-        `Removed registration from ${client.configPath}.`,
-      );
+      const parsed = parseClientConfiguration(text, client.format);
+      if (parsed.ok) {
+        const readback = parsed.value;
+        if (
+          !(removeNative && Object.hasOwn(readback.servers, name)) &&
+          !(
+            readback.dialect === "dsh" &&
+            dshDocument(readback.document).carriesEntry
+          ) &&
+          !(removeLegacy && Object.hasOwn(readback.legacyServers, name))
+        )
+          return item(
+            client.name,
+            "removed",
+            `Removed registration from ${client.configPath}.`,
+          );
+      }
     } catch (cause: unknown) {
       if (isClientConfigurationCleanupFailure(cause))
         await retryClientConfigurationCleanup(cause, resources);
-      try {
-        await publication.restore(original);
-      } catch {
-        return manualRecovery();
-      }
-      return item(
-        client.name,
-        "failed",
-        `Configuration could not be updated. The original was restored and its backup at ${backupPath} was retained. Repair the configuration or restore that backup, then rerun uninstall.`,
-      );
     }
+    try {
+      await publication.restore(original);
+    } catch {
+      return manualRecovery();
+    }
+    return item(
+      client.name,
+      "failed",
+      `Configuration could not be updated. The original was restored and its backup at ${backupPath} was retained. Repair the configuration or restore that backup, then rerun uninstall.`,
+    );
   };
   let completed: UninstallItem | undefined;
   try {

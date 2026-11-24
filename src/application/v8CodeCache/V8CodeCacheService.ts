@@ -30,6 +30,7 @@ export class V8CodeCacheService {
         inputSchema: inspectV8CodeCacheInputSchema,
         outputSchema: v8CodeCacheSchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "V8 code cache provider returned malformed output or changed artifact identity.",
         toParameters: (input) => input,
@@ -77,15 +78,7 @@ const validReport = (
 ): boolean => {
   if (report.artifact.bytes > input.max_file_bytes) return false;
   if (report.embedded_strings.length > input.max_strings) return false;
-  if (
-    report.payload.offset + report.payload.bytes !== report.artifact.bytes ||
-    report.payload.offset !== report.header.header_bytes
-  )
-    return false;
   return report.embedded_strings.every(
-    (observation) =>
-      observation.bytes >= input.min_string_bytes &&
-      observation.offset >= report.payload.offset &&
-      observation.offset + observation.bytes <= report.artifact.bytes,
+    (observation) => observation.bytes >= input.min_string_bytes,
   );
 };

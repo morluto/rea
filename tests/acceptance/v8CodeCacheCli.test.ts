@@ -17,75 +17,62 @@ cliTest(
   "reports wide, synthetic narrow and synthetic six-word header extents through the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-v8-cli-");
-    const wide = v8CodeCacheFixture();
-    const narrow = withSyntheticNarrowHeader(wide);
-    const legacy = withSyntheticLegacyHeader(wide);
-    const payloadDigest = createHash("sha256")
-      .update(wide.subarray(32))
-      .digest("hex");
+    const marker = "EMBEDDED_CONFIG_KEY_7c1d";
+    const wide = v8CodeCacheFixture(
+      `var settings = { key: "${marker}" }; settings.key;`,
+    );
+    const digest = (bytes: Buffer) =>
+      createHash("sha256").update(bytes).digest("hex");
+    const payloadDigest = digest(wide.subarray(32));
     for (const [bytes, headerBytes] of [
       [wide, 32],
-      [narrow, 28],
-      [legacy, 24],
+      [withSyntheticNarrowHeader(wide), 28],
+      [withSyntheticLegacyHeader(wide), 24],
     ] as const) {
-      const path = join(root, `header-${String(headerBytes)}.jsc`);
+      const name = `header-${String(headerBytes)}.jsc`;
+      const path = join(root, name);
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: ["inspect-v8-code-cache", path, "--json"],
+        arguments: [
+          "inspect-v8-code-cache",
+          headerBytes === 32 ? name : path,
+          "--minStringBytes",
+          "8",
+          "--json",
+        ],
+        cwd: root,
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const report = outputSchema.parse(result.json).normalized_result;
+      expect(report.artifact).toEqual({
+        path,
+        bytes: bytes.length,
+        sha256: digest(bytes),
+      });
       expect(report.header.magic).toBe(bytes.readUInt32LE(0));
       expect(report.header.magic_build_stable).toBe(0xc0de);
       expect(report.header.header_bytes).toBe(headerBytes);
       expect(report.header.fields).toHaveLength(headerBytes / 4);
-      expect(report.payload.offset).toBe(headerBytes);
-      expect(report.payload.bytes).toBe(bytes.length - headerBytes);
-      expect(report.payload.sha256).toBe(payloadDigest);
+      expect(report.payload).toMatchObject({
+        offset: headerBytes,
+        bytes: bytes.length - headerBytes,
+        sha256: payloadDigest,
+      });
       expect(report.coverage.status).toBe("complete");
+      const observation = report.embedded_strings.find((entry) =>
+        entry.text.includes(marker),
+      );
+      if (observation === undefined)
+        throw new Error("Missing printable marker");
+      expect(
+        bytes
+          .subarray(
+            observation.offset,
+            observation.offset + observation.retained_bytes,
+          )
+          .toString("latin1"),
+      ).toBe(observation.text);
     }
-  },
-);
-
-cliTest(
-  "locates retained printable bytes from a working-directory-relative cache",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-v8-cli-strings-");
-    const path = join(root, "module.jsc");
-    const marker = "EMBEDDED_CONFIG_KEY_7c1d";
-    const bytes = v8CodeCacheFixture(
-      `var settings = { key: "${marker}" }; settings.key;`,
-    );
-    await writeFile(path, bytes);
-    const result = await cli.run({
-      arguments: [
-        "inspect-v8-code-cache",
-        "module.jsc",
-        "--minStringBytes",
-        "8",
-        "--json",
-      ],
-      cwd: root,
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const report = outputSchema.parse(result.json).normalized_result;
-    const observation = report.embedded_strings.find((entry) =>
-      entry.text.includes(marker),
-    );
-    if (observation === undefined) throw new Error("Missing printable marker");
-    expect(report.artifact.path).toBe(path);
-    expect(observation.offset).toBeGreaterThanOrEqual(report.payload.offset);
-    expect(observation.offset + observation.bytes).toBeLessThanOrEqual(
-      report.artifact.bytes,
-    );
-    expect(
-      bytes
-        .subarray(
-          observation.offset,
-          observation.offset + observation.retained_bytes,
-        )
-        .toString("latin1"),
-    ).toBe(observation.text);
   },
 );
 

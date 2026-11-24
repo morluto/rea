@@ -1113,7 +1113,7 @@ it("retains partial GDB command Evidence while an inherited writer remains", asy
           records: [record],
           completion_status: "unknown",
         },
-        raw_result: { process_exit_observed: true, records: [record] },
+        raw_result: null,
       },
     },
   });
@@ -2271,11 +2271,12 @@ it("preserves SIGTERM startup exit status in the capability failure and Evidence
     expect(started.error._tag).toBe("AnalysisCapabilityUnavailableError");
     expect(started.error.message).toContain("exit code null, signal SIGTERM");
     expect(started.error.partialObservation).toMatchObject({
-      raw_result: {
+      normalized_result: {
         process_exit_code: null,
         process_exit_signal: "SIGTERM",
         process_exit_observed: true,
       },
+      raw_result: null,
     });
   }
 });
@@ -3202,7 +3203,7 @@ it("retains unknown inferior ownership after GDB exits during a command", async 
       cleanupIncomplete: true,
       partialObservation: {
         parameters: { command: "exit during command" },
-        raw_result: { command: "exit during command" },
+        raw_result: null,
         normalized_result: {
           command: "exit during command",
           process_exit_observed: true,
@@ -3857,7 +3858,11 @@ process.stdin.on('data', (chunk) => {
       cleanup: { resources: [started.value.session_id] },
       partialObservation: {
         predicate_type: "rea.debugger.console-observation",
-        raw_result: { command: "bad-record", completion_status: "unknown" },
+        normalized_result: {
+          command: "bad-record",
+          completion_status: "unknown",
+        },
+        raw_result: null,
       },
     },
   });
@@ -3898,7 +3903,11 @@ process.stdin.on('data', (chunk) => {
       cleanup: { resources: [started.value.session_id] },
       partialObservation: {
         predicate_type: "rea.debugger.console-observation",
-        raw_result: { command: "partial-line", completion_status: "unknown" },
+        normalized_result: {
+          command: "partial-line",
+          completion_status: "unknown",
+        },
+        raw_result: null,
       },
     },
   });
@@ -4112,11 +4121,12 @@ it.each(["incomplete", "rejected"] as const)(
       });
       expect(failed.error.partialObservation).toMatchObject({
         predicate_type: "rea.debugger.console-observation",
-        raw_result: {
+        normalized_result: {
           command: "will-fail",
           records: ['~"protocol output before failure"'],
           completion_status: "unknown",
         },
+        raw_result: null,
       });
     }
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
@@ -4183,11 +4193,12 @@ it("drains buffered startup stdout before capturing early-exit Evidence", async 
   expect(children).toHaveLength(2);
   if (!started.ok)
     expect(started.error.partialObservation).toMatchObject({
-      raw_result: {
+      normalized_result: {
         process_exit_code: 7,
         records: ['~"late startup record"'],
         completion_status: "unknown",
       },
+      raw_result: null,
     });
 });
 

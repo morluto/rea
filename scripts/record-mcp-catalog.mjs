@@ -81,6 +81,32 @@ const recordCatalog = async () => {
             : { type: "object" },
       };
     });
+    // Record the compact schemas a legacy client receives. The SDK stamps or
+    // wraps a non-object root before REA compacts that listing.
+    const compactServer = createServer(
+      { kind: "session", session },
+      {
+        environment: {
+          ...environment,
+          REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+        },
+      },
+    );
+    cleanup.push(() => compactServer.close());
+    const compactClient = new Client({
+      name: "rea-catalog-recorder-compact",
+      version: "1",
+    });
+    cleanup.push(() => compactClient.close());
+    const [compactClientTransport, compactServerTransport] =
+      InMemoryTransport.createLinkedPair();
+    await compactServer.connect(compactServerTransport);
+    await compactClient.connect(compactClientTransport);
+    const compactOutputSchemas = Object.fromEntries(
+      (await compactClient.listTools()).tools.flatMap((tool) =>
+        tool.outputSchema === undefined ? [] : [[tool.name, tool.outputSchema]],
+      ),
+    );
     const prompts = (await client.listPrompts()).prompts.map((prompt) => {
       const contract = PROMPT_CONTRACTS.find(
         (candidate) => candidate.name === prompt.name,
@@ -96,6 +122,7 @@ const recordCatalog = async () => {
       instructions: client.getInstructions(),
       identity: server.catalogIdentity,
       tools,
+      compactOutputSchemas,
       toolFamilies: Object.fromEntries(
         tools.map(({ name }) => {
           const family = toolFamilyId(name);
