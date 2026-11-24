@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_ANDROID_DTBO_READER_LIMITS } from "../artifactReaderLimits.js";
 import {
   ANDROID_DTBO_FORMAT,
+  ANDROID_DTBO_LIMITS,
   ANDROID_DTBO_MAGIC,
-  ANDROID_DTBO_MAX_ENTRY_COUNT,
-  ANDROID_DTBO_MAX_ENTRY_SIZE,
-  ANDROID_DTBO_MAX_HEADER_SIZE,
   decodeDtboCompression,
   hasAndroidDtboMagic,
   parseAndroidDtboEntries,
@@ -148,6 +147,30 @@ describe("androidDtboFormat", () => {
     });
   });
 
+  it("admits large header_size and dt_entry_size within file bounds and entry_table_bytes", () => {
+    const largeHeader = buildSyntheticAndroidDtbo({
+      headerSize: 65_537,
+      entries: [],
+    });
+    const headerRes = parseAndroidDtboHeader(largeHeader, largeHeader.length);
+    expect(headerRes.ok).toBe(true);
+    if (headerRes.ok) {
+      expect(headerRes.value.headerSize).toBe(65_537);
+      expect(headerRes.value.limitations[0]).toContain("65505 extra header");
+    }
+
+    const largeRow = buildSyntheticAndroidDtbo({
+      dtEntrySize: 4097,
+      entries: [{ payload: sampleAndroidDtboV0().entries[0]! }],
+    });
+    const rowRes = parseAndroidDtboHeader(largeRow, largeRow.length);
+    expect(rowRes.ok).toBe(true);
+    if (rowRes.ok) {
+      expect(rowRes.value.dtEntrySize).toBe(4097);
+      expect(rowRes.value.limitations[0]).toContain("reserves 4097 bytes");
+    }
+  });
+
   it("handles empty tables and omits zero-size entries with explicit limitations", () => {
     const emptyHeaderBuf = buildSyntheticAndroidDtbo({
       entries: [],
@@ -171,7 +194,7 @@ describe("androidDtboFormat", () => {
 
     const withZero = buildSyntheticAndroidDtbo({
       entries: [
-        { payload: Buffer.alloc(0), dtSize: 0, dtOffset: 64 },
+        { payload: Buffer.alloc(0), dtSize: 0, dtOffset: 96 },
         { payload: Buffer.from([0xd0, 0x0d, 0xfe, 0xed, 0, 0, 0, 40]) },
       ],
     });
@@ -277,13 +300,14 @@ describe("androidDtboFormat", () => {
     }
   });
 
-  it("checks table bounds and truncation before enforcing fixed decode limits", () => {
+  it("checks table bounds and truncation before enforcing adjustable reader limits", () => {
+    const defaultCount = DEFAULT_ANDROID_DTBO_READER_LIMITS.entry_count;
     const oobCount = Buffer.alloc(64);
     oobCount.writeUInt32BE(ANDROID_DTBO_MAGIC, 0);
     oobCount.writeUInt32BE(64, 4);
     oobCount.writeUInt32BE(32, 8);
     oobCount.writeUInt32BE(32, 12);
-    oobCount.writeUInt32BE(ANDROID_DTBO_MAX_ENTRY_COUNT + 10, 16);
+    oobCount.writeUInt32BE(defaultCount + 10, 16);
     oobCount.writeUInt32BE(32, 20);
     oobCount.writeUInt32BE(2048, 24);
     oobCount.writeUInt32BE(0, 28);
@@ -294,13 +318,13 @@ describe("androidDtboFormat", () => {
       expect(oobRes.error.failure.field).toBe("dt_entry_count");
     }
 
-    const declaredOverLimit = 32 + (ANDROID_DTBO_MAX_ENTRY_COUNT + 1) * 32;
+    const declaredOverLimit = 32 + (defaultCount + 1) * 32;
     const truncOverLimit = Buffer.alloc(64);
     truncOverLimit.writeUInt32BE(ANDROID_DTBO_MAGIC, 0);
     truncOverLimit.writeUInt32BE(declaredOverLimit, 4);
     truncOverLimit.writeUInt32BE(32, 8);
     truncOverLimit.writeUInt32BE(32, 12);
-    truncOverLimit.writeUInt32BE(ANDROID_DTBO_MAX_ENTRY_COUNT + 1, 16);
+    truncOverLimit.writeUInt32BE(defaultCount + 1, 16);
     truncOverLimit.writeUInt32BE(32, 20);
     truncOverLimit.writeUInt32BE(2048, 24);
     truncOverLimit.writeUInt32BE(0, 28);
@@ -314,51 +338,12 @@ describe("androidDtboFormat", () => {
       expect(truncRes.error.failure.field).toBe("total_size");
     }
 
-    const overHeaderSize = Buffer.alloc(ANDROID_DTBO_MAX_HEADER_SIZE + 1);
-    overHeaderSize.writeUInt32BE(ANDROID_DTBO_MAGIC, 0);
-    overHeaderSize.writeUInt32BE(overHeaderSize.length, 4);
-    overHeaderSize.writeUInt32BE(overHeaderSize.length, 8);
-    overHeaderSize.writeUInt32BE(32, 12);
-    overHeaderSize.writeUInt32BE(0, 16);
-    overHeaderSize.writeUInt32BE(overHeaderSize.length, 20);
-    const headerLimit = parseAndroidDtboHeader(
-      overHeaderSize,
-      overHeaderSize.length,
-    );
-    expect(headerLimit.ok).toBe(false);
-    if (!headerLimit.ok && headerLimit.error.failure.kind === "limit") {
-      expect(headerLimit.error.failure.limit.name).toBe(
-        "ANDROID_DTBO_MAX_HEADER_SIZE",
-      );
-      expect(headerLimit.error.failure.limit.maximum).toBe(
-        ANDROID_DTBO_MAX_HEADER_SIZE,
-      );
-    }
-
-    const overEntrySize = Buffer.alloc(32 + (ANDROID_DTBO_MAX_ENTRY_SIZE + 1));
-    overEntrySize.writeUInt32BE(ANDROID_DTBO_MAGIC, 0);
-    overEntrySize.writeUInt32BE(overEntrySize.length, 4);
-    overEntrySize.writeUInt32BE(32, 8);
-    overEntrySize.writeUInt32BE(ANDROID_DTBO_MAX_ENTRY_SIZE + 1, 12);
-    overEntrySize.writeUInt32BE(1, 16);
-    overEntrySize.writeUInt32BE(32, 20);
-    const entrySizeLimit = parseAndroidDtboHeader(
-      overEntrySize,
-      overEntrySize.length,
-    );
-    expect(entrySizeLimit.ok).toBe(false);
-    if (!entrySizeLimit.ok && entrySizeLimit.error.failure.kind === "limit") {
-      expect(entrySizeLimit.error.failure.limit.name).toBe(
-        "ANDROID_DTBO_MAX_ENTRY_SIZE",
-      );
-    }
-
     const overEntryCount = Buffer.alloc(declaredOverLimit);
     overEntryCount.writeUInt32BE(ANDROID_DTBO_MAGIC, 0);
     overEntryCount.writeUInt32BE(declaredOverLimit, 4);
     overEntryCount.writeUInt32BE(32, 8);
     overEntryCount.writeUInt32BE(32, 12);
-    overEntryCount.writeUInt32BE(ANDROID_DTBO_MAX_ENTRY_COUNT + 1, 16);
+    overEntryCount.writeUInt32BE(defaultCount + 1, 16);
     overEntryCount.writeUInt32BE(32, 20);
     const countLimit = parseAndroidDtboHeader(
       overEntryCount,
@@ -367,9 +352,44 @@ describe("androidDtboFormat", () => {
     expect(countLimit.ok).toBe(false);
     if (!countLimit.ok && countLimit.error.failure.kind === "limit") {
       expect(countLimit.error.failure.limit.name).toBe(
-        "ANDROID_DTBO_MAX_ENTRY_COUNT",
+        ANDROID_DTBO_LIMITS.entryCount.name,
       );
+      expect(countLimit.error.failure.limit.maximum).toBe(defaultCount);
+      expect(countLimit.error.failure.limit.required).toBe(defaultCount + 1);
     }
+
+    const admittedRaisedCount = parseAndroidDtboHeader(
+      overEntryCount,
+      overEntryCount.length,
+      {
+        ...DEFAULT_ANDROID_DTBO_READER_LIMITS,
+        entry_count: defaultCount + 1,
+      },
+    );
+    expect(admittedRaisedCount.ok).toBe(true);
+
+    const sample = sampleAndroidDtboV0().image;
+    const loweredTableBudget = parseAndroidDtboHeader(sample, sample.length, {
+      ...DEFAULT_ANDROID_DTBO_READER_LIMITS,
+      entry_table_bytes: 63,
+    });
+    expect(loweredTableBudget.ok).toBe(false);
+    if (
+      !loweredTableBudget.ok &&
+      loweredTableBudget.error.failure.kind === "limit"
+    ) {
+      expect(loweredTableBudget.error.failure.limit.name).toBe(
+        ANDROID_DTBO_LIMITS.entryTableBytes.name,
+      );
+      expect(loweredTableBudget.error.failure.limit.maximum).toBe(63);
+      expect(loweredTableBudget.error.failure.limit.required).toBe(64);
+    }
+
+    const raisedTableBudget = parseAndroidDtboHeader(sample, sample.length, {
+      ...DEFAULT_ANDROID_DTBO_READER_LIMITS,
+      entry_table_bytes: 64,
+    });
+    expect(raisedTableBudget.ok).toBe(true);
   });
 
   it("rejects out-of-bounds and overlapping entry payloads", () => {

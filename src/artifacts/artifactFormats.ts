@@ -427,7 +427,11 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "Android DTBO inventory establishes dt_table_header and dt_table_entry table facts, verifies leading 0xd00dfeed FDT magic on uncompressed entries, and bounds stored entry bytes. Compressed payloads are not decompressed, device trees are not overlaid, and images are not executed.",
     createReader: (path, options) =>
-      new AndroidDtboArtifactReader(path, sourceOf(options)),
+      new AndroidDtboArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_dtbo,
+      ),
   }),
   "android-ota-payload": container("android-ota-payload", {
     roleContainer: true,

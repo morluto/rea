@@ -979,7 +979,8 @@ expose child `dtbo-<index>.dtbo` blobs with `id`, `rev`, version-1 compression
 flags (`none`, `zlib`, `gzip`, `unknown`), `custom` words, and leading
 `0xd00dfeed` FDT magic checks. Compressed entries remain stored with explicit
 limitations; extract uncompressed `0xd00dfeed` entries and pass them to
-`inspect_devicetree`. See
+`inspect_devicetree`. Entry count and entry-table bytes are bounded via
+`artifact_limits.android_dtbo`. See
 [Android DTBO partition images](https://github.com/morluto/rea/blob/main/docs/android-dtbo.md).
 
 ISO 9660 disc images (`CD001` at sector 16, any filename, even `.hop`) use

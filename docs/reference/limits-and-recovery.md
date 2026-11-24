@@ -489,13 +489,13 @@ editable setting or active worker telemetry.
 
 ## Artifact reader admission
 
-`inspect_artifact` and `extract_artifact` accept `dotnet_bundle`, `node_sea`
-and `godot` groups in `artifact_limits`. Their controls apply when recognition
-or inventory encounters that format; supplying
+`inspect_artifact` and `extract_artifact` accept `dotnet_bundle`, `node_sea`,
+`godot`, `iso9660` and `android_dtbo` groups in `artifact_limits`. Their controls
+apply when recognition or inventory encounters that format; supplying
 a policy does not assert the format is present. Unsupported keys are rejected.
 Each group follows one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
-[Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md) and
-[Bun standalone](../bun-standalone.md) for format semantics.
+[Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md),
+[Bun standalone](../bun-standalone.md) and [Android DTBO partition images](../android-dtbo.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
 SEA and PCK readers, including repeated readable logical occurrences. Omission

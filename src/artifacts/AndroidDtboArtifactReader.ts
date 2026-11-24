@@ -1,8 +1,13 @@
+import {
+  DEFAULT_ANDROID_DTBO_READER_LIMITS,
+  type AndroidDtboReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import {
-  ANDROID_DTBO_FIXED_LIMITS,
   ANDROID_DTBO_FORMAT,
   ANDROID_DTBO_HEADER_MIN_SIZE,
+  ANDROID_DTBO_LIMITS,
+  type AndroidDtboLimitSpec,
   type AndroidDtboParseError,
   parseAndroidDtboEntries,
   parseAndroidDtboHeader,
@@ -15,8 +20,8 @@ import type {
 import { ParseFailureError } from "../domain/parseFailure.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
-  artifactFixedLimitFailure,
   artifactParseFailure,
+  artifactReaderLimitFailure,
 } from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
@@ -31,34 +36,33 @@ type DtboEntry = PositionalArtifactEntry & {
   readonly formatMetadata: AndroidDtboEntryMetadata;
 };
 
+const ANDROID_DTBO_LIMIT_BY_NAME: ReadonlyMap<string, AndroidDtboLimitSpec> =
+  new Map(Object.values(ANDROID_DTBO_LIMITS).map((spec) => [spec.name, spec]));
+
 function readObservedHexMagic(bytes: Buffer): string {
   const reader = new BinaryReader(bytes, false, ANDROID_DTBO_FORMAT);
   return `0x${reader.u32(0).toString(16).padStart(8, "0")}`;
 }
 
-function parseFailure(failure: AndroidDtboParseError): unknown {
+function parseFailure(failure: AndroidDtboParseError): Error {
   const facts = failure.failure;
   if (facts.kind === "limit") {
-    const ceiling = ANDROID_DTBO_FIXED_LIMITS.get(facts.limit.name);
-    if (ceiling !== undefined) {
-      return artifactFixedLimitFailure(
-        {
-          name: ceiling.name,
-          kind: "parser",
-          limit: facts.limit.maximum,
-          unit: ceiling.unit,
-        },
-        failure.message,
-        "capacity",
-        { cause: failure },
+    const spec = ANDROID_DTBO_LIMIT_BY_NAME.get(facts.limit.name);
+    if (spec !== undefined) {
+      return artifactReaderLimitFailure(
+        spec.parameter,
+        facts.limit.maximum,
+        spec.unit,
+        facts.limit.required,
       );
     }
   }
-  return artifactParseFailure(
+  const mapped = artifactParseFailure(
     new ParseFailureError(failure.failure, { cause: failure }),
     undefined,
     () => "capacity",
   );
+  return mapped instanceof Error ? mapped : failure;
 }
 
 function entryLogicalPath(index: number): string {
@@ -68,9 +72,15 @@ function entryLogicalPath(index: number): string {
 /** Read an Android DTBO partition table image without unpacking or overlaying it. */
 export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidDtboMetadata> {
   override readonly format = ANDROID_DTBO_FORMAT;
+  readonly #limits: AndroidDtboReaderLimits;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    limits: AndroidDtboReaderLimits = DEFAULT_ANDROID_DTBO_READER_LIMITS,
+  ) {
     super(path, "Android DTBO image", admitted);
+    this.#limits = limits;
   }
 
   formatMetadata(): AndroidDtboMetadata | undefined {
@@ -95,7 +105,11 @@ export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidD
     );
     this.assertOpen(signal);
 
-    const headerResult = parseAndroidDtboHeader(headerBytes, initial.size);
+    const headerResult = parseAndroidDtboHeader(
+      headerBytes,
+      initial.size,
+      this.#limits,
+    );
     if (!headerResult.ok) throw parseFailure(headerResult.error);
     const header = headerResult.value;
 

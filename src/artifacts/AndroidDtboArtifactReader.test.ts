@@ -3,14 +3,15 @@ import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { describe, expect, it } from "vitest";
 import {
-  ANDROID_DTBO_MAGIC,
-  ANDROID_DTBO_MAX_ENTRY_COUNT,
-} from "../domain/firmware/androidDtboFormat.js";
-import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
+  DEFAULT_ANDROID_DTBO_READER_LIMITS,
+  type AndroidDtboReaderLimits,
+} from "../domain/artifactReaderLimits.js";
+import { ANDROID_DTBO_MAGIC } from "../domain/firmware/androidDtboFormat.js";
 import type {
   ArtifactEntry,
   ArtifactReaderTraversal,
 } from "../resources/ArtifactReader.js";
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import {
   buildSyntheticAndroidDtbo,
   sampleAndroidDtboV0,
@@ -43,6 +44,18 @@ async function readWithCoverage(reader: AndroidDtboArtifactReader): Promise<{
     entries.push(entry);
   }
   return { entries, coverage };
+}
+
+async function collectClosed(
+  path: string,
+  limits?: AndroidDtboReaderLimits,
+): Promise<ArtifactEntry[]> {
+  const reader = new AndroidDtboArtifactReader(path, undefined, limits);
+  try {
+    return await collectEntries(reader);
+  } finally {
+    await reader.close();
+  }
 }
 
 describe("AndroidDtboArtifactReader", () => {
@@ -230,31 +243,19 @@ describe("AndroidDtboArtifactReader", () => {
       magic: 0x01020304,
       entries: [],
     });
-    const badReader = new AndroidDtboArtifactReader(
-      await writeTempImage(badMagic),
-    );
-    await expect(collectEntries(badReader)).rejects.toMatchObject({
-      reason: "malformed",
-    });
-    await badReader.close();
+    await expect(
+      collectClosed(await writeTempImage(badMagic)),
+    ).rejects.toMatchObject({ reason: "malformed" });
 
     const truncated = sampleAndroidDtboV0().image.subarray(0, 64);
-    const truncReader = new AndroidDtboArtifactReader(
-      await writeTempImage(truncated),
-    );
-    await expect(collectEntries(truncReader)).rejects.toMatchObject({
-      reason: "truncated",
-    });
-    await truncReader.close();
+    await expect(
+      collectClosed(await writeTempImage(truncated)),
+    ).rejects.toMatchObject({ reason: "truncated" });
 
     const unsupported = buildSyntheticAndroidDtbo({ version: 9, entries: [] });
-    const unsupReader = new AndroidDtboArtifactReader(
-      await writeTempImage(unsupported),
-    );
-    await expect(collectEntries(unsupReader)).rejects.toMatchObject({
-      reason: "unsupported",
-    });
-    await unsupReader.close();
+    await expect(
+      collectClosed(await writeTempImage(unsupported)),
+    ).rejects.toMatchObject({ reason: "unsupported" });
 
     const overlap = buildSyntheticAndroidDtbo({
       entries: [
@@ -263,33 +264,39 @@ describe("AndroidDtboArtifactReader", () => {
       ],
       totalSize: 140,
     });
-    const overlapReader = new AndroidDtboArtifactReader(
-      await writeTempImage(overlap),
-    );
-    await expect(collectEntries(overlapReader)).rejects.toMatchObject({
-      reason: "malformed",
-    });
-    await overlapReader.close();
+    await expect(
+      collectClosed(await writeTempImage(overlap)),
+    ).rejects.toMatchObject({ reason: "malformed" });
 
-    const overCountSize = 32 + (ANDROID_DTBO_MAX_ENTRY_COUNT + 1) * 32;
+    const defaultCount = DEFAULT_ANDROID_DTBO_READER_LIMITS.entry_count;
+    const overCountSize = 32 + (defaultCount + 1) * 32;
     const overCount = Buffer.alloc(overCountSize);
     overCount.writeUInt32BE(ANDROID_DTBO_MAGIC, 0);
     overCount.writeUInt32BE(overCountSize, 4);
     overCount.writeUInt32BE(32, 8);
     overCount.writeUInt32BE(32, 12);
-    overCount.writeUInt32BE(ANDROID_DTBO_MAX_ENTRY_COUNT + 1, 16);
+    overCount.writeUInt32BE(defaultCount + 1, 16);
     overCount.writeUInt32BE(32, 20);
-    const overReader = new AndroidDtboArtifactReader(
-      await writeTempImage(overCount),
-    );
-    await expect(collectEntries(overReader)).rejects.toMatchObject({
+    for (let i = 0; i < defaultCount + 1; i++) {
+      overCount.writeUInt32BE(0, 32 + i * 32);
+      overCount.writeUInt32BE(overCountSize, 32 + i * 32 + 4);
+    }
+    const overCountPath = await writeTempImage(overCount);
+    await expect(collectClosed(overCountPath)).rejects.toMatchObject({
       reason: "limit",
-      fixedAllowance: {
-        name: "ANDROID_DTBO_MAX_ENTRY_COUNT",
-        limit: ANDROID_DTBO_MAX_ENTRY_COUNT,
-        unit: "entries",
+      readerLimit: {
+        parameter: "artifact_limits.android_dtbo.entry_count",
+        effective_value: defaultCount,
+        unit: "count",
+        required_value: defaultCount + 1,
+        can_increase: true,
       },
     });
-    await overReader.close();
+    await expect(
+      collectClosed(overCountPath, {
+        ...DEFAULT_ANDROID_DTBO_READER_LIMITS,
+        entry_count: defaultCount + 1,
+      }),
+    ).resolves.toEqual([]);
   });
 });

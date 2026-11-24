@@ -1,3 +1,7 @@
+import {
+  DEFAULT_ANDROID_DTBO_READER_LIMITS,
+  type AndroidDtboReaderLimits,
+} from "../artifactReaderLimits.js";
 import { BinaryReader } from "../binaryContainer.js";
 import type { AndroidDtboCompressionMode } from "../formatMetadata/androidAndSystemMetadata.js";
 import {
@@ -15,40 +19,27 @@ export const ANDROID_DTBO_MAGIC = 0xd7b7ab1e;
 export const ANDROID_DTBO_HEADER_MIN_SIZE = 32;
 export const ANDROID_DTBO_ENTRY_MIN_SIZE = 32;
 
-export const ANDROID_DTBO_MAX_HEADER_SIZE = 64 * 1024;
-export const ANDROID_DTBO_MAX_ENTRY_SIZE = 4096;
-export const ANDROID_DTBO_MAX_ENTRY_COUNT = 4096;
-
-export interface AndroidDtboFixedLimit {
+export interface AndroidDtboLimitSpec {
   readonly name: string;
-  readonly limit: number;
-  readonly unit: "bytes" | "entries";
+  readonly parameter: string;
+  readonly maximum: number;
+  readonly unit: "bytes" | "count";
 }
 
-export const ANDROID_DTBO_FIXED_LIMITS: ReadonlyMap<
-  string,
-  AndroidDtboFixedLimit
-> = new Map(
-  (
-    [
-      {
-        name: "ANDROID_DTBO_MAX_HEADER_SIZE",
-        limit: ANDROID_DTBO_MAX_HEADER_SIZE,
-        unit: "bytes",
-      },
-      {
-        name: "ANDROID_DTBO_MAX_ENTRY_SIZE",
-        limit: ANDROID_DTBO_MAX_ENTRY_SIZE,
-        unit: "bytes",
-      },
-      {
-        name: "ANDROID_DTBO_MAX_ENTRY_COUNT",
-        limit: ANDROID_DTBO_MAX_ENTRY_COUNT,
-        unit: "entries",
-      },
-    ] satisfies readonly AndroidDtboFixedLimit[]
-  ).map((ceiling) => [ceiling.name, ceiling]),
-);
+export const ANDROID_DTBO_LIMITS = {
+  entryTableBytes: {
+    name: "Android DTBO entry table bytes",
+    parameter: "artifact_limits.android_dtbo.entry_table_bytes",
+    maximum: DEFAULT_ANDROID_DTBO_READER_LIMITS.entry_table_bytes,
+    unit: "bytes",
+  },
+  entryCount: {
+    name: "Android DTBO entry count",
+    parameter: "artifact_limits.android_dtbo.entry_count",
+    maximum: DEFAULT_ANDROID_DTBO_READER_LIMITS.entry_count,
+    unit: "count",
+  },
+} as const satisfies Record<string, AndroidDtboLimitSpec>;
 
 export interface AndroidDtboHeader {
   readonly magic: number;
@@ -114,6 +105,7 @@ export type AndroidDtboParseError =
 export function parseAndroidDtboHeader(
   prefix: Buffer,
   fileSize: number,
+  limits: AndroidDtboReaderLimits = DEFAULT_ANDROID_DTBO_READER_LIMITS,
 ): Result<AndroidDtboHeader, AndroidDtboParseError> {
   if (prefix.byteLength < 4 || fileSize < 4) {
     return err(
@@ -230,21 +222,6 @@ export function parseAndroidDtboHeader(
     );
   }
 
-  if (headerSize > ANDROID_DTBO_MAX_HEADER_SIZE) {
-    return err(
-      decodeLimit(
-        ANDROID_DTBO_FORMAT,
-        `Android DTBO header_size ${headerSize} exceeds fixed allowance (${ANDROID_DTBO_MAX_HEADER_SIZE} bytes).`,
-        {
-          name: "ANDROID_DTBO_MAX_HEADER_SIZE",
-          maximum: ANDROID_DTBO_MAX_HEADER_SIZE,
-          required: headerSize,
-        },
-        { offset: 8, field: "header_size" },
-      ),
-    );
-  }
-
   if (dtEntriesOffset < headerSize) {
     return err(
       malformedInput(
@@ -301,29 +278,29 @@ export function parseAndroidDtboHeader(
     );
   }
 
-  if (dtEntrySize > ANDROID_DTBO_MAX_ENTRY_SIZE) {
+  if (tableSize > limits.entry_table_bytes) {
     return err(
       decodeLimit(
         ANDROID_DTBO_FORMAT,
-        `Android DTBO dt_entry_size ${dtEntrySize} exceeds fixed allowance (${ANDROID_DTBO_MAX_ENTRY_SIZE} bytes).`,
+        `Android DTBO entry table requires ${tableSize} bytes, exceeding ${ANDROID_DTBO_LIMITS.entryTableBytes.parameter} (${limits.entry_table_bytes} bytes).`,
         {
-          name: "ANDROID_DTBO_MAX_ENTRY_SIZE",
-          maximum: ANDROID_DTBO_MAX_ENTRY_SIZE,
-          required: dtEntrySize,
+          name: ANDROID_DTBO_LIMITS.entryTableBytes.name,
+          maximum: limits.entry_table_bytes,
+          required: tableSize,
         },
         { offset: 12, field: "dt_entry_size" },
       ),
     );
   }
 
-  if (dtEntryCount > ANDROID_DTBO_MAX_ENTRY_COUNT) {
+  if (dtEntryCount > limits.entry_count) {
     return err(
       decodeLimit(
         ANDROID_DTBO_FORMAT,
-        `Android DTBO dt_entry_count ${dtEntryCount} exceeds fixed allowance (${ANDROID_DTBO_MAX_ENTRY_COUNT} entries).`,
+        `Android DTBO dt_entry_count ${dtEntryCount} exceeds ${ANDROID_DTBO_LIMITS.entryCount.parameter} (${limits.entry_count} entries).`,
         {
-          name: "ANDROID_DTBO_MAX_ENTRY_COUNT",
-          maximum: ANDROID_DTBO_MAX_ENTRY_COUNT,
+          name: ANDROID_DTBO_LIMITS.entryCount.name,
+          maximum: limits.entry_count,
           required: dtEntryCount,
         },
         { offset: 16, field: "dt_entry_count" },

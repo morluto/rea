@@ -10,16 +10,16 @@ overlaying, or executing any binary code.
 
 The container begins with a big-endian 32-byte `dt_table_header`:
 
-| Header field        | Purpose                                                                                 |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| `magic`             | Must be `0xd7b7ab1e`                                                                    |
-| `total_size`        | Declared container byte extent (`>= header_size`, `<= file size`)                       |
-| `header_size`       | Must be at least 32 bytes (bounded by `ANDROID_DTBO_MAX_HEADER_SIZE`)                   |
-| `dt_entry_size`     | Must be at least 32 bytes when entries exist (bounded by `ANDROID_DTBO_MAX_ENTRY_SIZE`) |
-| `dt_entry_count`    | Entry table row count (bounded by `ANDROID_DTBO_MAX_ENTRY_COUNT`)                       |
-| `dt_entries_offset` | Table start (`>= header_size`, fits within `total_size`)                                |
-| `page_size`         | Flash page alignment declared by the builder                                            |
-| `version`           | Table revision (`0` or `1`)                                                             |
+| Header field        | Purpose                                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `magic`             | Must be `0xd7b7ab1e`                                                                                       |
+| `total_size`        | Declared container byte extent (`>= header_size`, `<= file size`)                                          |
+| `header_size`       | Must be at least 32 bytes (bounded by `total_size` and `dt_entries_offset`; only 32 header bytes are read) |
+| `dt_entry_size`     | Must be at least 32 bytes when entries exist                                                               |
+| `dt_entry_count`    | Entry table row count                                                                                      |
+| `dt_entries_offset` | Table start (`>= header_size`, fits within `total_size`)                                                   |
+| `page_size`         | Flash page alignment declared by the builder                                                               |
+| `version`           | Table revision (`0` or `1`)                                                                                |
 
 Each `dt_table_entry` row yields an entry named `dtbo-<index>.dtbo` unless
 `dt_size` is `0` (empty rows are omitted and noted in limitations):
@@ -58,17 +58,28 @@ When one or more uncompressed entries start with `0xd00dfeed`, inspection probes
 propose `extract_artifact` followed by `inspect_devicetree` on the extracted
 `.dtbo` files (see [Flattened devicetree inspection](devicetree.md)).
 
-## Bounds, overlap checks, and refusals
+## Bounds, overlap checks, and admission limits
 
 - `dt_table_header` version other than `0` or `1` returns an unsupported-input
   refusal (`version`).
 - Files shorter than the 32-byte header, declared `header_size`, declared
   `total_size`, or entry table return a truncated refusal before entry
-  capacities are applied.
-- Declared table dimensions are checked against `total_size` before fixed
-  parser ceilings (`64 KiB` `header_size`, `4096` `dt_entry_size`, `4096`
-  `dt_entry_count`).
+  admission limits are applied.
+- `header_size` and `dt_entry_size` are bounded by intrinsic format invariants
+  and declared `total_size` / file size; the reader reads only 32 bytes from
+  `dt_table_header` and 32 decoded bytes per row.
 - Every non-empty entry payload is verified not to overlap `dt_table_header`, the
   `dt_table_entry` table, any other non-empty entry payload, or `total_size`.
+- Table size and row count are bounded by caller-adjustable per-call controls in
+  `artifact_limits.android_dtbo` (defaults: `entry_table_bytes = 16777216`,
+  `entry_count = 4096`):
+  - `artifact_limits.android_dtbo.entry_table_bytes` bounds the buffered
+    `dt_entry_count * dt_entry_size` read (`bytes`, up to Node string/buffer
+    representation capacity).
+  - `artifact_limits.android_dtbo.entry_count` bounds `dt_entry_count`
+    (`count`).
+  - Refusals carry `details.reader_limit` naming the exact parameter and allowed
+    range so callers can raise it on the next call (for example,
+    `--artifact-limits '{"android_dtbo":{"entry_count":8192}}'`).
 - Standalone DTBO partition images are distinct from single `0xd00dfeed`
   devicetrees and Android boot/vendor_boot images (see [Android boot and vendor_boot images](android-boot-image.md)).

@@ -33,12 +33,23 @@ it("inventories and extracts an Android DTBO image through compiled MCP", async 
       result: { kind: "archive", format: "android-dtbo", architecture: null },
     });
 
-    const reply = await call("inspect_artifact", {});
+    const limited = await call("inspect_artifact", {
+      artifact_limits: { android_dtbo: { entry_count: 1 } },
+    });
+    expect(limited.isError).toBe(true);
+    expect(JSON.stringify(limited)).toContain(
+      "artifact_limits.android_dtbo.entry_count",
+    );
+
+    const reply = await call("inspect_artifact", {
+      artifact_limits: { android_dtbo: { entry_count: 2 } },
+    });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(
       parseEvidence(reply.structuredContent).normalized_result,
     );
     const inventory = inspection.substeps[0]!.evidence.normalized_result;
+    expect(inventory.effective_limits?.android_dtbo.entry_count).toBe(2);
     expect(inventory.coverage.status).toBe("complete");
     expect(inventory.occurrences).toContainEqual(
       expect.objectContaining({
@@ -116,27 +127,30 @@ it("reports explicit compression and FDT-magic limitations for v1 DTBO entries v
     REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
   });
 
-  const opened = await call("open_binary", { path });
-  expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-  const reply = await call("inspect_artifact", {});
-  expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-  const inspection = artifactInspectionResultSchema.parse(
-    parseEvidence(reply.structuredContent).normalized_result,
-  );
-  const inventory = inspection.substeps[0]!.evidence.normalized_result;
-  expect(inventory.occurrences).toContainEqual(
-    expect.objectContaining({
-      logical_path: "dtbo-1.dtbo",
-      format_metadata: expect.objectContaining({
-        kind: "android-dtbo-entry",
-        compression: "gzip",
-        flags: 2,
-        fdt_magic_valid: false,
+  try {
+    const opened = await call("open_binary", { path });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const reply = await call("inspect_artifact", {});
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(reply.structuredContent).normalized_result,
+    );
+    const inventory = inspection.substeps[0]!.evidence.normalized_result;
+    expect(inventory.occurrences).toContainEqual(
+      expect.objectContaining({
+        logical_path: "dtbo-1.dtbo",
+        format_metadata: expect.objectContaining({
+          kind: "android-dtbo-entry",
+          compression: "gzip",
+          flags: 2,
+          fdt_magic_valid: false,
+        }),
       }),
-    }),
-  );
-  expect(
-    inventory.limitations.some((line) => line.includes("gzip compression")),
-  ).toBe(true);
-  await call("close_binary", {});
+    );
+    expect(
+      inventory.limitations.some((line) => line.includes("gzip compression")),
+    ).toBe(true);
+  } finally {
+    await call("close_binary", {});
+  }
 });

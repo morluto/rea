@@ -9,10 +9,8 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
-import {
-  ANDROID_DTBO_MAGIC,
-  ANDROID_DTBO_MAX_ENTRY_COUNT,
-} from "../../src/domain/firmware/androidDtboFormat.js";
+import { DEFAULT_ANDROID_DTBO_READER_LIMITS } from "../../src/domain/artifactReaderLimits.js";
+import { ANDROID_DTBO_MAGIC } from "../../src/domain/firmware/androidDtboFormat.js";
 import {
   buildSyntheticAndroidDtbo,
   sampleAndroidDtboV0,
@@ -97,7 +95,7 @@ cliTest(
 );
 
 cliTest(
-  "surfaces v1 DTBO compression/magic limitations and rejects over-limit DTBO tables cleanly",
+  "surfaces v1 DTBO compression/magic limitations, rejects overlapping tables, and admits raised artifact_limits",
   async ({ cli }) => {
     const directory = await createTestTempDirectory("rea-android-dtbo-v1-cli-");
     const mixed = sampleAndroidDtboV1Mixed();
@@ -139,14 +137,19 @@ cliTest(
       true,
     );
 
-    const overCountSize = 32 + (ANDROID_DTBO_MAX_ENTRY_COUNT + 1) * 32;
+    const defaultCount = DEFAULT_ANDROID_DTBO_READER_LIMITS.entry_count;
+    const overCountSize = 32 + (defaultCount + 1) * 32;
     const overLimit = Buffer.alloc(overCountSize);
     overLimit.writeUInt32BE(ANDROID_DTBO_MAGIC, 0);
     overLimit.writeUInt32BE(overCountSize, 4);
     overLimit.writeUInt32BE(32, 8);
     overLimit.writeUInt32BE(32, 12);
-    overLimit.writeUInt32BE(ANDROID_DTBO_MAX_ENTRY_COUNT + 1, 16);
+    overLimit.writeUInt32BE(defaultCount + 1, 16);
     overLimit.writeUInt32BE(32, 20);
+    for (let i = 0; i < defaultCount + 1; i++) {
+      overLimit.writeUInt32BE(0, 32 + i * 32);
+      overLimit.writeUInt32BE(overCountSize, 32 + i * 32 + 4);
+    }
     const overLimitPath = join(directory, "over-limit.dtbo");
     await writeFile(overLimitPath, overLimit);
 
@@ -154,8 +157,62 @@ cliTest(
       arguments: ["inspect-artifact", overLimitPath, "--json"],
     });
     expect(refused.exitCode).not.toBe(0);
+    expect(refused.json).toMatchObject({
+      details: {
+        reader_limit: {
+          parameter: "artifact_limits.android_dtbo.entry_count",
+          effective_value: defaultCount,
+          unit: "count",
+          required_value: defaultCount + 1,
+          can_increase: true,
+        },
+      },
+    });
     expect(refused.stderr + refused.stdout).toContain(
-      "ANDROID_DTBO_MAX_ENTRY_COUNT",
+      "artifact_limits.android_dtbo.entry_count",
+    );
+
+    const admitted = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        overLimitPath,
+        "--artifact-limits",
+        JSON.stringify({ android_dtbo: { entry_count: defaultCount + 1 } }),
+        "--json",
+      ],
+    });
+    expect(admitted.exitCode, admitted.stdout + admitted.stderr).toBe(0);
+    const admittedGraph = artifactInventoryResultSchema.parse(
+      artifactInspectionResultSchema.parse(
+        parseEvidence(admitted.json).normalized_result,
+      ).substeps[0]?.evidence.normalized_result,
+    );
+    expect(admittedGraph.effective_limits?.android_dtbo.entry_count).toBe(
+      defaultCount + 1,
+    );
+
+    const tableRefused = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        mixedPath,
+        "--artifact-limits",
+        JSON.stringify({ android_dtbo: { entry_table_bytes: 32 } }),
+        "--json",
+      ],
+    });
+    expect(tableRefused.exitCode).not.toBe(0);
+    expect(tableRefused.json).toMatchObject({
+      details: {
+        reader_limit: {
+          parameter: "artifact_limits.android_dtbo.entry_table_bytes",
+          effective_value: 32,
+          unit: "bytes",
+          can_increase: true,
+        },
+      },
+    });
+    expect(tableRefused.stderr + tableRefused.stdout).toContain(
+      "artifact_limits.android_dtbo.entry_table_bytes",
     );
 
     const badTable = buildSyntheticAndroidDtbo({

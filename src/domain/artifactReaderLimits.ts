@@ -93,6 +93,18 @@ export const iso9660ReaderLimitsSchema = z.strictObject({
 });
 export type Iso9660ReaderLimits = z.output<typeof iso9660ReaderLimitsSchema>;
 
+export const DEFAULT_ANDROID_DTBO_READER_LIMITS = {
+  entry_count: 4096,
+  entry_table_bytes: 16 * 1024 * 1024,
+};
+export const androidDtboReaderLimitsSchema = z.strictObject({
+  entry_count: count,
+  entry_table_bytes: representedBytes,
+});
+export type AndroidDtboReaderLimits = z.output<
+  typeof androidDtboReaderLimitsSchema
+>;
+
 /** Input selections preserve omission; only the producing operation resolves defaults. */
 export const artifactReaderLimitsInputSchema = z.strictObject({
   bun: z
@@ -179,6 +191,17 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `ISO 9660 admission; omitted fields use ${JSON.stringify(DEFAULT_ISO9660_READER_LIMITS)}. Descriptor count bounds the volume descriptor set; directory depth, record count, directory bytes and path bytes bound directory-tree traversal.`,
     ),
+  android_dtbo: z
+    .strictObject({
+      entry_count:
+        androidDtboReaderLimitsSchema.shape.entry_count.exactOptional(),
+      entry_table_bytes:
+        androidDtboReaderLimitsSchema.shape.entry_table_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android DTBO admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_DTBO_READER_LIMITS)}. Entry count bounds parsed dt_table_entry rows and child entries; entry table bytes bound the buffered dt_table_entry table read.`,
+    ),
   expanded_bytes: bytes
     .exactOptional()
     .describe(
@@ -194,6 +217,7 @@ export const artifactReaderLimitsSchema = z.strictObject({
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
+  android_dtbo: androidDtboReaderLimitsSchema,
   expanded_bytes: bytes.exactOptional(),
 });
 export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
@@ -209,6 +233,10 @@ export const resolveArtifactReaderLimits = (
   node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS, ...selected?.node_sea },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
+  android_dtbo: {
+    ...DEFAULT_ANDROID_DTBO_READER_LIMITS,
+    ...selected?.android_dtbo,
+  },
   ...(selected?.expanded_bytes === undefined
     ? {}
     : { expanded_bytes: selected.expanded_bytes }),
@@ -240,6 +268,7 @@ export const artifactReaderLimitMaximum = (
           "artifact_limits.bun.representation_bytes",
           "artifact_limits.dotnet_bundle.string_bytes",
           "artifact_limits.godot.directory_bytes",
+          "artifact_limits.android_dtbo.entry_table_bytes",
         ].includes(parameter)
       ? bufferConstants.MAX_STRING_LENGTH
       : Number.MAX_SAFE_INTEGER;
