@@ -6,6 +6,7 @@ import {
   immutableJsonSnapshotMember,
 } from "./immutableJson.js";
 import {
+  artifactCrc32PairSchema,
   artifactDfuCrc32PairSchema,
   artifactIntegrityPairOf,
   artifactSha256PairSchema,
@@ -72,6 +73,7 @@ const inspectionContradictionSchema = z.union([
   inspectionContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   inspectionContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   inspectionContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
+  inspectionContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
 ]);
 
 const nextProbeSchema = z.strictObject({

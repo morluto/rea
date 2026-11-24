@@ -12,16 +12,13 @@ import {
   RegularFileCleanupFailure,
   RegularFileCancelled,
   regularFileCancellation,
-  withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 
 import { stat } from "node:fs/promises";
 import {
-  assertRegularFileActive,
   sameRegularFileState,
   type RegularFileState,
 } from "../filesystem/RegularFile.js";
-import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 
 import type {
   AnalysisProfileResolution,
@@ -41,7 +38,6 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -50,8 +46,6 @@ import {
   type MachoTargetSelection,
 } from "../domain/apple/machoTargetSelection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { machoContainerKindFromMagic } from "../domain/apple/machoContainer.js";
-import { BinaryReader } from "../domain/binaryContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 import {
@@ -103,31 +97,10 @@ const resolveHopperAnalysisProfileInScope = async (
 ): Promise<Result<AnalysisProfileResolution, AnalysisError>> => {
   if (target.kind !== "executable" && target.kind !== "database")
     return ok({ profile: null });
-  let machoContainer: "thin" | "fat32" | "fat64" | undefined;
-  if (target.kind === "executable" && isMachOFormat(target.format)) {
-    const header = await readMachoMagic(
-      target.path,
-      options.resourceScope,
-      options.signal,
-    );
-    if (!header.ok) return header;
-    const observed = machoContainerKindFromMagic(header.value);
-    if (
-      observed === null ||
-      (observed === "thin") !== (target.format === "mach-o")
-    )
-      return err(
-        new BinaryTargetError(
-          target.path,
-          "The selected file's container signature disagrees with its admitted Mach-O format. Open the stable source again.",
-        ),
-      );
-    machoContainer = observed;
-  }
   let preparedImage: HopperMachOImage | undefined;
   if (
     target.kind === "executable" &&
-    machoContainer !== undefined &&
+    isMachOFormat(target.format) &&
     options.loaderArgsOverride.length === 0
   ) {
     const resolved = await resolveHopperMachOImage(target, {
@@ -140,6 +113,16 @@ const resolveHopperAnalysisProfileInScope = async (
     if (!resolved.ok) return resolved;
     preparedImage = resolved.value;
   }
+  const machoContainer: "thin" | "fat" | "fat32" | "fat64" | undefined =
+    target.kind === "executable" && target.format === "mach-o"
+      ? "thin"
+      : target.kind === "executable" && target.format === "mach-o-universal"
+        ? preparedImage !== undefined
+          ? preparedImage.method === "fat64_thin_slice"
+            ? "fat64"
+            : "fat32"
+          : (target.universalContainerKind ?? "fat")
+        : undefined;
   let targetSelection: MachoTargetSelection | undefined;
   if (preparedImage?.method === "thin_verified_copy") {
     targetSelection = machoTargetSelectionSchema.parse({
@@ -265,7 +248,7 @@ export const hopperDeclinedArchitectureReason = (
 /** Derive Hopper's complete non-interactive CLI loader selection. */
 export const hopperLoaderArgsForTarget = (
   target: BinaryTarget,
-  machoContainer?: "thin" | "fat32" | "fat64",
+  machoContainer?: "thin" | "fat" | "fat32" | "fat64",
 ): Result<
   readonly string[],
   ProviderAdapterError | AnalysisCapabilityUnavailableError
@@ -295,7 +278,9 @@ export const hopperLoaderArgsForTarget = (
         ),
       );
     return ok(
-      machoContainer === "fat32" || machoContainer === "fat64"
+      machoContainer === "fat" ||
+        machoContainer === "fat32" ||
+        machoContainer === "fat64"
         ? ["-l", "FAT", flag, "-l", "Mach-O"]
         : ["-l", "Mach-O", flag],
     );
@@ -313,35 +298,6 @@ export const hopperLoaderArgsForTarget = (
       );
   }
 };
-
-const readMachoMagic = (
-  path: string,
-  resources: RetainedResourceScope,
-  signal?: AbortSignal,
-): Promise<Result<number, AnalysisError>> =>
-  readHopperProfileFile(
-    { path, kind: "header" },
-    resources,
-    signal,
-    (options) =>
-      withOwnedRegularFile(path, options, async ({ handle }) => {
-        const magicBytes = 4;
-        const bytes = await readFileHandleRange(
-          handle,
-          0,
-          magicBytes,
-          (read) => {
-            if (read < magicBytes) assertRegularFileActive(signal);
-          },
-        );
-        if (bytes.length < magicBytes)
-          throw new BinaryTargetError(
-            path,
-            "Mach-O header became truncated before Hopper loader selection",
-          );
-        return new BinaryReader(bytes, false, "Mach-O").u32(0);
-      }),
-  );
 
 const verifiedLauncherDigests = new Map<
   string,
@@ -375,9 +331,9 @@ const sha256File = async (
   return ok(sha256);
 };
 
-/** Both profile reads retain the exact descriptor through final close and retry. */
+/** Retain the launcher descriptor through final close and retry. */
 const readHopperProfileFile = async <Value>(
-  source: { readonly path: string; readonly kind: "header" | "launcher" },
+  source: { readonly path: string; readonly kind: "launcher" },
   resources: RetainedResourceScope,
   signal: AbortSignal | undefined,
   read: (options: StableFileHashOptions) => Promise<Value>,
@@ -433,28 +389,22 @@ const readHopperProfileFile = async <Value>(
           })
         : physical instanceof AnalysisError
           ? physical
-          : kind === "header"
-            ? new BinaryTargetError(
-                path,
-                `Cannot read the Mach-O container header: ${errorMessage(physical)}`,
-                { cause: physical, cleanup },
-              )
-            : new ProviderAdapterError("hopper", "resolve_analysis_profile", {
-                cause: physical,
-                cleanup,
-                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${errorMessage(physical)}`,
-                remediationAction:
-                  "Select a readable regular Hopper launcher, then retry provider selection.",
-                diagnostics: {
-                  launcher_path: path,
-                  ...diagnostics,
-                  system_code:
-                    physical instanceof Error &&
-                    typeof Reflect.get(physical, "code") === "string"
-                      ? (Reflect.get(physical, "code") as string)
-                      : null,
-                },
-              });
+          : new ProviderAdapterError("hopper", "resolve_analysis_profile", {
+              cause: physical,
+              cleanup,
+              userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${errorMessage(physical)}`,
+              remediationAction:
+                "Select a readable regular Hopper launcher, then retry provider selection.",
+              diagnostics: {
+                launcher_path: path,
+                ...diagnostics,
+                system_code:
+                  physical instanceof Error &&
+                  typeof Reflect.get(physical, "code") === "string"
+                    ? (Reflect.get(physical, "code") as string)
+                    : null,
+              },
+            });
     if (cause instanceof RegularFileCleanupFailure) {
       const cleanupFailure = new ProviderCleanupError(
         "hopper",
