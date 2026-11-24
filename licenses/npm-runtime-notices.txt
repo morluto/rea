@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): 75d15d8402f16a1795e7ad58ef82298f2d5a143065ead92ac5bfa836b8169082
+Runtime dependency fingerprint (SHA-256): 83eead438ee1f2ffed487e3af57609893521ecc83fe6b1a9275820b36e63f736
 
 ===== @babel/helper-string-parser@8.0.6 =====
 Declared license: MIT
@@ -2332,10 +2332,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== canonicalize@3.0.0 =====
+===== canonicalize@5.1.0 =====
 Declared license: Apache-2.0
-Archive: https://registry.npmjs.org/canonicalize/-/canonicalize-3.0.0.tgz
-Integrity: sha512-yYLfHyDMIXRyRqsKBRLX023riFLpXY2YOfdtqKXZRZy9qsfOJ9U+4F9YZL7MEzL5+ziN2x2nlBvY/Voi3EBljA==
+Archive: https://registry.npmjs.org/canonicalize/-/canonicalize-5.1.0.tgz
+Integrity: sha512-bab9+WefZljqQ8jT0qRwVmTyzAUU63K97QIQD3agynIBrb6sa5M2eAy8Hv8K3p4V9+ONVYZKtGYl4Dg+/5Gumw==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---

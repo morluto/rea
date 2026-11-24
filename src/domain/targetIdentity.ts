@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "./canonicalDigest.js";
 import { z } from "zod";
 
 import type {
@@ -260,7 +260,7 @@ export const binaryTargetIdentity = (
 
 /** The only comparison of two target identities: an RFC 8785 canonical digest. */
 export const targetIdentityKey = (identity: TargetIdentity): string => {
-  const encoded = canonicalize(identity);
+  const encoded = serializeCanonicalValue(identity);
   if (encoded === undefined)
     throw new TypeError("RFC 8785 canonicalization rejected a target identity");
   return `target_${sha256Hex(encoded)}`;
