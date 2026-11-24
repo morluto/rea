@@ -950,8 +950,7 @@ rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/righ
 rea compare left.json right.json --record_pairs '[{"left_evidence_id":"ev_<left-sha256>","right_evidence_id":"ev_<right-sha256>"}]' --json
 ```
 
-Migration: replace `rea compare-bundles` with `rea compare`; the former command
-has been removed. The MCP tool remains `compare_bundles`.
+`rea compare` is the CLI form of the MCP `compare_bundles` tool.
 
 `rea evidence-import` performs process-local bundle authentication and
 validation, reporting record and Unknown-revision counts. `unknowns_added`
@@ -1042,8 +1041,7 @@ supplying a bundle does not make incompatible Evidence valid for a workflow.
 [member inspection options](#managed-assemblies-net) it applies to both sides,
 and `compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
 option above selects an input. Producers write a new bundle with
-`--evidence_output`; `inspect-managed-members` spelled that option
-`--evidence-bundle` in earlier releases.
+`--evidence_output`.
 File selectors remain available only on contracts that explicitly support them.
 
 Compare two artifact inventories with `compare-artifacts`. It takes the same
@@ -1237,8 +1235,8 @@ user permissions; consult the chosen guide for host requirements and effects.
 ## Start the MCP server
 
 Start REA's MCP server with `rea mcp` (or `rea --mcp`). The per-command
-`rea <command> --mcp` entry has been removed; it returns `MCP_MODE_REMOVED`
-and points to `rea mcp`. This is a breaking change from the earlier CLI.
+`rea <command> --mcp` form returns `MCP_MODE_REMOVED` and points to
+`rea mcp`.
 
 ## Serve MCP over streamable HTTP
 
@@ -1508,10 +1506,8 @@ does not fall back to global settings.
 
 `rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
 executable position is refused before any settings change; configure remote MCP
-transport in the client's own settings. Earlier delegated registration could
-interpret a URL as remote transport for some clients while storing it as an
-executable for Amp. That inconsistent URL interpretation and package acquisition
-are removed. Launcher arguments that happen to contain URLs remain arguments.
+transport in the client's own settings. Launcher arguments that happen to
+contain URLs remain arguments.
 
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
@@ -1620,8 +1616,6 @@ Cutter when available. This is separate from `--format json`, which selects the
 CLI result representation; the global `--json` flag selects that same CLI
 representation.
 
-Cutter no longer accepts command-local `--json=true` or `--json=false`.
-Replace these with `--json-output=true` or `--json-output=false`, respectively.
 Combine `--json-output` with bare `--json` when both Cutter command output and
 the CLI result should use JSON; either argument order is accepted.
 
