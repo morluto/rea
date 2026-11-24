@@ -49,7 +49,7 @@ it("inventories and extracts an Android DTBO image through compiled MCP", async 
       parseEvidence(reply.structuredContent).normalized_result,
     );
     const inventory = inspection.substeps[0]!.evidence.normalized_result;
-    expect(inventory.effective_limits?.android_dtbo.entry_count).toBe(2);
+    expect(inventory.effective_limits?.android_dtbo?.entry_count).toBe(2);
     expect(inventory.coverage.status).toBe("complete");
     expect(inventory.occurrences).toContainEqual(
       expect.objectContaining({

@@ -187,7 +187,7 @@ cliTest(
         parseEvidence(admitted.json).normalized_result,
       ).substeps[0]?.evidence.normalized_result,
     );
-    expect(admittedGraph.effective_limits?.android_dtbo.entry_count).toBe(
+    expect(admittedGraph.effective_limits?.android_dtbo?.entry_count).toBe(
       defaultCount + 1,
     );
 

@@ -16,7 +16,7 @@ import { prefixedDigestSchema } from "../digests.js";
 import type { ArtifactOccurrence } from "../artifactGraph.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { z } from "zod";
-import { artifactReaderLimitsSchema } from "../artifactReaderLimits.js";
+import { recordedArtifactReaderLimitsSchema } from "../artifactReaderLimits.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
@@ -121,7 +121,7 @@ export const artifactInventoryItemsSchema = z.array(
 );
 
 export const artifactInventorySummarySchema = z.strictObject({
-  effective_limits: artifactReaderLimitsSchema.exactOptional(),
+  effective_limits: recordedArtifactReaderLimitsSchema.exactOptional(),
   source_coverage: artifactInventoryCoverageSchema.exactOptional(),
   available_hash_status_counts: z
     .strictObject({

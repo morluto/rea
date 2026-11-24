@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { artifactInventoryResultSchema } from "./artifactGraph.js";
+import {
+  artifactExtractionResultSchema,
+  artifactInventoryResultSchema,
+} from "./artifactGraph.js";
+import {
+  artifactReaderLimitsSchema,
+  DEFAULT_ANDROID_DTBO_READER_LIMITS,
+  DEFAULT_BUN_READER_LIMITS,
+  DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+  DEFAULT_GODOT_READER_LIMITS,
+  DEFAULT_ISO9660_READER_LIMITS,
+  DEFAULT_NODE_SEA_READER_LIMITS,
+  resolveArtifactReaderLimits,
+} from "./artifactReaderLimits.js";
 
 describe("artifact graph path and provenance fields", () => {
   it("preserves long archive paths and command arguments inline", () => {
@@ -110,5 +123,73 @@ describe("artifact graph path and provenance fields", () => {
         integrity_contradictions: [],
       }).success,
     ).toBe(true);
+  });
+
+  it("reads historical effective_limits without fabricating android_dtbo while resolveArtifactReaderLimits populates it", () => {
+    const historicalLimits = {
+      bun: { ...DEFAULT_BUN_READER_LIMITS },
+      dotnet_bundle: { ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS },
+      node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS },
+      godot: { ...DEFAULT_GODOT_READER_LIMITS },
+      iso9660: { ...DEFAULT_ISO9660_READER_LIMITS },
+    };
+    const manifest = {
+      manifest_id: `agm_${"b".repeat(64)}`,
+      root_artifact_id: `art_${"a".repeat(64)}`,
+      root_sha256: "c".repeat(64),
+      root_format: "zip" as const,
+      graph_sha256: "d".repeat(64),
+      node_count: 1,
+      occurrence_count: 1,
+      edge_count: 0,
+    };
+
+    const inventory = artifactInventoryResultSchema.parse({
+      effective_limits: historicalLimits,
+      manifest,
+      nodes: [],
+      occurrences: [],
+      edges: [],
+      provenance: [],
+      integrity_contradictions: [],
+      coverage: { scope: "root", status: "complete" },
+      limitations: [],
+    });
+    expect(inventory.effective_limits).toEqual(historicalLimits);
+    expect(Object.hasOwn(inventory.effective_limits!, "android_dtbo")).toBe(
+      false,
+    );
+
+    const extraction = artifactExtractionResultSchema.parse({
+      effective_limits: historicalLimits,
+      manifest,
+      extraction_manifest: {
+        extraction_id: `aex_${"e".repeat(64)}`,
+        source_manifest_id: manifest.manifest_id,
+        selected_occurrence_ids: [],
+        files_sha256: "f".repeat(64),
+        output_root_alias: "$OUTPUT_ROOT",
+      },
+      output_root: "output-root",
+      artifacts: [],
+      containment_verified: true,
+      cleanup: { attempted: true, verified: true, residual_paths: [] },
+      coverage: { scope: "container-entries", status: "complete" },
+      provenance: [],
+      integrity_contradictions: [],
+      limitations: [],
+    });
+    expect(extraction.effective_limits).toEqual(historicalLimits);
+    expect(Object.hasOwn(extraction.effective_limits!, "android_dtbo")).toBe(
+      false,
+    );
+
+    const resolved = resolveArtifactReaderLimits();
+    expect(artifactReaderLimitsSchema.parse(resolved).android_dtbo).toEqual(
+      DEFAULT_ANDROID_DTBO_READER_LIMITS,
+    );
+    expect(artifactReaderLimitsSchema.safeParse(historicalLimits).success).toBe(
+      false,
+    );
   });
 });

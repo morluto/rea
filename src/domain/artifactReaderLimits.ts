@@ -222,6 +222,21 @@ export const artifactReaderLimitsSchema = z.strictObject({
 });
 export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
 
+/**
+ * Persisted `effective_limits` read from saved inventories and extractions.
+ * Newly added format groups stay optional here so saved historical Evidence
+ * without `android_dtbo` remains readable without fabricating defaults.
+ */
+export const recordedArtifactReaderLimitsSchema = z.strictObject({
+  bun: bunReaderLimitsSchema,
+  dotnet_bundle: dotnetBundleReaderLimitsSchema,
+  node_sea: nodeSeaReaderLimitsSchema,
+  godot: godotReaderLimitsSchema,
+  iso9660: iso9660ReaderLimitsSchema,
+  android_dtbo: androidDtboReaderLimitsSchema.exactOptional(),
+  expanded_bytes: bytes.exactOptional(),
+});
+
 export const resolveArtifactReaderLimits = (
   selected?: ArtifactReaderLimitsInput,
 ): ArtifactReaderLimits => ({
