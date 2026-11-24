@@ -1151,6 +1151,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-browser-extension": inProcess(
+    covered(
+      test(
+        "tests/acceptance/browserExtensionCli.test.ts",
+        "reads an unpacked manifest.json through CLI and MCP with the same declared surface",
+      ),
+    ),
+    covered(
+      test(
+        "src/browserExtension/BrowserExtensionProvider.test.ts",
+        "reports a caller cancellation before reading as cancelled",
+      ),
+    ),
+  ),
   "rea-cdp-browser": {
     ownership: "connection",
     stages: {
