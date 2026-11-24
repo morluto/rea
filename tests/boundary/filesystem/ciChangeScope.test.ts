@@ -27,6 +27,7 @@ import {
 import {
   executeWorkflowFixture as execFileAsync,
   workflowGit as git,
+  workflowFixtureEnvironment,
 } from "../../support/workflowGit.js";
 
 async function commit(directory: string) {
@@ -117,7 +118,7 @@ async function runPlanScript(
     {
       cwd: directory,
       env: {
-        ...process.env,
+        ...workflowFixtureEnvironment(),
         BASE_SHA: base,
         HEAD_SHA: head,
         GITHUB_SHA: head,
@@ -946,7 +947,7 @@ it("selects a completed CI ancestor rather than a foreign or non-terminal run", 
     {
       cwd: directory,
       env: {
-        ...process.env,
+        ...workflowFixtureEnvironment(),
         PATH: `${bin}:${process.env.PATH}`,
         GH_FIXTURE_RESPONSE: response,
         CI_REPOSITORY: "owner/repo",
@@ -979,7 +980,7 @@ it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
     {
       cwd: directory,
       env: {
-        ...process.env,
+        ...workflowFixtureEnvironment(),
         PATH: `${bin}:${process.env.PATH}`,
         CI_REPOSITORY: "owner/repo",
         CI_DEFAULT_BRANCH: "main",
@@ -1879,7 +1880,7 @@ it.each(["evm", "browser"])(
     const run = (result: string) =>
       execFileAsync(process.execPath, [command], {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           CI_JOBS: JSON.stringify({ ...jobs, [scope]: { result } }),
         },
       });
