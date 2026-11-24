@@ -93,6 +93,14 @@ page runs a fresh discovery on that device.
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
+`inspect_elf_notes` and `inspect_elf_debug_link` refuse a file above
+`max_file_bytes`, a decoded section-name table above it, or more notes than
+`max_entries` with `details.limit` naming that field
+(`control_kind: "parameter"`), its effective value, default and range. `inspect_il2cpp_metadata`
+accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
+index of `binary_path`; its refusal reports the same kind of limit. See
+[IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
+
 ### Static reader read allowance
 
 `inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
@@ -302,6 +310,23 @@ and raising a provider deadline cannot make the client wait longer.
 
 The failure names the limit and the effective value. Say this release has no
 runtime override, and name what does not raise it. Do not invent a setting.
+
+Every fixed ceiling a refusal declares (`fixedAllowanceOptions`,
+`fixedProducerInputAllowance`, `artifactFixedLimitFailure` or an inline
+`fixedAllowance`) is listed in
+[`fixed-ceiling-registry.json`](https://github.com/morluto/rea/blob/main/scripts/verify/fixed-ceiling-registry.json)
+under its file and allowance, with its class and reason: `format`,
+`protocol`, `representation`, `derived` (grows with the admitted input or
+another control), `forwarding` (relays a ceiling declared elsewhere), or
+`pending` with the issue that tracks giving it a control.
+`npm run lint` runs `scripts/verify/fixed-ceilings.mjs`, which fails on an
+unregistered declaration and on a stale entry. A resource or admission limit
+is not a fixed ceiling: give it a setting or per-call parameter and report
+`details.limit`. The same script counts refusals whose only recovery is an
+authored `remediationAction`, with no `limit`, `fixedAllowance` or
+`measuredExhaustion`, against `scripts/verify/untyped-budget-refusal-baseline.json`;
+that count may only shrink, and `--shrink-baselines` lowers it
+([#14234](https://github.com/morluto/rea/issues/14234)).
 
 JSON values stop at `MAX_JSON_DEPTH` (1000) in
 [`jsonValue.ts`](https://github.com/morluto/rea/blob/main/src/domain/jsonValue.ts):
