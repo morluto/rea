@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **deps:** MCP callers that need every volume, file and section inline must pass detail: "complete" to inspect_uefi_firmware.
 * **limits:** an inspect_il2cpp_metadata refusal at the ELF pointer index reports reported_limits.boundary "virtual-pointer-index-bytes" and details.limit for max_native_index_bytes, and no longer carries a details.refusal fixed_ceiling.
 * **pe:** import and delay-import walks continue to the null descriptor past a short directory Size instead of stopping with a malformed_entry issue, and inspect-pe-resources reports an unsupported optional-header magic as unsupported_target.
 * **desktop:** the desktop application result adds the native family, the ui-framework and runtime-library component categories, new probe operations, a required probe priority and deferred_probes.
@@ -21,6 +22,11 @@
 * **pwntools:** for a request-sourced pwntools input ceiling, details.limit is now a control_kind "parameter" limit instead of a setting limit carrying setting, source, update_mode and scope fields.
 * **uefi:** MCP callers that need every published file inline must pass detail: "complete" to extract_uefi_firmware.
 * **uefi:** MCP callers that need every volume, file and section inline must pass detail: "complete" to inspect_uefi_firmware.
+
+### build
+
+* **deps:** bump write-file-atomic from 7.0.0 to 8.0.0 ([#8134](https://github.com/morluto/rea/issues/8134)) ([05b683b](https://github.com/morluto/rea/commit/05b683b72e8579ab4cf1cbb7181179d27b110965))
+
 
 ### Features
 
@@ -600,6 +606,7 @@
 * **sourcemaps/browser/uefi:** event-driven wait, pre-sorted redaction, O(1) queue ([#13707](https://github.com/morluto/rea/issues/13707)) ([c5efbff](https://github.com/morluto/rea/commit/c5efbffc95646b4f17802b0ebbbddc168e8cbb2d))
 * **sqlite:** reuse stateless TextDecoder codecs and skip redundant truncation scan on short pages ([#13274](https://github.com/morluto/rea/issues/13274)) ([264c398](https://github.com/morluto/rea/commit/264c398c0d3299bb4de5a58e23e7f92637a08cdf))
 * **swift:** streamline symbol inventory classification ([#13902](https://github.com/morluto/rea/issues/13902)) ([78756a5](https://github.com/morluto/rea/commit/78756a52b4949125fd181dc9e0d68e7550a0714b))
+* **test:** classify tracked tests once for project policy checks ([#14331](https://github.com/morluto/rea/issues/14331)) ([eb256b3](https://github.com/morluto/rea/commit/eb256b3ac6ead12c11fe9b52ae1891b57ee8f4da))
 * **tests:** supervise direct vitest scripts through run-exclusive on POSIX ([#14104](https://github.com/morluto/rea/issues/14104)) ([e60777b](https://github.com/morluto/rea/commit/e60777b76fba2a91b67e30e9a6175bd9e77d4ddf))
 * **uefi:** pool framed LZMA worker and fuse single-pass publication ([#13338](https://github.com/morluto/rea/issues/13338)) ([6a20a88](https://github.com/morluto/rea/commit/6a20a88e8149ffe2cd03cd5c1da195defbae652f))
 * **uefi:** skip verified erased padding in NVRAM scans ([#14069](https://github.com/morluto/rea/issues/14069)) ([07b6a3d](https://github.com/morluto/rea/commit/07b6a3dc5f496081c60f4d122d08bad292a21509))
@@ -703,6 +710,7 @@
 * **native:** compose LLDB resolver cleanup through the shared owner ([3af56cc](https://github.com/morluto/rea/commit/3af56cc7d50a5f41ea4753d2d0570082611ee0a4)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **native:** extract NativeAotPeImage from nativeAotPe ([#13998](https://github.com/morluto/rea/issues/13998)) ([4d5b059](https://github.com/morluto/rea/commit/4d5b059c640aa5b690116bdffefba4085a1c3ebd))
 * **native:** extract NativeMacosErrorProjection from NativeMacOSProvider ([#13741](https://github.com/morluto/rea/issues/13741)) ([3306133](https://github.com/morluto/rea/commit/33061332ef3e386a9412841925128160e31bd1a0))
+* **nuget,apk:** adopt ByteSource and drop the NuGet in-memory parse branch ([05b683b](https://github.com/morluto/rea/commit/05b683b72e8579ab4cf1cbb7181179d27b110965))
 * **nuget,apk:** adopt ByteSource and drop the NuGet in-memory parse branch ([a324181](https://github.com/morluto/rea/commit/a324181cccd428618f1bb839121789720fb1395d))
 * **nuget:** select declared manifest occurrences in one pass ([#13402](https://github.com/morluto/rea/issues/13402)) ([4bb5c87](https://github.com/morluto/rea/commit/4bb5c87d2b1a06abcdf26ccf68dfd2551aebd9bd))
 * **pe:** decode certificate BMP and UTF-32 strings through BinaryReader ([6543a3c](https://github.com/morluto/rea/commit/6543a3c1a182aeeb797c3e9e27a3ec887e71d00f)), closes [#11865](https://github.com/morluto/rea/issues/11865)
@@ -764,6 +772,7 @@
 * **firmware:** describe UEFI summaries and views ([89fc51b](https://github.com/morluto/rea/commit/89fc51ba975e630743f2718d7cac3d4d817cc22c))
 * **ghidra:** link the native build steps for Linux arm64 ([dc10161](https://github.com/morluto/rea/commit/dc10161a9e0663c005fffb038e697306ca224482)), closes [#7018](https://github.com/morluto/rea/issues/7018)
 * **github:** require reported verification and factual docs in PR template ([#14130](https://github.com/morluto/rea/issues/14130)) ([a92d502](https://github.com/morluto/rea/commit/a92d5024724333f7169450a321101bb3e9dbd848))
+* **guides:** correct host and runtime claims and prune change notes ([05b683b](https://github.com/morluto/rea/commit/05b683b72e8579ab4cf1cbb7181179d27b110965))
 * **guides:** correct host and runtime claims and prune change notes ([4b5fcc9](https://github.com/morluto/rea/commit/4b5fcc9eab6c70d4e873c4fba6fe10e578623e4d))
 * **guides:** correct host requirements and prune change notes in runtime, web, data guides ([#14197](https://github.com/morluto/rea/issues/14197)) ([4b5fcc9](https://github.com/morluto/rea/commit/4b5fcc9eab6c70d4e873c4fba6fe10e578623e4d))
 * **guides:** correct native and platform guide flags, host limits and stale notes ([#14198](https://github.com/morluto/rea/issues/14198)) ([77b5b76](https://github.com/morluto/rea/commit/77b5b76e99f3f843e9691bee5a0dd616b8a909d8))
