@@ -7,6 +7,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisMalformedTargetError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
@@ -179,7 +180,7 @@ it.each([
     jsonCatalog(sampleCatalog(), {
       patch: (catalog) => delete catalog.m_ProviderIds,
     }),
-    AnalysisInputError,
+    AnalysisMalformedTargetError,
   ],
 ])(
   "maps format failures to typed errors with source identity (%#)",
