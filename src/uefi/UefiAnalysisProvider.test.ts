@@ -32,6 +32,7 @@ import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { GhidraInstallationHost } from "../ghidra/GhidraInstallation.js";
 import {
   ghidraProfileInstallationHost,
+  unavailableGhidraInstallationHost,
   verifiedGhidraJavaObservation,
 } from "../ghidra/GhidraInstallation.fixture.js";
 import { ok as javaProbeOk } from "../domain/result.js";
@@ -5166,30 +5167,36 @@ it("threads complete and partial coverage fact into decompile results", async ()
   await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
   await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
 
-  const provider = new UefiAnalysisProvider();
-  const execComplete = expectOk(
-    await provider.execute(
-      decompileRequest(inDir, outDir1, { include_disassembly: false }),
-    ),
-  );
-  const resComplete = execComplete.value.result as UefiDecompileResult;
-  expect(resComplete.coverage).toBe("complete");
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: unavailableGhidraInstallationHost,
+  });
+  try {
+    const execComplete = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir1, { include_disassembly: false }),
+      ),
+    );
+    const resComplete = execComplete.value.result as UefiDecompileResult;
+    expect(resComplete.coverage).toBe("complete");
 
-  const execPartial = expectOk(
-    await provider.execute(
-      decompileRequest(inDir, outDir2, {
-        max_modules: 1,
-        include_disassembly: false,
-      }),
-    ),
-  );
-  const resPartial = execPartial.value.result as UefiDecompileResult;
-  expect(resPartial.coverage).toBe("partial");
-  expect(resPartial.limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("Decompilation capped at 1 of 2"),
-    ]),
-  );
+    const execPartial = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir2, {
+          max_modules: 1,
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const resPartial = execPartial.value.result as UefiDecompileResult;
+    expect(resPartial.coverage).toBe("partial");
+    expect(resPartial.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Decompilation capped at 1 of 2"),
+      ]),
+    );
+  } finally {
+    await provider.close();
+  }
 });
 
 it("bounds module names in header comments and fallback scaffolding without amplifying buffers", async () => {
@@ -9524,7 +9531,9 @@ it("rejects rooted or escaping manifest payload paths and marks coverage partial
     }),
   );
 
-  const provider = new UefiAnalysisProvider();
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: unavailableGhidraInstallationHost,
+  });
   try {
     const executed = expectOk(
       await provider.execute(
@@ -9579,7 +9588,9 @@ it("preserves manifest metadata for valid payload files starting with two dots l
     }),
   );
 
-  const provider = new UefiAnalysisProvider();
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: unavailableGhidraInstallationHost,
+  });
   try {
     const executed = expectOk(
       await provider.execute(
@@ -9631,7 +9642,9 @@ it("preserves native POSIX payload files containing backslashes without rejectin
     }),
   );
 
-  const provider = new UefiAnalysisProvider();
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: unavailableGhidraInstallationHost,
+  });
   try {
     const executed = expectOk(
       await provider.execute(
