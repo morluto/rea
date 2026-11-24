@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";
@@ -5,6 +6,7 @@ import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatchi
 import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES } from "../../domain/analysisResourceLimits.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
 import {
@@ -27,17 +29,25 @@ const compare = async (input: unknown) => {
 };
 
 it("retains transitive provenance without treating dependencies as native observations and fails closed for a missing ancestor", async () => {
-  const ancestor = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_provenance",
-    parameters: {},
-    result: { provenance: "Synthetic ancestor" },
-  });
-  const dependency = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_dependency",
-    parameters: {},
-    result: { provenance: "Synthetic dependency" },
-    evidenceLinks: [ancestor.evidence_id],
-  });
+  const ancestor = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_provenance",
+      parameters: {},
+      result: { provenance: "Synthetic ancestor" },
+    },
+  );
+  const dependency = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { provenance: "Synthetic dependency" },
+      evidenceLinks: [ancestor.evidence_id],
+    },
+  );
   const left = nativeMatchingInventory(
     "1",
     [{ address: "0x10", value: "main" }],
@@ -74,51 +84,11 @@ it("retains transitive provenance without treating dependencies as native observ
     undefined,
     (id) => (id === dependency.evidence_id ? dependency : undefined),
   );
-  expect(missing.ok).toBe(false);
   if (missing.ok) throw new Error("Missing ancestor accepted");
   expect(missing.error).toMatchObject({
     evidenceId: ancestor.evidence_id,
     reason: "missing",
   });
-});
-
-it("keeps symbol origin unknown when supplied metadata describes a different same-address alias", async () => {
-  const left = unqualifiedInventory("1", [
-    { address: "0x10", value: "reported_name" },
-  ]);
-  const right = unqualifiedInventory("2", [
-    { address: "0x20", value: "reported_name" },
-  ]);
-  const alias = createEvidence(
-    nativeMatchingTarget("1"),
-    nativeMatchingProvider,
-    {
-      operation: "list_names",
-      parameters: {},
-      result: [
-        {
-          address: "0x10",
-          value: "other_alias",
-          symbol: {
-            primary: false,
-            dynamic: false,
-            external: false,
-            type: "function",
-            source: "user_defined",
-          },
-        },
-      ],
-    },
-  );
-  const { report } = await compare({ left, right, left_observations: [alias] });
-  expect(report.summary.matched).toBe(0);
-  const member = report.matches
-    .flatMap((match) => match.left)
-    .find((value) => value.address === "0x10");
-  expect(member?.limitations).toContain(
-    "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
-  );
-  expect(member?.evidence_links).toContain(alias.evidence_id);
 });
 
 it("preserves contradictory symbol origins from inventory/name facts or multiple name observations, independently of byte correspondence", async () => {
@@ -147,11 +117,11 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
     [observe("list_procedures", false), [observe("list_names", true)]],
     [observe("list_procedures", true), [observe("list_names", false)]],
     [
-      nativeMatchingInventory("1", [{ address: "0x10", value: "same_name" }]),
+      unqualifiedInventory("1", [{ address: "0x10", value: "same_name" }]),
       [observe("list_names", false), observe("list_names", true)],
     ],
     [
-      nativeMatchingInventory("1", [{ address: "0x10", value: "same_name" }]),
+      unqualifiedInventory("1", [{ address: "0x10", value: "same_name" }]),
       [observe("list_names", true), observe("list_names", false)],
     ],
   ] as const) {
@@ -172,8 +142,10 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
         withBytes ? "identical-bytes" : null,
       );
       const member = report.matches[0]!.left[0]!;
-      expect(member.limitations).toContain(
-        "Conflicting generated and named symbol-origin observations; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+      expect(member.limitations).toContainEqual(
+        expect.stringMatching(
+          /conflicting generated and named symbol-origin.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
+        ),
       );
       expect(member.limitations.join(" ")).not.toContain(
         "Symbol origin unavailable",
@@ -183,6 +155,40 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
     }
   }
 });
+
+it.each(["literals-only", "omissions-only", "paired", "unsupported"])(
+  "admits Swift literal facts and their coverage together (%s)",
+  async (coverage) => {
+    const detail = nativeMatchingDetails("1", "0x10", "0102", true)[0]!;
+    const dossier = functionDossierSchema.parse(detail.normalized_result);
+    delete dossier.swift_string_literals;
+    delete dossier.swift_string_literal_omissions;
+    const observed = createEvidence(
+      nativeMatchingTarget("1"),
+      nativeMatchingProvider,
+      {
+        operation: "analyze_function",
+        parameters: { procedure: "0x10" },
+        result: {
+          ...dossier,
+          ...(coverage === "literals-only" || coverage === "paired"
+            ? { swift_string_literals: [] }
+            : {}),
+          ...(coverage === "omissions-only" || coverage === "paired"
+            ? { swift_string_literal_omissions: [] }
+            : {}),
+        },
+      },
+    );
+    const result = await matchNativeFunctions({
+      left: nativeMatchingInventory("1", [{ address: "0x10", value: "main" }]),
+      right: nativeMatchingInventory("2", [{ address: "0x20", value: "main" }]),
+      left_observations: [observed],
+    });
+    expect(result.ok).toBe(coverage === "paired" || coverage === "unsupported");
+    if (!result.ok) expect(result.error._tag).toBe("EvidenceIntegrityError");
+  },
+);
 
 it.each(["", "ram:"])(
   "keeps informative %s CFG/call/string fingerprints as unresolved candidates and refuses incomplete structural observations",
@@ -639,37 +645,86 @@ it("composes consistent overlapping and partial byte reads without losing comple
   });
 });
 
-it("does not use generated symbols and preserves literal named FUN_ symbols when producer metadata proves their origin", async () => {
+it("pairs proven literal symbols and preserves unknown or generated origins", async () => {
   const entries = [
     { address: "0x10", value: "FUN_10" },
-    { address: "0x20", value: "apparently_named" },
+    { address: "0x20", value: "dynamic_name" },
+    { address: "0x30", value: "default_name" },
+    { address: "0x40", value: "EntryPoint" },
+    { address: "0x50", value: "reported_name" },
   ];
+  const named = (
+    address: string,
+    value: string,
+    source: "user_defined" | "analysis" | "default",
+    dynamic = false,
+  ) => ({
+    address,
+    value,
+    symbol: {
+      primary: true,
+      dynamic,
+      external: false,
+      type: "function",
+      source,
+    },
+  });
+  const alias = named("0x50", "other_alias", "user_defined");
   const names = (side: "1" | "2") =>
     createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
       operation: "list_names",
       parameters: {},
-      result: entries.map((entry, i) => ({
-        ...entry,
-        symbol: {
-          primary: true,
-          dynamic: i === 1,
-          external: false,
-          type: "function",
-          source: i === 0 ? "user_defined" : "default",
-        },
-      })),
+      result: [
+        named("0x10", "FUN_10", "user_defined"),
+        named("0x20", "dynamic_name", "analysis", true),
+        named("0x30", "default_name", "default"),
+        ...(side === "1"
+          ? [{ ...alias, symbol: { ...alias.symbol, primary: false } }]
+          : []),
+      ],
     });
+  const leftNames = names("1");
+  const rightNames = names("2");
   const { report } = await compare({
     left: unqualifiedInventory("1", entries),
     right: unqualifiedInventory("2", entries),
-    left_observations: [names("1")],
-    right_observations: [names("2")],
+    left_observations: [leftNames],
+    right_observations: [rightNames],
   });
-  expect(report.summary.matched).toBe(1);
-  expect(report.matches[0]?.left[0]?.name).toBe("FUN_10");
-  expect(report.matches[0]?.left[0]?.evidence_links).toContain(
-    names("1").evidence_id,
+  expect(report.summary).toEqual({
+    matched: 1,
+    only_left: 4,
+    only_right: 4,
+    unresolved: 0,
+  });
+  expect(report.matches.find(({ state }) => state === "matched")).toMatchObject(
+    {
+      basis: "exact-symbol",
+      left: [
+        {
+          name: "FUN_10",
+          evidence_links: expect.arrayContaining([leftNames.evidence_id]),
+        },
+      ],
+      right: [
+        {
+          name: "FUN_10",
+          evidence_links: expect.arrayContaining([rightNames.evidence_id]),
+        },
+      ],
+    },
   );
+  const leftMembers = report.matches.flatMap(({ left }) => left);
+  for (const name of ["EntryPoint", "reported_name"]) {
+    expect(leftMembers.find((member) => member.name === name)).toMatchObject({
+      limitations: expect.arrayContaining([
+        "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+      ]),
+    });
+  }
+  expect(
+    leftMembers.find(({ name }) => name === "reported_name")?.evidence_links,
+  ).toContain(leftNames.evidence_id);
 });
 
 it("assigns source authentication, role selection, context, and lookup failures to their owning boundary", async () => {
@@ -915,7 +970,9 @@ it("matches 20,000 retained Ghidra-shaped rows per side and refuses an oversized
   if (!refused.ok)
     expect(refused.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { maximum_bytes: 96 * 1024 * 1024 },
+      reportedLimits: {
+        maximum_bytes: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+      },
       retryable: false,
     });
 });
@@ -933,7 +990,6 @@ it("enforces the caller-resolved representation allowance and names its setting"
   const lowered = await matchNativeFunctions(small, {
     representationAllowance: { maximumBytes: 64 * 1024, source: "runtime" },
   });
-  expect(lowered.ok).toBe(false);
   if (lowered.ok) throw new Error("Lowered allowance admitted the request");
   expect(lowered.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
@@ -968,7 +1024,10 @@ it("enforces the caller-resolved representation allowance and names its setting"
   expect(refused.ok).toBe(false);
   if (!refused.ok)
     expect(refused.error).toMatchObject({
-      limit: { effective_value: 96 * 1024 * 1024, source: "default" },
+      limit: {
+        effective_value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+        source: "default",
+      },
     });
   const raised = await matchNativeFunctions(large, {
     representationAllowance: {
@@ -983,7 +1042,7 @@ it("enforces the caller-resolved representation allowance and names its setting"
   ).toBe(15_000);
 });
 
-it("keeps duplicate candidate storage linear and emits every input occurrence exactly once", async () => {
+it("emits every occurrence of duplicate candidates exactly once on both sides", async () => {
   const entries = Array.from({ length: 1000 }, (_, i) => ({
     address: `0x${i.toString(16)}`,
     value: "same",
@@ -993,11 +1052,13 @@ it("keeps duplicate candidate storage linear and emits every input occurrence ex
     right: nativeMatchingInventory("2", entries),
   });
   expect(report.matches).toHaveLength(1);
-  expect(report.matches[0]?.left).toHaveLength(1000);
-  expect(report.matches[0]?.right).toHaveLength(1000);
-  expect(new Set(report.matches[0]?.left.map((x) => x.function_id)).size).toBe(
-    1000,
-  );
+  for (const side of ["left", "right"] as const) {
+    const members = report.matches[0]?.[side];
+    expect(members).toHaveLength(1000);
+    expect(new Set(members?.map((member) => member.function_id)).size).toBe(
+      1000,
+    );
+  }
 });
 
 it("normalizes accepted body range address spaces before matching byte coverage", async () => {
@@ -1241,25 +1302,3 @@ it.each(["left_observations", "right_observations"] as const)(
     expect(restored.report.summary.matched).toBe(1);
   },
 );
-
-it("does not propose exact-symbol correspondence from unqualified EntryPoint labels", async () => {
-  const { report } = await compare({
-    left: unqualifiedInventory("1", [{ address: "0x10", value: "EntryPoint" }]),
-    right: unqualifiedInventory("2", [
-      { address: "0x20", value: "EntryPoint" },
-    ]),
-  });
-  expect(report.summary.matched).toBe(0);
-  expect(
-    report.matches.flatMap((match) => [...match.left, ...match.right]),
-  ).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        name: "EntryPoint",
-        limitations: expect.arrayContaining([
-          "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
-        ]),
-      }),
-    ]),
-  );
-});

@@ -8,8 +8,7 @@ import {
 } from "./javascriptApplicationEvidenceSchemas.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import { prefixedDigestSchema } from "../digests.js";
-
-const boundedTextSchema = z.string().min(1);
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 /** An observed IPC channel match whose uniqueness is not established. */
 export const IPC_COVERAGE_LIMITED_PAIRING_BASIS =
@@ -37,6 +36,7 @@ export const JAVASCRIPT_APPLICATION_NODE_KINDS = [
   "context-bridge-api",
   "ipc-channel",
   "ipc-handler",
+  "url-scheme",
   "worker",
   "service-worker",
   "endpoint",
@@ -147,7 +147,7 @@ export const javascriptApplicationGraphInputSchema = z.strictObject({
   nodes: z.array(applicationNodeSchema).min(1),
   edges: z.array(applicationEdgeSchema),
   coverage: applicationCoverageSchema,
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 /** Strict stored shape for a JavaScript Application Graph. */

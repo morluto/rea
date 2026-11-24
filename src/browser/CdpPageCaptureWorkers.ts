@@ -1,10 +1,6 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
-import {
-  admitRecords,
-  allowedSanitizedUrl,
-  recordValue,
-} from "./CdpCaptureValues.js";
+import { allowedSanitizedUrl } from "./CdpCaptureValues.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
@@ -36,14 +32,16 @@ export const captureWorkers = async (
     limitations,
   );
   const items: WebPageInspection["workers"] = [];
-  if (result === undefined) completeness.unavailable("workers");
-  const targets = admitRecords(recordValue(result)?.targetInfos);
-  if (result !== undefined && targets === undefined) {
-    completeness.exclude("workers", "invalid_protocol_value", null);
+  if (!result.ok) {
+    // A malformed target list is unreadable, not empty.
+    if (result.error._tag === "CdpMalformedReply")
+      completeness.exclude("workers", "invalid_protocol_value", null);
+    else completeness.unavailable("workers");
     return items;
   }
+  const targets = result.value.targetInfos;
   let malformedEntries = 0;
-  for (const entry of targets ?? []) {
+  for (const entry of targets) {
     const parsed = parseCdpWorkerTarget(entry);
     if (!parsed.ok) {
       malformedEntries += 1;

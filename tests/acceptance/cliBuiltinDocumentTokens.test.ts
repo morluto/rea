@@ -1,18 +1,27 @@
 import { estimateTokenCount } from "tokenx";
 import { expect } from "vitest";
 
+import { PRODUCT_IDENTITY } from "../../src/identity.js";
 import { workspaceCliTest } from "../support/cli/workspaceCliFixture.js";
 
 workspaceCliTest(
-  "applies token controls to SDK manifest and schema documents",
+  "applies token controls to manifest and schema documents",
   async ({ cli }) => {
     const run = async (...arguments_: string[]) => {
-      const result = await cli.run({ arguments: arguments_ });
+      const invocation = { arguments: arguments_ };
+      const freshTokenCount = arguments_.join(" ") === "--llms --token-count";
+      const freshTokenLimit =
+        arguments_.join(" ") === "--llms-full --token-limit 1";
+      const result = await cli.run({
+        ...invocation,
+        freshProcess: freshTokenCount || freshTokenLimit,
+      });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stderr).toBe("");
       return result.stdout;
     };
 
+    let llmsFullDocument = "";
     for (const args of [
       ["--llms"],
       ["--llms-full"],
@@ -21,12 +30,15 @@ workspaceCliTest(
       ["inspect-devicetree", "--schema", "--format", "json"],
     ]) {
       const document = await run(...args);
+      expect(document.trim().length, args.join(" ")).toBeGreaterThan(0);
+      if (args.length === 1 && args[0] === "--llms-full")
+        llmsFullDocument = document;
       expect(await run(...args, "--token-count")).toBe(
         `${estimateTokenCount(document)}\n`,
       );
     }
 
-    const document = await run("--llms-full");
+    const document = llmsFullDocument;
     const page = await run("--llms-full", "--token-limit", "1");
     expect(page.length).toBeLessThan(document.length);
     expect(page).toMatch(/\[truncated: showing tokens 0–1 of \d+\]\n$/);
@@ -35,16 +47,23 @@ workspaceCliTest(
       await run("inspect-devicetree", "--schema", "--token-limit", "1"),
     ).toMatch(/\[truncated: showing tokens 0–1 of \d+\]\n$/);
 
-    // Schema does not outrank help or plain version in Incur's dispatch.
+    // Schema does not outrank help or plain version in CLI dispatch.
     expect(
       await run("inspect-devicetree", "--schema", "--help", "--token-count"),
-    ).toBe(await run("inspect-devicetree", "--schema", "--help"));
+    ).toBe(await run("inspect-devicetree", "--help"));
     expect(await run("--schema", "--version", "--token-count")).toBe(
-      await run("--schema", "--version"),
+      `${PRODUCT_IDENTITY.packageVersion}\n`,
     );
+    const bash = await run("completions", "bash");
+    expect(bash).toContain('export COMPLETE="bash"');
     expect(await run("completions", "bash", "--schema", "--token-count")).toBe(
-      await run("completions", "bash", "--schema"),
+      bash,
     );
+
+    expect(await run("completions", "bash", "--json", "--token-count")).toBe(
+      bash,
+    );
+    expect(await run("completions", "bash", "--version")).toBe(bash);
 
     const unknown = await cli.run({
       arguments: ["no-such-command", "--schema"],
@@ -53,12 +72,16 @@ workspaceCliTest(
       arguments: ["no-such-command", "--schema", "--token-count"],
     });
     expect(unknown.exitCode).toBe(1);
+    expect(unknown.stdout).toContain("'no-such-command' is not a command");
     expect(unknownCount.exitCode).toBe(1);
     expect(unknownCount.stdout).toBe(unknown.stdout);
     const structuredWindow = await cli.run({
       arguments: ["--llms-full", "--format", "json", "--token-limit", "1"],
     });
     expect(structuredWindow.exitCode).toBe(1);
-    expect(structuredWindow.stdout).toContain("UNSUPPORTED_OUTPUT_COMBINATION");
+    expect(JSON.parse(structuredWindow.stdout)).toMatchObject({
+      ok: false,
+      error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+    });
   },
 );

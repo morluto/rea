@@ -162,7 +162,7 @@ def main():
 
     bridge["REA_TARGET_PATH"] = "/tmp/rea-hopper-facade-fixture"
     bridge["REA_OWNS_PROCESS_LIFETIME"] = False
-    bridge["_configure_hopper_api"](FakeDocumentProvider)
+    bridge["Document"] = FakeDocumentProvider
     bridge["_bind_session_document"]()
     current = bridge["_dispatch"]("current_document", {})
     current_address = bridge["_dispatch"]("current_address", {})
@@ -202,6 +202,7 @@ def main():
         "procedure_info", {"procedure": "0x401000"}
     )
     bridge["_assembly"] = lambda procedure: "ret"
+    bridge["_assembly_lines"] = lambda procedure, addresses=None: ["ret"]
     bridge["_pseudocode"] = lambda document, procedure: None
     bridge["_native_calls"] = lambda procedure, direction: ({}, [])
     bridge["_string_inventory"] = lambda document, targets=None: {}

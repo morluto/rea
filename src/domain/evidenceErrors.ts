@@ -20,18 +20,43 @@ export interface PublishedEvidenceFileObservation {
 export class EvidenceIntegrityError extends AnalysisError {
   readonly _tag = "EvidenceIntegrityError";
   override readonly userMessage: string | undefined;
+  /** For a two-sided comparison input, the side whose Evidence failed. */
+  readonly side: "left" | "right" | undefined;
+  /** The first failing location inside that Evidence or its result, when schema-located. */
+  readonly issuePath: readonly (string | number)[] | undefined;
+  /** The constraint a schema refinement named on that first issue. */
+  readonly constraint: string | undefined;
+  /** Schema issues after the first, which the message only summarizes. */
+  readonly remainingIssueCount: number | undefined;
 
   constructor(
     message: string,
-    options?: AnalysisErrorOptions & { readonly userMessage?: string },
+    options?: AnalysisErrorOptions & {
+      readonly userMessage?: string;
+      readonly side?: "left" | "right";
+      readonly issuePath?: readonly (string | number)[];
+      readonly constraint?: string;
+      readonly remainingIssueCount?: number;
+    },
   ) {
     super(message, options);
     this.userMessage = options?.userMessage;
+    this.side = options?.side;
+    this.issuePath = options?.issuePath;
+    this.constraint = options?.constraint;
+    this.remainingIssueCount = options?.remainingIssueCount;
   }
 }
 
 /** A valid snapshot belongs to a different target, provider, or analysis profile. */
-export class AnalysisSnapshotMismatchError extends EvidenceIntegrityError {}
+export class AnalysisSnapshotMismatchError extends EvidenceIntegrityError {
+  constructor(
+    message: string,
+    readonly bindingMismatch?: import("./analysisSnapshot.js").SnapshotBindingMismatch,
+  ) {
+    super(message);
+  }
+}
 
 /** A resource session cannot import or export a binary analysis snapshot. */
 export class ResourceSnapshotMismatchError extends AnalysisSnapshotMismatchError {
@@ -44,6 +69,11 @@ export class ResourceSnapshotMismatchError extends AnalysisSnapshotMismatchError
 
 /** A session Evidence reference is missing or has the wrong semantic identity. */
 export class EvidenceReferenceError extends EvidenceIntegrityError {
+  readonly expected: string;
+  readonly actual: string | null;
+  /** Set when the consuming workflow requires retained closure. */
+  readonly referenceScope: "retained-closure" | undefined;
+
   constructor(
     readonly evidenceId: string,
     readonly reason:
@@ -51,14 +81,23 @@ export class EvidenceReferenceError extends EvidenceIntegrityError {
       | "wrong_operation"
       | "wrong_predicate"
       | "identity_mismatch",
-    readonly expected: string,
-    readonly actual: string | null,
+    options: AnalysisErrorOptions & {
+      readonly expected: string;
+      readonly actual: string | null;
+      readonly referenceScope?: "retained-closure" | undefined;
+    },
   ) {
-    super(`Evidence reference ${reason}: ${evidenceId}`);
+    super(`Evidence reference ${reason}: ${evidenceId}`, options);
+    this.expected = options.expected;
+    this.actual = options.actual;
+    this.referenceScope = options.referenceScope;
   }
 }
 
 /** Evidence bundle filesystem access failed within the configured policy. */
+/** A recognized file kind supplied where a different Evidence input is required. */
+export type EvidenceFileDetectedKind = "analysis-snapshot" | "evidence-record";
+
 export class EvidenceFileError extends AnalysisError {
   readonly _tag = "EvidenceFileError";
   override readonly userMessage: string | undefined;
@@ -70,6 +109,8 @@ export class EvidenceFileError extends AnalysisError {
   /** Schema issues relative to the selected file's JSON root, never the request envelope. */
   readonly contentIssues: readonly AnalysisInputIssue[] | undefined;
   readonly systemCode: "EFBIG" | "ENOSPC" | "EDQUOT" | undefined;
+  /** For `wrong-kind`: the recognized kind the file holds instead, when known. */
+  readonly detectedKind: EvidenceFileDetectedKind | undefined;
 
   constructor(
     readonly operation: "read" | "write",
@@ -89,6 +130,7 @@ export class EvidenceFileError extends AnalysisError {
       readonly userMessage?: string;
       readonly contentIssues?: readonly AnalysisInputIssue[];
       readonly systemCode?: "EFBIG" | "ENOSPC" | "EDQUOT";
+      readonly detectedKind?: EvidenceFileDetectedKind;
     },
   ) {
     super(`Evidence bundle ${operation} failed: ${reason}`, options);
@@ -97,5 +139,6 @@ export class EvidenceFileError extends AnalysisError {
     this.userMessage = options?.userMessage;
     this.contentIssues = options?.contentIssues;
     this.systemCode = options?.systemCode;
+    this.detectedKind = options?.detectedKind;
   }
 }

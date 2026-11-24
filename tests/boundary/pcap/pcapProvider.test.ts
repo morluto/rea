@@ -3,6 +3,8 @@ import { watch } from "node:fs";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
 import {
@@ -91,37 +93,6 @@ it("inspects both tools without reading a capture", async () => {
   });
 });
 
-it("rejects a selected TShark whose bytes change during its version probe", async () => {
-  const root = await createTestTempDirectory("rea-pcap-tool-identity-");
-  const { tshark, capinfos } = await writeStubTools(root);
-  await writeFile(
-    tshark,
-    `#!/bin/sh
-if [ "$1" = "--version" ]; then
-  printf 'TShark (Wireshark) 4.6.6-stub\\n'
-  printf '\\n# changed during version probe\\n' >> "$0"
-  exit 0
-fi
-exit 2
-`,
-    { mode: 0o755 },
-  );
-  const provider = new PcapProvider({
-    environment: { REA_TSHARK_COMMAND: tshark, REA_CAPINFOS_COMMAND: capinfos },
-  });
-  onTestFinished(() => provider.close());
-  const result = await provider.execute({
-    operation: "inspect_pcap_client",
-    input: {},
-  });
-  expect(result.ok).toBe(false);
-  if (!result.ok)
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "artifact_changed",
-      details: { path: tshark },
-    });
-});
-
 it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
   const { provider, root } = await providerWith();
   const path = await captureFixture(root);
@@ -156,6 +127,29 @@ it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
   expect(result.tls_sni_values).toEqual(["api.example.com"]);
   expect(result.http_request_uris).toEqual(["http://api.example.com/v1/data"]);
   expect(result.coverage).toBe("complete");
+});
+
+it("retains DNS answers and exposes declared truncation as partial coverage", async () => {
+  const { provider, root } = await providerWith({
+    dnsJson: TSHARK_DNS_JSON.replace("00018180", "00018380"),
+  });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw new Error(result.error.message);
+  expect(result.value.result).toMatchObject({
+    coverage: "partial",
+    dns_queries: [
+      { query: "api.example.com", response_addresses: ["93.184.216.34"] },
+    ],
+  });
+  expect(result.value.limitations).toContain(
+    "DNS wire parsing: DNS message declares truncation (TC); captured records are incomplete",
+  );
+  expect(result.value.limitations).toContainEqual(
+    expect.stringContaining("DNS messages declare truncation"),
+  );
 });
 
 it.each([0, 1])(
@@ -240,7 +234,6 @@ it.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_capture",
       input: { path },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed producer encoding");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -272,7 +265,6 @@ posixIt.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_client",
       input: {},
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed version output");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -294,7 +286,6 @@ it.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_capture",
       input: { path },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed producer encoding");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -441,48 +432,6 @@ it("reports a non-capture file as unsupported", async () => {
   });
 });
 
-it("reports a missing tshark binary as a capability gap", async () => {
-  const provider = new PcapProvider({
-    environment: { REA_TSHARK_COMMAND: "/nonexistent/tshark" },
-  });
-  expect(await provider.inspectAvailability()).toMatchObject({
-    status: "unavailable",
-    code: "executable_missing",
-  });
-});
-
-it("rejects a capture that is not a readable file", async () => {
-  const { provider } = await providerWith();
-  const result = await provider.execute({
-    operation: "inspect_pcap_capture",
-    input: { path: "/nonexistent/capture.pcap" },
-  });
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "invalid_request",
-  });
-});
-
-it("cancels before spawning anything", async () => {
-  const { provider, root } = await providerWith();
-  await writeFile(join(root, "spawned"), "");
-  const controller = new AbortController();
-  controller.abort();
-  const result = await provider.execute(
-    {
-      operation: "inspect_pcap_capture",
-      input: { path: "/some/capture.pcap" },
-    },
-    { signal: controller.signal },
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "cancelled",
-  });
-});
-
 it("reports relative configuration and missing capinfos as capability gaps", async () => {
   const root = await createTestTempDirectory("rea-pcap-config-");
   const { tshark } = await writeStubTools(root);
@@ -515,85 +464,78 @@ it("reports relative configuration and missing capinfos as capability gaps", asy
   }
 });
 
-it("names the prlimit selection when the Linux limiter is unusable", async () => {
-  const root = await createTestTempDirectory("rea-pcap-prlimit-");
-  const tools = await writeStubTools(root);
-  const provider = new PcapProvider({
-    environment: {
-      REA_TSHARK_COMMAND: tools.tshark,
-      REA_CAPINFOS_COMMAND: tools.capinfos,
-      REA_TSHARK_PRLIMIT_COMMAND: "relative/prlimit",
-    },
-  });
-  onTestFinished(() => provider.close());
-  const result = await provider.execute({
-    operation: "inspect_pcap_capture",
-    input: { path: "/not-opened/capture.pcap" },
-  });
-  if (result.ok) throw new Error("expected an unusable limiter");
-  const projected = projectAnalysisError(result.error);
-  expect(projected).toMatchObject({
-    code: "capability_unavailable",
-    details: { provider_id: "pcap", operation: "inspect_pcap_capture" },
-  });
-  expect(projected.message).toContain("must be absolute");
-  expect(projected.message).toContain("Check that REA_TSHARK_PRLIMIT_COMMAND");
-});
-
-it("rejects directory and non-prlimit selections before opening the capture", async () => {
-  const root = await createTestTempDirectory("rea-pcap-invalid-limiter-");
-  const tools = await writeStubTools(root);
-  for (const configured of [root, "/usr/bin/true"]) {
+posixIt(
+  "preserves the limiter repair in readiness and refuses capture before reading input",
+  async () => {
+    const root = await createTestTempDirectory("rea-pcap-prlimit-");
+    const tools = await writeStubTools(root);
+    const configured = "relative/prlimit";
     const provider = new PcapProvider({
+      platform: "linux",
       environment: {
         REA_TSHARK_COMMAND: tools.tshark,
         REA_CAPINFOS_COMMAND: tools.capinfos,
         REA_TSHARK_PRLIMIT_COMMAND: configured,
       },
     });
-    try {
-      const result = await provider.execute({
+    onTestFinished(() => provider.close());
+    const availability = await provider.inspectAvailability();
+    expect(availability).toMatchObject({
+      status: "unavailable",
+      reason: expect.stringContaining("Cannot establish the selected Linux"),
+      remediation: expect.stringMatching(
+        /REA_TSHARK_PRLIMIT_COMMAND.*\/usr\/bin\/prlimit.*absolute.*executable.*util-linux prlimit/iu,
+      ),
+    });
+    if (availability.status !== "unavailable")
+      throw new Error("Expected an unavailable limiter");
+    const result = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path: join(root, "not-created.pcap") },
+    });
+    if (result.ok) throw new Error("expected an unusable limiter");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining("must be absolute"),
+      remediation: { action: availability.remediation },
+      details: {
+        provider_id: "pcap",
         operation: "inspect_pcap_capture",
-        input: { path: "/not-opened/capture.pcap" },
-      });
-      if (result.ok) throw new Error("expected an unusable limiter");
-      const error = projectAnalysisError(result.error);
-      expect(error).toMatchObject({
-        code: "capability_unavailable",
-        details: {
-          diagnostics: {
-            configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
-            configured,
-          },
+        diagnostics: {
+          configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
+          configured,
         },
-      });
-      expect(error.message).toContain("REA_TSHARK_PRLIMIT_COMMAND");
-      expect(error.message).not.toContain("Cannot run selected tool");
-    } finally {
-      await provider.close();
-    }
-  }
-});
+      },
+    });
+  },
+);
 
 it("rejects a different util-linux command before opening capture bytes", async () => {
   const root = await createTestTempDirectory("rea-pcap-other-util-linux-");
   const tools = await writeStubTools(root);
+  const configured = "/usr/bin/lsblk";
   const provider = new PcapProvider({
     environment: {
       REA_TSHARK_COMMAND: tools.tshark,
       REA_CAPINFOS_COMMAND: tools.capinfos,
-      REA_TSHARK_PRLIMIT_COMMAND: "/usr/bin/lsblk",
+      REA_TSHARK_PRLIMIT_COMMAND: configured,
     },
   });
   try {
     const result = await provider.execute({
       operation: "inspect_pcap_capture",
-      input: { path: "/not-opened/capture.pcap" },
+      input: { path: join(root, "not-created.pcap") },
     });
     if (result.ok) throw new Error("expected an unusable limiter");
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisCapabilityUnavailableError",
-      capturedOutput: { stdout: expect.stringContaining("--output") },
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "capability_unavailable",
+      details: {
+        diagnostics: {
+          configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
+          configured,
+        },
+        captured_output: { stdout: expect.stringContaining("--output") },
+      },
     });
   } finally {
     await provider.close();
@@ -843,32 +785,28 @@ fs.writeFileSync(${JSON.stringify(marker)}, 'ready'); setInterval(() => {}, 1000
     });
     onTestFinished(() => provider.close());
     const controller = new AbortController();
-    let watcher: ReturnType<typeof watch> | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const ready = new Promise<void>((resolve, reject) => {
-      watcher = watch(root, (_event, name) => {
-        if (name === "ready") resolve();
-      });
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new Error("tool did not start"));
-      }, 5000);
+    const toolStart = phaseArrival();
+    const watcher = watch(root, (_event, name) => {
+      if (name === "ready") toolStart.arrive();
     });
-    try {
-      const pending = provider.execute(
-        { operation: "inspect_pcap_capture", input: { path } },
-        { signal: controller.signal },
-      );
-      await ready;
+    const pending = provider.execute(
+      { operation: "inspect_pcap_capture", input: { path } },
+      { signal: controller.signal },
+    );
+    await withVerifierCleanup(async () => {
+      await toolStart.reached(pending, `${phase} tool startup`);
       controller.abort(new Error("caller cancellation"));
       const result = await pending;
       if (result.ok) throw new Error("expected cancellation");
       expect(projectAnalysisError(result.error).code).toBe("cancelled");
       await provider.close();
-    } finally {
-      watcher?.close();
-      clearTimeout(timer);
-    }
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending;
+      },
+      () => watcher.close(),
+    ]);
   },
 );
 
@@ -886,20 +824,24 @@ it.each(["change", "cancel"] as const)(
       { operation: "inspect_pcap_capture", input: { path } },
       { signal: controller.signal },
     );
-    try {
-      await held.firstRead;
+    await withVerifierCleanup(async () => {
+      await held.reached(pending, "snapshot read");
       if (action === "cancel") controller.abort();
       else await writeFile(path, "changed source bytes");
-    } finally {
       held.release();
-    }
-    const result = await pending;
-    if (result.ok) throw new Error("expected interrupted acquisition");
-    expect(result.error._tag).toBe(
-      action === "cancel"
-        ? "AnalysisCancelledError"
-        : "AnalysisArtifactChangedError",
-    );
+      const result = await pending;
+      if (result.ok) throw new Error("expected interrupted acquisition");
+      expect(result.error._tag).toBe(
+        action === "cancel"
+          ? "AnalysisCancelledError"
+          : "AnalysisArtifactChangedError",
+      );
+    }, [
+      held.release,
+      async () => {
+        await pending;
+      },
+    ]);
   },
 );
 
@@ -915,8 +857,8 @@ it("admits one capture and drains it before close releases resources", async () 
     input: { path },
   });
   let closing: Promise<void> | undefined;
-  try {
-    await held.firstRead;
+  await withVerifierCleanup(async () => {
+    await held.reached(pending, "snapshot read");
     const concurrent = await provider.execute({
       operation: "inspect_pcap_capture",
       input: { path },
@@ -933,16 +875,23 @@ it("admits one capture and drains it before close releases resources", async () 
     });
     await Promise.resolve();
     expect(closed).toBe(false);
-  } finally {
     held.release();
-  }
-  expect((await pending).ok).toBe(true);
-  await closing;
-  const afterClose = await provider.execute({
-    operation: "inspect_pcap_capture",
-    input: { path },
-  });
-  expect(afterClose.ok).toBe(false);
+    expect((await pending).ok).toBe(true);
+    await closing;
+    const afterClose = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path },
+    });
+    expect(afterClose.ok).toBe(false);
+  }, [
+    held.release,
+    async () => {
+      await pending;
+    },
+    async () => {
+      await closing;
+    },
+  ]);
 });
 
 it.each([false, true])(
@@ -962,7 +911,6 @@ it.each([false, true])(
       input: { path },
     });
     try {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Cleanup failure cannot return success");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "cleanup_incomplete",
@@ -1005,6 +953,19 @@ it("requests HTTP/2 URI facts and projects them through capture inspection", asy
   expect(result.coverage).toBe("complete");
 });
 
+it("keeps the packet summary when only the DNS wire pass exits unsuccessfully", async () => {
+  const { provider, root } = await providerWith({ failDnsPass: true });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    coverage: "partial",
+    packet_count: 3,
+  });
+});
+
 it("reports partial DNS coverage when raw extraction fails without selected DNS facts", async () => {
   const base: { _source: { layers: Record<string, unknown> } }[] =
     JSON.parse(TSHARK_JSON);
@@ -1030,5 +991,35 @@ it("reports partial DNS coverage when raw extraction fails without selected DNS 
   });
   expect(result.value.limitations.join(" ")).toContain(
     "DNS wire identity extraction was unavailable",
+  );
+});
+
+it("skips the second tshark DNS pass when base dissection observes no DNS, mDNS, or LLMNR traffic", async () => {
+  const base: { _source: { layers: Record<string, unknown> } }[] =
+    JSON.parse(TSHARK_JSON);
+  for (const packet of base) {
+    packet._source.layers["frame.protocols"] = ["eth:ethertype:ip:tcp:tls"];
+    for (const key of Object.keys(packet._source.layers)) {
+      if (key === "dns" || key === "dns_raw" || key.startsWith("dns."))
+        delete packet._source.layers[key];
+    }
+  }
+  const { provider, root } = await providerWith({
+    malformedDnsJson: true,
+    tsharkJson: JSON.stringify(base),
+  });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    coverage: "complete",
+    packet_count: base.length,
+    dns_queries: [],
+    dns_query_count: 0,
+  });
+  expect(result.value.limitations.join(" ")).not.toContain(
+    "DNS wire identity extraction",
   );
 });

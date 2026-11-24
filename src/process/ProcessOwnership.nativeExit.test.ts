@@ -1,3 +1,4 @@
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
@@ -255,9 +256,7 @@ it.each([
   },
 );
 
-const itOnLinux = process.platform === "linux" ? it : it.skip;
-
-itOnLinux(
+it.runIf(process.platform === "linux")(
   "verifies a real child exit between the native identity and follow-up read",
   async () => {
     const child = spawn(
@@ -551,32 +550,34 @@ it("honors cancellation during token-open exit settlement", async () => {
     lifecycle: { state: "observed", lifecycle: "non-zombie" },
   };
   const controller = new AbortController();
+  const reason = new Error("cancelled");
   const host: ProcessOwnershipHost = {
     platform: "linux",
     listProcesses: async () => [row],
     environment: async () => ({}),
     signalGroup: vi.fn(),
     processIdentities: async () => {
-      controller.abort(new Error("cancelled"));
+      controller.abort(reason);
       return new Map([[row.pid, identity]]);
     },
   };
-  await expect(
-    settleVanishedTokenFacts(
-      [
-        {
-          process: row,
-          state: "same-generation",
-          identityBefore: identity,
-          identityAfter: identity,
-          token: { state: "unavailable", reason: "vanished", code: "ESRCH" },
-        },
-      ],
-      host,
-      { deadline: undefined },
-      controller.signal,
-    ),
-  ).rejects.toThrow("cancelled");
+  const failure: unknown = await settleVanishedTokenFacts(
+    [
+      {
+        process: row,
+        state: "same-generation",
+        identityBefore: identity,
+        identityAfter: identity,
+        token: { state: "unavailable", reason: "vanished", code: "ESRCH" },
+      },
+    ],
+    host,
+    { deadline: undefined },
+    controller.signal,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+  if (!(failure instanceof ProcessOwnershipInspectionCancelled)) throw failure;
+  expect(failure.reason).toBe(reason);
 });
 
 it("does not signal a stale group after its last member exits during revalidation", async () => {
@@ -643,7 +644,8 @@ it("does not signal a stale group after its last member exits during revalidatio
       host,
     ),
   ).toEqual({ cleaned: true, signaled: false });
-  expect(tokenReads).toBe(2);
+  // The unreadable pre-signal token is read once more before exit settles it.
+  expect(tokenReads).toBe(3);
   expect(signalGroup).not.toHaveBeenCalled();
 });
 

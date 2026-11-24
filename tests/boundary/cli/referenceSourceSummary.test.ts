@@ -5,7 +5,7 @@ import { join } from "node:path";
 import canonicalize from "canonicalize";
 import { describe, expect } from "vitest";
 
-import { parseHistoricalSourceGraph } from "../../../src/domain/referenceSourceGraph.js";
+import { historicalSourceGraphSchema } from "../../../src/domain/referenceSourceGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -37,7 +37,7 @@ describe.skipIf(process.platform === "win32")(
           });
         const complete = await run();
         expect(complete.exitCode).toBe(0);
-        const graph = parseHistoricalSourceGraph(complete.json);
+        const graph = historicalSourceGraphSchema.parse(complete.json);
         const graphJson = canonicalize(graph);
         if (graphJson === undefined)
           throw new TypeError("Unserializable complete graph");
@@ -195,9 +195,13 @@ describe("compiled historical-source summary input boundaries", () => {
       const root = await createTestTempDirectory(
         "rea-reference-summary-input-",
       );
-      const result = await cli.run({
+      const invocation = {
         arguments: ["import-reference-source", root, ...options, "--json"],
         cwd: root,
+      };
+      const result = await cli.run({
+        ...invocation,
+        freshProcess: label === "--outline-depth=",
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({

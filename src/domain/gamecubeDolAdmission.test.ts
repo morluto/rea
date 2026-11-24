@@ -76,6 +76,30 @@ describe("gamecube-dol admission", () => {
     });
   });
 
+  it("requires an exact byte length for header-only admission", () => {
+    const header = new Uint8Array(0x101).subarray(1);
+    header.set(buildGamecubeDol().subarray(0, 0x100));
+
+    expect(admitGamecubeDol({ bytes: header, fileSize: 0x120 }).ok).toBe(true);
+    expect(admitGamecubeDol({ bytes: header, fileSize: 0x11f })).toMatchObject({
+      ok: false,
+      error: { constraint: "file_format_rejected" },
+    });
+    for (const fileSize of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      0x120 + 0.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ])
+      expect(admitGamecubeDol({ bytes: header, fileSize })).toMatchObject({
+        ok: false,
+        error: {
+          constraint: "file_format_rejected",
+          reason: expect.stringContaining("invalid DOL file extent"),
+        },
+      });
+  });
+
   it("rejects an entry outside every text section", () => {
     const admitted = admitGamecubeDol({
       bytes: buildGamecubeDol({ entryPoint: 0x8000_4000 }),

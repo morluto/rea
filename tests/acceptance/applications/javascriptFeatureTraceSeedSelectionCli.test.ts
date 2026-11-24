@@ -166,9 +166,10 @@ const traceThroughCli = async (
     input,
     JSON.stringify({ application, seed: scenario.seed, direction: "both" }),
   );
-  const response = await cli.run({
+  const invocation = {
     arguments: ["trace-application-feature", input, "--json"],
-  });
+  };
+  const response = await cli.run(invocation);
   expect(response.exitCode, `${scenario.name} via CLI`).toBe(0);
   const evidence = toolContract("trace_application_feature").outputSchema.parse(
     response.json,

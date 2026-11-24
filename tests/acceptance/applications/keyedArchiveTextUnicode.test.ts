@@ -41,10 +41,15 @@ cliTest.for([
         $objects: ["$null", value],
       }),
     );
-    const run = (args: readonly string[]) =>
-      cli.run({
+    const run = (args: readonly string[]) => {
+      const invocation = {
         arguments: ["inspect-keyed-archive", path, ...args],
+      };
+      return cli.run({
+        ...invocation,
+        freshProcess: label === "high" || label === "pair",
       });
+    };
     for (const format of ["json", "yaml"] as const) {
       const output = await run(["--format", format]);
       expect(output.exitCode, output.stderr).toBe(0);
@@ -112,24 +117,24 @@ cliTest(
           ],
         }),
       );
-      const json = await cli.run({
-        arguments: ["inspect-keyed-archive", path, "--json"],
-      });
+      const run = (args: readonly string[]) => {
+        const invocation = {
+          arguments: ["inspect-keyed-archive", path, ...args],
+        };
+        return cli.run({ ...invocation, freshProcess: label === "nul" });
+      };
+      const json = await run(["--json"]);
       expect(json.exitCode, json.stderr).toBe(0);
       expect(
         JSON.parse(json.stdout).normalized_result.objects[1].class_name,
       ).toBe(name);
-      const toon = await cli.run({
-        arguments: ["inspect-keyed-archive", path, "--format", "toon"],
-      });
+      const toon = await run(["--format", "toon"]);
       expect(toon.exitCode, toon.stderr).toBe(0);
       const toonDocument = decode(toon.stdout) as {
         normalized_result: { objects: { class_name?: string }[] };
       };
       expect(toonDocument.normalized_result.objects[1]?.class_name).toBe(name);
-      const markdown = await cli.run({
-        arguments: ["inspect-keyed-archive", path, "--format", "md"],
-      });
+      const markdown = await run(["--format", "md"]);
       if (label === "nul") {
         expect(markdown.exitCode).toBe(1);
         expect(markdown.stdout).toContain("--format json");

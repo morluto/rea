@@ -2,6 +2,10 @@ import { ServedOrder } from "./environmentStateWriteOrder.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compositeKey } from "../unicodeCodePointOrder.js";
 import {
+  environmentCollectionKey,
+  environmentEntityKey,
+} from "./environmentStateIdentity.js";
+import {
   ownMember,
   at,
   decodedSegment,
@@ -35,9 +39,9 @@ import type { InsertRule } from "./environmentStateWriteRules.js";
 import { withoutMembers } from "./environmentStateResponseMembers.js";
 
 export const entityTarget = (type: string, collection: string, id: string) =>
-  `e${compositeKey([type, collection, id])}`;
+  `e${environmentEntityKey(type, collection, id)}`;
 export const collectionTarget = (type: string, collection: string) =>
-  `c${compositeKey([type, collection])}`;
+  `c${environmentCollectionKey(type, collection)}`;
 export const documentTarget = (tool: string) => `d${compositeKey([tool])}`;
 
 /** A target `remove` dropped, so a later absence can still name the collection and id serving resolved. */
@@ -176,10 +180,16 @@ export class SimulatedState {
         key,
         fields: first.get(key) ?? this.#entities.get(key)!.fields,
       }));
-    for (const [index, { target: key, before: prior }] of ours.entries()) {
-      const fields =
-        ours.slice(index + 1).find((later) => later.target === key)?.before ??
-        this.#entities.get(key)!.fields;
+    const nextBefore: (JsonObject | null | undefined)[] = Array(ours.length);
+    const seenLater = new Map<string, JsonObject | null>();
+    for (let index = ours.length - 1; index >= 0; index -= 1) {
+      const write = ours[index]!;
+      nextBefore[index] = seenLater.get(write.target);
+      seenLater.set(write.target, write.before);
+    }
+    for (let index = 0; index < ours.length; index += 1) {
+      const { target: key, before: prior } = ours[index]!;
+      const fields = nextBefore[index] ?? this.#entities.get(key)!.fields;
       const at = order.findIndex((member) => member.key === key);
       if ((prior === null) !== at < 0) continue;
       if (at >= 0) order.splice(at, 1);
@@ -452,13 +462,14 @@ const targetFrom = (
     readonly written: string;
   },
 ): { readonly collection: string; readonly id: string } => {
+  const live = matchingTarget(
+    path,
+    () => state.ofType(type).map((entity) => entity.collection),
+    (collection, id) => state.entity(type, collection, id) !== undefined,
+  );
+  if (live !== undefined) return live;
   const removed = state.removedTargets(type);
   return (
-    matchingTarget(
-      path,
-      () => state.ofType(type).map((entity) => entity.collection),
-      (collection, id) => state.entity(type, collection, id) !== undefined,
-    ) ??
     matchingTarget(
       path,
       () => removed.map((target) => target.collection),

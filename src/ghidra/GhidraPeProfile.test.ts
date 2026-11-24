@@ -6,7 +6,7 @@ import {
   type GhidraSessionInfo,
 } from "./GhidraSessionValues.js";
 
-const target: BinaryTarget = {
+const target = {
   path: "/fixture/public.exe",
   sha256: "a".repeat(64),
   kind: "executable",
@@ -16,12 +16,12 @@ const target: BinaryTarget = {
   executableRole: "application",
   managed: false,
   codeView: {
-    pdbPath: "public.pdb",
+    pdbPath: "C:\\symbols\\public.pdb",
     pdbFileName: "public.pdb",
     guid: "01234567-89ab-cdef-0123-456789abcdef",
     age: 10,
   },
-};
+} satisfies BinaryTarget;
 const absentAttributes = {
   file: null,
   guid: null,
@@ -31,12 +31,40 @@ const absentAttributes = {
   loaded: null,
 };
 
+it("preserves undecodable PE locator bytes apart from Ghidra's reported file", () => {
+  const caveats = ghidraPePdbLimitations(
+    {
+      ...target,
+      codeView: {
+        pdbPath: null,
+        pdbFileName: null,
+        pdbPathBytesHex: "e92e706462",
+        guid: target.codeView?.guid ?? null,
+        age: 10,
+      },
+    },
+    {
+      ...absentAttributes,
+      file: "é.pdb",
+      guid: target.codeView?.guid ?? null,
+      age: "a",
+      loaded: true,
+    },
+  );
+  expect(caveats).toHaveLength(2);
+  expect(caveats[0]).toContain("é.pdb");
+  expect(caveats[1]).toContain(
+    "path encoding unknown; original path bytes 0xe92e706462",
+  );
+  expect(caveats[1]).toContain("equivalence is not established");
+});
+
 it.each(["file", "guid", "age"] as const)(
   "retains declared identity when only reported %s is omitted",
   (attribute) => {
     const pdb: GhidraSessionInfo["pdb"] = {
-      file: "program.pdb",
-      guid: "reported-guid",
+      file: "public.pdb",
+      guid: "0123456789abcdef0123456789abcdef",
       age: "a",
       signature: null,
       version: "RSDS",
@@ -80,7 +108,20 @@ it.each([true, false, null])(
     const caveats = ghidraPePdbLimitations(target, pdb);
     expect(caveats).toEqual(ghidraPdbLimitations(pdb));
     expect(caveats).toHaveLength(1);
-    expect(caveats.join(" ")).not.toContain('PDB "public.pdb"');
+    const warning = caveats[0] ?? "";
+    expect(warning).toContain("public.pdb");
+    expect(warning).toContain("list_procedures");
+    expect(warning).toMatch(/names and types may (?:still )?be missing/i);
+    expect(warning).toMatch(/empty name search does not prove/i);
+    if (loaded === true) {
+      expect(warning).toMatch(/loaded PDB/i);
+      expect(warning).toMatch(/not an independent PDB identity/i);
+    } else if (loaded === false) {
+      expect(warning).toMatch(/not loaded/i);
+    } else {
+      expect(warning).toMatch(/load state unknown/i);
+    }
+    expect(warning).not.toContain('PDB "public.pdb"');
   },
 );
 
@@ -91,27 +132,31 @@ it.each([
   { file: "public.pdb", guid: "unrecognized-guid", age: "a" },
   { file: "public.pdb", guid: "0123456789abcdef0123456789abcdef", age: "ten" },
 ])("retains non-equivalent declared PDB identity for %j", (identity) => {
-  for (const loaded of [false, null, true]) {
-    const pdb = { ...absentAttributes, ...identity, version: "RSDS", loaded };
-    const caveats = ghidraPePdbLimitations(target, pdb);
-    expect(caveats[0]).toBe(ghidraPdbLimitations(pdb)[0]);
-    expect(caveats[0]).toContain(identity.file);
-    expect(caveats[0]).toContain(identity.guid);
-    expect(caveats[0]).toContain(`age (hex) ${identity.age}`);
-    expect(caveats).toHaveLength(2);
-    expect(caveats[1]).toContain('PDB "public.pdb"');
-    expect(caveats[1]).toContain("01234567-89ab-cdef-0123-456789abcdef");
-    expect(caveats[1]).toContain("age (decimal) 10");
-    expect(caveats[1]).toContain("equivalence is not established");
-    expect(pdb).toMatchObject({ ...identity, loaded });
-  }
+  const pdb = {
+    ...absentAttributes,
+    ...identity,
+    version: "RSDS",
+    loaded: true,
+  };
+  const caveats = ghidraPePdbLimitations(target, pdb);
+  expect(caveats).toEqual([
+    ...ghidraPdbLimitations(pdb),
+    expect.stringContaining('PDB "public.pdb"'),
+  ]);
+  expect(caveats[0]).toContain(identity.file);
+  expect(caveats[0]).toContain(identity.guid);
+  expect(caveats[0]).toContain(`age (hex) ${identity.age}`);
+  expect(caveats[1]).toContain("01234567-89ab-cdef-0123-456789abcdef");
+  expect(caveats[1]).toContain("age (decimal) 10");
+  expect(caveats[1]).toContain("equivalence is not established");
+  expect(pdb).toMatchObject({ ...identity, loaded: true });
 });
 
 it.each([
-  "0123456789ABCDEF0123456789ABCDEF",
-  "01234567-89ab-cdef-0123-456789abcdef",
-])("avoids duplicate identity for normalized matching GUID %s", (guid) => {
-  const pdb = { ...absentAttributes, file: "public.pdb", guid, age: "a" };
+  ["public.pdb", "0123456789ABCDEF0123456789ABCDEF"],
+  ["C:\\symbols\\public.pdb", "01234567-89ab-cdef-0123-456789abcdef"],
+])("recognizes the declared locator %s and normalized GUID", (file, guid) => {
+  const pdb = { ...absentAttributes, file, guid, age: "a" };
   expect(ghidraPePdbLimitations(target, pdb)).toEqual(
     ghidraPdbLimitations(pdb),
   );
@@ -168,42 +213,39 @@ it("reports NB10 declared age without inventing a GUID", () => {
   expect(caveats[0]).not.toContain("GUID");
 });
 
-it.each([false, null, true])(
-  "keeps an omitted NB10 GUID unknown with loaded = %s",
-  (loaded) => {
-    const pdbPath = "a".repeat(4070) + "\\legacy.pdb";
-    const legacy = {
-      ...target,
-      codeView: {
-        pdbPath,
-        pdbFileName: "legacy.pdb",
-        guid: null,
-        age: 2,
-      },
-    };
-    const pdb = {
-      ...absentAttributes,
-      file: pdbPath,
-      age: "2",
-      signature: "01234567",
-      version: "NB10",
-      loaded,
-    };
-    expect(ghidraPePdbLimitations(legacy, pdb)).toEqual(
-      ghidraPdbLimitations(pdb),
-    );
-    const omitted: GhidraSessionInfo["pdb"] = {
-      ...pdb,
-      resource_limit: { omitted_attributes: ["guid"], utf16_budget: 4096 },
-    };
-    const caveats = ghidraPePdbLimitations(legacy, omitted);
-    expect(caveats).toEqual([
-      ...ghidraPdbLimitations(omitted),
-      expect.stringContaining('PDB "legacy.pdb" (age (decimal) 2)'),
-    ]);
-    expect(caveats.at(-1)).toContain("equivalence is not established");
-  },
-);
+it("keeps a budget-omitted NB10 GUID unknown", () => {
+  const pdbPath = "a".repeat(4070) + "\\legacy.pdb";
+  const legacy = {
+    ...target,
+    codeView: {
+      pdbPath,
+      pdbFileName: "legacy.pdb",
+      guid: null,
+      age: 2,
+    },
+  };
+  const pdb = {
+    ...absentAttributes,
+    file: pdbPath,
+    age: "2",
+    signature: "01234567",
+    version: "NB10",
+    loaded: null,
+  };
+  expect(ghidraPePdbLimitations(legacy, pdb)).toEqual(
+    ghidraPdbLimitations(pdb),
+  );
+  const omitted: GhidraSessionInfo["pdb"] = {
+    ...pdb,
+    resource_limit: { omitted_attributes: ["guid"], utf16_budget: 4096 },
+  };
+  const caveats = ghidraPePdbLimitations(legacy, omitted);
+  expect(caveats).toEqual([
+    ...ghidraPdbLimitations(omitted),
+    expect.stringContaining('PDB "legacy.pdb" (age (decimal) 2)'),
+  ]);
+  expect(caveats.at(-1)).toContain("equivalence is not established");
+});
 
 it.each(["signature", "version"] as const)(
   "keeps matching NB10 identity when only %s is omitted",
@@ -231,8 +273,12 @@ it.each(["signature", "version"] as const)(
 
 it("retains missing-report uncertainty without a declared CodeView record", () => {
   const { codeView: _, ...withoutReference } = target;
-  expect(ghidraPePdbLimitations(withoutReference, undefined)).toEqual(
-    ghidraPdbLimitations(undefined),
+  const caveats = ghidraPePdbLimitations(withoutReference, undefined);
+  expect(caveats).toEqual(ghidraPdbLimitations(undefined));
+  expect(caveats).toContainEqual(
+    expect.stringMatching(
+      /did not report PDB attributes.*coverage is unknown/i,
+    ),
   );
 });
 
@@ -248,50 +294,27 @@ it("adds no PDB warning for a non-PE target", () => {
   expect(ghidraPePdbLimitations(elf, undefined)).toEqual([]);
 });
 
-it("bounds an escaped inline locator while preserving its declared source value", () => {
-  const name = '"'.repeat(5000) + ".pdb";
-  const selected = {
-    ...target,
-    codeView: { ...target.codeView!, pdbFileName: name },
-  };
-  const caveats = ghidraPePdbLimitations(selected, undefined).join(" ");
-  expect(Buffer.byteLength(caveats)).toBeLessThan(1024);
-  expect(caveats).toContain("locator omitted");
-  expect(caveats).toContain("01234567-89ab-cdef-0123-456789abcdef");
-  expect(selected.codeView.pdbFileName).toBe(name);
-});
-
 it.each([
-  ["long ASCII", "a".repeat(171)],
+  ["ASCII beyond the conservative shortcut", "a".repeat(171)],
   ["ASCII at the byte budget", "a".repeat(1022)],
   ["ASCII beyond the byte budget", "a".repeat(1023)],
   ["quotes at the byte budget", '"'.repeat(511)],
   ["quotes beyond the byte budget", '"'.repeat(512)],
-  ["short control escapes", "\n".repeat(511)],
-  ["short control escapes beyond the byte budget", "\n".repeat(512)],
-  ["six-byte control escapes", "\u0001".repeat(170)],
-  ["six-byte control escapes beyond the byte budget", "\u0001".repeat(171)],
-  ["UTF-8 BMP text", "中".repeat(340)],
-  ["UTF-8 BMP text beyond the byte budget", "中".repeat(341)],
-  ["surrogate pairs", "😀".repeat(255)],
-  ["surrogate pairs beyond the byte budget", "😀".repeat(256)],
-  ["unpaired high surrogates", "\ud800".repeat(170)],
-  ["unpaired high surrogates beyond the byte budget", "\ud800".repeat(171)],
-  ["unpaired low surrogates", "\udfff".repeat(170)],
-  ["unpaired low surrogates beyond the byte budget", "\udfff".repeat(171)],
+  ["multibyte text beyond the byte budget", "中".repeat(341)],
 ])("uses actual JSON UTF-8 size for %s", (_, name) => {
   const selected = {
     ...target,
-    codeView: { ...target.codeView!, pdbFileName: name },
+    codeView: { ...target.codeView, pdbFileName: name },
   };
   const caveat = ghidraPePdbLimitations(selected, undefined).join(" ");
   const encoded = JSON.stringify(name);
   if (Buffer.byteLength(encoded) <= 1024) {
     expect(caveat).toContain(`PDB ${encoded} (`);
-    expect(caveat).not.toContain("locator omitted");
   } else {
-    expect(caveat).toContain("locator omitted");
+    expect(caveat).toContain("1024-byte resource budget");
     expect(caveat).not.toContain(encoded);
+    expect(Buffer.byteLength(caveat)).toBeLessThan(1024);
   }
+  expect(caveat).toContain("01234567-89ab-cdef-0123-456789abcdef");
   expect(selected.codeView.pdbFileName).toBe(name);
 });

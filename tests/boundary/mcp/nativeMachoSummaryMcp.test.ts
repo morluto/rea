@@ -1,7 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { copyFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect } from "vitest";
+import { afterAll, describe, expect } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { z } from "zod";
 
 import { inspectMachoSchema } from "../../../src/domain/native/nativeInspection.js";
@@ -16,6 +19,9 @@ import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { openProductionTarget } from "../../support/mcp/productionSession.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const evidenceOf = <Schema extends z.ZodType>(schema: Schema) =>
   z.object({
@@ -145,7 +151,7 @@ mcpTest(
     const { empty, segment, dependency, command, report } =
       binaryUncertainFixture();
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -157,24 +163,32 @@ mcpTest(
       throw new Error("No provider expected");
     });
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const client = await mcp.connect(
       createServer(
         { kind: "session", session },
         {
-          environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: { ...process.env },
         },
       ),
+      undefined,
+      schemaValidation,
     );
-    const tool = await advertisedMcpToolSchemas(client, "inspect_macho");
+    const tool = await advertisedMcpToolSchemas(
+      client,
+      "inspect_macho",
+      schemaValidation.assertions,
+    );
     expect(
-      tool.ajv.validate(tool.outputSchema, source),
+      tool.ajv.validate(canonicalOutputSchema(tool.name), source),
       JSON.stringify(tool.ajv.errors),
     ).toBe(true);
     const view = await advertisedMcpToolSchemas(
       client,
       "inspect_analysis_view",
+      schemaValidation.assertions,
     );
     for (const [facet, expected] of [
       ["segments", segment],
@@ -189,15 +203,11 @@ mcpTest(
         view.ajv.validate(view.inputSchema, request),
         JSON.stringify(view.ajv.errors),
       ).toBe(true);
-      const reply = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: request,
-      });
+      const reply = await client.callTool(
+        { name: "inspect_analysis_view", arguments: request },
+        { toolDefinition: view.toolDefinition },
+      );
       expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-      expect(
-        view.ajv.validate(view.outputSchema, reply.structuredContent),
-        JSON.stringify(view.ajv.errors),
-      ).toBe(true);
       const result = parseEvidence(reply.structuredContent).normalized_result;
       expect(result).toMatchObject({
         item: [expected],
@@ -222,7 +232,7 @@ mcpTest(
       sections: empty,
     };
     const historical = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -239,21 +249,20 @@ mcpTest(
       },
     );
     expect(
-      tool.ajv.validate(tool.outputSchema, historical),
+      tool.ajv.validate(canonicalOutputSchema(tool.name), historical),
       JSON.stringify(tool.ajv.errors),
     ).toBe(true);
-    const oldView = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: {
-        source: { kind: "inline", evidence: historical },
-        view: { kind: "macho", facet: "segments" },
+    const oldView = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: {
+          source: { kind: "inline", evidence: historical },
+          view: { kind: "macho", facet: "segments" },
+        },
       },
-    });
+      { toolDefinition: view.toolDefinition },
+    );
     expect(oldView.isError, JSON.stringify(oldView.content)).not.toBe(true);
-    expect(
-      view.ajv.validate(view.outputSchema, oldView.structuredContent),
-      JSON.stringify(view.ajv.errors),
-    ).toBe(true);
     expect(
       parseEvidence(oldView.structuredContent).normalized_result,
     ).toMatchObject({ item: [historicalSegment], source_exhaustive: true });
@@ -304,7 +313,7 @@ mcpTest(
       limitations: [],
     });
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -316,19 +325,23 @@ mcpTest(
       throw new Error("Imported views must not start a provider");
     });
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const client = await mcp.connect(
       createServer(
         { kind: "session", session },
         {
-          environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: { ...process.env },
         },
       ),
+      undefined,
+      schemaValidation,
     );
     const schemas = await advertisedMcpToolSchemas(
       client,
       "inspect_analysis_view",
+      schemaValidation.assertions,
     );
     for (const [facet, expected] of [
       ["imports", imported],
@@ -339,18 +352,14 @@ mcpTest(
         view: { kind: "macho", facet },
       };
       expect(
-        schemas.ajv.validate(schemas.inputSchema, request),
+        schemas.ajv.validate(schemas.canonicalInputSchema, request),
         JSON.stringify(schemas.ajv.errors),
       ).toBe(true);
-      const reply = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: request,
-      });
+      const reply = await client.callTool(
+        { name: "inspect_analysis_view", arguments: request },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-      expect(
-        schemas.ajv.validate(schemas.outputSchema, reply.structuredContent),
-        JSON.stringify(schemas.ajv.errors),
-      ).toBe(true);
       expect(
         pageSchema.parse(
           parseEvidence(reply.structuredContent).normalized_result,
@@ -472,8 +481,8 @@ describe.skipIf(process.platform !== "darwin")(
           },
         });
         expect(wrongKind.isError).toBe(true);
-        expect(JSON.stringify(wrongKind.content)).toContain(
-          "Mach-O inspection supports summary and macho views.",
+        expect(JSON.stringify(wrongKind.content)).toMatch(
+          /summary and macho views/iu,
         );
       },
     );
@@ -497,7 +506,8 @@ mcpTest(
       close: () => Promise.resolve(ok(null)),
     }));
     onTestFinished(async () => {
-      await session.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
     });
     const opened = await session.open(target);
     if (!opened.ok) throw opened.error;

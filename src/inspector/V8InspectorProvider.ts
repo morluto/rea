@@ -6,8 +6,8 @@ import {
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
 import {
   javascriptRuntimeObservationSchema,
   javascriptRuntimeTargetListSchema,
@@ -17,20 +17,27 @@ import {
   type ObserveJavaScriptRuntimeInput,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { delayWithCancellation } from "../browser/CdpCaptureValues.js";
-import {
-  readCdpScriptParsed,
-  readCdpExecutionContextCreated,
-  readCdpExecutionContextDestroyed,
-} from "../browser/CdpScriptContextFacts.js";
-import type { CdpConnection, CdpEvent } from "../browser/CdpConnection.js";
+import type { CdpScriptParsedFacts } from "../browser/CdpScriptContextFacts.js";
+import type { CdpRegisteredEventOf } from "../browser/protocol/CdpEvents.js";
+import type {
+  CdpConnection,
+  CdpReceivedEvent,
+} from "../browser/CdpConnection.js";
 import {
   ElectronFileScope,
   mapElectronFileAuthorizationFailure,
@@ -127,20 +134,15 @@ export class V8InspectorAdmission {
       }
       if (failures.length === 0) return;
       if (failures.length === 1) throw failures[0]!;
-      const cleanup = new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         V8_INSPECTOR_PROVIDER_IDENTITY.id,
-        failures.flatMap(({ cleanupResources }) => cleanupResources),
-        { reason: "Inspector provider cleanup remains incomplete." },
+        failures,
+        "Inspector provider cleanup remains incomplete.",
         {
           operation: "observe_javascript_runtime",
-          cause: new AggregateError(
-            failures,
-            "Inspector provider cleanup owners remain unresolved.",
-          ),
+          message: "Inspector provider cleanup owners remain unresolved.",
         },
       );
-      cleanup.bindCleanupDependencies(failures);
-      throw cleanup;
     } finally {
       this.#closing = false;
     }
@@ -156,6 +158,7 @@ const RETAINED_OBJECT_OVERHEAD_BYTES = 512;
 export interface ScriptDraft {
   readonly rawUrl: string;
   readonly executionContextKey: string | null;
+  readonly executionContextId: number | null;
   readonly cdpHash: string | null;
   readonly length: number | null;
   readonly isModule: boolean | null;
@@ -163,6 +166,7 @@ export interface ScriptDraft {
 
 export interface ContextDraft {
   readonly contextKey: string;
+  readonly executionContextId: number;
   state: "created" | "destroyed" | "cleared";
   readonly name: string | null;
   readonly origin: string | null;
@@ -171,6 +175,7 @@ export interface ContextDraft {
 export interface CaptureState {
   readonly scripts: ScriptDraft[];
   readonly contexts: Map<string, ContextDraft>;
+  readonly latestContexts: Map<string, ContextDraft>;
   eventsObserved: number;
   eventsRetained: number;
   eventsDropped: number;
@@ -310,29 +315,32 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
           ),
         ];
         return err(
-          new AnalysisCancelledError("list_javascript_runtime_targets", {
-            cause: cause.cause,
-            diagnostics: {
-              completed_target_inventory: {
-                runtime: discovery.runtime,
-                targets: allowed
-                  .sort((left, right) =>
-                    left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
-                  )
-                  .map(projectTarget),
-                excluded: { ...excluded, unconnectable },
-                targets_examined: targetsExamined,
-                targets_discovered: discovery.targets.length,
-                complete,
-                limitations: complete
-                  ? limitations
-                  : [
-                      ...limitations,
-                      "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
-                    ],
+          cancelledBy(
+            "list_javascript_runtime_targets",
+            carriedReason(cause.cause),
+            {
+              diagnostics: {
+                completed_target_inventory: {
+                  runtime: discovery.runtime,
+                  targets: allowed
+                    .sort((left, right) =>
+                      left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+                    )
+                    .map(projectTarget),
+                  excluded: { ...excluded, unconnectable },
+                  targets_examined: targetsExamined,
+                  targets_discovered: discovery.targets.length,
+                  complete,
+                  limitations: complete
+                    ? limitations
+                    : [
+                        ...limitations,
+                        "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
+                      ],
+                },
               },
             },
-          }),
+          ),
         );
       }
       return err(providerError(cause, "list_javascript_runtime_targets"));
@@ -473,12 +481,10 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
     // waiting for its bounded transport close. Preserve it as the primary
     // result even when cleanup completed normally.
     if (options.signal?.aborted === true && outcome?.ok === true) {
-      const cancellation = new AnalysisCancelledError(
+      const cancellation = cancelledBy(
         "observe_javascript_runtime",
-        {
-          cause: options.signal.reason,
-          partialObservation: outcome.value,
-        },
+        options.signal,
+        { partialObservation: outcome.value },
       );
       outcome = err(cancellation);
     }
@@ -621,6 +627,7 @@ const assertRuntimeKind = (
 const emptyCaptureState = (): CaptureState => ({
   scripts: [],
   contexts: new Map(),
+  latestContexts: new Map(),
   eventsObserved: 0,
   eventsRetained: 0,
   eventsDropped: 0,
@@ -633,37 +640,38 @@ const emptyCaptureState = (): CaptureState => ({
   truncationReasons: new Set(),
 });
 
-const ingestEvent = (event: CdpEvent, state: CaptureState): void => {
-  if (
-    event.method !== "Debugger.scriptParsed" &&
-    event.method !== "Debugger.scriptFailedToParse" &&
-    event.method !== "Runtime.executionContextCreated" &&
-    event.method !== "Runtime.executionContextDestroyed" &&
-    event.method !== "Runtime.executionContextsCleared"
-  )
-    return;
-  state.eventsObserved += 1;
-  if (event.method === "Debugger.scriptParsed") {
-    ingestScript(event, state);
-    return;
-  }
-  if (event.method === "Debugger.scriptFailedToParse") {
-    const facts = readCdpScriptParsed(event.params);
-    if (facts.scriptId === undefined || facts.url === undefined) {
-      state.invalidScripts += 1;
+const ingestEvent = (event: CdpReceivedEvent, state: CaptureState): void => {
+  const registered = event.registered;
+  switch (registered?.method) {
+    case "Debugger.scriptParsed":
+      state.eventsObserved += 1;
+      ingestScript(registered.payload.facts, state);
+      return;
+    case "Debugger.scriptFailedToParse": {
+      state.eventsObserved += 1;
+      const { facts } = registered.payload;
+      if (facts.scriptId === undefined || facts.url === undefined)
+        state.invalidScripts += 1;
+      else state.parseFailedScripts += 1;
       retainEvent(state, 0);
       return;
     }
-    state.parseFailedScripts += 1;
-    retainEvent(state, 0);
-    return;
+    case "Runtime.executionContextCreated":
+    case "Runtime.executionContextDestroyed":
+    case "Runtime.executionContextsCleared":
+      state.eventsObserved += 1;
+      ingestContext(registered, state);
+      return;
+    default:
+      return;
   }
-  ingestContext(event, state);
 };
 
-const ingestScript = (event: CdpEvent, state: CaptureState): void => {
+const ingestScript = (
+  facts: CdpScriptParsedFacts,
+  state: CaptureState,
+): void => {
   state.scriptsObserved += 1;
-  const facts = readCdpScriptParsed(event.params);
   const rawUrl = facts.url;
   if (rawUrl === undefined) {
     state.invalidScripts += 1;
@@ -671,9 +679,16 @@ const ingestScript = (event: CdpEvent, state: CaptureState): void => {
     return;
   }
   const { metadata } = facts;
+  const context =
+    facts.contextKey === null
+      ? undefined
+      : state.latestContexts.get(facts.contextKey);
   const draft: ScriptDraft = {
     rawUrl,
-    executionContextKey: facts.contextKey,
+    executionContextKey:
+      context?.state === "created" ? context.contextKey : null,
+    executionContextId:
+      facts.contextKey === null ? null : (facts.contextId ?? null),
     cdpHash: metadata.hash,
     length: metadata.length,
     isModule: metadata.isModule,
@@ -683,51 +698,57 @@ const ingestScript = (event: CdpEvent, state: CaptureState): void => {
   state.scripts.push(draft);
 };
 
-const ingestContext = (event: CdpEvent, state: CaptureState): void => {
-  if (event.method === "Runtime.executionContextsCleared") {
-    let byteDelta = 0;
-    for (const context of state.contexts.values()) {
-      byteDelta +=
-        retainedMetadataBytes({ ...context, state: "cleared" }) -
-        retainedMetadataBytes(context);
+const ingestContext = (
+  registered: CdpRegisteredEventOf<
+    | "Runtime.executionContextCreated"
+    | "Runtime.executionContextDestroyed"
+    | "Runtime.executionContextsCleared"
+  >,
+  state: CaptureState,
+): void => {
+  if (registered.method === "Runtime.executionContextsCleared") {
+    for (const context of state.latestContexts.values()) {
+      if (context.state === "created") context.state = "cleared";
     }
-    if (replaceRetainedMetadata(state, byteDelta)) {
-      for (const context of state.contexts.values()) context.state = "cleared";
-      retainEvent(state, 0);
-    }
+    state.latestContexts.clear();
+    retainEvent(state, 0);
     return;
   }
-  const created = event.method === "Runtime.executionContextCreated";
-  const createdContext = created
-    ? readCdpExecutionContextCreated(event.params)
-    : undefined;
-  const key =
-    createdContext === undefined
-      ? readCdpExecutionContextDestroyed(event.params).contextKey
-      : createdContext.contextKey;
-  if (key === null) {
+  const createdContext =
+    registered.method === "Runtime.executionContextCreated"
+      ? registered.payload.facts
+      : undefined;
+  const identity =
+    registered.method === "Runtime.executionContextCreated"
+      ? registered.payload.facts
+      : registered.payload;
+  const created = createdContext !== undefined;
+  const key = identity.contextKey;
+  if (key === null || identity.id === undefined) {
     state.invalidContexts += 1;
     retainEvent(state, 0);
     return;
   }
-  const previous = state.contexts.get(key);
+  const previous = state.latestContexts.get(key);
+  // A lifecycle transition invalidates the old binding even if the new
+  // record cannot be retained within the metadata budget.
+  state.latestContexts.delete(key);
+  if (!created && previous !== undefined) {
+    previous.state = "destroyed";
+    state.latestContexts.set(key, previous);
+    retainEvent(state, 0);
+    return;
+  }
   const draft: ContextDraft = {
-    contextKey: key,
+    contextKey: `context_${String(state.contexts.size)}`,
+    executionContextId: identity.id,
     state: created ? "created" : "destroyed",
-    name:
-      createdContext === undefined
-        ? (previous?.name ?? null)
-        : (createdContext.name ?? null),
-    origin:
-      createdContext === undefined
-        ? (previous?.origin ?? null)
-        : (createdContext.origin ?? null),
+    name: createdContext?.name ?? null,
+    origin: createdContext?.origin ?? null,
   };
-  const bytes =
-    retainedMetadataBytes(draft) -
-    (previous === undefined ? 0 : retainedMetadataBytes(previous));
-  if (!retainEvent(state, bytes)) return;
-  state.contexts.set(key, draft);
+  if (!retainEvent(state, retainedMetadataBytes(draft))) return;
+  state.contexts.set(draft.contextKey, draft);
+  state.latestContexts.set(key, draft);
 };
 
 const retainEvent = (state: CaptureState, bytes: number): boolean => {
@@ -782,7 +803,7 @@ const waitForCapture = async (
     ]);
   } finally {
     // Cancel only this wait's timer. The caller owns and retains its signal.
-    timerOwner.abort();
+    timerOwner.abort(OwnerCancellation.noLongerNeeded);
     removeDisconnect();
     removeProtocolFailure();
   }

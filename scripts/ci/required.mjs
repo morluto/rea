@@ -1,4 +1,4 @@
-import { CI_FLAGS } from "./scopes.mjs";
+import { CI_FLAGS, CI_LANES, testShardJob } from "./scopes.mjs";
 import { recordQualification } from "./qualification.mjs";
 
 const jobs = JSON.parse(process.env.CI_JOBS);
@@ -28,28 +28,33 @@ if (
   );
 if (outputs.tier === "full" && selectedScopes.length !== CI_FLAGS.length)
   throw new Error("Full qualification requires every canonical CI scope");
+// Only a fast pull-request plan may run a selected test subset.
+const testMode = outputs.test_mode;
+if (
+  !["full", "selected"].includes(testMode) ||
+  (testMode === "selected" &&
+    (outputs.tier !== "fast" ||
+      process.env.GITHUB_EVENT_NAME !== "pull_request" ||
+      outputs.code !== "true"))
+)
+  throw new Error(
+    "CI classification requires a valid test mode: full, or selected on a fast pull request",
+  );
 const required = reused ? ["changes"] : ["changes", "static", "test"];
 if (outputs.tier === "full") required.push("static-deep");
-const lanes = {
-  code: [
-    "build",
-    "test-shard",
-    ...(outputs.tier === "fast" ? ["test-source"] : []),
-  ],
-  reverse_tools: ["reverse-tools-quality"],
-  runtime: ["windows-native-build", "package-e2e"],
-  package: ["windows-curated"],
-  sqlite: ["sqlite-runtime"],
-  apple: ["apple-artifacts"],
-  fixtures: ["conformance-fixtures"],
-  readiness: ["reconstruction-readiness"],
-  docs: ["docs"],
-  workflows: ["static"],
-};
-for (const scope of selectedScopes) required.push(...(lanes[scope] ?? [scope]));
-const failed = [...new Set(required)].filter(
-  (name) => jobs[name]?.result !== "success",
+for (const scope of selectedScopes)
+  required.push(
+    ...((testMode === "selected" && CI_LANES[scope].selectedTests) ||
+      CI_LANES[scope].required[outputs.tier]),
+  );
+const matrix = testShardJob(
+  process.env.GITHUB_EVENT_NAME,
+  outputs.tier,
+  testMode,
 );
+const failed = [...new Set(required)]
+  .map((name) => (name === "test-shard" ? matrix : name))
+  .filter((name) => jobs[name]?.result !== "success");
 for (const [name, job] of Object.entries(jobs)) {
   if (["failure", "cancelled"].includes(job.result) && !failed.includes(name))
     failed.push(name);

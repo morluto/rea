@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import {
+  assertMipsCarvedTargetRefusal,
+  carveMipsElfBeforeSectionTable,
+} from "../../conformance/ghidra/mips-checks.mjs";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { expectBinaryTargetError } from "../../fixtures/binaryTargetAdmission.js";
@@ -305,6 +310,29 @@ it("refuses uncaptured section declarations while retaining unknown ABI evidence
   assert.equal(resolved.mips.limitations, undefined);
   assert.equal(ghidraMipsUnsupportedReason(resolved), null);
 });
+for (const little of [true, false]) {
+  it(`matches the real MIPS lane's carved-copy refusal (${little ? "LE" : "BE"})`, async () => {
+    // Linker layout puts the section table last, so the lane's carve keeps
+    // every program header and payload while dropping the whole table.
+    const original = fixture(little);
+    const linked = Buffer.concat([original, original.subarray(128, 208)]);
+    if (little) linked.writeUInt32LE(original.length, 32);
+    else linked.writeUInt32BE(original.length, 32);
+    const carve = carveMipsElfBeforeSectionTable(
+      linked,
+      little ? "little" : "big",
+    );
+    const path = await writeFixture(carve.bytes);
+    const error = expectBinaryTargetError(await parseBinaryTarget(path));
+    // The real lane applies the same check to MCP and CLI error projections.
+    assertMipsCarvedTargetRefusal(
+      projectAnalysisError(error),
+      await realpath(path),
+      carve.reason,
+    );
+    assert.deepEqual(await readFile(path), carve.bytes);
+  });
+}
 for (const failure of ["conflicting", "outside", "duplicate"]) {
   it(`retains ${failure} ABI errors in a partly captured section table`, async () => {
     const original = fixture();
@@ -380,6 +408,7 @@ const malformed: [string, (bytes: Buffer) => void, RegExp][] = [
   ["short record", (b) => b.writeUInt32LE(23, 68), /record size/u],
   ["oversized record", (b) => b.writeUInt32LE(0xffffffff, 68), /record size/u],
   ["invalid table stride", (b) => b.writeUInt16LE(31, 42), /entry size/u],
+  ["padded MIPS program stride", (b) => b.writeUInt16LE(36, 42), /entry size/u],
   ["extended program count", (b) => b.writeUInt16LE(0xffff, 44), /numbering/u],
   ["extended section count", (b) => b.writeUInt16LE(0, 48), /extended/u],
   ["changed identity", (b) => b.writeUInt32LE(0x60001001, 36), /identity/u],
@@ -592,13 +621,21 @@ it.each([
   },
 );
 
-it("checks the GNU attribute size bound before attempting its file read", async () => {
-  const bytes = withGnuAttributes(fixture(), [attributeSection([4, 5])]);
-  bytes.writeUInt32LE(0xfffffff0, 224);
-  bytes.writeUInt32LE(4097, 228);
-  const result = await inspectDeclarations(bytes);
-  assert.ok(!result.ok);
-  assert.match(result.error, /outside REA's inspected bound of 4096 bytes/u);
+it("distinguishes a capped GNU attribute section from one extending past EOF", async () => {
+  const emptyScope = attributeSection([]).subarray(9);
+  const payload = Buffer.concat([
+    attributeSection([4, 5]),
+    ...Array.from({ length: 817 }, () => emptyScope),
+  ]);
+  payload.writeUInt32LE(payload.length - 1, 1);
+  const bytes = withGnuAttributes(fixture(), [payload]);
+  const capped = await inspectDeclarations(bytes);
+  assert.ok(!capped.ok);
+  assert.match(capped.error, /outside REA's inspected bound of 4096 bytes/u);
+
+  const truncated = await inspectDeclarations(bytes.subarray(0, -1));
+  assert.ok(!truncated.ok);
+  assert.match(truncated.error, /GNU attribute section lies outside the file/u);
 });
 
 it("uses section type and bounds the GNU attribute payload extent", async () => {

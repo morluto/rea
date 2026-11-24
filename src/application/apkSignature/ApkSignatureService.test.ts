@@ -1,12 +1,15 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import { ApkSignatureProvider } from "../../apkSignature/ApkSignatureProvider.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ok } from "../../domain/result.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import { createEvidence } from "../../domain/evidence.js";
 import { ApkSignatureService } from "./ApkSignatureService.js";
 
 it("preserves pre-aborted cancellation reasons without starting the provider", async () => {
@@ -26,40 +29,67 @@ it("preserves pre-aborted cancellation reasons without starting the provider", a
   expect(result.error.cause).toBe(reason);
 });
 
-it("retains completed APK Evidence and the abort reason on late cancellation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-apk-service-"));
-  const provider = new ApkSignatureProvider();
-  try {
-    const path = join(root, "unsigned.apk");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("classes.dex", new TextReader("x"));
-    await writeFile(path, await writer.close());
-    const completed = await provider.inspect({ path });
-    if (!completed.ok) throw completed.error;
+it.each([false, true])(
+  "retains completed APK provenance with late cancellation=%s",
+  async (cancelled) => {
+    const root = await createTestTempDirectory("rea-apk-service-");
+    const provider = new ApkSignatureProvider();
+    try {
+      const path = join(root, "unsigned.apk");
+      const writer = new ZipWriter(new Uint8ArrayWriter());
+      await writer.add("classes.dex", new TextReader("x"));
+      await writeFile(path, await writer.close());
+      const completed = await provider.inspect({ path });
+      if (!completed.ok) throw completed.error;
+      const identity = { ...completed.value.provider, version: "fixture-1" };
+      const profile = createAnalysisProfile(identity, { mode: "static" });
+      const relationshipCoverage = {
+        status: "unknown",
+        reason: "Relationships were not inspected",
+      } as const;
+      const source = createEvidence(completed.value.subject, identity, {
+        operation: "read_apk_signing_block",
+        parameters: { path },
+        result: { observed: true },
+      });
+      const execution = {
+        ...completed.value,
+        provider: identity,
+        analysisProfile: profile,
+        relationshipCoverage,
+        sourceEvidence: [source],
+      };
 
-    const controller = new AbortController();
-    const reason = new Error("late abort reason");
-    const result = await new ApkSignatureService({
-      close: () => Promise.resolve(),
-      inspect: () => {
-        controller.abort(reason);
-        return Promise.resolve(ok(completed.value));
-      },
-    }).inspect({ path, detail: "complete" }, { signal: controller.signal });
+      const controller = new AbortController();
+      const reason = new Error("late abort reason");
+      const result = await new ApkSignatureService({
+        close: () => Promise.resolve(),
+        inspect: () => {
+          if (cancelled) controller.abort(reason);
+          return Promise.resolve(ok(execution));
+        },
+      }).inspect({ path, detail: "complete" }, { signal: controller.signal });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(reason);
-    expect(result.error.partialObservation).toMatchObject({
-      operation: "inspect_apk_signature",
-      normalized_result: completed.value.result,
-    });
-  } finally {
-    await provider.close();
-    await rm(root, { recursive: true, force: true });
-  }
-});
+      expect(result.ok).toBe(!cancelled);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+        expect(result.error.cause).toBe(reason);
+      }
+      const evidence = result.ok
+        ? result.value
+        : result.error.partialObservation;
+      expect(evidence).toMatchObject({
+        operation: "inspect_apk_signature",
+        normalized_result: completed.value.result,
+        analysis_profile: profile,
+        relationship_coverage: relationshipCoverage,
+        evidence_links: [source.evidence_id],
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it("refuses summary acquisition before reading when complete Evidence cannot be retained", async () => {
   const service = new ApkSignatureService({
@@ -78,7 +108,7 @@ it("refuses summary acquisition before reading when complete Evidence cannot be 
 });
 
 it("rejects a live provider subject path that differs from the selected APK", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-apk-subject-"));
+  const root = await createTestTempDirectory("rea-apk-subject-");
   const provider = new ApkSignatureProvider();
   try {
     const path = join(root, "selected.apk");
@@ -102,6 +132,5 @@ it("rejects a live provider subject path that differs from the selected APK", as
     });
   } finally {
     await provider.close();
-    await rm(root, { recursive: true, force: true });
   }
 });

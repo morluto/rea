@@ -1,7 +1,12 @@
 import type { MatchNativeFunctionsInput } from "../../contracts/native/functionMatchingContracts.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  ANALYSIS_EVIDENCE_PREDICATE,
+  isImmutableEvidence,
+  type Evidence,
+  evidenceFileTarget,
+} from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
 import { retainedEvidenceReferenceSchema } from "../../domain/evidenceReference.js";
 import {
@@ -12,13 +17,30 @@ import type { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
 
 import { nativeMatchingInputError } from "./NativeMatchingInputError.js";
 
-const INVENTORY_OPERATIONS = ["list_procedures"] as const;
-const OBSERVATION_OPERATIONS = [
-  "list_names",
-  "procedure_info",
-  "read_bytes",
-  "analyze_function",
-] as const;
+/** The operations one selected role admits, and how to produce them. */
+interface MatchingSourceRole {
+  readonly operations: readonly string[];
+  /** Matching borrows the record when it never copies the result. */
+  readonly borrowable: boolean;
+  readonly remediationAction?: string;
+}
+
+/** A filtered search cannot replace the inventory, so its refusal names the producers. */
+const INVENTORY_ROLE: MatchingSourceRole = {
+  operations: ["list_procedures"],
+  borrowable: true,
+  remediationAction:
+    "Select complete list_procedures Evidence: MCP list_procedures, or CLI rea list-procedures <path> --json (or --detail summary --evidence_output <bundle> with --source_bundle). search_procedures results are filtered by their pattern and are not inventories.",
+};
+const OBSERVATION_ROLE: MatchingSourceRole = {
+  operations: [
+    "list_names",
+    "procedure_info",
+    "read_bytes",
+    "analyze_function",
+  ],
+  borrowable: false,
+};
 
 /** Authenticate selected roles and their closure without interpreting dependencies as observations. */
 export const resolveNativeMatchingSources = async (
@@ -77,32 +99,29 @@ export const resolveNativeMatchingSources = async (
   const select = async (
     raw: unknown,
     path: readonly (string | number)[],
-    operations: readonly string[],
-    borrowable = false,
+    { operations, borrowable, remediationAction }: MatchingSourceRole,
   ): Promise<Evidence> => {
     const evidence = await resolve(raw, path, borrowable);
     if (
-      evidence.predicate_type !== "rea.analysis" ||
+      evidence.predicate_type !== ANALYSIS_EVIDENCE_PREDICATE ||
       !operations.includes(evidence.operation) ||
-      evidence.subject === null
+      evidenceFileTarget(evidence) === undefined
     ) {
       const message = `Expected artifact-bound rea.analysis ${operations.join(" or ")} Evidence, received ${evidence.predicate_type} ${evidence.operation}`;
       throw new AnalysisInputError(
         admission.operation,
-        { userMessage: message },
+        {
+          userMessage: message,
+          ...(remediationAction === undefined ? {} : { remediationAction }),
+        },
         [{ path, reason: "invalid_value", message }],
       );
     }
     return evidence;
   };
   // readFunctionInventory charges each inventory row before parsing it.
-  const left = await select(input.left, ["left"], INVENTORY_OPERATIONS, true);
-  const right = await select(
-    input.right,
-    ["right"],
-    INVENTORY_OPERATIONS,
-    true,
-  );
+  const left = await select(input.left, ["left"], INVENTORY_ROLE);
+  const right = await select(input.right, ["right"], INVENTORY_ROLE);
   const observations = async (
     inputs: readonly unknown[],
     field: "left_observations" | "right_observations",
@@ -111,11 +130,7 @@ export const resolveNativeMatchingSources = async (
     const result: Evidence[] = [];
     const seen = new Set<string>();
     for (const [index, input] of inputs.entries()) {
-      const record = await select(
-        input,
-        [field, index],
-        OBSERVATION_OPERATIONS,
-      );
+      const record = await select(input, [field, index], OBSERVATION_ROLE);
       if (
         digestCanonicalValue(record.subject) !==
           digestCanonicalValue(inventory.subject) ||

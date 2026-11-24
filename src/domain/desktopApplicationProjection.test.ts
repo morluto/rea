@@ -62,6 +62,11 @@ const facts: DesktopFact[] = [
     value: { container: "FORM", first_chunk: "GEN8" },
   },
   { kind: "il2cpp-library-convention", offset: null, value: "p" },
+  {
+    kind: "unity-il2cpp-backup-convention",
+    offset: null,
+    value: { backup_directory: "B" },
+  },
   { kind: "electron-asar-convention", offset: null, value: "p" },
   { kind: "unreal-container-convention", offset: null, value: "p" },
 ];

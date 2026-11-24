@@ -12,7 +12,8 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
+import { bindingHasMemberWrites } from "./javascriptSemanticEffectLog.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   completeSemanticSteps,
@@ -47,7 +48,7 @@ import {
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
-import { semanticComputedMethodKey } from "./javascriptSemanticEvaluationOrder.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
 
 interface CollectCallableInput {
   readonly node: t.Node;
@@ -77,7 +78,7 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
     computedKeyLocation:
       "key" in node &&
       t.isNode(node.key) &&
-      semanticComputedMethodKey(node, node.key)
+      semanticMethodDefinitionExpression(node, node.key)
         ? range(node.key)
         : null,
     returnSites: [],
@@ -269,7 +270,7 @@ export const immutableSemanticBindings = (
       mutable: binding.mutable,
       definitions: binding.definitions,
       value: evaluateSemanticBinding(binding, state),
-      ...(binding.memberWrites.length > 0 &&
+      ...(bindingHasMemberWrites(binding) &&
       binding.initializers.length === 1 &&
       binding.initializers[0]?.projection.length === 0
         ? {
@@ -286,19 +287,33 @@ export const immutableSemanticBindings = (
       compareUnicodeCodePoints(left.bindingId, right.bindingId),
     );
 
-const callableKind = (
-  node: t.Node,
-): "function" | "class" | "method" | undefined => {
-  if (
-    t.isClassMethod(node) ||
-    t.isClassPrivateMethod(node) ||
-    t.isObjectMethod(node)
-  )
-    return "method";
-  if (t.isFunction(node)) return "function";
-  if (t.isClass(node)) return "class";
-  return undefined;
+type CallableKind = "function" | "class" | "method";
+
+/**
+ * Callable kind by node type, from Babel's own `Function` and `Class` aliases
+ * with methods taking precedence. Traversals ask this of every node on entry
+ * and exit, so it is one lookup instead of a chain of type guards.
+ */
+const babelAliasTypes = (alias: "Class" | "Function"): readonly string[] => {
+  const types = t.FLIPPED_ALIAS_KEYS[alias];
+  if (types === undefined || types.length === 0)
+    throw new TypeError(`Babel declares no node types for alias ${alias}`);
+  return types;
 };
+
+const CALLABLE_KIND_BY_NODE_TYPE: ReadonlyMap<string, CallableKind> = new Map<
+  string,
+  CallableKind
+>([
+  ...babelAliasTypes("Class").map((type) => [type, "class"] as const),
+  ...babelAliasTypes("Function").map((type) => [type, "function"] as const),
+  ["ClassMethod", "method"],
+  ["ClassPrivateMethod", "method"],
+  ["ObjectMethod", "method"],
+]);
+
+const callableKind = (node: t.Node): CallableKind | undefined =>
+  CALLABLE_KIND_BY_NODE_TYPE.get(node.type);
 
 const callableName = (node: t.Node, parent: t.Node | null): string | null => {
   if (
@@ -428,7 +443,7 @@ const collectRequireLink = (
   node: t.VariableDeclarator,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
-  const required = semanticRequireOrigin(node.init, state);
+  const required = semanticRequireOriginCandidate(node.init, state);
   if (required === undefined) return;
   const { origin, call } = required;
   const bindings = requirePatternBindings(node.id, origin.importedPath);
@@ -437,6 +452,9 @@ const collectRequireLink = (
       state,
       {
         kind: "require",
+        ...(origin.loaderAuthority === "candidate"
+          ? { loaderAuthority: "candidate" as const }
+          : {}),
         specifier: origin.specifier,
         importedName: binding.importedName,
         localName: binding.localName,
@@ -453,12 +471,15 @@ const collectUnboundRequireLink = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   if (state.linkedRequireCalls.has(node)) return;
-  const required = semanticRequireOrigin(node, state);
+  const required = semanticRequireOriginCandidate(node, state);
   if (required === undefined) return;
   addModuleLink(
     state,
     {
       kind: "require",
+      ...(required.origin.loaderAuthority === "candidate"
+        ? { loaderAuthority: "candidate" as const }
+        : {}),
       specifier: required.origin.specifier,
       importedName: null,
       localName: null,
@@ -515,6 +536,7 @@ const collectCommonJsExport = (
       exported.exportedName,
       applicability === "uncertain" ? null : exported.value,
       exported.projection,
+      exported.loaderAuthority,
     );
   }
 };
@@ -525,13 +547,14 @@ const addCommonJsExport = (
   exportedName: string,
   exported: t.Node | null,
   projection?: JavaScriptSemanticPropertyPath,
+  loaderAuthority?: "candidate",
 ): void => {
   // Simple assignment chains yield their rightmost assigned value.
   let value = exported;
   while (t.isAssignmentExpression(value, { operator: "=" }))
     value = value.right;
   const required =
-    value === null ? undefined : semanticRequireOrigin(value, state);
+    value === null ? undefined : semanticRequireOriginCandidate(value, state);
   // Copies retain their module provenance, but do not export the source object
   // itself. A wildcard with exclusions cannot express one module link.
   const origin = projection?.some(
@@ -545,6 +568,10 @@ const addCommonJsExport = (
     state,
     {
       kind: "commonjs-export",
+      ...(origin?.loaderAuthority === "candidate" ||
+      loaderAuthority === "candidate"
+        ? { loaderAuthority: "candidate" as const }
+        : {}),
       specifier: origin?.specifier ?? null,
       importedName:
         origin === undefined

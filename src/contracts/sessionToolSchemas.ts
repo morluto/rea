@@ -3,17 +3,52 @@ import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
 
-import { processTraceSpecificationSchema } from "../domain/process/processTraceSpecification.js";
-import { evidenceSchema } from "../domain/evidence.js";
-import { evidenceSourceInputSchema } from "../domain/evidenceReference.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
-import { evidenceRecordFiltersSchema } from "../domain/evidenceRecordSummary.js";
+import {
+  EVIDENCE_LINK_INSPECTION_LIMIT,
+  EVIDENCE_RECORD_SELECTION_LIMIT,
+  EVIDENCE_SUMMARY_SELECTION_LIMIT,
+  evidenceLinkStatusFilterSchema,
+  evidenceLinkTraversalSchema,
+  evidenceRecordFiltersSchema,
+} from "../domain/evidenceRecordSummary.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
 
-/** Complete retained Evidence, or selected discovery metadata without payloads. */
+/** Complete retained Evidence, discovery metadata, a page of complete records, or link membership. */
 export const getEvidenceBundleInputSchema = z.strictObject({
-  detail: z.enum(["complete", "summary"]).default("complete"),
+  detail: z
+    .enum(["complete", "summary", "records", "links"])
+    .default("complete"),
   filters: evidenceRecordFiltersSchema.optional(),
+  offset: z
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "summary, records or links: first matching row to return; default 0. Summary returns every match when neither offset nor limit is supplied.",
+    ),
+  limit: z
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      `summary: maximum metadata rows, default ${String(EVIDENCE_SUMMARY_SELECTION_LIMIT)} when paging is selected. records: maximum complete records, default ${String(EVIDENCE_RECORD_SELECTION_LIMIT)}. links: maximum link rows, default ${String(EVIDENCE_LINK_INSPECTION_LIMIT)}.`,
+    ),
+  traversal: evidenceLinkTraversalSchema
+    .optional()
+    .describe(
+      "links only: direct (default) reads the selected records' own links; retained-closure also follows retained links.",
+    ),
+  linked_evidence_id: prefixedDigestSchema("ev")
+    .optional()
+    .describe(
+      "links only: return direct links to this exact Evidence ID, including when that target is missing here. Source filters and outgoing traversal still select the examined records; this does not follow incoming links transitively.",
+    ),
+  link_status: evidenceLinkStatusFilterSchema
+    .optional()
+    .describe(
+      "links only: rows to return, default all with linked_evidence_id, otherwise missing. Counts cover target-matching links before this status filter.",
+    ),
 });
 
 /** Optional document selection for volatile navigation context. */
@@ -44,23 +79,6 @@ export const bundleComparisonMcpInputSchema =
       "Absolute local filesystem path to the right Evidence bundle.",
     ),
   });
-
-/** Evidence references for deterministic process comparison. */
-export const processComparisonInputSchema = z.strictObject({
-  left: evidenceSchema,
-  right: evidenceSchema,
-  trace_spec: processTraceSpecificationSchema.optional(),
-  max_capture_age_ms: z.int().nonnegative().optional(),
-});
-
-/** Name each compared artifact inventory once: inline, retained, or in a local Evidence file. */
-export const artifactComparisonInputSchema = z.strictObject({
-  left: evidenceSourceInputSchema,
-  right: evidenceSourceInputSchema,
-});
-export type ArtifactComparisonInput = z.output<
-  typeof artifactComparisonInputSchema
->;
 
 /** Residual-unknown list filters. */
 export const listUnknownsInputSchema = z.strictObject({

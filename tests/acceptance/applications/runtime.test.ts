@@ -1,11 +1,12 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { FULL_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   evidenceResultOf,
@@ -14,6 +15,11 @@ import {
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const mainPath = fileURLToPath(
   new URL("../../../dist/main.js", import.meta.url),
@@ -33,7 +39,7 @@ const expectAvailableToolInventory = async (
     throw new Error("The compiled catalog omitted binary_session");
   const status = await client.callTool(
     { name: "binary_session", arguments: {} },
-    { toolDefinition: binarySession },
+    { toolDefinition: withCanonicalOutputSchema(binarySession) },
   );
   expect(status.isError).not.toBe(true);
   const inventory = z
@@ -51,7 +57,7 @@ const expectAvailableToolInventory = async (
   expect(
     availability.length,
     "compiled tool inventory is stale; run npm run build:cached",
-  ).toBe(FULL_CATALOG_IDENTITY.counts.mcp_tools);
+  ).toBe(DEFAULT_CATALOG_IDENTITY.counts.mcp_tools);
   expect(new Set(listed.tools.map(({ name }) => name))).toEqual(
     new Set(TOOL_CONTRACTS.map(({ name }) => name)),
   );
@@ -83,6 +89,8 @@ const callCurrentDocument = async (
     cwd: process.cwd(),
     env: {
       PATH: process.env.PATH ?? "",
+      // The fixture exercises Hopper even when other providers are installed.
+      REA_ANALYSIS_PROVIDER: "hopper",
       HOPPER_LAUNCHER_PATH: process.execPath,
       ...(target === undefined
         ? {}
@@ -100,7 +108,10 @@ const callCurrentDocument = async (
   transport.stderr?.on("data", (chunk: Buffer | string) => {
     stderr += chunk.toString();
   });
-  const client = new Client({ name: "runtime-smoke", version: "1.0.0" });
+  const client = new Client(
+    { name: "runtime-smoke", version: "1.0.0" },
+    { jsonSchemaValidator: schemaValidation },
+  );
 
   let result: Awaited<ReturnType<Client["callTool"]>>;
   try {
@@ -143,7 +154,7 @@ describe("production stdio runtime", () => {
     );
     expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
     expect(stderr).not.toContain(fixturePath);
-  }, 15_000);
+  });
 
   it.runIf(process.platform === "darwin")(
     "returns the selected document on macOS through MCP and structured logs",
@@ -173,7 +184,6 @@ describe("production stdio runtime", () => {
       expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
       expect(stderr).not.toContain(fixturePath);
     },
-    15_000,
   );
 
   // Use the suite's bounded acceptance deadline, including its coverage allowance.
@@ -193,7 +203,10 @@ describe("production stdio runtime", () => {
     transport.stderr?.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();
     });
-    const client = new Client({ name: "catalog-runtime", version: "1.0.0" });
+    const client = new Client(
+      { name: "catalog-runtime", version: "1.0.0" },
+      { jsonSchemaValidator: schemaValidation },
+    );
 
     try {
       await client.connect(transport);
@@ -216,7 +229,7 @@ describe("production stdio runtime", () => {
         throw new Error("The compiled catalog omitted close_binary");
       const closed = await client.callTool(
         { name: "close_binary", arguments: {} },
-        { toolDefinition: closeBinary },
+        { toolDefinition: withCanonicalOutputSchema(closeBinary) },
       );
       expect(closed.isError).not.toBe(true);
     } finally {
@@ -313,6 +326,5 @@ describe("production stdio saved-database admission", () => {
         ),
       ).toBe(false);
     },
-    15_000,
   );
 });

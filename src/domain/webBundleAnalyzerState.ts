@@ -1,5 +1,8 @@
 import type { WebPageInspection } from "./browserObservationSchemas.js";
-import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
+import type {
+  WebBundleAnalysis,
+  WebBundleCallSite,
+} from "./webBundleAnalysis.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
 type BrowserScript = WebPageInspection["scripts"]["items"][number];
@@ -15,6 +18,8 @@ export interface AnalysisAccumulator {
   readonly edges: BundleObservations["chunks"]["edges"];
   readonly routes: BundleObservations["routes"];
   readonly endpoints: BundleObservations["endpoints"];
+  /** Browser requests whose URL argument could not be resolved statically. */
+  readonly unresolvedEndpoints: WebBundleCallSite[];
   readonly webMcp: BundleObservations["webmcp_declarations"];
   readonly inferences: WebBundleAnalysis["inferences"];
   readonly seen: Set<string>;
@@ -29,6 +34,7 @@ export const createWebBundleAnalysisAccumulator = (): AnalysisAccumulator => ({
   edges: [],
   routes: [],
   endpoints: [],
+  unresolvedEndpoints: [],
   webMcp: [],
   inferences: [],
   seen: new Set(),

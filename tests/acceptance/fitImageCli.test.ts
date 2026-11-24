@@ -13,8 +13,10 @@ import {
 } from "../../src/artifacts/fit/FitImage.fixture.js";
 import {
   cells,
+  devicetreeFixture,
   dtString,
-} from "../../src/firmware/devicetree/Devicetree.fixture.js";
+  type FixtureNode,
+} from "../../src/domain/firmware/devicetree.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {
@@ -83,6 +85,52 @@ cliTest.for(cases)(
       ).toBe(0);
   },
 );
+
+cliTest("reports the fixed FIT devicetree depth limit", async ({ cli }) => {
+  const directory = await createTestTempDirectory("rea-fit-depth-cli-");
+  const source = join(directory, "boot.itb");
+  const inspect = async (depth: number) => {
+    let metadata: FixtureNode = { name: "leaf" };
+    for (let level = 2; level < depth; level++)
+      metadata = { name: "nested", children: [metadata] };
+    await writeFile(
+      source,
+      devicetreeFixture({
+        name: "",
+        children: [
+          {
+            name: "images",
+            children: [{ name: "kernel", properties: { data: FIT_KERNEL } }],
+          },
+          metadata,
+        ],
+      }),
+    );
+    return await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+  };
+  const admitted = await inspect(64);
+  expect(admitted.exitCode, admitted.stdout + admitted.stderr).toBe(0);
+  const inspection = artifactInspectionResultSchema.parse(
+    parseEvidence(admitted.json).normalized_result,
+  );
+  const graph = artifactInventoryResultSchema.parse(
+    inspection.substeps[0]?.evidence.normalized_result,
+  );
+  expect(graph.manifest.root_format).toBe("fit");
+
+  const refused = await inspect(65);
+  expect(refused.json).toMatchObject({
+    code: "truncated",
+    retryable: false,
+    details: {
+      boundary: "capacity",
+      detail: expect.stringContaining("fixed max_depth"),
+      reported_limits: { boundary: "max_depth", maximum: 64 },
+    },
+  });
+});
 
 cliTest("rejects a FIT hash mismatch through the CLI", async ({ cli }) => {
   const directory = await createTestTempDirectory("rea-fit-invalid-cli-");
@@ -202,7 +250,10 @@ cliTest.for([true, false])(
       (row) => row.logical_path === "images/linked.bin",
     );
     expect(linked?.format_metadata).toMatchObject({ image_data: "target" });
+    expect(target?.artifact_id).toEqual(expect.any(String));
     expect(linked?.artifact_id).toBe(target?.artifact_id);
+    expect(linked?.source_location?.offset).toEqual(expect.any(Number));
+    expect(target?.source_location?.offset).toEqual(expect.any(Number));
     expect(linked?.source_location?.offset).not.toBe(
       target?.source_location?.offset,
     );

@@ -3,9 +3,10 @@ import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
-import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
+import { HopperRemoteError } from "../../../src/hopper/HopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -34,13 +35,13 @@ import {
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
 import { z } from "zod";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
 import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCaptureService.js";
 import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import type { JavaScriptRuntimeObservationPort } from "../../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../../../src/ports/javascript/JavaScriptRuntimeObservationPort.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -50,8 +51,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     const workspace = await createTestWorkspace("rea-sqlite-mcp-admission-");
     const database = createSqliteDatabaseFixture(workspace.root);
     database.close();
-    const acquired = createDeferred<void>();
-    const release = createDeferred<void>();
+    const runtimeRoot = phaseGate();
     const provider = new SqliteDatabaseProvider(
       process.env,
       (spawn) =>
@@ -72,8 +72,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         const root = await PrivateRuntimeRoot.create({
           parent: workspace.root,
         });
-        acquired.resolve();
-        await release.promise;
+        await runtimeRoot.hold();
         return root;
       },
     );
@@ -82,7 +81,10 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       { kind: "session", session },
       { sqliteDatabase: new SqliteDatabaseService(provider) },
     );
-    const client = new Client({ name: "sqlite-admission", version: "1" });
+    const client = new Client(
+      { name: "sqlite-admission", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -92,7 +94,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         name: "inspect_sqlite_database",
         arguments: { path: database.path, table: "records", columns: ["id"] },
       });
-      await acquired.promise;
+      await runtimeRoot.reached(inspection, "SQLite runtime root");
       let closed = false;
       const closing = session.close().then((result) => {
         closed = true;
@@ -100,7 +102,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(closed).toBe(false);
-      release.resolve();
+      runtimeRoot.release();
       const result = await inspection;
       expect(result.isError).not.toBe(true);
       const evidenceId = z
@@ -110,11 +112,11 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         normalized_result: { rows: { columns: ["id"], returned_rows: 3 } },
       });
       expect(await closing).toMatchObject({ ok: true });
-      // Closing a binding clears its ledger after the admitted recording succeeds.
-      expect(session.evidenceById(evidenceId)).toBeUndefined();
+      // Engine cleanup waits for admission but preserves the completed fact.
+      expect(session.evidenceById(evidenceId)?.evidence_id).toBe(evidenceId);
       expect(closed).toBe(true);
     } finally {
-      release.resolve();
+      runtimeRoot.release();
       await client.close();
       await server.close();
       await session.close();
@@ -167,10 +169,13 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       { kind: "session", session },
       { sqliteDatabase: new SqliteDatabaseService(provider) },
     );
-    const client = new Client({
-      name: "sqlite-retained-observation",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "sqlite-retained-observation",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -404,7 +409,10 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
       },
     },
   );
-  const client = new Client({ name: "bound-service-lifecycle", version: "1" });
+  const client = new Client(
+    { name: "bound-service-lifecycle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -494,7 +502,7 @@ it("closes the Inspector owner with peers and retries its retained cleanup", asy
 
   await server.close();
   expect(inspectorCloseAttempts).toBe(2);
-  expect(peerCloseAttempts).toBe(2);
+  expect(peerCloseAttempts).toBe(1);
 });
 
 it("does not close a caller-owned Inspector observation provider", async () => {
@@ -536,10 +544,13 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
+  const client = new Client(
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -615,12 +626,8 @@ it("preserves distinct results across concurrent tool calls", async () => {
     ["list_names", [{ address: "0x3000", value: "fixture_global" }]],
   ]);
   const pending = new Map<string, () => void>();
-  let allStarted: () => void = () => {
-    throw new Error("start gate missing");
-  };
-  const started = new Promise<void>((resolve) => {
-    allStarted = resolve;
-  });
+  let releaseRemaining = false;
+  const allStarted = phaseArrival();
   const client = await connect({
     execute: async (name) => {
       const payload = payloads.get(name);
@@ -628,7 +635,8 @@ it("preserves distinct results across concurrent tool calls", async () => {
         throw new Error(`Unexpected operation: ${name}`);
       await new Promise<void>((resolve) => {
         pending.set(name, resolve);
-        if (pending.size === payloads.size) allStarted();
+        if (pending.size === payloads.size) allStarted.arrive();
+        if (releaseRemaining) resolve();
       });
       return ok(payload);
     },
@@ -637,18 +645,24 @@ it("preserves distinct results across concurrent tool calls", async () => {
   const requests = names.map((name) =>
     client.callTool({ name, arguments: {} }),
   );
-  await started;
-  for (const name of [...names].reverse()) {
-    const release = pending.get(name);
-    if (release === undefined)
-      throw new Error("request did not reach provider");
-    release();
-  }
-  const results = await Promise.all(requests);
-  results.forEach((result, index) => {
-    expect(result.isError).not.toBe(true);
-    expect(structured(result)).toMatchObject({
-      normalized_result: payloads.get(names[index] ?? ""),
+  try {
+    await allStarted.reached(Promise.all(requests), "MCP tool calls");
+    for (const name of [...names].reverse()) {
+      const release = pending.get(name);
+      if (release === undefined)
+        throw new Error("request did not reach provider");
+      release();
+    }
+    const results = await Promise.all(requests);
+    results.forEach((result, index) => {
+      expect(result.isError).not.toBe(true);
+      expect(structured(result)).toMatchObject({
+        normalized_result: payloads.get(names[index] ?? ""),
+      });
     });
-  });
+  } finally {
+    releaseRemaining = true;
+    for (const release of pending.values()) release();
+    await Promise.allSettled(requests);
+  }
 });

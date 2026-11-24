@@ -2,7 +2,7 @@ import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { err, ok } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   wasmArtifactSchema,
   wasmArtifactMatchesSubject,
@@ -21,6 +21,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 /** Source forms and text from completed WASM Evidence; this never executes a VM. */
 export const wasmViewRequestSchema = z.strictObject({
@@ -71,6 +72,8 @@ export const wasmSummarySchema = z.strictObject({
   limitation_count: z.int().nonnegative(),
 });
 
+const readWasmArtifact = createAnalysisViewResultReader(wasmArtifactSchema);
+
 /** Read the exact retained WABT forms with source identity and explicit uncertainty. */
 export const projectWasmArtifactView = (
   parent: AnalysisViewParent,
@@ -89,18 +92,13 @@ export const projectWasmArtifactView = (
         },
       ]),
     );
-  const parsed = parseAnalysisViewResult(wasmArtifactSchema, parent);
+  const parsed = readWasmArtifact(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   if (
     !wasmArtifactMatchesSubject(
       report.artifact,
-      parent.subject == null
-        ? null
-        : {
-            sha256: parent.subject.digest.sha256,
-            format: parent.subject.format,
-          },
+      evidenceSubjectTarget(parent.subject),
     )
   )
     return err(
@@ -161,7 +159,6 @@ export const projectWasmArtifactView = (
       },
       coverage: completeWithinViewCoverage(
         report.sections.length + report.imports.length + report.exports.length,
-        report.sections.length + report.imports.length + report.exports.length,
       ),
     });
   if (view.facet === "tool_profile") {
@@ -179,7 +176,7 @@ export const projectWasmArtifactView = (
       kind: "wasm" as const,
       view,
       item: report.tool_profile,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
       ...shared,
     });
   }

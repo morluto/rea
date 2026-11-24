@@ -23,17 +23,15 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { environmentManifestHar } from "../../../tests/fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperation.js";
 import { writeJsonOutput } from "../../cli/jsonOutput.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { analysisViewRequestSchema } from "../../domain/analysisView/analysisView.js";
-import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
+import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
 import {
   DEFAULT_BUILD_TEMPLATE_RULES,
   buildEnvironment,
-  canonicalTemplateRules,
   classifyBuildCapture,
   type EnvironmentBuildInput,
 } from "./environmentBuild.js";
@@ -43,7 +41,6 @@ import {
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
 import { loadEnvironmentSource } from "./environmentSource.js";
-import { prepareServedState } from "./environmentState.js";
 
 const listFiles = async (root: string): Promise<string[]> =>
   (await readdir(root, { recursive: true, withFileTypes: true }))
@@ -196,38 +193,6 @@ describe("buildEnvironment", () => {
     });
   });
 
-  it("reports the coverage of the state the bundle serves", async () => {
-    const root = await createTestTempDirectory("rea-environment-build-cov-");
-    const evidence = analysisViewCaptureEvidence(
-      environmentManifestCaptureFixture(),
-    );
-    const built = await buildEnvironment(
-      await buildInput(root, evidence, { dryRun: true, directory: undefined }),
-    );
-    if (!built.ok) throw built.error;
-    const manifest = inspectAnalysisViewValidated({
-      source: { kind: "inline", evidence },
-      view: analysisViewRequestSchema.parse({
-        kind: "environment-manifest",
-        template_rules: [...DEFAULT_BUILD_TEMPLATE_RULES],
-      }),
-    });
-    if (!manifest.ok) throw manifest.error;
-    const source = loadEnvironmentSource(manifest.value, evidence);
-    if (!source.ok) throw source.error;
-    const { state } = prepareServedState(source.value, evidence);
-    if (state === undefined) throw new Error("Expected a served state");
-    expect(built.value.coverage).toEqual(
-      summarizeEnvironmentCoverage({
-        views: state.views.values(),
-        writes: state.writes.values(),
-      }),
-    );
-    expect(
-      built.value.coverage!.reads.state + built.value.coverage!.reads.recorded,
-    ).toBe(state.views.size);
-  });
-
   it("plans the same files without writing anything on a dry run", async () => {
     const root = await createTestTempDirectory("rea-environment-build-dry-");
     const planned = await buildEnvironment(
@@ -378,10 +343,15 @@ describe("buildEnvironment cancellation and input checks", () => {
     const built = await buildEnvironment(input);
     if (built.ok) throw new Error("Expected a cancellation");
     const projected = projectAnalysisError(built.error);
-    expect(projected.code).toBe("cancelled");
-    expect(JSON.stringify(projected)).toContain(
-      `"output_directory":${JSON.stringify(input.directory)}`,
-    );
+    expect(projected).toMatchObject({
+      code: "cancelled",
+      details: {
+        diagnostics: {
+          output_directory: input.directory,
+          bundle_written: true,
+        },
+      },
+    });
     expect(await listFiles(input.directory!)).toHaveLength(7);
   });
 
@@ -492,12 +462,20 @@ describe("classifyBuildCapture", () => {
   });
 });
 
-describe("canonicalTemplateRules", () => {
-  it("orders rules as the views apply them", () => {
-    expect(
-      canonicalTemplateRules(["prefix-variance", "after-uid-literal"]),
-    ).toEqual(["after-uid-literal", "prefix-variance"]);
-  });
+it("reports template rules in the order the views apply them", async () => {
+  const root = await createTestTempDirectory("rea-environment-rule-order-");
+  const built = await buildEnvironment(
+    await buildInput(root, undefined, {
+      dryRun: true,
+      directory: undefined,
+      templateRules: ["prefix-variance", "after-uid-literal"],
+    }),
+  );
+  if (!built.ok) throw built.error;
+  expect(built.value.manifest.template_rules).toEqual([
+    "after-uid-literal",
+    "prefix-variance",
+  ]);
 });
 
 describe("buildEnvironment credential names", () => {
@@ -731,7 +709,9 @@ describe("buildEnvironment dry-run package tarball", () => {
         code: "invalid_request",
         details: { issues: [{ path: ["package_tarball"] }] },
       });
-      expect(await readdir(root)).not.toContain("bundle");
+      await expect(readdir(input.directory!)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       read.mockRestore();
     }

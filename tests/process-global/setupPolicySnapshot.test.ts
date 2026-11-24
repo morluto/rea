@@ -33,6 +33,7 @@ import {
   inspectClientConfiguration,
 } from "../../src/application/SetupClientConfiguration.js";
 import type { SetupClient } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 afterEach(() => {
@@ -47,6 +48,7 @@ it.each(["inspect", "configure"] as const)(
     const configPath = join(home, ".gemini", "settings.json");
     const client: SetupClient = {
       name: "gemini_cli",
+      registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
       configPath,
       format: "json",
       geminiSettings: {
@@ -81,7 +83,13 @@ it.each(["inspect", "configure"] as const)(
 it("rechecks registration ownership after preflight before creating any backup", async () => {
   const home = await createTestTempDirectory("rea-setup-ownership-recheck-");
   const configPath = join(home, "settings.json");
-  const client: SetupClient = { name: "test", configPath, format: "json" };
+  const client: SetupClient = {
+    name: "test",
+    // Source-only ownership fixture models Cursor JSON registration.
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    configPath,
+    format: "json",
+  };
   await writeFile(
     configPath,
     '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}',
@@ -121,6 +129,7 @@ it("blocks an inherited foreign row before planning creation of a missing write 
   );
   const client: SetupClient = {
     name: "opencode",
+    registrationProfile: supportedClientRegistrationProfile("opencode"),
     format: "opencode",
     configPath,
     configPaths: [lower, configPath],
@@ -145,6 +154,7 @@ it.each(["other", "rea"])(
     const configPath = join(home, "opencode.json");
     const client: SetupClient = {
       name: "opencode",
+      registrationProfile: supportedClientRegistrationProfile("opencode"),
       format: "opencode",
       configPath,
       configPaths: [lower, configPath],
@@ -185,3 +195,40 @@ it.each(["other", "rea"])(
     }
   },
 );
+
+it("reports an OpenCode layer conflict introduced before the transaction snapshot", async () => {
+  const home = await createTestTempDirectory("rea-setup-opencode-snapshot-");
+  const nativePath = join(home, "opencode.json");
+  const configPath = join(home, "opencode.jsonc");
+  const client: SetupClient = {
+    name: "opencode",
+    registrationProfile: supportedClientRegistrationProfile("opencode"),
+    configPath,
+    configPaths: [nativePath, configPath],
+    format: "opencode",
+  };
+  const native =
+    '{"mcp":{"servers":{"peer":{"type":"local","command":["peer"]}}}}';
+  const conflict =
+    '{"mcp":{"servers":{"type":"local","command":["legacy-peer"]}}}';
+  await writeFile(nativePath, native);
+  await writeFile(configPath, "{}");
+  expect(
+    await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
+  ).toMatchObject({
+    status: "update",
+  });
+  refresh.afterDiscovery = () => writeFile(configPath, conflict);
+  expect(
+    await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+  ).toEqual({
+    status: "failed",
+    reason: "invalid_configuration",
+    detail: expect.stringContaining("legacy OpenCode server named servers"),
+  });
+  expect(await readFile(configPath, "utf8")).toBe(conflict);
+  expect(await readFile(nativePath, "utf8")).toBe(native);
+  await expect(readFile(`${configPath}.rea.backup`)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});

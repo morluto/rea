@@ -1,11 +1,15 @@
+import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
 import { expect, it } from "vitest";
-import { createEvidence } from "../evidence.js";
-import { freezeJsonSnapshot } from "../immutableJson.js";
-import type { RustBinary } from "../rust/rustBinary.js";
 import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+  changedEvidenceSubject,
+  fileIdentity,
+} from "../../../tests/fixtures/evidenceSubject.js";
+import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
+import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
+import { createEvidence } from "../evidence.js";
+import type { RustBinary } from "../rust/rustBinary.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const report: RustBinary = {
   artifact: { path: "/artifacts/rust", sha256: "a".repeat(64), bytes: 512 },
@@ -39,12 +43,13 @@ const report: RustBinary = {
   limitations: [],
 };
 const parent = (value = structuredClone(report)): AnalysisViewParent => {
+  const architecture = binaryMetadataArchitecture(value.architecture);
   const evidence = createEvidence(
     {
       path: value.artifact.path,
       sha256: value.artifact.sha256,
-      format: "elf",
-      architecture: "x86_64",
+      format: metadataReportSubjectFormat(value),
+      ...(architecture === undefined ? {} : { architecture }),
     },
     { id: "rust-auditable", name: "Rust reader", version: "1" },
     {
@@ -54,6 +59,7 @@ const parent = (value = structuredClone(report)): AnalysisViewParent => {
     },
   );
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     subject: evidence.subject,
@@ -78,47 +84,22 @@ it("revalidates mutable and merely frozen Rust imports despite a claimed seal", 
   ).toBe(false);
 });
 
-it.each([false, true])(
-  "pages historical Rust feature omissions with a sealed source: %s",
-  (sealed) => {
-    const previous = structuredClone(report);
-    const metadata = previous.auditable_metadata;
-    if (metadata === null) throw new Error("Expected Rust metadata");
-    const legacy = {
-      ...previous,
-      auditable_metadata: {
-        ...metadata,
-        packages: metadata.packages.map(
-          ({ features: _features, ...pkg }) => pkg,
-        ),
-      },
-    } as unknown as RustBinary;
-    if (sealed) freezeJsonSnapshot(legacy);
-    const input = { ...parent(legacy), sealedResult: sealed };
-    const result = projectAnalysisView(input, {
-      kind: "rust",
-      collection: "packages",
-      fields: ["features"],
-      offset: 0,
-      limit: 10,
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value).toMatchObject({
-      page: { rows: [{ index: 0, features: null }] },
-    });
-  },
-);
-
 it("checks exact artifact identity and subject architecture for every Rust view", () => {
   for (const changed of [
     { format: "pe" as const },
     { architecture: "arm64" as const },
-    { digest: { sha256: "b".repeat(64) } },
+    { sha256: "b".repeat(64) },
   ]) {
     const source = parent();
-    if (source.subject == null || source.subject.format !== "elf")
+    if (
+      source.subject === undefined ||
+      fileIdentity(source.subject).format !== "elf"
+    )
       throw new Error("Missing ELF source");
-    const input = { ...source, subject: { ...source.subject, ...changed } };
+    const input = {
+      ...source,
+      subject: changedEvidenceSubject(source.subject, changed),
+    };
     expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(false);
     expect(
       projectAnalysisView(input, {
@@ -131,12 +112,55 @@ it("checks exact artifact identity and subject architecture for every Rust view"
   }
 });
 
+const withSectionName = (
+  value: RustBinary,
+  section_name: NonNullable<RustBinary["auditable_metadata"]>["section_name"],
+): RustBinary => ({
+  ...value,
+  auditable_metadata:
+    value.auditable_metadata === null
+      ? null
+      : { ...value.auditable_metadata, section_name },
+});
+
+it("refuses imported reports whose container facts contradict their format", () => {
+  const wasm: RustBinary = {
+    ...structuredClone(report),
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+  };
+  const accepted = projectAnalysisView(parent(wasm), { kind: "summary" });
+  if (!accepted.ok || accepted.value.kind !== "summary")
+    throw new Error("WebAssembly summary failed");
+  expect(accepted.value.summary).toMatchObject({
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+  });
+  for (const value of [
+    { ...wasm, architecture: "x86_64" },
+    { ...wasm, byte_order: "big" as const },
+    { ...wasm, bits: 32 as const },
+    { ...structuredClone(report), architecture: "wasm" },
+    withSectionName(wasm, "__DATA,.dep-v0"),
+    withSectionName(structuredClone(report), "__DATA,.dep-v0"),
+  ])
+    expect(projectAnalysisView(parent(value), { kind: "summary" }).ok).toBe(
+      false,
+    );
+});
+
 it("bounds inherited warnings and retains cycle counts without walking a cyclic graph", () => {
   const input = { ...parent(), limitations: ["x".repeat(300_000)] };
   const result = projectAnalysisView(input, { kind: "summary" });
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     summary: {
+      format: "elf",
+      bits: 64,
       auditable_metadata: {
         format_version: null,
         counts: { packages: 1, edges: 1, cyclic_packages: 1 },
@@ -153,7 +177,6 @@ it("bounds inherited warnings and retains cycle counts without walking a cyclic 
 
 it("pages matching original indices and omits dependency vectors unless selected", () => {
   const value = structuredClone(report);
-  expect(value.auditable_metadata?.packages[0]?.features).toEqual([]);
   value.auditable_metadata!.packages.push({
     name: "other",
     version: "1",
@@ -163,7 +186,11 @@ it("pages matching original indices and omits dependency vectors unless selected
     dependencies: [],
     features: [],
   });
-  const source = parent(value);
+  const source = {
+    ...parent(value),
+    normalizedResult: freezeOwnedJsonTreeSnapshot(value),
+    sealedResult: true,
+  };
   const first = projectAnalysisView(source, {
     kind: "rust",
     collection: "packages",
@@ -204,4 +231,76 @@ it("pages matching original indices and omits dependency vectors unless selected
     exhausted: true,
     next_offset: null,
   });
+  const edges = {
+    kind: "rust",
+    collection: "edges",
+    offset: 0,
+    limit: 1,
+  } as const;
+  expect(projectAnalysisView(source, edges)).toMatchObject({
+    ok: true,
+    value: {
+      page: {
+        collection: "edges",
+        rows: [{ index: 0, from_index: 0, to_index: 0 }],
+      },
+      coverage: { total: 1, exhausted: true },
+    },
+  });
+  for (const selection of [{ from_indices: [] }, { to_indices: [1] }])
+    expect(
+      projectAnalysisView(source, { ...edges, ...selection }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        page: { collection: "edges", rows: [] },
+        coverage: { total: 0 },
+      },
+    });
+  expect(
+    projectAnalysisView(source, {
+      kind: "rust",
+      collection: "packages",
+      offset: 0,
+      limit: 1,
+      versions: [],
+    }),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      page: { collection: "packages", rows: [] },
+      coverage: { total: 0 },
+    },
+  });
 });
+
+it.each(["packages", "edges"] as const)(
+  "reports decoded empty Rust %s as fully examined",
+  (collection) => {
+    const result = projectAnalysisView(
+      parent({
+        ...report,
+        auditable_metadata: {
+          ...report.auditable_metadata!,
+          packages: [],
+          root_package_index: null,
+          dependency_edges: [],
+          cyclic_dependency_indices: [],
+        },
+      }),
+      { kind: "rust", collection, offset: 3, limit: 1 },
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      page: { collection, rows: [] },
+      source_coverage: { embedded_records: "complete" },
+    });
+    expect(result.value.coverage).toEqual({
+      status: "empty",
+      examined: 0,
+      total: 0,
+      next_offset: null,
+      exhausted: true,
+    });
+  },
+);

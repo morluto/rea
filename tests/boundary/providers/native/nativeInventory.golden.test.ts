@@ -1,4 +1,7 @@
-import { inspectSignatureSchema } from "../../../../src/domain/native/nativeInspection.js";
+import {
+  inspectMachoSchema,
+  inspectSignatureSchema,
+} from "../../../../src/domain/native/nativeInspection.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -14,7 +17,7 @@ import {
   type NativeCommandCapture,
   type NativeCommandOptions,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
   parseDyldExports,
@@ -27,7 +30,26 @@ import {
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-const inventoryTarget = async (chained = false) => {
+/** One format-1 `LC_DYLD_CHAINED_FIXUPS` payload holding only import names. */
+const chainedImportPayload = (names: readonly string[]): Buffer => {
+  const pool = Buffer.from(`\0${names.join("\0")}\0`);
+  const imports = Buffer.alloc(names.length * 4);
+  let nameOffset = 1;
+  names.forEach((name, index) => {
+    imports.writeUInt32LE((nameOffset << 9) >>> 0, index * 4);
+    nameOffset += Buffer.byteLength(name) + 1;
+  });
+  const starts = Buffer.alloc(4);
+  const header = Buffer.alloc(28);
+  header.writeUInt32LE(28, 4);
+  header.writeUInt32LE(28 + starts.length, 8);
+  header.writeUInt32LE(28 + starts.length + imports.length, 12);
+  header.writeUInt32LE(names.length, 16);
+  header.writeUInt32LE(1, 20);
+  return Buffer.concat([header, starts, imports, pool]);
+};
+
+const inventoryTarget = async (chained = false, payload?: Buffer) => {
   const path = join(
     await createTestTempDirectory("rea-native-inventory-"),
     "fixture",
@@ -41,17 +63,21 @@ const inventoryTarget = async (chained = false) => {
   segment.writeBigUInt64LE(0x4000n, 48);
   segment.writeUInt32LE(7, 56);
   segment.writeUInt32LE(5, 60);
+  const payloadOffset = 0x2000;
   const fixups = Buffer.alloc(16);
   fixups.writeUInt32LE(0x80000034, 0);
   fixups.writeUInt32LE(16, 4);
+  if (payload !== undefined) {
+    fixups.writeUInt32LE(payloadOffset, 8);
+    fixups.writeUInt32LE(payload.length, 12);
+  }
   const image = machoImage({
     cpu: CPU.arm64,
     commands: chained ? [segment, fixups] : [segment],
   });
-  await writeFile(
-    path,
-    Buffer.concat([image, Buffer.alloc(0x4000 - image.byteLength)]),
-  );
+  const file = Buffer.concat([image, Buffer.alloc(0x4000 - image.byteLength)]);
+  payload?.copy(file, payloadOffset);
+  await writeFile(path, file);
   return nativeMachoTargetForFile(path);
 };
 
@@ -148,11 +174,14 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
       identifier: "com.example.fixture",
       designated_requirement: null,
       entitlements: { "com.apple.security.app-sandbox": true },
+      slices: {
+        described: signedArchitecture,
+        architectures: expect.arrayContaining([signedArchitecture, "x86_64"]),
+        unmapped: false,
+        checked: expect.arrayContaining([signedArchitecture, "x86_64"]),
+        unsigned: ["x86_64"],
+      },
       limitations: expect.arrayContaining([
-        expect.stringContaining(
-          "signature identity, hashes, designated requirement",
-        ),
-        "Unsigned Mach-O slices: x86_64.",
         "The designated requirement for the requested architecture is unavailable because codesign reported it unsigned.",
       ]),
       provenance: expect.arrayContaining([
@@ -200,10 +229,14 @@ it("uses the admitted universal target when codesign describes only its selected
   expect(execution.value.result).toMatchObject({
     signed: true,
     format: "Mach-O thin (arm64)",
-    limitations: expect.arrayContaining([
-      expect.stringContaining("Partial signature coverage"),
-      "Unsigned Mach-O slices: x86_64.",
-    ]),
+    // The admitted universal target, not codesign's thin format, lists the slices.
+    slices: {
+      described: "arm64",
+      architectures: ["x86_64", "arm64"],
+      unmapped: false,
+      checked: ["x86_64", "arm64"],
+      unsigned: ["x86_64"],
+    },
     provenance: expect.arrayContaining([
       expect.objectContaining({
         command: expect.arrayContaining(["-a", "x86_64"]),
@@ -256,10 +289,13 @@ it("retains distinct same-family FAT slices for signature coverage", async () =>
   const execution = await client.execute("inspect_signature", {});
   if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
-    limitations: expect.arrayContaining([
-      expect.stringContaining("Partial signature coverage"),
-      "Unsigned Mach-O slices: arm64e.",
-    ]),
+    slices: {
+      described: "arm64",
+      architectures: ["arm64", "arm64e"],
+      unmapped: false,
+      checked: ["arm64", "arm64e"],
+      unsigned: ["arm64e"],
+    },
     provenance: expect.arrayContaining([
       expect.objectContaining({
         command: expect.arrayContaining(["-a", "arm64e"]),
@@ -269,7 +305,9 @@ it("retains distinct same-family FAT slices for signature coverage", async () =>
   });
 });
 
-it.each([42, 0x81000002])(
+// 0xc1000002 carries an arm64e capability flag outside the versioned
+// pointer-authentication ABI, so codesign may name it differently.
+it.each([42, 0xc1000002])(
   "reports unknown signature coverage for unmapped FAT subtype %i",
   async (subtype) => {
     const path = join(
@@ -303,14 +341,119 @@ it.each([42, 0x81000002])(
     });
     const execution = await client.execute("inspect_signature", {});
     if (!execution.ok) throw execution.error;
+    // The one known slice is the described one; no per-slice check runs.
     expect(execution.value.result).toMatchObject({
-      limitations: expect.arrayContaining([
-        expect.stringContaining("signature states are unknown"),
-        expect.stringContaining("Partial signature coverage"),
-      ]),
+      slices: {
+        described: "arm64",
+        architectures: ["arm64"],
+        unmapped: true,
+        checked: [],
+        unsigned: [],
+      },
     });
   },
 );
+
+const ARM64E_V0 = { type: CPU.arm64.type, subtype: 0x80000002 } as const;
+const ARM64E_V1 = { type: CPU.arm64.type, subtype: 0x81000002 } as const;
+
+it.each([
+  ["arm64e.v1 beside x86_64", [ARM64E_V1, CPU.x86_64], false],
+  ["arm64e.v1 before arm64e", [ARM64E_V1, ARM64E_V0], true],
+  ["arm64e before arm64e.v1", [ARM64E_V0, ARM64E_V1], true],
+] as const)(
+  "inspects the selected %s slice through codesign's arm64e selector",
+  async (_label, cpus, laterSliceShadowed) => {
+    const path = join(
+      await createTestTempDirectory("rea-native-arm64e-abi-"),
+      "fixture",
+    );
+    await writeFile(
+      path,
+      fatImage(cpus.map((cpu) => ({ cpu, bytes: machoImage({ cpu }) }))),
+    );
+    const header = parseExecutableHeader(await readFile(path), "arm64");
+    if (!header.ok || header.value.format !== "mach-o-universal")
+      throw new Error("expected universal fixture");
+    // Admission selects the first slice; codesign resolves -a arm64e to the
+    // first arm64e slice in table order, whatever its ABI version.
+    expect(header.value.universalSlice.offset).toBe(
+      header.value.universalSlices[0]?.offset,
+    );
+    const replay = signatureRunner({
+      signed: await fixture("codesign.txt"),
+      unsigned: await fixture("dyld-inventory/codesign-unsigned.txt"),
+      entitlements: await fixture("entitlements.xml"),
+      unsignedHeader: true,
+    });
+    const calls: (readonly string[])[] = [];
+    const runner: NativeCommandRunner = {
+      run(tool, args, options) {
+        calls.push(args);
+        return replay.run(tool, args, options);
+      },
+    };
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient({
+      ...(await nativeMachoTargetForFile(path)),
+      ...header.value,
+    });
+    const result = await client.execute("inspect_signature", {});
+    if (!result.ok) throw result.error;
+    expect(calls[0]).toEqual(expect.arrayContaining(["-a", "arm64e"]));
+    // A later slice with the same selector name has no exact selector.
+    expect(
+      inspectSignatureSchema.parse(result.value.result).slices.unmapped,
+    ).toBe(laterSliceShadowed);
+  },
+);
+
+it("keeps an arm64e.v1 slice unknown behind an unmapped arm64e variant", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-native-arm64e-shadow-"),
+    "fixture",
+  );
+  const variant = { type: CPU.arm64.type, subtype: 0xc1000002 };
+  await writeFile(
+    path,
+    fatImage(
+      [variant, ARM64E_V1, CPU.x86_64].map((cpu) => ({
+        cpu,
+        bytes: machoImage({ cpu }),
+      })),
+    ),
+  );
+  const header = parseExecutableHeader(await readFile(path), "x64");
+  if (!header.ok || header.value.format !== "mach-o-universal")
+    throw new Error("expected universal fixture");
+  expect(header.value.universalSlice.offset).toBe(
+    header.value.universalSlices[2]?.offset,
+  );
+  const replay = signatureRunner({
+    signed: await fixture("codesign.txt"),
+    unsigned: await fixture("dyld-inventory/codesign-unsigned.txt"),
+    entitlements: await fixture("entitlements.xml"),
+    unsignedHeader: true,
+  });
+  const calls: (readonly string[])[] = [];
+  const runner: NativeCommandRunner = {
+    run(tool, args, options) {
+      calls.push(args);
+      return replay.run(tool, args, options);
+    },
+  };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient({
+    ...(await nativeMachoTargetForFile(path)),
+    ...header.value,
+  });
+  const result = await client.execute("inspect_signature", {});
+  if (!result.ok) throw result.error;
+  // codesign -a arm64e may resolve to the earlier variant, so neither arm64e
+  // slice has an exact selector.
+  expect(calls.filter((args) => args.includes("arm64e"))).toEqual([]);
+  expect(
+    inspectSignatureSchema.parse(result.value.result).slices.unmapped,
+  ).toBe(true);
+});
 
 it.each(["x64", "arm64"] as const)(
   "inspects an x86_64 LIB64 slice when %s is selected",
@@ -350,7 +493,7 @@ it.each(["x64", "arm64"] as const)(
     if (!result.ok) throw result.error;
     expect(calls.some((args) => args.includes("x86_64"))).toBe(true);
     expect(result.value.result).toMatchObject({
-      limitations: expect.arrayContaining(["Unsigned Mach-O slices: x86_64."]),
+      slices: { unsigned: ["x86_64"] },
     });
     if (host === "x64")
       expect(calls.slice(0, 3).every((args) => args.includes("x86_64"))).toBe(
@@ -445,10 +588,12 @@ it.each([
       identifier: "com.example.fixture",
       entitlements: { "com.apple.security.app-sandbox": true },
       designated_requirement: null,
-      limitations: expect.arrayContaining([
-        expect.stringContaining("Partial signature coverage"),
-        expect.stringContaining("did not complete"),
-      ]),
+      // Slices checked before the failing one keep their states; the rest stay unknown.
+      slices: {
+        architectures: ["x86_64", "arm64"],
+        checked: kind === "later slice diagnostic" ? ["x86_64"] : [],
+        unsigned: kind === "later slice diagnostic" ? ["x86_64"] : [],
+      },
     });
     expect(partial.provenance).toHaveLength(
       kind === "later slice diagnostic" ? 5 : 4,
@@ -459,7 +604,6 @@ it.each([
     if (kind === "later slice diagnostic") {
       expect(partial.limitations).toEqual(
         expect.arrayContaining([
-          "Unsigned Mach-O slices: x86_64.",
           "The designated requirement for the requested architecture is unavailable because codesign reported it unsigned.",
         ]),
       );
@@ -681,6 +825,126 @@ it("uses independent undefined names to resolve chained producer spacing", async
       ]),
     },
   });
+});
+
+it("names chained imports from the binary's import table when the symbol table omits them", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  // Weak-def coalescing binds a defined symbol, and Swift images can import
+  // names that have no symbol-table entry, so nm -gju lists neither.
+  outputs["nm:-gju"] = "";
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  __Z3inli  (from <weak-def-coalesce>)",
+    "      0x0001  _$s10AppIntents0A4EnumMp  (from AppIntents)",
+  ].join("\n");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(
+    await inventoryTarget(
+      true,
+      chainedImportPayload(["__Z3inli", "_$s10AppIntents0A4EnumMp"]),
+    ),
+  );
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      items: [
+        {
+          name: "__Z3inli",
+          name_status: "exact",
+          source: "<weak-def-coalesce>",
+        },
+        {
+          name: "_$s10AppIntents0A4EnumMp",
+          name_status: "exact",
+          source: "AppIntents",
+        },
+      ],
+    },
+  });
+  // The binary-owned table settles the spacing without the nm inventory.
+  expect(JSON.stringify(execution.value.result)).not.toContain('"-gju"');
+});
+
+it("names each chained row by its ordinal when the table holds both spacing readings", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] = "_foo\n";
+  // Ordinal 1 names " _foo"; installed dyld_info prints two spaces before it.
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  _foo  (from <weak-def-coalesce>)",
+    "      0x0001   _foo  (from <weak-def-coalesce>)",
+  ].join("\n");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(
+    await inventoryTarget(true, chainedImportPayload(["_foo", " _foo"])),
+  );
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      items: [
+        { name: "_foo", name_status: "exact" },
+        { name: " _foo", name_status: "exact" },
+      ],
+    },
+  });
+});
+
+it("records why an unusable chained import table falls back to the symbol table", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] = "__Z3inli\n";
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  __Z3inli  (from libc++)",
+  ].join("\n");
+  // A compressed symbol pool has no decodable names.
+  const payload = chainedImportPayload(["__Z3inli"]);
+  payload.writeUInt32LE(1, 24);
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(await inventoryTarget(true, payload));
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: { items: [{ name: "__Z3inli", name_status: "exact" }] },
+    limitations: expect.arrayContaining([
+      expect.stringContaining(
+        "Compressed chained-fixup symbol names are not supported",
+      ),
+    ]),
+  });
+  expect(JSON.stringify(execution.value.result)).toContain('"-gju"');
+});
+
+it("keeps a chained row unknown when its ordinal is outside the import table", () => {
+  const output = "      0x0005  _foo  (from library)";
+  expect(parseDyldImports(output, true, undefined, ["_foo"]).items).toEqual([
+    {
+      name: null,
+      raw_name: output.slice(6),
+      name_status: "ambiguous",
+      addend: null,
+      address: null,
+      weak: null,
+      reexport: null,
+      source: "library",
+    },
+  ]);
 });
 
 it("keeps missing and competing undefined-name matches unknown", () => {
@@ -1111,10 +1375,10 @@ it("reads exports from the symbol table without llvm-nm's dyld-info pass", async
   expect(nmCommands(execution.value.result)).toEqual(nmArguments);
 });
 
-it("binds leading-space exports to their exact nm identities", async () => {
-  // Real clang dylib: .globl "  _spaced"; "  _spaced": ret; .globl _spaced; _spaced: ret.
-  // dyld_info separates the address from the literal symbol with two spaces.
-  const names = "  _spaced\n_spaced\n";
+it("merges exact export identities with the first available dyld facts", async () => {
+  // Apple clang captures distinguish both leading spaces and a literal CR.
+  const names =
+    "  _spaced\n_spaced\ntrailing\ntrailing\r\n_nmOnly\n_spaced\n_ambiguous\n_ambiguous [weak-def]\n";
   const { runner, nmArguments } = symbolTableRunner(
     {
       "dyld_info:-exports": [
@@ -1123,40 +1387,10 @@ it("binds leading-space exports to their exact nm identities", async () => {
         "        offset      symbol",
         "        0x000002A0    _spaced",
         "        0x000002A4  _spaced",
-        "",
-      ].join("\n"),
-    },
-    { symbolTable: names, withDyldInfo: names },
-  );
-  const execution = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(await inventoryTarget())
-    .execute("inspect_macho", {});
-  if (!execution.ok) throw execution.error;
-  expect(nmArguments).toHaveLength(1);
-  const exported = (
-    execution.value.result as {
-      exports: { items: { name: string; address: string | null }[] };
-    }
-  ).exports.items;
-  expect(exported).toEqual([
-    expect.objectContaining({ name: "  _spaced", address: "0x1000002a0" }),
-    expect.objectContaining({ name: "_spaced", address: "0x1000002a4" }),
-  ]);
-});
-
-it("keeps an export name ending in a carriage return distinct", async () => {
-  // Captured from a clang executable exporting "trailing\r" and "trailing".
-  const names = "__mh_execute_header\n_main\ntrailing\ntrailing\r\n";
-  const { runner, nmArguments } = symbolTableRunner(
-    {
-      "dyld_info:-exports": [
-        "fixture [arm64]:",
-        "    -exports:",
-        "        offset      symbol",
-        "        0x00000000  __mh_execute_header",
-        "        0x00000338  _main",
         "        0x00000330  trailing",
         "        0x00000328  trailing\r",
+        "        0x000002A8  _spaced",
+        "        0x00000400  _ambiguous [weak-def]",
         "",
       ].join("\n"),
     },
@@ -1167,12 +1401,21 @@ it("keeps an export name ending in a carriage return distinct", async () => {
     .execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(nmArguments).toHaveLength(1);
-  const exported = (
-    execution.value.result as {
-      exports: { items: { name: string; address: string | null }[] };
-    }
-  ).exports.items.filter(({ name }) => name.startsWith("trailing"));
-  expect(exported).toEqual([
+  const { exports } = inspectMachoSchema.parse(execution.value.result);
+  expect(exports.items).toEqual([
+    expect.objectContaining({ name: "  _spaced", address: "0x1000002a0" }),
+    expect.objectContaining({
+      name: "_ambiguous",
+      address: null,
+      source: "nm",
+    }),
+    expect.objectContaining({
+      name: "_ambiguous [weak-def]",
+      address: null,
+      source: "nm",
+    }),
+    expect.objectContaining({ name: "_nmOnly", address: null, source: "nm" }),
+    expect.objectContaining({ name: "_spaced", address: "0x1000002a4" }),
     expect.objectContaining({ name: "trailing", address: "0x100000330" }),
     expect.objectContaining({ name: "trailing\r", address: "0x100000328" }),
   ]);
@@ -1246,7 +1489,11 @@ it("lets codesign select the only slice of a thin arm64e target", async () => {
   );
   const result = await client.execute("inspect_signature", {});
   if (!result.ok) throw result.error;
-  expect(result.value.result).toMatchObject({ signed: true });
+  // The admitted architecture is the arm64 family; codesign names the slice.
+  expect(result.value.result).toMatchObject({
+    signed: true,
+    slices: { described: "arm64e", architectures: [], checked: [] },
+  });
   expect(calls).toHaveLength(3);
   expect(calls.every((args) => !args.includes("-a"))).toBe(true);
   await client.close();

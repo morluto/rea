@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
@@ -13,6 +17,7 @@ import { createFunctionCoordinateContext } from "../../../src/domain/native/func
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const observe = (
   address: string,
@@ -21,14 +26,12 @@ const observe = (
   analysisProfile?: AnalysisProfileCommitment,
 ) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (template.subject === null)
-    throw new Error("Expected artifact-bound fixture");
   const dossier = functionDossierSchema.parse(template.normalized_result);
   return createEvidence(
     {
-      path: template.subject.local_path,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      path: fileSubjectDisplay(template.subject).local_path,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
@@ -65,10 +68,13 @@ it.each([
     throw new Error("Offline call paths must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "call-path-coordinate-identity",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "call-path-coordinate-identity",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const provider = FUNCTION_COMPARISON_EXAMPLE.left.provider;
@@ -127,9 +133,7 @@ it.each([
         shortest_hops: null,
         search_scope: { exhaustive: false },
         paths: [],
-        limitations: [
-          "No analyze_function Evidence covers reachable function 0x5000",
-        ],
+        limitations: [expect.stringMatching(/no analyze_function.*0x5000/iu)],
       });
       return;
     }
@@ -157,7 +161,10 @@ it("publishes explored extent without the terminal goal's callees", async () => 
     throw new Error("Offline call paths must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "call-path-search-extent", version: "1" });
+  const client = new Client(
+    { name: "call-path-search-extent", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -217,7 +224,10 @@ it("preserves unresolved outgoing call caveats and bounds search completeness at
     throw new Error("Offline call paths must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unresolved-call-path", version: "1" });
+  const client = new Client(
+    { name: "unresolved-call-path", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

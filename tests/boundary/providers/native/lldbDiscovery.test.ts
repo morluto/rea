@@ -7,7 +7,7 @@ import { thinMach } from "../../../../src/domain/binaryTarget.fixture.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { err } from "../../../../src/domain/result.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
-import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
+import { NativeCommandFailure } from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
   NativeFixtureRunner,
@@ -70,7 +70,6 @@ for (const [reason, code] of [
         },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected discovery failure");
       expect(launch).not.toHaveBeenCalled();
       expect(result.error.cause).toBe(

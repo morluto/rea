@@ -21,8 +21,13 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: website/requirements.txt
-      - name: Install sharing-image dependencies
+      - name: Set up Node.js for skill discovery and Worker checks
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Install website build dependencies
         run: |
+          npm ci --omit=dev --ignore-scripts
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libcairo2 fonts-dejavu-core
           python3 -m pip install -r website/requirements.txt

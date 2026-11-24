@@ -6,6 +6,8 @@ import type {
   ArtifactInventoryCoverage,
   ArtifactOccurrence,
 } from "../artifactGraph.js";
+import type { ArtifactInventorySnapshot } from "../artifactInventorySnapshot.js";
+import type { JsonValue } from "../jsonValue.js";
 
 /** One physical file occurrence, independent of its graph representations. */
 export const javaScriptFileOccurrenceSchema = z.strictObject({
@@ -103,6 +105,8 @@ export interface JavaScriptUnanalyzedArtifactLookup {
   readonly coverage: ArtifactInventoryCoverage;
   get(path: string): JavaScriptUnanalyzedArtifactFile | undefined;
   hasDirectory(path: string, containerSha256: string | undefined): boolean;
+  /** Indexed observed file paths, including analyzed files, strictly below a directory. */
+  filePathsBelow?(path: string): Iterable<string> | undefined;
 }
 
 /** One filesystem-backed ASAR nested beneath a directory input. */
@@ -125,3 +129,82 @@ export interface JavaScriptArtifactFileSet {
   readonly invalid_utf8_files: number;
   readonly source_selection?: JavaScriptSourceSelection;
 }
+
+/** Relevant file kinds that make a target a JavaScript application input. */
+const APPLICATION_INPUT_KINDS: ReadonlySet<JavaScriptArtifactFileKind> =
+  new Set(["javascript", "html", "package-json", "source-map"]);
+
+/**
+ * Whether the inventoried target holds anything the JavaScript lane analyzes.
+ * `empty` and `absent` require complete traversal; an unavailable relevant
+ * file of unknown kind, or incomplete traversal, leaves applicability unknown.
+ */
+export type JavaScriptApplicationInputPresence =
+  | "present"
+  | "empty"
+  | "absent"
+  | "unknown";
+
+/** A non-directory entry beneath the selected root; the root itself is excluded. */
+const isContainedEntry = ({
+  parent_occurrence_id: parent,
+  entry_kind: kind,
+}: ArtifactOccurrence): boolean => parent !== null && kind !== "directory";
+
+/** Classify application-input presence from the lane's own inventory facts. */
+export const javaScriptApplicationInputPresence = (
+  files: JavaScriptArtifactFileSet,
+  snapshot: Pick<ArtifactInventorySnapshot, "coverage" | "occurrences">,
+): JavaScriptApplicationInputPresence => {
+  if (
+    files.containers.length > 0 ||
+    files.files.some(({ kind }) => APPLICATION_INPUT_KINDS.has(kind)) ||
+    files.unavailable_relevant_files.some(
+      ({ kind }) => kind !== undefined && APPLICATION_INPUT_KINDS.has(kind),
+    )
+  )
+    return "present";
+  if (
+    snapshot.coverage.status !== "complete" ||
+    files.unavailable_relevant_files.some(({ kind }) => kind === undefined)
+  )
+    return "unknown";
+  return snapshot.occurrences.some(isContainedEntry) ? "absent" : "empty";
+};
+
+/**
+ * Bounded routing facts for a target without application inputs: entry
+ * counts by inventoried format and the JSON and native-addon files the lane
+ * classified. No paths are retained.
+ */
+export const javaScriptAbsentInputDiagnostics = (
+  files: JavaScriptArtifactFileSet,
+  snapshot: Pick<ArtifactInventorySnapshot, "occurrences">,
+): Readonly<Record<string, JsonValue>> => {
+  const byFormat = new Map<string, number>();
+  let entries = 0;
+  for (const occurrence of snapshot.occurrences) {
+    if (!isContainedEntry(occurrence)) continue;
+    entries += 1;
+    const format = occurrence.artifact_format;
+    byFormat.set(format, (byFormat.get(format) ?? 0) + 1);
+  }
+  return {
+    inventoried_entries: entries,
+    entries_by_format: Object.fromEntries(
+      [...byFormat].sort(([left], [right]) => (left < right ? -1 : 1)),
+    ),
+    json_files: files.files.filter(({ kind }) => kind === "json").length,
+    native_addon_files: files.files.filter(
+      ({ kind }) => kind === "native-addon",
+    ).length,
+  };
+};
+
+/** Directory-capable and per-file operations for a target the lane does not analyze. */
+export const JAVASCRIPT_ABSENT_INPUT_OPERATIONS = [
+  "inspect_desktop_application",
+  "audit_release_exposure",
+  "inspect_artifact",
+  "open_binary",
+] as const;

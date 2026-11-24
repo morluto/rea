@@ -1,7 +1,4 @@
-import {
-  IDA_COMPATIBILITY_PROFILES,
-  readIdaConfiguration,
-} from "./IdaConfiguration.js";
+import { IDA_COMPATIBILITY_PROFILES } from "./IdaConfiguration.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,19 +11,17 @@ import {
   AnalysisInputError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import {
-  decodeIdaToolResult,
-  type IdaMcpConnection,
-} from "./IdaMcpConnection.js";
+import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { parseConfig } from "../config/parseConfig.js";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "./IdaCallGraph.js";
 import { IdaProvider } from "./IdaProvider.js";
 import { idaCapabilities } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import type {
   RetainedResourceScope,
   AnalysisProfileResolution,
-} from "../application/AnalysisProvider.js";
-import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
+} from "../ports/AnalysisProvider.js";
+import { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 
 const resourceScope: RetainedResourceScope = {
@@ -91,16 +86,9 @@ const fixture = async () => {
       "xrefs_to",
     ],
     call: (name, args) => producer.call(name, args),
-    readResource: async (uri) => {
+    readResource: (uri, options) => {
       resources.push(uri);
-      const metadata = await producer.call("get_metadata", {});
-      if (
-        metadata === null ||
-        typeof metadata !== "object" ||
-        Array.isArray(metadata)
-      )
-        throw new Error("Invalid metadata fixture");
-      return { ...metadata, path: `${producer.inputPath}.i64` };
+      return producer.readResource(uri, options);
     },
     serverInfo: () => producer.serverInfo(),
     close: () => producer.close(),
@@ -126,7 +114,11 @@ describe("native IDA attached protocol", () => {
     const path = join(root, "mutable-registration.json");
     await writeFile(
       path,
-      JSON.stringify({ command: "first-server", mode: "attached" }),
+      JSON.stringify({
+        command: "first-server",
+        mode: "attached",
+        protocol: "native",
+      }),
     );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!config.ok) throw config.error;
@@ -168,7 +160,10 @@ describe("native IDA attached protocol", () => {
   it("does not reuse a registration across independent scopes sharing one signal", async () => {
     const { root, target } = await fixture();
     const path = join(root, "independent-registration.json");
-    await writeFile(path, JSON.stringify({ command: "first-server" }));
+    await writeFile(
+      path,
+      JSON.stringify({ command: "first-server", protocol: "native" }),
+    );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!config.ok) throw config.error;
     const provider = new IdaProvider(config.value, {});
@@ -186,7 +181,10 @@ describe("native IDA attached protocol", () => {
       resourceScope,
     });
     if (!firstProfile.ok) throw firstProfile.error;
-    await writeFile(path, JSON.stringify({ command: "second-server" }));
+    await writeFile(
+      path,
+      JSON.stringify({ command: "second-server", protocol: "native" }),
+    );
     const secondScope = new ProviderInspectionScope();
     const second = await provider.inspectReadinessSnapshot({
       signal: controller.signal,
@@ -231,7 +229,10 @@ describe("IDA selected registration factories", () => {
     }[] = [];
     const signal = new AbortController().signal;
     for (let index = 0; index < 40; index += 1) {
-      await writeFile(path, JSON.stringify({ command: `server-${index}` }));
+      await writeFile(
+        path,
+        JSON.stringify({ command: `server-${index}`, protocol: "native" }),
+      );
       const scope = new ProviderInspectionScope();
       const resolution = await provider.resolveAnalysisProfile(target, {
         signal,
@@ -275,33 +276,6 @@ describe("IDA selected registration factories", () => {
     for (const client of clients) await client.close();
   });
 
-  it("requires explicit opt-in and rejects native headless registrations", async () => {
-    const { root } = await fixture();
-    const path = join(root, "native.json");
-    await writeFile(
-      path,
-      JSON.stringify({ url: "http://127.0.0.1:13337/mcp", protocol: "native" }),
-    );
-    expect(await readIdaConfiguration(path, { resourceScope })).toMatchObject({
-      ok: true,
-      value: { mode: "attached", protocol: "native" },
-    });
-    await writeFile(
-      path,
-      JSON.stringify({
-        url: "http://127.0.0.1:13337/mcp",
-        protocol: "native",
-        mode: "headless",
-      }),
-    );
-    expect((await readIdaConfiguration(path, { resourceScope })).ok).toBe(
-      false,
-    );
-    await writeFile(path, JSON.stringify({ command: "python" }));
-    const old = await readIdaConfiguration(path, { resourceScope });
-    expect(old.ok && old.value.protocol).toBeUndefined();
-  });
-
   it("commits native profile semantics and advertises GUI effects without starting a provider", async () => {
     const { root, target, producer } = await fixture();
     const path = join(root, "profile.json");
@@ -334,34 +308,6 @@ describe("IDA selected registration factories", () => {
   });
 });
 
-describe("native IDA complete result decoding", () => {
-  it("uses complete native JSON text instead of a shortened structured preview", () => {
-    const complete = [
-      {
-        data: [{ addr: "0x1000", name: "main", size: "0x20" }],
-        next_offset: null,
-      },
-    ];
-    const response = {
-      content: [{ type: "text", text: JSON.stringify(complete) }],
-      structuredContent: { result: [], _output_truncated: true },
-    };
-    expect(decodeIdaToolResult(response, "native")).toEqual(complete);
-    expect(() =>
-      decodeIdaToolResult({ ...response, content: [] }, "native"),
-    ).toThrow("complete JSON");
-    expect(() =>
-      decodeIdaToolResult(
-        { ...response, content: [{ type: "text", text: "broken JSON" }] },
-        "native",
-      ),
-    ).toThrow();
-    expect(() =>
-      decodeIdaToolResult({ ...response, isError: true }, "native"),
-    ).toThrow("tool failed");
-  });
-});
-
 describe("native IDA provider observations", () => {
   it.each([false, true])(
     "keeps unknown callers in dossier coverage when callee truncation is %s",
@@ -385,6 +331,12 @@ describe("native IDA provider observations", () => {
         if (!direct.ok) throw direct.error;
         expect(direct.value.relationshipCoverage).toMatchObject({
           status: more ? "partial" : "complete",
+          discovery: {
+            callees: {
+              status: "unknown",
+              reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+            },
+          },
         });
         const dossier = await client.execute("analyze_function", {
           procedure: "main",
@@ -392,20 +344,21 @@ describe("native IDA provider observations", () => {
         if (!dossier.ok) throw dossier.error;
         expect(dossier.value.relationshipCoverage).toMatchObject({
           status: "unknown",
-          reason: more
-            ? expect.stringContaining(
-                "Callees: Upstream callees capped results at 500; additional callees remain unknown.",
-              )
-            : expect.stringContaining(
-                "Callers: Upstream xrefs do not establish direct caller relationships.",
-              ),
+          reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
         });
-        if (more)
+        if (more) {
+          const coverage = direct.value.relationshipCoverage;
+          if (coverage?.status !== "partial")
+            throw new Error("Expected partial callee coverage");
+          const limitation = coverage.limitations[0];
+          if (limitation === undefined)
+            throw new Error("Expected callee limitation");
+          expect(limitation).toMatch(/callees.*500.*unknown/iu);
           expect(dossier.value.relationshipCoverage).toMatchObject({
-            reason: expect.stringContaining(
-              "Callers: Upstream xrefs do not establish direct caller relationships.",
-            ),
+            reason: expect.stringContaining(limitation),
           });
+          expect(dossier.value.limitations).toContain(limitation);
+        }
         expect(dossier.value.result).toMatchObject({
           callers: [],
           callees: [{ address: "0x2000", name: "puts" }],
@@ -414,10 +367,6 @@ describe("native IDA provider observations", () => {
             callees: { available: true },
           },
         });
-        if (more)
-          expect(dossier.value.limitations).toContain(
-            "Upstream callees capped results at 500; additional callees remain unknown.",
-          );
       } finally {
         await client.close();
       }
@@ -491,11 +440,6 @@ describe("native IDA provider observations", () => {
       declared.find(({ operation }) => operation === "procedure_pseudo_code")
         ?.effects,
     ).toMatchObject({ mayShowUi: true, mayAccessNetwork: true });
-    expect(
-      idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false).find(
-        ({ operation }) => operation === "procedure_callers",
-      )?.available,
-    ).toBe(true);
   });
 
   it("rejects unavailable or mismatched recorded input hashes and database switches", async () => {
@@ -968,23 +912,34 @@ describe("native IDA malformed observations", () => {
       procedure: "main",
     });
     expect(result.ok && result.value.result).toBe("0x1000: nop\n0x1001: ret");
-    producer.overrideCall = (name) =>
-      name === "find_regex" ? { matches: [], cursor: { next: 0 } } : undefined;
-    expect((await client.execute("list_strings", {})).ok).toBe(false);
+    let pages = 0;
+    producer.overrideCall = (name) => {
+      if (name !== "disasm") return undefined;
+      if (++pages > 2)
+        throw new Error("Non-advancing assembly requested another page");
+      return {
+        asm: {
+          name: "main",
+          start_ea: "0x1000",
+          lines: "main (.text @ 0x1000):\n1000  nop",
+        },
+        cursor: { next: 0 },
+      };
+    };
+    const refused = await client.execute("procedure_assembly", {
+      procedure: "main",
+    });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok)
+      expect(refused.error.message).toMatch(
+        /cursor.*advance|pagination.*advance/iu,
+      );
+    expect(pages).toBe(1);
     await client.close();
   });
 });
 
 describe("native IDA attached operation admission", () => {
-  it("forwards the native producer's explicit reference cap flag", async () => {
-    const { client } = await fixture();
-    const result = await client.execute("xrefs", { address: "0x1000" });
-
-    if (!result.ok) throw result.error;
-    expect(result.value.referencesTruncated).toBe(false);
-    await client.close();
-  });
-
   it("reports the bound document but not headless-only address resolution", async () => {
     const { client, producer, target } = await fixture();
     const containing = await client.execute("resolve_containing_procedure", {
@@ -1002,5 +957,63 @@ describe("native IDA attached operation admission", () => {
       "nothing is dispatched upstream",
     ).toBe(false);
     await client.close();
+  });
+});
+
+describe("native IDA literal candidate precision", () => {
+  it("excludes unrelated non-ASCII strings while preserving U+017F and U+212A simple folds", async () => {
+    const { client, producer } = await fixture();
+    const values = [
+      "中文菜单",
+      "Настройки",
+      "İstanbul",
+      "σ",
+      "🧪",
+      "Warfare/Storage/Read-Write",
+      "warfare/\u017ftoragE/read-write",
+      "\u212aelvin",
+    ];
+    producer.overrideCall = (name, args) => {
+      if (name !== "find_regex") return undefined;
+      const regex = new RegExp(
+        Buffer.from(String(args.pattern)).toString("latin1"),
+        "i",
+      );
+      return {
+        matches: values.flatMap((value, index) =>
+          regex.test(Buffer.from(value).toString("latin1"))
+            ? [{ addr: `0x${(0x4000 + index).toString(16)}`, string: value }]
+            : [],
+        ),
+        cursor: { done: true },
+      };
+    };
+    try {
+      const storage = await client.execute("search_strings", {
+        pattern: "warfare/storage/read-write",
+      });
+      if (!storage.ok) throw storage.error;
+      expect(storage.value.result).toEqual([
+        { address: "0x4005", value: "Warfare/Storage/Read-Write" },
+        { address: "0x4006", value: "warfare/\u017ftoragE/read-write" },
+      ]);
+      const storageCall = producer.calls.find(
+        ({ name }) => name === "find_regex",
+      );
+      expect(storageCall?.args.pattern).not.toContain("\\x80-\\xff");
+      const rawMatches = JSON.stringify(storage.value.rawResult);
+      expect(rawMatches).not.toContain("中文菜单");
+      expect(rawMatches).not.toContain("İstanbul");
+
+      const kelvin = await client.execute("search_strings", {
+        pattern: "kelvin",
+      });
+      if (!kelvin.ok) throw kelvin.error;
+      expect(kelvin.value.result).toEqual([
+        { address: "0x4007", value: "\u212aelvin" },
+      ]);
+    } finally {
+      await client.close();
+    }
   });
 });
