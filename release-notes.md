@@ -316,6 +316,7 @@
 * **target:** preserve IDA signatures across short reads ([#13613](https://github.com/morluto/rea/issues/13613)) ([bb51d8e](https://github.com/morluto/rea/commit/bb51d8e7ea82324fa216c99b840aae0119b1d0de))
 * **test:** reap synthetic test-stub processes on cleanup failure and fail fast on unavailable exit polling ([#13368](https://github.com/morluto/rea/issues/13368)) ([bd9a7fa](https://github.com/morluto/rea/commit/bd9a7fad7efba6a2aad1ace7a9e4388f6cf11101))
 * **tests:** bound oxlint test threads, throttle export spin loop, align process-boundary workers, and use level-1 zlib in large synthetic fixtures ([#13471](https://github.com/morluto/rea/issues/13471)) ([9e9cfba](https://github.com/morluto/rea/commit/9e9cfba67dc4a0a050552aedd364d8436c7b4186))
+* **tests:** expect [#14225](https://github.com/morluto/rea/issues/14225)'s reader reasons in the boundary tests ([#14238](https://github.com/morluto/rea/issues/14238)) ([83877c8](https://github.com/morluto/rea/commit/83877c88b97cbd2d38f204f4589902715acd0fdd))
 * **tests:** expect the path reason for a FIFO root and a symlinked ZIP ([#14242](https://github.com/morluto/rea/issues/14242)) ([0af067d](https://github.com/morluto/rea/commit/0af067d766c43a44e4d6b696b6d8d4470f18556d))
 * **tests:** narrow markdown-it attributes to strings in doc link checks ([#14217](https://github.com/morluto/rea/issues/14217)) ([e39b56f](https://github.com/morluto/rea/commit/e39b56fc5de5a8791bdf8fa85b8366de213804a9))
 * **uefi:** attribute a refused output directory to output_directory ([c01c168](https://github.com/morluto/rea/commit/c01c16833635c30375f61fe0fba1f28ddffb685f))
@@ -348,6 +349,7 @@
 * **website:** use the blue REA wordmark for site icons ([2c4776d](https://github.com/morluto/rea/commit/2c4776d9aa9c1167da96f75a27645a23ef3a348e))
 * **website:** verify markdown fragments from parsed headings ([#13265](https://github.com/morluto/rea/issues/13265)) ([88d1d9b](https://github.com/morluto/rea/commit/88d1d9b8b5245ce25165f5da3a5eea19740f4886))
 * **windows-shortcuts:** preserve unread target uncertainty ([#13653](https://github.com/morluto/rea/issues/13653)) ([8018344](https://github.com/morluto/rea/commit/8018344145b2d6f77a2379f015c81205312cd542))
+* **zip:** account apksigner alignment padding before the APK Signing Block ([#14232](https://github.com/morluto/rea/issues/14232)) ([6d408c0](https://github.com/morluto/rea/commit/6d408c048006c54f7e4ca371e78caee3f0d6c43a))
 
 
 ### Performance Improvements
