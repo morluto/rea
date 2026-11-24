@@ -630,6 +630,7 @@
 * **apple:** share chained import decoding and proofs ([#13788](https://github.com/morluto/rea/issues/13788)) ([e012b68](https://github.com/morluto/rea/commit/e012b68371e52210785adec3c8f50e613cb4c685))
 * **apple:** share readFatSliceHeaders between resolver and inventory ([#13692](https://github.com/morluto/rea/issues/13692)) ([12658e2](https://github.com/morluto/rea/commit/12658e23e7803f605d9b3166bd7d719cecb0ad52))
 * **application:** add executeArtifactInspection runner and migrate 6 services ([#13819](https://github.com/morluto/rea/issues/13819)) ([8df9860](https://github.com/morluto/rea/commit/8df98603d11e01f3c1541076690b5a0186eaf408))
+* **application:** consolidate configuration and observation helpers ([#14322](https://github.com/morluto/rea/issues/14322)) ([2f5f02f](https://github.com/morluto/rea/commit/2f5f02f444ca0449427914538811c13ec0be291b))
 * **application:** extract BinaryTargetExecutableProbes from BinaryTargetResolver ([#13826](https://github.com/morluto/rea/issues/13826)) ([686bb09](https://github.com/morluto/rea/commit/686bb097f8045860f5e03b8c89d26ec2d0b976d1))
 * **application:** migrate 10 binary diagnostics services onto executeArtifactInspection ([#13849](https://github.com/morluto/rea/issues/13849)) ([d8f34c5](https://github.com/morluto/rea/commit/d8f34c530d65b086baaf18910c8f66f4dd5bd52c)), closes [#13848](https://github.com/morluto/rea/issues/13848)
 * **application:** migrate 3 remaining artifact services onto executeArtifactInspection ([#13867](https://github.com/morluto/rea/issues/13867)) ([a023edf](https://github.com/morluto/rea/commit/a023edf890d32524a312435f0e74b6301b10659a))
@@ -733,6 +734,7 @@
 * **server:** replace server.close and onclose monkey-patching with lifecycle hooks ([#13882](https://github.com/morluto/rea/issues/13882)) ([a569ec5](https://github.com/morluto/rea/commit/a569ec5584ceef3ef2efa6cd1a7673839e9de443))
 * **server:** simplify contractToolBindings types and handler dispatch ([#13912](https://github.com/morluto/rea/issues/13912)) ([fdad60a](https://github.com/morluto/rea/commit/fdad60aea7ba8c090c367ad7315a0101b644ecc4))
 * **setup:** extract SupportedClientLocations from SupportedClients ([#13731](https://github.com/morluto/rea/issues/13731)) ([8e619be](https://github.com/morluto/rea/commit/8e619be40c3074a36fe21d319d1c9dde11ae533d))
+* **tests:** consolidate repeated CLI capture and fixture construction ([#14311](https://github.com/morluto/rea/issues/14311)) ([78149ee](https://github.com/morluto/rea/commit/78149eeec979a124ffca8f36c815405491901709))
 * **uefi/native:** cache UEFI BinaryReader and reuse hasDosMzMagic ([#13659](https://github.com/morluto/rea/issues/13659)) ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
 * **uefi/native:** cache UEFI BinaryReader per buffer and reuse hasDosMzMagic ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
 * **uefi:** exercise only the framed LZMA worker ([#14072](https://github.com/morluto/rea/issues/14072)) ([1f4c8fe](https://github.com/morluto/rea/commit/1f4c8fe5d5c810a7aa7d7702c6fc8142b5afd37c))
@@ -1343,6 +1345,7 @@
 * record affected-test predictions above the live cutoff ([#14300](https://github.com/morluto/rea/issues/14300)) ([e6bf4af](https://github.com/morluto/rea/commit/e6bf4af1c913dd1b3d04c632298c6db045f1e95f))
 * **release:** preserve unpublished versions and verify npm before tagging ([#12770](https://github.com/morluto/rea/issues/12770)) ([ad2b34c](https://github.com/morluto/rea/commit/ad2b34ca9b30769ec8ff8ef26025a38a9a32c589))
 * run the verified actionlint release binary ([#14309](https://github.com/morluto/rea/issues/14309)) ([21facfd](https://github.com/morluto/rea/commit/21facfdeac604d6afcb7ce4495388c2d8afaae63))
+* shallow-checkout the classifier for qualification runs ([#14312](https://github.com/morluto/rea/issues/14312)) ([b73cc58](https://github.com/morluto/rea/commit/b73cc58925f09c08dca88cbbe1e04d7182cf7643))
 * validate workflow anchors with actionlint 1.7.12 ([#14298](https://github.com/morluto/rea/issues/14298)) ([f919526](https://github.com/morluto/rea/commit/f9195263d0ae23df996d28f4a7bf848067d936fa))
 * wait for static checks before broad PR test shards ([#14299](https://github.com/morluto/rea/issues/14299)) ([b8dd2c4](https://github.com/morluto/rea/commit/b8dd2c47d46419b0d82d03c1de2f261b7ffe3f73))
 
