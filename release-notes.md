@@ -1334,6 +1334,7 @@
 
 * **apple:** run the bundle executable provenance regression on macOS ([5d136df](https://github.com/morluto/rea/commit/5d136df3ce720385a7cb33137bf77962733c08aa))
 * **limits:** enforce numeric inventory drift on documentation changes ([#12881](https://github.com/morluto/rea/issues/12881)) ([aaf151f](https://github.com/morluto/rea/commit/aaf151f5d6cca927823ac605699e587dfca2c043))
+* measure portable runner time for recorded selection predictions ([#14304](https://github.com/morluto/rea/issues/14304)) ([24f35b4](https://github.com/morluto/rea/commit/24f35b401867904e23869698d3490a1894916fe1))
 * **release:** preserve unpublished versions and verify npm before tagging ([#12770](https://github.com/morluto/rea/issues/12770)) ([ad2b34c](https://github.com/morluto/rea/commit/ad2b34ca9b30769ec8ff8ef26025a38a9a32c589))
 
 ---
