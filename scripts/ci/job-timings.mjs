@@ -19,6 +19,7 @@ const STEP_COSTS = [
       "Upload complete static diagnostics",
       "Upload complete deep static diagnostics",
       "Retain available reverse tools diagnostics",
+      "Record affected-test prediction before the full suite",
       "Publish successful timing history",
       "Retain the exact qualified release package",
     ]),
