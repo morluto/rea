@@ -58,7 +58,7 @@ padding does not supply an RVA mapping.
 
 ## Checks that cannot apply
 
-The report omits a check that cannot apply to the formats the audit detected, and lists its id under `coverage.inapplicable_checks` in table order. `checks` and `coverage.inapplicable_checks` together always name every check in the table above, once each. A check stays in `checks` whenever a member it could apply to may have gone unread, such as a native image past the sample, a native image stored inside a package, an embedded package such as a .NET bundle or PyInstaller archive, or an incomplete inventory.
+The report omits a check that cannot apply to the formats the audit detected, and lists its id under `coverage.inapplicable_checks` in table order. `checks` and `coverage.inapplicable_checks` together always name every check in the table above, once each. A check stays in `checks` whenever a member it could apply to may have gone unread, such as a native image past the sample, a native image stored inside a package that was not read, or an incomplete inventory. A fully read package with no native member does not keep the native checks.
 
 | Check                                        | Omitted when                                                                                                         |
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -69,7 +69,7 @@ The report omits a check that cannot apply to the formats the audit detected, an
 | `text.credential_markers`                    | No text member was found                                                                                             |
 | `native.hardening`                           | No native image was found                                                                                            |
 | `macho.hardened_runtime`                     | No Mach-O image was found                                                                                            |
-| `android.manifest`                           | The selection is an app bundle, an ASAR, or a native executable with no embedded package                             |
+| `android.manifest`                           | The selection is an app bundle, an ASAR, or a native executable                                                      |
 
 On a single Windows PE, for example, the Electron, JavaScript, Mach-O, and Android checks are omitted, and `native.hardening` keeps its `inspect_binary_hardening` probe.
 

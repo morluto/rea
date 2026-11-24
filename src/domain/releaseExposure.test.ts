@@ -208,7 +208,7 @@ describe("release exposure format applicability", () => {
     expect(statusOf(report, "javascript.source_maps")).toBe("not_observed");
   });
 
-  it("keeps Mach-O and Android checks on a PE bundle whose packaged images are unread", () => {
+  it("keeps the Mach-O check on a PE bundle whose packaged images are unread", () => {
     const report = reportFor(
       executable("pe", {
         extractable: {
@@ -228,13 +228,39 @@ describe("release exposure format applicability", () => {
       owners({ electron_family: "not_a_directory" }),
     );
     expect(statusOf(report, "macho.hardened_runtime")).toBe("not_assessed");
-    expect(statusOf(report, "android.manifest")).toBe("not_assessed");
+    expect(statusOf(report, "android.manifest")).toBe("inapplicable");
     expect(
       report.checks.find(({ id }) => id === "macho.hardened_runtime")
         ?.next_probe,
     ).toBe("inspect_signature");
   });
 
+  it("omits native and Android checks on a fully read ASAR with only text", () => {
+    const report = reportFor(
+      scan({
+        target: {
+          selected_path: "/work/app.asar",
+          kind: "asar",
+          format: "asar",
+          sha256: SHA,
+        },
+        subject: { path: "/work/app.asar", sha256: SHA, format: "asar" },
+        extractable: {
+          formats: ["asar"],
+          readable_members: 2,
+          unreadable_members: 0,
+          samples: ["app.js"],
+        },
+      }),
+    );
+    expect(statusOf(report, "native.hardening")).toBe("inapplicable");
+    expect(statusOf(report, "macho.hardened_runtime")).toBe("inapplicable");
+    expect(statusOf(report, "android.manifest")).toBe("inapplicable");
+    expect(statusOf(report, "packaging.extractable_payload")).toBe("exposed");
+  });
+});
+
+describe("release exposure report split invariant", () => {
   it("rejects reports whose rows and inapplicable checks do not split the table", () => {
     const valid = reportFor(
       executable("pe"),
@@ -271,7 +297,9 @@ describe("release exposure format applicability", () => {
       }).success,
     ).toBe(false);
   });
+});
 
+describe("release exposure applicability with unread members", () => {
   it("keeps format-gated checks on a directory whose native images may be unread", () => {
     const report = reportFor(
       scan({
