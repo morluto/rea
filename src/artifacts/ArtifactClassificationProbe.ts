@@ -37,6 +37,8 @@ export interface ArtifactClassificationEvidence {
   readonly prefix: Buffer;
   /** The last bytes of the stream, when the producer observed its end. */
   readonly suffix?: Buffer;
+  /** The probe matched an XML plist prolog in the retained prefix. */
+  readonly xmlPlistSignature: boolean;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
   /** The FAT header decided once for the finished stream size. */
   readonly fatHeader: FatContainerHeader;
@@ -95,6 +97,7 @@ const NO_FAT_SLICE_HEADERS: ReadonlyMap<number, MachoHeaderPrefixFacts> =
 const finishClassificationEvidence = (
   prefix: Buffer,
   suffix: Buffer | undefined,
+  xmlPlistSignature: boolean,
   archiveBytes: number,
   finishAsar: (archiveBytes: number) => FinalAsarHeaderProbeObservation,
   sliceHeadersByOffset: Map<number, MachoHeaderPrefixFacts>,
@@ -123,6 +126,7 @@ const finishClassificationEvidence = (
   return {
     prefix,
     ...(suffix === undefined ? {} : { suffix }),
+    xmlPlistSignature,
     asarHeader: finishAsar(archiveBytes),
     fatHeader: finalHeader,
     fatSliceHeadersByOffset:
@@ -344,6 +348,7 @@ export const createArtifactClassificationProbe = (
         observedBytes === archiveBytes
           ? suffixBuffer.subarray(0, suffixLength)
           : undefined,
+        xml.state === "matched",
         archiveBytes,
         (bytes) => asar.finish(bytes),
         fatSliceHeadersByOffset,
