@@ -492,7 +492,7 @@ it
     if (scenario === "literal-replacement")
       expect(result).toMatchObject({
         ok: false,
-        error: { issues: [{ message: "valid �" }] },
+        error: { failure: { kind: "malformed", detail: "valid �" } },
       });
     if (scenario === "success") {
       if (!result.ok) throw result.error;
@@ -818,7 +818,7 @@ it.runIf(!unsupportedHost)(
         cleanupResources: [root],
         diagnostics: {
           reason: "root cleanup failed",
-          previous_error: { category: "invalid_input" },
+          previous_error: { category: "unsupported_target" },
         },
       },
     });
