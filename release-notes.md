@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **artifacts:** subject.identity gains a directory kind {kind:"directory",algorithm:"rea-directory-tree",version:1,sha256}. A directory inventory's subject and root sha256 are its tree digest, and a partial walk's subject is {kind:"unknown",reason:"not-observed"}. inspect_artifact no longer requires an open target. Directory symlink occurrences record link_target and compare by it.
 * **native:** procedure_references.procedure may now identify an address outside every procedure, with classification null and an unavailable body. find_xrefs_to_name adds resolved_name and candidates, and resolves bare import names on Ghidra.
 * **ghidra:** in MCP sessions, Ghidra result Evidence no longer lists session-scoped limitations inline. It carries one reference limitation and links a retained session-limitations Evidence (operation health, parameters.facet session-limitations) in evidence_links. Read it with get_evidence_bundle. Defect records no longer appear on operations or architectures outside their declared scope.
 * **pe:** import and delay-import walks continue to the null descriptor past a short directory Size instead of stopping with a malformed_entry issue, and inspect-pe-resources reports an unsupported optional-header magic as unsupported_target.
@@ -50,6 +51,7 @@
 * **analysis-view:** select retained JavaScript facts by property value ([25e93a8](https://github.com/morluto/rea/commit/25e93a8139abf3ad398d0366d84c53c75fcd0d82))
 * **android:** add optional limit and offset paging to search_android_classes ([#13846](https://github.com/morluto/rea/issues/13846)) ([f47dbd9](https://github.com/morluto/rea/commit/f47dbd9351ac8624c409d4e37ea630c1cc35edd9))
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
+* **artifacts:** inspect and compare directories by a content-addressed root digest ([#14270](https://github.com/morluto/rea/issues/14270)) ([56cf155](https://github.com/morluto/rea/commit/56cf15566ee1fee1cb0d3573bf0e23b1a682e635))
 * **artifacts:** inventory and extract stored and gzip-compressed tar archives ([#14245](https://github.com/morluto/rea/issues/14245)) ([225a19a](https://github.com/morluto/rea/commit/225a19ae7a39d06d03a8d5df4d9bf44e645a6c54))
 * **artifacts:** report declared DDS, GLB, KTX and KTX2 headers and regions ([#14248](https://github.com/morluto/rea/issues/14248)) ([78d2593](https://github.com/morluto/rea/commit/78d2593a4543592636a49c0cead0ca64dcef78ea))
 * **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
@@ -460,6 +462,7 @@
 * **ci:** reuse installed website rendering packages ([#14337](https://github.com/morluto/rea/issues/14337)) ([1e1db9e](https://github.com/morluto/rea/commit/1e1db9e342ad13d26c27f34af8a2d7a5648387c9))
 * **ci:** run scheduled full qualification every six hours ([#14374](https://github.com/morluto/rea/issues/14374)) ([14b9167](https://github.com/morluto/rea/commit/14b916795c9c80ba46109bdb0ea6b9aafe5daf44))
 * **ci:** skip the portable report runner for non-code changes ([#14333](https://github.com/morluto/rea/issues/14333)) ([7e16cb3](https://github.com/morluto/rea/commit/7e16cb3600489aedb28bffd3e79d9e21c75b1c7b))
+* **ci:** trace fixed-ceiling baselines and owned bridge sources in PR test selection ([#14375](https://github.com/morluto/rea/issues/14375)) ([229ba77](https://github.com/morluto/rea/commit/229ba77b1aa552192ab7b714c93bb3313f130392))
 * **cli/mcp:** decouple analysis view contracts and defer tshark PATH probes ([#13316](https://github.com/morluto/rea/issues/13316)) ([787b5aa](https://github.com/morluto/rea/commit/787b5aafb94f69f3b529a13bf47235a1b5ec4295))
 * **cli/mcp:** eliminate eager JSON schema work, double projection, and O(N^2) error compaction ([#13466](https://github.com/morluto/rea/issues/13466)) ([8688eb0](https://github.com/morluto/rea/commit/8688eb0195896d3083271dd73c8a490122f64c80))
 * **cli/server/dotnet:** single-pass --token-count JSON, indexed CLI command lookup, single status parse, and direct loops ([#13631](https://github.com/morluto/rea/issues/13631)) ([2532add](https://github.com/morluto/rea/commit/2532adda8449989fc12bebef215fbcb3494ff243))
