@@ -34,6 +34,7 @@ export const AGENT_BUDGET_OPERATIONS = [
   "inspect_rust_binary",
   "inspect_wasm_artifact",
   "inspect_web_network_capture",
+  "inspect_web_page",
   "inspect_with_objdump",
   "list_names",
   "list_procedures",

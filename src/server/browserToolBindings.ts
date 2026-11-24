@@ -95,7 +95,21 @@ export const bindBrowserObservationTools = (
     inspect_web_page: {
       admission: "sdk",
       ...optional,
-      run: (input, options) => inspectWebPage(browser, input, options),
+      run: async ({ detail, ...request }, options) => {
+        if (detail === "summary") {
+          const ready = requireAnalysisViewRetention(
+            "inspect_web_page",
+            retention,
+          );
+          if (!ready.ok) return ready;
+        }
+        const inspected = await inspectWebPage(browser, request, options);
+        return inspected.ok && detail === "summary"
+          ? projectRetainedAnalysis(inspected.value, retention, {
+              kind: "summary",
+            })
+          : inspected;
+      },
     },
     analyze_web_bundle: {
       admission: "sdk",

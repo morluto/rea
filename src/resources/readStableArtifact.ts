@@ -9,6 +9,8 @@ import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { budgetArtifactReads } from "./artifactReadBudget.js";
+import type { ArtifactReadBudget } from "../domain/artifactReadBudget.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
@@ -237,6 +239,11 @@ export interface StableArtifactHandleOptions<Value = unknown> {
   }) => void;
   /** Called after the parsed result passes the final identity check, before closing. */
   readonly onVerifiedResult?: (value: Value) => void;
+  /**
+   * Bound the positional reads `useFile` makes. `maximumBytes` then bounds
+   * only the identity pass, which streams the whole file once.
+   */
+  readonly readBudget?: ArtifactReadBudget | undefined;
 }
 
 /**
@@ -269,7 +276,7 @@ export const withStableArtifactHandle = async <Value>(
       options.onIdentity?.({ sha256, bytes: size });
       const verifyState = () =>
         verifyStableArtifactRead(path, fileSystem, file, initial, size);
-      const value = await useFile({
+      const handle: StableArtifactHandle = {
         sha256,
         size,
         prefix,
@@ -277,7 +284,12 @@ export const withStableArtifactHandle = async <Value>(
           readFileHandleRange(file, offset, length, () =>
             assertArtifactReadActive(options.signal),
           ),
-      }).catch(async (cause: unknown) => {
+      };
+      const value = await useFile(
+        options.readBudget === undefined
+          ? handle
+          : budgetArtifactReads(handle, options.readBudget),
+      ).catch(async (cause: unknown) => {
         // Format findings can reflect bytes rewritten during parsing. Keep
         // independent physical I/O, cancellation, and decoder failures primary.
         if (
