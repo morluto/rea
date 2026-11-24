@@ -9225,3 +9225,270 @@ it("marks coverage partial when Ghidra outcome reports failed functions count", 
     await provider.close();
   }
 });
+
+it("matches manifest rows with relative path components (./ or ../) to discovered modules without dropping phase-filtered modules", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-relpath-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Driver.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      manifest_version: "1.0",
+      modules: [
+        {
+          payload_file: "./Driver.efi",
+          name: "DxeRelativeDriver",
+          guid: "11223344-5566-7788-99aa-bbccddeeff00",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("DxeRelativeDriver");
+    expect(result.modules[0]?.guid).toBe(
+      "11223344-5566-7788-99aa-bbccddeeff00",
+    );
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(
+      result.limitations.some((l) =>
+        l.includes(
+          "was not found or admitted as a valid UEFI candidate module",
+        ),
+      ),
+    ).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("matches manifest rows with complex relative segments like ./sub/../Driver.efi", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-complex-relpath-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Driver.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      manifest_version: "1.0",
+      modules: [
+        {
+          payload_file: "./sub/../Driver.efi",
+          name: "DxeDotDotDriver",
+          guid: "aabbccdd-eeff-1122-3344-5566778899aa",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("DxeDotDotDriver");
+    expect(result.modules[0]?.guid).toBe(
+      "aabbccdd-eeff-1122-3344-5566778899aa",
+    );
+    expect(result.total_modules_decompiled).toBe(1);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("labels budget limit warning as retained recovered functions when Ghidra decompilation capped but kept candidate C", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-cap-retained-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peModule = createMinimalPeBuffer();
+  await writeFile(join(inDir, "driver.efi"), peModule);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            outC,
+            "/* Ghidra Decompiler output */\nvoid RecoveredFunc(void) {}\n",
+          );
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "limit_exceeded",
+              max_output_bytes: 4194304,
+              decompiled_functions: 1,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("ghidra");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes(
+          "stopped after reaching 4 MiB per-module limit; retained recovered functions.",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("recovered with reconstructed entry scaffolding"),
+      ),
+    ).toBe(false);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("labels budget limit warning as reconstructed entry scaffolding when Ghidra produces no C output", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-cap-scaffold-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peModule = createMinimalPeBuffer();
+  await writeFile(join(inDir, "driver.efi"), peModule);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "");
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "limit_exceeded",
+              max_output_bytes: 4194304,
+              decompiled_functions: 0,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes(
+          "stopped after reaching 4 MiB per-module limit; recovered with reconstructed entry scaffolding.",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("retained recovered functions"),
+      ),
+    ).toBe(false);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});

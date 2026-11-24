@@ -1505,12 +1505,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const formatDecompileBudgetLimit = (
       moduleName: string,
       limitBytes: number,
+      retainedRecoveredCode = false,
     ): string => {
       const limitLabel =
         limitBytes < MAX_DECOMPILE_MODULE_BYTES
           ? "64 MiB aggregate staging budget"
           : "4 MiB per-module limit";
-      return `Decompiled C output for ${moduleName} stopped after reaching ${limitLabel}; recovered with reconstructed entry scaffolding.`;
+      return retainedRecoveredCode
+        ? `Decompiled C output for ${moduleName} stopped after reaching ${limitLabel}; retained recovered functions.`
+        : `Decompiled C output for ${moduleName} stopped after reaching ${limitLabel}; recovered with reconstructed entry scaffolding.`;
     };
 
     const MAX_RAW_PAYLOAD_TOTAL_BYTES = 128 * 1024 * 1024;
@@ -2384,13 +2387,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               isCoveragePartial = true;
               const effectiveLimitBytes =
                 exporterOutcome.max_output_bytes ?? MAX_DECOMPILE_MODULE_BYTES;
-              const perModuleLimit = formatDecompileBudgetLimit(
-                safeLimitationModName,
-                effectiveLimitBytes,
-              );
-              if (!effectiveLimitations.includes(perModuleLimit)) {
-                effectiveLimitations.push(perModuleLimit);
-              }
+              let retainedCandidate = false;
               if (ghidraOutC && existsSync(ghidraOutC)) {
                 const candidateC = await readFile(ghidraOutC, "utf8");
                 const candidateCBytes = Buffer.byteLength(candidateC, "utf8");
@@ -2408,7 +2405,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   cContent = candidateC;
                   cGenerator = "ghidra";
                   ghidraEngineUsed = true;
+                  retainedCandidate = true;
                 }
+              }
+              const perModuleLimit = formatDecompileBudgetLimit(
+                safeLimitationModName,
+                effectiveLimitBytes,
+                retainedCandidate,
+              );
+              if (!effectiveLimitations.includes(perModuleLimit)) {
+                effectiveLimitations.push(perModuleLimit);
               }
             } else if (exporterOutcome?.status === "no_functions") {
               if ((exporterOutcome.failed_functions ?? 0) > 0) {
@@ -3288,6 +3294,28 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         payloadSha256?: string | undefined;
       };
       const isWindows = HOST_PLATFORM.platform === "win32";
+      const normalizeRelativePath = (
+        rawPath: string,
+        treatBackslashAsSep: boolean,
+      ): string => {
+        const parts = treatBackslashAsSep
+          ? rawPath.split(/[/\\]+/)
+          : rawPath.split(/\/+/);
+        const segments: string[] = [];
+        for (const part of parts) {
+          if (part === "" || part === ".") continue;
+          if (part === "..") {
+            if (segments.length > 0 && segments[segments.length - 1] !== "..") {
+              segments.pop();
+            } else {
+              segments.push("..");
+            }
+          } else {
+            segments.push(part);
+          }
+        }
+        return segments.join("/");
+      };
       const manifestModulesByExactRelPath = new Map<
         string,
         ManifestModuleEntry
@@ -3541,13 +3569,22 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   }
                   continue;
                 }
-                const exactNorm = isWindows
-                  ? m.payload_file.replace(/[/\\]+/g, "/")
-                  : m.payload_file.replace(/\/+/g, "/");
+                const exactNorm = normalizeRelativePath(
+                  m.payload_file,
+                  isWindows,
+                );
+                if (exactNorm.length === 0) {
+                  if (limitations.length < 50) {
+                    limitations.push(
+                      `Manifest module at index ${mIdx} has empty payload_file; ignored.`,
+                    );
+                  }
+                  continue;
+                }
                 const foldedNorm = exactNorm.toLowerCase();
-                const crossPlatformNorm = m.payload_file.replace(
-                  /[/\\]+/g,
-                  "/",
+                const crossPlatformNorm = normalizeRelativePath(
+                  m.payload_file,
+                  true,
                 );
                 const crossPlatformFolded = crossPlatformNorm.toLowerCase();
 
@@ -3801,7 +3838,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const ambiguousDirectoryInventoryKeys = new Set<string>();
       if (!isWindows) {
         for (const cEntry of candidateEntries) {
-          const normK = cEntry.path.split(/[/\\]+/).join("/");
+          const normK = normalizeRelativePath(cEntry.path, true);
           const existing = candidateCrossPlatformKeys.get(normK);
           if (existing !== undefined && existing !== cEntry.path) {
             ambiguousDirectoryInventoryKeys.add(normK);
@@ -3937,13 +3974,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           HOST_PLATFORM.platform === "win32"
             ? relPath.replaceAll("\\", "/")
             : relPath;
-        const exactLookupKey = isWindows
-          ? relPath.split(/[/\\]+/).join("/")
-          : relPath.split(/\/+/).join("/");
+        const exactLookupKey = normalizeRelativePath(relPath, isWindows);
         const foldedLookupKey = exactLookupKey.toLowerCase();
-        const crossPlatformLookupKey = isWindows
-          ? exactLookupKey
-          : relPath.split(/[/\\]+/).join("/");
+        const crossPlatformLookupKey = normalizeRelativePath(relPath, true);
         const crossPlatformFoldedKey = crossPlatformLookupKey.toLowerCase();
         const directoryPath = dirname(relPath);
         const hierarchySegments =
@@ -4114,8 +4147,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           }
           const identityRelPath =
             HOST_PLATFORM.platform === "win32"
-              ? declared.payloadFile.replaceAll("\\", "/")
-              : declared.payloadFile;
+              ? declared.exactNorm.replaceAll("\\", "/")
+              : declared.exactNorm;
           if (
             !omittedCandidates.some(
               (o) => o.identityRelPath === identityRelPath,
