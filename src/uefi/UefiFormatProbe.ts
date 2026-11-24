@@ -1,6 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { claimsExecutableHeader } from "../domain/binaryTarget.js";
+import { recognizesArtifactPrefix } from "../domain/artifactFormatRecognition.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { imageRegion, type ScanRegion } from "./UefiBytes.js";
 import { scanFirmwareVolumes } from "./FirmwareVolume.js";
@@ -65,6 +66,8 @@ const extendPrefix = async (
  * cheaply; only files that actually carry the signature cost a bounded
  * whole-image read. Images whose first volume lies beyond the prefix stay
  * unrecognized — an honest admission gap, noted in the probe contract.
+ * A prefix the shared recognizer table claims, such as an ISO 9660
+ * descriptor set, outranks the probe in every route that calls it.
  */
 export async function probeUefiFlashImage(
   handle: FileHandle,
@@ -96,7 +99,11 @@ export async function probeUefiFlashImage(
     prefix = await readFileHandleRange(handle, 0, probeBytes, throwIfCancelled);
   }
   throwIfCancelled();
-  if (claimsExecutableHeader(prefix, size) || !prefix.includes("_FVH", "ascii"))
+  if (
+    claimsExecutableHeader(prefix, size) ||
+    !prefix.includes("_FVH", "ascii") ||
+    recognizesArtifactPrefix(prefix, size)
+  )
     return false;
 
   const readLimit = Math.min(UEFI_FIRMWARE_LIMITS.inputBytes, size);
