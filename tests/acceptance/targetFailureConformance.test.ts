@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
@@ -59,6 +59,8 @@ for (const { operation, cases } of await loadTargetFailureReaders()) {
         );
         expect(error).toMatchObject(expected);
         expect(error).not.toHaveProperty("recovery");
+        // A refusal never alters the caller's selected file.
+        expect((await readFile(path)).equals(bytes)).toBe(true);
       },
     );
   }
