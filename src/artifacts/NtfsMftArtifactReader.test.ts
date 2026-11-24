@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -323,6 +323,31 @@ it("does not finish a traversal when close begins during final source verificati
     expect(calls).toBe(2);
   } finally {
     closeRead.release();
+    spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("reports a $MFT stream that shrinks during decoding as a changed file, not malformed", async () => {
+  const path = await writeMft(
+    "$MFT",
+    Buffer.concat([recordBytes({}), recordBytes({ index: 1 })]),
+  );
+  const reader = new NtfsMftArtifactReader(path);
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(async function (this: ArtifactFileSource, signal) {
+      const admitted = await read.call(this, signal);
+      // The decoder now meets EOF before the admitted length.
+      await truncate(path, MFT_DEFAULT_RECORD_BYTES);
+      return admitted;
+    });
+  try {
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "integrity" });
+  } finally {
     spy.mockRestore();
     await reader.close();
   }

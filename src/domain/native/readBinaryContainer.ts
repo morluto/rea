@@ -9,7 +9,10 @@ import {
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
 } from "../apple/machoContainer.js";
-import { readUniversalMachoImageFromReader } from "../apple/machoImageSelection.js";
+import {
+  MACHO_FORMAT,
+  readUniversalMachoImageFromReader,
+} from "../apple/machoImageSelection.js";
 import {
   readElfImage,
   readElfImageCooperative,
@@ -68,10 +71,14 @@ export const readBinaryContainerFromReader = async (
     if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
       const fat = await readUniversalMachoImageFromReader(source);
       if (!fat.ok) {
-        const { kind, detail, offset } = fat.error.failure;
+        const { failure } = fat.error;
+        const { kind, detail, offset } = failure;
         throw new BinaryFormatFailure(kind, detail, {
-          format: fat.error.failure.format,
+          format: failure.format,
           ...(offset === undefined ? {} : { offset }),
+          ...(failure.kind === "truncated" && failure.extent !== undefined
+            ? { extent: failure.extent }
+            : {}),
         });
       }
       if (fat.value !== null)
@@ -97,6 +104,11 @@ const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
       const fatHeader = readFatContainerHeader(bytes, bytes.length);
       if (fatHeader.state === "malformed")
         throw new BinaryFormatFailure("malformed", fatHeader.reason);
+      if (fatHeader.state === "truncated")
+        throw new BinaryFormatFailure("truncated", fatHeader.reason, {
+          format: MACHO_FORMAT,
+          extent: fatHeader.extent,
+        });
       const identity =
         fatHeader.state === "parsed"
           ? classifyFatContainerEvidence(fatHeader, bytes)

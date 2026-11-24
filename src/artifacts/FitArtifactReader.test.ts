@@ -293,8 +293,10 @@ it("fails a devicetree totalsize past the end of the file", async () => {
       kind: "truncated",
       format: "fit",
       field: "totalsize",
-      availableBytes: FIT_EMBEDDED.length,
-      requiredBytes: FIT_EMBEDDED.length + 4,
+      extent: {
+        availableBytes: FIT_EMBEDDED.length,
+        requiredBytes: FIT_EMBEDDED.length + 4,
+      },
     },
   });
 });

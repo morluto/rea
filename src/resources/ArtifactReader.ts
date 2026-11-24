@@ -561,8 +561,10 @@ export const truncatedArtifact = (
       format,
       detail,
       ...located(offset, field),
-      ...(availableBytes === undefined ? {} : { availableBytes }),
-      ...(requiredBytes === undefined ? {} : { requiredBytes }),
+      // The model carries the measured end only as a complete pair.
+      ...(availableBytes === undefined || requiredBytes === undefined
+        ? {}
+        : { extent: { availableBytes, requiredBytes } }),
     },
     options,
   );
