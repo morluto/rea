@@ -120,6 +120,8 @@ async function runPlanScript(
         ...process.env,
         BASE_SHA: base,
         HEAD_SHA: head,
+        GITHUB_SHA: head,
+        CI_RECORD_TEST_SHADOW: "true",
         GITHUB_EVENT_NAME: event,
         CI_FULL: String(full),
         CI_SKIP_FULL: String(skipFull),
@@ -560,11 +562,29 @@ it("selects the tests a pull request affects and runs everything when it cannot 
     (_, index) => `tests/composition/many${String(index)}.test.ts`,
   );
   const wide = await change(directory, many);
-  expect(await classify(directory, isolated, wide)).toMatchObject({
-    testSelection: {
-      mode: "full",
-      reason: "401 affected test files exceed the 400-file selection cap",
-    },
+  const widePlan = await runPlanScript(directory, isolated, wide);
+  const activeSelection = {
+    version: 3,
+    mode: "full",
+    reason: "401 affected test files exceed the 400-file selection cap",
+  };
+  expect(widePlan.testSelection).toEqual(activeSelection);
+  const wideOutput = await readFile(join(directory, "scope-output"), "utf8");
+  expect(wideOutput).toContain("test_shadow=true\n");
+  expect(wideOutput).toContain(
+    `test_selection=${JSON.stringify(activeSelection)}\n`,
+  );
+  expect(
+    JSON.parse(
+      await readFile(
+        join(directory, ".git", "test-selection-shadow.json"),
+        "utf8",
+      ),
+    ),
+  ).toEqual({
+    version: 1,
+    sha: wide,
+    files: [...many].sort(),
   });
   const capped = await change(directory, many.slice(0, 101), "// edited\n");
   expect(await classify(directory, wide, capped)).toMatchObject({
