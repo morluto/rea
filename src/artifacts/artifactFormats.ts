@@ -405,6 +405,10 @@ const NON_ZIP_FORMATS = {
       new UefiArtifactReader(path, sourceOf(options)),
   }),
   plist: described("plist", plain),
+  sqlite: described("sqlite", plain),
+  "windows-shortcut": described("windows-shortcut", plain),
+  "python-pyc": described("python-pyc", plain),
+  devicetree: described("devicetree", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",

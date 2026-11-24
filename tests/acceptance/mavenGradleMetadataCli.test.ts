@@ -567,16 +567,11 @@ cliTest.for([
     const bytes = Buffer.from(source, "utf8");
     await writeFile(path, bytes);
     const expected = {
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_maven_gradle_metadata",
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining(issue),
-          },
-        ],
+        format_failure: "malformed",
+        reason: expect.stringContaining(issue),
         partial_observation: {
           kind: "file-snapshot-hash",
           path,

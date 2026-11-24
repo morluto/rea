@@ -26,15 +26,13 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, createSharedMcpSession } from "../support/cli/cliFixture.js";
 
-/** A malformed model header is an invalid `path` on both adapters. */
+/** A malformed model header is a target refusal on both adapters. */
 const MALFORMED_MODEL = {
-  code: "invalid_request",
-  category: "invalid_input",
+  code: "unsupported_target",
+  category: "unsupported_target",
   details: {
     operation: "inspect_model_artifact",
-    issues: [
-      expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
-    ],
+    format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
   },
 } as const;
 
@@ -534,20 +532,18 @@ cliTest(
     );
     // The raw extent is outside this empty file, and that check runs before
     // the offset is converted to a host number.
+    // The bytes, not the arguments, are at fault, so this is a target refusal.
     expect(offsetFailure.error).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
+      code: "unsupported_target",
+      category: "unsupported_target",
       details: {
         operation: "inspect_model_artifact",
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${path}: Declared extent is outside the file`,
-          },
-        ],
+        path,
+        reason: "Declared extent is outside the file",
+        format_failure: "malformed",
       },
     });
+    expect(offsetFailure.error).not.toHaveProperty("recovery");
   },
 );
 

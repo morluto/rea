@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises";
 import { delimiter, dirname, join, resolve } from "node:path";
 
+import MarkdownIt from "markdown-it";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -24,6 +25,10 @@ const packageVersion = z
       await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
     ),
   ).version;
+// The example's runner uses the toolchain this checkout pins.
+const pinnedNode = (
+  await readFile(new URL("../../../.nvmrc", import.meta.url), "utf8")
+).trim();
 
 const example = async () =>
   z
@@ -71,7 +76,7 @@ it("keeps the example manually triggered, least-privileged, pinned and failure-p
     job.steps.find((step) => step.uses?.startsWith("actions/setup-node@"))
       ?.with,
   ).toMatchObject({
-    "node-version": "24.22.1",
+    "node-version": pinnedNode,
   });
   for (const step of job.steps) {
     expect(step["continue-on-error"]).toBeUndefined();
@@ -102,9 +107,21 @@ it("links to the workflow asset outside the documentation site's base", async ()
     new URL("../../../docs/ci-analysis.md", import.meta.url),
     "utf8",
   );
-  expect(guide).toContain(
-    "[minimal workflow](https://github.com/morluto/rea/blob/main/examples/github-actions/rea-analysis.yml)",
-  );
+  const workflowLinks = new MarkdownIt()
+    .parse(guide, {})
+    .flatMap((token) => token.children ?? [])
+    .flatMap((token) => {
+      const href = token.type === "link_open" ? token.attrGet("href") : null;
+      return typeof href === "string" ? [href] : [];
+    })
+    .filter((href) =>
+      href.endsWith("examples/github-actions/rea-analysis.yml"),
+    );
+  expect(workflowLinks.length).toBeGreaterThan(0);
+  for (const href of workflowLinks)
+    expect(href).toBe(
+      "https://github.com/morluto/rea/blob/main/examples/github-actions/rea-analysis.yml",
+    );
 });
 
 // This example explicitly targets an Ubuntu/Bash runner, not Windows shells.

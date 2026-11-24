@@ -220,7 +220,16 @@ class InvalidRequestError(Exception):
 
 
 class SelectorNotFoundError(InvalidRequestError):
-    """A valid selector did not resolve in the current Hopper document."""
+    """A valid selector did not resolve in the current Hopper document.
+
+    ``selector`` records how the selector resolved: its caller value, whether
+    Hopper matched it as a symbol, an address, or the cursor, and the resolved
+    address. An unresolved name has no address.
+    """
+
+    def __init__(self, message, selector=None):
+        super().__init__(message)
+        self.selector = selector
 
 
 EXHAUSTIVE_ANALYSIS_METHODS = frozenset(
@@ -461,7 +470,10 @@ def _address_selection(document, value=None):
             try:
                 address = int(value, 16)
             except ValueError as error:
-                raise SelectorNotFoundError("Unknown Hopper address or name: %s" % value) from error
+                raise SelectorNotFoundError(
+                    "Unknown Hopper address or name: %s" % value,
+                    {"value": value, "source": "unresolved"},
+                ) from error
     if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
         raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
     return address, source
@@ -482,7 +494,13 @@ def _procedure(document, value=None):
     address, source = _address_selection(document, value)
     result = _segment(document, address).getProcedureAtAddress(address)
     if result is None:
-        raise SelectorNotFoundError("No procedure exists at the requested address")
+        selector = {"value": value, "source": source, "address": _hex(address)}
+        if source == "symbol":
+            raise SelectorNotFoundError(
+                "Name %s resolves to %s, which is not inside a Hopper procedure" % (value, _hex(address)),
+                selector,
+            )
+        raise SelectorNotFoundError("No procedure exists at %s" % _hex(address), selector)
     if source == "symbol" and address != result.getEntryPoint():
         raise InvalidRequestError(
             "Symbol %s at %s is inside procedure %s at %s; select its entry name/address or use resolve_containing_procedure for explicit containment"
@@ -1680,7 +1698,11 @@ def _safe_diagnostic(error):
         message = str(error)
     else:
         message = "%s: Hopper bridge operation failed" % type(error).__name__
-    return {"code": -32000, "message": message, "type": diagnostic_type}
+    diagnostic = {"code": -32000, "message": message, "type": diagnostic_type}
+    selector = getattr(error, "selector", None)
+    if diagnostic_type == "selector_not_found" and selector is not None:
+        diagnostic["selector"] = selector
+    return diagnostic
 
 
 def _run():

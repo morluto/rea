@@ -147,6 +147,10 @@ const TARGETS: TargetFixtures = {
   javascript: { ...artifact, format: "javascript" },
   "source-map": { ...artifact, format: "source-map" },
   uefi: { ...artifact, format: "uefi" },
+  sqlite: { ...artifact, format: "sqlite" },
+  "windows-shortcut": { ...artifact, format: "windows-shortcut" },
+  "python-pyc": { ...artifact, format: "python-pyc" },
+  devicetree: { ...artifact, format: "devicetree" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;
