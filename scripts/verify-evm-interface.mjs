@@ -319,7 +319,10 @@ try {
     const path = join(root.path, name);
     await writeFile(path, data);
     for (const mode of ["cli", "mcp"]) {
-      await inspect(mode, path, "hex", "invalid_input");
+      // An undecodable hex carrier is the target's bytes, not the request.
+      const failure = await inspect(mode, path, "hex", "unsupported_target");
+      assert.equal(failure.details.failure_kind, "malformed");
+      assert.equal(failure.details.format, "evm-bytecode");
       cases++;
     }
   }
