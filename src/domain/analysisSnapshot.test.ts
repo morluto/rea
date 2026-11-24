@@ -19,7 +19,11 @@ import {
 import { createAnalysisProfile } from "./analysisProfile.js";
 import { createEvidence, evidenceSubject } from "./evidence.js";
 import { unknownTarget } from "./targetIdentity.js";
-import { createEvidenceBundle } from "./evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  createImmutableEvidenceBundle,
+} from "./evidenceBundle.js";
+import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
@@ -837,4 +841,59 @@ describe("analysis snapshot payload ownership", () => {
       expect(Object.isFrozen(tamperedEntry.execution.result)).toBe(false);
     },
   );
+});
+
+describe("detached snapshot exports", () => {
+  it("detaches sealed nested JSON payloads while keeping immutable snapshots shared", () => {
+    const { snapshot } = snapshotWithHistoricalEvidence();
+    const entry = snapshot.entries[0];
+    if (entry === undefined) throw new Error("Missing fixture entry");
+    const frozenResult = freezeJsonSnapshot({ summary: "cached", items: [1] });
+    const frozenRaw = freezeJsonSnapshot({ source: ["raw"] });
+    const frozenParams = freezeJsonSnapshot({ procedure: "main" });
+    const evidence = createEvidence(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROVIDER,
+      {
+        operation: entry.operation,
+        parameters: frozenParams,
+        result: frozenResult,
+        rawResult: frozenRaw,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      },
+    );
+    const sealedBundle = createImmutableEvidenceBundle([evidence]);
+    const input = {
+      ...snapshot,
+      entries: [
+        {
+          ...entry,
+          parameters: frozenParams,
+          execution: {
+            ...entry.execution,
+            result: frozenResult,
+            raw_result: frozenRaw,
+          },
+        },
+      ],
+      evidence_bundle: sealedBundle,
+    };
+    const detached = parseAnalysisSnapshot(input);
+    const detachedEntry = detached.entries[0]!;
+    const detachedRecord = detached.evidence_bundle.records[0]!;
+    expect(Object.isFrozen(detachedEntry.execution.result)).toBe(false);
+    expect(Object.isFrozen(detachedEntry.execution.raw_result)).toBe(false);
+    expect(Object.isFrozen(detachedEntry.parameters)).toBe(false);
+    expect(Object.isFrozen(detachedRecord.normalized_result)).toBe(false);
+    expect(Object.isFrozen(detachedRecord.raw_result)).toBe(false);
+    expect(Object.isFrozen(detachedRecord.parameters)).toBe(false);
+    (detachedRecord.normalized_result as { items: number[] }).items.push(2);
+    expect(sealedBundle.records[0]?.normalized_result).toEqual({
+      summary: "cached",
+      items: [1],
+    });
+    expect(Object.isFrozen(sealedBundle.records[0]?.normalized_result)).toBe(
+      true,
+    );
+  });
 });

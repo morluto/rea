@@ -14,7 +14,7 @@ import { createCliShell } from "#dist/cli/cliShell.js";
 import { registerCliCommand } from "#dist/cli/commandRegistry.js";
 import { estimateTokenCount } from "tokenx";
 
-import { parseCliOutputArguments } from "#dist/cliOutput.js";
+import { parseCliOutputArguments } from "#dist/cli/cliOutput.js";
 import { createCliResultOutput } from "#dist/cli/cliResultOutput.js";
 import { createEvidence } from "#dist/domain/evidence.js";
 import { unknownTarget } from "#dist/domain/targetIdentity.js";

@@ -22,9 +22,12 @@ import {
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const indexSchema = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
@@ -181,15 +184,8 @@ export const projectGoBinaryView = (
     SummaryAnalysisView | z.output<typeof goBinaryViewRequestSchema>
   >(admitted, "summary", "go");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Go build Evidence supports summary, go and cyclonedx views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Go build Evidence supports summary, go and cyclonedx views.",
     );
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
@@ -301,25 +297,41 @@ export const projectGoBinaryView = (
       );
     const values = view.values === undefined ? undefined : new Set(view.values);
     const needle = view.contains;
-    const selected = selectViewRows(
-      stringLiterals.items,
-      view,
-      (row, index) =>
-        (indices?.has(index) ?? true) &&
-        (values?.has(row.value) ?? true) &&
-        (needle === undefined || row.value.includes(needle)),
-      (row, index) => ({
-        index,
-        ...((fields?.has("value") ?? true) && { value: row.value }),
-        ...((fields?.has("location") ?? true) && { location: row.location }),
-        ...((fields?.has("first_header_offset") ?? true) && {
-          first_header_offset: row.first_header_offset,
-        }),
-        ...((fields?.has("reference_count") ?? true) && {
-          reference_count: row.reference_count,
-        }),
+    const matchLiteral =
+      values === undefined && needle === undefined
+        ? undefined
+        : (row: (typeof stringLiterals.items)[number]) =>
+            (values?.has(row.value) ?? true) &&
+            (needle === undefined || row.value.includes(needle));
+    const projectLiteral = (
+      row: (typeof stringLiterals.items)[number],
+      index: number,
+    ) => ({
+      index,
+      ...((fields?.has("value") ?? true) && { value: row.value }),
+      ...((fields?.has("location") ?? true) && { location: row.location }),
+      ...((fields?.has("first_header_offset") ?? true) && {
+        first_header_offset: row.first_header_offset,
       }),
-    );
+      ...((fields?.has("reference_count") ?? true) && {
+        reference_count: row.reference_count,
+      }),
+    });
+    const selected =
+      indices === undefined
+        ? selectViewRows(
+            stringLiterals.items,
+            view,
+            matchLiteral,
+            projectLiteral,
+          )
+        : selectIndexedViewRows(
+            stringLiterals.items,
+            indices,
+            view,
+            matchLiteral,
+            projectLiteral,
+          );
     return ok({
       kind: "go" as const,
       view,
@@ -342,21 +354,33 @@ export const projectGoBinaryView = (
     });
   if (view.collection === "dependencies") {
     const paths = view.paths === undefined ? undefined : new Set(view.paths);
-    const selected = selectViewRows(
-      info.module.dependencies,
-      view,
-      (row, index) =>
-        (indices?.has(index) ?? true) && (paths?.has(row.path) ?? true),
-      (row, index) => ({
-        index,
-        ...((fields?.has("path") ?? true) && { path: row.path }),
-        ...((fields?.has("version") ?? true) && { version: row.version }),
-        ...((fields?.has("sum") ?? true) && { sum: row.sum }),
-        ...((fields?.has("replacement") ?? true) && {
-          replacement: row.replacement,
-        }),
+    const matchDep =
+      paths === undefined
+        ? undefined
+        : (row: (typeof info.module.dependencies)[number]) =>
+            paths.has(row.path);
+    const projectDep = (
+      row: (typeof info.module.dependencies)[number],
+      index: number,
+    ) => ({
+      index,
+      ...((fields?.has("path") ?? true) && { path: row.path }),
+      ...((fields?.has("version") ?? true) && { version: row.version }),
+      ...((fields?.has("sum") ?? true) && { sum: row.sum }),
+      ...((fields?.has("replacement") ?? true) && {
+        replacement: row.replacement,
       }),
-    );
+    });
+    const selected =
+      indices === undefined
+        ? selectViewRows(info.module.dependencies, view, matchDep, projectDep)
+        : selectIndexedViewRows(
+            info.module.dependencies,
+            indices,
+            view,
+            matchDep,
+            projectDep,
+          );
     return ok({
       kind: "go" as const,
       view,
@@ -370,17 +394,28 @@ export const projectGoBinaryView = (
     });
   }
   const keys = view.keys === undefined ? undefined : new Set(view.keys);
-  const selected = selectViewRows(
-    info.module.settings,
-    view,
-    (row, index) =>
-      (indices?.has(index) ?? true) && (keys?.has(row.key) ?? true),
-    (row, index) => ({
-      index,
-      ...((fields?.has("key") ?? true) && { key: row.key }),
-      ...((fields?.has("value") ?? true) && { value: row.value }),
-    }),
-  );
+  const matchSetting =
+    keys === undefined
+      ? undefined
+      : (row: (typeof info.module.settings)[number]) => keys.has(row.key);
+  const projectSetting = (
+    row: (typeof info.module.settings)[number],
+    index: number,
+  ) => ({
+    index,
+    ...((fields?.has("key") ?? true) && { key: row.key }),
+    ...((fields?.has("value") ?? true) && { value: row.value }),
+  });
+  const selected =
+    indices === undefined
+      ? selectViewRows(info.module.settings, view, matchSetting, projectSetting)
+      : selectIndexedViewRows(
+          info.module.settings,
+          indices,
+          view,
+          matchSetting,
+          projectSetting,
+        );
   return ok({
     kind: "go" as const,
     view,

@@ -24,11 +24,17 @@ import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
-import { SERVER_START_FAILED } from "../../../src/main/messages.js";
+import { SERVER_START_FAILED } from "../../../src/server/serverStartFailure.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import type { McpServerHandle, McpServe } from "../../../src/main/types.js";
 import { phaseGate, settledCause } from "../../support/lifecycleHarness.js";
-import { HOT_TOOL_NAMES } from "../../../src/contracts/catalog/catalogDiscovery.js";
+import {
+  DISCOVER_TOOLS,
+  HOT_TOOL_NAMES,
+} from "../../../src/contracts/catalog/catalogDiscovery.js";
+import { presentAdvertisedOutputSchema } from "../../../src/contracts/compactOutputSchema.js";
+import { COMPACT_OUTPUT_SCHEMA_PRESENTATION } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { isRecord } from "../../../src/kernel/isRecord.js";
 import { DatabaseSync } from "node:sqlite";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchemaObject } from "ajv";
@@ -157,10 +163,25 @@ it.each([
         minItems: 1,
         maxItems: 20,
       },
-      offset: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+      offset: { type: "integer", minimum: 0 },
       limit: { type: "integer", minimum: 1, maximum: 20 },
     });
     expect(JSON.stringify(discovery.inputSchema)).not.toContain('"default"');
+    if (environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "compact") {
+      const canonical = DISCOVER_TOOLS.outputSchema[
+        "~standard"
+      ].jsonSchema.output({
+        target: "draft-2020-12",
+      });
+      if (!isRecord(canonical)) throw new Error("discover_tools output schema");
+      expect(canonical.type).toBe("object");
+      expect(discovery.outputSchema).toEqual(
+        presentAdvertisedOutputSchema(
+          canonical,
+          COMPACT_OUTPUT_SCHEMA_PRESENTATION,
+        ),
+      );
+    }
     const call = async (name: string, args: Record<string, unknown>) => {
       // Without a listed output schema, call with the listed definition.
       if (environment.REA_MCP_OUTPUT_SCHEMA_PROFILE !== "compact") {
@@ -182,12 +203,15 @@ it.each([
     expect(invalid.isError).toBe(true);
     expect(await client.listTools()).toEqual(initial);
     const loaded = await call("discover_tools", {
-      names: ["list_unknowns", "list_unknowns"],
+      names: ["list_unknowns", "discover_tools", "list_unknowns"],
     });
     expect(loaded.structuredContent).toMatchObject({
       loaded_count: initial.tools.length + 1,
-      total_matches: 1,
-      tools: [{ name: "list_unknowns" }],
+      total_matches: 2,
+      tools: [
+        { name: "list_unknowns" },
+        { name: "discover_tools", input_schema: discovery.inputSchema },
+      ],
     });
     expect((await call("list_unknowns", {})).isError).not.toBe(true);
     const materialized = await client.listTools();
@@ -291,9 +315,9 @@ it.each([
     eager: false,
   },
   {
-    name: "output-compact eager",
+    name: "output-compact deferred",
     environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" },
-    eager: true,
+    eager: false,
   },
 ])(
   "loads compiled analysis at the intended phase for $name startup",
@@ -326,6 +350,9 @@ it.each([
       { toolDefinition },
     );
     expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({
+      result: { items: [], total: 0, offset: 0, next_offset: null },
+    });
     expect(await loadedModules()).toEqual(
       new Set(["entrypoint", ...analysisModules]),
     );
@@ -423,8 +450,8 @@ it.each([
     }: {
       outputSchema?: unknown;
     }) => tool;
-    // Compact output schemas select independent eager composition. The rest
-    // of each tool's wire definition must match the deferred catalog.
+    // Compact output schemas come from the recorded catalog. The rest of
+    // each tool's wire definition must match the deferred off-profile listing.
     if (mode === "legacy") {
       const eager = await connect(mode, {
         REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
@@ -993,7 +1020,14 @@ registerHooks({
         .split("\n")
         .map((line): unknown => JSON.parse(line))
         .sort(),
-    ).toEqual(["client", "server", "session"]);
+    ).toEqual(
+      // A successful listing also records compact output schemas, which owns
+      // a second server and client. A producer failure stops before that.
+      (producerFails
+        ? ["client", "server", "session"]
+        : ["client", "client", "server", "server", "session"]
+      ).sort(),
+    );
     for (const owner of failures)
       expect(child.stderr).toContain(`${owner} cleanup failed`);
     if (producerFails) {
@@ -1074,9 +1108,14 @@ let entered = false;
 let release;
 const held = new Promise(resolve => { release = resolve; });
 let close;
+let hookCloses = 0;
 const result = await runDeferred({
   env: { REA_LOG_LEVEL: "silent" }, stdin: input,
-  serve: (factory, options) => serveStdio(factory, { ...options, transport: new StdioServerTransport(input, output) }),
+  serve: (factory, options) => serveStdio(context => {
+    const server = factory(context);
+    server.registerCloseHook(async () => { hookCloses++; });
+    return server;
+  }, { ...options, transport: new StdioServerTransport(input, output) }),
   loadOptionalProviders: async () => { entered = true; await held; return {}; },
   captureShutdown: owned => { close = owned; },
   registerShutdown: () => () => {}, writeStderr: text => { throw new Error(text); }, setExitCode: () => {},
@@ -1093,6 +1132,8 @@ try {
   release();
   await until(() => responses.some(value => value.id === 2) && responses.some(value => value.id === 3));
   await close();
+  await close();
+  assert.equal(hookCloses, 1);
   assert.deepEqual(Buffer.concat(received), Buffer.concat(writes));
   assert.equal(responses.filter(value => value.id === 2).length, 1);
   assert.equal(responses.filter(value => value.id === 3).length, 1);

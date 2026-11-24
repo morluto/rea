@@ -13,7 +13,7 @@ import {
   renderCliCommandFailure,
 } from "../../../src/cli/argumentErrors.js";
 
-import { readCliOutputArguments } from "../../../src/cliOutput.js";
+import { readCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -81,7 +81,7 @@ cliTest(
     expect(renderedCells(markdown.stdout)).toContain(message);
     expect(renderedCells(full.stdout)).toContain(message);
     expect(Number(count.stdout.trim())).toBe(
-      estimateTokenCount(markdown.stdout.trimEnd()),
+      estimateTokenCount(markdown.stdout),
     );
     expect(
       visibleText(parseFragment(renderer.render(window.stdout))),

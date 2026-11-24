@@ -1,4 +1,12 @@
 import { unknownTarget } from "../domain/targetIdentity.js";
+import { projectAndroidInventory } from "../domain/android/androidApplication.js";
+import { projectAppleInventory } from "../domain/apple/appleApplication.js";
+import { projectHarmonyInventory } from "../domain/harmony/harmonyApplication.js";
+import {
+  ANDROID_APPLICATION_PROVIDER,
+  APPLE_APPLICATION_PROVIDER,
+  HARMONY_APPLICATION_PROVIDER,
+} from "../domain/investigationProviders.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
@@ -90,3 +98,48 @@ export const projectInventoryEvidence = <
     sources: source.value.evidence,
   });
 };
+
+const createApplicationProjection =
+  <Output extends InventoryProjectionResult & JsonValue>(spec: {
+    readonly project: (
+      input: ParsedInventorySet,
+    ) => Result<Output, AnalysisInputError>;
+    readonly operation: string;
+    readonly predicateType: string;
+    readonly provider: EvidenceProvider;
+  }) =>
+  (
+    rawInput: unknown,
+    lookup?: EvidenceLookup,
+    execution?: Pick<ExecutionOptions, "signal">,
+  ): Result<InventoryProjectionEvidenceResult, AnalysisError> =>
+    projectInventoryEvidence({
+      rawInput,
+      ...(lookup === undefined ? {} : { lookup }),
+      ...(execution === undefined ? {} : { execution }),
+      ...spec,
+    });
+
+/** Project authenticated APK inventory Evidence into Android application Evidence. */
+export const projectAndroidApplicationEvidence = createApplicationProjection({
+  project: projectAndroidInventory,
+  operation: "project_android_application_graph",
+  predicateType: "rea.android-application-graph",
+  provider: ANDROID_APPLICATION_PROVIDER,
+});
+
+/** Project authenticated IPA or macOS app inventory Evidence into Apple application evidence. */
+export const projectAppleApplicationEvidence = createApplicationProjection({
+  project: projectAppleInventory,
+  operation: "project_apple_application_graph",
+  predicateType: "rea.apple-application-graph",
+  provider: APPLE_APPLICATION_PROVIDER,
+});
+
+/** Project authenticated HarmonyOS package inventory Evidence into application evidence. */
+export const projectHarmonyApplicationEvidence = createApplicationProjection({
+  project: projectHarmonyInventory,
+  operation: "project_harmony_application_graph",
+  predicateType: "rea.harmony-application-graph",
+  provider: HARMONY_APPLICATION_PROVIDER,
+});

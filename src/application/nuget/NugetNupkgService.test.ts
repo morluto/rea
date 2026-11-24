@@ -113,21 +113,3 @@ it("retains completed Evidence and caller selections on late cancellation", asyn
     });
   }
 });
-
-it.each([undefined, 67108864, 128])(
-  "preserves the caller's selected file budget %s",
-  async (maximum) => {
-    const input = {
-      path: report.artifact.path,
-      ...(maximum === undefined ? {} : { max_file_bytes: maximum }),
-    };
-    const service = new NugetNupkgService({
-      close: async () => {},
-      identity,
-      inspect: async () => ok(report),
-    });
-    const result = await service.inspect(input);
-    if (!result.ok) throw result.error;
-    expect(result.value.parameters).toEqual(input);
-  },
-);

@@ -11,11 +11,11 @@ import type { CompactInputSchemaPresentation } from "../contracts/compactInputSc
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {
   EvidenceMcpServerCore,
-  currentMcpRequestSignal,
   type StandardToolRegistration,
 } from "./EvidenceMcpServerCore.js";
+import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
-import { SERVER_START_FAILED } from "../main/messages.js";
+import { SERVER_START_FAILED } from "./serverStartFailure.js";
 import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";
 import { serverInstructions } from "./serverInstructions.js";
 
@@ -53,9 +53,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
   private protocolClosed = false;
   private runtimeClosed = false;
   private runtimeCleanup: (() => Promise<void>) | undefined;
-  private partialClose: (() => Promise<void>) | undefined;
   private materializing = false;
-  private readonly protocolClose = () => super.close();
   private readonly canAdvertise: (tool: string) => boolean;
 
   constructor(
@@ -71,9 +69,15 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
       readonly identity?: RecordedMcpCatalog["identity"] | undefined;
       readonly toolFamilies?: ReadonlySet<string> | undefined;
+      /** Serve build-recorded compact output advertisements instead of omitting outputs. */
+      readonly outputProfile?: "off" | "compact" | undefined;
     } = {},
   ) {
     const families = options.toolFamilies;
+    const recordedCompactTools =
+      options.outputProfile === "compact"
+        ? new Set(Object.keys(catalog.compactOutputSchemas ?? {}))
+        : undefined;
     const advertisesTool = (tool: string) =>
       isToolFamilyAdvertised(families, catalog.toolFamilies[tool]);
     super(
@@ -94,14 +98,16 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       delivery,
       options.compactPresentation,
       // The recorded output shape supplies the SDK's result codec.
-      // Listings omit it and the canonical runtime validates results.
-      "off",
+      // Listings omit it (or serve its recorded compact form) and the
+      // canonical runtime validates results.
+      options.outputProfile === "compact" ? "recorded" : "off",
       // Scoped digests belong to the canonical runtime, which attaches them
       // before serving any tool or prompt that can report an identity.
       families === undefined
         ? (options.identity ?? catalog.identity)
         : undefined,
       families,
+      recordedCompactTools,
     );
     this.canAdvertise = advertisesTool;
     for (const name of catalog.evidenceReferenceAlternatives)
@@ -123,16 +129,20 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
           },
         },
       };
+      const advertisedOutputSchema =
+        options.outputProfile === "compact"
+          ? (catalog.compactOutputSchemas?.[name] ?? outputSchema)
+          : outputSchema;
       const output: StandardSchemaWithJSON | undefined =
-        outputSchema === undefined
+        advertisedOutputSchema === undefined
           ? undefined
           : {
               "~standard": {
                 version: 1,
                 vendor: "rea",
                 jsonSchema: {
-                  input: () => outputSchema,
-                  output: () => outputSchema,
+                  input: () => advertisedOutputSchema,
+                  output: () => advertisedOutputSchema,
                 },
                 validate: async (value) => {
                   await this.ensureRuntime();
@@ -159,7 +169,11 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
         }) as InputCallback,
       );
       if (!advertisesTool(name)) registered.disable();
-      binding = { registered, input: inputSchema, output: outputSchema };
+      binding = {
+        registered,
+        input: inputSchema,
+        output: advertisedOutputSchema,
+      };
       this.tools.set(name, binding);
     }
     const completion = {
@@ -227,24 +241,20 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     this.runtimeCleanup = close;
   }
 
-  /** Canonical composition may wrap close; retain that exact cleanup capability. */
+  /** Materialize canonical registrations and close hooks into this server. */
   materialize(build: () => void): void {
-    const ownedClose = this.close.bind(this);
     this.materializing = true;
-    this.close = this.protocolClose;
     try {
       build();
       if (this.tools.size !== 0 || this.prompts.size !== 0)
         throw new Error("MCP catalog does not match runtime registrations");
     } finally {
-      this.partialClose = this.close.bind(this);
-      this.close = ownedClose;
       this.materializing = false;
     }
   }
 
-  closePartialRuntime(): Promise<void> {
-    return this.partialClose?.() ?? Promise.resolve();
+  closeRuntimeHooks(): Promise<void> {
+    return this.closeRegisteredHooks();
   }
 
   /**
@@ -357,7 +367,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     const errors: unknown[] = [];
     if (!this.protocolClosed) {
       try {
-        await this.protocolClose();
+        await this.closeProtocol();
         this.protocolClosed = true;
       } catch (cause) {
         errors.push(cause);

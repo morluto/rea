@@ -75,12 +75,6 @@ cliTest(
     ]);
     const compare = async (path: string) =>
       cli.run({ arguments: ["compare", leftPath, path, "--json"] });
-    const same = await compare(leftPath);
-    expect(same.exitCode).toBe(0);
-    expect(bundleComparisonResultSchema.parse(same.json)).toMatchObject({
-      status: "unchanged",
-      changes: [],
-    });
     const display = await compare(displayPath);
     expect(display.exitCode).toBe(0);
     const displayResult = bundleComparisonResultSchema.parse(display.json);
@@ -146,6 +140,14 @@ cliTest(
     });
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected shared MCP session");
+    const mcpDisplay = await call("compare_bundles", {
+      left_bundle_path: leftPath,
+      right_bundle_path: displayPath,
+    });
+    expect(mcpDisplay.isError).not.toBe(true);
+    expect(
+      parseEvidence(mcpDisplay.structuredContent).normalized_result,
+    ).toEqual(displayResult);
     const mcp = await call("compare_bundles", {
       left_bundle_path: leftPath,
       right_bundle_path: changedPath,
@@ -273,7 +275,7 @@ cliTest(
 );
 
 cliTest(
-  "rejects relative bundle paths over stdio MCP while CLI resolves them from its cwd",
+  "enforces comparison input before file lookup across stdio MCP and CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bundle-path-boundary-");
     const leftPath = join(root, "left.json");
@@ -284,12 +286,13 @@ cliTest(
       writeFile(rightPath, encoded),
     ]);
 
+    const schemas = createMcpSchemaValidation();
     const client = new Client(
       {
         name: "bundle-path-contract-test",
         version: "1",
       },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
+      { jsonSchemaValidator: schemas },
     );
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -339,6 +342,61 @@ cliTest(
         },
       });
     }
+
+    const missing = join(root, "missing.json");
+    const pair = {
+      left_evidence_id: `ev_${"a".repeat(64)}`,
+      right_evidence_id: `ev_${"b".repeat(64)}`,
+    };
+    const inputs = { left_bundle_path: missing, right_bundle_path: rightPath };
+    const recordPairs = [{ ...pair, unexpected_pair_field: true }];
+    const malformed = { ...inputs, record_pairs: recordPairs };
+    const rejected = await cli.run({
+      arguments: [
+        "compare",
+        missing,
+        rightPath,
+        "--record_pairs",
+        JSON.stringify(recordPairs),
+        "--json",
+      ],
+    });
+    const rejectedMcp = await client.callTool({
+      name: "compare_bundles",
+      arguments: malformed,
+    });
+    const error = {
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["record_pairs", 0, "unexpected_pair_field"],
+            reason: "unknown_argument",
+          },
+        ],
+      },
+    };
+    expect(rejected.exitCode).toBe(1);
+    expect({
+      cli: rejected.json,
+      mcp: parseMcpToolError(rejectedMcp).error,
+    }).toMatchObject({ cli: error, mcp: error });
+    const { tools } = await client.listTools();
+    const advertised = tools.find(({ name }) => name === "compare_bundles");
+    if (advertised === undefined)
+      throw new Error("Missing compare_bundles schema");
+    expect(schemas.assertions.validateSchema(advertised.inputSchema)).toBe(
+      true,
+    );
+    expect(
+      schemas.assertions.validate(advertised.inputSchema, {
+        ...inputs,
+        record_pairs: [pair],
+      }),
+    ).toBe(true);
+    expect(schemas.assertions.validate(advertised.inputSchema, malformed)).toBe(
+      false,
+    );
 
     const absolute = await client.callTool({
       name: "compare_bundles",

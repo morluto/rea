@@ -1,3 +1,4 @@
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisError,
@@ -41,6 +42,7 @@ export const GHIDRA_STARTUP_DEADLINE_ELAPSED =
 /** Additional structured context for a Ghidra session failure. */
 export interface GhidraSessionErrorOptions extends ErrorOptions {
   readonly cancellation?: { readonly reason: unknown };
+  readonly configurationFailure?: ConfigurationError;
   readonly partialObservation?: AnalysisPartialObservation;
   readonly timeoutMs?: number;
   readonly remoteCode?: string;
@@ -56,6 +58,7 @@ export class GhidraSessionError extends Error {
   readonly remoteCode: string | undefined;
   readonly cleanupFailure: AnalysisError | undefined;
   readonly cancellation: { readonly reason: unknown } | undefined;
+  readonly configurationFailure: ConfigurationError | undefined;
   readonly partialObservation: AnalysisPartialObservation | undefined;
   readonly concurrentCancellation: { readonly reason: unknown } | undefined;
 
@@ -72,6 +75,7 @@ export class GhidraSessionError extends Error {
     this.remoteCode = options.remoteCode;
     this.cleanupFailure = options.cleanupFailure;
     this.cancellation = options.cancellation;
+    this.configurationFailure = options.configurationFailure;
     this.partialObservation = options.partialObservation;
     this.concurrentCancellation = options.concurrentCancellation;
   }
@@ -136,6 +140,9 @@ export class GhidraSessionError extends Error {
       ...(this.cancellation === undefined
         ? {}
         : { cancellation: this.cancellation }),
+      ...(this.configurationFailure === undefined
+        ? {}
+        : { configurationFailure: this.configurationFailure }),
       ...(this.timeoutMs === undefined ? {} : { timeoutMs: this.timeoutMs }),
       ...(this.remoteCode === undefined ? {} : { remoteCode: this.remoteCode }),
       ...(cleanupFailure === undefined ? {} : { cleanupFailure }),
@@ -156,6 +163,7 @@ const createGhidraSessionError = (failure: {
   readonly timeoutMs?: number;
   readonly remoteCode?: string;
   readonly cancellation?: { readonly reason: unknown };
+  readonly configurationFailure?: ConfigurationError;
   readonly redact: (value: string, incomplete?: boolean) => string;
 }): GhidraSessionError =>
   new GhidraSessionError(
@@ -177,6 +185,9 @@ const createGhidraSessionError = (failure: {
         ? {}
         : { cancellation: failure.cancellation }),
       ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+      ...(failure.configurationFailure === undefined
+        ? {}
+        : { configurationFailure: failure.configurationFailure }),
       ...(failure.timeoutMs === undefined
         ? {}
         : { timeoutMs: failure.timeoutMs }),
@@ -211,7 +222,7 @@ export const bindGhidraSessionFailure =
     cause?: unknown,
     options: Pick<
       GhidraSessionErrorOptions,
-      "timeoutMs" | "remoteCode" | "cancellation"
+      "timeoutMs" | "remoteCode" | "cancellation" | "configurationFailure"
     > = {},
   ): GhidraSessionError => {
     const failure = createGhidraSessionError({

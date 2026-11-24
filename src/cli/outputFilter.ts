@@ -15,7 +15,10 @@ export type OutputFilterSegment =
 export type OutputFilterPath = readonly OutputFilterSegment[];
 
 export interface OutputFilterError {
-  readonly kind: "unclosed_slice" | "extra_slice_bounds";
+  readonly kind:
+    | "unclosed_slice"
+    | "extra_slice_bounds"
+    | "invalid_slice_bound";
 }
 
 /** Split on commas outside `[...]`; an empty last path is dropped. */
@@ -57,8 +60,16 @@ const parsePath = (
     segments.push(...keySegments(remaining.slice(0, open)));
     const bounds = remaining.slice(open + 1, close).split(",");
     if (bounds.length > 2) return err({ kind: "extra_slice_bounds" });
-    const [start, end] = bounds;
-    segments.push({ start: Number(start), end: Number(end) });
+    const [rawStart = "", rawEnd] = bounds;
+    const start = Number(rawStart);
+    const end = Number(rawEnd);
+    // Keep doubled openers with numeric or empty bounds on the legacy path.
+    const legacyStart =
+      rawStart.startsWith("[") && !Number.isNaN(Number(rawStart.slice(1)));
+    const invalidStart = Number.isNaN(start) && !legacyStart;
+    const invalidEnd = rawEnd !== undefined && Number.isNaN(end);
+    if (invalidStart || invalidEnd) return err({ kind: "invalid_slice_bound" });
+    segments.push({ start, end });
     remaining = remaining.slice(close + 1);
     if (remaining.startsWith(".")) remaining = remaining.slice(1);
   }

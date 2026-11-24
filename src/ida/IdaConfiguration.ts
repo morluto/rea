@@ -1,3 +1,4 @@
+import { WindowsChangeTimeConfigurationError } from "../config/windowsChangeTimeSettle.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
@@ -16,7 +17,9 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   withOwnedRegularFile,
   regularFileCancellation,
+  RegularFileCancelled,
   RegularFileCleanupFailure,
+  type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
 import {
   RegularFileOperationCancelled,
@@ -185,7 +188,9 @@ export const readIdaConfiguration = (
   options.resourceScope.run(async () => {
     let closeLease: AnalysisCleanupLease | undefined;
     try {
-      const text = await withOwnedRegularFile<string>(
+      const text = await withOwnedRegularFile<
+        Result<string, ConfigurationError>
+      >(
         path,
         {
           ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -204,21 +209,23 @@ export const readIdaConfiguration = (
         },
         async ({ handle, initial: metadata }) => {
           if (metadata.size > MAXIMUM_REGISTRATION_BYTES)
-            throw registrationTooLarge();
+            return err(registrationTooLarge());
           const bytes = await readBoundedFileBytes(
             handle,
             MAXIMUM_REGISTRATION_BYTES,
             {
               signal: options.signal,
+              expectedSize: metadata.size,
               cancellationFailure: (reason) =>
                 new RegularFileOperationCancelled(reason),
             },
           );
-          if (bytes === undefined) throw registrationTooLarge();
-          return bytes.toString("utf8");
+          if (bytes === undefined) return err(registrationTooLarge());
+          return ok(bytes.toString("utf8"));
         },
       );
-      const input: unknown = JSON.parse(text);
+      if (!text.ok) return text;
+      const input: unknown = JSON.parse(text.value);
       const envelope = z
         .object({ mcpServers: z.object({ "ida-pro-mcp": z.unknown() }) })
         .safeParse(input);
@@ -256,7 +263,20 @@ export const readIdaConfiguration = (
         ),
       );
     } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
+      if (cause instanceof WindowsChangeTimeConfigurationError)
+        return err(cause);
+      const rejection =
+        cause instanceof RegularFileCancelled ||
+        cause instanceof RegularFileCleanupFailure
+          ? completedRegistrationRejection(cause.outcome)
+          : undefined;
+      const cancellation = regularFileCancellation(cause);
+      if (cause instanceof RegularFileCancelled && rejection !== undefined)
+        return err(
+          rejection.retainSecondaryFailure(
+            cancelledBy("ida:registration", carriedReason(cause.reason)),
+          ),
+        );
       if (cause instanceof NonRegularFileReadError)
         return err(
           idaConfigurationError(
@@ -265,8 +285,7 @@ export const readIdaConfiguration = (
           ),
         );
       if (cause instanceof AnalysisCancelledError) throw cause;
-      const cancellation = regularFileCancellation(cause);
-      if (cancellation !== undefined) {
+      if (cancellation !== undefined && rejection === undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
           const error = cancelledBy(
             "ida:registration",
@@ -287,18 +306,20 @@ export const readIdaConfiguration = (
         );
       }
       if (cause instanceof RegularFileCleanupFailure) {
+        // A size rejection is a completed outcome holding a rejected Result,
+        // so the close failure must keep that primary reason, not replace it.
         const primary =
           cause.outcome.kind === "failed"
             ? cause.outcome.cause
-            : cause.cleanupCause;
+            : (rejection ?? cause.cleanupCause);
         const primaryMessage =
-          cause.outcome.kind === "failed"
-            ? primary instanceof ConfigurationError
-              ? primary.message
-              : primary instanceof NonRegularFileReadError
+          primary instanceof ConfigurationError
+            ? primary.message
+            : cause.outcome.kind === "failed"
+              ? primary instanceof NonRegularFileReadError
                 ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
                 : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
-            : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
+              : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
         const error = new ConfigurationError(primaryMessage, {
           cause,
           cleanup: {
@@ -312,6 +333,10 @@ export const readIdaConfiguration = (
             },
           ],
         });
+        if (cancellation !== undefined)
+          error.retainSecondaryFailure(
+            cancelledBy("ida:registration", carriedReason(cancellation.reason)),
+          );
         closeLease?.bindCleanupError(error);
         return err(error);
       }
@@ -336,6 +361,22 @@ const registrationTooLarge = (): ConfigurationError =>
     "REA_IDA_MCP_CONFIG exceeds the 64 KiB registration size.",
   );
 
+/** Recognize the size rejection carried by a completed read whose close failed. */
+const completedRegistrationRejection = (
+  outcome: RegularFileOperationOutcome<unknown>,
+): ConfigurationError | undefined => {
+  if (outcome.kind !== "completed") return undefined;
+  const value: unknown = outcome.value;
+  return typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    value.ok === false &&
+    "error" in value &&
+    value.error instanceof ConfigurationError
+    ? value.error
+    : undefined;
+};
+
 /**
  * Name the registration key that sets an IDA request or readiness deadline.
  * `ceilingMs` is the parsed `timeoutMs`; a shorter effective value is the time
@@ -353,6 +394,18 @@ export const idaRegistrationTimeoutGuidance = (
         ? `This IDA request reached the registration timeoutMs deadline of ${String(timeoutMs)} ms (deadlineExpired).`
         : `This IDA request reached its ${String(timeoutMs)} ms deadline (deadlineExpired), within the registration timeoutMs ceiling of ${String(ceilingMs)} ms.`,
   remediationAction: `Set timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG to an integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} (omitted means ${String(DEFAULT_IDA_REQUEST_TIMEOUT_MS)}). REA applies the edited file on the next IDA connection after it re-reads the registration; an already open session keeps the timeout it connected with. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+});
+
+/**
+ * Name the upstream supervisor setting that ended an open. It belongs to the
+ * process that runs ida-pro-mcp, not to REA's registration timeoutMs.
+ */
+export const idaSupervisorOpenTimeoutGuidance = (
+  seconds: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `The IDA database supervisor stopped opening and analyzing the input after its IDA_MCP_OPEN_TIMEOUT deadline of ${String(seconds)} s. That deadline is an ida-pro-mcp setting, separate from REA's registration timeoutMs.`,
+  remediationAction:
+    "Raise IDA_MCP_OPEN_TIMEOUT (0 waits indefinitely) in the environment that starts the ida-pro-mcp supervisor, then restart it. Keep the registration timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG above the expected analysis time as well. Confirm retained cleanup before retrying.",
 });
 
 /** A REA_IDA_MCP_CONFIG rejection that names the setting it concerns. */

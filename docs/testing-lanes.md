@@ -202,7 +202,7 @@ handler and can leave temporary workspace files. `verify:windows-native`
 separately checks binary input, backpressure, EOF and pending-write job closure.
 
 `npm run verify:android` requires an existing Java 17+ and an explicit
-`REA_JADX_MCP_JAR` for jadx-headless-mcp 0.7.1. Set `REA_ANDROID_TEST_APK` to the
+`REA_JADX_MCP_JAR` for jadx-headless-mcp 0.8.0. Set `REA_ANDROID_TEST_APK` to the
 fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit
 `npm run fixtures:android` command; files are SHA-256 verified and
 kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or
@@ -541,8 +541,8 @@ CLI/stdio MCP load-image parity, exact source bytes, both functions, the
 `bsr.b` call reference, decompilation through address and file offset, rejection
 of a misaligned entry and of a mapping past `0xffffffff` without replacing the
 active session, and runtime cleanup. Windows Ghidra P0 does not admit m68k, so
-this is not a Windows lane. Recorded on Ghidra 12.1.4 (no longer accepted); not
-yet re-run on 12.2. The recorded run was on macOS; Linux has not been exercised.
+this is not a Windows lane. It passed on Ghidra 12.2 with JDK 25 on macOS
+arm64; Linux has not been exercised.
 The lane uses the [supported Ghidra and JDK installation](getting-started/installation.md#ghidra).
 
 `npm run verify:ghidra:raw` uses a generated ARM little-endian headerless image
@@ -788,6 +788,8 @@ rejecting failed, cancelled, or unexpectedly skipped work. It rejects missing or
 unknown tiers and requires every canonical scope to be explicitly `true` or
 `false`; incomplete classification cannot silently omit verification lanes.
 The aggregate remains cancellable so superseded runs release their slots.
+After successful classification, `Portable tests` starts a runner only when
+the code scope is selected. Every code tier requires its merged report to pass.
 Branch protection
 should require this aggregate, `Static checks`, `Portable tests`, and
 `Conventional PR title`. Title validation runs separately on PR opening,

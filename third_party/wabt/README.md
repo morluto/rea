@@ -4,14 +4,16 @@ REA does not bundle, patch, install or download WABT executables. Operators sele
 an existing tool directory with `REA_WABT_BIN_DIRECTORY`.
 
 - Upstream: https://github.com/WebAssembly/wabt
-- Admitted release: https://github.com/WebAssembly/wabt/releases/tag/1.0.42
+- Verified release: https://github.com/WebAssembly/wabt/releases/tag/1.0.42
 - Source commit: `ff0ef7e0009402740c805a9744c09b05be063e48`
 - Upstream license: Apache-2.0, https://github.com/WebAssembly/wabt/blob/1.0.42/LICENSE
 - Runtime tools: `wasm-validate`, `wasm-objdump`, `wasm2wat`.
 - Verification fixture compiler: `wat2wasm` (not a runtime prerequisite).
 
-The adapter requires every version banner to report `1.0.42` and records the
-resolved executable path, SHA-256, exact banner and arguments for each tool.
+The adapter admits the release range stated in the
+[WASM guide](https://github.com/morluto/rea/blob/main/docs/guides/wasm/wasm-artifacts.md#configure-wabt);
+1.0.42 is the only verified release. It records the resolved executable path,
+SHA-256, exact banner and arguments for each tool.
 Version admission identifies the supported producer profile; it does not certify
 publisher authenticity. Operators remain responsible for trusted executable
 provenance. No `wasm-interp`, decompiler, replacement binary parser or target

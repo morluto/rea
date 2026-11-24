@@ -50,6 +50,10 @@ import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactRead
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
+import {
+  GpuAssetArtifactReader,
+  type GpuAssetFormat,
+} from "./gpuAsset/GpuAssetArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
@@ -234,6 +238,19 @@ function container<Id extends ArtifactFormatId>(
     : withReader(id, capabilities, createReader);
 }
 
+/** GPU asset containers: declared header facts and stored regions, nothing decoded. */
+const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "GPU asset inventory reports declared header fields and the byte regions they name. Texture, mesh and image payloads are not decoded or decompressed.",
+    createReader: (path, options) =>
+      new GpuAssetArtifactReader(path, id, sourceOf(options)),
+  });
+
 const NON_ZIP_FORMATS = {
   "dotnet-bundle": container("dotnet-bundle", {
     retainClassifiedSource: true,
@@ -275,17 +292,21 @@ const NON_ZIP_FORMATS = {
   }),
   pkg: container("pkg", { absentInventory: "platform" }),
   asar: container("asar", {
+    retainClassifiedSource: true,
     extractable: true,
     absentInventory: "unavailable",
-    createReader: (path, options) =>
-      new AsarArtifactReader(path, {
+    createReader: (path, options) => {
+      const admitted = sourceOf(options);
+      return new AsarArtifactReader(path, {
         ...(options.asarHeaderAdmission === undefined
           ? {}
           : { headerAdmission: options.asarHeaderAdmission }),
         ...(options.selectedPath === undefined
           ? {}
           : { selectedPath: options.selectedPath }),
-      }),
+        ...(admitted === undefined ? {} : { admitted }),
+      });
+    },
   }),
   ines: container("ines", {
     roleContainer: true,
@@ -338,6 +359,10 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new WxapkgArtifactReader(path, sourceOf(options)),
   }),
+  dds: gpuAsset("dds"),
+  glb: gpuAsset("glb"),
+  ktx: gpuAsset("ktx"),
+  ktx2: gpuAsset("ktx2"),
   uimage: container("uimage", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -401,6 +426,10 @@ const NON_ZIP_FORMATS = {
       new UefiArtifactReader(path, sourceOf(options)),
   }),
   plist: described("plist", plain),
+  sqlite: described("sqlite", plain),
+  "windows-shortcut": described("windows-shortcut", plain),
+  "python-pyc": described("python-pyc", plain),
+  devicetree: described("devicetree", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",
