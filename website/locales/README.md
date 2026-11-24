@@ -143,6 +143,10 @@ Bulgarian (`bg`) has a complete translated README in Cyrillic script. Its
 website catalog is pending and uses the same labeled, nonindexable English
 fallback; the Bulgarian README does not establish website translation coverage.
 
+Azerbaijani (`az`) has a complete translated README. Its website catalog is
+pending and uses the same labeled, nonindexable English fallback; the
+Azerbaijani README does not establish website translation coverage.
+
 The first catalogs started with machine-assisted drafts. They include editorial
 corrections to navigation, prompts and technical terminology. Traditional Chinese
 started from the Simplified Chinese draft and is maintained independently.
