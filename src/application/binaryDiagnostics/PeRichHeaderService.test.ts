@@ -80,6 +80,32 @@ it("retains the completed observation and abort reason when the caller cancels w
   });
 });
 
+it.each([
+  ["omitted", { path }],
+  ["explicit", { path, max_entries: 1024, max_file_bytes: 67_108_864 }],
+] as const)(
+  "records only caller-selected limits when they are %s",
+  async (_label, parameters) => {
+    const report = await parsedReport();
+    const completed = await serviceFor(report).inspect(parameters);
+    if (!completed.ok) throw completed.error;
+    expect(completed.value.parameters).toEqual(parameters);
+
+    const controller = new AbortController();
+    const cancelled = await new PeRichHeaderService({
+      identity,
+      inspect: () => {
+        controller.abort();
+        return Promise.resolve(ok(report));
+      },
+    }).inspect(parameters, { signal: controller.signal });
+    if (cancelled.ok) throw new Error("Expected late cancellation");
+    expect(
+      parseEvidence(cancelled.error.partialObservation).parameters,
+    ).toEqual(parameters);
+  },
+);
+
 it("locates the whole record in observed Evidence", async () => {
   const report = await parsedReport();
   const result = await serviceFor(report).inspect({ path });

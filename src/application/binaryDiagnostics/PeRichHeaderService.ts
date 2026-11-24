@@ -12,6 +12,7 @@ import {
 } from "../../domain/native/peRichHeader.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import type { Result } from "../../domain/result.js";
+import { callerAnalysisParameters } from "../AnalysisInput.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_pe_rich_header";
@@ -56,7 +57,7 @@ export class PeRichHeaderService {
             identity,
             {
               operation: OPERATION,
-              parameters,
+              parameters: callerAnalysisParameters(rawInput)(parameters),
               result: value,
               confidence: "observed",
               limitations: value.limitations,
