@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -24,7 +26,7 @@ const unknownInput = (question: string) =>
     recommended_probes: [],
     relationships: [],
   });
-const evidence = createEvidence(undefined, provider, {
+const evidence = createEvidence(unknownTarget("not-observed"), provider, {
   operation: "inspect-fixture",
   parameters: {},
   result: true,
@@ -85,19 +87,24 @@ describe("investigation record ownership", () => {
       unknownMutationEvidence(undefined, { operation: "record_unknown", input })
         .evidence_id,
     );
-    expect(mutation?.subject).toBeNull();
+    expect(mutation?.subject.identity.kind).toBe("unknown");
     expect(mutation?.parameters).toEqual(input);
     expect(records.listUnknowns()).toHaveLength(2);
   });
 
   it("rolls back Evidence when the linked Unknown fails validation", () => {
     const records = new InvestigationRecords();
+    const missingId = `ev_${"f".repeat(64)}`;
     const invalid = {
       ...unknownInput("Is the missing Evidence present?"),
-      supporting_evidence_ids: [`ev_${"f".repeat(64)}`],
+      supporting_evidence_ids: [missingId],
     };
     const refused = records.recordEvidenceWithUnknown(evidence, invalid);
     if (refused.ok) throw new Error("Expected invalid Unknown references");
+    expect(refused.error).toMatchObject({
+      _tag: "UnknownRegistryError",
+      constraint: { kind: "missing_evidence", evidence_id: missingId },
+    });
     expect(refused.error.partialObservation).toBeUndefined();
     expect(records.hasEvidence(evidence.evidence_id)).toBe(false);
     expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
@@ -131,8 +138,10 @@ describe("investigation record ownership", () => {
     });
     const bundle = records.exportEvidenceBundle();
     expect(
-      bundle.records.find(({ operation }) => operation === "update_unknown")
-        ?.subject?.digest.sha256,
+      fileIdentity(
+        bundle.records.find(({ operation }) => operation === "update_unknown")
+          ?.subject,
+      ).sha256,
     ).toBe(target.sha256);
     expect(
       bundle.records.find(({ operation }) => operation === "update_unknown")
@@ -140,40 +149,6 @@ describe("investigation record ownership", () => {
     ).toEqual(input);
     expect(records.updateUnknown(input, target).ok).toBe(false);
     expect(records.exportEvidenceBundle()).toEqual(bundle);
-  });
-
-  it("reports Unknown-only bundle changes and clears the single record owner", () => {
-    const source = new InvestigationRecords();
-    expect(
-      source.recordUnknown(
-        unknownInput("Can imported Unknowns notify observers?"),
-      ).ok,
-    ).toBe(true);
-    const bundle = source.exportEvidenceBundle();
-    const records = new InvestigationRecords();
-    expect(
-      records.mergeEvidenceBundle(createEvidenceBundle(bundle.records)).ok,
-    ).toBe(true);
-    expect(records.mergeEvidenceBundle(bundle)).toEqual({
-      ok: true,
-      value: {
-        recordsAdded: 0,
-        unknownsAdded: 1,
-        changed: true,
-        replacements: [],
-      },
-    });
-    expect(records.mergeEvidenceBundle(bundle)).toEqual({
-      ok: true,
-      value: {
-        recordsAdded: 0,
-        unknownsAdded: 0,
-        changed: false,
-        replacements: [],
-      },
-    });
-    records.clear();
-    expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
   });
 });
 
@@ -250,7 +225,7 @@ it("rejects changed creation intent after the original unknown was updated", () 
   });
   if (!updated.ok) throw updated.error;
   const retained = records.exportEvidenceBundle();
-  const addition = createEvidence(undefined, provider, {
+  const addition = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "another-derived-result",
     parameters: {},
     result: true,

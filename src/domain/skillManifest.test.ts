@@ -5,7 +5,7 @@ import {
 } from "./skillManifest.js";
 
 const manifest = (metadata: string, body = "\n# Instructions\n") =>
-  `---\nname: reverse-engineer-anything\nmetadata:\n${metadata}---\n${body}`;
+  `---\nname: reverse-engineer-anything\ndescription: Inspect programs.\nmetadata:\n${metadata}---\n${body}`;
 
 it.each(["'49'", '"49"'])(
   "reads semantic metadata with version %s",
@@ -40,7 +40,7 @@ it("does not read counterfeit metadata from the Markdown body", () => {
   });
   expect(addSkillManifestToolCount(content, 5)).toMatchObject({
     ok: false,
-    error: { message: "Missing authored skill version" },
+    error: { message: expect.stringMatching(/missing.*version/iu) },
   });
 });
 

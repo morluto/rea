@@ -1,23 +1,33 @@
+import { isUtf8 } from "node:buffer";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { launchExhaustedResource } from "./launchFailure.js";
 import {
   execFile,
   spawn,
   type ExecFileOptionsWithBufferEncoding,
 } from "node:child_process";
+import { isAbortOf } from "./SignalAbort.js";
 
 type ExecFileOutputOptions = Omit<
   ExecFileOptionsWithBufferEncoding,
   "encoding" | "maxBuffer"
 > & {
   readonly maxBuffer?: number;
+  /** Retain raw stdout for callers that parse admitted nonzero exits. */
+  readonly preserveFailedStdout?: true;
   /**
-   * Signal that stops the process on abort or timeout. The promise then
-   * settles only after that process's stdio pipes close, so a caller can
-   * remove files the command wrote. A descendant that inherited those pipes
-   * keeps them open until it exits; destroying the readers is not
-   * process-family completion and must not unblock this settlement. A process
-   * still running after a grace period is killed. Without this signal, Node's
-   * execFile sends SIGTERM on abort and rejects before the process exits.
+   * Signal that stops the process on abort or timeout. On POSIX the command
+   * leads its own process group, and the stop signal goes to that group
+   * while its leader is unreaped, so launcher scripts and their workers stop
+   * together. The promise then settles only after the stdio pipes close, so
+   * a caller can remove files the command wrote. A descendant that inherited
+   * those pipes keeps them open until it exits; destroying the readers is not
+   * process-family completion and must not unblock this settlement. A group
+   * whose leader is still running after a grace period is killed. Once the
+   * leader has been reaped its PID no longer identifies the group, so no
+   * further group signal is sent. Without this signal, Node's execFile sends
+   * SIGTERM to the direct child on abort and rejects before it exits.
    */
   readonly stopSignal?: NodeJS.Signals;
   /** Wait for inherited copies of an extra drained descriptor to close. Requires stopSignal. */
@@ -76,9 +86,12 @@ const invalidTimeout = (timeout: number): RangeError | undefined => {
   return error;
 };
 
+const failedStdoutBuffers = new WeakMap<Error, Buffer>();
+
 /** Captured subprocess output read from an execFileOutput rejection. */
 export interface ExecFileOutputFailure {
   readonly stdout: string;
+  readonly stdoutBuffer?: Buffer;
   readonly stderr: string;
   readonly code: string | number | null;
   readonly signal: string | null;
@@ -87,6 +100,9 @@ export interface ExecFileOutputFailure {
   readonly stdoutBytes?: number;
   readonly stderrBytes?: number;
   readonly collectionFailure?: boolean;
+  /** The decoded stream holds replacement characters for invalid UTF-8. */
+  readonly stdoutInvalidUtf8?: boolean;
+  readonly stderrInvalidUtf8?: boolean;
   /** The process never started; `code` is the spawn errno, not an exit. */
   readonly spawnFailed?: true;
 }
@@ -97,6 +113,7 @@ export const execFileOutputFailure = (
 ): ExecFileOutputFailure | undefined => {
   if (!(cause instanceof Error)) return undefined;
   const stdout = Reflect.get(cause, "stdout");
+  const stdoutBuffer = failedStdoutBuffers.get(cause);
   const stderr = Reflect.get(cause, "stderr");
   const code = Reflect.get(cause, "code");
   const signal = Reflect.get(cause, "signal");
@@ -105,11 +122,14 @@ export const execFileOutputFailure = (
   const stdoutBytes = Reflect.get(cause, "stdoutBytes");
   const stderrBytes = Reflect.get(cause, "stderrBytes");
   const collectionFailure = Reflect.get(cause, "collectionFailure");
+  const stdoutInvalidUtf8 = Reflect.get(cause, "stdoutInvalidUtf8");
+  const stderrInvalidUtf8 = Reflect.get(cause, "stderrInvalidUtf8");
   const spawnFailed = Reflect.get(cause, "spawnFailed");
   if (typeof stdout !== "string" || typeof stderr !== "string")
     return undefined;
   return {
     stdout,
+    ...(stdoutBuffer === undefined ? {} : { stdoutBuffer }),
     stderr,
     ...(typeof stdoutBytes === "number" &&
     Number.isSafeInteger(stdoutBytes) &&
@@ -127,29 +147,22 @@ export const execFileOutputFailure = (
     outputTruncated:
       outputTruncated === true || code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
     ...(collectionFailure === true ? { collectionFailure: true } : {}),
+    ...(stdoutInvalidUtf8 === true ? { stdoutInvalidUtf8: true } : {}),
+    ...(stderrInvalidUtf8 === true ? { stderrInvalidUtf8: true } : {}),
     ...(spawnFailed === true ? { spawnFailed: true } : {}),
   };
 };
 
-/** Spawn errnos reporting exhausted host capacity rather than an unusable command. */
-const HOST_SPAWN_CAPACITY_CODES: ReadonlySet<string> = new Set([
-  "EAGAIN",
-  "EMFILE",
-  "ENFILE",
-  "ENOMEM",
-]);
-
 /**
  * Whether the command never started because the host lacked process, memory
- * or file-descriptor capacity. The command itself may be usable; a retry after
- * capacity is freed can succeed.
+ * or file-descriptor capacity (classified by `launchExhaustedResource`). The
+ * command itself may be usable; a retry after capacity is freed can succeed.
  */
 export const spawnCapacityExhausted = (
   failure: ExecFileOutputFailure | undefined,
 ): boolean =>
   failure?.spawnFailed === true &&
-  typeof failure.code === "string" &&
-  HOST_SPAWN_CAPACITY_CODES.has(failure.code);
+  launchExhaustedResource(failure.code) !== undefined;
 
 /** Project admitted command failure facts without reinterpreting failure policy. */
 export const execFileFailureCapturedOutput = (
@@ -163,9 +176,26 @@ export const execFileFailureCapturedOutput = (
   ...(failure.stderrBytes === undefined
     ? {}
     : { stderr_bytes: failure.stderrBytes }),
-  exit_code: typeof failure.code === "number" ? failure.code : null,
+  // An exit status of output that was not fully collected is not reported.
+  exit_code:
+    failure.collectionFailure !== true && typeof failure.code === "number"
+      ? failure.code
+      : null,
   signal: failure.signal,
   truncated: failure.outputTruncated,
+  ...capturedInvalidUtf8(failure),
+});
+
+/** Captured-output markers for the streams a runner reported as invalid UTF-8. */
+export const capturedInvalidUtf8 = (output: {
+  readonly stdoutInvalidUtf8?: boolean;
+  readonly stderrInvalidUtf8?: boolean;
+}): Pick<
+  AnalysisCapturedOutput,
+  "stdout_invalid_utf8" | "stderr_invalid_utf8"
+> => ({
+  ...(output.stdoutInvalidUtf8 === true ? { stdout_invalid_utf8: true } : {}),
+  ...(output.stderrInvalidUtf8 === true ? { stderr_invalid_utf8: true } : {}),
 });
 
 /**
@@ -192,8 +222,14 @@ export const execFileBytes = (
   options: ExecFileOutputOptions = {},
 ): Promise<{ readonly stdout: Buffer; readonly stderr: Buffer }> =>
   new Promise((resolve, reject) => {
-    const { stopSignal, signal, timeout, lifetimePipe, ...execOptions } =
-      options;
+    const {
+      stopSignal,
+      signal,
+      timeout,
+      lifetimePipe,
+      preserveFailedStdout,
+      ...execOptions
+    } = options;
     if (lifetimePipe === true && stopSignal === undefined) {
       reject(new TypeError("lifetimePipe requires stopSignal"));
       return;
@@ -214,10 +250,15 @@ export const execFileBytes = (
     ): void => {
       if (error !== null) {
         admitSpawnFailure(error);
+        if (preserveFailedStdout) failedStdoutBuffers.set(error, stdout);
+        // Decoding replaces invalid UTF-8, so the failure marks those streams
+        // before the text is projected.
         Reflect.set(error, "stdout", stdout.toString("utf8"));
         Reflect.set(error, "stderr", stderr.toString("utf8"));
         Reflect.set(error, "stdoutBytes", stdout.byteLength);
         Reflect.set(error, "stderrBytes", stderr.byteLength);
+        if (!isUtf8(stdout)) Reflect.set(error, "stdoutInvalidUtf8", true);
+        if (!isUtf8(stderr)) Reflect.set(error, "stderrInvalidUtf8", true);
         reject(error);
         return;
       }
@@ -237,8 +278,10 @@ export const execFileBytes = (
           },
           (error, stdout, stderr) =>
             complete(
-              error?.name === "AbortError" && error.code === "ABORT_ERR"
-                ? new ExecFileOutputCancelledError(error.cause)
+              // A successful callback's null is not a rejection, even when
+              // the caller's abort reason is also null.
+              error !== null && isAbortOf(error, signal)
+                ? new ExecFileOutputCancelledError(signal.reason)
                 : error,
               stdout,
               stderr,
@@ -296,6 +339,9 @@ const startStoppableCommand = (
         ? ["ignore", "pipe", "pipe", "pipe"]
         : ["ignore", "pipe", "pipe"],
     killSignal: stopSignal,
+    // POSIX detach starts a new session, so the command leads a process group
+    // REA can stop as one family. Windows detach would only open a console.
+    detached: HOST_PLATFORM.platform !== "win32",
   });
   child.on("error", (error: Error) => {
     processError ??= error;
@@ -307,12 +353,31 @@ const startStoppableCommand = (
     const pipe = stdio?.[3];
     if (pipe != null && "resume" in pipe) pipe.resume();
   }
+  let signalled = false;
+  /**
+   * Signal the command's process group while its leader is unreaped. Node
+   * sets exitCode or signalCode in the same callback that reaps the leader,
+   * so until then the leader's PID still names the group this call created.
+   */
+  const signalFamily = (signalName: NodeJS.Signals): void => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const pid = child.pid;
+    if (HOST_PLATFORM.platform !== "win32" && pid !== undefined)
+      try {
+        process.kill(-pid, signalName);
+        signalled = true;
+        return;
+      } catch {
+        // The leader left its group; it is still the direct child.
+      }
+    if (child.kill(signalName)) signalled = true;
+  };
   // The first stop request names the failure; a later one is not resent.
   const stop = (reason: "abort" | "timeout" | "output-limit"): void => {
     if (stopped !== undefined || rootFailed || processError !== null) return;
     stopped = reason;
-    child.kill(stopSignal);
-    grace = setTimeout(() => child.kill("SIGKILL"), STOP_GRACE_MS);
+    signalFamily(stopSignal);
+    grace = setTimeout(() => signalFamily("SIGKILL"), STOP_GRACE_MS);
   };
   const onAbort = (): void => {
     stop("abort");
@@ -362,7 +427,7 @@ const startStoppableCommand = (
       );
       Reflect.set(processError, "code", code);
       Reflect.set(processError, "signal", exitSignal);
-      Reflect.set(processError, "killed", child.killed);
+      Reflect.set(processError, "killed", signalled);
     }
     if (processError !== null) Reflect.set(processError, "cmd", invocation);
     if (outputError !== undefined) Reflect.set(outputError, "cmd", invocation);
@@ -395,10 +460,15 @@ export const execFileOutput = (
   readonly stderr: string;
   readonly stdoutBytes: number;
   readonly stderrBytes: number;
+  /** The decoded stream holds replacement characters for invalid UTF-8. */
+  readonly stdoutInvalidUtf8?: true;
+  readonly stderrInvalidUtf8?: true;
 }> =>
   execFileBytes(command, arguments_, options).then(({ stdout, stderr }) => ({
     stdout: stdout.toString("utf8"),
     stderr: stderr.toString("utf8"),
     stdoutBytes: stdout.byteLength,
     stderrBytes: stderr.byteLength,
+    ...(isUtf8(stdout) ? {} : { stdoutInvalidUtf8: true as const }),
+    ...(isUtf8(stderr) ? {} : { stderrInvalidUtf8: true as const }),
   }));

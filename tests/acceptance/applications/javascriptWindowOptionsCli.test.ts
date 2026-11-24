@@ -5,13 +5,14 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 cliTest(
   "retains constant window preferences and inferred source provenance through CLI, MCP and fact views",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-window-options-");
     await writeFixtureFiles(root, {
+      "package.json": '{"type":"commonjs"}',
       "main.js": [
         'throw new Error("Static input must never execute");',
         'const { BrowserWindow } = require("electron");',

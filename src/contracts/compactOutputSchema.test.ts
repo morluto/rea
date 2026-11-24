@@ -1,7 +1,14 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
-import { compactAdvertisedOutputSchema } from "./compactOutputSchema.js";
+import { schemaDepth } from "./compactJsonSchema.js";
+import {
+  compactAdvertisedOutputSchema,
+  presentAdvertisedOutputSchema,
+} from "./compactOutputSchema.js";
+import { COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES } from "./mcpSchemaPresentation.js";
+import { advertisedOutputJsonSchema } from "./toolSchemaMetadata.js";
+import { toolContract } from "./toolContracts.js";
 
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
@@ -48,28 +55,75 @@ const referencedSchema = {
   },
 } as const;
 
-const oversizedSchema = (): Record<string, unknown> => ({
-  type: "object",
-  description: "A complete result envelope.",
-  properties: {
-    envelope: { type: "string" },
-    result: {
-      type: "object",
-      properties: Object.fromEntries(
-        Array.from({ length: 200 }, (_, index) => [
-          `field_${index}`,
-          { type: "string", description: `Field ${index}` },
-        ]),
-      ),
-      required: Array.from({ length: 200 }, (_, index) => `field_${index}`),
-      additionalProperties: false,
-    },
-  },
-  required: ["envelope", "result"],
-  additionalProperties: false,
-});
-
 describe("compact advertised output schema", () => {
+  it("keeps nullable integers valid when a deep sibling triggers pruning", () => {
+    const nest = (
+      leaf: Record<string, unknown>,
+      levels: number,
+    ): Record<string, unknown> =>
+      levels === 0
+        ? leaf
+        : { type: "object", properties: { child: nest(leaf, levels - 1) } };
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      {
+        type: "object",
+        properties: {
+          count: { type: ["integer", "null"] },
+          deep: nest({ type: "string" }, 9),
+        },
+        required: ["count", "deep"],
+      },
+      100_000,
+    );
+    expect(presentation).toBe("inline");
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    expect(validate({ count: 5, deep: {} })).toBe(true);
+    expect(validate({ count: null, deep: {} })).toBe(true);
+    expect(serializedBytes(schema)).toBeLessThanOrEqual(100_000);
+  });
+
+  it("keeps untyped deep schemas accepting every value after pruning", () => {
+    const nest = (
+      leaf: Record<string, unknown>,
+      levels: number,
+    ): Record<string, unknown> =>
+      levels === 0 ? leaf : { properties: { child: nest(leaf, levels - 1) } };
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      {
+        type: "object",
+        properties: { deep: nest({ type: "string" }, 9) },
+        required: ["deep"],
+      },
+      100_000,
+    );
+    // Nine untyped property nestings put the replaced node at depth 8.
+    // Pruning leaves that node as an empty schema.
+    expect(schema).toEqual({
+      type: "object",
+      properties: {
+        deep: {
+          properties: {
+            child: {
+              properties: {
+                child: {
+                  properties: {
+                    child: {},
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      required: ["deep"],
+    });
+    expect(schemaDepth(schema)).toBe(8);
+    expect(presentation).toBe("inline");
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    for (const child of [null, 1, "text", { nested: true }])
+      expect(validate({ deep: { child: { child: { child } } } })).toBe(true);
+  });
+
   it("drops nested annotation prose while keeping the root guidance and validation", () => {
     const { schema, presentation } = compactAdvertisedOutputSchema(
       structuredClone(annotatedSchema),
@@ -102,46 +156,6 @@ describe("compact advertised output schema", () => {
     expect(entries.items).toMatchObject({ type: "object" });
   });
 
-  it("reduces an oversized contract to a widening root shape within budget", () => {
-    const budgetBytes = 4 * 1024;
-    const { schema, presentation } = compactAdvertisedOutputSchema(
-      oversizedSchema(),
-      budgetBytes,
-    );
-    expect(presentation).toBe("reduced");
-    expect(serializedBytes(schema)).toBeLessThanOrEqual(budgetBytes);
-    expect(schema.type).toBe("object");
-    expect(schema.required).toEqual(["envelope", "result"]);
-    expect(schema.additionalProperties).toBe(false);
-    expect(schema.description).toContain("compact output schema profile");
-    const result = (schema.properties as Record<string, unknown>)
-      .result as Record<string, unknown>;
-    expect(result.type).toBe("object");
-    expect(result.properties).toBeUndefined();
-  });
-
-  it("accepts a valid canonical result after reduction", () => {
-    const budgetBytes = 4 * 1024;
-    const { schema } = compactAdvertisedOutputSchema(
-      oversizedSchema(),
-      budgetBytes,
-    );
-    const validate = new Ajv2020({ strict: false }).compile(schema);
-    const result = {
-      envelope: "ok",
-      result: Object.fromEntries(
-        Array.from({ length: 200 }, (_, index) => [
-          `field_${index}`,
-          `value ${index}`,
-        ]),
-      ),
-    };
-    expect(validate(result)).toBe(true);
-    // The advertisement is wider than the canonical contract: dropping nested
-    // detail must never reject a valid result, but it can accept an invalid one.
-    expect(validate({ envelope: "ok", result: { unknown: 1 } })).toBe(true);
-  });
-
   it("keeps a non-object root accepting every JSON value when it cannot fit", () => {
     const arraySchema = {
       type: "array",
@@ -162,10 +176,130 @@ describe("compact advertised output schema", () => {
     expect(validate(["anything"])).toBe(true);
     expect(validate({ also: "anything" })).toBe(true);
   });
+});
 
-  it("is deterministic across equivalent inputs", () => {
-    expect(compactAdvertisedOutputSchema(oversizedSchema(), 4 * 1024)).toEqual(
-      compactAdvertisedOutputSchema(oversizedSchema(), 4 * 1024),
+describe("compact object-union output schemas", () => {
+  it("uses the listed root type when reducing a wide output union", () => {
+    const branch = {
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 40 }, (_, index) => [
+          `field_${index}`,
+          { type: "string", description: `field ${index} `.repeat(30) },
+        ]),
+      ),
+      additionalProperties: false,
+    };
+    const wide = { oneOf: [branch, branch] };
+    const compacted = presentAdvertisedOutputSchema(
+      { type: "object", ...wide },
+      { budgetBytes: 256 },
     );
+    const unstamped = presentAdvertisedOutputSchema(wide, { budgetBytes: 256 });
+    expect(compacted.type).toBe("object");
+    expect(unstamped).toEqual({
+      type: ["null", "boolean", "object", "array", "number", "string"],
+      items: {},
+    });
+  });
+
+  it("keeps an object-stamped union's alternatives when the canonical schema cannot inline", () => {
+    // SDK 2.4.0 stamps type:object on a root that is only a $ref union of
+    // objects. search_guidance is that shape and does not fit the compact
+    // budget once its definitions are expanded.
+    const canonical = advertisedOutputJsonSchema(
+      toolContract("search_guidance"),
+    );
+    expect(canonical.type).toBeUndefined();
+    expect(Array.isArray(canonical.oneOf)).toBe(true);
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      { type: "object", ...canonical },
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+    expect(presentation).toBe("reduced");
+    expect(schema.properties).toBeUndefined();
+    expect(schema.type).toBe("object");
+    const alternatives = schema.anyOf as Record<string, unknown>[];
+    expect(alternatives.length).toBeGreaterThan(1);
+    expect(
+      alternatives.every(
+        (branch) =>
+          branch.type === "object" &&
+          typeof (branch.properties as Record<string, unknown> | undefined)
+            ?.status === "object",
+      ),
+    ).toBe(true);
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    const unavailable = {
+      status: "bundle_unavailable",
+      source: "installed_rea_guidance",
+      content_kind: "documentation",
+      message: "The guidance bundle is not installed.",
+    };
+    const stale = {
+      status: "stale_continuation",
+      source: "installed_rea_guidance",
+      content_kind: "documentation",
+      message: "The continuation no longer matches this bundle.",
+    };
+    expect(validate(unavailable)).toBe(true);
+    expect(validate(stale)).toBe(true);
+    expect(validate([])).toBe(false);
+    expect(serializedBytes(schema)).toBeLessThanOrEqual(
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+  });
+
+  it("keeps an already object-typed workflow union's alternatives", () => {
+    // guided_workflows declares an object root so older codecs do not wrap
+    // the result. That declaration has no root properties; the compact form
+    // still has to describe each action.
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      advertisedOutputJsonSchema(toolContract("guided_workflows")),
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+    expect(presentation).toBe("reduced");
+    expect(schema.type).toBe("object");
+    expect(schema.properties).toBeUndefined();
+    const alternatives = schema.anyOf as Record<string, unknown>[];
+    expect(alternatives).toHaveLength(2);
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    expect(
+      validate({
+        action: "list",
+        workflows: [
+          {
+            workflow_id: "inspect",
+            description: "Inspect one artifact.",
+            arguments: [],
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      validate({
+        action: "render",
+        workflow_id: "inspect",
+        rendered_prompt: "Inspect the artifact.",
+      }),
+    ).toBe(true);
+    expect(validate([])).toBe(false);
+    expect(serializedBytes(schema)).toBeLessThanOrEqual(
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+  });
+
+  it("keeps a fitting object-stamped union inline, including the object type", () => {
+    const canonical = advertisedOutputJsonSchema(
+      toolContract("read_guidance_section"),
+    );
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      { type: "object", ...canonical },
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+    expect(presentation).toBe("inline");
+    expect(schema.type).toBe("object");
+    expect(Array.isArray(schema.oneOf)).toBe(true);
+    expect(schema.$id).toBeUndefined();
   });
 });

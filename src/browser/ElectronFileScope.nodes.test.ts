@@ -1,15 +1,15 @@
 import { createServer } from "node:http";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { CdpElectronProvider } from "./CdpElectronProvider.js";
 
 it("lists only ASAR members with regular-file declarations while preserving unrelated metadata", async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "rea-asar-node-")));
+  const root = await createTestTempDirectory("rea-asar-node-");
   const archive = join(root, "app.asar");
   const files = {
     "empty.html": { size: 0, offset: "0" },
@@ -98,6 +98,5 @@ it("lists only ASAR members with regular-file declarations while preserving unre
         error === undefined ? resolve() : reject(error),
       ),
     );
-    await rm(root, { recursive: true, force: true });
   }
 });

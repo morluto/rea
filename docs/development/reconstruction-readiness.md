@@ -32,8 +32,7 @@ full report as the `reconstruction-readiness` artifact.
 
 ## Report scope and ownership
 
-The verifier runs as `npm run verify:readiness`; it is not exposed as a public
-CLI command or MCP tool. Its report separates two kinds of verification:
+The verifier is not exposed as a public CLI command or MCP tool. Its report separates two kinds of verification:
 
 - `observed_journeys` retains the actual static-analysis Evidence and the
   observed CLI/MCP identity checks, with their coverage limits.
@@ -45,10 +44,9 @@ The verifier's overall success means its listed checks passed. It is not an
 end-to-end reconstruction-readiness verdict. Actual analysis Evidence is not
 grafted into the synthetic report or used to close its checks.
 
-The retained artifact now uses `schema: "ReconstructionReadinessVerificationReport"`
-and `schema_version: 1`. The previous unversioned artifact was the nine-stage
-evaluator report itself. Consumers should read the two explicit sections; the
-synthetic nine-stage report now lives at `evaluator_conformance.baseline_report`.
+The retained artifact uses `schema: "ReconstructionReadinessVerificationReport"`
+and `schema_version: 1`. Consumers read the two explicit sections; the
+synthetic nine-stage report lives at `evaluator_conformance.baseline_report`.
 Observed CLI and MCP Evidence are retained in separate bundles under
 `observed_journeys.evidence_bundles`, preserving each surface's records.
 
@@ -145,5 +143,5 @@ npm run test:local -- tests/conformance/readiness/report/reconstructionReadiness
 ```
 
 Passing evaluator tests does not establish real-provider or fixture runtime
-behavior. Use the applicable [real-toolchain lanes](testing.md#real-toolchain-verification-lanes)
+behavior. Use the applicable [real-toolchain lanes](../testing-lanes.md#real-toolchain-verification-lanes)
 for those claims.

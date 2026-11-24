@@ -59,7 +59,7 @@ it("threads the selected host and environment into system diagnostics", async ()
   expect(host.homeDirectory).toBe("/selected/home");
   expect(host.platform).toBe("linux");
   expect(host.architecture).toBe("x64");
-  await host.installationPaths?.();
+  await host.installationLaunchers?.();
   expect(await host.macosVersion()).toBe("15.0");
   await host.executable(process.execPath);
 
@@ -75,7 +75,7 @@ it("threads the selected host and environment into system diagnostics", async ()
 
 it.each([
   "macosVersion",
-  "installationPaths",
+  "installationLaunchers",
   "brewHopperPath",
   "executable",
   "ilspyCmdVersion",
@@ -124,7 +124,7 @@ it.each(["complete", "failed"] as const)(
       },
     });
     try {
-      const pending = host.installationPaths?.();
+      const pending = host.installationLaunchers?.();
       if (outcome === "failed") await expect(pending).resolves.toEqual([]);
       else
         await expect(pending).rejects.toMatchObject({
@@ -169,7 +169,7 @@ fs.writeFileSync(${JSON.stringify(started)}, "ready");
       environment: { HOME: home, PATH: home },
       signal: controller.signal,
     });
-    const pending = host.installationPaths!().then(
+    const pending = host.installationLaunchers!().then(
       (value) => value,
       (cause: unknown) => cause,
     );
@@ -207,7 +207,7 @@ it.skipIf(process.platform === "win32")(
       signal: controller.signal,
     });
     try {
-      await expect(host.installationPaths?.()).rejects.toMatchObject({
+      await expect(host.installationLaunchers?.()).rejects.toMatchObject({
         _tag: "AnalysisCancelledError",
         cause: reason,
       });
@@ -337,3 +337,70 @@ it("reports no Homebrew Hopper when the cask has no receipt", async () => {
     new Set(["--caskroom"]),
   );
 });
+
+it("groups the Windows npm shims `where` lists under one installation", async () => {
+  const npm = "C:\\Users\\user\\AppData\\Roaming\\npm";
+  const other = "D:\\tools\\rea";
+  const listed = [
+    `${npm}\\rea`,
+    `${npm}\\rea.cmd`,
+    `${npm}\\REA.ps1`,
+    `${other}\\rea.cmd`,
+  ];
+  const host = systemDoctorHost({
+    platform: "win32",
+    architecture: "x64",
+    environment: { PATH: "C:\\Windows" },
+    execFileOutput: async (command) => {
+      if (command !== "where")
+        throw new Error(`Unexpected diagnostic command: ${command}`);
+      const stdout = `${listed.join("\r\n")}\r\n`;
+      return {
+        stdout,
+        stderr: "",
+        stdoutBytes: Buffer.byteLength(stdout),
+        stderrBytes: 0,
+      };
+    },
+  });
+  const launchers = (await host.installationLaunchers?.()) ?? [];
+  // Every listed launcher stays visible; identity groups them by directory.
+  expect(launchers.map(({ path }) => path)).toEqual(listed);
+  expect(new Set(launchers.map(({ installation }) => installation)).size).toBe(
+    2,
+  );
+});
+
+it.skipIf(process.platform === "win32")(
+  "resolves POSIX launchers that reach one package through symlinks",
+  async () => {
+    const root = await createTestTempDirectory("rea-doctor-launchers-");
+    const scripts = join(root, "lib/node_modules/rea-agents/scripts");
+    await mkdir(scripts, { recursive: true });
+    await writeFile(join(scripts, "rea.mjs"), "", { mode: 0o755 });
+    const launchers = [join(root, "bin/rea"), join(root, "home/bin/rea")];
+    for (const launcher of launchers) {
+      await mkdir(dirname(launcher), { recursive: true });
+      await symlink(join(scripts, "rea.mjs"), launcher);
+    }
+    const host = systemDoctorHost({
+      platform: "linux",
+      architecture: "x64",
+      environment: { PATH: "/selected/bin" },
+      execFileOutput: async () => {
+        const stdout = `${launchers.join("\n")}\n`;
+        return {
+          stdout,
+          stderr: "",
+          stdoutBytes: Buffer.byteLength(stdout),
+          stderrBytes: 0,
+        };
+      },
+    });
+    const resolved = (await host.installationLaunchers?.()) ?? [];
+    expect(resolved.map(({ path }) => path)).toEqual(launchers);
+    expect(new Set(resolved.map(({ installation }) => installation)).size).toBe(
+      1,
+    );
+  },
+);

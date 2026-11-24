@@ -6,7 +6,8 @@ libsigrokdecode on **Linux**. util-linux `prlimit` is required (default
 `/usr/bin/prlimit`, overridable with absolute `REA_SIGROK_PRLIMIT_COMMAND`).
 The limiter sets soft and hard address-space limits before the decoder starts.
 macOS and Windows are refused because this adapter cannot enforce that limit on
-those hosts. It does not acquire samples or communicate with hardware.
+those hosts. `REA_SIGROK_COMMAND` must name sigrok-cli by absolute path; REA
+does not search `PATH`. REA does not acquire samples or communicate with hardware.
 
 ```sh
 export REA_SIGROK_COMMAND=/absolute/path/to/sigrok-cli
@@ -103,16 +104,32 @@ failure; bounded post-run integrity checks finish before honoring a late abort. 
 never passed to sigrok. Caller-supplied tools and their libraries/decoder modules
 are trusted, and hashes identify bytes rather than publisher authenticity.
 
-The input copy is bounded at 32 MiB before reading, each command has a 30-second
-deadline, and combined stdout/stderr is bounded at 4 MiB during collection.
+By default, the input copy is bounded at 32 MiB before reading, each command has
+a 30-second deadline, and combined stdout/stderr is bounded at 4 MiB during collection.
 Oversized output fails rather than becoming truncated success. These limits do
-not form an OS sandbox. Before execution, `prlimit` enforces **1 GiB address
+not form an OS sandbox. Before execution, `prlimit` defaults to **1 GiB address
 space per process**, **64 MiB per file**, **30 CPU seconds** and no core dumps.
 Stricter inherited soft/hard limits are preserved; Evidence records the effective
 ceilings. Both limits are set before execution, so decoder allocations and compressed
 recording expansion cannot exceed the per-process address-space cap. These are
 not aggregate process-memory or filesystem quotas. The selected limiter is
 trusted and its path, digest and arguments are retained in Evidence.
+
+Each decoding and discovery call accepts `producer_limits` with positive safe
+integer overrides: `input_bytes`, `output_bytes`, `command_timeout_ms`,
+`address_space_bytes`, `file_bytes`, and `cpu_seconds`. The wall-clock timeout
+is at most 2,147,483,647 milliseconds, matching Node timers. Omitted fields keep
+the defaults above. Decoder discovery accepts the same controls except
+`input_bytes`, since it does not read a recording.
+
+CLI supplies this object as JSON with `--producer-limits`, for example
+`--producer-limits '{"input_bytes":67108864,"output_bytes":8388608,"cpu_seconds":60}'`.
+Values apply to the next call without restarting REA. Effective native ceilings
+still preserve any tighter inherited soft and hard limit. Errors identify the
+exhausted producer control and retain partial output and cleanup status; follow
+that repair after cleanup settles. Raising producer budgets does not raise
+separate parser representations, transport buffers or external client deadlines.
+Never truncate the selected artifact to fit an input budget.
 
 ## Verification
 
@@ -131,8 +148,7 @@ kernel-limit regression checks the inherited soft/hard limits and verifies an
 oversized allocation is refused before it can consume memory. Other formats,
 decoders and physical acquisition are not established by the UART fixture.
 The workflow result must be checked before claiming a specific Linux build
-verified. The earlier macOS tool check does not establish the current bounded
-integration, which deliberately refuses unsupported hosts.
+verified.
 
 One decode is admitted at a time, including acquisition and cleanup. Excess
 requests receive a retryable capacity error before acquiring another file or

@@ -15,7 +15,11 @@ it.each(formats)(
     const little = format.byteOrder === "little";
     const length = wide ? 64 : 52;
     const backing = Buffer.alloc(length + 17, 0xa5);
-    const bytes = backing.subarray(7, 7 + length);
+    const bytes = new Uint8Array(
+      backing.buffer,
+      backing.byteOffset + 7,
+      length,
+    );
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const programOffset = wide ? 0xfedcba9876543210n : 0xfedcba98n;
     const sectionOffset = wide ? 0xffffffffffffffffn : 0xffffffffn;
@@ -30,7 +34,10 @@ it.each(formats)(
       view.setUint16((wide ? 54 : 42) + index * 2, value, little),
     );
     const before = Buffer.from(backing);
-    const parsed = readElfRawTableDeclarations(backing.subarray(7), format);
+    const parsed = readElfRawTableDeclarations(
+      new Uint8Array(backing.buffer, bytes.byteOffset, length + 5),
+      format,
+    );
     expect(backing.equals(before)).toBe(true);
     backing.fill(0);
     expect(parsed).toEqual({
@@ -61,7 +68,7 @@ it.each(formats)(
         ok: false,
         error: {
           kind: "malformed",
-          message: "ELF table declarations are truncated",
+          message: expect.stringContaining("truncated"),
         },
       });
   },

@@ -1,3 +1,4 @@
+import { isSuccessfulHttpStatus } from "../../domain/httpResponseStatus.js";
 import { hasRepeatedQueryArgument } from "./environmentTools.js";
 import { stateBodyJson } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import {
@@ -25,6 +26,7 @@ import {
 import { pageBound } from "../../domain/analysisView/environmentStatePaging.js";
 import { replayReason } from "../../domain/analysisView/environmentStateVariants.js";
 import { isAbsence } from "../../domain/analysisView/environmentStateWriteChecks.js";
+import { updatedEntity } from "../../domain/analysisView/environmentStateWriteApply.js";
 import {
   evaluateQuery,
   renderQueryList,
@@ -44,6 +46,7 @@ import {
   type ObservedQuery,
   type ReplayArguments,
   type ReplayResult,
+  type ReplaySelection,
 } from "./environmentReplay.js";
 import {
   ENVIRONMENT_SERVE_OPERATION,
@@ -176,7 +179,7 @@ export const recordedJson = (
 /** The rendered body on the base record's status, content type and provenance; never cut. */
 export const stateAnswer = (
   serving: StateServing,
-  base: { readonly exchange: RecordedExchange; readonly exact: boolean },
+  base: ReplaySelection,
   body: JsonValue,
   state: StateProvenance,
 ): Result<StateAnswer, AnalysisError> => {
@@ -291,16 +294,6 @@ export const softDeleteFlag = (
   return undefined;
 };
 
-/** Fields as an application that soft-deletes shows them once deleted: with the type's deleted flag set, when it has one. */
-const deletedFields = (
-  serving: StateServing,
-  type: string,
-  fields: JsonObject,
-): JsonObject => {
-  const flag = softDeleteFlag(serving, type);
-  return flag === undefined ? fields : { ...fields, [flag]: true };
-};
-
 /** Fields as a delete's answer shows them: with the type's deleted flag as its recorded answer `shown` gave it, if it did. */
 export const deleteAnswerFields = (
   serving: StateServing,
@@ -326,9 +319,11 @@ const deletedEntity = (
     call,
     (collection, id) => store.deleted(type, collection, id),
   );
-  return entity === undefined
-    ? undefined
-    : { ...entity, fields: deletedFields(serving, type, entity.fields) };
+  if (entity === undefined) return undefined;
+  const flag = softDeleteFlag(serving, type);
+  return flag === undefined
+    ? entity
+    : updatedEntity(entity, { ...entity.fields, [flag]: true });
 };
 
 /** The answer for an entity the state does not hold: the tool's latest recorded 400, 404 or 410, else a tool error. */
@@ -352,9 +347,7 @@ export const missingAnswer = (
           exchange !== undefined &&
           (isAbsence(exchange.status) ||
             (nullAbsence &&
-              exchange.status !== null &&
-              exchange.status >= 200 &&
-              exchange.status < 300 &&
+              isSuccessfulHttpStatus(exchange.status) &&
               recordedJson(exchange) === null)),
       )
       .at(-1);
@@ -411,7 +404,7 @@ const answerItem = (
       replayed !== undefined &&
       !store.createdInto(view.type) &&
       !startedWithItem(store, view.type, call) &&
-      selectReplayExchange(tool, source.exchanges, args, observedQuery)
+      selectReplayExchange(tool, source.exchanges, args, { observedQuery })
         ?.exact === true
     )
       return fromRecording(source, tool, args, replayed, observedQuery);
@@ -437,12 +430,10 @@ const answerItem = (
       refused(tool, `Tool ${tool.name} has no usable recorded envelope.`),
     );
   const exact =
-    selectReplayExchange(
-      tool,
-      new Map([[base.ordinal, base]]),
-      args,
+    selectReplayExchange(tool, source.exchanges, args, {
       observedQuery,
-    )?.exact === true;
+      eligibleOrdinals: new Set([base.ordinal]),
+    })?.exact === true;
   return stateAnswer(
     serving,
     { exchange: base, exact },
@@ -459,11 +450,12 @@ const answerItem = (
 
 type StateDocumentView = Extract<StateView, { shape: "document" }>;
 
-/** One tool call: the tool, the arguments it was called with, and whether they name the answering line exactly. */
-interface ToolCall {
+/** A list call can name checked lines without distinguishing their query order. */
+interface ListCall {
   readonly tool: EnvironmentManifestTool;
   readonly args: ReplayArguments;
-  readonly exact: boolean;
+  readonly observedQuery: ObservedQuery | undefined;
+  readonly named: boolean;
 }
 
 /**
@@ -473,7 +465,7 @@ interface ToolCall {
  */
 const listSelection = (
   store: EnvironmentStateStore,
-  { tool, args, exact }: ToolCall,
+  { tool, args, named }: ListCall,
   view: StateListView,
   line: {
     readonly base: RecordedExchange;
@@ -491,7 +483,7 @@ const listSelection = (
   // A named query line, or a call with query arguments answered on a line it did not name, evaluates the query.
   const queried =
     view.query !== undefined &&
-    (exact
+    (named
       ? view.query.record_ordinals.includes(line.base.ordinal)
       : values.size > 0);
   if (queried) {
@@ -521,19 +513,20 @@ const listSelection = (
 /** A list call renders the entities its line selects from the state into that line's recorded envelope. */
 const answerList = (
   serving: StateServing,
-  call: ToolCall,
+  call: ListCall,
   view: StateListView,
-  base: RecordedExchange,
+  match: ReplaySelection,
 ): Result<StateAnswer, AnalysisError> => {
   const { source, store } = serving;
-  const { tool, args, exact } = call;
+  const { tool, args, named, observedQuery } = call;
+  const base = match.exchange;
   const envelope = recordedJson(base);
   const recorded =
     envelope === undefined ? undefined : listItems(envelope, view.pointer);
   if (envelope === undefined || recorded === undefined)
-    return fromRecording(source, tool, args, "body-unusable");
+    return fromRecording(source, tool, args, "body-unusable", observedQuery);
   // A requested page the collection has outgrown is answered as recorded, never with more items than it asked for.
-  const size = exact
+  const size = named
     ? pageBound(base.query ?? undefined, recorded.length)
     : undefined;
   if (
@@ -541,10 +534,16 @@ const answerList = (
     size !== undefined &&
     store.inCollection(view.type, collectionPathOf(base, false)).length > size
   )
-    return fromRecording(source, tool, args, "page-exceeded");
+    return fromRecording(source, tool, args, "page-exceeded", observedQuery);
   const selection = listSelection(store, call, view, { base, recorded });
   if (selection === undefined)
-    return fromRecording(source, tool, args, "unrecorded-request");
+    return fromRecording(
+      source,
+      tool,
+      args,
+      "unrecorded-request",
+      observedQuery,
+    );
   const volatile = new Set(store.type(view.type)?.volatile_fields);
   const items: JsonObject[] = [];
   for (const entity of selection.members) {
@@ -561,7 +560,7 @@ const answerList = (
           items,
           selection.total,
         );
-  return stateAnswer(serving, { exchange: base, exact }, body, {
+  return stateAnswer(serving, match, body, {
     source: "state",
     view: "list",
     type: view.type,
@@ -575,12 +574,12 @@ const answerList = (
 const answerDocument = (
   serving: StateServing,
   tool: EnvironmentManifestTool,
-  base: RecordedExchange,
+  selection: ReplaySelection,
 ): Result<StateAnswer, AnalysisError> => {
   const current = serving.store.document(tool.name);
   if (current === undefined)
     return err(refused(tool, `The state holds no document for ${tool.name}.`));
-  return stateAnswer(serving, { exchange: base, exact: true }, current.value, {
+  return stateAnswer(serving, selection, current.value, {
     source: "state",
     view: "document",
     path: current.path,
@@ -609,7 +608,7 @@ const answerCheckedLine = (
     observedQuery,
   );
   const base =
-    named ??
+    named?.exchange ??
     (view.shape === "list"
       ? (unfilteredLine(
           serving.source,
@@ -627,15 +626,15 @@ const answerCheckedLine = (
       "unrecorded-request",
       observedQuery,
     );
-  // An unfiltered call answers on a line it did not name, so its replay match is not exact.
+  const selection = named ?? { exchange: base, exact: false };
   return view.shape === "list"
     ? answerList(
         serving,
-        { tool, args, exact: named !== undefined },
+        { tool, args, observedQuery, named: named !== undefined },
         view,
-        base,
+        selection,
       )
-    : answerDocument(serving, tool, base);
+    : answerDocument(serving, tool, selection);
 };
 
 /** Answer one read tool call from the live state where its view is state-backed, else from its recordings. */

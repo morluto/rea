@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import {
   createAnalysisExecution,
   type ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { SignalRecordingService } from "./SignalRecordingService.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { decodeSignalRecordingInputSchema } from "../../domain/signals/signalRecording.js";
@@ -59,6 +59,7 @@ it("retains provider metadata in a late-cancellation observation", async () => {
   const relationshipCoverage = {
     status: "unknown",
     reason: "Recording relationships are not reported.",
+    limited_directions: ["callers", "callees"] as ["callers", "callees"],
   } as const;
   const execution = createAnalysisExecution(report, provider, {
     subject,

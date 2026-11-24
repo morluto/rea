@@ -5,7 +5,6 @@ from pathlib import Path
 import resource
 import gdb
 
-OUTPUT_BYTES = 64 * 1024 * 1024
 
 
 class ContextFailure(Exception):
@@ -79,6 +78,7 @@ def failure_exit(request_path, status, marker):
 def main():
     request_path = os.environ["REA_CORE_CONTEXT_REQUEST"]
     request = json.loads(Path(request_path).read_text(encoding="utf-8"))
+    output_bytes = request["producer_limits"]["output_bytes"]
     reserve = bytearray(1024 * 1024)
     try:
         reply = {"ok": True, "value": inspect(request)}
@@ -94,8 +94,8 @@ def main():
         reply = {"ok": False, "reason": "decoder", "message": type(error).__name__ + ": " + str(error)}
     try:
         encoded = json.dumps(reply, ensure_ascii=True, allow_nan=False).encode("utf-8")
-        if len(encoded) > OUTPUT_BYTES:
-            encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete debugger context exceeds the 64 MiB reply budget."}).encode("utf-8")
+        if len(encoded) > output_bytes:
+            encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete debugger context exceeds producer_limits.output_bytes=" + str(output_bytes) + "."}).encode("utf-8")
         descriptor = os.open(request["reply_path"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(encoded)

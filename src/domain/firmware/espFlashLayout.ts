@@ -38,6 +38,8 @@ export interface EspFlashRegion {
   readonly fileOffset: number;
   /** Bytes of the region the file holds, from `fileOffset`. */
   readonly available: number;
+  /** An empty declaration has no bytes to be missing from the dump. */
+  readonly availability: "empty" | "missing" | "truncated" | "complete";
   readonly partition: EspPartition | undefined;
 }
 
@@ -117,12 +119,21 @@ const partitionPaths = (
 
 const region = (
   input: EspFlashPlanInput,
-  fields: Omit<EspFlashRegion, "fileOffset" | "available">,
+  fields: Omit<EspFlashRegion, "fileOffset" | "available" | "availability">,
 ): EspFlashRegion => {
   const fileOffset = fields.flashAddress - input.origin.value;
   const start = Math.max(0, fileOffset);
   const end = Math.min(input.fileSize, fileOffset + fields.length);
-  return { ...fields, fileOffset, available: Math.max(0, end - start) };
+  const available = Math.max(0, end - start);
+  const availability =
+    fields.length === 0
+      ? "empty"
+      : available === 0
+        ? "missing"
+        : available < fields.length
+          ? "truncated"
+          : "complete";
+  return { ...fields, fileOffset, available, availability };
 };
 
 const rangeText = (address: number, length: number): string =>
@@ -207,22 +218,28 @@ export const planEspFlashLayout = (input: EspFlashPlanInput): EspFlashPlan => {
       limitations.push(
         `Partition ${name} at ${offsetText(part.offset)} starts before the end of the partition table at ${offsetText(tableEnd)}; gen_esp32part.py rejects such a table.`,
       );
-    if (placed.fileOffset < 0)
+    if (placed.availability === "empty")
+      limitations.push(
+        `Partition ${name} at ${offsetText(part.offset)} declares zero bytes.`,
+      );
+    else if (placed.fileOffset < 0)
       limitations.push(
         `Partition ${name} at ${offsetText(part.offset)} begins before the dump's first byte at flash ${offsetText(input.origin.value)}; it is not read.`,
       );
-    else if (placed.available === 0)
+    else if (placed.availability === "missing")
       limitations.push(
         `Partition ${name} at ${rangeText(part.offset, part.size)} lies outside the dump, which ends at flash ${offsetText(input.origin.value + input.fileSize)}.`,
       );
-    else if (placed.available < part.size)
+    else if (placed.availability === "truncated")
       limitations.push(
         `Partition ${name} at ${rangeText(part.offset, part.size)} is truncated: the dump holds ${String(placed.available)} of its ${String(part.size)} bytes.`,
       );
     // Every partition from the dump's first byte on is an entry holding the
     // bytes the file has, none when it lies past the end, so comparison sees
-    // what the file lacks instead of a missing path.
-    if (placed.fileOffset >= 0) regions.push(placed);
+    // what the file lacks instead of a missing path. A zero-byte declaration
+    // has no bytes to read, including one that starts before the origin.
+    if (placed.availability === "empty" || placed.fileOffset >= 0)
+      regions.push(placed);
   }
   limitations.push(...overlaps(regions));
   const boot = espBootPartitions(input.table.partitions);
@@ -268,6 +285,7 @@ const overlaps = (regions: readonly EspFlashRegion[]): string[] => {
   // The region reaching furthest so far, so a long one shows every overlap.
   let furthest: EspFlashRegion | undefined;
   for (const current of ordered) {
+    if (current.availability === "empty") continue;
     if (
       furthest !== undefined &&
       current.flashAddress < regionEnd(furthest) &&

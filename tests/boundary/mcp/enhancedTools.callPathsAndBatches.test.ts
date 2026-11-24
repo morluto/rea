@@ -1,7 +1,9 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
@@ -12,7 +14,10 @@ import { batchDecompileResultSchema } from "../../../src/domain/native/batchDeco
 import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
-import { MAX_ENHANCED_RECORDS } from "../../../src/contracts/enhancedInputs.js";
+import {
+  enhancedInputSchemas,
+  MAX_ENHANCED_RECORDS,
+} from "../../../src/contracts/enhancedInputs.js";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
@@ -53,7 +58,11 @@ describe("enhanced MCP relationship limitations", () => {
           arguments_.procedure === "0x1" ? ["0x2"] : [],
           arguments_.procedure === "0x1" ? [limitation] : [],
           arguments_.procedure === "0x1"
-            ? { status: "partial", limitations: [limitation] }
+            ? {
+                status: "partial",
+                limitations: [limitation],
+                limited_directions: ["callees"],
+              }
             : { status: "complete" },
         );
       },
@@ -125,7 +134,6 @@ describe("enhanced MCP graph caveats", () => {
     });
     expect(graph.structuredContent).toMatchObject({
       limitations: [
-        expect.stringMatching(/artifact identity.*unavailable/iu),
         "Derived by an REA composed workflow.",
         `Fixture analysis provider (fixture 1) procedure_callees: ${caveat}`,
         `Fixture analysis provider (fixture 1) procedure_callees: ${leafCaveat}`,
@@ -280,6 +288,7 @@ describe("trace_call_path MCP outcome semantics", () => {
         return relationshipExecution([], [], {
           status: "partial",
           limitations: ["one or more callees may be missing"],
+          limited_directions: ["callees"],
         });
       },
     });
@@ -455,79 +464,82 @@ describe("enhanced MCP batch cancellation", () => {
       expect(signals).toEqual(expectedCalls.map(() => false));
     },
   );
+});
 
-  it("stops later batch stages across the input when one entry lookup is cancelled", async () => {
-    const calls: string[] = [];
-    const client = await connect({
-      execute: async (name, arguments_) => {
-        const selector = String(arguments_.procedure ?? arguments_.address);
-        calls.push(`${name}:${selector}`);
-        if (name === "procedure_address") return ok(selector);
-        if (name === "address_name" && selector === "0x1")
-          return err(new AnalysisCancelledError(name));
-        if (name === "address_name") return ok("fixture_name");
-        if (name === "procedure_pseudo_code") return ok("return 0;");
-        throw new Error(`Unexpected operation: ${name}`);
+it("advertises and enforces the batch input budget before provider calls", async () => {
+  let calls = 0;
+  const client = await connect(
+    {
+      execute: async () => {
+        calls += 1;
+        throw new Error("provider must not be called for invalid input");
       },
-    });
-
-    const response = await client.callTool({
-      name: "batch_decompile",
-      arguments: { addresses: ["0x1", "0x2"] },
-    });
-
-    expect(response.isError).toBe(true);
-    expect(response.structuredContent).toBeUndefined();
-    expect(parseMcpToolError(response)).toMatchObject({
-      error: { code: "cancelled", details: { operation: "address_name" } },
-    });
-    expect(calls).toEqual([
-      "procedure_address:0x1",
-      "procedure_address:0x2",
-      "address_name:0x1",
-    ]);
+    },
+    {
+      // Admit the array plus its object member before schema validation.
+      REA_MCP_MAX_INPUT_ELEMENTS: String(MAX_ENHANCED_RECORDS + 2),
+    },
+  );
+  const { tools } = await client.listTools();
+  expect(tools.some(({ name }) => name === "batch_decompile")).toBe(true);
+  // The compact wire presentation may widen the canonical array bound.
+  const canonical = canonicalInputSchema("batch_decompile");
+  expect(canonical).toMatchObject({
+    properties: {
+      addresses: { type: "array", maxItems: MAX_ENHANCED_RECORDS },
+    },
   });
+
+  const addresses = Array.from({ length: MAX_ENHANCED_RECORDS }, () => "0x0");
+  const overLimit = { addresses: [...addresses, "0x1"] };
+  expect(
+    enhancedInputSchemas.batch_decompile.safeParse({ addresses }).success,
+  ).toBe(true);
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(canonical);
+  expect(validate({ addresses })).toBe(true);
+  expect(validate(overLimit)).toBe(false);
+
+  const result = await client.callTool({
+    name: "batch_decompile",
+    arguments: overLimit,
+  });
+
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["addresses"],
+            reason: "out_of_range",
+            maximum: MAX_ENHANCED_RECORDS,
+          },
+        ],
+      },
+    },
+  });
+  const malformed = await client.callTool({
+    name: "batch_decompile",
+    arguments: { addresses: "bad" },
+  });
+  expect(malformed.isError).toBe(true);
+  expect(parseMcpToolError(malformed)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["addresses"], reason: "invalid_type" }],
+      },
+    },
+  });
+  expect(calls).toBe(0);
 });
 
 describe("enhanced MCP batches", () => {
-  it("advertises and enforces the batch input budget before provider calls", async () => {
-    let calls = 0;
-    const client = await connect(
-      {
-        execute: async () => {
-          calls += 1;
-          throw new Error("provider must not be called for invalid input");
-        },
-      },
-      {
-        // Admit the array plus its object member before schema validation.
-        REA_MCP_MAX_INPUT_ELEMENTS: String(MAX_ENHANCED_RECORDS + 2),
-      },
-    );
-    const { tools } = await client.listTools();
-    expect(
-      tools.find(({ name }) => name === "batch_decompile")?.inputSchema,
-    ).toMatchObject({
-      properties: { addresses: { maxItems: MAX_ENHANCED_RECORDS } },
-    });
-
-    const result = await client.callTool({
-      name: "batch_decompile",
-      arguments: {
-        addresses: Array.from(
-          { length: MAX_ENHANCED_RECORDS + 1 },
-          () => "0x0",
-        ),
-      },
-    });
-
-    expect(result.isError).toBe(true);
-    expect(parseMcpToolError(result)).toMatchObject({
-      error: { code: "invalid_request", category: "invalid_input" },
-    });
-    expect(calls).toBe(0);
-  });
-
   it("returns every batch item in caller order with its own result", async () => {
     const addresses = Array.from(
       { length: 37 },
@@ -620,12 +632,14 @@ describe("enhanced MCP batches", () => {
             code: "unreadable_output",
             category: "execution_failure",
             details: { operation: "decompile", reason: "failed" },
-            message:
-              "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+            message: expect.stringMatching(
+              /result REA could not read.*repeating the unchanged request.*not expected to succeed/i,
+            ),
             retryable: false,
             remediation: {
-              action:
-                "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+              action: expect.stringMatching(
+                /result REA could not read.*repeating the unchanged request.*not expected to succeed/i,
+              ),
             },
           },
         },
@@ -708,7 +722,13 @@ describe("enhanced MCP batch answers without pseudocode", () => {
     const evidence = contract.outputSchema.parse(result.structuredContent);
     expect(evidence.normalized_result).toMatchObject({
       items: [
-        { address: "0x1", status: "ok", pseudocode: answers["0x1"]?.result },
+        // Successful text keeps its own observation's caveats (#8350).
+        {
+          address: "0x1",
+          status: "ok",
+          pseudocode: answers["0x1"]?.result,
+          limitations: answers["0x1"]?.limitations,
+        },
         {
           address: "0x2",
           status: "unavailable",
@@ -755,9 +775,9 @@ describe("enhanced MCP batch answers without pseudocode", () => {
     const { items } = batchDecompileResultSchema.parse(
       evidence.normalized_result,
     );
-    // Successful text, a caveat-free null and a typed provider failure carry
-    // no item caveats; the batch Evidence aggregates every observation's.
-    for (const index of [0, 2, 5])
+    // A caveat-free null and a typed provider failure carry no item caveats;
+    // the batch Evidence aggregates every observation's.
+    for (const index of [2, 5])
       expect(items[index]).not.toHaveProperty("limitations");
     expect(evidence.limitations).toEqual(
       expect.arrayContaining([

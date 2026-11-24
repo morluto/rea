@@ -5,6 +5,7 @@ import {
   type SpellingSummary,
 } from "./environmentManifestSpelling.js";
 import type { RouteRule } from "./webNetworkRouteTemplates.js";
+import { appendAll } from "../appendAll.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
 export const TEMPLATE_RULES = [
@@ -118,7 +119,7 @@ const earliest = (groups: readonly ToolGroup[]): ToolGroup =>
 /** Merge groups around `shape`; literal siblings of its templated positions become observed values. */
 const mergeGroups = (
   groups: readonly ToolGroup[],
-  shape = earliest(groups),
+  shape: ToolGroup,
 ): ToolGroup => {
   if (groups.length === 1) return groups[0]!;
   const primary = earliest(groups);
@@ -300,7 +301,7 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
       else bucket.push(group);
     }
     for (const bucket of buckets.values())
-      output.push(...mergeSiblings(bucket, position));
+      appendAll(output, mergeSiblings(bucket, position));
     current = output;
   }
   return current;
@@ -394,7 +395,7 @@ const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
       else bucket.push(group);
     }
     for (const bucket of buckets.values())
-      output.push(...mergePairBucket(bucket, position));
+      appendAll(output, mergePairBucket(bucket, position));
     current = output;
   }
   return current;
@@ -435,12 +436,11 @@ type SharedPosition = readonly (SharedDonor & {
 const sharedPositions = (
   groups: readonly ToolGroup[],
   position: number,
+  inRecordOrder: readonly number[],
 ): Map<string, SharedPosition> => {
   const donors = new Map<string, Map<string, SharedDonor>>();
-  const ordered = [...groups].sort(
-    (left, right) => (left.positions[0] ?? 0) - (right.positions[0] ?? 0),
-  );
-  for (const group of ordered) {
+  for (const index of inRecordOrder) {
+    const group = groups[index]!;
     const part = group.parts[position];
     if (!isShared(part)) continue;
     const key = prefixKey(group, position);
@@ -486,12 +486,23 @@ const sharedShape = (bucket: readonly ToolGroup[]): ToolGroup => {
   );
 };
 
-/** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method or length. */
+/** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method, on routes within the segment limit. */
 const mergePrefixVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
   let current = [...groups];
-  const longest = Math.max(0, ...current.map((group) => group.parts.length));
+  // Every pass keeps the groups in their original sequence. Keep the donor
+  // priority by first record without changing the order of output groups.
+  const inRecordOrder = groups
+    .map((_, index) => index)
+    .sort(
+      (left, right) =>
+        (groups[left]!.positions[0] ?? 0) - (groups[right]!.positions[0] ?? 0),
+    );
+  const longest = groups.reduce(
+    (length, group) => Math.max(length, group.parts.length),
+    0,
+  );
   for (let position = 0; position < longest; position += 1) {
-    const shared = sharedPositions(current, position);
+    const shared = sharedPositions(current, position, inRecordOrder);
     if (shared.size === 0) continue;
     current = current.map((group) => {
       const part = group.parts[position];

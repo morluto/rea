@@ -139,6 +139,15 @@ export const freezeJsonSnapshot = <T extends JsonValue>(value: T): T => {
   return value;
 };
 
+type OwnedTreeFrame =
+  | { readonly kind: "array"; readonly value: unknown[]; index: number }
+  | {
+      readonly kind: "object";
+      readonly value: object;
+      readonly keys: readonly string[];
+      index: number;
+    };
+
 /**
  * Seal a freshly parsed, exclusively owned JSON tree. Its parser has removed
  * aliases, accessors and hidden properties; existing sealed subtrees may be shared.
@@ -148,7 +157,7 @@ export const freezeJsonSnapshot = <T extends JsonValue>(value: T): T => {
 export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
   value: T,
 ): T => {
-  const frames: { value: object; children: Iterator<unknown> }[] = [];
+  const frames: OwnedTreeFrame[] = [];
   const ancestors = new Set<object>();
   const enter = (item: unknown): void => {
     if (isImmutableJsonSnapshot(item)) return;
@@ -160,22 +169,48 @@ export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
       throw new TypeError(
         "Immutable JSON snapshots cannot contain circular references",
       );
+    const isArray = Array.isArray(item);
     const prototype: unknown = Object.getPrototypeOf(item);
-    if (
-      !Array.isArray(item) &&
-      prototype !== Object.prototype &&
-      prototype !== null
-    )
+    if (!isArray && prototype !== Object.prototype && prototype !== null)
       throw new TypeError("Immutable JSON snapshots require ordinary objects");
     ancestors.add(item);
-    frames.push({ value: item, children: ownedTreeChildren(item) });
+    if (isArray) frames.push({ kind: "array", value: item, index: 0 });
+    else
+      frames.push({
+        kind: "object",
+        value: item,
+        keys: Object.keys(item),
+        index: 0,
+      });
   };
   enter(value);
   while (frames.length > 0) {
     const frame = frames[frames.length - 1]!;
-    const next = frame.children.next();
-    if (!next.done) enter(next.value);
-    else {
+    if (frame.kind === "array") {
+      if (frame.index < frame.value.length) {
+        const descriptor = Object.getOwnPropertyDescriptor(
+          frame.value,
+          frame.index,
+        );
+        if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+          throw new TypeError("Owned JSON trees require dense data arrays");
+        frame.index += 1;
+        enter(descriptor.value);
+      } else {
+        Object.freeze(frame.value);
+        ancestors.delete(frame.value);
+        frames.pop();
+      }
+    } else if (frame.index < frame.keys.length) {
+      const key = frame.keys[frame.index]!;
+      const descriptor = Object.getOwnPropertyDescriptor(frame.value, key);
+      if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+        throw new TypeError(
+          "Immutable JSON snapshots cannot contain accessors",
+        );
+      frame.index += 1;
+      enter(descriptor.value);
+    } else {
       Object.freeze(frame.value);
       ancestors.delete(frame.value);
       frames.pop();
@@ -185,27 +220,6 @@ export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
     immutableSnapshots.add(value);
   return value;
 };
-
-function* ownedTreeChildren(value: object): Generator<unknown> {
-  if (Array.isArray(value)) {
-    for (let index = 0; index < value.length; index++) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, index);
-      if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
-        throw new TypeError("Owned JSON trees require dense data arrays");
-      yield descriptor.value;
-    }
-  } else {
-    for (const key in value) {
-      if (!Object.hasOwn(value, key)) continue;
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
-        throw new TypeError(
-          "Immutable JSON snapshots cannot contain accessors",
-        );
-      yield descriptor.value;
-    }
-  }
-}
 
 /**
  * Seal exclusively owned JSON in bounded steps, authenticating only completion.

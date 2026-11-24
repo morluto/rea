@@ -12,6 +12,8 @@ import java.lang.reflect.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.zip.*;
 import kotlin.coroutines.EmptyCoroutineContext;
 import kotlinx.coroutines.BuildersKt;
@@ -43,7 +45,7 @@ public class ReaJadxMetadataRegression {
     return ((TextContent) response.getContent().get(0)).getText();
   }
 
-  private static void verifyManifestSummary() {
+  private static void verifyManifestSummary() throws Exception {
     for (String prefix : List.of("android", "a")) {
       for (String encoded : List.of("one &amp; beta", "one &amp;amp; beta")) {
         String xml = "<manifest xmlns:" + prefix + "=\"http://schemas.android.com/apk/res/android\""
@@ -51,8 +53,14 @@ public class ReaJadxMetadataRegression {
             + prefix + ":versionName=\"" + encoded + "\" " + prefix + ":versionCode=\"7\""
             + " other:versionName=\"decoy\"><uses-sdk " + prefix + ":minSdkVersion=\"23\" "
             + prefix + ":targetSdkVersion=\"35\"/><uses-permission " + prefix
-            + ":name=\"org.example.MARKER\"/><application><uses-permission " + prefix
-            + ":name=\"nested.decoy\"/></application></manifest>";
+            + ":name=\"org.example.MARKER\"/><uses-permission-sdk-23 " + prefix
+            + ":name=\"org.example.SDK23\"/><uses-permission-sdk-m " + prefix
+            + ":name=\"org.example.SDKM\"/><other:uses-permission-sdk-23 " + prefix
+            + ":name=\"foreign.element\"/><uses-permission-sdk-23 other:name=\"foreign.attribute\"/>"
+            + "<uses-permission-sdk-230 " + prefix + ":name=\"unknown.tag\"/>"
+            + "<application><uses-permission " + prefix + ":name=\"nested.decoy\"/>"
+            + "<uses-permission-sdk-23 " + prefix + ":name=\"nested.sdk23\"/>"
+            + "<uses-permission-sdk-m " + prefix + ":name=\"nested.sdkm\"/></application></manifest>";
         Map<String, Object> summary = ReaJadxBridge.manifestSummary(xml);
         require(summary.get("package").equals("org.example.root"), "Wrong manifest package");
         require(summary.get("version_name").equals(
@@ -60,8 +68,9 @@ public class ReaJadxMetadataRegression {
             "Version name lost XML entity identity: " + summary);
         require(summary.get("version_code").equals("7") && summary.get("min_sdk").equals("23")
             && summary.get("target_sdk").equals("35"), "Namespace prefix changed summary values");
-        require(summary.get("permissions").equals(List.of("org.example.MARKER")),
-            "Permission summary included a nested or unrelated declaration");
+        require(summary.get("permissions").equals(
+            List.of("org.example.MARKER", "org.example.SDK23", "org.example.SDKM")),
+            "Permission summary lost SDK-gated declarations or included unrelated declarations");
       }
     }
     for (String xml : List.of("<other/>", "<manifest><application></manifest>",
@@ -71,7 +80,96 @@ public class ReaJadxMetadataRegression {
       catch (IllegalArgumentException expected) { refused = true; }
       require(refused, "Malformed or externally described XML was accepted");
     }
+    verifyManifestSplitFacts();
   }
+
+  private static void verifyManifestSplitFacts() throws Exception {
+    String android = "xmlns:a=\"http://schemas.android.com/apk/res/android\"";
+    Map<String, Object> split = ReaJadxBridge.manifestSplitFacts("<manifest " + android
+        + " a:requiredSplitTypes=\"base__abi, base__density\"><application a:isSplitRequired=\"true\"/>"
+        + "<other a:isSplitRequired=\"true\"/></manifest>");
+    require(split.get("required_split_types").equals(List.of("base__abi", "base__density"))
+        && split.get("split_required").equals(true), "Required split facts were lost: " + split);
+    Map<String, Object> plain = ReaJadxBridge.manifestSplitFacts("<manifest " + android
+        + " requiredSplitTypes=\"unnamespaced\"><application a:isSplitRequired=\"false\"/></manifest>");
+    require(plain.get("required_split_types").equals(List.of())
+        && plain.get("split_required").equals(false),
+        "Split facts came from an unnamespaced or false declaration: " + plain);    boolean refused = false;
+    try {
+      ReaJadxBridge.manifestSplitFacts("<manifest " + android + " a:requiredSplitTypes=\""
+          + String.join(",", Collections.nCopies(65, "s")) + "\"/>");
+    } catch (IllegalArgumentException expected) { refused = true; }
+    require(refused, "An unbounded requiredSplitTypes list was admitted");
+    // The bridge decodes the binary manifest itself, without a session; framework
+    // attribute names must resolve through their resource IDs when names are stripped.
+    for (boolean named : List.of(true, false)) {
+      Path apk = Files.createTempFile("rea-split-manifest-", ".apk");
+      try {
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
+          zip.putNextEntry(new ZipEntry("AndroidManifest.xml"));
+          zip.write(splitManifest(named));
+          zip.closeEntry();
+        }
+        Object facts = ReaJadxBridge.nativeDeclarations(apk).get("manifest_splits");
+        require(facts.equals(Map.of("status", "observed",
+            "required_split_types", List.of("base__abi", "base__density"), "split_required", true)),
+            "Binary manifest split facts were lost (named=" + named + "): " + facts);
+      } finally {
+        Files.deleteIfExists(apk);
+      }
+    }
+  }
+
+  /** A binary manifest: requiredSplitTypes on <manifest>, isSplitRequired on <application>. */
+  private static byte[] splitManifest(boolean namedAttributes) {
+    List<String> strings = List.of("http://schemas.android.com/apk/res/android", "manifest",
+        namedAttributes ? "requiredSplitTypes" : "", "base__abi,base__density", "application",
+        namedAttributes ? "isSplitRequired" : "x");
+    java.io.ByteArrayOutputStream data = new java.io.ByteArrayOutputStream();
+    java.nio.ByteBuffer offsets = littleEndian(4 * strings.size());
+    for (String value : strings) {
+      offsets.putInt(data.size());
+      byte[] utf16 = value.getBytes(StandardCharsets.UTF_16LE);
+      data.writeBytes(littleEndian(2).putShort((short) value.length()).array());
+      data.writeBytes(utf16);
+      data.writeBytes(new byte[2]);
+    }
+    byte[] pool = chunk(0x0001, 28, littleEndian(20 + offsets.capacity() + data.size())
+        .putInt(strings.size()).putInt(0).putInt(0).putInt(28 + offsets.capacity()).putInt(0)
+        .put(offsets.array()).put(data.toByteArray()).array());
+    java.nio.ByteBuffer ids = littleEndian(4 * 6);
+    for (int id : new int[] {0, 0, 0x0101064e, 0, 0, 0x01010591}) ids.putInt(id);
+    byte[] resources = chunk(0x0180, 8, ids.array());
+    byte[] manifest = startElement(1, 2, 3, 0x03, 3);
+    byte[] application = startElement(4, 5, -1, 0x12, -1);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    for (byte[] part : List.of(pool, resources, manifest, application, endElement(4), endElement(1)))
+      body.writeBytes(part);
+    return chunk(0x0003, 8, body.toByteArray());
+  }
+
+  private static java.nio.ByteBuffer littleEndian(int size) {
+    return java.nio.ByteBuffer.allocate(size).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+  }
+
+  private static byte[] chunk(int type, int headerSize, byte[] body) {
+    return littleEndian(8 + body.length).putShort((short) type).putShort((short) headerSize)
+        .putInt(8 + body.length).put(body).array();
+  }
+
+  /** One element with one android-namespaced attribute row. */
+  private static byte[] startElement(int name, int attribute, int raw, int type, int value) {
+    return chunk(0x0102, 16, littleEndian(48).putInt(-1).putInt(-1).putInt(-1).putInt(name)
+        .putShort((short) 20).putShort((short) 20).putShort((short) 1).putShort((short) 0)
+        .putShort((short) 0).putShort((short) 0)
+        .putInt(0).putInt(attribute).putInt(raw).putShort((short) 8).put((byte) 0)
+        .put((byte) type).putInt(value).array());
+  }
+
+  private static byte[] endElement(int name) {
+    return chunk(0x0103, 16, littleEndian(16).putInt(-1).putInt(-1).putInt(-1).putInt(name).array());
+  }
+
 
   private static void verifyRootManifests(SessionHolder holder, SessionConfig config,
       Constructor<?> constructor, Method handle, Path output) throws Exception {
@@ -80,7 +178,9 @@ public class ReaJadxMetadataRegression {
     for (boolean assetFirst : List.of(true, false)) {
       String pkg = assetFirst ? "org.example.first" : "org.example.second";
       String root = "<manifest xmlns:a=\"http://schemas.android.com/apk/res/android\" package=\""
-          + pkg + "\" a:versionName=\"one &amp; beta\" a:versionCode=\"7\"/>";
+          + pkg + "\" a:versionName=\"one &amp; beta\" a:versionCode=\"7\">"
+          + "<uses-permission-sdk-23 a:name=\"org.example.SDK23\"/>"
+          + "<uses-permission-sdk-m a:name=\"org.example.SDKM\"/></manifest>";
       String asset = "<manifest package=\"org.example.asset\"/>";
       Path apk = output.resolve(assetFirst ? "manifest-asset-first.apk" : "manifest-root-first.apk");
       try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
@@ -99,6 +199,9 @@ public class ReaJadxMetadataRegression {
       JsonObject summary = call(handle, bridge, "get_app_info", new JsonObject());
       require(summary.get("package").getAsString().equals(pkg), "Asset or previous session supplied package facts");
       require(summary.get("version_name").getAsString().equals("one & beta"), "Wrong root version value");
+      require(summary.getAsJsonArray("permissions").equals(JsonParser.parseString(
+          "[\"org.example.SDK23\",\"org.example.SDKM\"]")),
+          "Root manifest SDK-gated permissions were omitted");
       String raw = holder.current().getResources().stream()
           .filter(resource -> resource.getOriginalName().equals("AndroidManifest.xml"))
           .findFirst().orElseThrow().loadContent().getText().getCodeStr();
@@ -596,6 +699,7 @@ public class ReaJadxMetadataRegression {
     require(ordinary.get("mode").getAsString().equals("java") && ordinary.get("body").getAsString().contains("COUNT"),
         "Ordinary executable method no longer produces Java");
     verifyNoBodyMethods(handle, bridge, holder.current());
+    verifyDisassemblyGenerationFailure(handle, bridge, holder.current());
     verifyMergedMethods(handle, bridge);
     verifyConstantFields(handle, bridge, holder.current());
     verifyRawMemberNames(handle, bridge);
@@ -754,17 +858,67 @@ public class ReaJadxMetadataRegression {
         select.invoke(null, new JadxSession.MethodSmali("highlightText", blocks, true, null), "highlightText()V");
         throw new AssertionError("Unproven disassembly identity or completeness was accepted");
       } catch (InvocationTargetException failure) {
-        require(failure.getCause() instanceof IllegalArgumentException,
-            "Disassembly uncertainty lost its failure reason");
+        require(failure.getCause().getClass().getSimpleName().equals("MethodDisassemblyUnavailable")
+            && failure.getCause().getMessage().contains("highlightText()V"),
+            "Disassembly uncertainty lost its method-scoped reason");
       }
     }
-    String reason = "smali generation failed: controlled timeout";
+    for (String reason : Arrays.asList(null, "class has no smali (no code)",
+        "smali generation failed: controlled timeout")) {
+      try {
+        select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, reason), "highlightText()V");
+        throw new AssertionError("Missing disassembly was accepted as a body");
+      } catch (InvocationTargetException failure) {
+        require(failure.getCause().getClass().getSimpleName().equals("MethodDisassemblyUnavailable")
+            && failure.getCause().getMessage().contains("highlightText()V")
+            && (reason == null || failure.getCause().getMessage().contains(reason)),
+            "Missing disassembly lost its method-scoped reason: " + failure.getCause());
+      }
+    }
+    Thread.currentThread().interrupt();
     try {
-      select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, reason), "highlightText()V");
-      throw new AssertionError("Disassembly generation failure was accepted");
+      select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, "smali generation failed: null"),
+          "highlightText()V");
+      throw new AssertionError("Interrupted disassembly returned a body");
     } catch (InvocationTargetException failure) {
-      require(failure.getCause() instanceof IllegalArgumentException
-          && failure.getCause().getMessage().contains(reason), "Original disassembly failure reason was lost");
+      require(failure.getCause().getClass() == IllegalArgumentException.class
+          && Thread.currentThread().isInterrupted(), "Disassembly consumed the caller interruption");
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  private static void verifyDisassemblyGenerationFailure(Method handle, Object bridge, JadxSession session)
+      throws Exception {
+    JsonObject input = methodArguments("fixture.MixedInitialization", "<clinit>");
+    JsonObject complete = call(handle, bridge, "get_method_body", input);
+    Field pool = JadxSession.class.getDeclaredField("decompilePool");
+    pool.setAccessible(true);
+    ExecutorService rejected = Executors.newSingleThreadExecutor();
+    rejected.shutdown();
+    Object original = pool.get(session);
+    pool.set(session, rejected);
+    try {
+      JsonObject unavailable = call(handle, bridge, "get_method_body", input);
+      require(unavailable.get("mode").getAsString().equals("unavailable")
+          && !unavailable.has("body") && !unavailable.has("fell_back") && !unavailable.has("markers"),
+          "Rejected disassembly work did not report an unavailable body: " + unavailable);
+      require(unavailable.get("body_unavailable_reason").getAsString().contains("smali generation failed"),
+          "JADX generation failure reason was discarded: " + unavailable);
+      for (String key : List.of("class_name", "method_name", "full_name", "dex_descriptor",
+          "overload_index", "overload_count")) {
+        require(complete.get(key).equals(unavailable.get(key)), "Disassembly failure changed " + key);
+      }
+      try {
+        call(handle, bridge, "get_method_body", methodArguments("fixture.MixedInitialization", "touch"));
+        throw new AssertionError("A Java generation error was classified as unavailable disassembly");
+      } catch (AssertionError failure) {
+        require(failure.getCause() instanceof IllegalArgumentException
+            && failure.getCause().getMessage().startsWith("// ERROR:"),
+            "Java generation did not keep its provider error: " + failure);
+      }
+    } finally {
+      pool.set(session, original);
     }
   }
 
@@ -978,10 +1132,73 @@ public class ReaJadxMetadataRegression {
       verifyInitializers(holder, config, constructor, handle, initializerApk);
       verifyDirectInvokes(holder, config, constructor, handle,
           Path.of(args[3]), Path.of(args[2]));
+      verifyLargeOverloadedClass(holder, config, constructor, handle, Path.of(args[2]));
       verifyRootManifests(holder, config, constructor, handle, Path.of(args[2]));
     } finally {
       BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
           (scope, continuation) -> holder.unload(continuation));
     }
+  }
+
+  private static void verifyLargeOverloadedClass(SessionHolder holder, SessionConfig config,
+      Constructor<?> constructor, Method handle, Path output) throws Exception {
+    Path source = output.resolve("LargeOverloaded.smali");
+    StringBuilder text = new StringBuilder(".class public Lfixture/LargeOverloaded;\n.super Ljava/lang/Object;\n");
+    for (int index = 0; index < 2495; index++) {
+      text.append(".method public static m").append(index).append("()V\n.registers 0\nreturn-void\n.end method\n");
+    }
+    text.append(".method public static pick()I\n.registers 1\nconst/16 v0, 101\nreturn v0\n.end method\n")
+        .append(".method public static pick(I)I\n.registers 1\nconst/16 v0, 102\nreturn v0\n.end method\n")
+        .append(".method public static pick(Ljava/lang/String;)I\n.registers 1\nconst/16 v0, 103\nreturn v0\n.end method\n")
+        .append(".method public static pick(II)I\n.registers 2\nconst/16 v0, 104\nreturn v0\n.end method\n")
+        .append(".method public static pick(J)I\n.registers 2\nconst/16 v0, 105\nreturn v0\n.end method\n")
+        .append(".method public static usePick(Ljava/lang/String;)I\n.registers 1\n"
+            + "invoke-static {p0}, Lfixture/LargeOverloaded;->pick(Ljava/lang/String;)I\n"
+            + "move-result v0\nreturn v0\n.end method\n");
+    Files.writeString(source, text, StandardCharsets.UTF_8);
+    Path dex = output.resolve("large-overloaded.dex");
+    SmaliOptions options = new SmaliOptions();
+    options.apiLevel = 28;
+    options.jobs = 1;
+    options.outputDexFile = dex.toString();
+    require(Smali.assemble(options, List.of(source.toString())), "Large overloaded assembly failed");
+    Path apk = output.resolve("large-overloaded.apk");
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
+      zip.putNextEntry(new ZipEntry("classes.dex"));
+      Files.copy(dex, zip);
+      zip.closeEntry();
+    }
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.unload(continuation));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.load(apk.toString(), config, continuation));
+    Object bridge = constructor.newInstance(holder);
+    ClassNode node = holder.current().getClasses().get(0).getClassNode();
+    require(node.getState() == ProcessState.NOT_LOADED, "Large class preload generated source");
+    JsonObject summary = call(handle, bridge, "get_class_summary", arguments("fixture.LargeOverloaded"));
+    require(summary.get("method_count").getAsInt() == 2501, "Wrong large method count");
+    require(node.getState() == ProcessState.NOT_LOADED, "Large class summary generated source");
+    String[] expectedDescriptors = { "()I", "(I)I", "(II)I", "(J)I", "(Ljava/lang/String;)I" };
+    String[] expectedConstants = { "101", "102", "104", "105", "103" };
+    for (int index = 0; index < expectedDescriptors.length; index++) {
+      JsonObject req = arguments("fixture.LargeOverloaded");
+      req.addProperty("method_name", "pick");
+      req.addProperty("overload_index", index);
+      JsonObject body = call(handle, bridge, "get_method_body", req);
+      require(body.get("dex_descriptor").getAsString().equals(expectedDescriptors[index])
+          && body.get("overload_count").getAsInt() == 5
+          && body.get("body").getAsString().contains(expectedConstants[index]),
+          "Overload resolution mismatch in 2500-method class at index " + index + ": " + body);
+    }
+    JsonObject lateReq = methodArguments("fixture.LargeOverloaded", "m2490");
+    JsonObject lateBody = call(handle, bridge, "get_method_body", lateReq);
+    require(lateBody.get("dex_descriptor").getAsString().equals("()V"), "Late method lookup failed");
+    JsonObject xrefReq = arguments("fixture.LargeOverloaded");
+    xrefReq.addProperty("method_name", "pick");
+    xrefReq.addProperty("overload_index", 4);
+    JsonObject xrefs = call(handle, bridge, "get_xrefs_to_method", xrefReq);
+    require(xrefs.get("count").getAsInt() == 1
+        && xrefs.getAsJsonArray("items").get(0).getAsJsonObject().get("name").getAsString().equals("usePick"),
+        "Overloaded xref resolution failed in 2500-method class: " + xrefs);
   }
 }

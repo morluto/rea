@@ -1,0 +1,6 @@
+$ COMPLETE=bash rea -- rea inspect-byte-e
+exit: 0
+--- stdout
+inspect-byte-entropy<end>
+--- stderr
+<end>

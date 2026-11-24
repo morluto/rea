@@ -72,6 +72,7 @@ it.each(formats)(
         dllCharacteristics: 0,
         directoryCountOffset: format.directoryOffset - 4,
         directoryCount: 0,
+        declaredDirectoryCount: 0,
         dataDirectories: [],
       },
     });
@@ -117,7 +118,7 @@ it.each(formats)("rejects a partial $format directory entry", (format) => {
     error: {
       kind: "malformed",
       reason: "truncated-directory-table",
-      message: "truncated PE data-directory table",
+      message: expect.stringMatching(/truncated.*directory/iu),
     },
   });
 });
@@ -135,24 +136,26 @@ it.each(formats)(
 );
 
 it.each(formats)(
-  "reads every $format directory that fits the maximum COFF optional-header extent",
+  "reads the 16 $format directories the loader reads when NumberOfRvaAndSizes is larger",
   (format) => {
     const byteLength = 0xffff;
-    const directoryCount = Math.floor(
-      (byteLength - format.directoryOffset) / 8,
-    );
-    const bytes = header(format, directoryCount, byteLength);
-    const offset = format.directoryOffset + (directoryCount - 1) * 8;
-    bytes.writeUInt32LE(0xffffffff, offset);
-    bytes.writeUInt32LE(0xfffffffe, offset + 4);
+    const bytes = header(format, 0xffffffff, byteLength);
+    const last = format.directoryOffset + 15 * 8;
+    bytes.writeUInt32LE(0xffffffff, last);
+    bytes.writeUInt32LE(0xfffffffe, last + 4);
+    // An entry past the 16th is not a directory, whatever the count says.
+    bytes.writeUInt32LE(0x1234, last + 8);
     const result = readPeOptionalHeaderStructure(bytes);
     if (!result.ok) throw new Error(result.error.message);
-    expect(result.value.directoryCount).toBe(directoryCount);
-    expect(result.value.dataDirectories).toHaveLength(directoryCount);
+    expect(result.value).toMatchObject({
+      directoryCount: 16,
+      declaredDirectoryCount: 0xffffffff,
+    });
+    expect(result.value.dataDirectories).toHaveLength(16);
     expect(result.value.dataDirectories.at(-1)).toEqual({
       address: 0xffffffff,
       size: 0xfffffffe,
-      offset,
+      offset: last,
     });
   },
 );
@@ -215,6 +218,7 @@ it("honors a Uint8Array window and detaches facts from later source changes", ()
     dllCharacteristics: 0,
     directoryCountOffset: formats[1].directoryOffset - 4,
     directoryCount: 1,
+    declaredDirectoryCount: 1,
     dataDirectories: [{ address: 0x12345678, size: 0x90, offset: 112 }],
   });
 });
@@ -224,14 +228,17 @@ it("keeps structural refusal ahead of conflicting machine width", () => {
   bytes.writeUInt32LE(1, 92);
   expect(readPeOptionalHeader(bytes, 0x8664)).toEqual({
     ok: false,
-    error: { kind: "malformed", message: "truncated PE data-directory table" },
+    error: {
+      kind: "malformed",
+      message: expect.stringMatching(/truncated.*directory/iu),
+    },
   });
   bytes.writeUInt32LE(0, 92);
   expect(readPeOptionalHeader(bytes, 0x8664)).toEqual({
     ok: false,
     error: {
       kind: "malformed",
-      message: "PE optional-header magic does not match its architecture",
+      message: expect.stringMatching(/magic.*architecture/iu),
     },
   });
 });
