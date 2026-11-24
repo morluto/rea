@@ -108,6 +108,7 @@ export const observePyInstallerCookie = async (
     return ok({ state: "absent" });
   const tailSize = Math.min(fileSize, PYINSTALLER_COOKIE_SEARCH_BYTES);
   const read = await readPyInstallerBytes(handle, {
+    measuredEnd: fileSize,
     position: fileSize - tailSize,
     length: tailSize,
     label: "CArchive tail",
