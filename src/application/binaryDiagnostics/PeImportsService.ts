@@ -91,13 +91,11 @@ const validReport = (
   input: {
     readonly max_dlls: number;
     readonly max_functions: number;
-    readonly max_file_bytes: number;
   },
 ): boolean => {
   const inside = insideArtifact(report.artifact.bytes);
   const dllCount = report.imports.length + report.delay_imports.length;
   if (
-    report.artifact.bytes > input.max_file_bytes ||
     report.coverage.examined_dlls > input.max_dlls ||
     dllCount > report.coverage.examined_dlls ||
     (report.coverage.status === "complete" &&

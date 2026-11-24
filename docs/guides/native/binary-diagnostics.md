@@ -315,7 +315,8 @@ shapes fail explicitly, rather than returning partial inventories. Exact shared
 payload ranges are supported. The supported tree has three levels: type, name,
 and language. Other resource payload formats remain opaque.
 
-`max_file_bytes` defaults to 64 MiB (maximum 512 MiB); `max_entries` defaults to
+`max_file_bytes`, the [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance) for headers, directories and resource
+ranges, defaults to 64 MiB (maximum 512 MiB); `max_entries` defaults to
 16384, the largest stock Windows resource image measured with headroom
 (maximum 65536). CLI options are `--max-file-bytes` and `--max-entries`.
 Metadata is bounded to 8 MiB; exceeding any budget fails without truncation.
@@ -558,7 +559,8 @@ their string tables keep readable export rows with `partial` coverage and
 unresolved versions. When version definition storage is compressed, requirement
 names also remain unknown because unseen definitions may override them.
 
-`max_file_bytes` defaults to 256 MiB (maximum 512 MiB; CLI `--max-file-bytes`).
+`max_file_bytes`, the [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance), defaults to 256 MiB (maximum 512 MiB;
+CLI `--max-file-bytes`); files up to 512 MiB are admitted whatever their size.
 Export directories in PE headers are read like those in sections. An export or
 dynamic symbol table above 262144 entries, more than 262144 rows, or more than
 16 MiB of retained names fails without partial success. Export rows do not establish that a symbol is reachable, safe to call

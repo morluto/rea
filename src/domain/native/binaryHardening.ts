@@ -31,7 +31,9 @@ export const inspectBinaryHardeningInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_BINARY_HARDENING_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
 });
 export type InspectBinaryHardeningInput = z.infer<
   typeof inspectBinaryHardeningInputSchema

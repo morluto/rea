@@ -69,7 +69,8 @@ the image never imported APIs through another table or overlay.
 
 ## Limits and failures
 
-The selected file is limited to 64 MiB by default (512 MiB maximum). At most
+The reader reads at most 64 MiB by default (`max_file_bytes`, 512 MiB maximum;
+see [read allowance](reference/limits-and-recovery.md#static-reader-read-allowance)), whatever the file size. At most
 256 import and delay-load descriptors are examined by default (4096 maximum),
 and at most 8192 functions across every table (262144 maximum). Malformed PE
 headers and exhausted DLL or function budgets fail without partial success.

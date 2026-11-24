@@ -26,6 +26,8 @@ const MAX_PE_EXPORT_ORDINAL = 0xffffffff + 0xfffffffe;
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES = 536870912;
+/** Default allowance for the bytes the export reader reads. */
+export const DEFAULT_NATIVE_EXPORTS_READ_BYTES = 268435456;
 /** Fixed bound on reported export rows, so one library cannot flood a reply. */
 export const MAX_NATIVE_EXPORT_ROWS = 262144;
 
@@ -39,8 +41,10 @@ export const inspectNativeExportsInputSchema = z.strictObject({
     .int()
     .min(64)
     .max(MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES)
-    .default(268435456)
-    .describe("Maximum stable artifact bytes to read (default 256 MiB)"),
+    .default(DEFAULT_NATIVE_EXPORTS_READ_BYTES)
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, tables and the ranges they reference (default 256 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
 });
 export type InspectNativeExportsInput = z.infer<
   typeof inspectNativeExportsInputSchema
