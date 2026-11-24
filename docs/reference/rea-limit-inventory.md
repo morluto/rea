@@ -206,3 +206,31 @@ tables above and compares them with `ANALYSIS_SETTINGS` or the owner constant
 the parser enforces. A mismatch names the limit and both values. A cell that
 is only `Number.MAX_SAFE_INTEGER` or `MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`
 means that export. `unset` means the code default is null.
+
+## Per-call request parameters and fixed ceilings
+
+Request parameters are not `REA_` limits and are not in `ANALYSIS_SETTINGS`;
+each operation's schema owns its bounds, and a refusal reports
+`details.limit` with `control_kind: "parameter"` and `applies_at: "next_call"`.
+These parameters report that limit:
+
+| Operation                                     | Parameter                | Default    | Floor |                   Maximum | Owner                                 |
+| --------------------------------------------- | ------------------------ | ---------- | ----: | ------------------------: | ------------------------------------- |
+| `inspect_il2cpp_metadata`                     | `max_native_index_bytes` | 1073741824 |     1 | `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/elfReadBudgets.ts` |
+| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`            | 128        |     1 |                       256 | `src/domain/native/elfReadBudgets.ts` |
+
+Refusals that still name a per-call control only in prose are counted by the
+`untyped-budget-refusal` architecture guard and tracked in
+[#14234](https://github.com/morluto/rea/issues/14234).
+
+Fixed ceilings are listed with their class and reason in
+`scripts/verify/fixed-ceiling-registry.json`, which `npm run lint` checks with
+`scripts/verify/fixed-ceilings.mjs`; see
+[keep a fixed ceiling honest](limits-and-recovery.md#keep-a-fixed-ceiling-honest).
+Entries classed `pending` are resource limits awaiting a control, tracked in
+[#14175](https://github.com/morluto/rea/issues/14175) (IL2CPP),
+[#14235](https://github.com/morluto/rea/issues/14235) (native readers),
+[#14236](https://github.com/morluto/rea/issues/14236) (archive and container
+readers) and [#14237](https://github.com/morluto/rea/issues/14237) (producer
+output and capture).

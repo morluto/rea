@@ -78,6 +78,8 @@ export type Il2cppBinaryReadOptions = Pick<
 > & {
   /** Also link genericMethodTable rows; unrequested paths read no generic table. */
   readonly genericInstances?: boolean;
+  /** Caller's ELF pointer index allowance (`max_native_index_bytes`). */
+  readonly maxNativeIndexBytes?: number;
 };
 
 const assertGenericLinkLayout = (
@@ -101,7 +103,12 @@ export function* linkIl2cppBinarySteps(
 ): Generator<void, Il2cppBinaryLink> {
   assertGenericLinkLayout(metadata, options);
   yield;
-  return yield* linkImageSteps(openImageSteps(bytes), metadata, facts, options);
+  return yield* linkImageSteps(
+    openImageSteps(bytes, undefined, options.maxNativeIndexBytes),
+    metadata,
+    facts,
+    options,
+  );
 }
 
 export const linkIl2cppBinaryCooperative = async (
@@ -115,7 +122,7 @@ export const linkIl2cppBinaryCooperative = async (
   await pause();
   const container = await readIl2cppBinaryContainerCooperative(bytes, pause);
   const steps = linkImageSteps(
-    openImageSteps(bytes, container),
+    openImageSteps(bytes, container, options.maxNativeIndexBytes),
     metadata,
     facts,
     options,
