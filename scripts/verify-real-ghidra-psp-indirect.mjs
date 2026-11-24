@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
@@ -17,6 +16,7 @@ import {
 } from "../tests/conformance/ghidra/psp-fixture.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import {
   createVerifierRun,
   completeVerifierRun,
@@ -43,7 +43,8 @@ if (ghidra.status !== "available")
 
 const run = createVerifierRun();
 const commands = await createVerifierCommands();
-const workspace = await mkdtemp(join(tmpdir(), "rea-psp-indirect-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-psp-indirect-" });
+const workspace = fixture.path;
 const runtime = join(workspace, "runtime");
 const origin = fileURLToPath(
   new URL("../tests/conformance/psp/control-flow/", import.meta.url),
@@ -369,17 +370,11 @@ try {
   failures.push(error);
 } finally {
   try {
-    if (client !== undefined) await client.close();
-  } catch (error) {
-    failures.push(error);
-  }
-  try {
-    if (transport !== undefined) await transport.close();
-  } catch (error) {
-    failures.push(error);
-  }
-  try {
-    await commands.close();
+    await fixture.closeEarly([
+      () => client?.close(),
+      () => transport?.close(),
+      () => commands.close(),
+    ]);
   } catch (error) {
     failures.push(error);
   }
@@ -401,7 +396,7 @@ if (failures.length > 0)
     `PSP verifier failed; retained workspace: ${workspace}`,
   );
 assert.ok(report, "Missing PSP indirect branch report");
-await rm(workspace, { recursive: true, force: true });
+await fixture.release();
 process.stdout.write(
   JSON.stringify(
     {
