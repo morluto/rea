@@ -50,11 +50,11 @@ export interface AgentResultBudget {
  * and doctor report the seed. A delivery budget never refuses work.
  */
 export const currentAgentResultBudget = (
-  environment: Readonly<Record<string, string | undefined>> = process.env,
+  /** The launch seed from the environment the CLI or server captured. */
+  seed: string | undefined,
 ): AgentResultBudget | undefined => {
   const override = currentAnalysisSettingOverride(AGENT_RESULT_BUDGET_SETTING);
   if (override !== undefined) return { bytes: override, source: "runtime" };
-  const seed = environment[AGENT_RESULT_BUDGET_ENVIRONMENT];
   if (seed === undefined)
     return { bytes: DEFAULT_AGENT_RESULT_BUDGET_BYTES, source: "default" };
   const parsed = agentResultBudgetBytesSchema.safeParse(seed);

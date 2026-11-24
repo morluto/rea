@@ -133,7 +133,10 @@ export const runEager = async (
           analysisSettings,
           environment,
           signal: startup.signal,
-          delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
+          delivery: createToolResultDelivery(
+            config.value.mcpMaxResponseBytes,
+            environment,
+          ),
           loadOptionalProviders:
             dependencies.loadOptionalProviders ??
             (() =>

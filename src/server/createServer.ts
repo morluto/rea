@@ -646,7 +646,7 @@ const selectToolResultDelivery = (
     environment.REA_MCP_MAX_RESPONSE_BYTES,
   );
   if (!configured.ok) throw configured.error;
-  return createToolResultDelivery(configured.value);
+  return createToolResultDelivery(configured.value, environment);
 };
 
 const outputSchemaProfile = (

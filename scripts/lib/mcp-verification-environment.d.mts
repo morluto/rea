@@ -1,3 +1,4 @@
 export const INLINE_EVIDENCE_MCP_ENVIRONMENT: {
   readonly REA_MCP_MAX_INPUT_ELEMENTS: "65536";
+  readonly REA_AGENT_RESULT_BUDGET_BYTES: string;
 };

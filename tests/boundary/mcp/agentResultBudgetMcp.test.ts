@@ -20,6 +20,7 @@ import { AGENT_BUDGET_DELIVERY_META } from "../../../src/server/ToolResultDelive
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
+import { withCliEvidencePublication } from "../../../src/cli/cliEvidencePublication.js";
 import { createByteEntropyService } from "../../../src/composition/binaryDiagnostics/byteEntropy.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -373,6 +374,12 @@ it("delivers the same over-budget summary through CLI publication, with complete
   expect(parseEvidence(await publish("complete")).evidence_id).toBe(
     complete.evidence_id,
   );
+  // The invocation's captured seed, not the ambient process, raises it.
+  const seeded = await withCliEvidencePublication(
+    () => publish(undefined),
+    String(16 * 1024 * 1024),
+  );
+  expect(parseEvidence(seeded).evidence_id).toBe(complete.evidence_id);
 
   const bundle = join(
     await createTestTempDirectory("rea-agent-budget-bundle-"),

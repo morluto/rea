@@ -205,6 +205,8 @@ export class ToolResultDelivery {
       viewSource?: JsonValue,
     ) => Readonly<Record<string, JsonValue>> = () => ({}),
     private readonly noTargetRecovery?: string,
+    /** REA_AGENT_RESULT_BUDGET_BYTES from the environment this server captured. */
+    private readonly agentBudgetSeed?: string,
   ) {
     this.maximumResponseBytes = maximumResponseBytes;
     this.resultBudgetBytes = maximumResponseBytes - 1024;
@@ -217,6 +219,7 @@ export class ToolResultDelivery {
       this.maximumResponseBytes,
       this.nativeContinuation,
       recovery,
+      this.agentBudgetSeed,
     );
   }
 
@@ -315,16 +318,28 @@ export class ToolResultDelivery {
     const budgeted =
       recorded === undefined
         ? undefined
-        : overBudgetSummary(evidence, contract, recordSummary);
+        : overBudgetSummary(
+            evidence,
+            contract,
+            recordSummary,
+            this.agentBudgetSeed,
+          );
     if (budgeted !== undefined) {
-      const delivered = this.successResult(budgeted.summary, contract, {
-        evidence_id: budgeted.summary.evidence_id,
-        evidence_reference: {
-          kind: "retained-evidence",
-          evidence_id: evidence.evidence_id,
+      // The frame check covers the delivery facts added after encoding.
+      const delivered = this.successResult(
+        budgeted.summary,
+        contract,
+        {
+          evidence_id: budgeted.summary.evidence_id,
+          evidence_reference: {
+            kind: "retained-evidence",
+            evidence_id: evidence.evidence_id,
+          },
+          agent_budget: budgeted.delivery as unknown as JsonValue,
         },
-        agent_budget: budgeted.delivery as unknown as JsonValue,
-      });
+        undefined,
+        agentBudgetDeliveryBytes(budgeted.delivery),
+      );
       return delivered.isError === true
         ? delivered
         : withAgentBudgetDelivery(delivered, budgeted.delivery);
@@ -563,18 +578,21 @@ export class ToolResultDelivery {
       failure: Extract<ToolResultEncoding, { readonly ok: false }>,
       budgetBytes: number,
     ) => Iterable<JsonValue>,
+    /** Bytes the caller adds to a successful result after this encoding. */
+    reservedBytes = 0,
   ): CallToolResult {
+    const budgetBytes = this.resultBudgetBytes - reservedBytes;
     let encoded = encodeToolResult(
       value,
-      this.resultBudgetBytes,
+      budgetBytes,
       "structured-and-text",
       contract.returnsTargetContent,
     );
     if (!encoded.ok && alternatives !== undefined)
-      for (const candidate of alternatives(encoded, this.resultBudgetBytes)) {
+      for (const candidate of alternatives(encoded, budgetBytes)) {
         const candidateEncoding = encodeToolResult(
           candidate,
-          this.resultBudgetBytes,
+          budgetBytes,
           "structured-and-text",
           contract.returnsTargetContent,
         );
@@ -636,6 +654,7 @@ const overBudgetSummary = (
   evidence: Evidence,
   contract: ToolContract,
   recordSummary: EvidenceWriter["recordEvidence"] | undefined,
+  agentBudgetSeed: string | undefined,
 ):
   | { readonly summary: Evidence; readonly delivery: AgentBudgetDelivery }
   | undefined => {
@@ -643,7 +662,7 @@ const overBudgetSummary = (
   const selection = currentMcpToolRequest()?.deliverySelection;
   if (selection === undefined || selection.detail !== undefined)
     return undefined;
-  const budget = currentAgentResultBudget();
+  const budget = currentAgentResultBudget(agentBudgetSeed);
   if (budget === undefined) return undefined;
   const completeBytes = agentBudgetOverflowBytes(evidence, budget);
   if (completeBytes === undefined) return undefined;
@@ -666,6 +685,25 @@ const overBudgetSummary = (
   };
 };
 
+const agentBudgetDeliveryBlock = (delivery: AgentBudgetDelivery) => ({
+  type: "text" as const,
+  text: JSON.stringify({ delivery }),
+});
+
+/**
+ * Upper bound on the wire bytes the delivery facts add: their text block
+ * with its separator, and their `_meta` member with its separator.
+ */
+export const agentBudgetDeliveryBytes = (
+  delivery: AgentBudgetDelivery,
+): number =>
+  Buffer.byteLength(JSON.stringify(agentBudgetDeliveryBlock(delivery))) +
+  1 +
+  Buffer.byteLength(
+    JSON.stringify({ [AGENT_BUDGET_DELIVERY_META]: delivery }),
+  ) +
+  1;
+
 /**
  * Carry the delivery facts beside the summary record: a second text block
  * the model reads, and `_meta` for clients that read structured metadata.
@@ -676,10 +714,7 @@ const withAgentBudgetDelivery = (
   delivery: AgentBudgetDelivery,
 ): CallToolResult => ({
   ...result,
-  content: [
-    ...result.content,
-    { type: "text", text: JSON.stringify({ delivery }) },
-  ],
+  content: [...result.content, agentBudgetDeliveryBlock(delivery)],
   _meta: { ...result._meta, [AGENT_BUDGET_DELIVERY_META]: delivery },
 });
 

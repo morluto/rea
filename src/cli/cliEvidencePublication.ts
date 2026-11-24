@@ -8,12 +8,20 @@ export interface PublishedEvidenceReceipt {
 
 interface PublicationContext {
   receipt?: PublishedEvidenceReceipt;
+  /** REA_AGENT_RESULT_BUDGET_BYTES from the environment this invocation captured. */
+  readonly agentBudgetSeed?: string | undefined;
 }
 const publication = new AsyncLocalStorage<PublicationContext>();
 
 /** Keep publication state in the invocation that owns delivery and formatting. */
-export const withCliEvidencePublication = <Value>(run: () => Value): Value =>
-  publication.run({}, run);
+export const withCliEvidencePublication = <Value>(
+  run: () => Value,
+  agentBudgetSeed?: string,
+): Value => publication.run({ agentBudgetSeed }, run);
+
+/** The agent result budget seed of this invocation; none outside one. */
+export const cliAgentBudgetSeed = (): string | undefined =>
+  publication.getStore()?.agentBudgetSeed;
 
 export const recordCliEvidencePublication = (
   receipt: PublishedEvidenceReceipt,

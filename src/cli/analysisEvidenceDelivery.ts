@@ -1,5 +1,8 @@
 import { explicitValuesOccurIn } from "../domain/explicitSensitiveValues.js";
-import { recordCliEvidencePublication } from "./cliEvidencePublication.js";
+import {
+  cliAgentBudgetSeed,
+  recordCliEvidencePublication,
+} from "./cliEvidencePublication.js";
 import { recordCliDeliveredEvidence } from "./cliResultControls.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import {
@@ -236,7 +239,7 @@ const budgetDelivery = (
   input: CliEvidencePublication,
 ): ((recovery: AgentBudgetRecovery) => AgentBudgetDelivery) | undefined => {
   if (input.detail !== undefined) return undefined;
-  const budget = currentAgentResultBudget();
+  const budget = currentAgentResultBudget(cliAgentBudgetSeed());
   if (budget === undefined) return undefined;
   const completeBytes = agentBudgetOverflowBytes(complete, budget);
   return completeBytes === undefined
