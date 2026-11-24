@@ -467,8 +467,12 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_erlang_beam" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_erlang_beam",
+        format_failure: "malformed",
+        format: "beam",
+      },
     });
   },
 );
@@ -505,10 +509,12 @@ cliTest(
     const refused = await inspect();
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_erlang_beam",
-        issues: [{ path: ["path"], reason: "invalid_format" }],
+        format_failure: "malformed",
+        format: "beam",
+        reason: "BEAM chunk payload exceeds the form.",
       },
     });
   },

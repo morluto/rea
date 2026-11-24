@@ -25,7 +25,6 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { ParseFailureError } from "../domain/parseFailure.js";
 
 /**
  * A reader's integrity failure as a selected-artifact change, keeping the
@@ -85,25 +84,22 @@ export const projectOwnedArtifactInputFailure = (
     return new AnalysisUnsupportedTargetError(operation, path, cause.message, {
       cause,
     });
-  // A parser's malformed or truncated bytes keep their parsed facts and are a
-  // target refusal; the request that selected the file is not at fault. Only
-  // the reader's own reason establishes that: a cancelled read carries the
-  // caller's opaque abort reason as its cause, whatever that value is.
-  const parsed = cause.cause;
-  if (
-    (cause.reason === "malformed" || cause.reason === "truncated") &&
-    parsed instanceof ParseFailureError &&
-    (parsed.failure.kind === "malformed" || parsed.failure.kind === "truncated")
-  )
-    return new AnalysisMalformedTargetError(operation, path, parsed.failure, {
-      cause,
-    });
-  if (
-    cause.reason === "malformed" ||
-    cause.reason === "truncated" ||
-    cause.reason === "format" ||
-    cause.reason === "path"
-  )
+  // A parser's malformed or truncated bytes keep the format owner's parsed
+  // facts and are a target refusal; the request that selected the file is not
+  // at fault. The reader records those facts only for its own malformed or
+  // truncated reason, so a cancelled read whose opaque abort reason happens to
+  // be a parser failure stays a cancellation.
+  if (cause.parseFailure !== undefined)
+    return new AnalysisMalformedTargetError(
+      operation,
+      path,
+      cause.parseFailure,
+      { cause },
+    );
+  // Only a path-kind refusal (a symlink, directory or other non-regular file)
+  // is the caller's selection. Byte faults without parsed facts are left to
+  // the reader's own artifact-operation classification.
+  if (cause.reason === "path")
     return stableArtifactInputFailure(cause, operation, field);
   return undefined;
 };
@@ -159,7 +155,7 @@ export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
       }
     : {};
 
-/** Report a rejected artifact path or format with its source-provided recovery. */
+/** Report a rejected artifact path with its source-provided recovery. */
 export const stableArtifactInputFailure = (
   cause: ArtifactReaderFailure,
   operation: string,

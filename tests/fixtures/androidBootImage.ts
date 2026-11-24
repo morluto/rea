@@ -420,6 +420,7 @@ export const androidBootImageRefusals = () => {
       kind: "truncated",
       code: "truncated",
       category: "truncated",
+      format: "android-boot-image",
     },
     {
       name: "bad-page",
@@ -427,6 +428,7 @@ export const androidBootImageRefusals = () => {
       kind: "malformed",
       code: "unsupported_target",
       category: "unsupported_target",
+      format: "android-boot-image",
     },
   ] as const;
 };

@@ -1,4 +1,4 @@
-import { malformedInput } from "../domain/parseFailure.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 import {
   parseMachoLayout,
   type MachoLayout,
@@ -28,7 +28,7 @@ export const layoutFor = (
     slice,
   });
   if (selected.ok) return parseMachoLayout(bytes, selected.value);
-  if (selected.error.kind === "malformed")
-    throw malformedInput("macho", selected.error.message);
+  if (selected.error.kind === "format")
+    throw new ParseFailureError(selected.error.failure);
   throw new MachoSliceRefused(selected.error);
 };

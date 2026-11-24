@@ -6,7 +6,16 @@ import {
   fatSliceRange,
   machoImage,
 } from "../../artifacts/apple/MachoImage.fixture.js";
-import { selectMachoSlice } from "../../domain/apple/machoSliceSelection.js";
+import {
+  requireSelectedNativeImage,
+  requireSelectedNativeImageFromReader,
+  selectMachoSlice,
+} from "../../domain/apple/machoSliceSelection.js";
+import {
+  AnalysisInputError,
+  AnalysisMalformedTargetError,
+  AnalysisUnsupportedTargetError,
+} from "../../domain/analysisErrorCore.js";
 
 const selectNativeImage = (
   bytes: Buffer,
@@ -196,10 +205,17 @@ describe("selectNativeImage family reads and unread slices", () => {
       [CPU_ARM64, 2, 0],
     ]);
     const result = selectNativeImage(file.bytes, "arm64e");
+    const message =
+      "FAT architecture 1 CPU type/subtype disagrees with its Mach-O header";
     expect(result.ok ? undefined : result.error).toEqual({
-      kind: "malformed",
-      message:
-        "FAT architecture 1 CPU type/subtype disagrees with its Mach-O header",
+      kind: "format",
+      message,
+      failure: {
+        kind: "malformed",
+        format: "macho",
+        detail: message,
+        offset: file.offsets[1],
+      },
     });
   });
 
@@ -211,9 +227,44 @@ describe("selectNativeImage family reads and unread slices", () => {
     // Declare the second slice past the end of the file.
     file.bytes.writeUInt32BE(file.bytes.length, 8 + 20 + 12);
     const result = selectNativeImage(file.bytes, "arm64");
+    const message = "FAT architecture 1 slice range extends beyond the file";
     expect(result.ok ? undefined : result.error).toEqual({
-      kind: "malformed",
-      message: "FAT architecture 1 slice range extends beyond the file",
+      kind: "format",
+      message,
+      failure: { kind: "malformed", format: "macho", detail: message },
+    });
+  });
+
+  it("fails as truncated when the selected slice ends inside its Mach-O identity", () => {
+    const file = fat([
+      [CPU_ARM64, 0],
+      [CPU_ARM64, 2],
+    ]);
+    // The second slice keeps its Mach-O magic but declares only 8 bytes.
+    file.bytes.writeUInt32BE(8, 8 + 20 + 12);
+    const result = selectNativeImage(file.bytes, "arm64e");
+    expect(result.ok ? undefined : result.error).toMatchObject({
+      kind: "format",
+      failure: {
+        kind: "truncated",
+        format: "macho",
+        detail: "FAT architecture 1 has a truncated Mach-O identity",
+        offset: file.offsets[1],
+      },
+    });
+  });
+
+  it("keeps an alignment outside coverage unsupported, not malformed", () => {
+    const file = fat([[CPU_ARM64, 0]]);
+    file.bytes.writeUInt32BE(60, 8 + 16);
+    const result = selectNativeImage(file.bytes, "arm64");
+    expect(result.ok ? undefined : result.error).toMatchObject({
+      kind: "format",
+      failure: {
+        kind: "unsupported",
+        format: "macho",
+        detail: "FAT architecture 0 alignment exponent 60 is unsupported",
+      },
     });
   });
 
@@ -269,3 +320,88 @@ describe("selectNativeImage family reads and unread slices", () => {
     );
   });
 });
+
+/** Both public selection mappers, over a buffer and over a random-access reader. */
+const MAPPERS = {
+  buffer: (bytes: Buffer, architecture: MachoSliceArchitecture) =>
+    Promise.resolve().then(() =>
+      requireSelectedNativeImage(
+        "inspect_go_binary",
+        "/a.dylib",
+        bytes,
+        architecture,
+      ),
+    ),
+  reader: (bytes: Buffer, architecture: MachoSliceArchitecture) =>
+    requireSelectedNativeImageFromReader(
+      "inspect_go_binary",
+      "/a.dylib",
+      {
+        size: bytes.length,
+        readRange: (offset, length) =>
+          Promise.resolve(bytes.subarray(offset, offset + length)),
+      },
+      architecture,
+    ),
+} as const;
+
+describe.each(Object.entries(MAPPERS))(
+  "requireSelectedNativeImage over a %s",
+  (_, select) => {
+    const refusal = (bytes: Buffer, architecture: MachoSliceArchitecture) =>
+      select(bytes, architecture).then(
+        () => {
+          throw new Error("expected a selection refusal");
+        },
+        (cause: unknown) => cause,
+      );
+
+    it("refuses an unknown slice as the caller's architecture, not the file", async () => {
+      const { bytes } = fat([[CPU_ARM64, 0]]);
+      const refused = await refusal(bytes, "x86_64");
+      expect(refused).toBeInstanceOf(AnalysisInputError);
+      expect(refused).toMatchObject({
+        issues: [{ path: ["architecture"], reason: "invalid_value" }],
+      });
+    });
+
+    it("refuses a truncated selected slice as a truncated target at its path", async () => {
+      const file = fat([
+        [CPU_ARM64, 0],
+        [CPU_ARM64, 2],
+      ]);
+      file.bytes.writeUInt32BE(8, 8 + 20 + 12);
+      const refused = await refusal(file.bytes, "arm64e");
+      expect(refused).toBeInstanceOf(AnalysisMalformedTargetError);
+      expect(refused).toMatchObject({
+        path: "/a.dylib",
+        failure: {
+          kind: "truncated",
+          format: "macho",
+          offset: file.offsets[1],
+        },
+      });
+    });
+
+    it("refuses a slice whose header disagrees with its table entry as a malformed target", async () => {
+      const file = fat([
+        [CPU_ARM64, 0],
+        [CPU_ARM64, 2, 0],
+      ]);
+      const refused = await refusal(file.bytes, "arm64e");
+      expect(refused).toBeInstanceOf(AnalysisMalformedTargetError);
+      expect(refused).toMatchObject({
+        path: "/a.dylib",
+        failure: { kind: "malformed", format: "macho" },
+      });
+    });
+
+    it("refuses an alignment outside coverage as an unsupported target", async () => {
+      const file = fat([[CPU_ARM64, 0]]);
+      file.bytes.writeUInt32BE(60, 8 + 16);
+      const refused = await refusal(file.bytes, "arm64");
+      expect(refused).toBeInstanceOf(AnalysisUnsupportedTargetError);
+      expect(refused).toMatchObject({ path: "/a.dylib" });
+    });
+  },
+);

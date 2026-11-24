@@ -58,6 +58,9 @@ export const translateArtifactFailure = (
         ...(cause.integrityCheck === undefined
           ? {}
           : { integrityCheck: cause.integrityCheck }),
+        ...(cause.parseFailure === undefined
+          ? {}
+          : { parseFailure: cause.parseFailure }),
       },
     );
     if (cause.admission !== undefined)

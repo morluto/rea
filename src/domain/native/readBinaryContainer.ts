@@ -67,8 +67,13 @@ export const readBinaryContainerFromReader = async (
     const fatPrefix = readFatHeaderPrefix(prefix);
     if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
       const fat = await readUniversalMachoImageFromReader(source);
-      if (!fat.ok)
-        throw new BinaryFormatFailure("malformed", fat.error.message);
+      if (!fat.ok) {
+        const { kind, detail, offset } = fat.error.failure;
+        throw new BinaryFormatFailure(kind, detail, {
+          format: fat.error.failure.format,
+          ...(offset === undefined ? {} : { offset }),
+        });
+      }
       if (fat.value !== null)
         throw new BinaryFormatFailure(
           "unsupported",

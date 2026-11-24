@@ -184,8 +184,8 @@ mcpTest(
         arguments: { path: malformed, max_atoms: 1 },
       });
       expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+        code: "unsupported_target",
+        details: { format_failure: "truncated", format: "beam" },
       });
     } finally {
       await session.close();
@@ -243,7 +243,7 @@ mcpTest(
 );
 
 mcpTest(
-  "reports impossible BEAM table counts as malformed input",
+  "reports impossible BEAM table counts as a truncated target",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     const root = await createTestTempDirectory("rea-beam-malformed-rows-");
@@ -260,15 +260,11 @@ mcpTest(
         arguments: { path },
       });
       expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
+        code: "unsupported_target",
         details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: expect.stringContaining("lambda table is truncated"),
-            },
-          ],
+          format_failure: "truncated",
+          format: "beam",
+          reason: expect.stringContaining("lambda table is truncated"),
         },
       });
     } finally {
