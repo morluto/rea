@@ -86,32 +86,56 @@ export type HeaderArchitecture = Exclude<
   (typeof HEADER_ARCHITECTURE_EXCLUSIONS)[number]
 >;
 
-/**
- * Prefix of the limitation recorded when an optional ELF32 MIPS section header
- * table extends past the captured file, leaving unread headers unknown.
- */
-export const MIPS_SECTION_TABLE_TRUNCATION_PREFIX =
-  "MIPS section header table at file offset ";
+/** Typed declaration-inspection limitation; consumers switch on `kind`, never prose. */
+export type MipsElfLimitation =
+  | {
+      readonly kind: "truncated_section_table";
+      readonly offset: number;
+      readonly examined: number;
+      readonly declared: number;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "unexamined_declarations";
+      readonly message: string;
+    };
+
+/** Extract human-readable messages from typed MIPS ELF inspection limitations. */
+export const mipsLimitationMessages = (
+  limitations?: readonly MipsElfLimitation[],
+): readonly string[] =>
+  (limitations ?? []).map((limitation) => limitation.message);
+
+const MIPS_ET_EXEC = 2;
+const MIPS_ARCH_1 = 0x00000000;
+const MIPS_ARCH_32 = 0x50000000;
+const MIPS_ARCH_32R2 = 0x70000000;
 
 /**
- * True when an ELF32 MIPS header has the recordless legacy ET_EXEC shape
- * (unspecified ABI, MIPS-I/MIPS32/MIPS32r2, no ASE/machine/FP64/NAN2008/n32/32bitmode flags).
+ * Whether an ELF header has the recordless legacy ELF32 MIPS ET_EXEC shape:
+ * MIPS-I / MIPS32 / MIPS32r2 with unspecified ABI and no ASE, machine,
+ * FP64, NAN2008, n32, or 32bitmode flags. Does not by itself establish lane
+ * admission (ABI flags, GNU attributes, and limitations are checked by the
+ * provider profile).
  */
-export const isRecordlessLegacyMips32Header = (
-  mips: Pick<MipsElfMetadata, "elfClass" | "type" | "flags">,
+export const isRecordlessLegacyMipsExecHeader = (
+  metadata: ElfFamilyMetadata,
 ): boolean => {
-  const arch = mips.flags & 0xf0000000;
+  const { flags } = metadata;
+  const arch = flags & 0xf0000000;
   return (
-    mips.elfClass === 32 &&
-    mips.type === 2 &&
-    (arch === 0x00000000 || arch === 0x50000000 || arch === 0x70000000) &&
-    (mips.flags & 0x0f000000) === 0 &&
-    (mips.flags & 0x00ff0000) === 0 &&
-    (mips.flags & 0x0000f000) === 0 &&
-    (mips.flags & 0x20) === 0 &&
-    (mips.flags & 0x40) === 0 &&
-    (mips.flags & 0x100) === 0 &&
-    (mips.flags & 0x600) === 0
+    metadata.elfClass === 32 &&
+    metadata.type === MIPS_ET_EXEC &&
+    (arch === MIPS_ARCH_1 ||
+      arch === MIPS_ARCH_32 ||
+      arch === MIPS_ARCH_32R2) &&
+    (flags & 0x0f000000) === 0 &&
+    (flags & 0x00ff0000) === 0 &&
+    (flags & 0x0000f000) === 0 &&
+    (flags & 0x20) === 0 &&
+    (flags & 0x40) === 0 &&
+    (flags & 0x100) === 0 &&
+    (flags & 0x600) === 0
   );
 };
 
@@ -122,7 +146,7 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
   /** Undefined until inspected; null means no GNU attribute section was observed. */
   readonly gnuAttributes?: MipsGnuAttributes | null;
   /** Unavailable declaration sources; missing records there remain unknown. */
-  readonly limitations?: readonly string[];
+  readonly limitations?: readonly MipsElfLimitation[];
   /** Complete dynamic REL declarations, or the reason they could not be inspected. */
   readonly sharedLoad?:
     | {

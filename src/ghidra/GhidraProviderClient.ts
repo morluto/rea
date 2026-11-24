@@ -607,7 +607,9 @@ export const createGhidraProviderClient = (input: {
           "Static analysis does not emulate reset vectors, memory-mapped I/O, or firmware boot sequences.",
         ]
       : []),
-    ...(target.architecture === "mips" ? (target.mips.limitations ?? []) : []),
+    ...(target.architecture === "mips"
+      ? (target.mips.limitations ?? []).map((limitation) => limitation.message)
+      : []),
     ...(committedProfile.parameters.mips_abi_basis === "inferred-o32-assumption"
       ? [
           "The ELF header declares no ABI field and no ABI flags record was observed; o32 calling conventions are an analysis assumption of this lane, not a declared fact.",
