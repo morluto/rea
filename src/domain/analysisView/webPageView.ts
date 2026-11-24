@@ -21,6 +21,11 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { selectViewRows } from "./selectViewRows.js";
+import {
+  analysisTextPage,
+  analysisTextPageItemSchema,
+} from "./analysisViewText.js";
+import { webTextArtifactMetadataSchema } from "../webContentArtifact.js";
 
 export const WEB_PAGE_OPERATION = "inspect_web_page" as const;
 
@@ -31,6 +36,32 @@ const consoleEventSchema = page.console.shape.events.element;
 const networkRequestSchema = page.network.shape.requests.element;
 const scriptSchema = page.scripts.shape.items.element;
 const resourceSchema = page.resources.element;
+const frameSchema = page.frames.element;
+const workerSchema = page.workers.element;
+
+/** Script metadata; captured text pages through the script-source collection. */
+export const webPageScriptRowSchema = scriptSchema
+  .omit({ source: true })
+  .extend({
+    source: z.discriminatedUnion("included", [
+      z.strictObject({ included: z.literal(false), reason: z.string() }),
+      z.strictObject({
+        included: z.literal(true),
+        artifact: webTextArtifactMetadataSchema,
+      }),
+    ]),
+  });
+
+/** The selected section's own capture context, beside the page's coverage. */
+export const webPageSectionSchema = z.strictObject({
+  dom: page.dom.omit({ nodes: true }).optional(),
+  accessibility: page.accessibility.omit({ nodes: true }).optional(),
+  console: page.console.omit({ events: true }).optional(),
+  network: page.network
+    .omit({ requests: true, websocket_connections: true })
+    .optional(),
+  scripts: page.scripts.omit({ items: true }).optional(),
+});
 
 const pageShape = {
   kind: z.literal("web-page"),
@@ -64,7 +95,20 @@ export const webPageViewRequestSchema = z.discriminatedUnion("collection", [
     methods: names.describe("Exact request methods, such as GET"),
   }),
   z.strictObject({ ...pageShape, collection: z.literal("scripts") }),
+  z.strictObject({
+    kind: z.literal("web-page"),
+    collection: z.literal("script-source"),
+    script_key: scriptSchema.shape.script_key,
+    offset: z
+      .int()
+      .nonnegative()
+      .default(0)
+      .describe("UTF-16 code-unit offset into the captured source"),
+    limit: z.int().positive().max(65_536).default(16_384),
+  }),
   z.strictObject({ ...pageShape, collection: z.literal("resources") }),
+  z.strictObject({ ...pageShape, collection: z.literal("frames") }),
+  z.strictObject({ ...pageShape, collection: z.literal("workers") }),
 ]);
 type WebPageView = z.output<typeof webPageViewRequestSchema>;
 
@@ -74,8 +118,6 @@ export const webPageSummarySchema = z.strictObject({
   target: page.target,
   capture_window: page.capture_window,
   completeness: page.completeness,
-  frames: page.frames,
-  workers: page.workers,
   dom: page.dom.omit({ nodes: true }),
   accessibility: page.accessibility.omit({ nodes: true }),
   network: page.network.omit({ requests: true, websocket_connections: true }),
@@ -94,6 +136,8 @@ export const webPageSummarySchema = z.strictObject({
     websocket_connections: z.int().nonnegative(),
     scripts: z.int().nonnegative(),
     resources: z.int().nonnegative(),
+    frames: z.int().nonnegative(),
+    workers: z.int().nonnegative(),
     metadata_responses: z.int().nonnegative(),
     agent_hints: z.int().nonnegative(),
     metadata_dom_urls: z.int().nonnegative(),
@@ -108,8 +152,11 @@ export const webPageViewItemsSchema = z.union([
   z.array(accessibilityNodeSchema),
   z.array(consoleEventSchema),
   z.array(networkRequestSchema),
-  z.array(scriptSchema),
+  z.array(webPageScriptRowSchema),
   z.array(resourceSchema),
+  z.array(frameSchema),
+  z.array(workerSchema),
+  z.array(analysisTextPageItemSchema.extend({ script_key: z.string() })),
 ]);
 
 const readReport = createAnalysisViewResultReader(webPageInspectionSchema);
@@ -131,8 +178,6 @@ const summarize = (report: WebPageInspection): WebPageSummary => {
     target: report.target,
     capture_window: report.capture_window,
     completeness: report.completeness,
-    frames: report.frames,
-    workers: report.workers,
     dom,
     accessibility,
     network,
@@ -151,6 +196,8 @@ const summarize = (report: WebPageInspection): WebPageSummary => {
       websocket_connections: report.network.websocket_connections.length,
       scripts: report.scripts.items.length,
       resources: report.resources.length,
+      frames: report.frames.length,
+      workers: report.workers.length,
       metadata_responses: report.metadata.responses.length,
       agent_hints: report.metadata.agent_hints.length,
       metadata_dom_urls: report.metadata.dom_urls.length,
@@ -176,7 +223,54 @@ const matching = <Row>(
 
 const identity = <Row>(row: Row): Row => row;
 
-const selectRows = (report: WebPageInspection, view: WebPageView) => {
+type Script = WebPageInspection["scripts"]["items"][number];
+const scriptRow = ({
+  source,
+  ...metadata
+}: Script): z.output<typeof webPageScriptRowSchema> => {
+  if (!source.included) return { ...metadata, source };
+  const { text: _text, ...artifact } = source.artifact;
+  return { ...metadata, source: { included: true, artifact } };
+};
+
+const sectionOf = (
+  report: WebPageInspection,
+  collection: Exclude<WebPageView["collection"], "script-source">,
+): z.output<typeof webPageSectionSchema> => {
+  switch (collection) {
+    case "dom": {
+      const { nodes: _nodes, ...dom } = report.dom;
+      return { dom };
+    }
+    case "accessibility": {
+      const { nodes: _nodes, ...accessibility } = report.accessibility;
+      return { accessibility };
+    }
+    case "console": {
+      const { events: _events, ...context } = report.console;
+      return { console: context };
+    }
+    case "network": {
+      const {
+        requests: _requests,
+        websocket_connections: _sockets,
+        ...network
+      } = report.network;
+      return { network };
+    }
+    case "scripts": {
+      const { items: _items, ...scripts } = report.scripts;
+      return { scripts };
+    }
+    default:
+      return {};
+  }
+};
+
+const selectRows = (
+  report: WebPageInspection,
+  view: Exclude<WebPageView, { collection: "script-source" }>,
+) => {
   switch (view.collection) {
     case "dom":
       return selectViewRows(
@@ -207,9 +301,13 @@ const selectRows = (report: WebPageInspection, view: WebPageView) => {
         identity,
       );
     case "scripts":
-      return selectViewRows(report.scripts.items, view, undefined, identity);
+      return selectViewRows(report.scripts.items, view, undefined, scriptRow);
     case "resources":
       return selectViewRows(report.resources, view, undefined, identity);
+    case "frames":
+      return selectViewRows(report.frames, view, undefined, identity);
+    case "workers":
+      return selectViewRows(report.workers, view, undefined, identity);
   }
 };
 
@@ -259,11 +357,49 @@ export const projectWebPageView = (
       summary: summarize(report),
       coverage: completeWithinViewCoverage(1),
     });
+  // Every page keeps the capture's completeness and its section's context,
+  // so an empty or short page still says whether the section was observed.
+  const context = { ...shared, completeness: report.completeness };
+  if (selected.collection === "script-source") {
+    const script = report.scripts.items.find(
+      (row) => row.script_key === selected.script_key,
+    );
+    const source = script?.source;
+    if (source?.included !== true)
+      return err(
+        analysisViewInputError([
+          {
+            path: ["view", "script_key"],
+            reason: "invalid_value",
+            message:
+              source === undefined
+                ? "No script with this script_key was captured; list scripts first."
+                : `Script source was not captured: ${source.reason}`,
+          },
+        ]),
+      );
+    const text = analysisTextPage(
+      source.artifact.text,
+      selected.offset,
+      selected.limit,
+      "Script source",
+    );
+    if (!text.ok) return text;
+    return ok({
+      ...context,
+      kind: "web-page" as const,
+      view: selected,
+      section: { scripts: { total: report.scripts.total } },
+      items: [{ ...text.value.item, script_key: selected.script_key }],
+      coverage: text.value.coverage,
+    });
+  }
   const rows = selectRows(report, selected);
   return ok({
-    ...shared,
+    ...context,
     kind: "web-page" as const,
     view: selected,
+    section: sectionOf(report, selected.collection),
     items: rows.rows,
     coverage: pageViewCoverage(selected.offset, rows.rows.length, rows.total),
   });

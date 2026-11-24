@@ -4,7 +4,9 @@ import {
   summaryViewResultBase,
   viewResultBaseFields,
 } from "../analysisViewBase.js";
+import { webPageInspectionSchema } from "../../browserObservationSchemas.js";
 import {
+  webPageSectionSchema,
   webPageSummarySchema,
   webPageViewItemsSchema,
   webPageViewRequestSchema,
@@ -27,5 +29,7 @@ export const webPagePageViewResultSchema = z.strictObject({
   parent_operation: z.literal("inspect_web_page"),
   target_url: z.string(),
   view: webPageViewRequestSchema,
+  completeness: webPageInspectionSchema.shape.completeness,
+  section: webPageSectionSchema,
   items: webPageViewItemsSchema,
 });
