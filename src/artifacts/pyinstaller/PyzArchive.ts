@@ -1,6 +1,9 @@
 import type { FileHandle } from "node:fs/promises";
 import { hashReadable } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  readArtifactFileChunks,
+} from "../../resources/index.js";
 import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 
 import { BinaryReader } from "../../domain/binaryContainer.js";
@@ -84,12 +87,14 @@ export const readPyzArchive = async (
   start: number,
   size: number,
   signal?: AbortSignal,
+  measuredEnd?: number,
 ): Promise<Result<PyzArchive, PyInstallerFailure>> => {
   if (size < PYZ_HEADER_BYTES)
     return err(
       pyInstallerFailure("malformed", "PYZ archive magic does not match"),
     );
   const headerRead = await readPyInstallerBytes(handle, {
+    ...(measuredEnd === undefined ? {} : { measuredEnd }),
     position: start,
     length: PYZ_HEADER_BYTES,
     label: "PYZ header",
@@ -109,6 +114,7 @@ export const readPyzArchive = async (
       ),
     );
   const read = await readPyInstallerBytes(handle, {
+    ...(measuredEnd === undefined ? {} : { measuredEnd }),
     position: start + header.tocOffset,
     length: tableSize,
     label: "PYZ table",
@@ -124,10 +130,17 @@ export const readPyzArchive = async (
     }),
     signal,
   );
-  if (digest.bytes !== size)
+  if (digest.bytes !== size) {
+    if (measuredEnd !== undefined && start + size <= measuredEnd)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "PYZ image ended before the measured file size",
+        { integrityCheck: "read-coverage" },
+      );
     return err(
       pyInstallerFailure("malformed", "PYZ image extends outside the file"),
     );
+  }
   return parsePyzParts(header, table, digest.sha256);
 };
 

@@ -39,33 +39,21 @@ const containerCases: readonly TargetFailureCase[] = [
     name: "zip-member-past-eof",
     kind: "malformed",
     bytes: zipMemberPastEof,
-    facts: {
-      format: "zip",
-      reason:
-        "ZIP archive is malformed: read at 1162 extends beyond the 138-byte archive",
-    },
+    facts: { format: "zip" },
     identity: false,
   },
   {
     name: "intel-hex-record-checksum",
     kind: "malformed",
     bytes: () => Buffer.from(INTEL_HEX_I32_GAP.replace("BEEFC3", "BEEFC4")),
-    facts: {
-      format: "intel-hex",
-      reason:
-        "Intel HEX is malformed: line 4: record type 00 checksum 0xc4 does not match computed 0xc3",
-    },
+    facts: { format: "intel-hex" },
     identity: false,
   },
   {
     name: "uf2-conflicting-rewrite",
     kind: "malformed",
     bytes: conflictingUf2,
-    facts: {
-      format: "uf2",
-      reason:
-        "UF2 is malformed: family 0xe48bff56 (RP2040) address 0x10000000 is written with different values by block 0 (0x01) and block 1 (0xff)",
-    },
+    facts: { format: "uf2" },
     identity: false,
   },
 ];

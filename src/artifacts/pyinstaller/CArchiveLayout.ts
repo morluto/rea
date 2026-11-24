@@ -141,6 +141,7 @@ export const readCArchiveToc = async (
   handle: FileHandle,
   cookie: PyInstallerCookie,
   signal?: AbortSignal,
+  measuredEnd?: number,
 ): Promise<Result<readonly CArchiveEntry[], PyInstallerFailure>> => {
   if (cookie.tocLength > MAX_TOC_BYTES)
     return err(
@@ -151,6 +152,7 @@ export const readCArchiveToc = async (
     );
   const position = cookie.archiveStart + cookie.tocOffset;
   const read = await readPyInstallerBytes(handle, {
+    ...(measuredEnd === undefined ? {} : { measuredEnd }),
     position,
     length: cookie.tocLength,
     label: "CArchive table of contents",

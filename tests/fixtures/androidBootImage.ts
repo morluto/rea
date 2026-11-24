@@ -406,6 +406,7 @@ export const androidBootImageRefusals = () => {
       kind: "unsupported",
       code: "unsupported_target",
       category: "unsupported_target",
+      format: "android-boot-image",
     },
     {
       name: "vendor-version",
@@ -413,6 +414,7 @@ export const androidBootImageRefusals = () => {
       kind: "unsupported",
       code: "unsupported_target",
       category: "unsupported_target",
+      format: "android-boot-image",
     },
     {
       name: "short-image",
