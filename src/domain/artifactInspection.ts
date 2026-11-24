@@ -20,6 +20,10 @@ import {
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { isJavaScriptSourcePath } from "./javascript/javascriptArtifactFiles.js";
 import { admitRawBinary } from "./rawBinary.js";
+import {
+  isStandaloneArtifactFormat,
+  type StandaloneArtifactFormat,
+} from "./artifactFormatRecognition.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { offsetText } from "./firmware/espImageStructures.js";
@@ -582,8 +586,47 @@ const probesForFormat = (
         authority: "artifact-bytes",
       },
     ];
+  if (format === "uefi" || isStandaloneArtifactFormat(format))
+    return [
+      {
+        ...STANDALONE_FORMAT_READERS[format],
+        authority: "artifact-bytes",
+      },
+    ];
   return [];
 };
+
+/** The dedicated execution-free reader for each single-file format. */
+const STANDALONE_FORMAT_READERS = {
+  uefi: {
+    operation: "inspect_uefi_firmware",
+    rationale:
+      "Map firmware volumes, FFS files, sections and compression without execution.",
+  },
+  sqlite: {
+    operation: "inspect_sqlite_database",
+    rationale:
+      "Read the schema, tables and rows from a read-only snapshot of the database.",
+  },
+  "windows-shortcut": {
+    operation: "inspect_windows_shortcut",
+    rationale:
+      "Read the Shell Link target, arguments and ExtraData without resolving or executing it.",
+  },
+  "python-pyc": {
+    operation: "inspect_python_pyc",
+    rationale:
+      "Decode the pyc header and marshalled code objects without importing or running them.",
+  },
+  devicetree: {
+    operation: "inspect_devicetree",
+    rationale:
+      "Decode the flattened devicetree header, reservations and node tree.",
+  },
+} as const satisfies Record<
+  "uefi" | StandaloneArtifactFormat,
+  { readonly operation: string; readonly rationale: string }
+>;
 
 // A probe names one operation, so each reader is its own row; the rows share
 // one short rationale because each tool's description already says what it

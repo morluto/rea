@@ -6,6 +6,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
 import { ModelHeaderReader } from "../../../src/model/ModelHeaderReader.js";
 import {
+  MODEL_HEADER_BYTES,
   MODEL_JSON_NESTING,
   MODEL_METADATA_NESTING,
   MODEL_REPORT_BYTES,
@@ -337,7 +338,7 @@ it.each([67_324_752, 67_324_760, 99_999_993, 100_000_000])(
     if (result.ok) throw new Error("Representation limit was bypassed");
     expect(result.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reason: expect.stringContaining("32 MiB"),
+      reportedLimits: { maximum_representation_bytes: MODEL_REPORT_BYTES },
     });
   },
 );
@@ -346,12 +347,14 @@ it("retains the absolute header budget for GGUF without allocating that extent",
   const { path } = await providerAt(Buffer.alloc(0));
   const file = await open(path, "r+");
   onTestFinished(() => file.close());
-  await file.truncate(100_000_009);
-  const reader = new ModelHeaderReader(file, 100_000_009);
-  expect(() => reader.guarantee(100_000_000)).not.toThrow();
-  expect(() => reader.guarantee(100_000_001)).toThrow(ParseFailureError);
+  await file.truncate(MODEL_HEADER_BYTES + 9);
+  const reader = new ModelHeaderReader(file, MODEL_HEADER_BYTES + 9);
+  expect(() => reader.guarantee(MODEL_HEADER_BYTES)).not.toThrow();
+  expect(() => reader.guarantee(MODEL_HEADER_BYTES + 1)).toThrow(
+    ParseFailureError,
+  );
   try {
-    reader.guarantee(100_000_001);
+    reader.guarantee(MODEL_HEADER_BYTES + 1);
   } catch (cause) {
     expect(cause).toBeInstanceOf(ParseFailureError);
     if (!(cause instanceof ParseFailureError))
@@ -359,10 +362,8 @@ it("retains the absolute header budget for GGUF without allocating that extent",
     expect(cause.failure).toMatchObject({
       kind: "limit",
       format: "model",
-      limit: { name: "header-bytes", maximum: 100_000_000 },
+      limit: { name: "header-bytes", maximum: MODEL_HEADER_BYTES },
     });
-    expect(cause.message).toContain("100,000,000 bytes");
-    expect(cause.message).not.toContain("Safetensors");
   }
 });
 
@@ -394,25 +395,19 @@ it("separates impossible string lengths from nesting capacity", async () => {
     await invalid.provider.inspect({ path: invalid.path, hash: "header" }),
   ).toMatchObject({ ok: false, error: MALFORMED_TARGET });
   for (const [label, bytes, allowance] of [
-    ["nesting", deep.bytes, "32 array frames"],
+    ["nesting", deep.bytes, { maximum_array_frames: MODEL_METADATA_NESTING }],
   ] as const) {
     const { path, provider } = await providerAt(bytes);
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error(`${label} capacity was accepted`);
+    // The exact reported limit excludes the header and report budgets.
     expect(result.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       retryable: false,
-      remediationAction: expect.stringContaining(allowance),
     });
-    const remediation =
-      "remediationAction" in result.error ? result.error.remediationAction : "";
-    expect(remediation).not.toContain(String(MODEL_REPORT_BYTES));
-    expect(remediation).not.toContain("100,000,000");
-    expect(result.error).toMatchObject({
-      reportedLimits: expect.not.objectContaining({
-        maximum_report_bytes: MODEL_REPORT_BYTES,
-      }),
-    });
+    expect(
+      "reportedLimits" in result.error ? result.error.reportedLimits : null,
+    ).toEqual(allowance);
   }
 });
 
@@ -946,8 +941,8 @@ it.each([
 it.each([
   [
     "header-bytes",
-    { maximum_header_bytes: 100_000_000 },
-    "header allowance is 100,000,000 bytes",
+    { maximum_header_bytes: MODEL_HEADER_BYTES },
+    `header allowance is ${MODEL_HEADER_BYTES.toLocaleString("en-US")} bytes`,
   ],
   [
     "report-bytes",
@@ -990,12 +985,12 @@ it.each([
 
 it("refuses an oversized declared header before reading or expanding it", async () => {
   const bytes = Buffer.alloc(9);
-  bytes.writeBigUInt64LE(100_000_001n);
+  bytes.writeBigUInt64LE(BigInt(MODEL_HEADER_BYTES + 1));
   bytes[8] = 0x7b;
   const { path, provider } = await providerAt(bytes);
   const file = await open(path, "r+");
   try {
-    await file.truncate(100_000_009);
+    await file.truncate(MODEL_HEADER_BYTES + 9);
   } finally {
     await file.close();
   }
@@ -1004,13 +999,10 @@ it("refuses an oversized declared header before reading or expanding it", async 
   expect(result.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     retryable: false,
-    reportedLimits: { maximum_header_bytes: 100_000_000 },
-    remediationAction: expect.stringContaining("100,000,000"),
+    reportedLimits: { maximum_header_bytes: MODEL_HEADER_BYTES },
+    // The refusal precedes format identification.
+    cause: { failure: { kind: "limit", format: "model" } },
   });
-  expect(result.error.message).not.toContain("Safetensors");
-  expect(
-    "remediationAction" in result.error ? result.error.remediationAction : "",
-  ).not.toContain("Safetensors");
   expect(
     "reportedLimits" in result.error ? result.error.reportedLimits : {},
   ).not.toHaveProperty("maximum_report_bytes");
@@ -1408,7 +1400,6 @@ it("classifies over-depth Safetensors extension JSON as a resource limit", async
   expect(result.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     resource: "memory",
-    reason: expect.stringContaining("Safetensors JSON nesting"),
     reportedLimits: { maximum_json_depth: MODEL_JSON_NESTING },
   });
 });

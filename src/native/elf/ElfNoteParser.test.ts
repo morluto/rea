@@ -930,7 +930,13 @@ it("reuses one descriptor hash and GNU NUL scan across note headers", async () =
         max_file_bytes: payload.length + 160,
       }),
     ),
-  ).rejects.toThrow(/byte budget/u);
+  ).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      format: "elf-notes",
+      limit: { name: "note_text_bytes" },
+    },
+  });
 });
 
 it("preserves interior NULs in GNU gold alongside a bounded trailing scan", async () => {

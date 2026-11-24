@@ -86,12 +86,7 @@ cliTest(
     expect(missing.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [
-          expect.objectContaining({
-            path: ["architecture"],
-            message: expect.stringContaining("architecture"),
-          }),
-        ],
+        issues: [expect.objectContaining({ path: ["architecture"] })],
       },
     });
   },

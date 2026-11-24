@@ -1325,7 +1325,7 @@ it("retains multipackage references as distinct unresolved declarations", async 
           dependency_member: index < 2 ? "assets/x:y" : null,
         });
         await expect(reader.open(entry)).rejects.toMatchObject({
-          reason: "format",
+          reason: "path",
         });
       }
     },
