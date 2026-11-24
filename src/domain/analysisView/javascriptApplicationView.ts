@@ -22,7 +22,9 @@ import {
   type JavaScriptApplicationSourceCoverage,
 } from "./javascriptApplicationCoverage.js";
 import {
+  projectJavaScriptFactGroups,
   projectJavaScriptFacts,
+  javascriptFactGroupsViewRequestSchema,
   javascriptFactsViewRequestSchema,
 } from "./javascriptFactsView.js";
 import {
@@ -457,11 +459,12 @@ export const projectJavaScriptApplicationView = (
     view.kind !== "item" &&
     view.kind !== "page" &&
     view.kind !== "javascript" &&
-    view.kind !== "javascript-facts"
+    view.kind !== "javascript-facts" &&
+    view.kind !== "javascript-fact-groups"
   )
     return err(
       jsIncompatible(
-        "JavaScript application Evidence supports summary, module item/page, typed module references or selected JavaScript facts.",
+        "JavaScript application Evidence supports summary, module item/page, typed module references, selected JavaScript facts or JavaScript fact groups.",
       ),
     );
   assertOwnedView<
@@ -470,13 +473,37 @@ export const projectJavaScriptApplicationView = (
     | PageAnalysisView
     | z.output<typeof javascriptModuleReferencesRequestSchema>
     | z.output<typeof javascriptFactsViewRequestSchema>
-  >(view, "summary", "item", "page", "javascript", "javascript-facts");
+    | z.output<typeof javascriptFactGroupsViewRequestSchema>
+  >(
+    view,
+    "summary",
+    "item",
+    "page",
+    "javascript",
+    "javascript-facts",
+    "javascript-fact-groups",
+  );
   const sourceCoverage = javascriptApplicationSourceCoverage(analysis);
   const { fields: shared, limitationCount } = parentFields(
     parent,
     analysis,
     sourceCoverage,
   );
+  if (view.kind === "javascript-fact-groups") {
+    const { rows, total } = projectJavaScriptFactGroups(
+      analysis.graph.nodes,
+      view,
+      isImmutableJsonSnapshot(analysis) ? analysis : undefined,
+    );
+    return ok({
+      ...shared,
+      kind: "javascript-fact-groups" as const,
+      view,
+      rows,
+      source_coverage: sourceCoverage,
+      coverage: pageCoverage(view.offset, rows.length, total),
+    });
+  }
   if (view.kind === "javascript-facts") {
     const { rows, total } = projectJavaScriptFacts(
       analysis.graph.nodes,

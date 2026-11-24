@@ -8,7 +8,6 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
@@ -667,16 +666,15 @@ it("retains the exact source when recognized magic has no complete version", asy
 
   if (result.ok) throw new Error("Expected truncated metadata prefix");
   expect(result.error).toMatchObject({
-    _tag: "AnalysisInputError",
-    issues: [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: expect.stringMatching(
-          /truncated-header:.*metadata version is unknown/u,
-        ),
-      },
-    ],
+    _tag: "AnalysisMalformedTargetError",
+    path,
+    failure: {
+      kind: "truncated",
+      format: "il2cpp-metadata",
+      detail: expect.stringMatching(
+        /truncated-header:.*metadata version is unknown/u,
+      ),
+    },
   });
   expect(result.error.partialObservation).toMatchObject({
     operation: "observe_il2cpp_metadata_source",
@@ -879,8 +877,13 @@ it.each([false, true])(
       expect(ordinary).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisInputError",
-          issues: [{ path: ["binary_path"], reason: "invalid_format" }],
+          _tag: "AnalysisMalformedTargetError",
+          path: binary_path,
+          failure: {
+            kind: "malformed",
+            format: "il2cpp-binary",
+            detail: expect.stringMatching(/^malformed-container:/u),
+          },
         },
       });
     } finally {
@@ -914,16 +917,20 @@ it("refuses duplicate MethodDef tokens before publishing linked Evidence or Ghid
       { path, binary_path: binaryPath, detail: "complete" },
       { path: duplicateSeeds },
     );
-    expect(refused.ok).toBe(false);
     if (refused.ok)
       throw new Error("Duplicate MethodDef identity was accepted");
-    if (!(refused.error instanceof AnalysisInputError))
-      throw new Error("Duplicate MethodDef identity was not an input refusal");
-    expect(refused.error.issues[0]?.message).toContain("invalid-method-token");
-    expect(refused.error.issues[0]?.message).toContain("share MethodDef token");
-    expect(refused.error.partialObservation).toMatchObject({
-      normalized_result: { artifact: { path } },
+    // The reused row is in the metadata's own records, so the metadata alone
+    // is malformed; the binary is not named.
+    expect(projectAnalysisError(refused.error)).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        path,
+        format: "il2cpp-metadata",
+        format_failure: "malformed",
+        reason: expect.stringMatching(/^invalid-method-definition-token:/u),
+      },
     });
+    expect(projectAnalysisError(refused.error)).not.toHaveProperty("recovery");
     await expect(readFile(duplicateSeeds)).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -958,9 +965,44 @@ it("retains both observed file identities and the selected architecture when nat
   try {
     const result = await provider.inspect({ path, binary_path });
     if (result.ok) throw new Error("Unresolved registration accepted");
+    // Both files parse; neither is called malformed. The conflict lists each
+    // selecting field and keeps each file's identity.
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      conformsToInputContract: true,
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: expect.stringContaining(
+            `Selected metadata ${path} does not link to the selected binary: code-registration-not-found:`,
+          ),
+        },
+        {
+          path: ["binary_path"],
+          reason: "invalid_value",
+          message: expect.stringContaining(
+            `Selected binary ${binary_path} does not link to the metadata: code-registration-not-found:`,
+          ),
+        },
+      ],
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      retryable: false,
+      remediation: {
+        action: expect.stringContaining("from the same build"),
+      },
+    });
+    expect(projectAnalysisError(result.error)).not.toHaveProperty("recovery");
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: {
-        artifact: { path },
+        artifact: {
+          path,
+          sha256: createHash("sha256")
+            .update(createLinkedIl2cppMetadataFixture().bytes)
+            .digest("hex"),
+        },
         selected_binary: {
           path: binary_path,
           identity_status: "observed",
@@ -1134,16 +1176,13 @@ it("names the metadata, not the binary, when linking reads a malformed metadata 
     const result = await provider.inspect({ path, binary_path: binaryPath });
     if (result.ok) throw new Error("Expected the metadata name to be refused");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      issues: [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining(
-            `Selected artifact ${path} is corrupt: invalid-string:`,
-          ),
-        },
-      ],
+      _tag: "AnalysisMalformedTargetError",
+      path,
+      failure: {
+        kind: "malformed",
+        format: "il2cpp-metadata",
+        detail: expect.stringMatching(/^invalid-string:/u),
+      },
     });
 
     const corrected = Buffer.from(metadata);

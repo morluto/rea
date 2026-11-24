@@ -87,6 +87,14 @@ const issues = (response: unknown) =>
     })
     .parse(parseMcpToolError(response as never)).error;
 
+/** A universal file's own format refusal: a target fault, no field to correct. */
+const containerRefusal = (response: unknown) => {
+  const { error } = parseMcpToolError(response as never);
+  expect(error).not.toHaveProperty("details.issues");
+  expect(error).not.toHaveProperty("recovery");
+  return error;
+};
+
 sliceTest(
   "reads the selected Go slice of a universal Mach-O with file-relative provenance",
   async ({ slices: { client, session, write } }) => {
@@ -249,7 +257,7 @@ sliceTest(
     const damaged = await write("damaged", truncated);
     for (const architecture of [undefined, "arm64"] as const)
       expect(
-        issues(
+        containerRefusal(
           await client.callTool({
             name: "inspect_go_binary",
             arguments: {
@@ -257,10 +265,15 @@ sliceTest(
               ...(architecture === undefined ? {} : { architecture }),
             },
           }),
-        ).details.issues[0],
+        ),
       ).toMatchObject({
-        path: ["path"],
-        message: expect.stringContaining(`Selected artifact ${damaged}: FAT`),
+        code: "unsupported_target",
+        details: {
+          path: damaged,
+          format_failure: "malformed",
+          format: "macho",
+          reason: "FAT architecture 0 slice range extends beyond the file",
+        },
       });
 
     // The FAT table and the slice header must agree before the slice is read.
@@ -276,21 +289,20 @@ sliceTest(
       ]).bytes,
     );
     expect(
-      issues(
+      containerRefusal(
         await client.callTool({
           name: "inspect_go_binary",
           arguments: { path: disagreeing, architecture: "arm64" },
         }),
       ),
     ).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
-        issues: [
-          {
-            path: ["path"],
-            message: `Selected artifact ${disagreeing}: FAT architecture 0 CPU type/subtype disagrees with its Mach-O header`,
-          },
-        ],
+        path: disagreeing,
+        format_failure: "malformed",
+        format: "macho",
+        reason:
+          "FAT architecture 0 CPU type/subtype disagrees with its Mach-O header",
       },
     });
   },
@@ -408,15 +420,20 @@ sliceTest(
     const path = await write("overlapping", universal.bytes);
     for (const architecture of ["arm64", "arm64e"])
       expect(
-        issues(
+        containerRefusal(
           await client.callTool({
             name: "inspect_go_binary",
             arguments: { path, architecture },
           }),
-        ).details.issues[0],
+        ),
       ).toMatchObject({
-        path: ["path"],
-        message: `Selected artifact ${path}: Mach-O slices 0 and 1 overlap.`,
+        code: "unsupported_target",
+        details: {
+          path,
+          format_failure: "malformed",
+          format: "macho",
+          reason: "Mach-O slices 0 and 1 overlap.",
+        },
       });
   },
 );

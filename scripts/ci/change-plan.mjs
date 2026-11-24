@@ -88,6 +88,26 @@ const DOCS_AND_CODE_INPUTS = [
 const matchesAny = (file, patterns) =>
   patterns.some((pattern) => matchesGlob(file, pattern));
 
+const TYPED_LINT_FILE_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
+// Leave space in the Linux runner's environment for JSON-escaped job outputs
+// and the other lane outputs consumed by the required gate.
+const TYPED_LINT_OUTPUT_MAX_BYTES = 16 * 1024;
+
+const selectTypedLintFiles = (files, listCheckedOutFiles) => {
+  const candidates = files.filter((file) =>
+    TYPED_LINT_FILE_EXTENSION.test(file),
+  );
+  if (!candidates.length) return [];
+  // Deletions still affect lane and test selection. Oxlint only takes files
+  // tracked in the checkout it will check, and owns its own ignore patterns.
+  const checkedOutFiles = new Set(listCheckedOutFiles());
+  const selected = candidates.filter((file) => checkedOutFiles.has(file));
+  return Buffer.byteLength(JSON.stringify(selected)) <=
+    TYPED_LINT_OUTPUT_MAX_BYTES
+    ? selected
+    : null;
+};
+
 /**
  * Plan the CI lanes for one event. `repository` answers the Git questions the
  * plan asks, so the classification runs without a process per decision.
@@ -411,6 +431,9 @@ export function planChanges(request, repository) {
         ]
       : [linux],
   };
+  let checkedOutFiles;
+  const listCheckedOutFiles = () =>
+    (checkedOutFiles ??= repository.listFiles("HEAD", []));
   const testSelection = planTestSelection({
     files,
     event,
@@ -419,10 +442,14 @@ export function planChanges(request, repository) {
     // The checked-out revision is the one whose tests run. Script and
     // configuration files are listed so shared script modules can be traced.
     snapshot: {
-      list: () => repository.listFiles("HEAD", []),
+      list: listCheckedOutFiles,
       read: (paths) => repository.readFiles("HEAD", paths),
     },
   });
+  const typedLintFiles =
+    event === "pull_request" && tier === "fast" && selected.code
+      ? selectTypedLintFiles(files, listCheckedOutFiles)
+      : [];
   return {
     ...selected,
     tier,
@@ -431,6 +458,7 @@ export function planChanges(request, repository) {
     reasons,
     testSelection,
     testShards: testShards(tier, testSelection),
+    typedLintFiles,
   };
 }
 

@@ -185,7 +185,11 @@ const presentOutputSchemasForToolsList = (
       tools: message.result.tools.map((tool: unknown) => {
         if (!isRecord(tool) || !isRecord(tool.outputSchema)) return tool;
         const { outputSchema: canonical, ...advertisedTool } = tool;
-        const outputSchema = advertiseToolOutput(canonical, presentation);
+        const outputSchema = advertiseToolOutput(
+          canonical,
+          presentation,
+          typeof tool.name === "string" ? tool.name : undefined,
+        );
         return outputSchema === undefined
           ? advertisedTool
           : { ...advertisedTool, outputSchema };

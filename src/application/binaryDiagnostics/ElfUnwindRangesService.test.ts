@@ -10,7 +10,6 @@ import {
 import { parseElfUnwindRangesFromHandle } from "../../native/elf/ElfUnwindTables.js";
 import {
   elfUnwindAbsentFixture,
-  elfUnwindByteSource,
   elfUnwindFixture,
   elfUnwindSectionlessFixture,
 } from "../../native/elf/ElfUnwindTables.fixture.js";
@@ -20,6 +19,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const identity = ELF_UNWIND_RANGES_PROVIDER;
 
@@ -37,7 +37,7 @@ const parsed = (
     ...raw,
   });
   return parseElfUnwindRangesFromHandle(
-    elfUnwindByteSource(bytes),
+    bufferByteSource(bytes, 4096),
     {
       path: input.path,
       sha256: "a".repeat(64),

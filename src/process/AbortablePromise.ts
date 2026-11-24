@@ -1,3 +1,4 @@
+import type { Result } from "../domain/result.js";
 import {
   cancelledBy,
   type CarriedCancellationReason,
@@ -37,6 +38,16 @@ export const waitForAbortable = async <Value>(
   } finally {
     if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
   }
+};
+
+/** Join a retiring owner, preserving a reported failure even if the waiter has since aborted. */
+export const waitForRetainedResult = async <Value, Failure>(
+  pending: Promise<Result<Value, Failure>>,
+  signal: AbortSignal | undefined,
+): Promise<Result<Value, Failure> | AbortedWait> => {
+  const observed = await waitForAbortable(pending, signal);
+  if (observed instanceof AbortedWait || !observed.ok) return observed;
+  return signal?.aborted ? new AbortedWait(signal.reason) : observed;
 };
 
 /**

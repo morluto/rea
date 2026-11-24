@@ -6,10 +6,12 @@ import type { ElfNotes } from "./native/elfNotes.js";
 import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
 import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
 import type { KernelModule } from "./native/kernelModule.js";
+import type { V8CodeCache } from "./v8/v8CodeCache.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
 import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
+import type { ErlangBeam } from "./erlang/beam.js";
 import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
@@ -28,6 +30,7 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
   "AnalysisUnsupportedTargetError",
+  "AnalysisMalformedTargetError",
   "AnalysisCancelledError",
   "AnalysisTimeoutError",
   "AnalysisResourceConstraintError",
@@ -704,6 +707,7 @@ export type AnalysisPartialObservation =
   | ElfUnwindRanges
   | KernelBuildConfig
   | KernelModule
+  | V8CodeCache
   | InterfaceBuilderAnalysis
   | PartialTaskMeasurement
   | {
@@ -714,6 +718,7 @@ export type AnalysisPartialObservation =
     }
   | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
   | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | ErlangBeam
   | ApiContract
   | GraphqlContract
   | PlaywrightTrace

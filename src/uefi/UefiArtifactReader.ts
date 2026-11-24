@@ -443,7 +443,7 @@ export class UefiArtifactReader implements ArtifactReader {
       const primary =
         cause.cause instanceof NonRegularFileReadError
           ? new ArtifactReaderFailure(
-              "format",
+              "path",
               `UEFI flash image source is not a regular file: ${this.path}`,
               { cause: cause.cause },
             )

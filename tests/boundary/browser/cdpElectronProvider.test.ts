@@ -481,10 +481,11 @@ describe("CdpElectronProvider target access", () => {
   it("retains a completed page observation when cancellation arrives during final detach", async () => {
     const root = await electronFixture();
     const controller = new AbortController();
+    const reason = { request: "cancel during Electron detach" };
     const browser = await startFakeCdpBrowser({
       electronFileUrl: pathToFileURL(join(root, "index.html")).href,
       commandEvents: ({ method }) => {
-        if (method === "Target.detachFromTarget") controller.abort();
+        if (method === "Target.detachFromTarget") controller.abort(reason);
         return undefined;
       },
     });
@@ -503,6 +504,7 @@ describe("CdpElectronProvider target access", () => {
 
     if (result.ok) throw new Error("Expected late cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
     expect(result.error.partialObservation).toMatchObject({
       kind: "electron-page-observation",
       cleanup: "transport-closed",
@@ -642,6 +644,7 @@ describe("CdpElectronProvider transport lifecycle", () => {
       expect(first.error.cleanupIncomplete).toBe(true);
       expect(first.error.partialObservation).toMatchObject({
         kind: "electron-page-observation",
+        cleanup: "incomplete",
         inspection: { target: { file_path: join(root, "index.html") } },
       });
       const failedCloses = closes;

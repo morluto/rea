@@ -16,8 +16,8 @@ import {
   readElfDirectoryFromBufferCooperative,
   readElfDirectoryFromReader,
   type ElfSectionDirectory,
-  type NativeByteSource,
 } from "./nativeSectionDirectory.js";
+import type { ByteSource } from "../byteSource.js";
 
 const requireElfFileRange = (
   fileSize: number,
@@ -208,7 +208,7 @@ export const readElfImageCooperative = async (
 
 /** Read ELF sections and program mappings positionally without buffering the whole file. */
 export const readElfImageFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   operation: string,
   pause: ZstandardFramePause,
   maximumSourceAndDecodedNamesBytes?: number,
