@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
-import {
   BOOKMARK_TOGGLE_ROWS,
   CREATES_BY_TITLE_ROWS,
   NULL_THEN_STARRED_ROWS,
@@ -12,15 +8,7 @@ import {
   REFUTED_TITLE_SORT_ROWS,
   feedEntry,
 } from "../../../tests/fixtures/environmentStateItemWrites.js";
-import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
-
-const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
-  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === tool,
-  );
-  if (plan === undefined) throw new Error(`No plan for ${tool}`);
-  return plan;
-};
+import { planOf } from "../../../tests/fixtures/environmentStateWrites.js";
 
 describe("item writes", () => {
   it("learns a create's sort from a later list its full order follows, after one create was placed last", () => {

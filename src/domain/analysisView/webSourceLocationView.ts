@@ -20,7 +20,10 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   pageViewCoverage,
@@ -294,15 +297,8 @@ export const projectWebSourceLocationView = (
     SummaryAnalysisView | z.output<typeof webSourceLocationViewRequestSchema>
   >(admitted, "summary", "source-location");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Source-location Evidence supports summary and source-location views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Source-location Evidence supports summary and source-location views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
