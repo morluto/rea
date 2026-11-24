@@ -1,3 +1,4 @@
+import { isSuccessfulHttpStatus } from "../../domain/httpResponseStatus.js";
 import { advertiseToolInput } from "../../contracts/advertisedTool.js";
 import { formattedEllipsisExcerpt } from "../../domain/excerpt.js";
 import { jsonPointerTokens } from "../../domain/jsonPointer.js";
@@ -206,9 +207,6 @@ const describeJson = (value: JsonValue): string => {
   return `a JSON ${value === null ? "null" : typeof value}`;
 };
 
-const isSuccess = (status: number | null): boolean =>
-  status !== null && status >= 200 && status < 300;
-
 /** The first cited record replay answers as JSON, preferring a 2xx one; each body is parsed at most once. */
 const firstJson = (
   tool: EnvironmentManifestTool,
@@ -219,7 +217,10 @@ const firstJson = (
   for (const success of [true, false])
     for (const ordinal of tool.record_ordinals) {
       const exchange = exchanges.get(ordinal);
-      if (exchange === undefined || isSuccess(exchange.status) !== success)
+      if (
+        exchange === undefined ||
+        isSuccessfulHttpStatus(exchange.status) !== success
+      )
         continue;
       const body = replayedBody(exchange);
       if (body.kind === "json")
@@ -239,7 +240,7 @@ const describeResponses = (
       : `recorded statuses ${describeList(tool.statuses, tool.statuses.length)}`;
   const found = firstJson(tool, exchanges);
   if (found === undefined) return recorded;
-  const returns = isSuccess(found.status)
+  const returns = isSuccessfulHttpStatus(found.status)
     ? "returns"
     : found.status === null
       ? "a record without a status returns"

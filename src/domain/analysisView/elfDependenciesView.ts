@@ -4,14 +4,14 @@ import {
   elfDependenciesSchema,
   type ElfDependencies,
 } from "../native/elfDependencies.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { namePrefixesSchema, startsWithAny } from "./namePrefixFilter.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -177,14 +177,8 @@ export const projectElfDependenciesView = (
   parent: AnalysisViewParent,
   view: AdmittedView,
 ) => {
-  const invalid = (message: string) =>
-    err(
-      analysisViewInputError([
-        { path: ["view"], reason: "invalid_value", message },
-      ]),
-    );
   if (view.kind !== "summary" && view.kind !== "elf-dependencies")
-    return invalid(
+    return invalidAnalysisView(
       "ELF dependency Evidence supports summary and elf-dependencies views.",
     );
   assertOwnedView<
@@ -287,7 +281,7 @@ export const projectElfDependenciesView = (
   ) => {
     const fields = fieldsOf === undefined ? allowed : [...new Set(fieldsOf)];
     if (fields.some((field) => !allowed.includes(field)))
-      return invalid(
+      return invalidAnalysisView(
         `Selected ${label} fields do not belong to those rows; available fields: ${allowed.join(", ")}.`,
       );
     const columns = new Set<string>(fields);

@@ -92,4 +92,23 @@ describe("CLI option aliases", () => {
     expect(result.stdout).not.toContain("Unknown flag");
     expect(result.stdout).toContain("/nonexistent/REA.app");
   });
+
+  it("refuses the schema key spelling with the documented flag", async () => {
+    // argvParser.test.ts covers each token shape (bare, inline value,
+    // negation) against the structured flag_spelling failure; this case
+    // checks the public CLI projection documented in getting-started/cli.md.
+    const result = await serve(createCli({}), [
+      "inspect-plist",
+      "/nonexistent/REA.app",
+      "--relativePath",
+      "Contents/Info.plist",
+      "--json",
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "PARSE_ERROR",
+      message: "Unknown flag: --relativePath. Did you mean --relative-path?",
+      retryable: false,
+    });
+  });
 });

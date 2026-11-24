@@ -1,11 +1,12 @@
-import type { ElfDependencyByteSource } from "./ElfDependencyParser.js";
+import { write16, write32, writeWord } from "../BinaryInteger.fixture.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 export const elfDependencyByteSource = (
   bytes: Buffer,
   prefixBytes = 4096,
-  readRange: ElfDependencyByteSource["readRange"] = async (offset, length) =>
+  readRange: PrefixedByteSource["readRange"] = async (offset, length) =>
     bytes.subarray(offset, offset + length),
-): ElfDependencyByteSource => ({
+): PrefixedByteSource => ({
   size: bytes.length,
   prefix: bytes.subarray(0, prefixBytes),
   readRange,
@@ -24,42 +25,6 @@ export const elfHash = (name: string): number => {
 };
 
 const concat = (...parts: readonly Buffer[]): Buffer => Buffer.concat(parts);
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(value, offset);
-  else bytes.writeUInt32BE(value, offset);
-};
-
-const writeWord = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  bits: 32 | 64,
-  little: boolean,
-): void => {
-  if (bits === 64) {
-    const wide = BigInt(value);
-    if (little) bytes.writeBigUInt64LE(wide, offset);
-    else bytes.writeBigUInt64BE(wide, offset);
-    return;
-  }
-  write32(bytes, offset, value, little);
-};
 
 export interface ElfDependencyImportSpec {
   readonly name: string;

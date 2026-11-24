@@ -10,37 +10,50 @@ import type {
 import { peCertificateTypeName } from "../../domain/native/peCertificates.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
 import {
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../../domain/parseFailure.js";
+import {
   oidName,
   parsePkcs7SignedData,
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
 import {
-  readPeImageHeaders,
-  readPeImageHeadersAt,
-} from "../../domain/pe/peImageHeaders.js";
+  readPeImage,
+  readPeImageFromReader,
+  type PeImage,
+} from "../../domain/native/peImage.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
-const fail = (message: string): never => {
-  throw new ArtifactReaderFailure("format", message);
+/** The format the certificate table's own parser names in its failures. */
+const FORMAT = "pe-certificate-table";
+
+/** The bytes violate the certificate table's structure. */
+const fail = (message: string, options?: ErrorOptions): never => {
+  throw malformedInput(FORMAT, message, options);
 };
 
-/** Shared PE header admission, with malformed headers as format failures. */
-const readCertificateImageHeaders = (bytes: Buffer) => {
+/** A declared certificate structure starts in the bytes but ends past them. */
+const failTruncated = (message: string): never => {
+  throw truncatedInput(FORMAT, message);
+};
+
+/** Shared PE image admission, with malformed headers as format failures. */
+const readCertificateImage = (bytes: Buffer): PeImage => {
   try {
-    return readPeImageHeaders(bytes);
+    return readPeImage(bytes, "headers");
   } catch (cause) {
     throw artifactParseFailure(cause, undefined);
   }
 };
 
-const readCertificateImageHeadersAt = async (handle: StableArtifactHandle) => {
+const readCertificateImageAt = async (
+  handle: StableArtifactHandle,
+): Promise<PeImage> => {
   try {
-    return await readPeImageHeadersAt(
-      handle.prefix,
-      handle.size,
-      (offset, length) => handle.readRange(offset, length),
-    );
+    return await readPeImageFromReader(handle, "headers");
   } catch (cause) {
     throw artifactParseFailure(cause, undefined);
   }
@@ -58,7 +71,7 @@ const requireRange = (
     length < 0 ||
     offset > fileSize - length
   )
-    fail(
+    failTruncated(
       `PE certificate range ${String(offset)} + ${String(length)} leaves the artifact.`,
     );
 };
@@ -81,17 +94,12 @@ const ABSENT_LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
 ] as const;
 
-type CertificateHeaders = ReturnType<typeof readPeImageHeaders>;
-
-const certificateTableRange = (
-  headers: CertificateHeaders,
-  fileSize: number,
-) => {
-  const security = headers.dataDirectories[4];
+const certificateTableRange = (image: PeImage, fileSize: number) => {
+  const security = image.pe_data_directories[4];
   if (security === undefined || (security.address === 0 && security.size === 0))
     return null;
   const { address: tableOffset, size: tableSize } = security;
-  if (tableSize === 0 || tableOffset < headers.headerSize)
+  if (tableSize === 0 || tableOffset < image.pe_size_of_headers)
     fail("PE certificate table offset overlaps headers or has zero size.");
   if (tableOffset % 8 !== 0)
     fail("PE certificate table offset must be aligned to eight bytes.");
@@ -99,17 +107,20 @@ const certificateTableRange = (
   return {
     tableOffset,
     tableSize,
-    directoryAt: headers.optionalHeaderOffset + security.offset,
+    directoryAt: image.pe_optional_header_file_offset + security.offset,
   };
 };
 
 const parsePeCertificateTable = (
-  { machine, format }: CertificateHeaders,
+  image: PeImage,
   range: ReturnType<typeof certificateTableRange>,
   table: Buffer,
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
 ): PeCertificates => {
+  const format = image.bits === 64 ? "pe32-plus" : "pe32";
+  const machine = image.pe_machine;
+  const headerAnomalies = [...image.pe_header_anomalies];
   if (range === null)
     return {
       artifact,
@@ -118,6 +129,7 @@ const parsePeCertificateTable = (
       table: null,
       entries: [],
       coverage: { status: "complete", examined_entries: 0, certificates: 0 },
+      header_anomalies: headerAnomalies,
       limitations: [...ABSENT_LIMITATIONS],
     };
   const { tableOffset, tableSize, directoryAt } = range;
@@ -129,7 +141,7 @@ const parsePeCertificateTable = (
     );
   const entries: PeCertificates["entries"] = [];
   let at = 0;
-  const reader = new BinaryReader(table, true, "pe-certificate-table");
+  const reader = new BinaryReader(table, true, FORMAT);
   let examined = 0;
   let teletexStringCompatibilityUsed = false;
   let unsignedAttributesPresent = false;
@@ -137,7 +149,8 @@ const parsePeCertificateTable = (
     // Alignment padding sits inside the gap before the next 8-byte boundary.
     // Bytes that remain after that boundary are a short header, including
     // zeros at the start of the table.
-    if (table.length - at < 8) fail("WIN_CERTIFICATE header is truncated.");
+    if (table.length - at < 8)
+      failTruncated("WIN_CERTIFICATE header is truncated.");
     const length = reader.u32(at);
     if (length < 8)
       fail("WIN_CERTIFICATE dwLength is shorter than its header.");
@@ -146,7 +159,7 @@ const parsePeCertificateTable = (
       fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
     const next = align8(entryEnd);
     if (next > table.length)
-      fail("WIN_CERTIFICATE alignment padding is truncated.");
+      failTruncated("WIN_CERTIFICATE alignment padding is truncated.");
     examined += 1;
     if (examined > input.max_entries)
       throw new ArtifactReaderFailure(
@@ -236,8 +249,16 @@ const parsePeCertificateTable = (
         if (
           cause instanceof PeCertificateAsn1Failure &&
           cause.exhausted === null
-        )
-          fail(`PKCS#7 signedData is malformed: ${cause.message}`);
+        ) {
+          // A DER form outside the decoder's coverage is not corrupt bytes.
+          if (cause.unsupportedForm)
+            throw unsupportedInput(
+              FORMAT,
+              `PKCS#7 signedData uses an unsupported form: ${cause.message}`,
+              { cause },
+            );
+          fail(`PKCS#7 signedData is malformed: ${cause.message}`, { cause });
+        }
         throw cause;
       }
     }
@@ -275,6 +296,7 @@ const parsePeCertificateTable = (
       examined_entries: examined,
       certificates,
     },
+    header_anomalies: headerAnomalies,
     limitations: [
       ...LIMITATIONS,
       ...(teletexStringCompatibilityUsed ? [TELETEX_LIMITATION] : []),
@@ -289,13 +311,13 @@ export const parsePeCertificates = (
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
 ): PeCertificates => {
-  const headers = readCertificateImageHeaders(bytes);
-  const range = certificateTableRange(headers, bytes.length);
+  const image = readCertificateImage(bytes);
+  const range = certificateTableRange(image, bytes.length);
   const table =
     range === null
       ? Buffer.alloc(0)
       : bytes.subarray(range.tableOffset, range.tableOffset + range.tableSize);
-  return parsePeCertificateTable(headers, range, table, artifact, input);
+  return parsePeCertificateTable(image, range, table, artifact, input);
 };
 
 /**
@@ -307,11 +329,11 @@ export const parsePeCertificatesFromHandle = async (
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
 ): Promise<PeCertificates> => {
-  const headers = await readCertificateImageHeadersAt(handle);
-  const range = certificateTableRange(headers, handle.size);
+  const image = await readCertificateImageAt(handle);
+  const range = certificateTableRange(image, handle.size);
   const table =
     range === null
       ? Buffer.alloc(0)
       : await handle.readRange(range.tableOffset, range.tableSize);
-  return parsePeCertificateTable(headers, range, table, artifact, input);
+  return parsePeCertificateTable(image, range, table, artifact, input);
 };

@@ -1716,3 +1716,43 @@ it("detaches sealed bundle and staged entry payloads on export", () => {
   );
   expect(sealedBundle.records[0]?.normalized_result).toEqual(result);
 });
+
+describe("snapshot recording refusals", () => {
+  const recording = (address: string, extra: object = {}) => ({
+    target: structuredClone(ANALYSIS_SNAPSHOT_TARGET),
+    profile: structuredClone(ANALYSIS_SNAPSHOT_PROFILE),
+    operation: "xrefs" as const,
+    parameters: { address, document: "fixture" },
+    execution: {
+      ...createAnalysisExecution([], ANALYSIS_SNAPSHOT_PROVIDER, {
+        subject: ANALYSIS_SNAPSHOT_TARGET,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      }),
+      ...extra,
+    },
+  });
+
+  it("names a reference truncation the record would drop", () => {
+    const cache = new AnalysisSnapshotCache();
+    const truncated = recording("0x1000", { referencesTruncated: true });
+    expect(cache.recordingRefusal(truncated)).toContain("reference truncation");
+    cache.record(truncated);
+    expect(cache.entries()).toEqual([]);
+    const plain = recording("0x1000");
+    expect(cache.recordingRefusal(plain)).toBeUndefined();
+    cache.record(plain);
+    expect(cache.entries()).toHaveLength(1);
+  });
+
+  it("names a full cache only for a query it does not already hold", () => {
+    const cache = new AnalysisSnapshotCache();
+    for (let index = 0; index < 10_000; index++)
+      cache.record(recording(`0x${(0x1000 + index).toString(16)}`));
+    expect(cache.entries()).toHaveLength(10_000);
+    expect(cache.recordingRefusal(recording("0x1000"))).toBeUndefined();
+    const extra = recording("0x900000");
+    expect(cache.recordingRefusal(extra)).toContain("10000-entry maximum");
+    cache.record(extra);
+    expect(cache.entries()).toHaveLength(10_000);
+  });
+});

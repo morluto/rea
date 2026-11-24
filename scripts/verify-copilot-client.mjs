@@ -23,7 +23,10 @@ import {
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { advertisedToolPresentation } from "../dist/contracts/mcpSchemaPresentation.js";
 
@@ -205,17 +208,8 @@ await withVerifierCleanup(async () => {
           requestIndex <= 8,
           "Local model workflow exceeded its turn budget",
         );
-        const call = (name, args) => ({
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: `call_rea_fixture_${requestIndex}`,
-              type: "function",
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        });
+        const call = (name, args) =>
+          toolCallMessage(`call_rea_fixture_${requestIndex}`, name, args);
         if (!skillRequested) {
           const skill = tools.find((t) => t.name === "skill");
           assert(skill, "Copilot CLI must expose its native skill tool");

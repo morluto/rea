@@ -100,15 +100,11 @@ it("reads signed TYPE_INT64 constants and rejects a truncated payload", async ()
     });
     expect(truncated.isError).toBe(true);
     expect(parseMcpToolError(truncated).error).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_python_pyc",
-        issues: [
-          {
-            reason: "invalid_format",
-            message: expect.stringContaining("64-bit integer"),
-          },
-        ],
+        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        reason: expect.stringContaining("64-bit integer"),
       },
     });
   } finally {
@@ -251,16 +247,11 @@ it("rejects negative code fields for magics after constructor validation was add
     });
     expect(response.isError).toBe(true);
     expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_python_pyc",
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("co_flags is negative"),
-          },
-        ],
+        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        reason: expect.stringContaining("co_flags is negative"),
       },
     });
   } finally {

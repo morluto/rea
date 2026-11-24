@@ -6,20 +6,17 @@ import {
   readGoBinaryImageFromHandle,
   type ReadGoBinaryImageOptions,
 } from "../../../src/go/GoBinaryImage.js";
-import type { NativeByteSource } from "../../../src/domain/native/nativeSectionDirectory.js";
-
-export const goByteSource = (bytes: Buffer) =>
-  ({
-    size: bytes.length,
-    prefix: bytes.subarray(0, 4096),
-    readRange: async (offset, length) =>
-      bytes.subarray(offset, offset + length),
-  }) satisfies NativeByteSource;
+import { bufferByteSource } from "../../../src/domain/byteSource.js";
 
 export const readGoFixture = (
   bytes: Buffer,
   options?: ReadGoBinaryImageOptions,
-) => readGoBinaryImageFromHandle(goByteSource(bytes), options, async () => {});
+) =>
+  readGoBinaryImageFromHandle(
+    bufferByteSource(bytes, 4096),
+    options,
+    async () => {},
+  );
 
 /** Actual filesystem paths that fail before Go artifact acquisition begins. */
 export const createGoBinaryPathFailureFixture = async (
@@ -443,12 +440,11 @@ export const createGoBinaryDiagnosticFixtures = () => {
     { name: "damaged-pe", bytes: damagedPe },
     ...highBitSignatures,
   ];
-  const absentDirectories = createGoBinaryFixture({ format: "pe" }).bytes;
-  absentDirectories.writeUInt32LE(1, 152 + 108);
+  // The loader reads the optional header at its fixed offsets whatever
+  // SizeOfOptionalHeader declares, so an unknown magic there is unsupported.
   const shortOptionalHeaders = [0, 1].map((size) => {
     const bytes = createGoBinaryFixture({ format: "pe" }).bytes;
     bytes.writeUInt16LE(size, 148);
-    // Bytes following the declared header must not supply its magic field.
     bytes.fill(0xff, 152 + size, 154);
     return { name: `optional-header-${String(size)}-bytes`, bytes };
   });
@@ -463,18 +459,25 @@ export const createGoBinaryDiagnosticFixtures = () => {
       code: "unsupported_target" as const,
       details: { operation: "inspect_go_binary" },
     })),
-    ...[
-      { name: "absent-directories", bytes: absentDirectories },
-      ...shortOptionalHeaders,
-    ].map((fixture) => ({
+    ...shortOptionalHeaders.map((fixture) => ({
       ...fixture,
-      code: "invalid_request" as const,
+      code: "unsupported_target" as const,
       details: {
         operation: "inspect_go_binary",
-        issues: [{ path: ["path"], reason: "invalid_format" }],
+        reason: "Only PE32 and PE32+ image optional headers are supported",
       },
     })),
   ];
+};
+
+/**
+ * A PE that declares one data directory. The loader admits it, and the Go
+ * build information is found by section scan, so inspection succeeds.
+ */
+export const createGoBinaryOneDirectoryFixture = () => {
+  const fixture = createGoBinaryFixture({ format: "pe" });
+  fixture.bytes.writeUInt32LE(1, 152 + 108);
+  return fixture;
 };
 
 const encodeVarint = (input: number): Buffer => {
