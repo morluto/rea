@@ -307,7 +307,8 @@ The lane builds six fixtures from committed freestanding C and assembly sources:
 - RV32 and RV64 double-float builds (`rv{32,64}imafdc`) of `riscv.c`,
   each linked as `ET_EXEC` and as a PIE.
 - An RV32 soft-float build of `riscv-float-abi.c` with ESP32-C3's
-  `-march=rv32imc_zicsr_zifencei -mabi=ilp32`, typed with DWARF.
+  `-march=rv32imc_zicsr_zifencei -mabi=ilp32`, typed with DWARF. It also links
+  `riscv-noreturn.c`, compiled separately with `-mno-relax`.
 - The same objects linked with `--strip-all`. Every allocated section keeps
   its address and bytes, so the typed build's symbols locate its functions.
 
@@ -339,6 +340,11 @@ For the soft-float builds the lane also checks:
   names no floating-point register.
 - Retained Evidence states the prototype outcome; the stripped build has no
   function definitions.
+- An LLVM objdump reading finds the call from `rea_riscv_stop_caller` to
+  `rea_riscv_stop`, which DWARF declares no-return, as one `auipc`+`jalr` pair,
+  as in ESP-IDF's calls between flash and IRAM. In the typed build, Ghidra's
+  Listing ends that computed call, its basic block has no successor, and the
+  caller's terminal-call limitation names `rea_riscv_stop`.
 
 Header-mutated copies check admission. The RV32 double-float image relabelled as
 soft-float (`e_flags` `0x1`), refused before this lane, is admitted through the

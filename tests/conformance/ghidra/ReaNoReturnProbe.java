@@ -3,6 +3,7 @@
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import generic.jar.ResourceFile;
+import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.script.GhidraScript;
 import ghidra.app.script.GhidraScriptUtil;
 import ghidra.framework.Application;
@@ -11,6 +12,7 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.listing.FlowOverride;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.RefType;
@@ -23,11 +25,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
+import java.util.Set;
+import java.util.TreeSet;
 
 /** Injects reported analysis flags into imported ELF/Mach-O functions; never executes target code. */
 public class ReaNoReturnProbe extends GhidraScript {
     private record MemoryCallReference(Address source, Address target, RefType type,
         SourceType sourceType, int operandIndex, boolean primary) {}
+    /** A computed call's state before the repair: which flows, body and pseudocode it had. */
+    private record ComputedCall(String name, boolean ends, boolean constant, Address call, Address fallthrough,
+        FlowOverride override, Set<Address> targets, AddressSet body, String pseudocode) {}
     private final JsonArray checks = new JsonArray();
     private final Map<Function, Address> originalEnds = new LinkedHashMap<>();
     private final Map<Function, String> originalSignatures = new LinkedHashMap<>();
@@ -199,6 +206,118 @@ public class ReaNoReturnProbe extends GhidraScript {
         }
     }
 
+    private Instruction computedCall(Function caller) {
+        Instruction found = null;
+        for (Instruction ins : currentProgram.getListing().getInstructions(caller.getBody(), true)) {
+            FlowType flow = ins.getFlowType();
+            if (!flow.isCall() || !flow.isComputed()) continue;
+            if (found != null) throw new IllegalStateException("Two computed calls in " + caller.getName());
+            found = ins;
+        }
+        require("computed_call_falls_through_" + caller.getName(), found != null &&
+            found.getDefaultFlows().length == 0 && !found.getFlowType().isTerminal() && found.getFallThrough() != null);
+        return found;
+    }
+
+    private Set<Address> callTargets(Instruction call) {
+        Set<Address> targets = new TreeSet<>();
+        for (Reference reference : call.getReferencesFrom())
+            if (reference.getReferenceType().isCall()) targets.add(reference.getToAddress());
+        return targets;
+    }
+
+    /** Add the COMPUTED_CALL reference that Ghidra's analysis records for a resolved target. */
+    private void recordTarget(Instruction call, Function target) {
+        if (callTargets(call).contains(target.getEntryPoint())) return;
+        currentProgram.getReferenceManager().addMemoryReference(call.getAddress(), target.getEntryPoint(),
+            RefType.COMPUTED_CALL, SourceType.ANALYSIS, 0);
+    }
+
+    private void forgetOtherTargets(Instruction call, Function target) {
+        for (Reference reference : call.getReferencesFrom())
+            if (reference.getReferenceType().isCall() && !reference.getToAddress().equals(target.getEntryPoint()))
+                currentProgram.getReferenceManager().delete(reference);
+    }
+
+    private String pseudocode(Function function) {
+        DecompInterface decompiler = new DecompInterface();
+        try {
+            if (!decompiler.openProgram(currentProgram))
+                throw new IllegalStateException("Decompiler: " + decompiler.getLastMessage());
+            var result = decompiler.decompileFunction(function, 60, monitor);
+            if (!result.decompileCompleted())
+                throw new IllegalStateException("Decompiler: " + result.getErrorMessage());
+            return result.getDecompiledFunction().getC();
+        } finally {
+            decompiler.dispose();
+        }
+    }
+
+    /**
+     * Real decoded computed calls to a local no-return function. Inline assembly fixes three call
+     * targets in the instruction stream, and a writable slot supplies the fourth. The fifth
+     * target is a conditional move between a returning and the no-return address, which Ghidra's
+     * p-code expresses as a CBRANCH over the COPY. Besides the code, only the injected state
+     * differs: a second recorded target, an existing override, and the one reference recorded
+     * for the no-return value of the slot and the conditional move. Only the first call may end.
+     */
+    private List<ComputedCall> computedCalls() throws Exception {
+        Function stop = function("rea_computed_stop");
+        stop.setNoReturn(true);
+        Map<String, Boolean> callers = new LinkedHashMap<>();
+        callers.put("rea_constant_call", true);
+        callers.put("rea_constant_call_two_targets", false);
+        callers.put("rea_constant_call_overridden", false);
+        callers.put("rea_hook_call", false);
+        callers.put("rea_conditional_call", false);
+        // The decompiler can resolve only the fixed targets; it continues past the other calls.
+        Set<String> variable = Set.of("rea_hook_call", "rea_conditional_call");
+        List<ComputedCall> calls = new ArrayList<>();
+        for (var item : callers.entrySet()) {
+            Function caller = function(item.getKey());
+            Instruction call = computedCall(caller);
+            recordTarget(call, stop);
+            // Ghidra 12.2 records both arms of the conditional move. Keep only the no-return arm,
+            // as an analysis that resolves one arm would, so the target proof alone must refuse it.
+            if (item.getKey().equals("rea_conditional_call")) forgetOtherTargets(call, stop);
+            if (item.getKey().endsWith("_two_targets")) recordTarget(call, function("rea_strlen"));
+            if (item.getKey().endsWith("_overridden")) call.setFlowOverride(FlowOverride.CALL);
+            require("computed_call_stays_open_" + item.getKey(), call.getFlowType().isCall() &&
+                !call.getFlowType().isTerminal() && call.getFallThrough() != null);
+            require("computed_call_recorded_targets_" + item.getKey(), callTargets(call).size() ==
+                (item.getKey().endsWith("_two_targets") ? 2 : 1));
+            calls.add(new ComputedCall(item.getKey(), item.getValue(), !variable.contains(item.getKey()), call.getAddress(), call.getFallThrough(),
+                call.getFlowOverride(), callTargets(call), new AddressSet(caller.getBody()), pseudocode(caller)));
+        }
+        return calls;
+    }
+
+    private void requireComputedCalls(List<ComputedCall> calls) {
+        Function stop = function("rea_computed_stop");
+        require("computed_stop_keeps_flag", stop.hasNoReturn());
+        for (ComputedCall saved : calls) {
+            Function caller = function(saved.name());
+            Instruction call = currentProgram.getListing().getInstructionAt(saved.call());
+            String name = saved.name();
+            require("computed_call_targets_kept_" + name, call != null && callTargets(call).equals(saved.targets()));
+            if (saved.ends()) {
+                require("computed_call_ended_" + name, call.getFlowOverride() == FlowOverride.CALL_RETURN &&
+                    call.getFlowType().isTerminal() && call.getFallThrough() == null);
+                require("computed_caller_refit_" + name, caller.getBody().getMaxAddress().equals(call.getMaxAddress()));
+            } else {
+                require("computed_call_kept_" + name, call.getFlowOverride() == saved.override() &&
+                    !call.getFlowType().isTerminal() && saved.fallthrough().equals(call.getFallThrough()));
+                require("computed_caller_body_kept_" + name, caller.getBody().equals(saved.body()));
+            }
+            // The decompiler already stops at a constant target and continues past the slot call.
+            String after = pseudocode(caller);
+            if (!after.equals(saved.pseudocode()))
+                println("REA_NO_RETURN_PSEUDOCODE " + name + "\n--- before\n" + saved.pseudocode() + "\n--- after\n" + after);
+            require("computed_call_pseudocode_unchanged_" + name, after.equals(saved.pseudocode()));
+            require("computed_call_pseudocode_tail_" + name, after.contains("rea_after_call") != saved.constant());
+        }
+    }
+
     @Override
     public void run() throws Exception {
         String[] args = getScriptArgs();
@@ -229,6 +348,7 @@ public class ReaNoReturnProbe extends GhidraScript {
         localStop.setNoReturn(true);
         Function localReturn = function("rea_local_return");
         localReturn.setNoReturn(true);
+        List<ComputedCall> computed = computedCalls();
 
         GhidraScript fix = script("ReaGhidraNoReturnFix.java", new File(directory, "ReaGhidraNoReturnFix.java"));
         Method repair = fix.getClass().getMethod("run");
@@ -252,6 +372,7 @@ public class ReaNoReturnProbe extends GhidraScript {
         require("local_return_repaired", !localReturn.hasNoReturn());
         require("independent_entry_preserved", adjacent.getBody().equals(adjacentBody) &&
             !adjacentCaller.getBody().contains(adjacentEntry));
+        requireComputedCalls(computed);
 
         GhidraScript bridge = script("ReaGhidraBridge.java", new File(directory, "ReaGhidraBridge.java"));
         Method warnings = bridge.getClass().getDeclaredMethod(

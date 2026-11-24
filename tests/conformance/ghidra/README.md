@@ -14,8 +14,11 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce
   typed and stripped RV32 ilp32 images whose calls cover every rule of the ilp32
   policy; `riscv-checks.mjs` holds that policy's expected storage and the
-  call-site oracle. `npm run verify:ghidra:riscv` exercises real CLI/MCP
-  discovery, decompilation, argument storage, output schemas, profile and
+  call-site oracle. `../c/riscv-noreturn.c`, compiled separately with
+  `-mno-relax`, adds an `auipc`+`jalr` call to a DWARF no-return function,
+  whose fallthrough Ghidra's Listing must not keep.
+  `npm run verify:ghidra:riscv` exercises real CLI/MCP discovery,
+  decompilation, argument storage, terminal calls, output schemas, profile and
   snapshot identity, admission and refusal diagnostics, immutable source bytes,
   and owned cleanup. It requires BYO Ghidra 12.2/JDK 25+ and RISC-V
   Clang/LLD/LLVM readelf/LLVM objdump; `REA_RISCV_CLANG`, `REA_RISCV_LLD`,
@@ -67,13 +70,18 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
 - `no-return.c` and `ReaNoReturnProbe.java` inject incorrect import flags into a
   real ELF or Mach-O analysis database, verify caller recovery, propagated flag
   repair and signature preservation, and retain genuine/unknown no-return calls
-  and independently identified entries. Run `npm run build:cached`, then
-  `node scripts/verify-real-ghidra-noreturn.mjs` with the Ghidra/JDK environment
-  below on Linux or macOS x64/arm64. On Linux, use a procps-compatible process
-  table that exposes REA's current process for owned cleanup. It also checks
-  named limitations through the real read-only TCP bridge and provider Evidence
-  projection; default Unix-socket transport, Windows, and the reported Amethyst
-  artifact need separate verification. Fixture target code is never executed.
+  and independently identified entries. Its computed calls to a local no-return
+  function check the computed-call repair: a call whose target inline assembly
+  fixes ends. A second recorded target, an existing flow override, a writable
+  function-pointer slot and a conditional move each keep the fallthrough, body
+  and pseudocode; the last two have one injected candidate. Run
+  `npm run build:cached`, then `node scripts/verify-real-ghidra-noreturn.mjs`
+  with the Ghidra/JDK environment below on Linux or macOS x64/arm64. On Linux,
+  use a procps-compatible process table that exposes REA's current process for
+  owned cleanup. It also checks named limitations through the real read-only TCP
+  bridge and provider Evidence projection; default Unix-socket transport,
+  Windows, and the reported Amethyst artifact need separate verification.
+  Fixture target code is never executed.
 - `ReaDecompilerFailureProbe.java` replaces the bridge decompiler after a real
   import of `cross-format.c`, so one function's decompilation fails. It checks
   that `analyze_function` still returns that function's assembly, callers,

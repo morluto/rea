@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
@@ -24,6 +24,8 @@ const BUILDS = {
       "./riscv-probe.S",
       "./riscv-isa-probe.S",
     ],
+    // Compiled alone with -mno-relax, so the linker keeps its auipc+jalr calls.
+    unrelaxed: ["../c/riscv-noreturn.c"],
     march: () => "rv32imc_zicsr_zifencei",
     mabi: () => "ilp32",
     flags: 1,
@@ -107,9 +109,9 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
   const compiler = fixtureCommand(FIXTURE_TOOLS.riscvClang);
   const linker = fixtureCommand(FIXTURE_TOOLS.riscvLinker);
   const reader = fixtureCommand(FIXTURE_TOOLS.riscvReadelf);
-  const sources = build.sources.map((path) =>
-    fileURLToPath(new URL(path, import.meta.url)),
-  );
+  const source = (path) => fileURLToPath(new URL(path, import.meta.url));
+  const sources = build.sources.map(source);
+  const unrelaxed = (build.unrelaxed ?? []).map(source);
   const path = join(
     directory,
     `rv${bits}${floatAbi === "double" ? "" : `-${floatAbi}`}${pie ? "-pie" : ""}.elf`,
@@ -118,10 +120,24 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
     bits === 32
       ? "/lib/ld-linux-riscv32-ilp32d.so.1"
       : "/lib/ld-linux-riscv64-lp64d.so.1";
-  const args = [
+  const target = [
     `--target=riscv${bits}-unknown-elf`,
     `-march=${build.march(bits)}`,
     `-mabi=${build.mabi(bits)}`,
+  ];
+  const compilations = unrelaxed.map((sourcePath) => [
+    ...target,
+    "-mno-relax",
+    "-fno-pic",
+    "-O0",
+    "-g",
+    "-c",
+    sourcePath,
+    "-o",
+    path.replace(/\.elf$/u, `-${basename(sourcePath, ".c")}.o`),
+  ]);
+  const args = [
+    ...target,
     `--ld-path=${linker}`,
     "-nostdlib",
     ...(pie
@@ -132,6 +148,7 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
     "-Wl,-e,rea_riscv_entry",
     "-Wl,--build-id=none",
     ...sources,
+    ...compilations.map((compilation) => compilation.at(-1)),
     "-o",
     path,
   ];
@@ -139,6 +156,8 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
   const compilerVersion = await run(compiler, ["--version"], options);
   const linkerVersion = await run(linker, ["--version"], options);
   const readerVersion = await run(reader, ["--version"], options);
+  for (const compilation of compilations)
+    await run(compiler, compilation, { ...options, timeout: 60000 });
   await run(compiler, args, { ...options, timeout: 60000 });
   const elf = await readRiscvElf(reader, path, floatAbi, run);
   assert.equal(elf.class, `ELF${bits}`);
@@ -189,10 +208,11 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
       compiler: { command: compiler, version: compilerVersion.stdout.trim() },
       linker: { command: linker, version: linkerVersion.stdout.trim() },
       reader: { command: reader, version: readerVersion.stdout.trim() },
+      ...(compilations.length === 0 ? {} : { compilations }),
       arguments: args,
     },
     sources: await Promise.all(
-      sources.map(async (sourcePath) => ({
+      [...sources, ...unrelaxed].map(async (sourcePath) => ({
         path: sourcePath,
         sha256: await sha256(sourcePath),
       })),

@@ -5,7 +5,9 @@ import {
   assertRiscvIlp32Caller,
   assertRiscvIlp32Storage,
   assertRiscvIlp32TableConsistent,
+  assertRiscvTerminalCall,
   parseRiscvCallSites,
+  parseRiscvFarCalls,
   riscvStorageLocations,
 } from "./riscv-checks.mjs";
 
@@ -268,6 +270,136 @@ const ADDRESSES = {
   rea_riscv_abi_quad: "0x11316",
   rea_riscv_abi_variadic: "0x1136a",
 };
+
+// The same tool's listing of rea_riscv_stop_caller, whose object -mno-relax
+// built. rea_riscv_stop is at 0x11644.
+const FAR_LISTING = `
+11660: addi sp, sp, -0x10
+11662: sw ra, 0xc(sp)
+11664: sw s0, 0x8(sp)
+11666: addi s0, sp, 0x10
+11668: sw a0, -0xc(s0)
+1166c: lw a0, -0xc(s0)
+11670: bnez a0, 0x11680 <rea_riscv_stop_caller+0x20>
+11672: j 0x11674 <rea_riscv_stop_caller+0x14>
+11674: lw a0, -0xc(s0)
+11678: auipc ra, 0x0
+1167c: jalr -0x34(ra) <rea_riscv_stop>
+11680: lw a0, -0xc(s0)
+11684: addi a0, a0, 0x1
+11686: lw ra, 0xc(sp)
+11688: lw s0, 0x8(sp)
+1168a: addi sp, sp, 0x10
+1168c: ret
+`;
+const FAR_PAIR = "11678: auipc ra, 0x0\n1167c: jalr -0x34(ra) <rea_riscv_stop>";
+const FAR_CALL = { auipc: "0x11678", jalr: "0x1167c", target: "0x11644" };
+const STOP = { name: "rea_riscv_stop", address: "0x11644" };
+const TERMINAL_LIMITATION =
+  "Ghidra Listing reports a terminal call at 0x1167c to 0x11644 rea_riscv_stop (external=false, thunk=false, hasNoReturn=true); fallthrough is excluded by Ghidra's flow model. This records Ghidra's FunctionManager flag, not an independent verification that the callee cannot return.";
+
+/**
+ * REA's reading of that call through `rea inspect-native-instruction` and
+ * `rea function` on Ghidra 12.1.4, trimmed to the fields the check reads.
+ * The pseudocode was the same with and without the no-return repair.
+ */
+const reading = (
+  flow: string,
+  successors: readonly string[],
+  limitations: readonly string[],
+) => ({
+  call: FAR_CALL,
+  callee: STOP,
+  instruction: {
+    address: "0x1167c",
+    status: "decoded",
+    flow: {
+      kind: "call",
+      conditional: false,
+      computed: true,
+      classification_evidence: [
+        { source: "ghidra-listing-flow-type", value: flow },
+      ],
+    },
+    references: [{ target_address: "0x11644", call: true }],
+  },
+  dossier: {
+    pseudocode:
+      "\nuint __rea_ilp32 rea_riscv_stop_caller(uint code)\n\n{\n  if (code == 0) {\n                    /* WARNING: Subroutine does not return */\n    rea_riscv_stop(0);\n  }\n  return code + 1;\n}\n\n",
+    callees: [{ address: "0x11644" }],
+    basic_blocks: [
+      { start: "0x11660", end: "0x11672", successors: ["0x11672", "0x11680"] },
+      { start: "0x11672", end: "0x11674", successors: ["0x11674"] },
+      { start: "0x11674", end: "0x11680", successors },
+      { start: "0x11680", end: "0x1168e", successors: [] },
+    ],
+    limitations,
+  },
+});
+const REPAIRED = reading("COMPUTED_CALL_TERMINATOR", [], [TERMINAL_LIMITATION]);
+// The returning-imports-decoded-return-v2 repair left the call returning.
+const RETURNING = reading("COMPUTED_CALL", ["0x11680"], []);
+
+describe("RISC-V unrelaxed call to a no-return function", () => {
+  it("computes each auipc+jalr target from the pair's immediates", () => {
+    const call = { auipc: "0x11678", jalr: "0x1167c", target: "0x11644" };
+    expect(parseRiscvFarCalls(FAR_LISTING)).toEqual([call]);
+    // `-M no-aliases` names the link register; the call is the same.
+    expect(
+      parseRiscvFarCalls(
+        FAR_LISTING.replace("jalr -0x34(ra)", "jalr ra, -0x34(ra)"),
+      ),
+    ).toEqual([call]);
+    // A negative upper immediate wraps within the 32-bit address space.
+    expect(
+      parseRiscvFarCalls(
+        FAR_LISTING.replace(
+          FAR_PAIR,
+          "11678: auipc ra, 0xfffff\n1167c: jalr 0x10(ra)",
+        ),
+      ),
+    ).toEqual([{ ...call, target: "0x10688" }]);
+  });
+
+  it("ignores relaxed, indirect and unlinked calls", () => {
+    expect(
+      parseRiscvFarCalls(
+        FAR_LISTING.replace(FAR_PAIR, "11678: jal 0x11644 <rea_riscv_stop>"),
+      ),
+    ).toEqual([]);
+    // A tail call through the pair links no return address.
+    expect(
+      parseRiscvFarCalls(
+        FAR_LISTING.replace(
+          FAR_PAIR,
+          "11678: auipc t1, 0x0\n1167c: jalr zero, -0x34(t1)",
+        ),
+      ),
+    ).toEqual([]);
+    // rea_riscv_abi_caller makes direct calls and one call through a3.
+    expect(parseRiscvFarCalls(LISTING)).toEqual([]);
+  });
+
+  it("accepts the repaired terminal call and refuses the returning one", () => {
+    expect(() => assertRiscvTerminalCall(REPAIRED)).not.toThrow();
+    expect(() => assertRiscvTerminalCall(RETURNING)).toThrow(/Listing flow/u);
+    // Each fact is checked on its own.
+    expect(() =>
+      assertRiscvTerminalCall(
+        reading("COMPUTED_CALL_TERMINATOR", ["0x11680"], [TERMINAL_LIMITATION]),
+      ),
+    ).toThrow(/successors/u);
+    expect(() =>
+      assertRiscvTerminalCall(reading("COMPUTED_CALL_TERMINATOR", [], [])),
+    ).toThrow(/No limitation/u);
+    expect(() =>
+      assertRiscvTerminalCall({
+        ...REPAIRED,
+        callee: { ...STOP, address: "0x11660" },
+      }),
+    ).toThrow(/target/u);
+  });
+});
 
 describe("RISC-V ilp32 conformance checks", () => {
   it("keeps every call-site word at its storage location", () => {

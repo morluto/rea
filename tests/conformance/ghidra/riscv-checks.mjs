@@ -199,6 +199,38 @@ export function assertRiscvIlp32TableConsistent() {
         );
 }
 
+/** The instructions of an `llvm-objdump --no-show-raw-insn` listing. */
+const listingInstructions = (listing) =>
+  listing.split("\n").flatMap((line) => {
+    const match = /^\s*([\da-f]+):\s+([a-z.]+)(?:\s+(.*))?$/u.exec(line);
+    if (match === null) return [];
+    const [, address, mnemonic, text = ""] = match;
+    const operands = text
+      .replace(/\s*<[^>]*>/u, "")
+      .split(",")
+      .map((operand) => operand.trim())
+      .filter((operand) => operand.length > 0);
+    return [
+      { address: Number.parseInt(address, 16), mnemonic, text, operands },
+    ];
+  });
+
+const immediate = (text) => {
+  const value = Number.parseInt(
+    text,
+    text.replace(/^-/u, "").startsWith("0x") ? 16 : 10,
+  );
+  assert.ok(Number.isSafeInteger(value), `Unexpected immediate ${text}`);
+  return value;
+};
+
+/** An `offset(base)` operand. */
+const memoryOperand = (operand) => {
+  const match = /^(-?(?:0x)?[\da-f]+)\((\w+)\)$/u.exec(operand);
+  assert.ok(match !== null, `Unexpected memory operand ${operand}`);
+  return { offset: immediate(match[1]), base: match[2] };
+};
+
 /**
  * Reconstruct the argument words each call in an `llvm-objdump` listing of
  * `rea_riscv_abi_caller` writes. It interprets only the instructions that
@@ -213,21 +245,10 @@ export function parseRiscvCallSites(listing) {
   const memory = new Map();
   let written = new Set();
   const calls = [];
-  const immediate = (text) => {
-    const value = Number.parseInt(
-      text,
-      text.replace(/^-/u, "").startsWith("0x") ? 16 : 10,
-    );
-    assert.ok(Number.isSafeInteger(value), `Unexpected immediate ${text}`);
-    return value;
-  };
   const address = (operand) => {
-    const match = /^(-?(?:0x)?[\da-f]+)\((\w+)\)$/u.exec(operand);
-    assert.ok(match !== null, `Unexpected memory operand ${operand}`);
-    const base = registers.get(match[2]);
-    return base?.stack === undefined
-      ? undefined
-      : base.stack + immediate(match[1]);
+    const { offset, base } = memoryOperand(operand);
+    const value = registers.get(base);
+    return value?.stack === undefined ? undefined : value.stack + offset;
   };
   const isRegister = (operand) =>
     /^(?:zero|ra|sp|gp|tp|t[0-6]|s(?:[0-9]|1[01])|a[0-7])$/u.test(
@@ -238,15 +259,7 @@ export function parseRiscvCallSites(listing) {
     if (value === undefined) registers.delete(register);
     else registers.set(register, value);
   };
-  for (const line of listing.split("\n")) {
-    const match = /^\s*[\da-f]+:\s+([a-z.]+)(?:\s+(.*))?$/u.exec(line);
-    if (match === null) continue;
-    const [, mnemonic, text = ""] = match;
-    const operands = text
-      .replace(/\s*<[^>]*>/u, "")
-      .split(",")
-      .map((operand) => operand.trim())
-      .filter((operand) => operand.length > 0);
+  for (const { mnemonic, text, operands } of listingInstructions(listing)) {
     if (
       (mnemonic === "jal" && operands[0] !== "zero") ||
       mnemonic === "jalr" ||
@@ -327,8 +340,41 @@ export function parseRiscvCallSites(listing) {
   return calls;
 }
 
-/** Disassemble the typed fixture's caller with an independent LLVM tool. */
-export async function inspectRiscvCallSites(path, run = execute) {
+/**
+ * The calls in an `llvm-objdump` listing that go through an `auipc`+`jalr`
+ * pair, which linker relaxation would shorten to one `jal`. Each RV32 target
+ * comes from the pair's immediates, not from the listing's symbol annotations.
+ */
+export function parseRiscvFarCalls(listing) {
+  const calls = [];
+  let previous;
+  for (const instruction of listingInstructions(listing)) {
+    // `jalr offset(base)` is the alias of `jalr ra, offset(base)`.
+    const [link, operand] =
+      instruction.operands.length === 1
+        ? ["ra", ...instruction.operands]
+        : instruction.operands;
+    if (
+      instruction.mnemonic === "jalr" &&
+      link === "ra" &&
+      previous?.mnemonic === "auipc"
+    ) {
+      const { offset, base } = memoryOperand(operand);
+      const [upper, value] = previous.operands;
+      if (base === upper)
+        calls.push({
+          auipc: `0x${previous.address.toString(16)}`,
+          jalr: `0x${instruction.address.toString(16)}`,
+          target: `0x${((previous.address + immediate(value) * 0x1000 + offset) >>> 0).toString(16)}`,
+        });
+    }
+    previous = instruction;
+  }
+  return calls;
+}
+
+/** Disassemble one fixture symbol with an independent LLVM tool. */
+const disassembleRiscvSymbol = async (path, symbol, run) => {
   const command = fixtureCommand(FIXTURE_TOOLS.riscvObjdump);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
@@ -338,20 +384,92 @@ export async function inspectRiscvCallSites(path, run = execute) {
   const version = await run(command, ["--version"], options);
   const { stdout, stderr } = await run(
     command,
-    [
-      "-d",
-      "--no-show-raw-insn",
-      "--disassemble-symbols=rea_riscv_abi_caller",
-      path,
-    ],
+    ["-d", "--no-show-raw-insn", `--disassemble-symbols=${symbol}`, path],
     options,
   );
   assert.equal(stderr.trim(), "", `objdump diagnostics: ${stderr}`);
   return {
     command,
     version: version.stdout.split("\n").find((line) => /version/iu.test(line)),
-    calls: parseRiscvCallSites(stdout),
+    listing: stdout,
   };
+};
+
+/** Disassemble the typed fixture's caller with an independent LLVM tool. */
+export async function inspectRiscvCallSites(path, run = execute) {
+  const { listing, ...tool } = await disassembleRiscvSymbol(
+    path,
+    "rea_riscv_abi_caller",
+    run,
+  );
+  return { ...tool, calls: parseRiscvCallSites(listing) };
+}
+
+/** Find the unrelaxed calls of the soft-float fixture's no-return caller. */
+export async function inspectRiscvFarCalls(path, run = execute) {
+  const { listing, ...tool } = await disassembleRiscvSymbol(
+    path,
+    "rea_riscv_stop_caller",
+    run,
+  );
+  return { ...tool, calls: parseRiscvFarCalls(listing) };
+}
+
+/**
+ * REA's view of an unrelaxed call to a no-return function. Ghidra's Listing
+ * ends the computed call, the call keeps its reference to the callee, its
+ * basic block has no successor, and the caller's terminal-call limitation
+ * names the callee and its flag. The pseudocode still calls the callee.
+ */
+export function assertRiscvTerminalCall({
+  call,
+  callee,
+  instruction,
+  dossier,
+}) {
+  const site = BigInt(call.jalr);
+  const target = BigInt(callee.address);
+  assert.equal(BigInt(call.target), target, `${call.jalr} target`);
+  assert.equal(instruction.status, "decoded");
+  assert.equal(BigInt(instruction.address), site);
+  assert.deepEqual(
+    [
+      instruction.flow.kind,
+      instruction.flow.computed,
+      instruction.flow.conditional,
+    ],
+    ["call", true, false],
+  );
+  assert.ok(
+    instruction.flow.classification_evidence?.some(
+      ({ source, value }) =>
+        source === "ghidra-listing-flow-type" &&
+        value === "COMPUTED_CALL_TERMINATOR",
+    ),
+    `${call.jalr} Listing flow: ${JSON.stringify(instruction.flow)}`,
+  );
+  assert.ok(
+    instruction.references.some(
+      (reference) =>
+        reference.call && BigInt(reference.target_address) === target,
+    ),
+    `${call.jalr} has no call reference to ${callee.name}`,
+  );
+  const block = dossier.basic_blocks.find(
+    ({ start, end }) => BigInt(start) <= site && site < BigInt(end),
+  );
+  assert.ok(block !== undefined, `No basic block holds ${call.jalr}`);
+  assert.deepEqual(block.successors, [], `${call.jalr} successors`);
+  assert.ok(
+    dossier.callees.some(({ address }) => BigInt(address) === target),
+    `${callee.name} missing from the callees`,
+  );
+  assert.match(dossier.pseudocode, new RegExp(`\\b${callee.name}\\(`, "u"));
+  const named = `Ghidra Listing reports a terminal call at 0x${site.toString(16)} to 0x${target.toString(16)} ${callee.name} (external=false, thunk=false, hasNoReturn=true);`;
+  assert.ok(
+    dossier.limitations.some((limitation) => limitation.startsWith(named)),
+    `No limitation starts ${named} ${JSON.stringify(dossier.limitations)}`,
+  );
 }
 
 const matchesWord = (call, actual, expected) =>
