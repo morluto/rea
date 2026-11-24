@@ -835,7 +835,7 @@ it("keeps fast feedback separate from complete qualification and release proof",
       ),
     );
   expect(ci.on.schedule).toEqual([
-    { cron: "23 0-2,4-23 * * *" },
+    { cron: "23 9,15,21 * * *" },
     { cron: "23 3 * * *" },
   ]);
   expect(ci.concurrency.group).toContain("'qualification' || 'feedback'");
