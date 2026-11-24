@@ -26,7 +26,7 @@ it("rejects advertised PE32 data directories outside the optional header", async
   const fixture = createGoBinaryFixture({ format: "pe", bits: 32 });
   fixture.bytes.writeUInt32LE(1, 152 + 92);
   const path = join(root, "truncated-pe32.exe");
-  await writeFile(path, fixture.bytes);
+  await writeFile(path, fixture.bytes.subarray(0, 152 + 96));
   const result = await new GoBinaryProvider().inspect({ path });
   if (result.ok) throw new Error("Truncated PE32 directories must be refused");
   expect(projectAnalysisError(result.error)).toMatchObject({
