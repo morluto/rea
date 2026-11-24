@@ -97,6 +97,9 @@ it.each([
   "tests/support/analysis-efficiency/resource-run.py",
   "scripts/fixtures/http3-lab.py",
   "scripts/fixtures/managed/pe.mjs",
+  "scripts/verify/advertised-schemas/engines.py",
+  "scripts/verify-real-browser.mjs",
+  "scripts/verify-qwen-client.mjs",
   "src/process/ExecFileOutput.test.ts",
   "src/process/ProcessOwnership.fixture.ts",
   "scripts/lib/http3-verifier-lifecycle.test.mjs",
@@ -165,6 +168,13 @@ it("uses the scope in a bounded workflow gated on administrator activation", () 
   );
   expect(workflowDocument.jobs.scope.if).toBe(
     "vars.REA_CODEQL_ADVANCED == 'true'",
+  );
+  const scopeCheckout = workflowDocument.jobs.scope.steps.find((step) =>
+    step.uses?.startsWith("actions/checkout@"),
+  );
+  // Numeric 0 is falsy in Actions expressions; keep the nonzero branch first.
+  expect(scopeCheckout?.with?.["fetch-depth"]).toBe(
+    "${{ github.event_name != 'pull_request' && 1 || 0 }}",
   );
   const job = workflowDocument.jobs.analyze;
   expect(job.if).toBe(
