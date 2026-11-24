@@ -1,80 +1,158 @@
 import { describe, expect, it } from "vitest";
+
 import {
+  ADMITTED_GHIDRA_MINOR_FLOOR,
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
   SUPPORTED_GHIDRA_VERSION,
   ghidraReleaseAccepted,
   ghidraReleaseCompatibility,
   ghidraReleaseLine,
+  GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
+  GHIDRA_CLANG_O0_SWITCH_DEFECT,
+  ghidraKnownProviderDefects,
+  ghidraKnownProviderDefectLimitations,
   ghidraVersionDetail,
   unverifiedGhidraBuildLimitation,
+  type GhidraDefectApplicability,
 } from "./GhidraReleasePolicy.js";
 
-describe("ghidraReleaseCompatibility", () => {
-  it("marks the verified build", () => {
-    const compatibility = ghidraReleaseCompatibility("12.1.4");
-    expect(compatibility.status).toBe("verified");
-    if (compatibility.status !== "verified") return;
-    expect(compatibility.raw).toBe("12.1.4");
-  });
-
-  it("marks the rest of the verified line compatible", () => {
-    expect(ghidraReleaseCompatibility("12.1.2").status).toBe("compatible");
-  });
-
-  it("admits a newer minor release as compatible", () => {
-    const compatibility = ghidraReleaseCompatibility("12.2");
-    expect(compatibility.status).toBe("compatible");
-    if (compatibility.status !== "compatible") return;
-    expect(compatibility.raw).toBe("12.2");
-  });
-
-  it("rejects other majors and older minors", () => {
-    expect(ghidraReleaseCompatibility("12.0.4").status).toBe("unsupported");
-    expect(ghidraReleaseCompatibility("11.4").status).toBe("unsupported");
-    expect(ghidraReleaseCompatibility("13.0").status).toBe("unsupported");
-  });
-
-  it("leaves unparseable releases unresolved", () => {
-    expect(ghidraReleaseCompatibility("latest").status).toBe("unresolved");
-    expect(ghidraReleaseCompatibility(null).status).toBe("unresolved");
-  });
-});
-
-describe("ghidraReleaseAccepted", () => {
-  it("accepts the verified build and newer compatible releases", () => {
-    expect(ghidraReleaseAccepted("12.1.4")).toBe(true);
+describe("Ghidra release admission", () => {
+  it("verifies the pinned build and JDK major", () => {
+    expect(SUPPORTED_GHIDRA_VERSION).toBe("12.2");
+    expect(SUPPORTED_GHIDRA_JAVA_MAJOR).toBe(25);
+    expect(ADMITTED_GHIDRA_MINOR_FLOOR).toBe(2);
+    expect(ghidraReleaseCompatibility("12.2")).toMatchObject({
+      status: "verified",
+      raw: "12.2",
+    });
     expect(ghidraReleaseAccepted("12.2")).toBe(true);
+    expect(unverifiedGhidraBuildLimitation("12.2")).toBeUndefined();
+    expect(ghidraKnownProviderDefects("12.2")).toEqual([
+      GHIDRA_CLANG_O0_SWITCH_DEFECT,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
+    ]);
+    const limitations = ghidraKnownProviderDefectLimitations("12.2");
+    expect(limitations).toEqual(
+      ghidraKnownProviderDefectLimitations(SUPPORTED_GHIDRA_VERSION),
+    );
+    const [closedSwitch, openSwitch] = limitations;
+    for (const fact of [
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.id,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.release,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.fixed_in,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.fix_commit,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.upstream_issue,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.compiler,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.optimization,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.architecture,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.construct,
+      GHIDRA_CLANG_O0_SWITCH_DEFECT.effect,
+    ])
+      expect(closedSwitch).toEqual(expect.stringContaining(fact));
+    for (const fact of [
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.id,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.release,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.status,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.upstream_issue,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.architecture,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.optimization,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.construct,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.bound,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.table,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.scope.source,
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.effect,
+    ])
+      expect(openSwitch).toEqual(expect.stringContaining(fact));
+    expect(openSwitch).not.toContain(GHIDRA_CLANG_O0_SWITCH_DEFECT.fix_commit);
+    expect(ghidraVersionDetail("12.2")).toBe("12.2");
   });
 
-  it("rejects unsupported releases", () => {
-    expect(ghidraReleaseAccepted("13.0")).toBe(false);
-    expect(ghidraReleaseAccepted("latest")).toBe(false);
+  it("admits other builds on the floor as compatible", () => {
+    for (const raw of ["12.2.1", "12.3", "12.2-DEV"]) {
+      expect(ghidraReleaseCompatibility(raw).status).toBe("compatible");
+      expect(ghidraReleaseAccepted(raw)).toBe(true);
+      expect(unverifiedGhidraBuildLimitation(raw)).toBeTypeOf("string");
+      expect(ghidraVersionDetail(raw)).toBe(
+        `${raw}; compatible ${ghidraReleaseLine()} release (verified build ${SUPPORTED_GHIDRA_VERSION})`,
+      );
+    }
+    const [closedDefect, openDefect] =
+      ghidraKnownProviderDefectLimitations("12.2");
+    for (const raw of ["12.2", "12.2.0", "12.2.0-DEV", "12.2-DEV"]) {
+      expect(ghidraKnownProviderDefects(raw)).toEqual([
+        GHIDRA_CLANG_O0_SWITCH_DEFECT,
+        GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
+      ]);
+      expect(ghidraKnownProviderDefectLimitations(raw)).toEqual([
+        closedDefect,
+        openDefect,
+      ]);
+    }
+    for (const raw of ["12.2.1", "12.3"]) {
+      expect(ghidraKnownProviderDefects(raw)).toEqual([
+        GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
+      ]);
+      expect(ghidraKnownProviderDefectLimitations(raw)).toEqual([openDefect]);
+      expect(openDefect).not.toContain(GHIDRA_CLANG_O0_SWITCH_DEFECT.id);
+    }
+    expect(ghidraReleaseLine()).toBe("12.x (>=12.2)");
+  });
+
+  it("rejects builds below the compile floor and other majors", () => {
+    for (const raw of ["12.1.4", "12.1", "12.0.4", "11.4", "13.0.0"]) {
+      expect(ghidraReleaseCompatibility(raw).status).toBe("unsupported");
+      expect(ghidraReleaseAccepted(raw)).toBe(false);
+      expect(unverifiedGhidraBuildLimitation(raw)).toBeUndefined();
+      expect(ghidraKnownProviderDefects(raw)).toEqual([]);
+      expect(ghidraKnownProviderDefectLimitations(raw)).toEqual([]);
+      expect(ghidraVersionDetail(raw)).toBe(
+        `${raw}; accepted releases are ${ghidraReleaseLine()} (verified build ${SUPPORTED_GHIDRA_VERSION})`,
+      );
+    }
+  });
+
+  it("leaves unreadable versions unresolved", () => {
+    expect(ghidraReleaseCompatibility(null)).toEqual({
+      status: "unresolved",
+      raw: null,
+    });
+    expect(ghidraReleaseCompatibility("latest").status).toBe("unresolved");
+    expect(ghidraReleaseAccepted(undefined)).toBe(false);
+    expect(ghidraVersionDetail(undefined)).toBe("unknown");
+    expect(ghidraVersionDetail("latest")).toBe("latest");
+    expect(ghidraKnownProviderDefects("latest")).toEqual([]);
+    expect(ghidraKnownProviderDefectLimitations("latest")).toEqual([]);
   });
 });
 
-describe("unverifiedGhidraBuildLimitation", () => {
-  it("reports a newer compatible build against the verified build", () => {
-    const limitation = unverifiedGhidraBuildLimitation("12.2");
-    expect(limitation).toBeDefined();
-    expect(limitation).toContain("12.2");
-    expect(limitation).toContain(SUPPORTED_GHIDRA_VERSION);
+describe("Ghidra known-defect applicability", () => {
+  const ids = (
+    architecture: GhidraDefectApplicability["architecture"],
+    operation: string,
+  ) =>
+    ghidraKnownProviderDefectLimitations("12.2", { architecture, operation })
+      .map((limitation) => /ghidra-\d+/u.exec(limitation)?.[0])
+      .filter((id) => id !== undefined);
+
+  it.each([
+    ["x86_64", "procedure_pseudo_code", ["ghidra-9996"]],
+    ["x86_64", "procedure_references", ["ghidra-9996"]],
+    ["arm64", "procedure_pseudo_code", ["ghidra-10154"]],
+    ["arm64_32", "analyze_function", ["ghidra-10154"]],
+    ["x86", "procedure_pseudo_code", []],
+    ["mips", "xrefs", []],
+    [undefined, "procedure_pseudo_code", ["ghidra-9996", "ghidra-10154"]],
+    ["x86_64", "read_bytes", []],
+    ["x86_64", "search_bytes", ["ghidra-9996"]],
+    ["x86_64", "search_strings", []],
+    ["x86_64", "list_names", []],
+    ["x86_64", "health", []],
+    [undefined, "read_bytes", []],
+  ] as const)("on %s for %s keeps %j", (architecture, operation, expected) => {
+    expect(ids(architecture, operation)).toEqual(expected);
   });
 
-  it("stays silent for the verified build and unsupported releases", () => {
-    expect(unverifiedGhidraBuildLimitation("12.1.4")).toBeUndefined();
-    expect(unverifiedGhidraBuildLimitation("13.0")).toBeUndefined();
-  });
-});
-
-describe("ghidraReleaseLine", () => {
-  it("names the accepted release floor", () => {
-    expect(ghidraReleaseLine()).toBe("12.x (>=12.1)");
-  });
-});
-
-describe("ghidraVersionDetail", () => {
-  it("describes a newer compatible release against the verified build", () => {
-    const detail = ghidraVersionDetail("12.2");
-    expect(detail).toContain("compatible");
-    expect(detail).toContain(SUPPORTED_GHIDRA_VERSION);
+  it("keeps every version-matched record when no applicability is given", () => {
+    expect(ghidraKnownProviderDefectLimitations("12.2")).toHaveLength(2);
   });
 });

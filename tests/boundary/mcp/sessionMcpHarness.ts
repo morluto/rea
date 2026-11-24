@@ -1,3 +1,6 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
+import type { AdbRequest } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { readFile, writeFile } from "node:fs/promises";
@@ -16,8 +19,6 @@ import type {
   AnalysisProvider,
 } from "../../../src/ports/AnalysisProvider.js";
 import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
-import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
-import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
 import {
   createEvidenceBundle,
   evidenceBundleSchema,
@@ -25,6 +26,7 @@ import {
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const SNAPSHOT_PROFILE = createAnalysisProfile(
   { id: "fixture", name: "Fixture analysis provider", version: "1" },
@@ -52,13 +54,13 @@ const androidAnalysis: AndroidAnalysisPort = {
   execute: unusedHostToolExecution,
 };
 
-const adbDeviceAnalysis: AdbDeviceAnalysisPort = {
+const adbDeviceAnalysis: RequestAnalysisPort<AdbRequest> = {
   inspectAvailability: async () => HOST_TOOLS_NOT_CONFIGURED,
   close: async () => {},
   execute: unusedHostToolExecution,
 };
 
-const apktoolAnalysis: ApktoolResourceAnalysisPort = {
+const apktoolAnalysis: RequestAnalysisPort<ApktoolRequest> = {
   inspectAvailability: async () => HOST_TOOLS_NOT_CONFIGURED,
   close: async () => {},
   execute: unusedHostToolExecution,
@@ -109,7 +111,10 @@ export const createSessionMcpHarness = async (
           }),
     },
   );
-  const mcp = new Client({ name: "session-test", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "session-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server);

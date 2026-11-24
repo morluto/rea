@@ -28,7 +28,7 @@ const it = test.skipIf(process.platform === "win32");
 it("identifies a caller-selected kuna by version and digest", async () => {
   const root = await createTestTempDirectory("rea-kuna-install-");
   const kuna = await writeFakeKuna(root, {
-    version: { stdout: "kuna 1.990\n" },
+    version: { stdout: "kuna 1.1000\n" },
   });
   const link = join(root, "current-kuna");
   await symlink(kuna, link);
@@ -43,7 +43,7 @@ it("identifies a caller-selected kuna by version and digest", async () => {
     value: {
       configuration: { command: link, cacheRoot: join(root, "cache") },
       executable: await realpath(kuna),
-      version: "1.990",
+      version: "1.1000",
       verified: true,
       // A `#!` launcher reports its interpreter; ownership checks must not expect the path.
       script: true,

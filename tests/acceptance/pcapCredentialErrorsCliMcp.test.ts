@@ -39,6 +39,11 @@ const verifyOriginalError = (document: unknown) => {
       reported_limits: z.object({
         max_output_bytes: z.literal(8 * 1024 * 1024),
       }),
+      refusal: z.object({
+        kind: z.literal("fixed_ceiling"),
+        limit: z.literal(8 * 1024 * 1024),
+        unit: z.literal("bytes"),
+      }),
       captured_output: z.object({
         stdout: z.string(),
         stdout_bytes: z.literal(8 * 1024 * 1024),

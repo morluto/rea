@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod } from "node:fs/promises";
+
 import { join, resolve } from "node:path";
 
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
@@ -13,7 +14,7 @@ import {
 } from "../../../tests/support/process/processFixture.js";
 
 const startPythonBridge = async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-cutter-receipt-"));
+  const directory = await createTestTempDirectory("rea-cutter-receipt-");
   await chmod(directory, 0o700);
   const processes = createTestProcessRegistry();
   const child = processes.spawn(
@@ -77,11 +78,7 @@ const startPythonBridge = async () => {
       async close(): Promise<void> {
         child.stdin.end("shutdown\n");
         const exited = await waitForExit(child, 3_000);
-        try {
-          await processes.shutdown();
-        } finally {
-          await rm(directory, { recursive: true, force: true });
-        }
+        await processes.shutdown();
         if (!exited) throw new Error(`Python bridge did not exit: ${stderr}`);
       },
     };
@@ -89,7 +86,6 @@ const startPythonBridge = async () => {
     child.stdin.end("shutdown\n");
     await waitForExit(child, 3_000);
     await processes.shutdown();
-    await rm(directory, { recursive: true, force: true });
     throw error;
   }
 };

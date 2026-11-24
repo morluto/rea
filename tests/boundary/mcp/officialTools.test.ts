@@ -7,7 +7,7 @@ import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
-import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
+import { HopperRemoteError } from "../../../src/hopper/HopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
@@ -19,6 +19,7 @@ import { composeBinarySession } from "../../../src/application/binary/BinarySess
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { createBinarySessionTargets } from "../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface Invocation {
   readonly name: string;
@@ -75,7 +76,7 @@ it("advertises strict masked-byte arguments and bounded pages", () => {
 });
 
 describe("read_bytes contract", () => {
-  it("accepts lengths above the former arbitrary ceiling and rejects zero", () => {
+  it("accepts any positive read length and rejects zero", () => {
     const contract = OFFICIAL_TOOL_CONTRACTS.find(
       ({ name }) => name === "read_bytes",
     );
@@ -129,7 +130,10 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "contract-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "contract-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

@@ -6,7 +6,7 @@ import type {
   MacosPkgEntryMetadata,
   MacosPkgMetadata,
   MacosPkgRefusal,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/macosPkgMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import {
   MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,

@@ -9,9 +9,10 @@ import {
   HopperCancelledError,
   HopperProcessError,
   HopperStartError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
@@ -49,7 +50,7 @@ import {
 import {
   acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
-} from "../process/HopperLease.js";
+} from "./HopperLease.js";
 import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
@@ -266,23 +267,18 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     }
     if (failures.length === 0) return ok(null);
     if (failures.length === 1) return err(failures[0]!);
-    const resources = [
-      ...new Set(failures.flatMap((failure) => failure.cleanupResources)),
-    ];
-    const failure = new ProviderCleanupError(
-      "hopper",
-      resources,
-      {
-        reason: failures.map((failure) => failure.message).join("; "),
-      },
-      {
-        cause: new AggregateError(
-          failures,
-          "Hopper image and publisher cleanup remain incomplete",
-        ),
-      },
+    // Match the parts, which use ProviderCleanupError's default operation.
+    return err(
+      providerCleanupErrorFromFailures(
+        "hopper",
+        failures,
+        failures.map((failure) => failure.message).join("; "),
+        {
+          operation: "close_binary",
+          message: "Hopper image and publisher cleanup remain incomplete",
+        },
+      ),
     );
-    return err(failure.bindCleanupDependencies(failures));
   }
 
   async launch(

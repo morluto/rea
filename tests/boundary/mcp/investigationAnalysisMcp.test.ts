@@ -27,6 +27,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("aggregates comparison Evidence and records an approved runtime gap", async () => {
   const { session, server, client } = await connected();
@@ -134,7 +135,10 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "investigation-close-race", version: "1" });
+  const client = new Client(
+    { name: "investigation-close-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const callPathPreparation = phaseGate();
@@ -245,10 +249,17 @@ const dossierWithCallees = (addresses: readonly string[]) => {
   });
 };
 
-it.each([
+it.each<{
+  label: string;
+  coverage: RelationshipCoverage | undefined;
+  providerLimitations: string[];
+  dossierLimitations: string[];
+  status: string;
+  exhaustive: boolean;
+}>([
   {
     label: "complete",
-    coverage: { status: "complete" } as RelationshipCoverage,
+    coverage: { status: "complete" },
     providerLimitations: ["The provider version identity is unavailable."],
     dossierLimitations: ["The dossier has no native value-flow observation."],
     status: "unknown",
@@ -259,7 +270,7 @@ it.each([
     coverage: {
       status: "complete",
       discovery: { callees: { status: "complete" } },
-    } as RelationshipCoverage,
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "not_found",
@@ -275,7 +286,7 @@ it.each([
           reason: "This node was classified as data.",
         },
       },
-    } as RelationshipCoverage,
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "unknown",
@@ -286,7 +297,8 @@ it.each([
     coverage: {
       status: "partial",
       limitations: ["Callee output was capped."],
-    } as RelationshipCoverage,
+      limited_directions: ["callees"],
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "unknown",
@@ -297,7 +309,8 @@ it.each([
     coverage: {
       status: "unknown",
       reason: "Callee coverage was not established.",
-    } as RelationshipCoverage,
+      limited_directions: ["callees"],
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "unknown",
@@ -616,7 +629,10 @@ const connected = async (analysis?: AnalysisOperationPort) => {
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "investigation-test", version: "1" });
+  const client = new Client(
+    { name: "investigation-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

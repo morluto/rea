@@ -16,8 +16,9 @@ import {
   isTextualFormat,
   textSyntaxFormat,
 } from "./stateFormats.js";
+import { decodeStateUtf16 } from "./stateTextEncoding.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -330,33 +331,6 @@ const plainScrub = (text: string, identity: HostIdentity): TextScrub => {
   return { text: scrubbed, decoded: scrubbed };
 };
 
-/** UTF-16 text after a byte-order mark, decoded and encoded as the computer's boot respelling does; undefined otherwise. */
-const utf16Text = (bytes: Buffer) => {
-  const order = [
-    { mark: [0xff, 0xfe], swap: false },
-    { mark: [0xfe, 0xff], swap: true },
-  ].find(({ mark }) => mark.every((byte, index) => bytes[index] === byte));
-  if (order === undefined) return undefined;
-  const little = Buffer.from(bytes.subarray(2));
-  if (order.swap && little.length % 2 === 0) little.swap16();
-  try {
-    return {
-      // The signature is already removed; a leading U+FEFF here is content.
-      text: new TextDecoder("utf-16le", {
-        fatal: true,
-        ignoreBOM: true,
-      }).decode(little),
-      encode: (scrubbed: string) => {
-        const encoded = Buffer.from(scrubbed, "utf16le");
-        if (order.swap) encoded.swap16();
-        return Buffer.concat([Buffer.from(order.mark), encoded]);
-      },
-    };
-  } catch {
-    return undefined;
-  }
-};
-
 /** A seed by its home path and the format the state view read it as. */
 interface Seed {
   readonly home: string;
@@ -370,12 +344,19 @@ interface Seed {
  */
 const seedText = (bytes: Buffer, { home, format }: Seed) => {
   if (bytes.length > MAX_SCRUBBED_BYTES) return undefined;
-  if (!isTextualFormat(format)) {
-    const utf16 = utf16Text(bytes);
-    return utf16 === undefined
-      ? undefined
-      : { ...utf16, format: textSyntaxFormat(home, utf16.text) };
+  const utf16 = decodeStateUtf16(bytes);
+  if (utf16 !== undefined) {
+    return {
+      text: utf16.text,
+      format: textSyntaxFormat(home, utf16.text),
+      encode: (scrubbed: string) => {
+        const encoded = Buffer.from(scrubbed, "utf16le");
+        if (utf16.order === "be") encoded.swap16();
+        return Buffer.concat([bytes.subarray(0, 2), encoded]);
+      },
+    };
   }
+  if (!isTextualFormat(format)) return undefined;
   try {
     const text = strictUtf8Decoder("preserve").decode(bytes);
     return {

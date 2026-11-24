@@ -17,7 +17,7 @@ import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisInputError,
@@ -44,6 +44,7 @@ import {
   SQLITE_DATABASE_LIMITS,
   SQLITE_INSPECTION_REASONS,
   SQLITE_STRUCTURED_INSPECTION_REASONS,
+  SQLITE_WORKER_HEAP_BYTES,
 } from "./SqliteDatabaseLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
@@ -55,28 +56,30 @@ const {
   ...inspectionShape
 } = sqliteDatabaseSchema.shape;
 const inspectionSchema = z.strictObject(inspectionShape);
-const replySchema = z.union([
+const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), inspection: inspectionSchema }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z
-      .enum(SQLITE_INSPECTION_REASONS)
-      .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
-    message: z.string(),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.literal("column-evaluation"),
-    message: z.string(),
-    readable_columns: z.array(z.string()),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.literal("column-limit"),
-    message: z.string(),
-    selected_columns: z.int().positive(),
-    engine_column_limit: z.int().positive(),
-  }),
+  z.discriminatedUnion("reason", [
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z
+        .enum(SQLITE_INSPECTION_REASONS)
+        .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
+      message: z.string(),
+    }),
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("column-evaluation"),
+      message: z.string(),
+      readable_columns: z.array(z.string()),
+    }),
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("column-limit"),
+      message: z.string(),
+      selected_columns: z.int().positive(),
+      engine_column_limit: z.int().positive(),
+    }),
+  ]),
 ]);
 /** Replaceable launcher retains the shared owned-process supervision boundary. */
 export type SqliteWorkerLauncher = NonNullable<
@@ -119,10 +122,11 @@ const rejectedReply = (
       {
         capturedOutput,
         userMessage: reply.message,
+        related: { parameters: ["columns", "table", "schema_scope"] },
         remediationAction: `The database is readable; only the listed column values failed. REA's SQLite connection loads no extensions or application functions and disables schema trust. ${
           readable.length === 0
             ? "No other readable column was found"
-            : `Select columns whose values were read: columns: ${JSON.stringify(readable)} (CLI: one --column per name)`
+            : `Select columns whose values were read: columns: ${JSON.stringify(readable)}`
         }; omit table and use schema_scope: database to read the stored declarations without evaluating rows. Obtaining the failed values needs a SQLite connection able to evaluate them. Do not repeat the unchanged request.`,
       },
     );
@@ -146,7 +150,7 @@ const rejectedReply = (
       "memory",
       reply.message,
       {
-        javascript_heap_bytes: 256 * 1024 * 1024,
+        javascript_heap_bytes: SQLITE_WORKER_HEAP_BYTES,
       },
       { capturedOutput, diagnostics: { selected_path: selectedPath } },
     );
@@ -231,7 +235,7 @@ export const executeSqliteDatabaseWorker = async (request: {
     {
       command: process.execPath,
       arguments: [
-        "--max-old-space-size=256",
+        `--max-old-space-size=${String(SQLITE_DATABASE_LIMITS.workerHeapMiB)}`,
         fileURLToPath(new URL("./SqliteDatabaseWorker.js", import.meta.url)),
         requestPath,
       ],
@@ -333,11 +337,7 @@ const sqliteReplyCompletionFailure = (
     carriedReason(artifactFileCancellationCause(cause)),
     { capturedOutput },
   );
-  return analysisErrorWithCleanupFailure(
-    cancellation,
-    cleanup,
-    operation,
-  ).bindCleanupDependencies([cancellation, cleanup]);
+  return analysisErrorWithCleanupDependencies(cancellation, cleanup, operation);
 };
 
 /** A malformed reply or producer refusal stays primary over its later close. */
@@ -348,9 +348,5 @@ export const sqliteReplyFinalizationFailure = (
   finalization === undefined
     ? primary
     : finalization.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          finalization,
-          operation,
-        ).bindCleanupDependencies([primary, finalization])
+      ? analysisErrorWithCleanupDependencies(primary, finalization, operation)
       : primary.retainSecondaryFailure(finalization);

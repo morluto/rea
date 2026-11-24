@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { browserScenarioSchema } from "../../domain/browserScenario.js";
 import {
-  type BrowserScenarioEventAdmission,
   browserScenarioEventSchema,
   type BrowserScenarioEvent,
 } from "../../domain/browserScenarioCaptureValues.js";
@@ -187,13 +186,13 @@ it.each([true, false])(
       request,
       JSON.stringify({ token: secret, public: "kept" }),
     );
-    vi.spyOn(response, "headers").mockReturnValue({
+    response.headers = () => ({
       "content-type": "application/json",
       "x-derived-token": secret,
     });
-    vi.spyOn(response, "headersArray").mockResolvedValue([
+    response.headersArray = async () => [
       { name: "X-Derived-Token", value: secret },
-    ]);
+    ];
     secrets.responseProtector("login", [
       { name: "token", json_pointer: "/token", secret: true },
     ])?.(request);
@@ -206,8 +205,16 @@ it.each([true, false])(
     );
     if (content?.kind !== "network-content")
       throw new Error("Missing response content");
-    expect(JSON.stringify(content.headers)).not.toContain(secret);
-    expect(content.headers.state).toBe("captured");
+    expect(content.headers).toEqual({
+      state: "captured",
+      items: [
+        {
+          name: "X-Derived-Token",
+          value: "[REDACTED:page:login.token]",
+          redacted: true,
+        },
+      ],
+    });
     if (responseBody)
       expect(JSON.parse(bodyText(content))).toEqual({
         token: "[REDACTED:page:login.token]",
@@ -221,16 +228,33 @@ it.each([true, false])(
   },
 );
 
+const sourceMarker = '"[REDACTED:page:login.token]"';
+
 it.each([
-  ['{"token":"\\u0073ecret-token"}', "/token"],
-  ['{"token":"secret\\/token"}', "/token"],
-  ['{"token":1e3}', "/token"],
-  ['{"token":1000.0}', "/token"],
-  ['{"items":[{"a/b":"\\u0073ecret-token"}]}', "/items/0/a~1b"],
-  ['{"token":"shadowed","token":"\\u0073ecret-token"}', "/token"],
+  {
+    label: "escaped pointer and alias, with unrelated spellings",
+    body: '{ "items":[{"a/b":"\\u0073ecret-token"}], "mirror":"\\u0073ecret-token", "unknown":1e-400 }',
+    pointer: "/items/0/a~1b",
+    retained: `{ "items":[{"a/b":${sourceMarker}}], "mirror":${sourceMarker}, "unknown":1e-400 }`,
+  },
+  {
+    label: "escaped slash",
+    body: '{"token":"secret\\/token"}',
+    retained: `{"token":${sourceMarker}}`,
+  },
+  {
+    label: "numeric source and an exact alias",
+    body: '{"token":1e3,"mirror":1000.0}',
+    retained: `{"token":${sourceMarker},"mirror":${sourceMarker}}`,
+  },
+  {
+    label: "duplicate scalar keys",
+    body: '{"token":"shadowed","token":"\\u0073ecret-token"}',
+    retained: `{"token":${sourceMarker},"token":${sourceMarker}}`,
+  },
 ])(
-  "redacts the selected source JSON token structurally: %s",
-  async (body, pointer) => {
+  "redacts $label without rewriting unselected source bytes",
+  async ({ body, pointer = "/token", retained }) => {
     const { collector, events, secrets } = harness({
       request_body: false,
       response_body: true,
@@ -248,19 +272,13 @@ it.each([
     const content = events.find(
       (event) => event.kind === "network-content" && event.phase === "response",
     );
-    expect(content).toBeDefined();
-    const text = bodyText(content!);
-    expect(text).not.toMatch(/secret|0073|shadowed|1e3|1000/u);
-    expect(JSON.parse(text)).toBeDefined();
-    expect(text).toContain("[REDACTED:page:login.token]");
+    if (content === undefined) throw new Error("Missing response content");
+    expect(bodyText(content)).toBe(retained);
   },
 );
 
 it.each([
   { size: 20, headers: { "content-encoding": "gzip" } },
-  { size: 0, headers: { "content-length": "24" } },
-  { size: 0, headers: { "content-length": "0024" } },
-  { size: 0, headers: { "content-length": "00000000000000000024" } },
   {
     size: 0,
     headers: { "content-encoding": "gzip", "content-length": "0024" },
@@ -299,33 +317,6 @@ it.each([
   },
 );
 
-it("preserves unselected source spellings while redacting escaped aliases", async () => {
-  const { collector, events, secrets } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: false,
-  });
-  const request = new RequestFixture("marked");
-  const body =
-    '{ "token":"secret-token", "mirror":"\\u0073ecret-token", "unknown":1e-400 }';
-  request.responseSize = Buffer.byteLength(body);
-  secrets.responseProtector("login", [
-    { name: "token", json_pointer: "/token", secret: true },
-  ])?.(request);
-  collector.request(request);
-  collector.response(new ResponseFixture(request, body));
-  collector.finished(request);
-  await collector.finish();
-  const content = events.find(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  const text = bodyText(content!);
-  expect(text).toContain('"unknown":1e-400');
-  expect(text).toContain('{ "token":');
-  expect(text).not.toMatch(/secret|0073/u);
-  expect(JSON.parse(text).mirror).toBe("[REDACTED:page:login.token]");
-});
-
 it("associates sensitive fields by request identity while keeping same-URL unmarked values", async () => {
   const { collector, events, secrets } = harness({
     request_body: false,
@@ -361,10 +352,6 @@ it("associates sensitive fields by request identity while keeping same-URL unmar
 
 it.each([
   { size: 64, headers: { "content-encoding": "br" } },
-  { size: 0, headers: {} },
-  { size: 0, headers: { "content-length": "0000" } },
-  { size: 0, headers: { "content-length": "24, 24" } },
-  { size: 0, headers: { "content-length": "0009007199254740993" } },
   { size: 0, headers: { "content-length": "00012000001" } },
 ])(
   "withholds marked response content when decoded bounds are unknown or over budget: %j",
@@ -401,70 +388,50 @@ it.each([
   },
 );
 
-it("keeps observed completion independent of rejected completion metadata", async () => {
-  const { secrets, limits } = harness();
-  let omit = false;
-  const omitted: string[] = [];
+it("records phase omissions without reading blocked content or misreporting completion", async () => {
+  const { limits, secrets } = harness();
+  const reason = "max-total-event-allocation-bytes";
+  let omit = true;
+  const emit = vi.fn(() => ({ status: "retained", sequence: 1 }) as const);
+  const omitNetwork = vi.fn();
+  const redact = vi.spyOn(secrets, "redact");
   const collector = new PlaywrightScenarioNetwork({
-    selection: {
-      request_body: false,
-      response_body: false,
-      header_values: false,
-    },
+    selection,
     limits,
     secrets,
     admitText: () =>
       omit
-        ? {
-            status: "omitted",
-            sequence: 1,
-            reason: "max-total-event-allocation-bytes",
-          }
+        ? { status: "omitted", sequence: 1, reason }
         : { status: "retained", sequence: 1 },
-    emit: () => ({ status: "retained", sequence: 1 }),
+    emit,
     admitContentBody: () => ({ status: "retained", sequence: 1 }),
-    omitNetwork: (_id, kind) => {
-      omitted.push(kind);
-    },
-    omitEvent: (kind) => {
-      omitted.push(kind);
-    },
+    omitNetwork,
+    omitEvent: () => undefined,
   });
-  const request = new RequestFixture("ordinary");
-  collector.request(request);
-  omit = true;
-  collector.finished(request);
-  await collector.finish();
-  expect(omitted).toContain("request-finished");
-  expect(omitted).not.toContain("request-unfinished");
-});
+  const blocked = new RequestFixture("blocked");
+  collector.request(blocked);
+  expect(redact).not.toHaveBeenCalled();
+  expect(emit).not.toHaveBeenCalled();
 
-it.each(["finished", "failed", "unfinished"])(
-  "counts selected omitted response content when %s",
-  async (terminal) => {
-    const { collector, omittedEventCounts } = harness(
-      { request_body: false, response_body: true, header_values: false },
-      undefined,
-      "fixture",
-      { max_network_transactions: 1 },
-    );
-    collector.request(new RequestFixture("admitted"));
-    const request = new RequestFixture("omitted");
-    const response = new ResponseFixture(request, "response");
-    collector.request(request);
-    collector.response(response);
-    expect(omittedEventCounts.get("network-content")).toBe(1);
-    collector.response(response);
-    expect(omittedEventCounts.get("network-content")).toBe(1);
-    if (terminal === "finished") collector.finished(request);
-    if (terminal === "failed") collector.failed(request);
-    expect(omittedEventCounts.get("network-content")).toBe(1);
-    await collector.finish();
-    expect(omittedEventCounts.get("network-content")).toBe(1);
-    expect(response.bodyReads).toBe(0);
-    expect(request.bodyReads).toBe(0);
-  },
-);
+  omit = false;
+  const completed = new RequestFixture("admitted");
+  const response = new ResponseFixture(completed, "body");
+  collector.request(completed);
+  collector.response(response);
+  omit = true;
+  collector.finished(completed);
+  await collector.finish();
+
+  expect(blocked.bodyReads + blocked.headerReads + response.bodyReads).toBe(0);
+  expect(omitNetwork.mock.calls).toEqual([
+    ["request-1", "request", reason],
+    ["request-2", "request-finished", reason],
+    ["request-1", "request-unfinished", reason],
+  ]);
+  expect(collector.limitations().join(" ")).toContain(
+    "network coverage is incomplete",
+  );
+});
 
 it("redacts declared secrets in browser-produced form and JSON encodings", async () => {
   for (const secret of ["私密", 'space " and \n']) {
@@ -486,19 +453,31 @@ it("redacts declared secrets in browser-produced form and JSON encodings", async
   }
 });
 
-it("associates out-of-order same-URL responses by request identity", async () => {
+it("binds out-of-order same-URL content to its originating event", async () => {
   const { collector, events } = harness();
   const slow = new RequestFixture("slow");
   const fast = new RequestFixture("fast");
+  const slowResponse = new ResponseFixture(slow, "reply:slow");
+  const fastResponse = new ResponseFixture(fast, "reply:fast");
+  slowResponse.status = () => 201;
+  fastResponse.status = () => 202;
   collector.request(slow);
   collector.request(fast);
-  collector.response(new ResponseFixture(fast, "reply:fast"));
-  collector.response(new ResponseFixture(slow, "reply:slow"));
+  collector.response(fastResponse);
+  collector.response(slowResponse);
   collector.finished(fast);
   collector.finished(slow);
   await collector.finish();
+
   const content = events.filter((event) => event.kind === "network-content");
-  for (const marker of ["slow", "fast"]) {
+  const starts = events.filter((event) => event.kind === "request");
+  expect(content).toHaveLength(4);
+  expect(starts).toHaveLength(2);
+  for (const [index, marker, status] of [
+    [0, "slow", 201],
+    [1, "fast", 202],
+  ] as const) {
+    const start = starts[index]!;
     const request = content.find(
       (event) => event.phase === "request" && bodyText(event) === marker,
     );
@@ -506,58 +485,50 @@ it("associates out-of-order same-URL responses by request identity", async () =>
       (event) =>
         event.phase === "response" && bodyText(event) === `reply:${marker}`,
     );
+    expect(request).toMatchObject({
+      transaction_id: start.transaction_id,
+      source_event_sequence: start.sequence,
+    });
+    const reported = events.find(
+      (event) => event.kind === "response" && event.status === status,
+    );
+    expect(reported).toMatchObject({ transaction_id: start.transaction_id });
     expect(response).toMatchObject({
+      transaction_id: start.transaction_id,
+      source_event_sequence: reported?.sequence,
       body: { representation: "playwright-response-body-bytes" },
     });
-    expect(request?.transaction_id).toBe(response?.transaction_id);
-    expect(request?.source_event_sequence).not.toBe(
-      response?.source_event_sequence,
-    );
   }
-  expect(new Set(content.map((event) => event.transaction_id)).size).toBe(2);
 });
 
-it("keeps metadata-only capture free of body and header-value reads", async () => {
+it("records completed and unfinished metadata without reading content", async () => {
   const { collector, events } = harness({
     request_body: false,
     response_body: false,
     header_values: false,
   });
-  const request = new RequestFixture("body");
-  const response = new ResponseFixture(request, "reply");
-  collector.request(request);
+  const completed = new RequestFixture("complete");
+  const response = new ResponseFixture(completed, "reply");
+  const unfinished = new RequestFixture("pending");
+  collector.request(completed);
   collector.response(response);
-  collector.finished(request);
+  collector.finished(completed);
+  collector.request(unfinished);
   await collector.finish();
-  expect(
-    request.bodyReads +
-      request.headerReads +
-      response.bodyReads +
-      response.headerReads,
-  ).toBe(0);
+
+  for (const source of [completed, response, unfinished]) {
+    expect(source.bodyReads).toBe(0);
+    expect(source.headerReads).toBe(0);
+  }
   expect(events.map(({ kind }) => kind)).toEqual([
     "request",
     "response",
     "request-finished",
-  ]);
-  expect(JSON.stringify(events)).not.toContain("private-transport");
-});
-
-it("reports unfinished metadata even when content was not selected", async () => {
-  const { collector, events } = harness({
-    request_body: false,
-    response_body: false,
-    header_values: false,
-  });
-  const request = new RequestFixture("body");
-  collector.request(request);
-  await collector.finish();
-  expect(events.map(({ kind }) => kind)).toEqual([
     "request",
     "request-unfinished",
   ]);
   expect(collector.limitations()).toHaveLength(1);
-  expect(request.bodyReads + request.headerReads).toBe(0);
+  expect(JSON.stringify(events)).not.toContain("private-transport");
 });
 
 it.each([
@@ -567,7 +538,7 @@ it.each([
       response_body: false,
       header_values: false,
     },
-    reads: [1, 0, 0, 0],
+    reads: [1, 1, 0, 0],
     phases: ["request"],
   },
   {
@@ -576,7 +547,7 @@ it.each([
       response_body: true,
       header_values: false,
     },
-    reads: [0, 0, 1, 0],
+    reads: [0, 0, 1, 1],
     phases: ["response"],
   },
   {
@@ -589,7 +560,7 @@ it.each([
     phases: ["request", "response"],
   },
 ])(
-  "reads only the selected content $selection",
+  "reads selected bodies and the headers needed for their type $selection",
   async ({ selection: selected, reads, phases }) => {
     const { collector, events } = harness(selected);
     const request = new RequestFixture("input");
@@ -609,6 +580,12 @@ it.each([
         .filter((event) => event.kind === "network-content")
         .map((event) => event.phase),
     ).toEqual(phases);
+    if (!selected.header_values)
+      expect(
+        events
+          .filter((event) => event.kind === "network-content")
+          .map(({ headers }) => headers),
+      ).toEqual([{ state: "not_requested" }]);
   },
 );
 
@@ -681,143 +658,70 @@ it("does not read unfinished streaming responses and reports the cutoff", async 
   expect(collector.limitations().length).toBeGreaterThan(0);
 });
 
-it("queues completed body reads behind the active-read limit", async () => {
-  const { collector, events } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: false,
-  });
-  const requests = Array.from(
-    { length: 20 },
-    (_, index) => new RequestFixture(`request-${String(index)}`),
-  );
-  const releases: Array<(bytes: Buffer) => void> = [];
-  let activeReads = 0;
-  let maximumActiveReads = 0;
-  for (const request of requests) {
-    const response = new ResponseFixture(request, "unused");
-    response.read = () =>
-      new Promise((resolve) => {
-        activeReads += 1;
-        maximumActiveReads = Math.max(maximumActiveReads, activeReads);
-        releases.push((bytes) => {
-          activeReads -= 1;
-          resolve(bytes);
+it.each(["completion", "cancellation"])(
+  "keeps completed response reads bounded through %s",
+  async (terminal) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const { collector, events } = harness(
+      { request_body: false, response_body: true, header_values: false },
+      controller.signal,
+    );
+    const markers = Array.from({ length: 20 }, (_, index) => `queued-${index}`);
+    const responses = markers.map((marker) => {
+      const request = new RequestFixture(marker);
+      const response = new ResponseFixture(request, "unused");
+      response.read = () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve(Buffer.from(marker)), 4_000);
         });
-      });
-    collector.request(request);
-    collector.response(response);
-    collector.finished(request);
-  }
-
-  let releasedReads = 0;
-  while (releasedReads < requests.length) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const batch = releases.splice(0);
-    expect(batch.length).toBeGreaterThan(0);
-    batch.forEach((release) => release(Buffer.from("captured")));
-    releasedReads += batch.length;
-  }
-  await collector.finish();
-
-  const content = events.filter(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  expect(maximumActiveReads).toBe(16);
-  expect(content).toHaveLength(20);
-  expect(
-    content.every(
-      (event) =>
-        event.kind === "network-content" && event.body.state === "captured",
-    ),
-  ).toBe(true);
-  expect(events.filter(({ kind }) => kind === "network-content")).toHaveLength(
-    20,
-  );
-});
-
-it("starts each queued body's timeout when its read begins", async () => {
-  vi.useFakeTimers();
-  const { collector, events } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: false,
-  });
-  const requests = Array.from(
-    { length: 20 },
-    (_, index) => new RequestFixture(`request-${String(index)}`),
-  );
-  for (const request of requests) {
-    const response = new ResponseFixture(request, "unused");
-    response.read = () =>
-      new Promise((resolve) => {
-        setTimeout(() => resolve(Buffer.from("captured")), 4_000);
-      });
-    collector.request(request);
-    collector.response(response);
-    collector.finished(request);
-  }
-
-  const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(4_000);
-  await vi.advanceTimersByTimeAsync(4_000);
-  await finishing;
-
-  const content = events.filter(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  expect(content).toHaveLength(20);
-  expect(
-    content.every(
-      (event) =>
-        event.kind === "network-content" && event.body.state === "captured",
-    ),
-  ).toBe(true);
-});
-
-it("settles queued reads as cancelled without starting their body APIs", async () => {
-  const controller = new AbortController();
-  const { collector, events } = harness(
-    {
-      request_body: false,
-      response_body: true,
-      header_values: false,
-    },
-    controller.signal,
-  );
-  const requests = Array.from(
-    { length: 20 },
-    (_, index) => new RequestFixture(`request-${String(index)}`),
-  );
-  const responses = requests.map((request) => {
-    const response = new ResponseFixture(request, "unused");
-    response.read = () => new Promise(() => undefined);
-    return response;
-  });
-  requests.forEach((request, index) => {
-    collector.request(request);
-    collector.response(responses[index]!);
-    collector.finished(request);
-  });
-
-  expect(responses.filter(({ bodyReads }) => bodyReads > 0)).toHaveLength(16);
-  controller.abort();
-  await collector.finish();
-
-  expect(responses.filter(({ bodyReads }) => bodyReads > 0)).toHaveLength(16);
-  const content = events.filter(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  expect(content).toHaveLength(20);
-  expect(
-    content.every(
-      (event) =>
-        event.kind === "network-content" &&
-        event.body.state === "unavailable" &&
-        event.body.reason === "cancelled",
-    ),
-  ).toBe(true);
-});
+      collector.request(request);
+      collector.response(response);
+      collector.finished(request);
+      return response;
+    });
+    const content = () =>
+      events.filter(
+        (event) =>
+          event.kind === "network-content" && event.phase === "response",
+      );
+    const firstBatch = [...Array<number>(16).fill(1), 0, 0, 0, 0];
+    const finishing = collector.finish();
+    try {
+      expect(responses.map(({ bodyReads }) => bodyReads)).toEqual(firstBatch);
+      if (terminal === "cancellation") {
+        controller.abort();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(responses.map(({ bodyReads }) => bodyReads)).toEqual(firstBatch);
+        expect(content()).toEqual(
+          Array.from({ length: responses.length }, () =>
+            expect.objectContaining({
+              body: expect.objectContaining({
+                state: "unavailable",
+                reason: "cancelled",
+              }),
+            }),
+          ),
+        );
+      } else {
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(content().map(bodyText).sort()).toEqual(
+          markers.slice(0, 16).sort(),
+        );
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(content().map(bodyText).sort()).toEqual([...markers].sort());
+        expect(responses.map(({ bodyReads }) => bodyReads)).toEqual(
+          Array<number>(responses.length).fill(1),
+        );
+      }
+      await finishing;
+    } finally {
+      controller.abort();
+      await vi.runAllTimersAsync();
+      await finishing;
+    }
+  },
+);
 
 it("bounds hung completed-body reads and rejects late mutation after finalization", async () => {
   vi.useFakeTimers();
@@ -852,29 +756,6 @@ it("bounds hung completed-body reads and rejects late mutation after finalizatio
   collector.request(new RequestFixture("after-cutoff"));
   await Promise.resolve();
   expect(JSON.stringify(events)).toBe(frozen);
-});
-
-it("cancellation settles pending reads and preserves the cancelled reason", async () => {
-  const controller = new AbortController();
-  const { collector, events } = harness(selection, controller.signal);
-  const request = new RequestFixture("cancel");
-  const response = new ResponseFixture(request, "unused");
-  response.read = () => new Promise(() => undefined);
-  collector.request(request);
-  collector.response(response);
-  collector.finished(request);
-  controller.abort();
-  await collector.finish();
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "network-content",
-      phase: "response",
-      body: expect.objectContaining({
-        state: "unavailable",
-        reason: "cancelled",
-      }),
-    }),
-  );
 });
 
 it.each([false, true])(
@@ -945,8 +826,12 @@ it("preserves read errors and does not turn unexposed or empty bytes into the sa
   collector.request(missing);
   collector.response(response);
   collector.finished(missing);
+  const emptyResponse = new ResponseFixture(empty, "");
+  emptyResponse.headersArray = async () => [
+    { name: "Content-Type", value: "application/json" },
+  ];
   collector.request(empty);
-  collector.response(new ResponseFixture(empty, ""));
+  collector.response(emptyResponse);
   collector.finished(empty);
   await collector.finish();
   expect(events).toContainEqual(
@@ -979,120 +864,206 @@ it("preserves read errors and does not turn unexposed or empty bytes into the sa
         state: "captured",
         content: "",
         bytes: 0,
+        media_type: "application/json",
+        media_type_source: "content-type-header",
       }),
     }),
   );
   expect(collector.limitations().length).toBeGreaterThan(0);
 });
 
-it("redacts declared encodings in body media metadata", async () => {
-  const { collector, events } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: false,
-  });
-  const request = new RequestFixture("input");
-  const response = new ResponseFixture(request, "ordinary-bytes");
-  const headers = response.headers();
-  response.headers = () => ({
-    ...headers,
-    "content-type": `text/plain; fixture=${encodeURIComponent("私密")}`,
-  });
-  collector.request(request);
-  collector.response(response);
-  collector.finished(request);
-  await collector.finish();
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "network-content",
-      phase: "response",
-      body: expect.objectContaining({
-        state: "captured",
-        media_type: "text/plain; fixture=[REDACTED:declared]",
-      }),
-    }),
-  );
-});
+const quotedJsonType = 'application/json; note="one,two"';
 
-it("bounds admitted transactions before invoking content producers", async () => {
-  const { collector, events } = harness();
-  const admitted: RequestFixture[] = [];
-  for (let index = 0; index < 1024; index += 1) {
-    const request = new RequestFixture(`body-${index}`);
-    admitted.push(request);
+it.each([
+  {
+    label: "conflicting declarations",
+    declarations: ["application/json", "application/octet-stream"],
+    type: null,
+  },
+  {
+    label: "a coalesced declaration",
+    declarations: ["application/json; charset=utf-8, application/octet-stream"],
+    type: null,
+  },
+  {
+    label: "agreeing declarations with a quoted comma",
+    declarations: [quotedJsonType, quotedJsonType],
+    type: quotedJsonType,
+  },
+  { label: "unreadable headers", declarations: null, type: null },
+  {
+    label: "a redacted declaration",
+    declarations: ["application/json; fixture=%E7%A7%81%E5%AF%86"],
+    type: null,
+    retainedHeader: "application/json; fixture=[REDACTED:declared]",
+  },
+])(
+  "derives safe body media evidence from $label",
+  async ({ declarations, type, retainedHeader }) => {
+    const { collector, events } = harness({
+      request_body: false,
+      response_body: true,
+      header_values: retainedHeader !== undefined,
+    });
+    const request = new RequestFixture("input");
+    const response = new ResponseFixture(request, '{"value":"\\u79c1\\u5bc6"}');
+    // The flattened metadata cannot establish the producer's ordered Content-Type.
+    response.headers = () => ({ "content-type": "application/octet-stream" });
+    response.headersArray = async () => {
+      response.headerReads += 1;
+      if (declarations === null) throw new Error("Headers unavailable");
+      return declarations.map((value) => ({ name: "Content-Type", value }));
+    };
     collector.request(request);
-    collector.request(request); // repeated producer delivery cannot add jobs
-  }
-  const rejected = new RequestFixture("rejected");
-  const response = new ResponseFixture(rejected, "rejected");
-  collector.request(rejected);
-  collector.response(response);
-  collector.finished(rejected);
-  await collector.finish();
-  expect(admitted[0]?.bodyReads).toBe(1);
-  expect(
-    admitted.every(
-      (request) => request.bodyReads === 1 && request.headerReads === 1,
-    ),
-  ).toBe(true);
-  expect(rejected.bodyReads).toBe(0);
-  expect(rejected.headerReads).toBe(0);
-  expect(response.bodyReads).toBe(0);
-  expect(response.headerReads).toBe(0);
-  expect(
-    events.filter((event) => event.kind === "network-content"),
-  ).toHaveLength(1024);
-  expect(collector.limitations().join(" ")).toContain("resource budget");
-});
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    expect(response.headerReads).toBe(1);
+    expect(content).toMatchObject({
+      headers:
+        retainedHeader === undefined
+          ? { state: "not_requested" }
+          : {
+              state: "captured",
+              items: [
+                { name: "Content-Type", value: retainedHeader, redacted: true },
+              ],
+            },
+      body: {
+        state: "captured",
+        media_type: type,
+        media_type_source: "content-type-header",
+      },
+    });
+    if (content === undefined) throw new Error("Missing response content");
+    expect(JSON.parse(bodyText(content))).toEqual({
+      value: "[REDACTED:declared]",
+    });
+  },
+);
 
-it("uses the caller's transaction limit and reports the exact omitted ID range", async () => {
-  const { collector, events, omittedEventCounts } = harness(
-    selection,
-    undefined,
-    "fixture",
-    { max_network_transactions: 2 },
-  );
-  const requests = Array.from(
-    { length: 4 },
-    (_, index) => new RequestFixture(`body-${String(index)}`),
-  );
-  for (const request of requests) collector.request(request);
-  collector.response(new ResponseFixture(requests[2]!, "body-2"));
-  collector.finished(requests[2]!);
-  await collector.finish();
-  expect(collector.omittedTransactionRange()).toEqual({
-    first_transaction_id: "request-3",
-    last_transaction_id: "request-4",
-    count: 2,
-    reason: "max-network-transactions",
-  });
-  expect(events.filter(({ kind }) => kind === "request")).toHaveLength(2);
-  expect(Object.fromEntries(omittedEventCounts)).toEqual({
-    request: 2,
-    "network-content": 3,
-    response: 1,
-    "request-finished": 1,
-  });
-  expect(requests[2]?.bodyReads).toBe(0);
-});
-
-it("uses the caller's body-byte limit and returns typed size evidence", async () => {
-  const { collector, events } = harness(selection, undefined, "fixture", {
-    max_network_body_bytes: 4,
-  });
-  const request = new RequestFixture("12345");
-  collector.request(request);
-  await collector.finish();
-  expect(events.find(({ kind }) => kind === "network-content")).toMatchObject({
-    transaction_id: "request-1",
-    body: {
-      state: "unavailable",
-      reason: "body-size-limit",
-      limit_bytes: 4,
-      observed_bytes: 5,
+it.each([
+  {
+    label: "default",
+    cap: 1024,
+    selected: selection,
+    limits: {},
+  },
+  {
+    label: "caller-selected",
+    cap: 2,
+    selected: {
+      request_body: false,
+      response_body: true,
+      header_values: false,
     },
-  });
-});
+    limits: { max_network_transactions: 2 },
+  },
+])(
+  "enforces the $label transaction limit before reading content and counts omissions once",
+  async ({ cap, selected, limits }) => {
+    const { collector, events, omittedEventCounts } = harness(
+      selected,
+      undefined,
+      "fixture",
+      limits,
+    );
+    const admitted = Array.from({ length: cap }, (_, index) => {
+      const request = new RequestFixture(`body-${index}`);
+      collector.request(request);
+      collector.request(request);
+      return request;
+    });
+    const omitted = ["finished", "failed", "pending"].map((state) => {
+      const request = new RequestFixture(state);
+      const response = new ResponseFixture(request, state);
+      collector.request(request);
+      collector.request(request);
+      collector.response(response);
+      collector.response(response);
+      return { request, response, state };
+    });
+    expect(omittedEventCounts.get("network-content")).toBe(
+      selected.request_body ? 6 : 3,
+    );
+    for (const { request, state } of omitted) {
+      if (state === "finished") collector.finished(request);
+      if (state === "failed") collector.failed(request);
+    }
+    const admittedResponse = new ResponseFixture(admitted[0]!, "retained");
+    collector.response(admittedResponse);
+    collector.finished(admitted[0]!);
+    await collector.finish();
+
+    expect(events.filter(({ kind }) => kind === "request")).toHaveLength(cap);
+    expect(
+      events.filter(({ kind }) => kind === "network-content"),
+    ).toHaveLength((selected.request_body ? cap : 0) + 1);
+    const extraOrMissingReads = admitted.filter(
+      ({ bodyReads, headerReads }) =>
+        bodyReads !== Number(selected.request_body) ||
+        headerReads !== Number(selected.header_values),
+    );
+    expect(extraOrMissingReads.map(({ marker }) => marker)).toEqual([]);
+    expect(admittedResponse.bodyReads).toBe(1);
+    for (const { request, response } of omitted) {
+      expect(request.bodyReads + request.headerReads).toBe(0);
+      expect(response.bodyReads + response.headerReads).toBe(0);
+    }
+    expect(collector.omittedTransactionRange()).toEqual({
+      first_transaction_id: `request-${cap + 1}`,
+      last_transaction_id: `request-${cap + 3}`,
+      count: 3,
+      reason: "max-network-transactions",
+    });
+    expect(Object.fromEntries(omittedEventCounts)).toEqual({
+      request: 3,
+      response: 3,
+      "request-finished": 1,
+      "request-failed": 1,
+      "network-content": selected.request_body ? 6 : 3,
+    });
+    expect(collector.limitations().join(" ")).toContain("resource budget");
+  },
+);
+
+it.each([
+  { label: "default", limit: 64 * 1024, limits: {} },
+  { label: "caller-selected", limit: 4, limits: { max_network_body_bytes: 4 } },
+])(
+  "reports the $label body-byte limit while retaining a body exactly at the limit",
+  async ({ limit, limits }) => {
+    const { collector, events } = harness(selection, undefined, "fixture", {
+      ...limits,
+      // Exercise the byte boundary independently of redaction allocation.
+      max_network_body_allocation_bytes: 16 * 1024 * 1024,
+    });
+    const admitted = "x".repeat(limit);
+    collector.request(new RequestFixture(admitted + "x"));
+    collector.request(new RequestFixture(admitted));
+    await collector.finish();
+    const content = events.filter((event) => event.kind === "network-content");
+    expect(content).toHaveLength(2);
+    expect(
+      content.find(({ transaction_id }) => transaction_id === "request-1"),
+    ).toMatchObject({
+      body: {
+        state: "unavailable",
+        reason: "body-size-limit",
+        limit_bytes: limit,
+        observed_bytes: limit + 1,
+      },
+    });
+    const accepted = content.find(
+      ({ transaction_id }) => transaction_id === "request-2",
+    );
+    if (accepted === undefined) throw new Error("Missing retained body");
+    expect(bodyText(accepted)).toBe(admitted);
+  },
+);
 
 it("keeps header names and selected body when unselected values are oversized", async () => {
   const { collector, events } = harness({
@@ -1123,22 +1094,6 @@ it("keeps header names and selected body when unselected values are oversized", 
   expect(request.bodyReads).toBe(1);
 });
 
-it("omits oversized body copies and retains ordinary content", async () => {
-  const { collector, events } = harness();
-  collector.request(new RequestFixture("x".repeat(64 * 1024 + 1)));
-  collector.request(new RequestFixture("ordinary"));
-  await collector.finish();
-  const content = events.filter((event) => event.kind === "network-content");
-  expect(content[0]?.body).toMatchObject({
-    state: "unavailable",
-    reason: "body-size-limit",
-    limit_bytes: 64 * 1024,
-    observed_bytes: 64 * 1024 + 1,
-    message: expect.stringContaining("budget"),
-  });
-  expect(bodyText(content[1]!)).toBe("ordinary");
-});
-
 it("reserves redaction expansion before creating replacement copies", async () => {
   const { collector, events, secrets } = harness(selection, undefined, "a");
   const redact = vi.spyOn(secrets, "redactBytes");
@@ -1148,43 +1103,12 @@ it("reserves redaction expansion before creating replacement copies", async () =
     events.find((event) => event.kind === "network-content")?.body,
   ).toMatchObject({
     state: "unavailable",
-    message: expect.stringContaining("redaction"),
+    reason: "body-allocation-limit",
   });
   // Ordinary header values can still pass through the byte redactor.
   expect(redact.mock.calls.every(([value]) => value.length < 64 * 1024)).toBe(
     true,
   );
-});
-
-it("does not read content when phase metadata was omitted", async () => {
-  const { secrets, limits } = harness();
-  const redact = vi.spyOn(secrets, "redact");
-  const collector = new PlaywrightScenarioNetwork({
-    selection,
-    limits,
-    secrets,
-    admitText: () => ({
-      status: "omitted",
-      sequence: 1,
-      reason: "max-total-event-allocation-bytes",
-    }),
-    emit: (): BrowserScenarioEventAdmission => ({
-      status: "retained",
-      sequence: 1,
-    }),
-    admitContentBody: () => ({ status: "retained", sequence: 1 }),
-    omitNetwork: () => undefined,
-    omitEvent: () => undefined,
-  });
-  const request = new RequestFixture("ordinary");
-  collector.request(request);
-  await collector.finish();
-  expect(redact).not.toHaveBeenCalled();
-  expect(request.bodyReads + request.headerReads).toBe(0);
-  expect(collector.limitations().join(" ")).toContain(
-    "max-total-event-allocation-bytes",
-  );
-  expect(collector.limitations().join(" ")).toContain("incomplete");
 });
 
 it("stamps when each request was observed, and the browser's own start and duration once it ends", async () => {

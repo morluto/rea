@@ -20,7 +20,7 @@ import {
   writeApplicationZip,
 } from "../../../support/applicationSessionFixture.js";
 
-import { projectHarmonyApplicationEvidence } from "../../../../src/application/harmony/HarmonyApplicationService.js";
+import { projectHarmonyApplicationEvidence } from "../../../../src/application/InventoryProjectionEvidence.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import {
   harmonyApplicationProjectionResultSchema,
@@ -28,6 +28,7 @@ import {
 } from "../../../../src/domain/harmony/harmonyApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
+import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   ZIP_PACKAGE_FORMATS,
@@ -396,6 +397,38 @@ describe("HarmonyOS packaging boundaries", () => {
     ]);
   });
 
+  it("stops resolving retained inventory pages when the caller cancels mid-request", async () => {
+    const path = await writeApplicationZip("rea-harmony-cancel-", "entry.hap", [
+      { path: "module.json", content: '{"module":{"name":"entry"}}' },
+      { path: "resources.index", content: "resource index" },
+    ]);
+    const pages = fragmentInventoryEvidence(
+      await inventoryApplicationPackage(path),
+      2,
+    );
+    const controller = new AbortController();
+    const reason = { request: "cancel Harmony projection" };
+    const looked: string[] = [];
+    const result = projectHarmonyApplicationEvidence(
+      {
+        inventory_evidence: pages.map(({ evidence_id }) => ({
+          kind: "retained-evidence",
+          evidence_id,
+        })),
+      },
+      (id) => {
+        looked.push(id);
+        controller.abort(reason);
+        return pages.find(({ evidence_id }) => evidence_id === id);
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(looked).toEqual([pages[0]?.evidence_id]);
+  });
+
   it("rejects non-HarmonyOS inventory Evidence", async () => {
     const inventory = await createNonApplicationZipInventory(
       "rea-harmony-invalid-",
@@ -623,24 +656,52 @@ describe("HarmonyOS manifest path rules", () => {
   });
 
   it.each([
-    { paths: ["a/module.json", "z/config.json"] },
-    { paths: ["a/config.json", "z/module.json"] },
-  ])("keeps Stage precedence for $paths", async ({ paths }) => {
-    const path = await writeApplicationZip(
-      "rea-harmony-mixed-model-",
-      "Both.hap",
-      paths.map((path) => ({ path, content: "{}" })),
-    );
-    const projection = requireDeterministicProjection(
-      projectHarmonyApplicationEvidence,
-      await inventoryApplicationPackage(path),
-      harmonyApplicationProjectionResultSchema,
-    );
-    expect(projection.packaging_model).toBe("stage");
-    expect(
-      projection.components.manifests.map(({ path }) => path).sort(),
-    ).toEqual(paths.toSorted());
-  });
+    {
+      paths: ["module.json", "config.json"],
+      model: "stage",
+      manifests: ["config.json", "module.json"],
+      unclassified: [],
+    },
+    {
+      paths: ["docs/module.json", "config.json"],
+      model: "fa",
+      manifests: ["config.json"],
+      unclassified: ["docs/module.json"],
+    },
+    {
+      paths: ["docs/config.json", "docs/module.json", "docs/pack.info"],
+      model: "unknown",
+      manifests: [],
+      unclassified: ["docs/config.json", "docs/module.json", "docs/pack.info"],
+    },
+    {
+      paths: ["./module.json", "config.json"],
+      model: "fa",
+      manifests: ["config.json"],
+      unclassified: ["module.json"],
+    },
+  ])(
+    "uses exact root manifest names for $paths",
+    async ({ paths, model, manifests, unclassified }) => {
+      const path = await writeApplicationZip(
+        "rea-harmony-mixed-model-",
+        "Both.hap",
+        paths.map((path) => ({ path, content: "{}" })),
+      );
+      const projection = requireDeterministicProjection(
+        projectHarmonyApplicationEvidence,
+        await inventoryApplicationPackage(path),
+        harmonyApplicationProjectionResultSchema,
+      );
+      expect(projection.packaging_model).toBe(model);
+      expect(
+        projection.components.manifests.map(({ path }) => path).sort(),
+      ).toEqual(manifests);
+      expect(
+        projection.unclassified_components.map(({ path }) => path).sort(),
+      ).toEqual(unclassified);
+    },
+  );
 
   it.each([
     { name: "module.json", model: "stage" },

@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_result.blocks --format csv
+exit: 1
+--- stdout
+{"ok":false,"error":{"code":"UNSUPPORTED_OUTPUT_COMBINATION","message":"CSV/TSV output requires --filter-output <row-array-path> and --columns <column,...>; nested Evidence is not flattened."}}
+<end>
+--- stderr
+<end>

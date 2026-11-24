@@ -1,6 +1,7 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { classifyLaunchFailureCode } from "../process/launchFailure.js";
+import { launcherFailureOf } from "../process/launchFailure.js";
+import { classifyLaunchFailure } from "../process/classifyProviderOutcome.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import {
   retainOwnedCommandCleanup,
@@ -13,12 +14,14 @@ import { randomUUID } from "node:crypto";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ownershipPreparationError } from "../providers/ownedProcessAvailability.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
@@ -271,26 +274,33 @@ const observeGhidraJava = async (
       });
     } else if (
       preparation !== undefined &&
-      commandFailure?.reason !== "timeout"
+      commandFailure?.reason !== "timeout" &&
+      preparationHostCapacityFailure(cause) === undefined
     ) {
-      primary = new ProviderAdapterError("ghidra", "ghidra:java", {
+      primary = ownershipPreparationError(
+        "ghidra",
+        "ghidra:java",
         cause,
-        ...(output === undefined ? {} : { capturedOutput: output }),
-        diagnostics: {
-          stage: "ownership_preparation",
-          ...(!(preparation instanceof DarwinProcessOwnershipInspectionError) ||
-          preparation.compilerOutcome === undefined
-            ? {}
-            : {
-                compiler_outcome: jsonValueSchema.parse(
-                  preparation.compilerOutcome,
-                ),
-              }),
-        },
-      });
+        output,
+      );
     } else if (cause instanceof AnalysisError) {
       primary = cause;
     }
+    const launch =
+      preparationHostCapacityFailure(cause) ??
+      launcherFailureOf(commandFailure?.processError ?? cause);
+    if (
+      primary === undefined &&
+      (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
+    )
+      // The host, not the selected Java runtime, refused this launch.
+      primary = classifyLaunchFailure(launch, {
+        providerId: "ghidra",
+        operation: "ghidra:java",
+        fixedArguments: true,
+        command,
+        details: { cause, diagnostics: { java_executable: command } },
+      });
     if (primary === undefined) {
       const code =
         commandFailure?.reason === "timeout"
@@ -301,7 +311,7 @@ const observeGhidraJava = async (
       const failed: GhidraJavaProbeFailure = {
         _tag: "GhidraJavaProbeFailure",
         code:
-          classifyLaunchFailureCode(code)?.kind === "missing"
+          launch?.kind === "missing"
             ? "runtime_missing"
             : "runtime_unavailable",
         detail: `${command}: ${errorMessage(cause)}`,

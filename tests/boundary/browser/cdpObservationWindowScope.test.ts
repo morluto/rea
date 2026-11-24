@@ -8,11 +8,11 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 import { frameNavigated, trackBrowser } from "./cdpBrowserProvider.support.js";
 
-const observeDuringClockSampling = async (
+const observeDuringPreparation = async (
   commandEvents: NonNullable<FakeOptions["commandEvents"]>,
 ) => {
   return observeWithFake({
-    eventsBeforeReply: ["Performance.getMetrics"],
+    eventsBeforeReply: ["Network.enable", "Performance.getMetrics"],
     commandResult: (command) =>
       command.method === "Performance.getMetrics"
         ? { metrics: [{ name: "Timestamp", value: 20 }] }
@@ -24,6 +24,7 @@ const observeDuringClockSampling = async (
 const observeWithFake = async (options: FakeOptions) => {
   const browser = await startFakeCdpBrowser(options);
   trackBrowser(browser);
+  const progress: number[] = [];
   const result = await new CdpBrowserProvider().observeSession(
     observeWebSessionInputSchema.parse({
       cdp_endpoint: browser.endpoint,
@@ -31,9 +32,16 @@ const observeWithFake = async (options: FakeOptions) => {
       target_id: "allowed-page",
       observation_ms: 20,
     }),
+    {
+      progress: {
+        report: async (update) => {
+          progress.push(update.completed);
+        },
+      },
+    },
   );
   if (!result.ok) throw result.error;
-  return { browser, observation: result.value };
+  return { browser, progress, observation: result.value };
 };
 
 const laterInWindowRequest = (
@@ -52,83 +60,93 @@ const laterInWindowRequest = (
   },
 });
 
-const expectNoCommittedFrameWithInvalidTimeline = (
-  observation: Awaited<ReturnType<typeof observeWithFake>>["observation"],
-) => {
-  expect(observation.timeline).not.toContainEqual(
-    expect.objectContaining({ type: "navigation_committed" }),
-  );
-  expect(observation.completeness.excluded).toContainEqual(
-    expect.objectContaining({
-      section: "timeline",
-      reason: "invalid_protocol_value",
+const foreignUrl = "https://outside.invalid/path";
+type WireCommand = Parameters<NonNullable<FakeOptions["commandEvents"]>>[0];
+const outsideNavigation = {
+  navigation_committed: (command: WireCommand) =>
+    frameNavigated(command, {
+      id: "frame-main",
+      loaderId: "outside-loader",
+      url: foreignUrl,
     }),
-  );
+  navigation_requested: (command: WireCommand) => ({
+    method: "Page.frameRequestedNavigation",
+    sessionId: command.sessionId,
+    params: {
+      frameId: "frame-main",
+      url: foreignUrl,
+      reason: "scriptInitiated",
+    },
+  }),
+  redirect: (command: WireCommand, origin: string) => ({
+    method: "Network.requestWillBeSent",
+    sessionId: command.sessionId,
+    params: {
+      requestId: "outside-redirect",
+      type: "Document",
+      frameId: "frame-main",
+      redirectResponse: { url: `${origin}/prior`, status: 302 },
+      request: { url: foreignUrl },
+    },
+  }),
 };
 
-it("fails closed on an untimestamped cross-origin main-frame commit during clock sampling", async () => {
-  const { observation } = await observeDuringClockSampling(
-    (command, origin) => {
-      if (command.method !== "Performance.getMetrics") return undefined;
-      return [
-        frameNavigated(command, {
-          id: "frame-main",
-          loaderId: "outside-loader",
-          url: "https://outside.invalid/path",
-        }),
-        laterInWindowRequest(command, origin),
-      ];
-    },
-  );
+it.each([
+  ["Network.enable", "navigation_committed", { loader_id: "outside-loader" }],
+  [
+    "Performance.getMetrics",
+    "navigation_committed",
+    { loader_id: "outside-loader" },
+  ],
+  ["Performance.getMetrics", "navigation_requested", {}],
+  ["Performance.getMetrics", "redirect", { request_id: "outside-redirect" }],
+] as const)(
+  "ends preparation for a foreign %s event of type %s",
+  async (phase, type, identity) => {
+    const { browser, observation, progress } = await observeDuringPreparation(
+      (command, origin) => {
+        const later =
+          command.method === "Performance.getMetrics"
+            ? [laterInWindowRequest(command, origin)]
+            : [];
+        if (command.method === phase)
+          return [outsideNavigation[type](command, origin), ...later];
+        return later.length === 0 ? undefined : later;
+      },
+    );
 
-  expect(observation.window.end_reason).toBe("target_left_scope");
-  expect(observation.target.final_url).toBeNull();
-  expect(observation.timeline).toContainEqual(
-    expect.objectContaining({
-      type: "navigation_committed",
-      loader_id: "outside-loader",
-      timestamp: null,
-      destination_scope: "outside_policy",
-      url: null,
-    }),
-  );
-  expect(observation.timeline).not.toContainEqual(
-    expect.objectContaining({ request_id: "later-in-window-request" }),
-  );
-});
+    expect(observation.window.end_reason).toBe("target_left_scope");
+    expect(progress).toEqual([2]);
+    expect(observation.target.final_url).toBeNull();
+    expect(observation.timeline).toContainEqual(
+      expect.objectContaining({
+        ...identity,
+        type,
+        timestamp: null,
+        destination_scope: "outside_policy",
+        url: null,
+        ...(type === "redirect"
+          ? {
+              redirect_response: {
+                scope: "approved",
+                status: 302,
+                url: `${browser.allowedOrigin}/prior`,
+              },
+            }
+          : {}),
+      }),
+    );
+    expect(observation.timeline).not.toContainEqual(
+      expect.objectContaining({ request_id: "later-in-window-request" }),
+    );
+  },
+);
 
-it("keeps an unidentifiable frame commit unknown without inventing a main-frame event", async () => {
-  const { observation } = await observeDuringClockSampling((command) =>
-    command.method === "Performance.getMetrics"
-      ? [frameNavigated(command, { url: "https://outside.invalid/unknown" })]
-      : undefined,
-  );
-
-  expect(observation.window.end_reason).toBe("window_elapsed");
-  expectNoCommittedFrameWithInvalidTimeline(observation);
-});
-
-it("marks a frame event with absent parameters as unknown timeline evidence", async () => {
-  const { observation } = await observeDuringClockSampling((command) =>
-    command.method === "Performance.getMetrics"
-      ? [
-          {
-            method: "Page.frameNavigated",
-            sessionId: command.sessionId,
-            params: undefined,
-          },
-        ]
-      : undefined,
-  );
-
-  expectNoCommittedFrameWithInvalidTimeline(observation);
-  expect(observation.completeness.unavailable_sections).toContain("timeline");
-});
-
-it("records a malformed child identity without treating it as the main frame", async () => {
-  const { observation } = await observeDuringClockSampling((command) =>
+it("accounts for each malformed frame commit without inventing a main-frame navigation", async () => {
+  const { observation } = await observeDuringPreparation((command) =>
     command.method === "Performance.getMetrics"
       ? [
+          frameNavigated(command, { url: "https://outside.invalid/unknown" }),
           frameNavigated(command, {
             id: 3,
             parentId: "frame-main",
@@ -139,11 +157,21 @@ it("records a malformed child identity without treating it as the main frame", a
   );
 
   expect(observation.window.end_reason).toBe("window_elapsed");
-  expectNoCommittedFrameWithInvalidTimeline(observation);
+  expect(observation.timeline).not.toContainEqual(
+    expect.objectContaining({ type: "navigation_committed" }),
+  );
+  expect(observation.completeness.unavailable_sections).toContain("timeline");
+  expect(observation.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+      count: 2,
+    }),
+  );
 });
 
 it("updates the main frame from a pre-arm root replacement without inventing a navigation row", async () => {
-  const { observation } = await observeDuringClockSampling((command, origin) =>
+  const { observation } = await observeDuringPreparation((command, origin) =>
     command.method === "Performance.getMetrics"
       ? [
           frameNavigated(command, {
@@ -198,87 +226,6 @@ it("updates the main frame from a pre-arm root replacement without inventing a n
         /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
       ),
     ]),
-  );
-});
-
-it("fails closed on an untimestamped out-of-scope main-frame request during clock sampling", async () => {
-  const { observation } = await observeDuringClockSampling(
-    (command, origin) => {
-      if (command.method !== "Performance.getMetrics") return undefined;
-      return [
-        {
-          method: "Page.frameRequestedNavigation",
-          sessionId: command.sessionId,
-          params: {
-            frameId: "frame-main",
-            url: "https://outside.invalid/path",
-            reason: "scriptInitiated",
-          },
-        },
-        laterInWindowRequest(command, origin),
-      ];
-    },
-  );
-
-  expect(observation.window.end_reason).toBe("target_left_scope");
-  expect(observation.timeline).toContainEqual(
-    expect.objectContaining({
-      type: "navigation_requested",
-      timestamp: null,
-      destination_scope: "outside_policy",
-      url: null,
-    }),
-  );
-  expect(observation.timeline).not.toContainEqual(
-    expect.objectContaining({ request_id: "later-in-window-request" }),
-  );
-});
-
-it("fails closed on an untimestamped out-of-scope redirect during clock sampling", async () => {
-  const { observation } = await observeDuringClockSampling(
-    (command, origin) => {
-      if (command.method !== "Performance.getMetrics") return undefined;
-      return [
-        {
-          method: "Network.requestWillBeSent",
-          sessionId: command.sessionId,
-          params: {
-            requestId: "unknown-time-outside-redirect",
-            type: "Document",
-            frameId: "frame-main",
-            redirectResponse: { url: `${origin}/prior` },
-            request: { url: "https://outside.invalid/redirected" },
-          },
-        },
-        {
-          method: "Network.requestWillBeSent",
-          sessionId: command.sessionId,
-          params: {
-            requestId: "later-in-window-request",
-            timestamp: 21,
-            type: "Document",
-            frameId: "frame-main",
-            redirectResponse: { url: `${origin}/prior` },
-            request: { url: `${origin}/later` },
-          },
-        },
-      ];
-    },
-  );
-
-  expect(observation.window.end_reason).toBe("target_left_scope");
-  expect(observation.target.final_url).toBeNull();
-  expect(observation.timeline).toContainEqual(
-    expect.objectContaining({
-      type: "redirect",
-      request_id: "unknown-time-outside-redirect",
-      timestamp: null,
-      destination_scope: "outside_policy",
-      url: null,
-    }),
-  );
-  expect(observation.timeline).not.toContainEqual(
-    expect.objectContaining({ request_id: "later-in-window-request" }),
   );
 });
 
@@ -410,16 +357,16 @@ it("ends an armed observation at a fatal protocol failure without waiting out it
     malformedEventOnMethod: "Page.setLifecycleEventsEnabled",
   });
   trackBrowser(browser);
-  const started = performance.now();
+  // The window outlasts every test deadline, so returning at all shows the
+  // fatal failure ended it; waiting it out turns into a deadline failure.
   const result = await new CdpBrowserProvider().observeSession(
     observeWebSessionInputSchema.parse({
       cdp_endpoint: browser.endpoint,
       allowed_origins: [browser.allowedOrigin],
       target_id: "allowed-page",
-      observation_ms: 10_000,
+      observation_ms: 600_000,
     }),
   );
-  expect(performance.now() - started).toBeLessThan(5_000);
   expect(result).toMatchObject({
     ok: false,
     error: { _tag: "BrowserObservationError", reason: "protocol_error" },
@@ -427,29 +374,27 @@ it("ends an armed observation at a fatal protocol failure without waiting out it
 });
 
 it("does not join an empty document request identity to a later loading failure", async () => {
-  const { observation } = await observeDuringClockSampling(
-    (command, origin) => {
-      if (command.method !== "Performance.getMetrics") return undefined;
-      return [
-        {
-          ...laterInWindowRequest(command, origin),
-          params: {
-            ...laterInWindowRequest(command, origin).params,
-            requestId: "",
-          },
+  const { observation } = await observeDuringPreparation((command, origin) => {
+    if (command.method !== "Performance.getMetrics") return undefined;
+    return [
+      {
+        ...laterInWindowRequest(command, origin),
+        params: {
+          ...laterInWindowRequest(command, origin).params,
+          requestId: "",
         },
-        {
-          method: "Network.loadingFailed",
-          sessionId: command.sessionId,
-          params: {
-            requestId: "",
-            timestamp: 22,
-            errorText: "net::ERR_FAILED",
-          },
+      },
+      {
+        method: "Network.loadingFailed",
+        sessionId: command.sessionId,
+        params: {
+          requestId: "",
+          timestamp: 22,
+          errorText: "net::ERR_FAILED",
         },
-      ];
-    },
-  );
+      },
+    ];
+  });
   expect(observation.window.end_reason).toBe("window_elapsed");
   expect(observation.timeline).toContainEqual(
     expect.objectContaining({ type: "redirect", request_id: null }),
@@ -475,10 +420,10 @@ const redirectCases = [
       ["null status", null],
       ["boolean status", false],
       ["object status", {}],
+      ["zero status", 0],
     ] as const
   ).map(([name, status]) => ({
     name,
-    invalidStatus: true,
     response: (origin: string) => ({ url: `${origin}/prior`, status }),
     expected: (origin: string) => ({
       url: `${origin}/prior`,
@@ -508,15 +453,6 @@ const redirectCases = [
     expected: (origin: string) => ({
       url: `${origin}/prior`,
       status: null,
-      scope: "approved",
-    }),
-  },
-  {
-    name: "zero status",
-    response: (origin: string) => ({ url: `${origin}/prior`, status: 0 }),
-    expected: (origin: string) => ({
-      url: `${origin}/prior`,
-      status: 0,
       scope: "approved",
     }),
   },
@@ -560,73 +496,58 @@ const redirectCases = [
   },
 ];
 
-it.each(redirectCases)(
-  "preserves scoped redirect response facts with $name",
-  async (testCase) => {
-    const { response, expected } = testCase;
-    const { browser, observation } = await observeDuringClockSampling(
-      (command, origin) => {
-        if (command.method !== "Performance.getMetrics") return undefined;
-        return [
-          {
-            method: "Network.requestWillBeSent",
-            sessionId: command.sessionId,
-            params: {
-              requestId: "redirect-context",
-              timestamp: 21,
-              type: "Document",
-              frameId: "frame-main",
-              request: { url: `${origin}/next`, method: "GET" },
-              redirectResponse: {
-                ...response(origin),
-                headers: { Authorization: "discard-redirect-header" },
-              },
-            },
+it("retains scoped redirect response facts for each request", async () => {
+  const { browser, observation } = await observeDuringPreparation(
+    (command, origin) => {
+      if (command.method !== "Performance.getMetrics") return undefined;
+      return redirectCases.map(({ name, response }, index) => ({
+        method: "Network.requestWillBeSent",
+        sessionId: command.sessionId,
+        params: {
+          requestId: name,
+          timestamp: 21 + index,
+          type: "Document",
+          frameId: "frame-main",
+          request: { url: `${origin}/next`, method: "GET" },
+          redirectResponse: {
+            ...response(origin),
+            headers: { Authorization: "discard-redirect-header" },
           },
-        ];
-      },
-    );
-    expect(observation.timeline).toContainEqual(
-      expect.objectContaining({
-        type: "redirect",
-        request_id: "redirect-context",
-        redirect_response: expected(browser.allowedOrigin),
-      }),
-    );
-    if (
-      expected(browser.allowedOrigin).scope === null ||
-      "invalidStatus" in testCase
-    )
-      expect(observation.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section: "timeline",
-          reason: "invalid_protocol_value",
-        }),
-      );
-    else
-      expect(observation.completeness.excluded).not.toContainEqual(
-        expect.objectContaining({
-          section: "timeline",
-          reason: "invalid_protocol_value",
-        }),
-      );
-    const scope = expected(browser.allowedOrigin).scope;
-    if (scope === "outside_policy" || scope === "unsupported") {
-      expect(observation.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section: "timeline",
-          reason:
-            scope === "outside_policy"
-              ? "disallowed_origin"
-              : "unsupported_url",
-        }),
-      );
-      expect(observation.completeness.policy_filtered_sections).toContain(
-        "timeline",
-      );
-    }
-    const serialized = JSON.stringify(observation);
-    expect(serialized).not.toContain("discard-redirect-");
-    expect(serialized).not.toContain("outside.invalid");
-  },
-);
+        },
+      }));
+    },
+  );
+
+  expect(observation.window.end_reason).toBe("window_elapsed");
+  expect(
+    observation.timeline
+      .filter(({ type }) => type === "redirect")
+      .map(({ request_id, redirect_response }) => ({
+        request_id,
+        redirect_response,
+      })),
+  ).toEqual(
+    redirectCases.map(({ name, expected }) => ({
+      request_id: name,
+      redirect_response: expected(browser.allowedOrigin),
+    })),
+  );
+
+  const timelineExclusions = observation.completeness.excluded.filter(
+    ({ section }) => section === "timeline",
+  );
+  expect(timelineExclusions).toHaveLength(3);
+  expect(timelineExclusions).toEqual(
+    expect.arrayContaining([
+      { section: "timeline", reason: "invalid_protocol_value", count: 8 },
+      { section: "timeline", reason: "disallowed_origin", count: 1 },
+      { section: "timeline", reason: "unsupported_url", count: 1 },
+    ]),
+  );
+  expect(observation.completeness.policy_filtered_sections).toContain(
+    "timeline",
+  );
+  const serialized = JSON.stringify(observation);
+  expect(serialized).not.toContain("discard-redirect-");
+  expect(serialized).not.toContain("outside.invalid");
+});

@@ -20,7 +20,6 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import type { ProviderOutcomeContext } from "../../process/classifyProviderOutcome.js";
 import { describeLaunchFailure } from "../../process/launchFailure.js";
-import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import type { ProviderFailureDialect } from "../../providers/classifyProviderFailure.js";
 import type { PwntoolsFailureEvidence } from "./PwntoolsResourceLimits.js";
 import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
@@ -45,6 +44,11 @@ export interface PwntoolsFailureContext {
     | "runtime"
     | "request"
     | undefined;
+  /**
+   * Input ceiling that applies when producer_limits.input_bytes is omitted;
+   * undefined when omitting it would fail configuration.
+   */
+  readonly omittedInputBytes?: number | undefined;
 }
 
 const pwntoolsInputLimitFact = (
@@ -179,11 +183,24 @@ export const pwntoolsFailureDialect = (
                     limits.input_bytes,
                     context.inputBytesSource,
                   ),
-                  limit: analysisSettingLimit(
-                    "pwntools.max_input_bytes",
-                    limits.input_bytes,
-                    context.inputBytesSource,
-                  ),
+                  // Report the control that stopped the read: a per-call
+                  // producer_limits.input_bytes, or the registered setting. A
+                  // parameter limit needs a usable default; when omitting the
+                  // parameter would fail configuration there is none, so the
+                  // setting-shaped limit (which carries no default) stays.
+                  limit:
+                    context.inputBytesSource === "request" &&
+                    context.omittedInputBytes !== undefined
+                      ? producerLimitControl(
+                          "input_bytes",
+                          limits.input_bytes,
+                          context.omittedInputBytes,
+                        )
+                      : analysisSettingLimit(
+                          "pwntools.max_input_bytes",
+                          limits.input_bytes,
+                          context.inputBytesSource,
+                        ),
                 },
                 [
                   {
@@ -312,7 +329,7 @@ const pwntoolsCommandContext = (
         context,
         { cause: details.cause, diagnostics: details.diagnostics },
       ),
-    dialect: (outcome, details) => {
+    dialect: (outcome, details, unclassified) => {
       // A reserved exit means a resource failure only when the bridge's
       // marker names that resource.
       const reservedExit =
@@ -347,20 +364,9 @@ const pwntoolsCommandContext = (
           },
         );
       // The shared owner already carries the command's output as
-      // `details.capturedOutput`; diagnostics keep only the exit facts.
-      const snapshot = outcome.output?.snapshot;
-      return new ProviderAdapterError(context.providerId, context.operation, {
-        ...details,
-        diagnostics: {
-          ...pwntoolsPhaseDiagnostics(state),
-          reason: outcome.message,
-          failure_kind:
-            outcome.cause instanceof OwnedCommandFailure
-              ? outcome.cause.reason
-              : outcome.kind,
-          exit_code: snapshot?.exitCode ?? null,
-          signal: snapshot?.signal ?? null,
-        },
+      // `details.capturedOutput` and reports the examined exit facts.
+      return unclassified({
+        diagnostics: pwntoolsPhaseDiagnostics(state),
       });
     },
   };

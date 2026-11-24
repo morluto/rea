@@ -55,7 +55,7 @@ describe("binary production construction ownership", () => {
     ).toEqual([]);
   });
 
-  it("rejects the former runtime composition exception", () => {
+  it("rejects an application module that re-exports composition", () => {
     expect(
       inspectModuleBoundaries(
         "src/application/runtime.ts",
@@ -385,15 +385,14 @@ describe("module import syntax and source discovery", () => {
     'import { value } from "../domain/../android/Provider.js";',
     'const loaded = import("../%61ndroid/Provider.js?view=one#fragment");',
   ])("checks the resolved owner in %s", (source) => {
-    // Only the declared localPath -> HostPlatform import is exempt (see
-    // LAYER_EXCEPTIONS); the same import from another domain file is not.
+    // Host path admission uses node:path without a domain-to-platform exception.
     expect(
       inspectModuleBoundaries(
         "src/domain/localPath.ts",
         'import { HOST_PLATFORM } from "../platform/HostPlatform.js";',
         process.cwd(),
       ),
-    ).toEqual([]);
+    ).toEqual([expect.objectContaining({ boundary: "pure-layer" })]);
     expect(
       inspectModuleBoundaries(
         "src/domain/probe.ts",
@@ -590,7 +589,7 @@ describe.each(["apple", "inventory", "extraction"])(
       ["../../application/Workflow.js", false],
       ["../../composition/android.js", false],
       ["../../cli.js", false],
-      ["../../server/registerEvidenceTools.js", false],
+      ["../../server/providerOperationToolHandler.js", false],
       ["../../main.ts", false],
       ["../../domain/apple/plistValue.js", true],
       ["../../domain/artifactInventorySnapshot.js", true],

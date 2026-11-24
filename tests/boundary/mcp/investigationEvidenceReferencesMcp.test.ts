@@ -27,6 +27,8 @@ import { functionDossierSchema } from "../../../src/domain/native/functionDossie
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const reference = (source: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -47,7 +49,7 @@ const harness = (inputElements?: string) =>
         }),
   });
 
-it("admits an independent inline dossier and composes its summary parent without producer work", async () => {
+it("advertises retained Evidence and composes an independent dossier without producer work", async () => {
   const { session, client } = await harness();
   const source = FUNCTION_COMPARISON_EXAMPLE.left;
   const selection = {
@@ -76,9 +78,23 @@ it("admits an independent inline dossier and composes its summary parent without
   expect(receipt.normalized_result).toMatchObject({
     parent_evidence_id: source.evidence_id,
   });
+  const retainedInput = { ...selection, functions: [reference(source)] };
+  const callPath = (await client.listTools()).tools.find(
+    ({ name }) => name === "build_call_path",
+  );
+  if (callPath === undefined) throw new Error("Expected build_call_path");
+  expect(callPath.description).toContain(
+    '{"kind":"retained-evidence","evidence_id":"ev_..."}',
+  );
+  expect(callPath.description).toContain("parent_evidence_id");
+  const validation = createMcpSchemaValidation();
+  expect(
+    validation.assertions.validate(callPath.inputSchema, retainedInput),
+  ).toBe(true);
+
   const retained = await client.callTool({
     name: "build_call_path",
-    arguments: { ...selection, functions: [reference(source)] },
+    arguments: retainedInput,
   });
   expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
   expect(parseEvidence(retained.structuredContent)).toEqual(expected);
@@ -205,10 +221,13 @@ it("reports missing or wrong-kind records without recording a successful workflo
 });
 
 it("reports missing sources for a retained dossier with a large link set", async () => {
-  const client = new Client({
-    name: "large-evidence-links-test",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "large-evidence-links-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(
     new StdioClientTransport({
@@ -238,8 +257,7 @@ it("reports missing sources for a retained dossier with a large link set", async
       evidenceLinks: links,
     },
   );
-  const directory = await mkdtemp(join(tmpdir(), "rea-large-links-"));
-  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const directory = await createTestTempDirectory("rea-large-links-");
   const path = join(directory, "bundle.json");
   await writeFile(path, JSON.stringify(createEvidenceBundle([source])));
   const imported = await client.callTool({

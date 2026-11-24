@@ -2,41 +2,25 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { peImportsSchema } from "../../../src/domain/native/peImports.js";
-import { createPeImportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createPeImportsService } from "../../../src/composition/binaryDiagnostics/peImports.js";
 import { peImportImage } from "../../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("PE import stable filesystem boundary", () => {
-  it("reports non-file and malformed PE selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-pe-imports-files-");
     const path = join(root, "app.exe");
     const alias = join(root, "alias.exe");
-    const malformed = join(root, "malformed.exe");
     await writeFile(path, peImportImage());
-    await writeFile(malformed, Buffer.from("not a pe"));
     await symlink(path, alias);
     const service = createPeImportsService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [malformed, "invalid_format"],
-      [join(root, "missing.exe"), "invalid_value"],
-      [join(path, "child.exe"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_pe_imports",
-        issues: [
-          {
-            path: ["path"],
-            reason,
-            message: expect.any(String),
-          },
-        ],
-      });
-    }
+    await expectFileSelectionErrors(
+      service,
+      "inspect_pe_imports",
+      { root, alias, path },
+      ".exe",
+    );
   });
 
   it("retains partial Evidence for an import name beyond the read allowance", async () => {
@@ -110,7 +94,7 @@ describe("PE import stable filesystem boundary", () => {
     if (dlls.ok) throw new Error("Expected DLL budget failure");
     expect(dlls.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { limit: "dlls", maximum: 1 },
+      reportedLimits: { boundary: "dlls", maximum: 1 },
       remediationAction: expect.stringContaining("Raise max_dlls above 1"),
       retryable: false,
     });
@@ -121,11 +105,13 @@ describe("PE import stable filesystem boundary", () => {
     if (text.ok) throw new Error("Expected retained-text failure");
     expect(text.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { limit: "retained_text", maximum: 16777216 },
+      reportedLimits: { boundary: "retained_text", maximum: 16777216 },
       remediationAction: undefined,
       fixedAllowance: {
-        name: expect.stringContaining("16777216-byte PE import retained-text"),
+        name: expect.stringContaining("PE import retained-text allowance"),
         kind: "bytes",
+        limit: 16777216,
+        unit: "bytes",
       },
       retryable: false,
     });

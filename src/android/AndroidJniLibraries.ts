@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
   streamChunkToBuffer,
+  yieldArtifactRead,
   ZipArtifactReader,
 } from "../resources/index.js";
 import type {
@@ -12,6 +12,7 @@ import type {
   AndroidJniLibraryCheckpoint,
 } from "../domain/android/androidJniBindings.js";
 import { compileAndroidJniLibrarySelection } from "../domain/android/androidJniBindings.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { inspectAndroidJniLibrary } from "../domain/android/androidJniLibrary.js";
@@ -19,11 +20,12 @@ import {
   JadxInterruption,
   throwIfJadxInterrupted,
 } from "./JadxInterruption.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Bounds cover the live library buffer, completed scan work and retained JSON separately. */
 export const ANDROID_JNI_LIBRARY_LIMITS = Object.freeze({
@@ -37,6 +39,33 @@ export interface AndroidJniLibraries {
   readonly libraries: readonly AndroidJniLibraryObservation[];
   readonly inventory: AndroidJniReport["library_inventory"];
 }
+
+/** A library read failure, with the reader check an `integrity` failure names. */
+const jniReadFailure = (
+  cause: unknown,
+): NonNullable<AndroidJniLibraryObservation["failure"]> => {
+  if (cause instanceof AnalysisError) throw cause;
+  const message = errorMessage(cause);
+  if (!(cause instanceof ArtifactReaderFailure)) return { kind: "io", message };
+  // The library report has only a message, so a reader-named ceiling's
+  // narrowing (such as recompressing a Zstandard member) travels in it.
+  const narrowing = cause.fixedAllowance?.narrowing;
+  if (cause.reason !== "integrity")
+    return {
+      kind: cause.reason,
+      message: narrowing === undefined ? message : `${message} ${narrowing}`,
+    };
+  if (cause.integrityCheck === undefined)
+    throw invariantViolation(
+      "An integrity reader failure reached the JNI inventory without its check.",
+      { cause },
+    );
+  return {
+    kind: "integrity",
+    message,
+    integrity_check: cause.integrityCheck,
+  };
+};
 
 /** Read each exact ZIP occurrence once from the provider's immutable admitted APK. */
 export const readAndroidJniLibraries = async (input: {
@@ -96,9 +125,7 @@ export const readAndroidJniLibraries = async (input: {
             break;
           }
           const identity = {
-            library_id: `jni_library_${createHash("sha256")
-              .update(JSON.stringify([input.apkSha256, entry.adapterKey]))
-              .digest("hex")}`,
+            library_id: `jni_library_${sha256Hex(JSON.stringify([input.apkSha256, entry.adapterKey]))}`,
             source_index,
             source_key: entry.adapterKey,
             path: entry.path,
@@ -171,7 +198,7 @@ export const readAndroidJniLibraries = async (input: {
                   { integrityCheck: "declared-size" },
                 );
               throwIfJadxInterrupted(input.signal);
-              const sha256 = createHash("sha256").update(bytes).digest("hex");
+              const sha256 = sha256Hex(bytes);
               inProgress = {
                 ...identity,
                 sha256,
@@ -184,6 +211,7 @@ export const readAndroidJniLibraries = async (input: {
               };
               const parsed = await inspectAndroidJniLibrary(bytes, {
                 signal: input.signal,
+                pause: () => yieldArtifactRead(input.signal),
               });
               throwIfJadxInterrupted(input.signal);
               observation = {
@@ -203,17 +231,7 @@ export const readAndroidJniLibraries = async (input: {
               observation = {
                 ...identity,
                 facts: null,
-                failure: {
-                  kind:
-                    cause instanceof ArtifactReaderFailure
-                      ? cause.reason
-                      : "io",
-                  message: errorMessage(cause),
-                  ...(cause instanceof ArtifactReaderFailure &&
-                  cause.integrityCheck !== undefined
-                    ? { integrity_check: cause.integrityCheck }
-                    : {}),
-                },
+                failure: jniReadFailure(cause),
               };
             }
           }

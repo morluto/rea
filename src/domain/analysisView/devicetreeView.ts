@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { devicetreeSchema } from "../firmware/devicetree.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -47,26 +47,29 @@ const counts = {
   reference_count: z.int().nonnegative(),
   unresolved_reference_count: z.int().nonnegative(),
 };
-export const devicetreeSummarySchema = devicetreeSchema
-  .pick({ artifact: true, header: true, summary: true, coverage: true })
-  .extend(counts);
+const { artifact, header, summary, coverage } = devicetreeSchema.shape;
+export const devicetreeSummarySchema = z.strictObject({
+  artifact,
+  header,
+  summary,
+  coverage,
+  ...counts,
+});
 /** Fixed-size page context; unbounded summary strings stay in the summary view. */
-export const devicetreePageContextSchema = devicetreeSchema
-  .pick({ artifact: true, header: true, coverage: true })
-  .extend({ ...counts, alias_count: z.int().nonnegative() });
+export const devicetreePageContextSchema = z.strictObject({
+  artifact,
+  header,
+  coverage,
+  ...counts,
+  alias_count: z.int().nonnegative(),
+});
 const readReport = createAnalysisViewResultReader(devicetreeSchema);
 export const projectDevicetreeView = (
   parent: AnalysisViewParent,
   view: AdmittedView,
 ) => {
-  const invalid = (message: string) =>
-    err(
-      analysisViewInputError([
-        { path: ["view"], reason: "invalid_value", message },
-      ]),
-    );
   if (view.kind !== "summary" && view.kind !== "devicetree")
-    return invalid(
+    return invalidAnalysisView(
       "Devicetree Evidence supports summary and devicetree views.",
     );
   assertOwnedView<
@@ -108,20 +111,24 @@ export const projectDevicetreeView = (
       coverage: completeWithinViewCoverage(r.nodes.length),
     });
   if (view.collection === "properties" && view.path === undefined)
-    return invalid("A properties page requires an exact node path.");
+    return invalidAnalysisView(
+      "A properties page requires an exact node path.",
+    );
   if (
     view.path !== undefined &&
     view.collection !== "nodes" &&
     view.collection !== "properties"
   )
-    return invalid("path selects only nodes or properties.");
+    return invalidAnalysisView("path selects only nodes or properties.");
   const nodeIndex =
     view.path === undefined
       ? -1
       : r.nodes.findIndex((n) => n.path === view.path);
   const node = r.nodes[nodeIndex];
   if (view.collection === "properties" && node === undefined)
-    return invalid("The selected node path is absent from this Evidence.");
+    return invalidAnalysisView(
+      "The selected node path is absent from this Evidence.",
+    );
   // Slice retained rows before allocating projections; exact node selection keeps its original index.
   const page = <T>(rows: readonly T[], originalIndex?: number) => ({
     items: rows.slice(view.offset, view.offset + view.limit).map((row, i) => ({

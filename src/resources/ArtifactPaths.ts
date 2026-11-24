@@ -147,9 +147,13 @@ export class ArtifactPathRegistry {
           parts.length,
         ) ??
         artifactFixedLimitFailure(
-          "Artifact path depth",
-          this.budget.maxParts,
-          "path parts",
+          {
+            name: "The artifact path depth allowance",
+            kind: "parser",
+            limit: this.budget.maxParts,
+            unit: "path parts",
+          },
+          `An artifact path has ${String(parts.length)} parts, above ${String(this.budget.maxParts)}.`,
         )
       );
     if (this.budget !== undefined) {
@@ -165,9 +169,13 @@ export class ArtifactPathRegistry {
                 this.#nodeCount + parts.length - index,
               ) ??
               artifactFixedLimitFailure(
-                "Artifact path tree",
-                this.budget.maxNodes,
-                "path nodes",
+                {
+                  name: "The artifact path tree allowance",
+                  kind: "parser",
+                  limit: this.budget.maxNodes,
+                  unit: "path nodes",
+                },
+                `The artifact paths need ${String(this.#nodeCount + parts.length - index)} path nodes, above ${String(this.budget.maxNodes)}.`,
               )
             );
           break;

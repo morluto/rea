@@ -1,17 +1,6 @@
 {
   "upward": {},
-  "cycles": [
-    "cli <-> cli.ts",
-    "cli <-> cliBrowserScenarioCommands.ts",
-    "cli <-> cliEvidenceCommands.ts",
-    "cli <-> cliOutput.ts",
-    "main <-> server"
-  ],
-  "crossProvider": {
-    "gpu -> artifacts": 1,
-    "model -> artifacts": 1
-  },
-  "entry": {
-    "application -> desktop": 41
-  }
+  "cycles": [],
+  "crossProvider": {},
+  "entry": {}
 }

@@ -13,7 +13,10 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 
@@ -58,14 +61,8 @@ export const projectAndroidSymbolSummary = (
 ) => {
   const view = ownedView<SummaryAnalysisView>(admitted, "summary");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Android class and method Evidence supports summary views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Android class and method Evidence supports summary views.",
     );
   if (
     parent.operation !== "inspect_android_class" &&
@@ -127,7 +124,10 @@ export const projectAndroidSymbolSummary = (
     summary: parsed.value,
     unknowns: [
       ...shared.unknowns,
-      ...(parsed.value.source.status === "partial"
+      ...(parsed.value.source === null
+        ? [parsed.value.body_unavailable_reason]
+        : []),
+      ...(parsed.value.source?.status === "partial"
         ? [
             "The selected method source is partial; retained text does not establish a complete method body.",
           ]

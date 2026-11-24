@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import { createReleaseExposureService } from "../composition/releaseExposure.js";
@@ -8,10 +8,8 @@ import {
   releaseExposureReportSchema,
 } from "../domain/releaseExposure.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Report what static analysis recovers from one shipped artifact. */

@@ -20,6 +20,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { advertisedMcpToolSchemas } from "../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
@@ -76,49 +77,27 @@ const setup = async () => {
   return { root, path, bytes, environment, run, inventory, occurrence };
 };
 
-it("extracts repeatable CLI selections into the exact requested destination", async () => {
-  const data = await setup();
-  const ids = [
-    data.occurrence("lib/selected.so"),
-    data.occurrence("lib/other.so"),
-  ];
-  const output = join(data.root, "chosen-output");
-  const evidence = await data.run("extract-artifact", [
-    "--output-root",
-    output,
-    ...ids.flatMap((id) => ["--occurrence-id", id]),
-  ]);
-  const result = artifactExtractionResultSchema.parse(
-    evidence.normalized_result,
-  );
-  expect(result.output_root).toBe(output);
-  expect(result.artifacts.map(({ relative_path }) => relative_path)).toEqual([
-    "lib/other.so",
-    "lib/selected.so",
-  ]);
-  expect(result.extraction_manifest.selected_occurrence_ids).toEqual(
-    [...ids].sort(),
-  );
-  expect(result.manifest).toEqual(data.inventory.manifest);
-  expect(await readdir(output)).toEqual(["lib"]);
-  expect(await readFile(join(output, "lib/selected.so"), "utf8")).toBe(
-    "native fixture",
-  );
-});
-
-it("keeps CLI/MCP selection identity, invalid-input refusals and committed output after close", async () => {
+it("publishes the same selected occurrences through CLI and MCP and rejects invalid selections", async () => {
   const data = await setup();
   const id = data.occurrence("lib/selected.so");
+  const ids = [id, data.occurrence("lib/other.so")];
+  const cliOutput = join(data.root, "cli-output");
+  const evidence = await data.run("extract-artifact", [
+    "--output-root",
+    cliOutput,
+    ...ids.flatMap((id) => ["--occurrence-id", id]),
+  ]);
   const cliResult = artifactExtractionResultSchema.parse(
-    (
-      await data.run("extract-artifact", [
-        "--output-root",
-        join(data.root, "cli-output"),
-        "--occurrence-id",
-        id,
-      ])
-    ).normalized_result,
+    evidence.normalized_result,
   );
+  expect(cliResult.output_root).toBe(cliOutput);
+  expect(cliResult.artifacts.map(({ relative_path }) => relative_path)).toEqual(
+    ["lib/other.so", "lib/selected.so"],
+  );
+  expect(cliResult.extraction_manifest.selected_occurrence_ids).toEqual(
+    [...ids].sort(),
+  );
+  expect(cliResult.manifest).toEqual(data.inventory.manifest);
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [cli, "mcp"],
@@ -128,10 +107,13 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
     },
     stderr: "pipe",
   });
-  const client = new Client({
-    name: "extraction-selection-test",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "extraction-selection-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const output = join(data.root, "mcp-output");
   await withVerifierCleanup(async () => {
     await client.connect(transport);
@@ -141,7 +123,7 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
     });
     expect(opened.isError).not.toBe(true);
     const schemas = await advertisedMcpToolSchemas(client, "extract_artifact");
-    for (const occurrence_ids of [[id], [id, data.occurrence("lib/other.so")]])
+    for (const occurrence_ids of [[id], ids])
       expect(
         schemas.ajv.validate(schemas.canonicalInputSchema, {
           output_root: output,
@@ -162,7 +144,7 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
     );
     const reply = await artifactMcpCall(client, {
       name: "extract_artifact",
-      arguments: { output_root: output, occurrence_ids: [id] },
+      arguments: { output_root: output, occurrence_ids: ids.toReversed() },
     });
     expect(reply.isError).not.toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
@@ -192,9 +174,15 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
     });
     expect(closed.isError).not.toBe(true);
   }, [() => client.close(), () => transport.close()]);
-  expect(await readFile(join(output, "lib/selected.so"), "utf8")).toBe(
-    "native fixture",
-  );
+  for (const root of [cliOutput, output]) {
+    expect(await readdir(root)).toEqual(["lib"]);
+    expect(await readFile(join(root, "lib/selected.so"), "utf8")).toBe(
+      "native fixture",
+    );
+    expect(await readFile(join(root, "lib/other.so"), "utf8")).toBe(
+      "other architecture",
+    );
+  }
   const digest = (bytes: Uint8Array) =>
     createHash("sha256").update(bytes).digest("hex");
   expect(digest(await readFile(data.path))).toBe(digest(data.bytes));

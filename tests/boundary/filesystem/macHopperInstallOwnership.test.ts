@@ -20,18 +20,10 @@ import {
 } from "../../../src/application/MacHopper.js";
 import { SetupCleanupOwner } from "../../../src/application/SetupCleanupOwner.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-
-const roots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const temporaryRoot = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-hopper-owned-stage-test-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-hopper-owned-stage-test-");
   return root;
 };
 

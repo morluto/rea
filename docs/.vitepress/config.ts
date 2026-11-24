@@ -10,8 +10,6 @@ const documentationRoot = fileURLToPath(new URL("..", import.meta.url));
 const rewrites: Record<string, string> = {
   ...documentationRewrites,
   "README.md": "documentation.md",
-  "specs/README.md": "specs/index.md",
-  "adr/README.md": "adr/index.md",
 };
 
 export default defineConfig({
@@ -86,17 +84,12 @@ export default defineConfig({
       { text: "Get started", link: "/installation" },
       { text: "Documentation", link: "/documentation" },
       { text: "Reference", link: "/mcp-contracts" },
-      { text: "Roadmap", link: "/roadmap" },
+      { text: "Issues", link: "https://github.com/morluto/rea/issues" },
     ],
     sidebar: [
       {
         text: "Documentation directory",
-        items: [
-          { text: "All guides", link: "/documentation" },
-          { text: "Authoring conventions", link: "/development/documentation" },
-          { text: "Feature specifications", link: "/specs/" },
-          { text: "Architecture decisions", link: "/adr/" },
-        ],
+        items: [{ text: "All guides", link: "/documentation" }],
       },
       ...documentationSections.map((section) => ({
         text: section.text,

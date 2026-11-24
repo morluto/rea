@@ -256,7 +256,7 @@ const cpioArchiveLimit = (maximum: number): MacosPkgParseError =>
  * that share an aggregate expansion budget pass what remains of it, so the
  * decoded size is accounted for before the output is allocated.
  */
-export const gunzipBounded = (
+const gunzipBounded = (
   bytes: Buffer,
   maximum: number = MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
 ): Result<Buffer, MacosPkgParseError> => {
@@ -291,15 +291,6 @@ export const gunzipBounded = (
       }),
     );
   }
-};
-
-export const parseGzipCpioOdc = (
-  bytes: Buffer,
-  maximum: number = MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
-): Result<readonly CpioMember[], MacosPkgParseError> => {
-  const inflated = gunzipBounded(bytes, maximum);
-  if (!inflated.ok) return inflated;
-  return parseCpioOdc(inflated.value);
 };
 
 export interface ArchiveInventory {

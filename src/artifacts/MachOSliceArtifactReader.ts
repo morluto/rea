@@ -22,7 +22,6 @@ import {
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
 import {
   machoArchitectureFamily,
-  machoCpuSubtypeBase,
   machoKnownArm32Subtype,
 } from "../domain/apple/machoCpuIdentity.js";
 import {
@@ -33,6 +32,7 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import {
+  lipoDescribesCpu,
   parseLipoOutputResult,
   LipoFieldRetentionError,
   type LipoArchitecture,
@@ -709,61 +709,27 @@ const lipoMatchesSlice = (
     reported.cpu_subtype_code !== null;
   return (
     (hasPhysicalIdentity || structurallyUnique) &&
-    lipoNameMatches(reported.name, observed) &&
+    (reported.numericName !== undefined ||
+      lipoNameMatches(reported.name, observed)) &&
     (reported.file_offset === null ||
       reported.file_offset === observed.slice_offset) &&
     (reported.size === null || reported.size === observed.slice_size) &&
-    (reported.cpu_type_code === null ||
-      reported.cpu_type_code === observedCpuType) &&
-    lipoSubtypeMatches(reported, observedCpuSubtype) &&
+    lipoDescribesCpu(reported, observedCpuType, observedCpuSubtype) &&
     (reported.alignment === null ||
       observed.fat_alignment_exponent === null ||
       reported.alignment === 2 ** observed.fat_alignment_exponent)
   );
 };
 
-/**
- * Compare the complete subtype when lipo printed its capability byte, and
- * otherwise only the subtype bits its record names.
- */
-const lipoSubtypeMatches = (
-  reported: LipoArchitecture,
-  observedCpuSubtype: number,
-): boolean => {
-  if (reported.cpu_subtype_code !== null)
-    return reported.cpu_subtype_code === observedCpuSubtype;
-  return (
-    reported.cpu_subtype_base === null ||
-    reported.cpu_subtype_base === machoCpuSubtypeBase(observedCpuSubtype)
-  );
-};
-
-/** ARM implementation names from cctools libstuff/arch.c, keyed by lipo spelling. */
-const ARM_SUBTYPES: Readonly<Record<string, number>> = {
-  armv4t: 5,
-  armv5: 7,
-  xscale: 8,
-  armv6: 6,
-  armv7: 9,
-  armv7f: 10,
-  armv7s: 11,
-  armv7k: 12,
-  armv6m: 14,
-  armv7m: 15,
-  armv7em: 16,
-  "armv8m.main": 17,
-  "armv8m.base": 18,
-  "armv8.1m.main": 19,
-};
-
 /** Reconcile lipo's specific name with the structural reader's CPU family. */
 const lipoNameMatches = (reported: string, observed: MachoSlice): boolean => {
   if (reported === observed.architecture) return true;
-  if (observed.cpu_type === 12 && observed.architecture === "arm")
-    return (
-      ARM_SUBTYPES[reported] ===
-      machoCpuSubtypeBase(observed.fat_cpu_subtype ?? observed.cpu_subtype)
+  if (observed.cpu_type === 12 && observed.architecture === "arm") {
+    const subtype = machoKnownArm32Subtype(
+      observed.fat_cpu_subtype ?? observed.cpu_subtype,
     );
+    return (reported === "armv5" ? "armv5tej" : reported) === subtype;
+  }
   if (reported === machoArchitectureFamily(observed.architecture)) return true;
   // Retain lipo's capability-variant spelling; physical identity is checked separately.
   return (

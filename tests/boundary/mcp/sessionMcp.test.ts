@@ -1,3 +1,6 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
+import type { AdbRequest } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -21,8 +24,6 @@ import type {
   ProviderAvailability,
 } from "../../../src/ports/AnalysisProvider.js";
 import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
-import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
-import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
@@ -46,6 +47,7 @@ import {
   createSessionMcpHarness,
   snapshotAndRecordUnknown,
 } from "./sessionMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const SNAPSHOT_PROFILE = createAnalysisProfile(
   { id: "fixture", name: "Fixture analysis provider", version: "1" },
@@ -183,12 +185,12 @@ describe("public provider availability", () => {
       remediation: "Use Apktool 2.7.0 or newer.",
       diagnostics: { minimum_version: "2.7.0" },
     };
-    const adbDeviceAnalysis: AdbDeviceAnalysisPort = {
+    const adbDeviceAnalysis: RequestAnalysisPort<AdbRequest> = {
       inspectAvailability: async () => available,
       close: async () => {},
       execute: async () => ok(null),
     };
-    const apktoolAnalysis: ApktoolResourceAnalysisPort = {
+    const apktoolAnalysis: RequestAnalysisPort<ApktoolRequest> = {
       inspectAvailability: async () => unavailable,
       close: async () => {},
       execute: async () => ok(null),
@@ -197,10 +199,13 @@ describe("public provider availability", () => {
       { kind: "session", session },
       { adbDeviceAnalysis, apktoolAnalysis, logger: silentLogger },
     );
-    const mcp = new Client({
-      name: "provider-host-readiness",
-      version: "1.0.0",
-    });
+    const mcp = new Client(
+      {
+        name: "provider-host-readiness",
+        version: "1.0.0",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -249,7 +254,7 @@ describe("owned-process prerequisite during status discovery", () => {
           );
         },
       );
-      const adbDeviceAnalysis: AdbDeviceAnalysisPort = {
+      const adbDeviceAnalysis: RequestAnalysisPort<AdbRequest> = {
         inspectAvailability: async () => ({
           status: "available",
           code: null,
@@ -265,7 +270,10 @@ describe("owned-process prerequisite during status discovery", () => {
         { kind: "session", session },
         { adbDeviceAnalysis, apktoolAnalysis, logger: silentLogger },
       );
-      const mcp = new Client({ name: "ps-prerequisite", version: "1.0.0" });
+      const mcp = new Client(
+        { name: "ps-prerequisite", version: "1.0.0" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
       resources.push(mcp, server, apktoolAnalysis);
@@ -348,7 +356,10 @@ describe("target-free MCP lifecycle", () => {
         logger: silentLogger,
       },
     );
-    const mcp = new Client({ name: "status-readiness", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "status-readiness", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -392,7 +403,10 @@ describe("target-free MCP lifecycle", () => {
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "replaced-target", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "replaced-target", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);

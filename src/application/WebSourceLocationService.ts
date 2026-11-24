@@ -4,7 +4,6 @@ import {
 } from "../domain/sourceMapLimits.js";
 import { WEB_SOURCE_LOCATION_PROVIDER } from "../domain/webTraceProviders.js";
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   primaryAnalysisError,
@@ -42,6 +41,7 @@ import type {
 } from "../ports/WebSourceLocationPorts.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "trace_web_source_location";
 const artifactsSchema = selectedWebScriptArtifactsSchema.extend({
@@ -293,7 +293,7 @@ const verifyPairing = (
     map.file.path !== input.source_map.path ||
     map.url !== input.source_map.url ||
     Buffer.byteLength(map.text) !== map.file.bytes ||
-    createHash("sha256").update(map.text).digest("hex") !== map.file.sha256 ||
+    sha256Hex(map.text) !== map.file.sha256 ||
     map.file.bytes > selectedSourceMapLimits(input.source_map_limits).mapBytes
   )
     return invalidOutput(

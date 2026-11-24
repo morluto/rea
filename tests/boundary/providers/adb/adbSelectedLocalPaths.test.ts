@@ -37,6 +37,7 @@ it.each(["path", "explicit"] as const)(
 printf '%s|%s|%s|%s\\n' "$1" "$ADB_SERVER_SOCKET" "$CALLER_EMPTY" "\${CALLER_ABSENT-unset}" >> "$0.calls"
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 35.0.1-fixture\\nInstalled as %s\\n' "$0"
+elif [ "$1" = start-server ]; then :
 elif [ "$1" = devices ]; then
   printf 'List of devices attached\\n%s device model:fixture transport_id:1\\n' "$ANDROID_SERIAL"
 else exit 1; fi
@@ -80,7 +81,7 @@ else exit 1; fi
     });
     expect(JSON.stringify(result.value)).not.toContain("tcp:localhost:");
     expect(await readFile(join(selectedDirectory, "adb.calls"), "utf8")).toBe(
-      "version|tcp:localhost:5041||unset\ndevices|tcp:localhost:5041||unset\n",
+      "version|tcp:localhost:5041||unset\nstart-server|tcp:localhost:5041||unset\ndevices|tcp:localhost:5041||unset\n",
     );
     await expect(
       access(join(ambientDirectory, "adb.calls")),
@@ -103,6 +104,7 @@ const fixture = async () => {
   await writeFile(
     binary,
     `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"; exit 0; fi
 if [ "$3" = shell ] && [ "$4" = pm ] && [ "$5" = path ]; then printf 'package:/data/app/fixture/base.apk\\n'; exit 0; fi
 if [ "$3" = shell ]; then exit 1; fi
@@ -256,6 +258,7 @@ it.each([true, false])(
     await writeFile(
       binary,
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"; exit 0; fi
 if [ "$3" = pull ]; then ${created ? `printf 'partial bytes' > "$5";` : ""} printf 'transfer interrupted\\n' >&2; exit 1; fi
 exit 1
@@ -309,6 +312,7 @@ it.each(["file", "symlink"] as const)(
     await writeFile(
       binary,
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"; exit 0; fi
 if [ "$3" = pull ]; then printf 'invoked' > "$0.called"; exit 1; fi
 exit 1

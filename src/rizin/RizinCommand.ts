@@ -1,5 +1,57 @@
-import type { RizinInput } from "../domain/reverseEngineering.js";
+import type {
+  CommandRefusal,
+  CommandRejection,
+} from "../domain/commandObservation.js";
+import type {
+  ProviderToolIdentification,
+  ProviderVersionProbe,
+  RizinInput,
+} from "../domain/reverseEngineering.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { RIZIN_PROVIDER_IDENTITY } from "./RizinProviderIdentity.js";
+
+/**
+ * The first `-v` line Rizin and radare2 print: a plain tool token, a version,
+ * any build tokens, then `@ <os>-<arch>-<bits>` and an optional `, <package>`.
+ * Rizin 0.9.1 prints `rizin 0.9.1 @ darwin-arm-64, package: 0.9.1_2
+ * (Homebrew)`; radare2 6.1.8 prints `radare2 6.1.8 +0 abi:110 @
+ * darwin-arm_64`. A line such as `Warning: 123 …` identifies nothing.
+ */
+const VERSION_BANNER =
+  /^(?<tool>[A-Za-z][\w.+-]*) (?<version>\d[\w.+-]*)(?: [^\s@]+)* @ [A-Za-z0-9]+-[A-Za-z0-9]+[-_]\d+(?:, .*)?$/u;
+
+/**
+ * Read the `-v` banner of the executable that REA_RIZIN_COMMAND selected.
+ * radare2 also accepts REA's argument list, so another tool is recorded with
+ * a limitation rather than refused.
+ */
+export const identifyRizinTool = (
+  banner: string,
+): ProviderToolIdentification | undefined => {
+  const match = VERSION_BANNER.exec(banner);
+  const tool = match?.groups?.tool;
+  const version = match?.groups?.version;
+  if (tool === undefined || version === undefined) return undefined;
+  if (tool === "rizin")
+    return {
+      identity: { ...RIZIN_PROVIDER_IDENTITY, version },
+      limitations: [],
+    };
+  return {
+    identity: { id: RIZIN_PROVIDER_IDENTITY.id, name: tool, version },
+    limitations: [
+      `REA_RIZIN_COMMAND selected ${tool} ${version}, not Rizin. REA ran it with Rizin's arguments; the output follows ${tool}'s command semantics, which REA has not verified.`,
+    ],
+  };
+};
+
+/** Identify the selected tool; the service probes before every command. */
+export const RIZIN_VERSION_PROBE: ProviderVersionProbe = {
+  arguments: ["-v"],
+  identify: identifyRizinTool,
+  assumedIdentity:
+    "No -v banner identified the tool that REA_RIZIN_COMMAND selected; the provider name Rizin is assumed from that setting, not observed.",
+};
 
 /** Default one-shot presentation to plain text while retaining plugin availability. */
 export const rizinCommand = (input: RizinInput): readonly string[] => [
@@ -49,34 +101,49 @@ export const rizinCommandLimitations = (
  */
 const RIZIN_SHELL_REFUSALS: readonly {
   readonly line: RegExp;
-  readonly refused: (match: RegExpExecArray) => string;
+  readonly reason: CommandRefusal["reason"];
+  /** The named command's capture group, when the line names one. */
+  readonly command?: 1;
+  readonly refused: (command: string | null) => string;
 }[] = [
   {
     line: /^ERROR: Command '(.*)' does not exist\.$/u,
-    refused: (match) => `the unknown command ${JSON.stringify(match[1])}`,
+    reason: "unknown_command",
+    command: 1,
+    refused: (command) => `the unknown command ${JSON.stringify(command)}`,
   },
   {
     line: /^ERROR: Wrong number of arguments passed to `(.*)`, see its help with `.*\?`$/u,
-    refused: (match) =>
-      `a wrong argument count for ${JSON.stringify(match[1])}`,
+    reason: "wrong_argument_count",
+    command: 1,
+    refused: (command) =>
+      `a wrong argument count for ${JSON.stringify(command)}`,
   },
   {
     line: /^ERROR: core: Error while executing command: /u,
+    reason: "invalid_statement",
     refused: () => "an invalid statement",
   },
   {
     line: /^ERROR: core: Error while parsing command: /u,
+    reason: "parse_failure",
     refused: () => "input that failed to parse",
   },
 ];
 
-/** Explain the first Rizin shell refusal in a completed process's stderr. */
-export const rizinCommandRejection = (stderr: string): string | undefined => {
+/** The first Rizin shell refusal in a completed process's stderr. */
+export const rizinCommandRejection = (
+  stderr: string,
+): CommandRejection | undefined => {
   for (const text of stderr.split(/\r?\n/u))
-    for (const { line, refused } of RIZIN_SHELL_REFUSALS) {
+    for (const { line, reason, command, refused } of RIZIN_SHELL_REFUSALS) {
       const match = line.exec(text);
-      if (match !== null)
-        return `Rizin refused ${refused(match)} (ERROR line on stderr). It skips a refused statement and every later one, so stdout holds at most the output of earlier statements; empty stdout is not an empty result. Correct the statement, using <command>? for Rizin's help, and run it again.`;
+      if (match === null) continue;
+      const named = command === undefined ? null : (match[command] ?? null);
+      return {
+        refusal: { reason, command: named, line: text },
+        limitation: `Rizin refused ${refused(named)} (ERROR line on stderr, recorded in refusal). It skips a refused statement and every later one, so stdout holds at most the output of earlier statements; empty stdout is not an empty result. Correct the statement, using <command>? for Rizin's help, and run it again.`,
+      };
     }
   return undefined;
 };

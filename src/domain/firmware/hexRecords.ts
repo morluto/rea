@@ -1,4 +1,4 @@
-import type { HexRecordsMetadata } from "../artifactFormatMetadata.js";
+import type { HexRecordsMetadata } from "../formatMetadata/firmwareMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
 import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";
@@ -106,6 +106,7 @@ const formatFailure = (line: number, detail: string): RegionDecodeFailure => ({
 class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   readonly #encoding: HexRecordEncoding;
   readonly #line: Uint8Array;
+  readonly #scratch: Uint8Array;
   readonly #runs: RecordRun[] = [];
   #arena: Uint8Array;
   #arenaWriteOffset = 0;
@@ -121,13 +122,15 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   #start: (DeclaredValue<number> & { readonly record: string }) | undefined;
   #startSegment: DeclaredValue<readonly [number, number]> | undefined;
   #header: DeclaredValue<Uint8Array> | undefined;
-  #declaredCount: number | null = null;
+  #declaredCount: DeclaredValue<number> | undefined;
   readonly #dataTypes = new Set<string>();
 
   constructor(encoding: HexRecordEncoding, fileBytes: number) {
     this.#encoding = encoding;
     // One extra byte holds the CR of a CRLF line at the maximum length.
-    this.#line = new Uint8Array(maxLineChars(encoding) + 1);
+    const maxChars = maxLineChars(encoding);
+    this.#line = new Uint8Array(maxChars + 1);
+    this.#scratch = new Uint8Array(Math.ceil(maxChars / 2));
     this.#arena = new Uint8Array(Math.floor(fileBytes / 2));
   }
 
@@ -182,7 +185,11 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
       return err(this.#overlong(this.#lineNumber));
     length = trimTrailingBlanks(this.#line, length);
     if (length === 0) return ok(undefined);
-    const parsed = parseRecord(this.#encoding, this.#line.subarray(0, length));
+    const parsed = parseRecord(
+      this.#encoding,
+      this.#line.subarray(0, length),
+      this.#scratch,
+    );
     if (!parsed.ok) return err(this.#failure(parsed.error));
     if (this.#termination !== undefined)
       return err(
@@ -201,7 +208,6 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   }
 
   #applyIntel(record: HexRecord): Result<void, RegionDecodeFailure> {
-    const value = readBigEndian(record.data);
     switch (record.type) {
       case "00":
         return this.#intelData(record);
@@ -209,18 +215,24 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
         this.#termination = { value: record.type, line: this.#lineNumber };
         return ok(undefined);
       case "02":
-      case "04":
+      case "04": {
+        const value = readBigEndian(record.data);
         this.#segmentRecords ||= record.type === "02";
         this.#linearRecords ||= record.type === "04";
         this.#baseFromSegment = record.type === "02";
         this.#base = record.type === "02" ? value * 16 : value * 0x1_0000;
         return ok(undefined);
-      case "03":
+      }
+      case "03": {
+        const value = readBigEndian(record.data);
         return this.#declareStartSegment([value >>> 16, value & 0xffff]);
-      default:
+      }
+      default: {
         // "05": the start linear address.
+        const value = readBigEndian(record.data);
         this.#linearRecords = true;
         return this.#declareStart(value, record.type);
+      }
     }
   }
 
@@ -267,7 +279,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
               `record type ${record.type} declares ${String(record.address)} data records, but ${String(this.#dataRecordCount)} precede it`,
             ),
           );
-        this.#declaredCount = record.address;
+        this.#declaredCount = { value: record.address, line: this.#lineNumber };
         return ok(undefined);
       default:
         this.#termination = { value: record.type, line: this.#lineNumber };
@@ -381,18 +393,28 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   }
 
   #limitations(): string[] {
-    const label = HEX_RECORD_ENCODING_LABELS[this.#encoding];
-    if (this.#termination === undefined)
-      return [`${label} has no termination record; the file may be truncated.`];
-    const termination = this.#termination.value;
-    const mismatched = [...this.#dataTypes].filter(
-      (type) => SREC_WIDTH_OF[type] !== SREC_WIDTH_OF[termination],
-    );
-    return this.#encoding === "srec" && mismatched.length > 0
-      ? [
+    const limitations: string[] = [];
+    const count = this.#declaredCount;
+    if (count !== undefined && count.value < this.#dataRecordCount)
+      limitations.push(
+        `S-record line ${String(count.line)}: the final count covers ${String(count.value)} of ${String(this.#dataRecordCount)} data records. Data after the count is retained.`,
+      );
+    const termination = this.#termination?.value;
+    if (termination === undefined) {
+      const label = HEX_RECORD_ENCODING_LABELS[this.#encoding];
+      limitations.push(
+        `${label} has no termination record; the file may be truncated.`,
+      );
+    } else if (this.#encoding === "srec") {
+      const mismatched = [...this.#dataTypes].filter(
+        (type) => SREC_WIDTH_OF[type] !== SREC_WIDTH_OF[termination],
+      );
+      if (mismatched.length > 0)
+        limitations.push(
           `S-record termination ${termination} does not match the address width of ${mismatched.sort().join(", ")} data records.`,
-        ]
-      : [];
+        );
+    }
+    return limitations;
   }
 
   #metadata(
@@ -426,7 +448,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
         header?.every((byte) => byte >= 0x20 && byte <= 0x7e) === true
           ? String.fromCharCode(...header)
           : null,
-      declared_data_record_count: this.#declaredCount,
+      declared_data_record_count: this.#declaredCount?.value ?? null,
     };
   }
 }

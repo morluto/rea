@@ -1,12 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
 
 import { describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { guestFileAnswerBytes } from "./AgentEnvComputer.js";
@@ -22,8 +21,10 @@ const sha256 = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 
 /** A computer whose controller lists `files` into a file beside the folder and whose data/get answers them, noting each fetch of a file. */
-const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => {
-  const listing = Buffer.from(
+const computer = (
+  files: ReadonlyMap<string, Buffer>,
+  steps: string[],
+  listing = Buffer.from(
     JSON.stringify({
       files: [...files].map(([path, bytes]) => ({
         path,
@@ -32,7 +33,8 @@ const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => {
       })),
       skipped: [],
     }),
-  );
+  ),
+) => {
   return {
     exec: () =>
       Promise.resolve({
@@ -57,6 +59,56 @@ const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => {
 };
 
 describe("fetchHomeFolder", () => {
+  it.each([
+    {
+      caseName: "a literal replacement character",
+      nameBytes: Buffer.from("\uFFFD"),
+      malformed: false,
+    },
+    {
+      caseName: "malformed filename bytes",
+      nameBytes: Buffer.from([0xff]),
+      malformed: true,
+    },
+  ])("keeps file identity with $caseName", async ({ nameBytes, malformed }) => {
+    const content = Buffer.from("seed");
+    const path = ".rea-build/b/\uFFFD";
+    const files = new Map([[path, content]]);
+    const steps: string[] = [];
+    const listing = Buffer.concat([
+      Buffer.from('{"files":[{"path":".rea-build/b/'),
+      nameBytes,
+      Buffer.from(
+        `","size":${String(content.length)},"sha256":"${sha256(content)}"}],"skipped":[]}`,
+      ),
+    ]);
+    const fetched = fetchHomeFolder(
+      computer(files, steps, listing),
+      ".rea-build/b",
+      {
+        file: (file) => {
+          steps.push(`write ${file.path}`);
+          return Promise.resolve();
+        },
+      },
+    );
+    if (malformed) {
+      await expect(fetched).rejects.toThrow(
+        "The build computer's file listing is not valid UTF-8 JSON.",
+      );
+      expect(steps).toEqual([]);
+    } else {
+      await expect(fetched).resolves.toEqual({
+        files: 1,
+        bytes: content.length,
+      });
+      expect(steps).toEqual([
+        `get ${path} within ${String(content.length)}`,
+        "write \uFFFD",
+      ]);
+    }
+  });
+
   it("splits tiny files before their answer envelopes exceed the live budget", async () => {
     const workingBytes = Math.floor(getHeapStatistics().heap_size_limit / 12);
     const count = Math.floor(workingBytes / (64 * 1024)) + 2;
@@ -250,27 +302,21 @@ describe("controller arguments", () => {
       );
       expect(Buffer.from(piece, "utf8").toString("utf8") === piece).toBe(true);
     }
-    const root = await mkdtemp(join(tmpdir(), "rea-controller-args-"));
-    try {
-      const output = join(root, "listing.json");
-      const payload = JSON.stringify({ root, output });
-      const mid = Math.floor(payload.length / 2);
-      const script = fileURLToPath(
-        new URL("../../bridge/agentenv/capture.py", import.meta.url),
-      );
-      const stdout = execFileSync(
-        "python3",
-        ["-I", "-B", script, "list", payload.slice(0, mid), payload.slice(mid)],
-        { encoding: "utf8" },
-      );
-      const answer: unknown = JSON.parse(
-        stdout.trim().split("\n").at(-1) ?? "",
-      );
-      expect(answer).toMatchObject({
-        listing_bytes: expect.any(Number),
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    const root = await createTestTempDirectory("rea-controller-args-");
+    const output = join(root, "listing.json");
+    const payload = JSON.stringify({ root, output });
+    const mid = Math.floor(payload.length / 2);
+    const script = fileURLToPath(
+      new URL("../../bridge/agentenv/capture.py", import.meta.url),
+    );
+    const stdout = execFileSync(
+      "python3",
+      ["-I", "-B", script, "list", payload.slice(0, mid), payload.slice(mid)],
+      { encoding: "utf8" },
+    );
+    const answer: unknown = JSON.parse(stdout.trim().split("\n").at(-1) ?? "");
+    expect(answer).toMatchObject({
+      listing_bytes: expect.any(Number),
+    });
   });
 });

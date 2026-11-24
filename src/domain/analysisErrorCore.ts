@@ -2,6 +2,7 @@ import type { JsonValue } from "./jsonValue.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
 import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
+import type { ParseFailure } from "./parseFailure.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -26,6 +27,34 @@ export class AnalysisUnsupportedTargetError extends AnalysisError {
     super(`Unsupported target for ${operation} at ${path}: ${reason}`, options);
     this.remediationAction = options?.remediationAction;
     this.undecodedContent = options?.undecodedContent ?? false;
+  }
+}
+
+/** What a byte-format parser established about the selected target's bytes. */
+export type MalformedTargetFailure = Extract<
+  ParseFailure,
+  { readonly kind: "malformed" | "truncated" }
+>;
+
+/**
+ * The selected target's bytes violate, or end inside, a structure of the
+ * format this operation reads. The request's arguments are not at fault, so
+ * this is a target refusal rather than invalid input.
+ */
+export class AnalysisMalformedTargetError extends AnalysisError {
+  readonly _tag = "AnalysisMalformedTargetError";
+  readonly failure: MalformedTargetFailure;
+  constructor(
+    readonly operation: string,
+    readonly path: string,
+    failure: MalformedTargetFailure,
+    options?: AnalysisErrorOptions,
+  ) {
+    super(
+      `${failure.kind === "truncated" ? "Truncated" : "Malformed"} ${failure.format} target for ${operation} at ${path}: ${failure.detail}`,
+      options,
+    );
+    this.failure = Object.freeze({ ...failure });
   }
 }
 
@@ -134,11 +163,31 @@ export const reattributedResourceConstraint = (
       ...options,
       ...resourceConstraintRecovery(error),
       ...(error.limit === undefined ? {} : { limit: error.limit }),
+
+      ...(error.related === undefined ? {} : { related: error.related }),
       ...(error.requestSent === undefined
         ? {}
         : { requestSent: error.requestSent }),
     },
   );
+
+/**
+ * Refuse at a fixed ceiling that its producer named. The ceiling carries its
+ * own value and recovery, so no other limit is reported beside it, and the
+ * unchanged request is not retryable.
+ */
+export const fixedCeilingConstraint = (
+  operation: string,
+  resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
+  reason: string,
+  ceiling: FixedAllowance,
+  options?: AnalysisErrorOptions,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(operation, resource, reason, null, {
+    ...options,
+    retryable: false,
+    fixedAllowance: ceiling,
+  });
 
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (

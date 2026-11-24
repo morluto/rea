@@ -1,15 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { access, symlink } from "node:fs/promises";
-import { execFile } from "node:child_process";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
+import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { createVerifierRun } from "./lib/verifier-run.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
 
-const execFileAsync = promisify(execFile);
 createVerifierRun();
 
 if (process.platform !== "linux")
@@ -20,8 +19,21 @@ await access(launcher);
 await access("/usr/bin/Xvfb");
 await access("/usr/bin/xauth");
 await access("/usr/bin/python3");
-const linked = await execFileAsync("ldd", [launcher]);
-if (`${linked.stdout}\n${linked.stderr}`.includes("not found"))
+// ldd runs before a workspace exists, so it uses the same short-lived owner
+// as requireLaneToolchain rather than a fixture-retained command owner.
+const linked = await runOwnedCommand(
+  {
+    command: "ldd",
+    arguments: [launcher],
+    cwd: process.cwd(),
+    env: process.env,
+    runId: `rea-hopper-linux-ldd-${randomUUID()}`,
+    expectedCommand: null,
+    sweepTokenOwnedProcesses: true,
+  },
+  { timeoutMs: null, diagnosticBytes: 1024 * 1024 },
+);
+if (`${linked.stdout.text}\n${linked.stderr.text}`.includes("not found"))
   throw new Error("Hopper has unresolved shared-library dependencies");
 const alternateDirectory = await VerifierFixture.open({
   prefix: "rea-real-hopper-launcher-",

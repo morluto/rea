@@ -1,3 +1,4 @@
+import type { Result } from "../domain/result.js";
 import { Deadline } from "../domain/deadline.js";
 
 /** Result of an abort-aware interval wait. */
@@ -100,15 +101,11 @@ export class ProviderStartupDeadline {
   /**
    * Wait for at most one polling interval under the shared deadline signal.
    *
-   * Both timers may fire before their monotonic targets. Retain the earlier
-   * of the polling target and deadline, and wait again for any residual time.
+   * Treat the polling target and the startup deadline as separate absolute times.
+   * Clamp each timer to the remaining budget and recheck both targets on wake.
    */
   wait(milliseconds: number): Promise<AbortableWaitResult> {
-    const startedAt = performance.now();
-    // Absolute target: the earlier of the requested polling interval and the
-    // absolute monotonic deadline.
-    const targetAt =
-      startedAt + Math.min(milliseconds, this.#budget.remainingMs());
+    const targetAt = performance.now() + milliseconds;
     const poll = (): Promise<AbortableWaitResult> => {
       const budget = this.remainingMs();
       const residual = Math.max(0, targetAt - performance.now());
@@ -127,6 +124,16 @@ export class ProviderStartupDeadline {
       });
     };
     return poll();
+  }
+
+  /** Settle readiness under this deadline while leaving failed startup primary. */
+  async finishStartup<Value, Failure>(
+    start: () => Promise<Result<Value, Failure>>,
+    interrupt: () => Promise<Result<never, Failure>>,
+  ): Promise<Result<Value, Failure>> {
+    const outcome = await start();
+    if (!outcome.ok) return outcome;
+    return this.interruption === undefined ? outcome : interrupt();
   }
 
   /**

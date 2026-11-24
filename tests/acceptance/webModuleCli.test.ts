@@ -8,6 +8,7 @@ import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { webModuleArtifactsFixture } from "../fixtures/webModuleTrace.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest(
   "accepts zero-based numeric source indices and returns the same engine-free CLI/MCP trace",
@@ -77,7 +78,10 @@ cliTest(
         webModuleTrace: createWebModuleTraceService(environment),
       },
     );
-    const client = new Client({ name: "module-cli-parity", version: "1" });
+    const client = new Client(
+      { name: "module-cli-parity", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();
@@ -97,6 +101,7 @@ cliTest(
     // The CLI renders native separators; MCP keeps the caller's spelling and
     // still selects the same manifest root from a forward-slash Windows path.
     const forwardSlash = manifestPath.replaceAll("\\", "/");
+    if (forwardSlash === manifestPath) return;
     const forward = await client.callTool({
       name: "trace_web_module_imports",
       arguments: { manifest_path: forwardSlash, script_index: 0 },

@@ -8,6 +8,7 @@ import {
   type ArtifactOccurrence,
 } from "./artifactGraph.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
   ArtifactInventoryCarrierError,
   hasCompleteInventoryCoverage,
@@ -144,33 +145,12 @@ export const compareArtifacts = (
   const right = comparisonInventory(rightEvidence, "right");
   const leftComplete = left.inventory.complete;
   const rightComplete = right.inventory.complete;
-  const sameScope =
-    left.inventory.coverage.scope === right.inventory.coverage.scope;
-  const rootCoverageComplete =
-    sameScope &&
-    left.inventory.complete &&
-    right.inventory.complete &&
-    left.inventory.coverage.status === "complete" &&
-    right.inventory.coverage.status === "complete";
-  const entryCoverageComplete =
-    rootCoverageComplete &&
-    left.inventory.coverage.scope === "container-entries";
-  const leftCovered =
-    sameScope &&
-    hasCompleteInventoryCoverage(left.inventory, left.inventory.coverage.scope);
-  const rightCovered =
-    sameScope &&
-    hasCompleteInventoryCoverage(
-      right.inventory,
-      right.inventory.coverage.scope,
-    );
-  const fullyCovered =
-    leftCovered &&
-    rightCovered &&
-    (entryCoverageComplete ||
-      (rootCoverageComplete &&
-        left.inventory.manifest.occurrence_count === 1 &&
-        right.inventory.manifest.occurrence_count === 1));
+  const {
+    sameScope,
+    rootCoverageComplete,
+    entryCoverageComplete,
+    fullyCovered,
+  } = comparisonCoverage(left.inventory, right.inventory);
   const leftOccurrencesByPath = occurrencesByPath(left.inventory.occurrences);
   const rightOccurrencesByPath = occurrencesByPath(right.inventory.occurrences);
   const comparison = compareOccurrences(
@@ -261,6 +241,107 @@ export const compareArtifacts = (
   });
 };
 
+/**
+ * Coverage that decides whether a path absent from the change rows was
+ * affirmatively compared as unchanged.
+ */
+const comparisonCoverage = (left: InventorySet, right: InventorySet) => {
+  const sameScope = left.coverage.scope === right.coverage.scope;
+  const rootCoverageComplete =
+    sameScope &&
+    left.complete &&
+    right.complete &&
+    left.coverage.status === "complete" &&
+    right.coverage.status === "complete";
+  const entryCoverageComplete =
+    rootCoverageComplete && left.coverage.scope === "container-entries";
+  const fullyCovered =
+    sameScope &&
+    hasCompleteInventoryCoverage(left, left.coverage.scope) &&
+    hasCompleteInventoryCoverage(right, right.coverage.scope) &&
+    (entryCoverageComplete ||
+      (rootCoverageComplete &&
+        left.manifest.occurrence_count === 1 &&
+        right.manifest.occurrence_count === 1));
+  return {
+    sameScope,
+    rootCoverageComplete,
+    entryCoverageComplete,
+    fullyCovered,
+  };
+};
+
+/** Status of one logical path that has no row in `changes`. */
+export type UnreportedArtifactPathStatus =
+  | { readonly status: "unchanged" }
+  | { readonly status: "unknown"; readonly limitation: string }
+  | { readonly status: "unobserved" };
+
+/** Classifier for paths a comparison omitted from `changes`. */
+export type UnreportedArtifactPathClassifier = (
+  logicalPath: string,
+) => UnreportedArtifactPathStatus;
+
+/**
+ * Validate the exact inventories a comparison cited once, then classify any
+ * number of paths it omitted from `changes`. Only a path observed once on each
+ * side of a fully covered comparison is unchanged; this matches the paths
+ * counted in `summary.unchanged`. A path neither inventory observed is not
+ * evidence of equality: it is unobserved under complete coverage and unknown
+ * otherwise.
+ */
+export const prepareUnreportedArtifactPaths = (
+  result: ArtifactComparisonResult,
+  sources: { readonly left: unknown; readonly right: unknown },
+): UnreportedArtifactPathClassifier => {
+  const left = retainedComparisonInventory(sources.left);
+  const right = retainedComparisonInventory(sources.right);
+  if (
+    left.manifest.manifest_id !== result.left_manifest_id ||
+    right.manifest.manifest_id !== result.right_manifest_id
+  )
+    throw new EvidenceIntegrityError(
+      "Artifact comparison source inventories disagree with its manifests",
+    );
+  const { fullyCovered } = comparisonCoverage(left, right);
+  const leftByPath = occurrencesByPath(left.occurrences);
+  const rightByPath = occurrencesByPath(right.occurrences);
+  return (logicalPath) => {
+    // The index holds only observed paths. Absence on both sides proves the
+    // selector names no compared member only when coverage is complete;
+    // otherwise the path may lie where the comparison never reached.
+    const leftMatches = leftByPath.get(logicalPath);
+    const rightMatches = rightByPath.get(logicalPath);
+    if (leftMatches === undefined && rightMatches === undefined)
+      return fullyCovered
+        ? { status: "unobserved" }
+        : {
+            status: "unknown",
+            limitation:
+              "The selected artifact path was not observed in either inventory, and the comparison does not have complete coverage; it may name a member the comparison never reached.",
+          };
+    if (fullyCovered && leftMatches?.length === 1 && rightMatches?.length === 1)
+      return { status: "unchanged" };
+    return {
+      status: "unknown",
+      limitation:
+        "The selected artifact path matched across inventories without complete comparison coverage; it is not established as unchanged.",
+    };
+  };
+};
+
+const retainedComparisonInventory = (input: unknown): InventorySet => {
+  try {
+    return parseArtifactInventoryEvidence(input).inventory;
+  } catch (cause: unknown) {
+    if (!(cause instanceof ArtifactInventoryCarrierError)) throw cause;
+    throw new EvidenceIntegrityError(cause.message, {
+      cause,
+      userMessage: cause.message,
+    });
+  }
+};
+
 const compareOccurrences = (
   left: InventorySet,
   right: InventorySet,
@@ -278,6 +359,12 @@ const compareOccurrences = (
   const rightNodes = new Map(
     right.nodes.map((item) => [item.artifact_id, item]),
   );
+  const comparableRootDigest = hasComparableRootDigest(left, right);
+  const compareDirectorySourceNames =
+    left.manifest.root_format === "directory" &&
+    right.manifest.root_format === "directory";
+  const partialRootDigest =
+    hasPartialRootDigest(left) || hasPartialRootDigest(right);
   const leftRelationsFor = relationsForOccurrence(left);
   const rightRelationsFor = relationsForOccurrence(right);
   const paths = [
@@ -311,7 +398,10 @@ const compareOccurrences = (
     }
     const leftOccurrence = leftMatches[0];
     const rightOccurrence = rightMatches[0];
-    const metadata = occurrenceMetadata({ leftOccurrence, rightOccurrence });
+    const metadata = occurrenceMetadata(
+      { leftOccurrence, rightOccurrence },
+      { compareDirectorySourceNames },
+    );
     if (leftOccurrence !== undefined && rightOccurrence !== undefined) {
       if (metadata.asarPacking === "unknown") hasUnknownAsarPacking = true;
       if (metadata.formatDeclaration === "unknown")
@@ -328,6 +418,10 @@ const compareOccurrences = (
         leftRelationsFor(leftOccurrence),
         rightRelationsFor(rightOccurrence),
       ),
+      compareRootContentDigest: path !== "." || comparableRootDigest,
+      rootContentIdentityUnknown:
+        path === "." &&
+        (partialRootDigest || (!comparableRootDigest && !coverage.entries)),
       rootCovered: coverage.root,
       entriesCovered: coverage.entries,
       evidenceLinks,
@@ -363,6 +457,8 @@ interface ClassifyPathInput {
   readonly leftNode: ArtifactNode | undefined;
   readonly rightNode: ArtifactNode | undefined;
   readonly relations: FactComparison;
+  readonly compareRootContentDigest: boolean;
+  readonly rootContentIdentityUnknown: boolean;
   readonly rootCovered: boolean;
   readonly entriesCovered: boolean;
   readonly evidenceLinks: readonly string[];
@@ -436,6 +532,8 @@ const classifyPath = (input: ClassifyPathInput): ArtifactChange | null => {
   if (presence !== null) return presence;
   const declaration = classifyDeclarationRecord(input, base);
   if (declaration.handled) return declaration.change;
+  const link = classifyLinkTargets(input, base);
+  if (link.handled) return link.change;
   const availability = classifyAvailability(input, base);
   if (availability !== null) {
     const known = occurrenceDifferences(input);
@@ -458,6 +556,7 @@ const classifyPath = (input: ClassifyPathInput): ArtifactChange | null => {
   const dimensions = changedDimensions(input);
   const occurrence = occurrenceDifferences(input);
   if (
+    input.rootContentIdentityUnknown ||
     declarationUnknown(input.metadata) ||
     occurrence.kindUnknown ||
     occurrence.formatUnknown ||
@@ -497,6 +596,8 @@ interface OccurrenceMetadata {
   readonly asarPacking: FactComparison;
   /** Every occurrence records `encrypted`, so a pair's comparison is known. */
   readonly encryption: Exclude<FactComparison, "unknown">;
+  /** Stored directory entry path, preserving non-NFC spellings normalized in `logical_path`. */
+  readonly directorySourcePath: Exclude<FactComparison, "unknown">;
   /** Absent when neither occurrence records a compared declaration. */
   readonly formatDeclaration: FactComparison | "absent";
   /** Unknown when either side could not read a compared field. */
@@ -506,6 +607,7 @@ interface OccurrenceMetadata {
 /** A declaration that differs even when content is unavailable. */
 const declarationChanged = (metadata: OccurrenceMetadata): boolean =>
   metadata.asarPacking === "changed" ||
+  metadata.directorySourcePath === "changed" ||
   metadata.formatDeclaration === "changed";
 
 /** A declared fact that differs: a declaration or the encryption. */
@@ -616,13 +718,41 @@ const compareFormatDeclarations = (
   };
 };
 
+/** Compare exact stored directory names without leaking format-specific archive aliases. */
+const compareDirectorySourcePath = (
+  left: ArtifactOccurrence | undefined,
+  right: ArtifactOccurrence | undefined,
+  compareDirectorySourceNames: boolean,
+): Exclude<FactComparison, "unknown"> => {
+  if (
+    !compareDirectorySourceNames ||
+    left === undefined ||
+    right === undefined ||
+    left.logical_path === "." ||
+    right.logical_path === "."
+  )
+    return "unchanged";
+  return (left.source_path ?? left.logical_path) ===
+    (right.source_path ?? right.logical_path)
+    ? "unchanged"
+    : "changed";
+};
+
 /** Interpret each pair's declarations once, preserving historical omission. */
-const occurrenceMetadata = (input: OccurrencePair): OccurrenceMetadata => {
+const occurrenceMetadata = (
+  input: OccurrencePair,
+  options: { readonly compareDirectorySourceNames: boolean },
+): OccurrenceMetadata => {
   const left = input.leftOccurrence;
   const right = input.rightOccurrence;
   return {
     asarPacking: compareAsarPacking(left?.unpacked, right?.unpacked),
     encryption: left?.encrypted === right?.encrypted ? "unchanged" : "changed",
+    directorySourcePath: compareDirectorySourcePath(
+      left,
+      right,
+      options.compareDirectorySourceNames,
+    ),
     ...compareFormatDeclarations(
       formatMetadataDeclaration(left?.format_metadata),
       formatMetadataDeclaration(right?.format_metadata),
@@ -670,6 +800,39 @@ const classifyDeclarationRecord = (
 };
 
 /**
+ * Symlinks have no content node; a reader that recorded both stored targets
+ * compares them, and neither link is followed. A link whose target either
+ * side did not record stays unavailable.
+ */
+const classifyLinkTargets = (
+  input: ClassifyPathInput,
+  base: ReturnType<typeof buildArtifactChangeBase>,
+): { readonly handled: boolean; readonly change: ArtifactChange | null } => {
+  const left = input.leftOccurrence;
+  const right = input.rightOccurrence;
+  if (
+    left?.entry_kind !== "symlink" ||
+    right?.entry_kind !== "symlink" ||
+    left.link_target === undefined ||
+    right.link_target === undefined
+  )
+    return { handled: false, change: null };
+  const dimensions: ArtifactChange["dimensions"] = [];
+  if (left.link_target.hex !== right.link_target.hex)
+    dimensions.push("content");
+  if (left.executable !== right.executable) dimensions.push("executable");
+  if (input.metadata.directorySourcePath === "changed")
+    dimensions.push("metadata");
+  return {
+    handled: true,
+    change:
+      dimensions.length === 0
+        ? null
+        : { ...base, classification: "changed", dimensions },
+  };
+};
+
+/**
  * Without observed content on both sides, the containers' declared digests
  * are the remaining content evidence. Claims of one algorithm that differ,
  * and a claim present on only one side, are a metadata difference. They are
@@ -691,6 +854,7 @@ const changedDimensions = (input: {
   readonly leftOccurrence: ArtifactOccurrence | undefined;
   readonly rightOccurrence: ArtifactOccurrence | undefined;
   readonly relations: FactComparison;
+  readonly compareRootContentDigest: boolean;
 }): z.infer<typeof comparisonDimensionSchema>[] => {
   const left = input.leftNode;
   const right = input.rightNode;
@@ -700,7 +864,7 @@ const changedDimensions = (input: {
     z.infer<typeof comparisonDimensionSchema>,
     boolean,
   ][] = [
-    ["content", left.sha256 !== right.sha256],
+    ["content", input.compareRootContentDigest && left.sha256 !== right.sha256],
     ["kind", occurrence.kind],
     [
       "format",
@@ -738,10 +902,10 @@ const relationsForOccurrence = (
   inventory: InventorySet,
 ): ((
   occurrence: ArtifactOccurrence | undefined,
-) => readonly RelationProjection[] | undefined) => {
+) => readonly string[] | undefined) => {
   if (inventory.edges.length !== inventory.manifest.edge_count)
     return () => undefined;
-  const output = new Map<string, RelationProjection[]>();
+  const output = new Map<string, string[]>();
   const unresolvedPaths = new Set<string>();
   const occurrences = new Map(
     inventory.occurrences.map((item) => [item.occurrence_id, item]),
@@ -760,7 +924,7 @@ const relationsForOccurrence = (
       continue;
     }
     const values = output.get(path);
-    const projection: RelationProjection = {
+    const projection = canonicalJson({
       parent_logical_path: parent?.logical_path ?? null,
       // Containment roots are path-normalized to avoid graph-wide deltas, but
       // a source map's target is a semantic content identity, not its parent
@@ -771,14 +935,11 @@ const relationsForOccurrence = (
       relation: edge.relation,
       logical_path: occurrence.logical_path,
       producer: edge.producer,
-    };
+    });
     if (values === undefined) output.set(path, [projection]);
     else values.push(projection);
   }
-  for (const values of output.values())
-    values.sort((left, right) =>
-      compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
-    );
+  for (const values of output.values()) values.sort(compareUnicodeCodePoints);
   return (occurrence) => {
     if (occurrence?.artifact_id == null) return undefined;
     if (artifactOccurrenceRelationshipCoverage(occurrence) === "unknown")
@@ -789,26 +950,15 @@ const relationsForOccurrence = (
 };
 
 const compareRelations = (
-  left: readonly RelationProjection[] | undefined,
-  right: readonly RelationProjection[] | undefined,
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
 ): FactComparison => {
   if (left === undefined || right === undefined) return "unknown";
-  return JSON.stringify(left) === JSON.stringify(right)
-    ? "unchanged"
-    : "changed";
+  if (left.length !== right.length) return "changed";
+  for (let index = 0; index < left.length; index += 1)
+    if (left[index] !== right[index]) return "changed";
+  return "unchanged";
 };
-
-interface RelationProjection {
-  /** Logical parent is stable across graph-root ID changes. */
-  readonly parent_logical_path: string | null;
-  /** Content identity is material for a maps-source edge. */
-  readonly mapped_artifact_id: string | null;
-  readonly child_artifact_id: string;
-  readonly relation: ArtifactInventoryResult["edges"][number]["relation"];
-  readonly logical_path: string | null;
-  /** Producer is semantic provenance; edge ordinal is presentation order. */
-  readonly producer: ArtifactInventoryResult["edges"][number]["producer"];
-}
 
 const summarize = (
   left: InventorySet,
@@ -823,21 +973,22 @@ const summarize = (
     unknown: 0,
     contradiction: 0,
   };
-  for (const change of changes) counts[change.classification] += 1;
+  const changedPaths = new Set<string>();
+  for (const change of changes) {
+    counts[change.classification] += 1;
+    if (change.classification !== "added")
+      changedPaths.add(change.logical_path);
+  }
   // Change rows are keyed by logical path, and one row for a duplicate path
   // stands for every left occurrence on it. Only occurrences on paths
   // without a left-side change are affirmatively unchanged.
-  const changedPaths = new Set(
-    changes
-      .filter(({ classification }) => classification !== "added")
-      .map(({ logical_path: path }) => path),
-  );
+  let unchanged = 0;
+  if (covered) {
+    for (const { logical_path: path } of left.occurrences)
+      if (!changedPaths.has(path)) unchanged += 1;
+  }
   return {
-    unchanged: covered
-      ? left.occurrences.filter(
-          ({ logical_path: path }) => !changedPaths.has(path),
-        ).length
-      : 0,
+    unchanged,
     ...counts,
     unknown: covered
       ? counts.unknown
@@ -855,6 +1006,60 @@ const summarize = (
   };
 };
 
+type RootDigestScheme =
+  | { readonly kind: "file-bytes" }
+  | { readonly kind: "legacy-directory-listing" }
+  | {
+      readonly kind: "directory-tree";
+      readonly algorithm: string;
+      readonly version: number;
+    }
+  | { readonly kind: "partial" };
+
+/**
+ * Identify the scheme that produced `manifest.root_sha256` and the root node's
+ * `sha256`. A partial directory root's digest is only an addressable graph key,
+ * not a content identity; an older directory inventory without `root_digest`
+ * hashes a listing rather than a `rea-directory-tree` encoding.
+ */
+const rootDigestScheme = (inventory: InventorySet): RootDigestScheme => {
+  if (inventory.rootDigest !== undefined)
+    return inventory.rootDigest.status === "partial"
+      ? { kind: "partial" }
+      : {
+          kind: "directory-tree",
+          algorithm: inventory.rootDigest.algorithm,
+          version: inventory.rootDigest.version,
+        };
+  return inventory.manifest.root_format === "directory"
+    ? { kind: "legacy-directory-listing" }
+    : { kind: "file-bytes" };
+};
+
+const hasPartialRootDigest = (inventory: InventorySet): boolean =>
+  inventory.rootDigest?.status === "partial";
+
+/**
+ * Root digests establish a content difference only when both sides carry a
+ * complete digest from the same scheme.
+ */
+const hasComparableRootDigest = (
+  left: InventorySet,
+  right: InventorySet,
+): boolean => {
+  const leftScheme = rootDigestScheme(left);
+  const rightScheme = rootDigestScheme(right);
+  if (leftScheme.kind === "partial" || rightScheme.kind === "partial")
+    return false;
+  if (leftScheme.kind !== rightScheme.kind) return false;
+  return (
+    leftScheme.kind !== "directory-tree" ||
+    (rightScheme.kind === "directory-tree" &&
+      leftScheme.algorithm === rightScheme.algorithm &&
+      leftScheme.version === rightScheme.version)
+  );
+};
+
 // Differing manifest root digests prove a root content change even when node
 // details are unavailable. Fold that fact into an existing root row so one
 // logical path keeps one classification.
@@ -864,7 +1069,11 @@ const applyRootHashChange = (
   changes: ArtifactChange[],
   evidenceLinks: readonly string[],
 ): void => {
-  if (left.manifest.root_sha256 === right.manifest.root_sha256) return;
+  if (
+    !hasComparableRootDigest(left, right) ||
+    left.manifest.root_sha256 === right.manifest.root_sha256
+  )
+    return;
   const index = changes.findIndex((change) => change.logical_path === ".");
   const existing = changes[index];
   if (existing !== undefined) {

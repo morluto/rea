@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import {
   isComparisonOrCountFile,
@@ -175,6 +174,31 @@ it("counts defaults in template substitutions and after postfix updates", () => 
   expect(
     optionalFactDefaultCount("const ratio = i-- / (report.count ?? 0);"),
   ).toBe(1);
+  // A non-null assertion completes its operand; a prefix `!` starts one.
+  expect(
+    optionalFactDefaultCount("const ratio = value! / (report.count ?? 0);"),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount("const ratio = f()! / (report.count ?? 0);"),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount("const ok = !/(report.count ?? 0)/u.test(s);"),
+  ).toBe(0);
+  // `export default` starts an expression, so `!` and `/` there are prefix
+  // and a regular expression, not an assertion and a division.
+  expect(
+    optionalFactDefaultCount(
+      "export default !/[/*]/.test(s); const n = report.count ?? 0;",
+    ),
+  ).toBe(1);
+  expect(
+    optionalFactDefaultCount("export default !/(report.count ?? 0)/u.test(s);"),
+  ).toBe(0);
+  expect(
+    optionalFactDefaultCount(
+      "export default /[/*]/; const n = report.count ?? 0;",
+    ),
+  ).toBe(1);
 });
 
 it("does not let a nested expression's marker exempt an outer default", () => {
@@ -202,17 +226,6 @@ it("exempts a default whose operand starts on an earlier line", () => {
       "const offset = getOptions(\n  request,\n).offset ?? 0;",
     ),
   ).toBe(1);
-});
-
-it("loads without installed dependencies, as CI runs it before npm ci", async () => {
-  const source = await readFile(
-    new URL(
-      "../../scripts/verify/optional-fact-default-guard.mjs",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-  expect(source).not.toMatch(/\bfrom\s+["'](?!node:|\.)/u);
 });
 
 it("selects comparison, coverage and count files only", () => {

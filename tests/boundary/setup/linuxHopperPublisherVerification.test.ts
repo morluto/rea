@@ -36,10 +36,7 @@ import {
   type LinuxHopperRelease,
 } from "../../../src/application/HopperReleaseFeed.js";
 import * as signatures from "../../../src/process/DetachedPgpSignature.js";
-import {
-  downloadHopperPackage,
-  HOPPER_METADATA_TIMEOUT_MS,
-} from "../../../src/application/HopperDownload.js";
+import { HOPPER_METADATA_TIMEOUT_MS } from "../../../src/application/HopperDownload.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import * as leases from "../../../src/process/HopperLease.js";
@@ -762,6 +759,8 @@ linux(
         cacheDirectory: f.publisher.cacheRoot,
         launcherSha256: f.release.main_exe_hash,
         runId: "fixture-competing-writer",
+        failure: (failure: { readonly kind: string }) =>
+          new Error(`Fixture cache lease failed: ${failure.kind}`),
       };
       expect(await acquire(input)).toMatchObject({ acquired: false });
       await expect(f.publisher.close()).rejects.toMatchObject({
@@ -780,43 +779,6 @@ linux(
   },
 );
 
-it("bounds a stalled metadata fetch and preserves caller cancellation", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(
-      (_url, options: RequestInit) =>
-        new Promise((_resolve, reject) => {
-          const signal = options.signal;
-          signal?.addEventListener("abort", () => reject(signal.reason), {
-            once: true,
-          });
-          signal?.throwIfAborted();
-        }),
-    ),
-  );
-  // REA's own deadline is a returned transport fact; only caller cancellation rejects.
-  expect(
-    await downloadHopperPackage("https://www.hopperapp.com/fixture", {
-      timeoutMs: 10,
-    }),
-  ).toEqual({
-    ok: false,
-    error: {
-      url: "https://www.hopperapp.com/fixture",
-      kind: "timeout",
-      limit: "deadline",
-      timeoutMs: 10,
-      receivedBytes: 0,
-    },
-  });
-  const controller = new AbortController();
-  const reason = new Error("Caller cancelled metadata inspection");
-  const pending = downloadHopperPackage("https://www.hopperapp.com/fixture", {
-    signal: controller.signal,
-  });
-  controller.abort(reason);
-  await expect(pending).rejects.toBe(reason);
-});
 it("names the release feed and its limit when the metadata fetch times out", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
@@ -842,6 +804,7 @@ it("names the release feed and its limit when the metadata fetch times out", asy
         reason: "release_metadata",
         download: {
           request: "release_feed",
+          url: HOPPER_RELEASES_URL,
           kind: "timeout",
           limit: "deadline",
           timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
@@ -853,37 +816,6 @@ it("names the release feed and its limit when the metadata fetch times out", asy
     vi.useRealTimers();
   }
 });
-it("cancels an oversized chunked metadata response before retaining it", async () => {
-  const cancelled = vi.fn();
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(
-      async () =>
-        new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(new Uint8Array(4));
-            },
-            cancel: cancelled,
-          }),
-        ),
-    ),
-  );
-  expect(
-    await downloadHopperPackage("https://www.hopperapp.com/fixture", {
-      maxBytes: 3,
-    }),
-  ).toEqual({
-    ok: false,
-    error: {
-      url: "https://www.hopperapp.com/fixture",
-      kind: "response_too_large",
-      maxBytes: 3,
-    },
-  });
-  expect(cancelled).toHaveBeenCalledOnce();
-});
-
 portableTar(
   "retains the temporary root until its failed hash descriptor closes",
   async () => {

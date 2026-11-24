@@ -8,8 +8,6 @@ import {
 import { createSystemProcessOwnershipHost } from "./ProcessOwnershipObservation.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 
-const itOnLinux = process.platform === "linux" ? it : it.skip;
-
 const observedIdentity = (entry: ProcessTableEntry, identity: string) => ({
   state: "readable" as const,
   identity,
@@ -232,42 +230,45 @@ it.each([undefined, "run-token"])(
 );
 
 describe("Linux process start identities", () => {
-  itOnLinux("reads Linux process start identities from proc stat", async () => {
-    const host = createSystemProcessOwnershipHost("linux", {});
-    expect(host.processIdentities).toBeDefined();
-    expect(host.captureBaseline).toBeDefined();
-    const observedProcess = {
-      pid: process.pid,
-      parentPid: process.ppid,
-      processGroupId: process.pid,
-      state: "S",
-      command: process.execPath,
-    } satisfies ProcessTableEntry;
-    const identities = await host.processIdentities?.(
-      [observedProcess],
-      undefined,
-      new Set([observedProcess.pid]),
-    );
-    expect(identities?.get(observedProcess.pid)).toMatchObject({
-      state: "readable",
-      identity: expect.stringMatching(/^linux-starttime:\d+$/u),
-      lifecycle: { state: "observed", lifecycle: "non-zombie" },
-      relation: {
-        state: "observed",
+  it.runIf(process.platform === "linux")(
+    "reads Linux process start identities from proc stat",
+    async () => {
+      const host = createSystemProcessOwnershipHost("linux", {});
+      expect(host.processIdentities).toBeDefined();
+      expect(host.captureBaseline).toBeDefined();
+      const observedProcess = {
+        pid: process.pid,
         parentPid: process.ppid,
-        processGroupId: expect.any(Number),
-      },
-    });
-    expect(identities?.get(observedProcess.pid)).toHaveProperty(
-      "effectiveUid",
-      process.geteuid!(),
-    );
-    const baseline = await host.captureBaseline?.();
-    expect(baseline).toContainEqual({
-      pid: observedProcess.pid,
-      identity: expect.stringMatching(/^linux-starttime:\d+$/u),
-    });
-  });
+        processGroupId: process.pid,
+        state: "S",
+        command: process.execPath,
+      } satisfies ProcessTableEntry;
+      const identities = await host.processIdentities?.(
+        [observedProcess],
+        undefined,
+        new Set([observedProcess.pid]),
+      );
+      expect(identities?.get(observedProcess.pid)).toMatchObject({
+        state: "readable",
+        identity: expect.stringMatching(/^linux-starttime:\d+$/u),
+        lifecycle: { state: "observed", lifecycle: "non-zombie" },
+        relation: {
+          state: "observed",
+          parentPid: process.ppid,
+          processGroupId: expect.any(Number),
+        },
+      });
+      expect(identities?.get(observedProcess.pid)).toHaveProperty(
+        "effectiveUid",
+        process.geteuid!(),
+      );
+      const baseline = await host.captureBaseline?.();
+      expect(baseline).toContainEqual({
+        pid: observedProcess.pid,
+        identity: expect.stringMatching(/^linux-starttime:\d+$/u),
+      });
+    },
+  );
 });
 
 it("validates and cleans an exact-token owner without a capture baseline", async () => {

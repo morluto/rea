@@ -1,5 +1,4 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
@@ -20,6 +19,8 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { WindowsChangeTimeConfigurationError } from "../config/windowsChangeTimeSettle.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -50,6 +51,7 @@ import {
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "export_web_scripts";
 
@@ -100,7 +102,7 @@ export const exportWebScriptsValidated = async (
     const { bytes, loaded } = prepared.value;
     if (options.signal?.aborted)
       return err(cancelledBy(OPERATION, options.signal));
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     const result = await publishWebScripts(input, loaded, sha256, {
       resources,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -262,11 +264,10 @@ const readCapture = async (
           ? {}
           : { lease: retry.cleanupLease }),
       };
-      if (retry.outcome.kind === "completed") {
+      if (cause.outcome.kind === "completed") {
         const cancellation =
-          signal?.aborted === true
-            ? { reason: signal.reason }
-            : regularFileCancellation(cause);
+          regularFileCancellation(cause) ??
+          (signal?.aborted === true ? { reason: signal.reason } : undefined);
         if (cancellation !== undefined) {
           const primary = cancelledBy(
             OPERATION,
@@ -278,12 +279,17 @@ const readCapture = async (
               : incompleteCaptureCleanup(primary, path, cleanup),
           );
         }
-        return ok({ bytes: retry.outcome.value as Buffer, cleanup });
+        return ok({ bytes: cause.outcome.value as Buffer, cleanup });
       }
-      const primary = captureReadFailure(
-        path,
-        cause,
-        retry.cleanup === undefined ? { cause: cause.cleanupCause } : undefined,
+      const primary = captureReadErrorWithCancellation(
+        captureReadFailure(
+          path,
+          cause,
+          retry.cleanup === undefined
+            ? { cause: cause.cleanupCause }
+            : undefined,
+        ),
+        signal,
       );
       return err(
         retry.cleanup === undefined
@@ -291,9 +297,19 @@ const readCapture = async (
           : incompleteCaptureCleanup(primary, path, cleanup),
       );
     }
-    return err(captureReadFailure(path, cause));
+    return err(
+      captureReadErrorWithCancellation(captureReadFailure(path, cause), signal),
+    );
   }
 };
+
+const captureReadErrorWithCancellation = (
+  error: AnalysisError,
+  signal: AbortSignal | undefined,
+): AnalysisError =>
+  signal?.aborted === true
+    ? analysisErrorWithCancellation(error, cancelledBy(OPERATION, signal))
+    : error;
 
 const captureReadFailure = (
   path: string,
@@ -320,7 +336,7 @@ const captureReadFailure = (
           "Capture read and file-handle close both failed",
           { cause },
         );
-  if (cause instanceof ConfigurationError) {
+  if (cause instanceof WindowsChangeTimeConfigurationError) {
     if (closeFailure === undefined) return cause;
     return new ConfigurationError(cause.message, {
       cause: causeWithClose,

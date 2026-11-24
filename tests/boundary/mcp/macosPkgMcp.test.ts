@@ -17,6 +17,9 @@ it.each(["compact"] as const)(
     const bytes = buildProductArchive();
     await writeFile(path, bytes);
     const { call } = await connectLocalToolsMcp({
+      TMPDIR: root,
+      TMP: root,
+      TEMP: root,
       REA_MCP_TOOL_FAMILIES: "session,artifact",
       REA_MCP_INPUT_SCHEMA_PROFILE: profile,
       REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,

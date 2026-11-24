@@ -1,6 +1,6 @@
 import { contractNamed } from "./contractCliDescription.js";
 import { resolveJavaScriptMemberMutationAllowance } from "../config/javascriptMemberMutationAllowance.js";
-import { z } from "incur";
+import { z } from "zod";
 import { cliDecimalField } from "./options.js";
 import { requirePresence } from "../domain/schemaConstraints.js";
 
@@ -28,13 +28,12 @@ import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS, cliCommandFor } from "../contracts/cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
-import {
-  registerContractCommand,
-  runOnSessionTarget,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runOnSessionTarget } from "./contractCommandRunners.js";
 
 export const registerUtilityCommands = (
   cli: CliInstance,
@@ -109,7 +108,7 @@ const registerCapabilityCommands = (
     CLI_COMMANDS.capabilities,
     CLI_COMMANDS.providers,
   ] as const) {
-    cli.command(command, {
+    registerCliCommand(cli, command, {
       description:
         command === "capabilities"
           ? "List provider capabilities and side effects"
@@ -163,7 +162,7 @@ const registerNativeCommands = (
         path: {
           name: "relativePath",
           description:
-            "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
+            "Plist path relative to the app root, or an absolute path within the opened bundle (default: its Info.plist)",
         },
       },
     },
@@ -252,7 +251,7 @@ const registerReferenceSourceCommand = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  cli.command(CLI_COMMANDS.importReferenceSource, {
+  registerCliCommand(cli, CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",
     args: z.object({
       root: localPathStringSchema.describe(

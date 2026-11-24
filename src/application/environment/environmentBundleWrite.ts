@@ -34,6 +34,7 @@ import type {
   WrittenBundleFile,
 } from "./environmentExport.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /**
  * A host failure on one file the bundle writer was reading or writing.
@@ -95,7 +96,7 @@ const writeBytes = async (
   const written = await writingBundleFile(directory, relative, () =>
     tree.write(relative, Readable.from([bytes]), {
       bytes: bytes.length,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha256: sha256Hex(bytes),
     }),
   );
   return { path: written.relativePath, bytes: written.bytesWritten };

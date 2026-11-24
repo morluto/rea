@@ -197,11 +197,23 @@ describe("process CLI cleanup errors", () => {
         );
         if (targetPid !== undefined) {
           expect(Number.isSafeInteger(targetPid) && targetPid > 0).toBe(true);
+          let lastObservation: Awaited<
+            ReturnType<typeof observeProcessStartIdentity>
+          >;
           await expect
-            .poll(() => observeProcessStartIdentity(targetPid), {
-              interval: 25,
-            })
-            .toBeUndefined();
+            .poll(
+              async () => {
+                lastObservation = await observeProcessStartIdentity(targetPid);
+                return lastObservation?.state === "readable"
+                  ? "running"
+                  : "settled";
+              },
+              {
+                interval: 25,
+              },
+            )
+            .toBe("settled");
+          expect(lastObservation).toBeUndefined();
         }
       }
     },

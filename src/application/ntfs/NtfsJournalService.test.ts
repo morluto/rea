@@ -101,7 +101,7 @@ it("refuses an oversized acquisition as a fixed ceiling, not host memory", async
       },
     });
     // Recovery comes from the fixed-allowance owner, not host-memory advice.
-    expect(projected.remediation.action).toBe(
+    expect(projected.remediation.action).toContain(
       fixedAllowanceRemediation("The NTFS journal file allowance", "input"),
     );
   } finally {

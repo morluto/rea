@@ -11,10 +11,10 @@ import {
 } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import type { _electron as electron } from "playwright-core";
@@ -65,6 +65,7 @@ const STARTUP_TIMEOUT_MS = 60_000;
 
 import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const hookPath = fileURLToPath(
   new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
@@ -200,9 +201,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ...safeElectronEnvironment(this.environment, runId, this.platform),
           REA_ELECTRON_CAPTURE_ARGV: JSON.stringify({
             length: applicationArgs.length,
-            sha256: createHash("sha256")
-              .update(JSON.stringify(applicationArgs))
-              .digest("hex"),
+            sha256: sha256Hex(JSON.stringify(applicationArgs)),
           }),
         },
         args: applicationArgs,
@@ -262,9 +261,26 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       actions = actionOutcome.actions;
       if (actionOutcome.cleanupError !== undefined)
         throw actionOutcome.cleanupError;
-      const state = await readFinalApplicationState(
-        application,
-        options.signal,
+      const signal = options.signal;
+      const actionCancellation = actionOutcome.actionCancellation;
+      const cancelledInAction =
+        signal?.aborted === true &&
+        actionCancellation !== undefined &&
+        Object.is(actionCancellation.cause, signal.reason);
+      const state = await readFinalApplicationState(application, signal).catch(
+        (cause: unknown) => {
+          const failure = providerError(cause);
+          // A cancellation already recorded for an action precedes the
+          // best-effort final read, which can lose its Inspector transport.
+          if (
+            cancelledInAction &&
+            !failure.cleanupIncomplete &&
+            !(failure instanceof AnalysisCancelledError) &&
+            failure.userCategory !== "cancelled"
+          )
+            throw actionCancellation.retainSecondaryFailure(failure);
+          throw failure;
+        },
       );
       const finalCapture = projectElectronActiveCapture(paths, actions, state);
       retained = { stage: "final", state };
@@ -352,11 +368,11 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         );
         owner.bind(failure);
         if (outcome.ok) return err(failure);
-        const composed = analysisErrorWithCleanupFailure(
+        const composed = analysisErrorWithCleanupDependencies(
           outcome.error,
           failure,
           OPERATION,
-        ).bindCleanupDependencies([outcome.error, failure]);
+        );
         if (failure.partialObservation !== undefined)
           composed.partialObservation = failure.partialObservation;
         return err(composed);

@@ -7,9 +7,10 @@ import { describe, expect } from "vitest";
 import {
   CanonicalDigestError,
   digestCanonicalValue,
+  serializeCanonicalValue,
 } from "./canonicalDigest.js";
 
-const legacyDigest = (value: unknown): string => {
+const strictDigest = (value: unknown): string => {
   const encoded = canonicalize(value);
   if (encoded === undefined) throw new TypeError("Unserializable fixture");
   return createHash("sha256").update(encoded).digest("hex");
@@ -19,7 +20,8 @@ describe("incremental canonical digest", () => {
   it.prop([fc.jsonValue()])(
     "preserves canonicalize digests for JSON values",
     (value) => {
-      expect(digestCanonicalValue(value)).toBe(legacyDigest(value));
+      expect(digestCanonicalValue(value)).toBe(strictDigest(value));
+      expect(serializeCanonicalValue(value)).toBe(canonicalize(value));
     },
   );
 
@@ -27,24 +29,39 @@ describe("incremental canonical digest", () => {
     const shared = { key: "value" };
     const sparse: unknown[] = [undefined, Symbol("omit"), () => undefined];
     sparse.length = 6;
-    const fixtures: unknown[] = [
-      { "\uE000": "BMP", "\u{10000}": "supplementary" },
-      {
-        "€": "\ud800",
-        "😀": "\udc00",
-        "\r": '\n\t"\\',
-        number: -0,
-        exponent: 1e30,
-      },
-      { omitted: undefined, symbol: Symbol("omit"), fn: () => undefined },
-      sparse,
-      [shared, shared],
-      new Date("2026-10-06T00:00:00Z"),
-      { toJSON: () => ({ b: 2, a: [1, null] }) },
-      { nested: { toJSON: () => undefined } },
+    // Frozen canonicalize 3 output for data outside the strict JSON profile.
+    const fixtures: [unknown, string][] = [
+      [
+        { "\uE000": "BMP", "\u{10000}": "supplementary" },
+        '{"𐀀":"supplementary","":"BMP"}',
+      ],
+      [{ "\ud800": "\udc00" }, '{"\\ud800":"\\udc00"}'],
+      [
+        {
+          "€": "\ud800",
+          "😀": "\udc00",
+          "\r": '\n\t"\\',
+          number: -0,
+          exponent: 1e30,
+        },
+        '{"\\r":"\\n\\t\\"\\\\","exponent":1e+30,"number":0,"€":"\\ud800","😀":"\\udc00"}',
+      ],
+      [
+        { omitted: undefined, symbol: Symbol("omit"), fn: () => undefined },
+        '{"fn":undefined}',
+      ],
+      [sparse, "[null,null,,,,]"],
+      [[shared, shared], '[{"key":"value"},{"key":"value"}]'],
+      [new Date("2026-10-06T00:00:00Z"), '"2026-10-06T00:00:00.000Z"'],
+      [{ toJSON: () => ({ b: 2, a: [1, null] }) }, '{"a":[1,null],"b":2}'],
+      [{ nested: { toJSON: () => undefined } }, '{"nested":undefined}'],
     ];
-    for (const value of fixtures)
-      expect(digestCanonicalValue(value)).toBe(legacyDigest(value));
+    for (const [value, expected] of fixtures) {
+      expect(serializeCanonicalValue(value)).toBe(expected);
+      expect(digestCanonicalValue(value)).toBe(
+        createHash("sha256").update(expected).digest("hex"),
+      );
+    }
   });
 
   it("rejects unsupported roots, non-finite numbers, BigInt and ancestor cycles", () => {
@@ -82,7 +99,7 @@ describe("incremental canonical digest", () => {
       payload: Array.from({ length: 64 }, () => "x".repeat(16_384)),
       tail: ["€", "😀", "x".repeat(9000)],
     };
-    expect(digestCanonicalValue(value)).toBe(legacyDigest(value));
+    expect(digestCanonicalValue(value)).toBe(strictDigest(value));
   });
 
   it("preserves canonicalize property access and toJSON cycle behavior", () => {
@@ -96,11 +113,11 @@ describe("incremental canonical digest", () => {
       };
     };
     expect(digestCanonicalValue(createAccessor())).toBe(
-      legacyDigest(createAccessor()),
+      createHash("sha256").update('{"value":3}').digest("hex"),
     );
     const shared = { toJSON: () => ({ answer: 42 }) };
     expect(digestCanonicalValue([shared, shared])).toBe(
-      legacyDigest([shared, shared]),
+      strictDigest([shared, shared]),
     );
   });
 });

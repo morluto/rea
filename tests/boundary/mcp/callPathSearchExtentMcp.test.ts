@@ -17,6 +17,7 @@ import { createFunctionCoordinateContext } from "../../../src/domain/native/func
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const observe = (
   address: string,
@@ -67,10 +68,13 @@ it.each([
     throw new Error("Offline call paths must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "call-path-coordinate-identity",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "call-path-coordinate-identity",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const provider = FUNCTION_COMPARISON_EXAMPLE.left.provider;
@@ -157,7 +161,10 @@ it("publishes explored extent without the terminal goal's callees", async () => 
     throw new Error("Offline call paths must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "call-path-search-extent", version: "1" });
+  const client = new Client(
+    { name: "call-path-search-extent", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -217,7 +224,10 @@ it("preserves unresolved outgoing call caveats and bounds search completeness at
     throw new Error("Offline call paths must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unresolved-call-path", version: "1" });
+  const client = new Client(
+    { name: "unresolved-call-path", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

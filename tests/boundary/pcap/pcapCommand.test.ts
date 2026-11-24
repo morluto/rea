@@ -1,3 +1,4 @@
+import { UnclassifiedProviderFailure } from "../../../src/domain/unclassifiedProviderFailure.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
@@ -6,6 +7,10 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { expect, it, onTestFinished, test, vi } from "vitest";
 import { phaseGate } from "../../support/lifecycleHarness.js";
+import {
+  stopTestChild,
+  stopTestOwner,
+} from "../../support/process/stopTestChild.js";
 import { runPcapCommand } from "../../../src/pcap/PcapCommand.js";
 import { Deadline } from "../../../src/domain/deadline.js";
 import * as ownership from "../../../src/process/ProcessOwnershipObservation.js";
@@ -91,12 +96,16 @@ it("preserves a failed producer when cancellation arrives during its final clean
     },
     retain: (owner) =>
       onTestFinished(async () => {
-        expect((await owner.stop()).status).not.toBe("incomplete");
+        expect((await stopTestOwner(owner)).status).not.toBe("incomplete");
       }),
   }).catch((cause: unknown) => cause);
   expect(controller.signal.aborted).toBe(true);
-  expect(failure).toBeInstanceOf(AnalysisProtocolError);
-  if (!(failure instanceof AnalysisProtocolError)) throw failure;
+  expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
+  if (!(failure instanceof UnclassifiedProviderFailure)) throw failure;
+  expect(failure.examined).toMatchObject({
+    failure_kind: "exited",
+    exit_code: 7,
+  });
   expect(failure.cause).toBeInstanceOf(OwnedCommandFailure);
   expect((failure.cause as OwnedCommandFailure).reason).toBe("process");
   expect(failure.capturedOutput).toMatchObject({
@@ -128,6 +137,7 @@ it.each([
       signal: controller.signal,
       launcher: async (spawn) => {
         const launched = await spawnOwnedProviderProcess(spawn);
+        onTestFinished(() => stopTestChild(launched.process));
         launched.process.stdout?.once("data", () => controller.abort(reason));
         return launched;
       },
@@ -182,7 +192,7 @@ it.skipIf(process.platform !== "darwin")(
       signal: undefined,
       retain: (owner) => {
         onTestFinished(async () => {
-          expect((await owner.stop()).status).not.toBe("incomplete");
+          expect((await stopTestOwner(owner)).status).not.toBe("incomplete");
         });
       },
     }).then(
@@ -236,6 +246,7 @@ it("returns complete stdout while retaining unresolved process cleanup", async (
     },
     retain: (owner, resources, reason) => {
       retained = { owner, resources, reason };
+      onTestFinished(() => stopTestChild(owner.launch.process));
     },
   });
   expect(output.stdout).toBe("complete producer output");
@@ -253,7 +264,7 @@ it("returns complete stdout while retaining unresolved process cleanup", async (
   expect(retained?.reason).toBe("injected cleanup uncertainty");
   if (retained === undefined) throw new Error("Cleanup owner was not retained");
   mayClean = true;
-  expect((await retained.owner.stop()).status).not.toBe("incomplete");
+  expect((await stopTestOwner(retained.owner)).status).not.toBe("incomplete");
 });
 
 it.each([
@@ -439,7 +450,7 @@ const runLimited = async (
     nativeBound: { limiter: { command: limiter, arguments: limiterArguments } },
     retain: (owner) =>
       onTestFinished(async () => {
-        await owner.stop();
+        await stopTestOwner(owner);
       }),
   }).catch((cause: unknown) => cause);
 

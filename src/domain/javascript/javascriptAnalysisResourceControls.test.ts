@@ -176,7 +176,6 @@ it("names the four semantic arguments on ceiling coverage", () => {
   expect(nodes.limitation).toContain(String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM));
   // The producer records controls by contract field; adapters name options.
   expect(nodes.limitation).not.toContain("--");
-  expect(nodes.limitation).toContain("coverage.controls records them");
   expect(nodes.controls).toEqual([
     {
       control_kind: "parameter",
@@ -194,33 +193,38 @@ it("names the four semantic arguments on ceiling coverage", () => {
       default_value: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
     }),
   ]);
-  expect(nodes.limitation).toContain(
-    "Set max_semantic_nodes and max_semantic_nodes_per_file",
-  );
   expect(nodes.limitation).toContain("Raising them does not raise");
-  expect(nodes.limitation).toContain("next analysis");
   expect(unknowns.controls.map(({ parameter }) => parameter)).toEqual([
     "max_semantic_unknowns",
     "max_semantic_unknowns_per_file",
   ]);
   expect(unknowns.limitation).toContain("max_semantic_nodes");
-  expect(perFileOnly.limitation).toContain("max_semantic_nodes_per_file is 30");
-  expect(perFileOnly.limitation).toContain(
-    "Set max_semantic_nodes_per_file on the next",
-  );
-  expect(perFileOnly.controls.map(({ parameter }) => parameter)).toEqual([
-    "max_semantic_nodes_per_file",
+  expect(perFileOnly.controls).toEqual([
+    {
+      control_kind: "parameter",
+      parameter: "max_semantic_nodes_per_file",
+      effective_value: 30,
+      unit: "count",
+      minimum: 1,
+      maximum: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+      default_value: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
+      applies_at: "next_call",
+    },
   ]);
-  expect(perFileOnly.limitation).toContain("coverage.controls records it");
   expect(perFileOnly.limitation).toContain("Raising it does not raise");
   expect(perFileOnly.limitation).not.toContain("max_semantic_nodes is 50");
 
-  expect(totalOnly.limitation).toContain("max_semantic_unknowns is 3");
-  expect(totalOnly.limitation).toContain(
-    "Set max_semantic_unknowns on the next",
-  );
-  expect(totalOnly.controls.map(({ parameter }) => parameter)).toEqual([
-    "max_semantic_unknowns",
+  expect(totalOnly.controls).toEqual([
+    {
+      control_kind: "parameter",
+      parameter: "max_semantic_unknowns",
+      effective_value: 3,
+      unit: "count",
+      minimum: 1,
+      maximum: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+      default_value: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticUnknowns,
+      applies_at: "next_call",
+    },
   ]);
   expect(totalOnly.limitation).not.toContain(
     "max_semantic_unknowns_per_file is 2",
@@ -232,7 +236,13 @@ it("names the four semantic arguments on ceiling coverage", () => {
     30,
     { total: true, perFile: false },
   );
-  expect(capped.limitation).toContain("Do not increase it further");
+  expect(capped.controls).toEqual([
+    expect.objectContaining({
+      parameter: "max_semantic_nodes",
+      effective_value: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+      maximum: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+    }),
+  ]);
   expect(capped.limitation).not.toContain("max_semantic_nodes_per_file is 30");
   expect(() =>
     javaScriptSemanticCeilingCoverage("nodes", 50, 30, {

@@ -194,3 +194,18 @@ processTest(
     ]);
   },
 );
+
+processTest(
+  "reports an incomplete request frame when the input ends",
+  async ({ processes }) => {
+    const complete = encodeCliSessionFrame({ id: 1 });
+    for (const input of [complete.subarray(0, 2), complete.subarray(0, -1)]) {
+      const result = await processes.run(process.execPath, [worker], { input });
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(result.signal).toBeNull();
+      expect(result.stderr).toContain(
+        "CLI session ended with an incomplete frame",
+      );
+    }
+  },
+);

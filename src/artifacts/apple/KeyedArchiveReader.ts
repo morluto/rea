@@ -14,7 +14,6 @@ import {
   DirectoryArtifactEntryAccessDenied,
   translateArtifactFailure,
 } from "../../resources/index.js";
-import { createHash } from "node:crypto";
 import {
   decodeLimit,
   isHostLimitFailure,
@@ -22,9 +21,11 @@ import {
 } from "../../domain/parseFailure.js";
 import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
-import { InternalInvariantError } from "../../domain/internalInvariant.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../../domain/internalInvariant.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
-import { z } from "zod";
 
 import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
 import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
@@ -64,6 +65,7 @@ import {
 } from "../../domain/apple/appleArchiveFormat.js";
 import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */
@@ -181,8 +183,8 @@ const keyedArchiveKindRemediation = (
   if (kind === "nib-archive")
     return "Decode compiled NIBArchive files with decode_interface_builder on the app bundle.";
   return platform === "darwin"
-    ? "Inspect an ordinary property list with inspect_plist; inspect_keyed_archive decodes NSKeyedArchiver archives only."
-    : "Select an NSKeyedArchiver archive; inspect_keyed_archive decodes only those. inspect_plist, which reads ordinary property lists, requires a macOS host.";
+    ? "Inspect an ordinary property list with inspect_plist; inspect_keyed_archive decodes keyed archives only."
+    : "Select a keyed archive; inspect_keyed_archive decodes only those. inspect_plist, which reads ordinary property lists, requires a macOS host.";
 };
 
 interface BundleKeyedArchiveInput {
@@ -413,7 +415,15 @@ const readSelectedKeyedArchive = async (
         { cause: input.signal.reason },
       );
     }
-    const bytes = z.instanceof(Buffer).parse(chunk);
+    if (!Buffer.isBuffer(chunk)) {
+      stream.destroy();
+      // The member stream contract yields Buffers; anything else is a REA
+      // defect, not evidence about the archive's bytes.
+      throw invariantViolation(
+        "Expected Buffer chunk from keyed archive stream",
+      );
+    }
+    const bytes = chunk;
     size += bytes.length;
     if (size > MAX_BYTES) {
       stream.destroy();
@@ -424,7 +434,7 @@ const readSelectedKeyedArchive = async (
   const bytes = Buffer.concat(chunks, size);
   return decodeSelectedArchive(bytes, {
     targetSha256: input.targetSha256,
-    archiveSha256: createHash("sha256").update(bytes).digest("hex"),
+    archiveSha256: sha256Hex(bytes),
     resourceRoot: input.resourceRoot,
     parameters: selected,
     platform: input.platform,
@@ -484,13 +494,16 @@ const decodeSelectedArchive = (
           ),
         },
       );
+    const parserLimit =
+      cause instanceof ParseFailureError && cause.failure.kind === "limit"
+        ? cause.failure.limit
+        : undefined;
     throw new ArtifactReaderFailure(
-      (cause instanceof ParseFailureError && cause.kind === "limit") ||
-        isHostLimitFailure(cause)
+      parserLimit !== undefined || isHostLimitFailure(cause)
         ? "limit"
         : "format",
       `Cannot decode selected Foundation keyed archive: ${errorMessage(cause)}`,
-      { cause },
+      { cause, ...(parserLimit === undefined ? {} : { parserLimit }) },
     );
   }
 };

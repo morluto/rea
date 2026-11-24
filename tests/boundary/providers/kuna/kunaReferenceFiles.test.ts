@@ -563,3 +563,60 @@ it("bounds u64 input parsing before BigInt allocation", () => {
   expect(normalizeKunaAddress("0x10000000000000000")).toBeUndefined();
   expect(normalizeKunaAddress("caller")).toBeUndefined();
 });
+
+it("accepts out-of-order calleeOrder sequences and rejects gaps or fast-path row fallback errors", async () => {
+  const reordered = graph();
+  reordered.edges[0]!.calleeOrder = 1;
+  reordered.edges[1]!.calleeOrder = 0;
+  expect(await parseKunaCallGraph(wire(reordered), input)).toMatchObject({
+    ok: true,
+    value: { edgeCount: 2 },
+  });
+  const gapped = graph();
+  gapped.edges[0]!.calleeOrder = 2;
+  gapped.edges[1]!.calleeOrder = 0;
+  expect(await parseKunaCallGraph(wire(gapped), input)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisOutputError",
+      reason: "graph callee orders are incomplete",
+    },
+  });
+  const badEdge = graph();
+  badEdge.edges[0]!.kind = "invalid";
+  expect(await parseKunaCallGraph(wire(badEdge), input)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisOutputError",
+      diagnostics: { code: "row_field", member: "graph edge", field: "kind" },
+    },
+  });
+});
+
+it("keeps arm64 direct BL normalization while skipping non-BL instructions and rejecting malformed xref rows", () => {
+  const doc = xrefs();
+  doc.xrefs[0]!.instruction = "bl\t0X002000";
+  doc.xrefs[1]!.instruction = "blx 0x2000";
+  const parsed = parseKunaIncomingReferences(wire(doc), input, "0x2000");
+  expect(parsed).toMatchObject({
+    ok: true,
+    value: {
+      arm64DirectCalls: [
+        {
+          from_address: "0x1004",
+          caller_address: "0x1000",
+          to_address: "0x2000",
+          instruction: "bl\t0X002000",
+        },
+      ],
+    },
+  });
+  const malformed = xrefs();
+  malformed.xrefs[0]!.address_hex = "0x01";
+  expect(parseKunaIncomingReferences(wire(malformed), input, "0x2000")).toEqual(
+    {
+      ok: false,
+      error: { code: expect.any(String) },
+    },
+  );
+});

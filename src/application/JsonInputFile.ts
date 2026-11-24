@@ -1,5 +1,6 @@
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { constants } from "node:buffer";
+import { isAbortWithReason } from "../process/SignalAbort.js";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -40,6 +41,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 type JsonInputFileFailure =
@@ -138,14 +140,7 @@ const isOwnedJsonPipelineCancellation = (
   try {
     while (pending.length > 0) {
       const current = pending.pop();
-      if (
-        current === cancellation ||
-        (current instanceof Error &&
-          current.name === "AbortError" &&
-          "code" in current &&
-          current.code === "ABORT_ERR" &&
-          current.cause === cancellation)
-      ) {
+      if (isAbortWithReason(current, cancellation)) {
         owned = true;
         continue;
       }
@@ -533,9 +528,9 @@ const jsonReadFailure = (
   )
     return cause;
   if (
+    hostRangeErrorKind(cause) === "host-capacity" &&
     cause instanceof Error &&
-    ((cause instanceof RangeError &&
-      cause.message === "Invalid string length") ||
+    (cause.message === "Invalid string length" ||
       ("code" in cause && cause.code === "ERR_STRING_TOO_LONG"))
   )
     return new AnalysisResourceConstraintError(

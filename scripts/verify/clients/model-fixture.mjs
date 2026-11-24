@@ -3,6 +3,18 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createModelFixtureServer } from "./model-fixture-server.mjs";
 
+export const toolCallMessage = (id, name, args) => ({
+  role: "assistant",
+  content: null,
+  tool_calls: [
+    {
+      id,
+      type: "function",
+      function: { name, arguments: JSON.stringify(args) },
+    },
+  ],
+});
+
 /** A loopback model fixture exercises real clients without claiming live-provider compatibility. */
 export const createOpenAiModelFixture = async ({
   directory,

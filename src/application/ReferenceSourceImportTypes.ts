@@ -140,10 +140,10 @@ export interface ReferenceSourceImportOptions {
 }
 
 export const DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS = [
+  // The last matching rule supplies provenance, so directories must match ".git/" last.
+  ".git",
   ".git/",
   ".git/hooks/",
-  // Match pointer files after directory rules to preserve their provenance.
-  ".git",
   "node_modules/",
   "dist/",
   "build/",

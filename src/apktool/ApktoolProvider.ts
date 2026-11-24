@@ -22,10 +22,8 @@ import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
-import {
-  AnalysisError,
-  type AnalysisErrorOptions,
-} from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -40,7 +38,6 @@ import {
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
-  apktoolResultSchemas,
   apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
@@ -65,7 +62,10 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import type { RuntimeExhaustionArea } from "../process/RuntimeExhaustion.js";
+import {
+  externalJvmExhaustionRecovery,
+  type ExternalJvm,
+} from "../process/RuntimeExhaustion.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
 import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
@@ -86,28 +86,19 @@ import {
 const DECODE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MANIFEST_MAX_BYTES = 512 * 1024;
 const MAX_DECODED_ENTRIES_VISITED = 100_000;
-/**
- * Recovery for the JVM memory area Apktool's decoder reported exhausted. REA
- * does not set the decoder JVM's limits, so each names the launcher setting
- * that governs that area.
- */
-const APKTOOL_EXHAUSTION_REMEDIATION: Readonly<
-  Record<RuntimeExhaustionArea | "unknown", string>
-> = {
-  heap: "REA does not set Apktool's Java heap. Raise the maximum heap (-Xmx) of the selected Apktool launcher's JVM, or decode a smaller APK.",
-  "gc-overhead":
-    "REA does not set Apktool's Java heap. The decoder JVM spent nearly all its time collecting garbage; raise the maximum heap (-Xmx) of the selected Apktool launcher's JVM, or decode a smaller APK.",
-  metaspace:
-    "REA does not set Apktool's class metadata limit. Raise -XX:MaxMetaspaceSize of the selected Apktool launcher's JVM; a larger heap (-Xmx) does not raise it.",
-  "array-size":
-    "The decoder requested an array larger than the JVM allows; a larger heap (-Xmx) does not lift this limit. Decode a smaller APK.",
-  "native-thread":
-    "The decoder JVM could not create a native thread. Check host thread/process limits and available native memory for the selected Apktool launcher; a larger heap (-Xmx) does not help.",
-  unknown:
-    "REA does not set the memory limits of Apktool's JVM. Review the reported out-of-memory line and the selected Apktool launcher's JVM memory settings, or decode a smaller APK.",
+/** Apktool's decoder runs in the selected launcher's JVM, whose limits REA does not set. */
+const APKTOOL_JVM: ExternalJvm = {
+  program: "Apktool's",
+  role: "decoder",
+  raise: (option) =>
+    `Raise the ${option} of the selected Apktool launcher's JVM`,
+  settings: "the selected Apktool launcher's JVM memory settings",
+  threads:
+    "Check host thread/process limits and available native memory for the selected Apktool launcher",
+  smaller: "decode a smaller APK",
 };
 
-const STDERR_EXCERPT_BYTES = 512;
+const STDERR_EXCERPT_CHARACTERS = 512;
 
 const apktoolDecodeTimeoutGuidance = (timeoutMs: number) => ({
   userMessage: `apktool decode reached its ${String(timeoutMs)} ms wall-clock deadline (deadlineExpired).`,
@@ -188,7 +179,8 @@ const runApktool = async (
       },
       signal === undefined ? {} : { signal },
     );
-    return ok({ stdout: output.stdout.text, stderr: output.stderr.text });
+    const { stdout, stderr } = capturedProviderOutput(output);
+    return ok({ stdout, stderr });
   } catch (cause) {
     return err(
       commands.retainFailure(
@@ -215,24 +207,18 @@ const apktoolCommandFailure = (
       ? processInspectionCancellationError(failure, operation)
       : undefined;
   if (inspectionCancellation !== undefined) return inspectionCancellation;
-  const commandFailure = (details: AnalysisErrorOptions): AnalysisError =>
-    new ProviderAdapterError("apktool", operation, {
-      ...details,
-      ...(failure instanceof OwnedCommandFailure
-        ? {
-            userMessage: `The selected Apktool command failed while decoding ${targetPath}`,
-          }
-        : {}),
-      diagnostics: {
-        selected_command: selection.command,
-        target_path: targetPath,
-      },
-    });
+  const userMessage = `The selected Apktool command failed while decoding ${targetPath}`;
+  const diagnostics = {
+    selected_command: selection.command,
+    target_path: targetPath,
+  };
   const outcome = providerOutcomeOf(failure);
   if (outcome === undefined)
-    return commandFailure({
+    return new ProviderAdapterError("apktool", operation, {
+      ...(failure instanceof OwnedCommandFailure ? { userMessage } : {}),
       cause: failure,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      diagnostics,
     });
   return classifyProviderOutcome(outcome, {
     providerId: APKTOOL_PROVIDER_IDENTITY.id,
@@ -247,18 +233,19 @@ const apktoolCommandFailure = (
     outputLimit: {
       limits: { max_output_bytes: limits.maxOutputBytes },
       recovery: fixedAllowanceOptions(
-        `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
+        "The apktool output capture allowance (decode_timeout_ms does not raise it)",
         "capture",
+        { limit: limits.maxOutputBytes, unit: "bytes" },
       ),
     },
     runtimeExhaustion: ({ area }) => ({
       limits: null,
       recovery: {
         retryable: false,
-        remediationAction: `${APKTOOL_EXHAUSTION_REMEDIATION[area ?? "unknown"]} Repeating the unchanged request is expected to fail the same way.`,
+        remediationAction: `${externalJvmExhaustionRecovery(area, APKTOOL_JVM)} Repeating the unchanged request is expected to fail the same way.`,
       },
     }),
-    dialect: (exit, details) => {
+    dialect: (exit, details, unclassified) => {
       // A physical launcher/capture failure does not establish target refusal.
       // Only a fully collected ordinary nonzero decode exit carries that meaning.
       if (
@@ -271,13 +258,14 @@ const apktoolCommandFailure = (
         exit.signal !== null ||
         exit.output?.truncated !== false
       )
-        return commandFailure(details);
+        return unclassified({ userMessage, diagnostics });
       return new AnalysisUnsupportedTargetError(
         operation,
         targetPath,
-        exit.output.snapshot.stderr.text
-          .trim()
-          .slice(0, STDERR_EXCERPT_BYTES) ||
+        ellipsisExcerpt(
+          exit.output.snapshot.stderr.text.trim(),
+          STDERR_EXCERPT_CHARACTERS,
+        ) ||
           `apktool exited with code ${String(exit.exitCode)} for ${operation}`,
         details,
       );
@@ -715,14 +703,10 @@ export class ApktoolProvider {
       completedDecode.coverage = coverage;
       if (!projection.ok) throw projection.error.cause;
       result = ok(
-        createAnalysisExecution(
-          apktoolResultSchemas.decode_android_resources.parse(completedDecode),
-          provider,
-          {
-            subject: { path: input.path, sha256, format: "apk" },
-            limitations,
-          },
-        ),
+        createAnalysisExecution(completedDecode, provider, {
+          subject: { path: input.path, sha256, format: "apk" },
+          limitations,
+        }),
       );
     } catch (cause) {
       const { cause: physical, origin } = artifactFilePrimaryFacts(cause);

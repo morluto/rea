@@ -1,30 +1,25 @@
-import { Writable } from "node:stream";
+import { captureOutput } from "../../support/cli/capturedOutput.js";
 
-import { Formatter } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
 const countFor = async (
   value: unknown,
   format: "toon" | "yaml",
+  notice = false,
+  tokenCount = true,
 ): Promise<{ readonly handled: boolean; readonly text: string }> => {
-  const chunks: Buffer[] = [];
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
+  const { destination, text: readText } = captureOutput();
   const output = createCliResultOutput(
     parseCliOutputArguments([
       "fixture",
       "--format",
       format,
       "--full-output",
-      "--token-count",
+      ...(tokenCount ? ["--token-count"] : []),
     ]),
     destination,
   );
@@ -32,34 +27,35 @@ const countFor = async (
   const handled = await output.write(value, {
     command: "fixture",
     duration: "0ms",
-    format,
+    ...(notice
+      ? {
+          cta: {
+            description: "Update available",
+            commands: [{ command: "rea --update" }],
+          },
+        }
+      : {}),
   });
-  return { handled, text: Buffer.concat(chunks).toString("utf8") };
+  return { handled, text: readText() };
 };
 
-describe("full-output token counts for delegated formats", () => {
-  it.each(["toon", "yaml"] as const)(
-    "counts the emitted envelope, not just the selected data (%s)",
-    async (format) => {
+describe("full-output token counts", () => {
+  it.each(
+    (["toon", "yaml"] as const).flatMap((format) =>
+      [false, true].map((notice) => ({ format, notice })),
+    ),
+  )(
+    "counts the emitted envelope without a terminal notice ($format, notice: $notice)",
+    async ({ format, notice }) => {
       const value = { imported: 0, unknowns_added: 0, total: 0 };
-      const counted = await countFor(value, format);
+      const counted = await countFor(value, format, notice);
       expect(counted.handled).toBe(true);
+      const emitted = await countFor(value, format, false, false);
       expect(counted.text).toBe(
-        `${estimateTokenCount(
-          Formatter.format(
-            {
-              ok: true,
-              data: value,
-              meta: { command: "fixture", duration: "0ms" },
-            },
-            format,
-          ),
-        )}\n`,
+        String(estimateTokenCount(emitted.text)) + "\n",
       );
     },
   );
 
-  // Bare counts stay delegated to Incur and are covered by the CLI replay
-  // (bare toon/yaml report the selected result before and after this fix);
-  // this boundary owns only the full-output envelope count.
+  // The public CLI replay also covers bare counts for these formats.
 });

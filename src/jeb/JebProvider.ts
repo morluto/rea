@@ -5,7 +5,10 @@ import {
 } from "./JebMcpConnectionOwner.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  withDelegatedCleanupOwner,
+} from "../domain/analysisErrorCleanup.js";
 import { z } from "zod";
 import type {
   JebAnalysisPort,
@@ -30,7 +33,8 @@ import {
 import {
   jvmExhaustionArea,
   RUNTIME_EXHAUSTION_TOKENS,
-  type RuntimeExhaustionArea,
+  externalJvmExhaustionRecovery,
+  type ExternalJvm,
 } from "../process/RuntimeExhaustion.js";
 import {
   classifyProviderFailure,
@@ -117,21 +121,15 @@ const envelope = z.discriminatedUnion("success", [
   failure,
 ]);
 
-/** Recovery for the JVM memory area JEB reported; each area has its own limit. */
-const JEB_EXHAUSTION_REMEDIATION: Readonly<
-  Record<RuntimeExhaustionArea | "unknown", string>
-> = {
-  heap: "REA does not set JEB's Java heap. Restart the JEB client with a larger maximum heap (-Xmx), or select a smaller input.",
-  "gc-overhead":
-    "REA does not set JEB's Java heap. The engine JVM spent nearly all its time collecting garbage; restart the JEB client with a larger maximum heap (-Xmx), or select a smaller input.",
-  metaspace:
-    "REA does not set JEB's class metadata limit. Restart the JEB client with a larger -XX:MaxMetaspaceSize; a larger heap (-Xmx) does not raise it.",
-  "array-size":
-    "The engine requested an array larger than the JVM allows; a larger heap (-Xmx) does not lift this limit. Select a smaller input.",
-  "native-thread":
-    "The engine JVM could not create a native thread. Reduce concurrent work in the JEB client or review the engine host's thread and process limits; a larger heap (-Xmx) does not help.",
-  unknown:
-    "REA does not set the memory limits of JEB's JVM. Review the reported out-of-memory line and the JEB client's JVM memory settings, or select a smaller input.",
+/** JEB runs in the user's own JVM; REA sets none of its memory limits. */
+const JEB_JVM: ExternalJvm = {
+  program: "JEB's",
+  role: "engine",
+  raise: (option) => `Restart the JEB client with a larger ${option}`,
+  settings: "the JEB client's JVM memory settings",
+  threads:
+    "Reduce concurrent work in the JEB client or review the engine host's thread and process limits",
+  smaller: "select a smaller input",
 };
 
 /**
@@ -156,7 +154,7 @@ const refusalExhaustion = (
     null,
     {
       diagnostics: { ...diagnostics, jvm_exhaustion_area: area ?? null },
-      remediationAction: JEB_EXHAUSTION_REMEDIATION[area ?? "unknown"],
+      remediationAction: externalJvmExhaustionRecovery(area, JEB_JVM),
     },
   );
 };
@@ -635,7 +633,7 @@ export class JebProvider implements JebAnalysisPort {
    */
   #attributed(operation: JebOperation, failure: AnalysisError): AnalysisError {
     if (failure instanceof JebMcpCleanupFailure)
-      return analysisErrorWithCleanupFailure(
+      return analysisErrorWithCleanupDependencies(
         this.#attributed(
           operation,
           classifyProviderFailure(
@@ -645,9 +643,7 @@ export class JebProvider implements JebAnalysisPort {
         ),
         failure.cleanupFailure,
         operation,
-      )
-        .bindCleanupDependencies([failure.cleanupFailure])
-        .bindCleanupResourceOwner(failure.cleanupFailure);
+      ).bindCleanupResourceOwner(failure.cleanupFailure);
     if (
       failure instanceof AnalysisCancelledError ||
       failure instanceof AnalysisTimeoutError
@@ -675,9 +671,7 @@ export class JebProvider implements JebAnalysisPort {
               ...(failure.limit === undefined ? {} : { limit: failure.limit }),
             })
           : cancelledBy(operation, failure, options);
-      return attributed
-        .bindCleanupDependencies([failure])
-        .bindCleanupResourceOwner(failure);
+      return withDelegatedCleanupOwner(attributed, failure);
     }
     return failure.retainDiagnostics({ endpoint: this.#selectedEndpoint });
   }

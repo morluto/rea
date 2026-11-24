@@ -26,13 +26,19 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import {
+  readComputerScreenshotBytes,
+  type AgentEnvComputer,
+} from "../../desktop/AgentEnvComputer.js";
 import {
   controller,
-  type Answer,
-  type ControlledComputer,
+  parseBuildComputerJson,
 } from "../../desktop/BuildComputerController.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../../ports/BuildComputerControl.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
@@ -65,7 +71,7 @@ const CHECKPOINT_SHOT = { format: "jpeg", quality: 70 } as const;
 /**
  * Keep a screenshot of the checkpoint just taken in the capture's screens
  * folder, where the export finds a screen judge's examples. A screenshot
- * that fails leaves the checkpoint as it is; only cancellation propagates.
+ * that fails leaves the acknowledged checkpoint available.
  */
 const keepScreenshot = async (
   computer: CaptureComputer,
@@ -79,16 +85,14 @@ const keepScreenshot = async (
       CHECKPOINT_SHOT,
       signal,
     );
-    const image = shot.content.find((block) => block.type === "image")?.data;
-    if (shot.isError || typeof image !== "string") return;
+    const image = readComputerScreenshotBytes(shot);
+    if (image === undefined || signal.aborted) return;
     await computer.addHomeFiles(
-      new Map([
-        [`${folder}/screens/${name}.jpg`, Buffer.from(image, "base64")],
-      ]),
+      new Map([[`${folder}/screens/${name}.jpg`, image]]),
       signal,
     );
-  } catch (cause: unknown) {
-    if (signal.aborted) throw cause;
+  } catch {
+    // A screenshot only enriches a completed acknowledgement.
   }
 };
 const STOP = "stop_build_capture";
@@ -177,10 +181,8 @@ const checkExportRuntime = async (
       );
     let rawSchema: unknown;
     try {
-      rawSchema = JSON.parse(content.toString("utf8"));
+      rawSchema = parseBuildComputerJson(content, "REA export schema");
     } catch {
-      // Parser errors can quote only a fragment of a credential, which cannot
-      // be removed reliably by exact-token redaction.
       return err(
         adapterError(
           START,
@@ -242,6 +244,8 @@ interface CaptureRun {
   status: "running" | "unreleased" | "stopped" | "released";
   /** Checkpoints the capture acknowledged, then those its own Evidence records. */
   checkpoints: Set<string>;
+  /** Remote acknowledgements whose caller cancelled before receiving them. */
+  readonly unreportedCheckpoints: Map<string, CheckpointTaken>;
   /** The capture's package installs only from its file, so the export takes the request's URL. */
   packageFile?: boolean;
   outputBytes?: number;
@@ -357,6 +361,7 @@ export class DesktopBuildCapture {
       folder: `${WORK}/captures/${String(this.#count)}`,
       status: "running",
       checkpoints: new Set(),
+      unreportedCheckpoints: new Map(),
       exports: 0,
     };
     this.#run = run;
@@ -394,10 +399,13 @@ export class DesktopBuildCapture {
         readonly package_lists: number;
         readonly package_lists_error: string | null;
       },
-      { readonly failure: AnalysisError; readonly answer?: Answer }
+      {
+        readonly failure: AnalysisError;
+        readonly answer?: BuildControllerAnswer;
+      }
     >
   > {
-    let answer: Answer;
+    let answer: BuildControllerAnswer;
     try {
       answer = await controller(
         this.computer,
@@ -477,6 +485,12 @@ export class DesktopBuildCapture {
   ): Promise<Result<CheckpointTaken, AnalysisError>> {
     const run = this.#run;
     if (run?.status !== "running") return err(refused(MARK, ...NOT_RUNNING));
+    if (signal.aborted) return err(cancelledBy(MARK, signal));
+    const unreported = run.unreportedCheckpoints.get(name);
+    if (unreported !== undefined) {
+      run.unreportedCheckpoints.delete(name);
+      return ok(unreported);
+    }
     if (run.checkpoints.has(name))
       return err(
         refused(
@@ -513,18 +527,23 @@ export class DesktopBuildCapture {
           ),
         );
       run.checkpoints.add(name);
-      await keepScreenshot(this.computer, run.folder, name, signal);
       const {
         kind: _kind,
         changed_files: changed,
         more_changed_files: more,
         ...taken
       } = event;
-      return ok({
+      const receipt: CheckpointTaken = {
         ...taken,
         changed_files: changed ?? null,
         more_changed_files: more ?? null,
-      });
+      };
+      await keepScreenshot(this.computer, run.folder, name, signal);
+      if (signal.aborted) {
+        run.unreportedCheckpoints.set(name, receipt);
+        return err(cancelledBy(MARK, signal));
+      }
+      return ok(receipt);
     } catch (cause: unknown) {
       return err(
         cause instanceof AnalysisError
