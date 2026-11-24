@@ -272,7 +272,8 @@ const validatedFatDeclarations = (
 ): Result<readonly FatDeclaration[], string> => {
   if (header.state === "needs-data")
     return err("truncated or invalid FAT architecture table");
-  if (header.state === "malformed") return err(header.reason);
+  if (header.state === "malformed" || header.state === "truncated")
+    return err(header.reason);
   const identityError = fatIdentityError(
     bytes,
     header,

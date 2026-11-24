@@ -618,17 +618,23 @@ const errorDetails = (
   lifecycleErrorDetails(error);
 
 /** The public facts of a format owner's malformed or truncated parse. */
-const parseFailureDetails = ({
-  kind,
-  format,
-  offset,
-  field,
-}: MalformedTargetFailure) => ({
-  format_failure: kind,
-  format,
-  ...(offset === undefined ? {} : { offset }),
-  ...(field === undefined ? {} : { field }),
-});
+const parseFailureDetails = (failure: MalformedTargetFailure) => {
+  const { kind, format, offset, field } = failure;
+  const extent = kind === "truncated" ? failure.extent : undefined;
+  return {
+    format_failure: kind,
+    format,
+    ...(offset === undefined ? {} : { offset }),
+    ...(field === undefined ? {} : { field }),
+    // The reader's measured end of the input and the length it needed.
+    ...(extent === undefined
+      ? {}
+      : {
+          available_bytes: extent.availableBytes,
+          required_bytes: extent.requiredBytes,
+        }),
+  };
+};
 
 const requestErrorDetails = (
   error: AnalysisError,
