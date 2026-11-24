@@ -505,6 +505,13 @@
       "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
     }
   },
+  "src/native/pe/PeUnwindRangesProvider.ts": {
+    "\"The PE exception-directory entry allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The 2,097,152-entry typed-array allowance bounds decoder memory like the other PE structural allowances; it is a resource policy pending #14235."
+    }
+  },
   "src/native/pe/PeResourcesProvider.ts": {
     "\"The PE resource metadata allowance\"": {
       "class": "pending",
