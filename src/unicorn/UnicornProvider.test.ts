@@ -48,7 +48,9 @@ describe("UnicornProvider", () => {
     expect(capability.effects.launchesProcess).toBe(true);
     expect(capability.effects.mutatesArtifact).toBe(false);
     expect(capability.effects.mayAccessNetwork).toBe(false);
-    expect(capability.effects.mayWriteFilesystem).toBe(false);
+    // The bridge writes request/reply files in a per-run directory it
+    // removes afterwards, so the write is declared, not hidden.
+    expect(capability.effects.mayWriteFilesystem).toBe(true);
     expect(capability.limitations.length).toBeGreaterThan(0);
   });
 

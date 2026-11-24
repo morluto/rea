@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../../domain/evidence.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   emulateFunctionInputSchema,
   emulateFunctionOutputSchema,
@@ -70,11 +71,15 @@ describe("emulate_function contract", () => {
     // MCP clients validate structuredContent against it, and the tool
     // returns a complete Evidence record.
     expect(() => contract.outputSchema.parse(raw)).toThrow();
-    const evidence = createEvidence(undefined, UNICORN_PROVIDER, {
-      operation: "emulate_function",
-      parameters: {},
-      result: raw,
-    });
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      UNICORN_PROVIDER,
+      {
+        operation: "emulate_function",
+        parameters: {},
+        result: raw,
+      },
+    );
     const parsed = contract.outputSchema.parse(evidence);
     expect(parsed.normalized_result).toEqual(raw);
   });
