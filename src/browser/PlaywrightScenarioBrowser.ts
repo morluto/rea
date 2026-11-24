@@ -32,6 +32,9 @@ import {
 
 const OPERATION = "capture_browser_scenario" as const;
 
+/** Best-effort reclamation must never decide when the caller's browser starts. */
+const SCENARIO_PROFILE_RECLAMATION_TIMEOUT_MS = 5_000;
+
 const throwIfScenarioCancelled = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted === true)
     throw new BrowserObservationError(OPERATION, "cancelled", {
@@ -680,9 +683,12 @@ export const openPlaywrightScenarioBrowser = async (
     );
 
   // Reclaim what a terminated earlier run could not remove; a profile another
-  // live owner still holds is left in place. Best effort: reclamation never
-  // blocks the scenario the caller asked for.
-  await reclaimStaleScenarioProfiles().catch(() => undefined);
+  // live owner still holds is left in place. Best effort: the deadline bounds
+  // the sweep so a stale directory can never decide when this browser starts.
+  await withPlaywrightExecutionBoundary(
+    () => reclaimStaleScenarioProfiles(),
+    SCENARIO_PROFILE_RECLAMATION_TIMEOUT_MS,
+  ).catch(() => undefined);
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   let context: BrowserContext;
   try {
