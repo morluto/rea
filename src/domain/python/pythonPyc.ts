@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { digestSchema } from "../digests.js";
 import {
   absoluteLocalPathStringSchema,
@@ -86,50 +87,66 @@ export const pythonPycMarshalProfile = (
 ): PythonPycMarshalProfile | null =>
   PYTHON_PYC_MARSHAL_PROFILES.get(magic) ?? null;
 
-export const PYTHON_PYC_LIMIT_MAXIMA = {
-  max_file_bytes: 64 * 1024 * 1024,
-  max_objects: 65536,
-  max_depth: 256,
-  max_string_bytes: 8 * 1024 * 1024,
+/** The per-call budgets `inspect_python_pyc` accepts, shared by its schema and refusals. */
+export const PYTHON_PYC_READ_BUDGETS = {
+  max_file_bytes: {
+    minimum: 16,
+    maximum: 64 * 1024 * 1024,
+    default_value: 16 * 1024 * 1024,
+  },
+  max_objects: { minimum: 1, maximum: 65536, default_value: 16384 },
+  max_depth: { minimum: 1, maximum: 256, default_value: 64 },
+  max_string_bytes: {
+    minimum: 1,
+    maximum: 8 * 1024 * 1024,
+    default_value: 1024 * 1024,
+  },
 } as const;
+export type PythonPycReadBudget = keyof typeof PYTHON_PYC_READ_BUDGETS;
+
+/**
+ * The per-call control that stopped pyc inspection, named by its contract
+ * field; each adapter names the option that sets it. The schema owns the same
+ * bounds, so the reported range is the one the next call accepts.
+ */
+export const pythonPycBudgetLimit = (
+  parameter: PythonPycReadBudget,
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter,
+  effective_value: effectiveValue,
+  unit:
+    parameter === "max_objects" || parameter === "max_depth"
+      ? "count"
+      : "bytes",
+  ...PYTHON_PYC_READ_BUDGETS[parameter],
+  applies_at: "next_call",
+});
+
+const budget = (name: PythonPycReadBudget) => {
+  const bounds = PYTHON_PYC_READ_BUDGETS[name];
+  return z
+    .number()
+    .int()
+    .min(bounds.minimum)
+    .max(bounds.maximum)
+    .default(bounds.default_value);
+};
 
 export const pythonPycLimitsSchema = z.strictObject({
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(16)
-    .max(PYTHON_PYC_LIMIT_MAXIMA.max_file_bytes)
-    .default(16 * 1024 * 1024)
-    .describe(
-      "Maximum selected file size in bytes; exceeding the budget fails without partial success",
-    ),
-  max_objects: z
-    .number()
-    .int()
-    .min(1)
-    .max(PYTHON_PYC_LIMIT_MAXIMA.max_objects)
-    .default(16384)
-    .describe(
-      "Maximum marshal objects to examine; exceeding the budget fails without partial success",
-    ),
-  max_depth: z
-    .number()
-    .int()
-    .min(1)
-    .max(PYTHON_PYC_LIMIT_MAXIMA.max_depth)
-    .default(64)
-    .describe(
-      "Maximum marshal nesting depth; exceeding the budget fails without partial success",
-    ),
-  max_string_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(PYTHON_PYC_LIMIT_MAXIMA.max_string_bytes)
-    .default(1024 * 1024)
-    .describe(
-      "Maximum bytes retained for one marshal string or byte string; exceeding the budget fails without partial success",
-    ),
+  max_file_bytes: budget("max_file_bytes").describe(
+    "Maximum selected file size in bytes; exceeding the budget fails without partial success",
+  ),
+  max_objects: budget("max_objects").describe(
+    "Maximum marshal objects to examine; exceeding the budget fails without partial success",
+  ),
+  max_depth: budget("max_depth").describe(
+    "Maximum marshal nesting depth; exceeding the budget fails without partial success",
+  ),
+  max_string_bytes: budget("max_string_bytes").describe(
+    "Maximum bytes retained for one marshal string or byte string; exceeding the budget fails without partial success",
+  ),
 });
 
 export type PythonPycLimits = z.infer<typeof pythonPycLimitsSchema>;

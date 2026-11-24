@@ -11,7 +11,8 @@ import type { PythonPycPort } from "../ports/python/PythonPycPort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
-  PYTHON_PYC_LIMIT_MAXIMA,
+  PYTHON_PYC_READ_BUDGETS,
+  pythonPycBudgetLimit,
   type InspectPythonPycInput,
   type PythonPycLimits,
 } from "../domain/python/pythonPyc.js";
@@ -30,20 +31,30 @@ import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailu
 
 const OPERATION = "inspect_python_pyc";
 
+/**
+ * Recovery for the caller-selected budgets that determine one parser limit.
+ * A limit owned by one control reports it as `limit`; a product of several
+ * controls names each as a related parameter, since no single range applies.
+ */
 const parserLimitRecovery = (
   input: InspectPythonPycInput,
   fields: readonly (keyof PythonPycLimits)[],
 ) => {
   const actions = fields.map((field) => {
     const selected = input[field];
-    const maximum = PYTHON_PYC_LIMIT_MAXIMA[field];
-    const option = `--${field.replaceAll("_", "-")}`;
+    const { maximum } = PYTHON_PYC_READ_BUDGETS[field];
     return selected < maximum
-      ? `Raise ${field} (${option}) above ${selected}, up to ${maximum}, on the next call.`
-      : `${field} (${option}) is at this operation's maximum of ${maximum}; select a complete artifact within that bound.`;
+      ? `Raise ${field} above ${String(selected)}, up to ${String(maximum)}, on the next call.`
+      : `${field} is at this operation's maximum of ${String(maximum)}; select a complete artifact within that bound.`;
   });
+  const [only] = fields;
   return {
     retryable: false as const,
+    ...(fields.length === 1 && only !== undefined
+      ? { limit: pythonPycBudgetLimit(only, input[only]) }
+      : fields.length > 1
+        ? { related: { parameters: [...fields] } }
+        : {}),
     remediationAction: `${actions.join(" ")} Repeating the unchanged request fails the same way; waiting or adding host memory does not raise these parser limits.`,
   };
 };

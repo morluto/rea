@@ -712,3 +712,31 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "adds the CLI flag to a pyc budget refusal's structured limit",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-pyc-cli-limit-");
+    const path = join(directory, "sample.pyc");
+    await writeFile(path, pythonPycFixture("py311", { nested: true }));
+    const refused = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--max-objects", "1", "--json"],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_objects",
+          effective_value: 1,
+          cli_flag: "--max-objects",
+        },
+      },
+    });
+    // The service names contract fields; only the CLI spells flags.
+    expect(
+      JSON.stringify((refused.json as { remediation: unknown }).remediation),
+    ).not.toContain("--");
+  },
+);
