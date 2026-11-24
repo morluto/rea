@@ -101,6 +101,7 @@ const createV8InspectorEvidence = (
         status: "observed-loaded",
       })),
       observed_total: scriptFilePaths.length,
+      parse_failed_total: 0,
       excluded: { unsupported_location: 0, invalid_protocol_value: 0 },
     },
     execution_contexts: [],
@@ -160,7 +161,7 @@ it.each([
     expect(evidence.parameters).not.toHaveProperty("timeout_policy");
     expect(evidence.subject).toMatchObject({
       name: filename,
-      format: "file",
+      identity: { kind: "file", format: "file" },
     });
     const parsedGraph = parseApplicationGraphEvidence(evidence);
     expect(parsedGraph.ok).toBe(true);
