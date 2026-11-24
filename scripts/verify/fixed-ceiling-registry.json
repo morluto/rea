@@ -603,5 +603,11 @@
       "issue": 14237,
       "reason": "SQLite worker diagnostic capture is a producer budget."
     }
+  },
+  "src/unity/UnityAddressablesProvider.ts": {
+    "\"The Unity Addressables catalog.hash allowance\"": {
+      "class": "format",
+      "reason": "catalog.hash holds one Hash128 string of 32 hexadecimal digits; 4096 bytes bounds that format fact, and the catalog and report budgets are per-call parameters."
+    }
   }
 }

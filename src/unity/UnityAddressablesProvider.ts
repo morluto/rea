@@ -1,5 +1,9 @@
 import { UNITY_ADDRESSABLES_PROVIDER_IDENTITY } from "./UnityAddressablesProviderIdentity.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -25,12 +29,13 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import {
   AnalysisAccessDeniedError,
   cancelledBy,
-  fixedCeilingConstraint,
   isAborted,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
+import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { unityAddressablesCatalogEvidence } from "../domain/unity/unityAddressablesEvidence.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
@@ -38,21 +43,23 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
+  UNITY_ADDRESSABLES_BUDGET_DEFAULTS,
+  UNITY_ADDRESSABLES_BUDGET_MAXIMA,
+  unityAddressablesBudgets,
   unityAddressablesSchema,
   type UnityAddressables,
+  type UnityAddressablesBudgets,
   type UnityAddressablesProviderInput,
 } from "../domain/unity/unityAddressables.js";
 import { createUnityAddressablesAdmission } from "./UnityAddressablesAdmission.js";
 import { readUnityAddressablesCatalogSteps } from "./UnityAddressablesCatalog.js";
+import { UNITY_ADDRESSABLES_FORMAT } from "./UnityAddressablesFormat.js";
 import type { UnityAddressablesRowCounts } from "./UnityAddressablesShared.js";
 
 /** Bundled format reader identity; the catalog format version is a separate observed fact. */
 const OPERATION = "inspect_unity_addressables";
-// Shipped catalogs are kilobytes to tens of megabytes.
-const INPUT_BYTES = 256 * 1024 * 1024;
-// catalog.hash holds one Hash128 string.
+// catalog.hash holds one Hash128 string (32 hexadecimal digits).
 const HASH_BYTES = 4096;
-const OUTPUT_BYTES = 64 * 1024 * 1024;
 
 type Artifact = UnityAddressables["artifact"];
 type HashFile = NonNullable<UnityAddressables["hash_file"]>;
@@ -74,8 +81,92 @@ interface Observed {
 interface FailureSite {
   readonly path: string;
   readonly field: Field;
-  readonly maximum: number;
 }
+
+type FileSizeRefusal = (
+  cause: ArtifactReaderFailure,
+  details: AnalysisErrorOptions,
+) => AnalysisError;
+
+const budgetRecovery = (
+  parameter: keyof UnityAddressablesBudgets,
+  value: number,
+): string =>
+  value < UNITY_ADDRESSABLES_BUDGET_MAXIMA[parameter]
+    ? `Increase ${parameter} above ${String(value)} (maximum ${String(UNITY_ADDRESSABLES_BUDGET_MAXIMA[parameter])}) on the next ${OPERATION} request; no restart is required.`
+    : `${parameter} is at its runtime representation maximum ${String(value)}; no larger value is supported. Preserve the complete selected catalog and report this boundary rather than repeating the unchanged request.`;
+
+/** The per-call control of an exhausted budget, while a larger value is selectable. */
+const budgetLimit = (
+  parameter: keyof UnityAddressablesBudgets,
+  value: number,
+): { readonly limit?: AnalysisControlLimit } =>
+  value < UNITY_ADDRESSABLES_BUDGET_MAXIMA[parameter]
+    ? {
+        limit: {
+          control_kind: "parameter",
+          parameter,
+          effective_value: value,
+          unit: "bytes",
+          minimum: 1,
+          maximum: UNITY_ADDRESSABLES_BUDGET_MAXIMA[parameter],
+          default_value: UNITY_ADDRESSABLES_BUDGET_DEFAULTS[parameter],
+          applies_at: "next_call",
+        },
+      }
+    : {};
+
+/** A stopped read keeps its cleanup facts; the named limit becomes the refusal's cause. */
+const readLimit = (
+  cause: ArtifactReaderFailure,
+  { cause: _read, ...details }: AnalysisErrorOptions,
+  name: string,
+  maximum: number,
+) => ({
+  limit: decodeLimit(
+    UNITY_ADDRESSABLES_FORMAT,
+    cause.message,
+    { name, maximum },
+    { cause },
+  ),
+  details,
+});
+
+/** The catalog read stopped at the caller's max_input_bytes. */
+const inputLimit =
+  (maximum: number): FileSizeRefusal =>
+  (cause, options) => {
+    const { limit, details } = readLimit(
+      cause,
+      options,
+      "max_input_bytes",
+      maximum,
+    );
+    return parseLimitConstraint(OPERATION, "file-size", limit, {
+      ...details,
+      retryable: false,
+      remediationAction: `The Unity Addressables catalog input allowance is ${String(maximum)} bytes. ${budgetRecovery("max_input_bytes", maximum)} max_report_bytes remains independent. Preserve the complete catalog; do not truncate required bytes.`,
+      ...budgetLimit("max_input_bytes", maximum),
+    });
+  };
+
+/** catalog.hash is a format-bounded file: one Hash128 string. */
+const hashFileLimit: FileSizeRefusal = (cause, options) => {
+  const { limit, details } = readLimit(
+    cause,
+    options,
+    "catalog.hash",
+    HASH_BYTES,
+  );
+  return parseLimitConstraint(OPERATION, "file-size", limit, {
+    ...details,
+    ...fixedAllowanceOptions(
+      "The Unity Addressables catalog.hash allowance",
+      "input",
+      { limit: HASH_BYTES, unit: "bytes" },
+    ),
+  });
+};
 
 const UNREADABLE_PATH_CODES = new Set([
   "ENOENT",
@@ -117,10 +208,10 @@ const retainReadObservation = (
 
 const unityAddressablesFailureDialect = (
   path: string,
+  fileSize: FileSizeRefusal,
   field: Field = "path",
-  maximum = INPUT_BYTES,
 ): ProviderFailureDialect => {
-  const site = { path, field, maximum };
+  const site = { path, field };
   // Provider-owned typed refusals, examined before the shared file facts.
   const recognise = (cause: unknown) =>
     parseFailureAnalysisError(OPERATION, path, cause) ??
@@ -149,19 +240,7 @@ const unityAddressablesFailureDialect = (
       path,
       field,
       description: field === "path" ? "catalog" : "catalog hash file",
-      fileSize: (cause, details) =>
-        fixedCeilingConstraint(
-          OPERATION,
-          "file-size",
-          cause.message,
-          {
-            name: "the fixed Unity Addressables input allowance",
-            kind: "input",
-            limit: maximum,
-            unit: "bytes",
-          },
-          { ...details, cause },
-        ),
+      fileSize,
     },
     recognise: (cause) => {
       const failure = recognise(cause);
@@ -189,17 +268,25 @@ const unityAddressablesFailureDialect = (
   };
 };
 
-const reportLimit = (path: string, maximumBytes: number) =>
-  fixedCeilingConstraint(
+const reportBudgetRefusal = (reason: string, maximumBytes: number) =>
+  parseLimitConstraint(
     OPERATION,
     "memory",
-    `The complete Addressables catalog report for ${path} exceeds the retained report budget; no complete inventory is retained.`,
+    decodeLimit(UNITY_ADDRESSABLES_FORMAT, reason, {
+      name: "max_report_bytes",
+      maximum: maximumBytes,
+    }),
     {
-      name: "The Unity Addressables complete-report allowance",
-      kind: "bytes",
-      limit: maximumBytes,
-      unit: "bytes",
+      retryable: false,
+      remediationAction: `The Unity Addressables complete-report allowance is ${String(maximumBytes)} bytes. ${budgetRecovery("max_report_bytes", maximumBytes)} max_input_bytes and MCP delivery limits remain independent.`,
+      ...budgetLimit("max_report_bytes", maximumBytes),
     },
+  );
+
+const reportLimit = (path: string, maximumBytes: number) =>
+  reportBudgetRefusal(
+    `The complete Addressables catalog report for ${path} exceeds the retained report budget; no complete inventory is retained.`,
+    maximumBytes,
   );
 
 const hashReportLimit = (
@@ -207,16 +294,9 @@ const hashReportLimit = (
   hashPath: string,
   maximumBytes: number,
 ) =>
-  fixedCeilingConstraint(
-    OPERATION,
-    "memory",
+  reportBudgetRefusal(
     `The Addressables catalog report for ${path} exceeds the retained report budget with the selected hash file ${hashPath}; the decoded catalog is retained without it.`,
-    {
-      name: "The Unity Addressables complete-report allowance",
-      kind: "bytes",
-      limit: maximumBytes,
-      unit: "bytes",
-    },
+    maximumBytes,
   );
 
 const sourceArtifact = (
@@ -403,9 +483,7 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
   #inspecting = false;
   #admissionStopped = false;
 
-  /** `outputBytes` exists so tests can reach the guard with small files. */
   constructor(
-    private readonly outputBytes: number = OUTPUT_BYTES,
     private readonly yieldControl: () => Promise<void> = setImmediate,
   ) {}
 
@@ -462,11 +540,12 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
     if (refused !== undefined) return err(refused);
     this.#inspecting = true;
     const observed: Observed = {};
+    const budgets = unityAddressablesBudgets(input);
     try {
       return await this.#resources.run(async () => {
         const snapshot = await this.#readArtifact(
           input.path,
-          INPUT_BYTES,
+          budgets.max_input_bytes,
           options?.signal,
           (completed) => {
             observed.artifact = sourceArtifact(input.path, completed);
@@ -474,7 +553,7 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
         );
         const artifact = sourceArtifact(input.path, snapshot);
         assertArtifactReadActive(options?.signal);
-        const limit = this.outputBytes;
+        const limit = budgets.max_report_bytes;
         const admission = createUnityAddressablesAdmission(limit, () => {
           throw reportLimit(input.path, limit);
         });
@@ -509,6 +588,7 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
         const hashFile = await this.#readHashFile(
           input,
           observed,
+          limit,
           options?.signal,
         );
         if (hashFile !== null && "error" in hashFile)
@@ -526,9 +606,16 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
     } catch (cause: unknown) {
       const failure = classifyProviderFailure(
         cause,
-        unityAddressablesFailureDialect(input.path),
+        unityAddressablesFailureDialect(
+          input.path,
+          inputLimit(budgets.max_input_bytes),
+        ),
       );
-      const partial = partialEvidence(input, observed, this.outputBytes);
+      const partial = partialEvidence(
+        input,
+        observed,
+        budgets.max_report_bytes,
+      );
       if (partial !== undefined) failure.partialObservation = partial;
       return err(failure);
     } finally {
@@ -540,6 +627,7 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
   async #readHashFile(
     input: UnityAddressablesProviderInput,
     observed: Observed,
+    reportBytes: number,
     signal: AbortSignal | undefined,
   ): Promise<HashFile | null | { error: AnalysisError }> {
     const hashPath = input.hash_path;
@@ -558,9 +646,9 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
     } catch (cause: unknown) {
       const error = classifyProviderFailure(
         cause,
-        unityAddressablesFailureDialect(hashPath, "hash_path", HASH_BYTES),
+        unityAddressablesFailureDialect(hashPath, hashFileLimit, "hash_path"),
       );
-      const partial = partialEvidence(input, observed, this.outputBytes);
+      const partial = partialEvidence(input, observed, reportBytes);
       if (partial !== undefined) error.partialObservation = partial;
       return { error };
     }

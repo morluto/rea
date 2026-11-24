@@ -11,7 +11,12 @@ import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  UNITY_ADDRESSABLES_BUDGET_DEFAULTS,
+  UNITY_ADDRESSABLES_BUDGET_MAXIMA,
+} from "../../../src/domain/unity/unityAddressables.js";
 import { UnityAddressablesProvider } from "../../../src/unity/UnityAddressablesProvider.js";
 import {
   binaryCatalog,
@@ -21,11 +26,13 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** One-shot inspections keep the real reader's cleanup at one test boundary. */
-const inspect = async (
-  input: { path: string; hash_path?: string },
-  limit?: number,
-) => {
-  const provider = new UnityAddressablesProvider(limit);
+const inspect = async (input: {
+  path: string;
+  hash_path?: string;
+  max_input_bytes?: number;
+  max_report_bytes?: number;
+}) => {
+  const provider = new UnityAddressablesProvider();
   try {
     return await provider.inspect(input);
   } finally {
@@ -125,7 +132,11 @@ it("keeps the decoded catalog when only the selected hash file exceeds the repor
   await writeFile(hashPath, hash);
   // The catalog report fits; its hash text and limitation do not.
   const limit = Buffer.byteLength(JSON.stringify(catalogOnly.value)) + 100;
-  const result = await inspect({ path, hash_path: hashPath }, limit);
+  const result = await inspect({
+    path,
+    hash_path: hashPath,
+    max_report_bytes: limit,
+  });
   expect(result.ok).toBe(false);
   if (result.ok) return;
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
@@ -151,10 +162,11 @@ it("keeps only bounded source facts when the decoded catalog exceeds the report 
     "catalog.json",
     jsonCatalog({ ...sampleCatalog(), locatorId: "L".repeat(20_000) }),
   );
-  const result = await inspect(
-    { path, hash_path: join(path, "..", "missing.hash") },
-    8000,
-  );
+  const result = await inspect({
+    path,
+    hash_path: join(path, "..", "missing.hash"),
+    max_report_bytes: 8000,
+  });
   expect(result.ok).toBe(false);
   if (result.ok) return;
   // The report refusal wins over the missing hash file, which is never read;
@@ -198,7 +210,7 @@ it.each([
 
 it("refuses a report over budget during decoding with admitted counts retained", async () => {
   const path = await write("catalog.bin", binaryCatalog());
-  const result = await inspect({ path }, 900);
+  const result = await inspect({ path, max_report_bytes: 900 });
   expect(result.ok).toBe(false);
   if (result.ok) return;
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
@@ -213,6 +225,52 @@ it("refuses a report over budget during decoding with admitted counts retained",
     (result.error.partialObservation as { normalized_result: object })
       .normalized_result,
   ).not.toHaveProperty("declared_row_counts");
+});
+
+it.each([
+  ["max_input_bytes", (bytes: number) => bytes - 1],
+  ["max_report_bytes", () => 900],
+] as const)(
+  "refuses at the per-call %s with its control and succeeds once it is raised",
+  async (parameter, lowered) => {
+    const bytes = binaryCatalog();
+    const path = await write("catalog.bin", bytes);
+    const refused = await inspect({ path, [parameter]: lowered(bytes.length) });
+    if (refused.ok) throw new Error(`${parameter} must refuse`);
+    expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    const projected = projectAnalysisError(refused.error);
+    expect(projected.retryable).toBe(false);
+    expect(projected.details?.limit).toEqual({
+      control_kind: "parameter",
+      parameter,
+      effective_value: lowered(bytes.length),
+      unit: "bytes",
+      minimum: 1,
+      maximum: UNITY_ADDRESSABLES_BUDGET_MAXIMA[parameter],
+      default_value: UNITY_ADDRESSABLES_BUDGET_DEFAULTS[parameter],
+      applies_at: "next_call",
+    });
+    const raised = await inspect({ path, [parameter]: 64 * 1024 * 1024 });
+    if (!raised.ok) throw raised.error;
+    expect(raised.value.keys).toHaveLength(7);
+  },
+);
+
+it("names the fixed catalog.hash allowance rather than a per-call control", async () => {
+  const path = await write("catalog.json", jsonCatalog());
+  const hashPath = join(path, "..", "catalog.hash");
+  await writeFile(hashPath, "f".repeat(4097));
+  const result = await inspect({ path, hash_path: hashPath });
+  if (result.ok) throw new Error("An oversized catalog.hash must refuse");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  if (!(result.error instanceof AnalysisResourceConstraintError))
+    throw result.error;
+  expect(result.error.fixedAllowance).toMatchObject({
+    kind: "input",
+    limit: 4096,
+    unit: "bytes",
+  });
+  expect(projectAnalysisError(result.error).details?.limit).toBeUndefined();
 });
 
 /** More than one yield interval of keys. */
@@ -232,7 +290,7 @@ it("admits one inspection at a time and none after close", async () => {
   const gate = new Promise<void>((resolve) => (release = resolve));
   let acknowledge!: () => void;
   const yielded = new Promise<void>((resolve) => (acknowledge = resolve));
-  const provider = new UnityAddressablesProvider(undefined, () => {
+  const provider = new UnityAddressablesProvider(() => {
     acknowledge();
     return gate;
   });
@@ -261,7 +319,7 @@ it("admits one inspection at a time and none after close", async () => {
 it("stops between decoding steps when cancelled", async () => {
   const path = await write("catalog.bin", binaryCatalog(largeCatalog()));
   const controller = new AbortController();
-  const provider = new UnityAddressablesProvider(undefined, () => {
+  const provider = new UnityAddressablesProvider(() => {
     controller.abort(new Error("stop"));
     return Promise.resolve();
   });

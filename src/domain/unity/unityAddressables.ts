@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { constants as bufferConstants } from "node:buffer";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
@@ -10,6 +11,47 @@ export const UNITY_ADDRESSABLES_BINARY_VERSIONS = [2, 3] as const;
 
 const count = z.number().int().nonnegative();
 const rowIndex = count;
+
+/** Defaults applied at the owning reader; omitted request fields stay omitted in Evidence. */
+export const UNITY_ADDRESSABLES_BUDGET_DEFAULTS = {
+  // Shipped catalogs are kilobytes to tens of megabytes.
+  max_input_bytes: 256 * 1024 * 1024,
+  max_report_bytes: 64 * 1024 * 1024,
+} as const;
+
+/** Actual single-buffer/string representability of the catalog bytes and the encoded report. */
+export const UNITY_ADDRESSABLES_BUDGET_MAXIMA = {
+  max_input_bytes: bufferConstants.MAX_LENGTH,
+  max_report_bytes: bufferConstants.MAX_STRING_LENGTH,
+} as const;
+
+export type UnityAddressablesBudgets = {
+  readonly [Key in keyof typeof UNITY_ADDRESSABLES_BUDGET_DEFAULTS]: number;
+};
+
+const budget = (
+  parameter: keyof UnityAddressablesBudgets,
+  description: string,
+) =>
+  z
+    .int()
+    .positive()
+    .max(UNITY_ADDRESSABLES_BUDGET_MAXIMA[parameter])
+    .exactOptional()
+    .describe(
+      `${description} Default ${String(UNITY_ADDRESSABLES_BUDGET_DEFAULTS[parameter])}. Positive safe integer, maximum ${String(UNITY_ADDRESSABLES_BUDGET_MAXIMA[parameter])} (runtime Buffer/string representability). Applies on the next inspection without restart.`,
+    );
+
+export const unityAddressablesBudgets = (
+  selection: Partial<UnityAddressablesBudgets> = {},
+): UnityAddressablesBudgets => ({
+  max_input_bytes:
+    selection.max_input_bytes ??
+    UNITY_ADDRESSABLES_BUDGET_DEFAULTS.max_input_bytes,
+  max_report_bytes:
+    selection.max_report_bytes ??
+    UNITY_ADDRESSABLES_BUDGET_DEFAULTS.max_report_bytes,
+});
 
 /** One explicit local catalog; detail selects delivery, never decoding coverage. */
 export const inspectUnityAddressablesInputSchema = z.strictObject({
@@ -27,6 +69,14 @@ export const inspectUnityAddressablesInputSchema = z.strictObject({
     .describe(
       "Absolute path to the caller-selected catalog.hash file to record next to the catalog; its text is reported, not recomputed",
     ),
+  max_input_bytes: budget(
+    "max_input_bytes",
+    "Stable catalog byte admission; does not raise the report budget.",
+  ),
+  max_report_bytes: budget(
+    "max_report_bytes",
+    "Complete encoded catalog report byte admission, including the hash file; independent of MCP response delivery.",
+  ),
 });
 
 const artifactSchema = z.strictObject({

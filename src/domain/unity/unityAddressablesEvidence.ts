@@ -26,7 +26,7 @@ export const unityAddressablesCatalogEvidence = (
       operation: "inspect_unity_addressables",
       parameters: Object.fromEntries(
         Object.entries(input).filter(([, item]) => item !== undefined),
-      ) as Record<string, string>,
+      ),
       result: value,
       // JSON dependencies are resolved through keys; everything else is read as stored.
       confidence: value.format === "json" ? "derived" : "observed",

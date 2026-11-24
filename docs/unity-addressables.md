@@ -100,9 +100,16 @@ and prints a compact overview.
 - Location data other than asset bundle request options reports its type name
   only. A binary object key or location data whose type record stores no class
   name reports `type_name: null` (unknown), not an empty name.
-- Input is limited to 256 MiB per catalog and 4 KiB per hash file; the encoded
-  report to 64 MiB; one inspection runs at a time per reader. Unsupported
-  formats, malformed records and resource limits return typed reasons.
+- Two per-call budgets bound each inspection: `max_input_bytes` (default
+  256 MiB) for the catalog read and `max_report_bytes` (default 64 MiB) for the
+  complete encoded report, including the hash file. A refusal reports the
+  budget that stopped it in `details.limit`; raise that one value on the next
+  call (`--max-input-bytes` or `--max-report-bytes` on the CLI). No restart is
+  required.
+- A hash file is limited to 4 KiB, since `catalog.hash` holds one Hash128
+  string; this ceiling has no control. One inspection runs at a time per
+  reader. Unsupported formats, malformed records and resource limits return
+  typed reasons.
 
 ## Checked builds
 
