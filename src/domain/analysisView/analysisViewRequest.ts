@@ -15,6 +15,7 @@ import { apkSignatureViewRequestSchema } from "../apkSignature/apkSignatureQuery
 import { erlangBeamViewRequestSchema } from "./erlangBeamView.js";
 import { pythonPycViewRequestSchema } from "./pythonPycView.js";
 import { nativeExportsViewRequestSchema } from "./nativeExportsView.js";
+import { byteEntropyBlocksViewRequestSchema } from "./byteEntropyView.js";
 import { elfDependenciesViewRequestSchema } from "./elfDependenciesView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
@@ -95,6 +96,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   erlangBeamViewRequestSchema,
   pythonPycViewRequestSchema,
   nativeExportsViewRequestSchema,
+  byteEntropyBlocksViewRequestSchema,
   elfDependenciesViewRequestSchema,
   javaScriptRoutesViewRequestSchema,
   webBundleViewRequestSchema,

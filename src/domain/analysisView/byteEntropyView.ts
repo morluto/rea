@@ -5,10 +5,30 @@ import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
+  ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { completeWithinViewCoverage } from "./analysisViewCoverage.js";
+import { viewResultBaseFields } from "./analysisViewBase.js";
+import {
+  boundedViewMessages,
+  completeWithinViewCoverage,
+  pageViewCoverage,
+} from "./analysisViewCoverage.js";
+
+export const byteEntropyBlocksViewRequestSchema = z.strictObject({
+  kind: z.literal("byte-entropy-blocks"),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().max(256).default(64),
+});
+
+export const byteEntropyBlocksViewResultSchema = z.strictObject({
+  ...viewResultBaseFields,
+  kind: z.literal("byte-entropy-blocks"),
+  parent_operation: z.literal("inspect_byte_entropy"),
+  view: byteEntropyBlocksViewRequestSchema,
+  items: byteEntropySchema.shape.blocks,
+});
 
 export const byteEntropySummarySchema = byteEntropySchema
   .omit({ blocks: true, runs: true, limitations: true })
@@ -38,12 +58,43 @@ const topRuns = (runs: readonly EntropyRun[]): EntropyRun[] => {
   return retained;
 };
 
-/** Rank ten longest runs for triage; the full series remains in parent Evidence. */
+/** Summarize runs or select consecutive block rows from the same retained report. */
 export const projectByteEntropyView = (
   parent: AnalysisViewParent,
   report: ByteEntropy,
   view: AdmittedView,
 ) => {
+  const source = {
+    parent_evidence_id: parent.evidenceId,
+    parent_operation: "inspect_byte_entropy" as const,
+    parent_digest: parent.evidenceId.slice(3),
+    artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
+    unknowns: [] as string[],
+  };
+  const limitations = [...parent.limitations, ...report.limitations];
+  const page = ownedView<z.output<typeof byteEntropyBlocksViewRequestSchema>>(
+    view,
+    "byte-entropy-blocks",
+  );
+  if (page !== undefined) {
+    const items = report.blocks.slice(page.offset, page.offset + page.limit);
+    return ok({
+      ...source,
+      kind: "byte-entropy-blocks" as const,
+      view: page,
+      items,
+      coverage: pageViewCoverage(
+        page.offset,
+        items.length,
+        report.blocks.length,
+      ),
+      limitations: boundedViewMessages(
+        limitations,
+        parent.evidenceId,
+        "limitations",
+      ),
+    });
+  }
   if (view.kind !== "summary")
     return err(
       new AnalysisInputError("inspect_analysis_view", undefined, [
@@ -51,18 +102,15 @@ export const projectByteEntropyView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Byte entropy Evidence supports the summary view; retrieve parent Evidence for the complete block series.",
+            "Byte entropy Evidence supports summary and byte-entropy-blocks views.",
         },
       ]),
     );
   assertOwnedView<SummaryAnalysisView>(view, "summary");
   return ok({
+    ...source,
     kind: "summary" as const,
     view,
-    parent_evidence_id: parent.evidenceId,
-    parent_operation: "inspect_byte_entropy" as const,
-    parent_digest: parent.evidenceId.slice(3),
-    artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
     summary: {
       artifact: report.artifact,
       block_size: report.block_size,
@@ -74,9 +122,6 @@ export const projectByteEntropyView = (
       top_runs: topRuns(report.runs),
     },
     coverage: completeWithinViewCoverage(report.blocks.length),
-    limitations: [
-      ...new Set([...parent.limitations, ...report.limitations]),
-    ].sort(),
-    unknowns: [] as string[],
+    limitations: [...new Set(limitations)].sort(),
   });
 };

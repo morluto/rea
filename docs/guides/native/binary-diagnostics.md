@@ -311,6 +311,7 @@ without an analysis engine, execution, extraction or network access.
 ```sh
 rea inspect-byte-entropy ./firmware.bin --block-size 4096 --json
 rea inspect-byte-entropy ./firmware.bin --offset 4096 --length 65536 --json
+rea inspect-byte-entropy ./firmware.bin --detail summary --evidence_output ./entropy-bundle.json
 ```
 
 ```json
@@ -354,12 +355,23 @@ blocks at most 1.0 form `low` runs. Other blocks interrupt runs. Entropy does no
 prove encryption, and this measure cannot distinguish encrypted from compressed
 data. Small blocks can underestimate entropy; the result is a triage clue.
 
-MCP `detail: "summary"` retains complete Evidence in the session and returns
-file entropy, block/run counts, thresholds, the selected window, and the ten
-longest runs (ties ordered by file offset). Use its `parent_evidence_id` to
-retrieve complete Evidence, or request its summary with `inspect_analysis_view`.
-The CLI returns complete Evidence through the same service. Summary detail
-requires a session capable of retaining Evidence.
+Summary detail returns file entropy, block/run counts, thresholds, the selected
+window, and the ten longest runs (ties ordered by file offset). The CLI saves
+complete Evidence with `--evidence_output`, which is required with
+`--detail summary`. MCP `detail: "summary"` requires a session that can retain
+complete Evidence. Both interfaces still default to complete output.
+
+Page the blocks through `inspect_analysis_view` without reading the original
+file again. For MCP, use `source: {kind: "retained-evidence", evidence_id: "..."}`
+with the summary's `normalized_result.parent_evidence_id`. The equivalent CLI
+call reads the saved bundle.
+
+```sh
+rea inspect-analysis-view '{"source":{"kind":"evidence-file","path":"./entropy-bundle.json"},"view":{"kind":"byte-entropy-blocks","offset":0,"limit":64}}' --json
+```
+
+The view offset is a zero-based block index. Each row still contains its byte
+offset, byte length and entropy. A page defaults to 64 rows and accepts at most 256. Use its `coverage.next_offset` until the page reports `exhausted`.
 
 Reads use one block-sized buffer and a 256-entry histogram. Complete output
 can become very large because it includes one row per selected block, and

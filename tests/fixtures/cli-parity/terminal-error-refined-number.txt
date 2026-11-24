@@ -13,9 +13,11 @@ Arguments:
   path  Local file
 
 Options:
-  --block-size <value>  Power-of-two block size from 256 to 65536 bytes (default: 4096)
-  --offset <value>      Window start as a decimal file byte offset (default: 0)
-  --length <value>      Window length in bytes; omit to extend through EOF
+  --block-size <value>         Power-of-two block size from 256 to 65536 bytes (default: 4096)
+  --offset <value>             Window start as a decimal file byte offset (default: 0)
+  --length <value>             Window length in bytes; omit to extend through EOF
+  --detail <complete|summary>  Deliver complete Evidence, or a summary with --evidence_output (default: complete)
+  --evidence_output <string>   Save complete Evidence as a bundle; required for summary delivery. Never overwrites.
 
 Global Options:
   --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])

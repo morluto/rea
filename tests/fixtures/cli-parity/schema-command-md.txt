@@ -67,6 +67,31 @@ Window start as a decimal file byte offset
 
 Window length in bytes; omit to extend through EOF
 
+## options.properties.detail.description
+
+Deliver complete Evidence, or a summary with --evidence_output
+
+## options.properties.detail.default
+
+complete
+
+## options.properties.detail.type
+
+string
+
+## options.properties.detail.enum
+
+\["complete","summary"\]
+
+## options.properties.evidence_output
+
+| Key         | Value                                                                                |
+|-------------|--------------------------------------------------------------------------------------|
+| description | Save complete Evidence as a bundle; required for summary delivery. Never overwrites. |
+| type        | string                                                                               |
+| minLength   | 1                                                                                    |
+| pattern     | ^\[^\\x00\]\*$                                                                       |
+
 ## options.additionalProperties
 
 false

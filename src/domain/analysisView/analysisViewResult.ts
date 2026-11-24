@@ -218,6 +218,7 @@ import { batchDecompileSummaryViewResultSchema } from "./summarySchemas/batchDec
 import { binaryLayoutSummaryViewResultSchema } from "./summarySchemas/binaryLayoutSummarySchema.js";
 import { browserScenarioSummaryViewResultSchema } from "./summarySchemas/browserScenarioSummarySchema.js";
 import { byteEntropySummaryViewResultSchema } from "./summarySchemas/byteEntropySummarySchema.js";
+import { byteEntropyBlocksViewResultSchema } from "./byteEntropyView.js";
 import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummarySchema.js";
 import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
@@ -655,6 +656,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     rows: z.array(jsonValueSchema),
   }),
   playwrightTracePageViewResultSchema,
+  byteEntropyBlocksViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     ...nativeViewSourceContext,
