@@ -24,7 +24,6 @@ import {
   DwarfSectionAllowanceFailure,
   locateDwarfSectionsFromHandle,
 } from "./DwarfSections.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import {
   abbrevTable,
   compileUnit,
@@ -38,6 +37,8 @@ import {
   peImage,
   strxBeforeBase,
 } from "./DwarfUnits.fixture.js";
+import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const inspect = async (
   bytes: Buffer,
@@ -508,17 +509,6 @@ it("does not inflate a duplicate section and caps decompressed bytes across role
   expect(aggregate.ok).toBe(false);
   if (!aggregate.ok)
     expect(aggregate.error).toBeInstanceOf(AnalysisResourceConstraintError);
-});
-
-const bufferByteSource = (bytes: Buffer): NativeByteSource => ({
-  size: bytes.length,
-  prefix: bytes,
-  readRange: (offset, length) =>
-    Promise.resolve(
-      offset < 0 || length <= 0 || offset >= bytes.length
-        ? Buffer.alloc(0)
-        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
-    ),
 });
 
 it("charges failed decompression attempts against the shared allowance", async () => {

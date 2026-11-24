@@ -1,11 +1,11 @@
-import type { ElfDependencyByteSource } from "./ElfDependencyParser.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 export const elfDependencyByteSource = (
   bytes: Buffer,
   prefixBytes = 4096,
-  readRange: ElfDependencyByteSource["readRange"] = async (offset, length) =>
+  readRange: PrefixedByteSource["readRange"] = async (offset, length) =>
     bytes.subarray(offset, offset + length),
-): ElfDependencyByteSource => ({
+): PrefixedByteSource => ({
   size: bytes.length,
   prefix: bytes.subarray(0, prefixBytes),
   readRange,

@@ -101,10 +101,9 @@ export const run = async (
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  // The deferred server omits the recorded output schemas from listings, the
-  // default `off` profile; `compact` composes its bounded presentation.
-  const recordedOutputCatalog =
-    config.value.mcpOutputSchemaProfile !== "compact";
+  // The deferred server serves build-recorded output advertisements for
+  // both profiles (omitted, or compact when recorded at build time).
+  const recordedOutputCatalog = true;
   // Progressive discovery needs scoped identity before the first analysis.
   // Ordinary tool listings can defer that identity to the canonical runtime.
   const scopedProgressiveCatalog =

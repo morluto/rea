@@ -20,7 +20,6 @@ import {
   coreSiginfoNote,
   elf32ProcessIdentityFixture,
   elfNote,
-  elfNoteByteSource,
   elfNoteFixture,
   elfNoteTablePastEnd,
   elfExtendedSectionCountFixture,
@@ -34,6 +33,7 @@ import {
   readElfBuildIds,
   readElfBuildIdsFromHandle,
 } from "./ElfNoteParser.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
@@ -41,7 +41,7 @@ const defaults = inspectElfNotesInputSchema.parse({
 
 const parse = (bytes: Buffer, input: typeof defaults = defaults) =>
   parseElfNotesFromHandle(
-    elfNoteByteSource(bytes),
+    bufferByteSource(bytes, 4096),
     {
       path: input.path,
       sha256: createHash("sha256").update(bytes).digest("hex"),

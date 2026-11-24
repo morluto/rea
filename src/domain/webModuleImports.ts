@@ -181,6 +181,9 @@ const traverseModuleImports = (
         case "ImportExpression":
           record("dynamic-import", node.source);
           break;
+        default:
+          // Other AST nodes declare no module import.
+          break;
       }
     },
   });

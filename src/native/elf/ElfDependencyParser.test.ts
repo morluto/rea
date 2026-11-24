@@ -16,10 +16,8 @@ import {
   elfDependencyFixture,
   elfHash,
 } from "./ElfDependencies.fixture.js";
-import {
-  parseElfDependenciesFromHandle,
-  type ElfDependencyByteSource,
-} from "./ElfDependencyParser.js";
+import { parseElfDependenciesFromHandle } from "./ElfDependencyParser.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 const artifactPath = "/artifacts/program";
 
@@ -1240,7 +1238,7 @@ const elf64ProgramHeader = (bytes: Buffer, type: number): number => {
 
 const readFromSource = (
   bytes: Buffer,
-  readRange?: ElfDependencyByteSource["readRange"],
+  readRange?: PrefixedByteSource["readRange"],
   onYield: () => Promise<void> = async () => {},
 ) =>
   parseElfDependenciesFromHandle(

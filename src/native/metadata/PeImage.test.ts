@@ -8,12 +8,12 @@ import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 import {
-  goByteSource,
   readGoFixture,
   GO_MODULE_TEXT,
   createGoBinaryFixture,
   setGoPeVirtualSize,
 } from "../../../tests/fixtures/go/image.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 for (const bits of [32, 64] as const) {
   it.each([
@@ -90,7 +90,7 @@ it.each([32, 64] as const)(
       setGoPeVirtualSize(fixture.bytes, 0);
 
       const container = await readPeImageFromReader(
-        goByteSource(fixture.bytes),
+        bufferByteSource(fixture.bytes, 4096),
       );
       expect(container.sections[0]).toMatchObject({
         name: ".data",
