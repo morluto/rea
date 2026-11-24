@@ -2,7 +2,7 @@
 ---
 
 
-## [6.11.0](https://github.com/morluto/rea/compare/rea-agents-6.10.1...rea-agents-6.11.0) (2026-11-23)
+## [6.11.0](https://github.com/morluto/rea/compare/rea-agents-6.10.1...rea-agents-6.11.0) (2026-11-24)
 
 
 ### ⚠ BREAKING CHANGES
@@ -228,6 +228,7 @@
 * **javascript:** preserve Webpack slots outside finite writes ([#13006](https://github.com/morluto/rea/issues/13006)) ([91a68a8](https://github.com/morluto/rea/commit/91a68a8b7cd374b0b5a09cf5b57b05b8bb304162))
 * **javascript:** qualify response consumers with uncertain receivers ([a8d714f](https://github.com/morluto/rea/commit/a8d714f0e31f976df4efb2ed47bf9dfa90a86d0c))
 * **javascript:** read the target of method-first request(method, url) calls ([73bc6f4](https://github.com/morluto/rea/commit/73bc6f48c72d02069ef7a3e4f73869cbeeff11bc))
+* **javascript:** record the collapsed-query resource limit on observations ([#14220](https://github.com/morluto/rea/issues/14220)) ([df6454c](https://github.com/morluto/rea/commit/df6454c3fd9092954078501f133d784a57ea49b3))
 * **javascript:** reject an http method token Node refuses at the call site ([adf186d](https://github.com/morluto/rea/commit/adf186d5ffb831fb674aa02e5323e579d8710e9c))
 * **javascript:** report no loader call in a program that names no CommonJS loader ([#14191](https://github.com/morluto/rea/issues/14191)) ([998512e](https://github.com/morluto/rea/commit/998512eeb86a682f104e6ac80217c61be292ee9f)), closes [#14190](https://github.com/morluto/rea/issues/14190)
 * **javascript:** resolve literal spreads and const aliases in kill signals ([4bcd0d8](https://github.com/morluto/rea/commit/4bcd0d864a82c89a15c1152516bf0c46fd224731))
