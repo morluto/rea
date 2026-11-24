@@ -82,4 +82,4 @@ ${decoys}
   expect(overgeneration[0]).toContain("context-bridge");
   // The limitation is advisory; unowned claims still keep the ledger short of ready.
   expect(ledger.status).not.toBe("ready");
-}, 60_000);
+});

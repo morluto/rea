@@ -107,17 +107,20 @@ export const evaluateReconstructionObligationLedger = ({
     orphanManifestIds,
     evidenceLinks.filter((id) => !records.has(id)).length,
   );
-  // Over-generation is advisory: it is listed but never bounds coverage or
-  // closure, which read only the closure limitations.
+  // Over-generation is advisory: it is listed with its kind but never bounds
+  // coverage or closure, which count only the closure limitations.
   const limitations = [
-    ...new Set([
-      ...closureLimitations,
-      ...reconstructionObligationOvergeneration(obligations).map(
-        reconstructionObligationOvergenerationLimitation,
-      ),
-    ]),
-  ].sort();
-  const coverage = reconstructionObligationCoverage(closureLimitations);
+    ...closureLimitations.map((text) => ({ text, kind: "closure" as const })),
+    ...reconstructionObligationOvergeneration(obligations).map(
+      (overgeneration) => ({
+        text: reconstructionObligationOvergenerationLimitation(overgeneration),
+        kind: "obligation-overgeneration" as const,
+      }),
+    ),
+  ].sort((left, right) =>
+    left.text < right.text ? -1 : left.text > right.text ? 1 : 0,
+  );
+  const coverage = reconstructionObligationCoverage(closureLimitations.length);
   const semantic = {
     coverage,
     summary: summarizeReconstructionObligations(obligations),
@@ -126,11 +129,12 @@ export const evaluateReconstructionObligationLedger = ({
     dependency_graph: dependencyGraph,
     obligations,
     evidence_links: evidenceLinks,
-    limitations,
+    limitations: limitations.map(({ text }) => text),
+    limitation_kinds: limitations.map(({ kind }) => kind),
   };
   const status = reconstructionObligationLedgerStatus(
     obligations,
-    closureLimitations,
+    closureLimitations.length,
   );
   const closureDigest = reconstructionObligationLedgerClosureDigest({
     status,
@@ -230,14 +234,29 @@ const evaluateObligation = (
   const diagnostics: Diagnostic[] = [];
   // A retired claim keeps its facts and contradictions visible but demands no
   // owner, fixture, original case, or authority; that work is not required.
-  const retired = retiresObligation(candidate.disposition);
-  if (candidate.definitionCount > 1)
+  // A contested definition applies no retirement, as for any other duplicate:
+  // every retiring record's reason stays visible as a competing definition.
+  const contested = candidate.definitionCount > 1;
+  const retired = retiresObligation(candidate.disposition) && !contested;
+  const competingRetirements =
+    contested &&
+    retiresObligation(candidate.disposition) &&
+    candidate.dispositionReason !== null
+      ? [
+          ...candidate.competingRetirements,
+          {
+            disposition: candidate.disposition,
+            reason: candidate.dispositionReason,
+          },
+        ]
+      : candidate.competingRetirements;
+  if (contested)
     addDiagnostic(
       diagnostics,
       "duplicate-definition",
       "Multiple candidate definitions share this obligation ID.",
     );
-  for (const { disposition, reason } of candidate.competingRetirements)
+  for (const { disposition, reason } of competingRetirements)
     addDiagnostic(
       diagnostics,
       "duplicate-definition",
@@ -273,7 +292,7 @@ const evaluateObligation = (
     );
     evaluateAuthority(candidate, originalCases, context, diagnostics);
   }
-  evaluateDisposition(candidate, diagnostics);
+  evaluateDisposition(candidate, retired, diagnostics);
   diagnostics.push(
     ...contradictionDiagnostics(
       candidate.obligation_id,
@@ -514,6 +533,7 @@ const evaluateAuthority = (
 
 const evaluateDisposition = (
   candidate: ReconstructionObligationCandidate,
+  retired: boolean,
   diagnostics: Diagnostic[],
 ): void => {
   if (candidate.disposition === "blocked")
@@ -522,6 +542,7 @@ const evaluateDisposition = (
       "blocked",
       "Reviewed disposition marks this obligation blocked.",
     );
+  if (!retired) return;
   if (candidate.disposition === "out-of-scope")
     addDiagnostic(
       diagnostics,

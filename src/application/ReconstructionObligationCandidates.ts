@@ -71,8 +71,20 @@ export const deriveReconstructionObligationCandidates = (
   const reviewed = request.reviewedObligations
     .map((obligation) => ({ key: reviewedOrderKey(obligation), obligation }))
     .sort((left, right) => compareUnicodeCodePoints(left.key, right.key));
-  for (const { obligation } of reviewed)
-    addCandidate(candidates, reviewedCandidate(obligation, records));
+  const reviewCounts = new Map<string, number>();
+  for (const { obligation_id: id } of request.reviewedObligations)
+    reviewCounts.set(id, (reviewCounts.get(id) ?? 0) + 1);
+  for (const { obligation } of reviewed) {
+    // A merged definition keeps the first definition's target, so review
+    // Evidence is tied to that artifact.
+    const target =
+      candidates.get(obligation.obligation_id)?.target ?? obligation.target;
+    addCandidate(
+      candidates,
+      reviewedCandidate(obligation, records, target.artifact_sha256),
+      reviewCounts.get(obligation.obligation_id) === 1,
+    );
+  }
   return {
     candidates: [...candidates.values()].sort((left, right) =>
       compareUnicodeCodePoints(left.obligation_id, right.obligation_id),
@@ -397,6 +409,7 @@ const splitReviewedObligation = (
 const reviewedCandidate = (
   obligation: ReviewedReconstructionObligation,
   records: ReadonlyMap<string, Evidence>,
+  artifactSha256: string | null,
 ): ReconstructionObligationCandidate => {
   const { definition, reviewEvidenceIds, disposition, dispositionReason } =
     splitReviewedObligation(obligation);
@@ -412,7 +425,7 @@ const reviewedCandidate = (
       return {
         evidence_id: evidenceId,
         authority: evidence.authority,
-        state: reviewedEvidenceState(evidence),
+        state: reviewedEvidenceState(evidence, artifactSha256),
         location: `/evidence/${evidenceId}`,
       };
     }),
@@ -457,39 +470,58 @@ const graphReference = (
   };
 };
 
+/**
+ * Runtime Evidence cited by a review is authority only for the artifact it
+ * observes: when the obligation names a target artifact, Evidence observing
+ * another (or no known) artifact is `other-artifact`.
+ */
 const reviewedEvidenceState = (
   evidence: Evidence,
+  artifactSha256: string | null,
 ): ReconstructionObligation["authority_references"][number]["state"] => {
-  if (evidenceSupportsOriginalAuthority(evidence, "process")) return "observed";
   if (
-    evidence.authority === "external-service" &&
-    evidence.confidence === "observed"
+    evidenceSupportsOriginalAuthority(evidence, "process") ||
+    (evidence.authority === "external-service" &&
+      evidence.confidence === "observed")
   )
-    return "observed";
+    return artifactSha256 === null ||
+      observedArtifactSha256(evidence) === artifactSha256
+      ? "observed"
+      : "other-artifact";
   if (evidence.authority === "shipped-artifact") return "candidate";
   return "reviewed";
+};
+
+/** The artifact an Evidence record observes, when it names one. */
+const observedArtifactSha256 = (evidence: Evidence): string | null => {
+  const capture = parseProcessCaptureEvidence(evidence);
+  if (capture.ok) return capture.value.capture.manifest.executable_sha256;
+  const { identity } = evidence.subject;
+  return identity.kind === "file" ? identity.sha256 : null;
 };
 
 const addCandidate = (
   candidates: Map<string, ReconstructionObligationCandidate>,
   candidate: ReconstructionObligationCandidate,
+  soleReview = false,
 ): void => {
   const current = candidates.get(candidate.obligation_id);
   if (current === undefined) {
     candidates.set(candidate.obligation_id, candidate);
     return;
   }
-  // A retiring reviewed record that names a generated ID reviews that
-  // generated claim: its disposition, reason, and next steps apply to the
-  // generated definition, which is kept rather than redefined. A second
-  // retiring record, or one for another obligation version, competes with
-  // the definition instead of overwriting the first review.
+  // The only reviewed record for a generated ID, when it retires that claim,
+  // reviews it: its disposition, reason, and next steps apply to the
+  // generated definition, which is kept rather than redefined. A retiring
+  // record beside another reviewed record for the ID, or one for another
+  // obligation version, competes with the definition instead, so no
+  // retirement applies, whatever the records' order.
   const reviewsGenerated =
     current.origin === "generated" && candidate.origin === "reviewed";
   const retiresGenerated =
     reviewsGenerated &&
+    soleReview &&
     retiresObligation(candidate.disposition) &&
-    !retiresObligation(current.disposition) &&
     candidate.obligation_version === current.obligation_version;
   // A retiring record that is not applied keeps its reason visible on the
   // competing-definition diagnostic instead of being dropped.

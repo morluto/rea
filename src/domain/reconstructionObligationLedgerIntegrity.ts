@@ -2,7 +2,6 @@ import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { evidenceAuthoritySchema } from "./evidence.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import { uniqueSorted } from "./canonicalOrdering.js";
 
 import type {
   ReconstructionObligation,
@@ -49,11 +48,15 @@ export const summarizeReconstructionObligations = (
     ],
     ({ application_layer }) => application_layer,
   ),
+  // Evidence that observes another artifact is listed but is not authority
+  // for this obligation, so it is not counted.
   by_evidence_authority: countBy(
     obligations,
     evidenceAuthoritySchema.options,
     ({ authority_references: references }) =>
-      references.map(({ authority }) => authority),
+      references.flatMap(({ authority, state }) =>
+        state === "other-artifact" ? [] : [authority],
+      ),
   ),
   by_source_state: countBy(
     obligations,
@@ -92,35 +95,57 @@ export interface ReconstructionObligationOvergeneration {
 export const reconstructionObligationOvergeneration = (
   obligations: readonly ReconstructionObligation[],
 ): ReconstructionObligationOvergeneration[] => {
-  const unboundByArtifact = new Map<string, ReconstructionObligation[]>();
-  for (const obligation of obligations) {
-    const sha256 = obligation.target.artifact_sha256;
-    if (
-      sha256 === null ||
+  // One pass: each artifact's tally is created once and updated in place.
+  const tallies = foldByKey(
+    obligations,
+    (obligation) =>
       obligation.origin !== "generated" ||
       obligation.binding !== null ||
       obligation.source_state === "observed" ||
       obligation.required_original_authority === "static"
-    )
-      continue;
-    const group = unboundByArtifact.get(sha256);
-    if (group === undefined) unboundByArtifact.set(sha256, [obligation]);
-    else group.push(obligation);
+        ? null
+        : obligation.target.artifact_sha256,
+    () => ({ total: 0, retired: 0, families: new Set<string>() }),
+    (tally, { status, family }) => {
+      tally.total += 1;
+      if (status === "out-of-scope") tally.retired += 1;
+      tally.families.add(family);
+    },
+  );
+  return [...tallies]
+    .filter(([, { total }]) => total > OBLIGATION_OVERGENERATION_THRESHOLD)
+    .map(([artifactSha256, { total, retired, families }]) => ({
+      artifactSha256,
+      total,
+      retired,
+      unreviewed: total - retired,
+      families: [...families].sort(compareUnicodeCodePoints),
+    }));
+};
+
+/**
+ * Fold items into one accumulator per key. Each accumulator is created once,
+ * on its key's first item, and updated in place for every later item, so
+ * grouping never copies a group. Items whose key is null are skipped.
+ */
+export const foldByKey = <Item, Key, Accumulator>(
+  items: readonly Item[],
+  keyOf: (item: Item) => Key | null,
+  create: () => Accumulator,
+  add: (accumulator: Accumulator, item: Item) => void,
+): Map<Key, Accumulator> => {
+  const accumulators = new Map<Key, Accumulator>();
+  for (const item of items) {
+    const key = keyOf(item);
+    if (key === null) continue;
+    let accumulator = accumulators.get(key);
+    if (accumulator === undefined) {
+      accumulator = create();
+      accumulators.set(key, accumulator);
+    }
+    add(accumulator, item);
   }
-  return [...unboundByArtifact]
-    .filter(([, group]) => group.length > OBLIGATION_OVERGENERATION_THRESHOLD)
-    .map(([artifactSha256, group]) => {
-      const retired = group.filter(
-        ({ status }) => status === "out-of-scope",
-      ).length;
-      return {
-        artifactSha256,
-        total: group.length,
-        retired,
-        unreviewed: group.length - retired,
-        families: uniqueSorted(group.map(({ family }) => family)),
-      };
-    });
+  return accumulators;
 };
 
 /** Render the advisory limitation for one over-generated artifact. */
@@ -134,35 +159,56 @@ export const reconstructionObligationOvergenerationLimitation = ({
   `obligation-overgeneration: artifact ${artifactSha256} has ${String(total)} generated obligations with no runtime authority and no manifest binding (families: ${families.join(", ")}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(unreviewed)} still unreviewed, ${String(retired)} retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`;
 
 /**
- * A retained ledger's limitations without the advisory ones its obligations
- * imply. The advisory text is re-derived from the obligations, not parsed.
+ * Kind of one ledger limitation. Only `closure` limitations bound coverage
+ * and status; `obligation-overgeneration` is advisory. The sentence is display
+ * text only and is never matched to find the kind.
  */
-export const reconstructionObligationClosureLimitations = (
+export type ReconstructionObligationLimitationKind = NonNullable<
+  ReconstructionObligationLedger["limitation_kinds"]
+>[number];
+
+/**
+ * Every count of closure-bounding limitations consistent with a retained
+ * ledger. Recorded kinds decide it exactly. A ledger without kinds was
+ * retained before they were recorded, and its kinds are derived from its
+ * obligations, never from its sentences: either it predates advisory
+ * limitations, so every limitation bounds closure, or it lists one advisory
+ * limitation per over-generated artifact its obligations imply.
+ */
+export const reconstructionObligationClosureLimitationCounts = (
   obligations: readonly ReconstructionObligation[],
   limitations: readonly string[],
-): string[] => {
-  const advisory = new Set(
-    reconstructionObligationOvergeneration(obligations).map(
-      reconstructionObligationOvergenerationLimitation,
-    ),
-  );
-  return limitations.filter((limitation) => !advisory.has(limitation));
+  kinds: readonly ReconstructionObligationLimitationKind[] | undefined,
+): number[] => {
+  if (kinds !== undefined) {
+    let closure = 0;
+    for (const kind of kinds) if (kind === "closure") closure += 1;
+    return [closure];
+  }
+  const advisory = reconstructionObligationOvergeneration(obligations).length;
+  return [
+    ...new Set([
+      limitations.length,
+      Math.max(0, limitations.length - advisory),
+    ]),
+  ];
 };
 
 /**
  * Derive closure status from required obligations, their diagnostic facts,
- * and the limitations that bound closure (advisory limitations excluded).
+ * and the number of limitations that bound closure (advisory ones excluded).
  */
 export const reconstructionObligationLedgerStatus = (
   obligations: readonly ReconstructionObligation[],
-  limitations: readonly string[],
+  closureLimitationCount: number,
 ): ReconstructionObligationLedger["status"] => {
   if (obligations.length === 0) return "unknown";
   const requiredOpen = obligations.filter(
     ({ required, status }) => required && status !== "verified",
   );
-  // A retired claim reports its disposition status, not "contradicted", yet
-  // its authenticated contradiction stays visible and still fails closure.
+  // A retired claim reports its disposition status, not "contradicted" or
+  // "unknown", yet the diagnostics behind those statuses stay visible and
+  // still decide closure, so retiring a claim never improves the ledger.
   if (
     requiredOpen.some(
       ({ status, diagnostics }) =>
@@ -173,16 +219,34 @@ export const reconstructionObligationLedgerStatus = (
     )
   )
     return "failed";
-  if (limitations.length > 0) return "unknown";
-  if (requiredOpen.some(({ status }) => status === "unknown")) return "unknown";
+  if (closureLimitationCount > 0) return "unknown";
+  if (
+    requiredOpen.some(
+      ({ status, diagnostics }) =>
+        status === "unknown" ||
+        hasReconstructionObligationDiagnostic(
+          diagnostics,
+          "duplicate-definition",
+        ) ||
+        hasReconstructionObligationDiagnostic(
+          diagnostics,
+          "residual-unknown",
+        ) ||
+        hasReconstructionObligationDiagnostic(
+          diagnostics,
+          "unavailable-authority",
+        ),
+    )
+  )
+    return "unknown";
   return requiredOpen.length === 0 ? "ready" : "open";
 };
 
-/** Coverage from the limitations that bound closure (advisory ones excluded). */
+/** Coverage from the number of limitations that bound closure. */
 export const reconstructionObligationCoverage = (
-  limitations: readonly string[],
+  closureLimitationCount: number,
 ): ReconstructionObligationLedger["coverage"] => ({
-  status: limitations.length === 0 ? "complete" : "partial",
+  status: closureLimitationCount === 0 ? "complete" : "partial",
 });
 
 export const reconstructionObligationReports = (
@@ -287,6 +351,7 @@ export const reconstructionObligationLedgerClosureDigest = (ledger: {
   readonly obligations: ReconstructionObligationLedger["obligations"];
   readonly evidence_links: ReconstructionObligationLedger["evidence_links"];
   readonly limitations: ReconstructionObligationLedger["limitations"];
+  readonly limitation_kinds?: ReconstructionObligationLedger["limitation_kinds"];
 }): string =>
   digestCanonicalValue(
     {
@@ -300,6 +365,11 @@ export const reconstructionObligationLedgerClosureDigest = (ledger: {
       obligations: ledger.obligations,
       evidence_links: ledger.evidence_links,
       limitations: ledger.limitations,
+      // Absent from ledgers retained before kinds were recorded, whose
+      // commitment therefore stays unchanged.
+      ...(ledger.limitation_kinds === undefined
+        ? {}
+        : { limitation_kinds: ledger.limitation_kinds }),
     },
     "Reconstruction obligation ledger",
   );

@@ -246,10 +246,20 @@ the generated `required` value is kept, so a retired required obligation stays
 required. The generated `source_state` is kept too: review Evidence is
 attached, but an observed process or service record cited by the review does
 not make the generated claim `observed`. The record must name the generated
-`obligation_version`, and only one retiring record may review a generated ID;
-a second retiring record, or one for another version, is a competing
-definition reported as `duplicate-definition` rather than a retirement, and
-the result does not depend on the order the records are listed.
+`obligation_version` and must be the only reviewed record for that ID. When
+another reviewed record names the same ID, whether retiring, `active`, or
+`blocked`, or the record names another version, no retirement applies: like
+any other duplicate, the claim reports `duplicate-definition`, keeps status
+`unknown`, and keeps demanding its closure work. Each retiring record's
+disposition and reason stay in a `duplicate-definition` diagnostic, and the
+result does not depend on the order the records are listed.
+
+Observed runtime Evidence cited by a review is authority only for the
+artifact it observes. When the obligation names a target artifact, a cited
+process capture or other observed runtime record for another artifact, or for
+no known artifact, is listed with reference `state` `other-artifact`: it does
+not satisfy the obligation's original authority, so `static-only` remains, and
+`summary.by_evidence_authority` does not count it.
 
 ```json
 {
@@ -399,12 +409,13 @@ retiring claims never makes a ledger `ready`. Proof that was supplied for a
 retired obligation is still checked: a failing fixture or verifier proof on
 its binding reports `fixture-failed` or `verifier-failed` and fails the
 ledger. An authenticated contradiction on a retired obligation reports a
-`contradiction` diagnostic and also fails the ledger. Residual unknowns,
-unavailable authority, and competing reviewed definitions remain visible on
-it. When several retiring records name one obligation, only the first in
-canonical order (not input order) is applied; each other one is reported as a
+`contradiction` diagnostic and also fails the ledger. Residual unknowns and
+unavailable authority remain visible on it and keep the ledger `unknown`, as
+they would on an unretired claim, so retiring a claim never improves the
+ledger status. A contested retirement is not applied: when several reviewed
+records name one obligation, every retiring one is reported as a
 `duplicate-definition` diagnostic that carries its disposition and reason, so
-no review reason is dropped.
+no review reason is dropped, and the obligation stays `unknown`.
 
 ### Over-generation
 
@@ -424,7 +435,13 @@ it. Every candidate is still listed, and the limitation tells agents to stop
 fixture work on those candidates until runtime authority or reviewed
 dispositions cover the still-unreviewed ones. The limitation is advisory: it
 reports a count, not truncation, so it changes neither `coverage.status` nor
-the ledger `status`. A large real application with a complete graph can cross
+the ledger `status`. `limitation_kinds` names the kind of each limitation in
+`limitations` order: `closure` limitations bound coverage and status, and
+`obligation-overgeneration` ones do not. The sentence is display text only;
+rewording it never changes coverage or status. A ledger retained before
+`limitation_kinds` existed has no such field; its kinds are then derived from
+its obligations, never from its sentences, and its coverage and status are
+read as they were when it was written. A large real application with a complete graph can cross
 the threshold and keep `complete` coverage. A fully retired artifact still
 never reaches `ready`: retired obligations stay required and open, so
 retiring every decoy does not close the ledger, and the artifact stays
@@ -502,12 +519,14 @@ The `summary` counts obligations. `by_status`, `by_application_layer`, and
 `by_source_state` place each obligation in exactly one bucket.
 `by_evidence_authority` groups obligations by the Evidence `authority` of their
 `authority_references`: an obligation counts once under each distinct authority
-it cites, so those counts can exceed `total`. A reference's own `state` and the
-obligation's `source_state` do not affect its authority bucket.
+it cites, so those counts can exceed `total`. A reference whose `state` is
+`other-artifact` observes another artifact and is not counted. Otherwise a
+reference's own `state` and the obligation's `source_state` do not affect its
+authority bucket.
 
 The tool returns every obligation inline. Its `ledger_id` and `closure_digest`
 identify the complete result, including summaries, reports, ownership and
-dependency graphs, Evidence links, and limitations. A new `closure_digest`
+dependency graphs, Evidence links, limitations, and their kinds. A new `closure_digest`
 identifies a changed ledger; it does not establish that a verifier ran again.
 Applicability is checked against the retained proof's explicit bindings.
 

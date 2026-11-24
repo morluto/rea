@@ -8,12 +8,13 @@ import { evidenceBundleSchema } from "./evidenceBundle.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
-  reconstructionObligationClosureLimitations,
+  reconstructionObligationClosureLimitationCounts,
   reconstructionObligationCoverage,
   reconstructionObligationDependencyGraph,
   reconstructionObligationLedgerClosureDigest,
   reconstructionObligationLedgerStatus,
   reconstructionObligationEvidenceIds,
+  reconstructionObligationOvergeneration,
   reconstructionObligationOwnershipGraph,
   reconstructionObligationReports,
   summarizeReconstructionObligations,
@@ -116,7 +117,11 @@ const obligationTargetSchema = z.strictObject({
 const authorityReferenceSchema = z.strictObject({
   evidence_id: evidenceIdSchema,
   authority: evidenceAuthoritySchema,
-  state: obligationEvidenceStateSchema,
+  state: z
+    .enum([...obligationEvidenceStateSchema.options, "other-artifact"])
+    .describe(
+      "Evidence state for this obligation. other-artifact marks observed runtime Evidence that does not observe the obligation's target artifact; it is listed but is not authority for the obligation.",
+    ),
   location: textSchema,
 });
 
@@ -277,6 +282,8 @@ export const reconstructionObligationSchema = z.strictObject({
   diagnostics: z.array(diagnosticSchema),
 });
 
+const limitationKindSchema = z.enum(["closure", "obligation-overgeneration"]);
+
 const countBySchema = <Schema extends z.ZodType>(
   key: Schema,
 ): z.ZodArray<
@@ -340,7 +347,7 @@ export const reconstructionObligationLedgerSchema = z
       by_status: countBySchema(obligationStatusSchema),
       by_application_layer: countBySchema(obligationLayerSchema),
       by_evidence_authority: countBySchema(evidenceAuthoritySchema).describe(
-        "Obligations per Evidence authority. An obligation counts once under each distinct authority among its authority_references, so counts can sum above total.",
+        "Obligations per Evidence authority. An obligation counts once under each distinct authority among its authority_references, except other-artifact references, so counts can sum above total.",
       ),
       by_source_state: countBySchema(obligationEvidenceStateSchema).describe(
         "Obligations per source_state; each obligation counts once.",
@@ -368,19 +375,47 @@ export const reconstructionObligationLedgerSchema = z
     obligations: z.array(reconstructionObligationSchema),
     evidence_links: z.array(evidenceIdSchema),
     limitations: z.array(textSchema),
+    limitation_kinds: z
+      .array(limitationKindSchema)
+      .exactOptional()
+      .describe(
+        "Kind of each limitation, in limitations order. Only closure limitations bound coverage and status; obligation-overgeneration is advisory. Absent from ledgers retained before kinds were recorded; their kinds are then derived from the obligations.",
+      ),
   })
   .superRefine((ledger, context) => {
-    const closureLimitations = reconstructionObligationClosureLimitations(
+    const kinds = ledger.limitation_kinds;
+    if (kinds !== undefined) {
+      if (kinds.length !== ledger.limitations.length)
+        context.addIssue({
+          code: "custom",
+          path: ["limitation_kinds"],
+          message: "Limitation kinds must name one kind per limitation",
+        });
+      let advisory = 0;
+      for (const kind of kinds)
+        if (kind === "obligation-overgeneration") advisory += 1;
+      if (
+        advisory !==
+        reconstructionObligationOvergeneration(ledger.obligations).length
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["limitation_kinds"],
+          message: "Advisory limitation kinds do not match the obligations",
+        });
+    }
+    const readings = reconstructionObligationClosureLimitationCounts(
       ledger.obligations,
       ledger.limitations,
+      kinds,
+    ).map((count) => ({
+      status: reconstructionObligationLedgerStatus(ledger.obligations, count),
+      coverage: reconstructionObligationCoverage(count).status,
+    }));
+    const statusReadings = readings.filter(
+      ({ status }) => status === ledger.status,
     );
-    if (
-      ledger.status !==
-      reconstructionObligationLedgerStatus(
-        ledger.obligations,
-        closureLimitations,
-      )
-    )
+    if (statusReadings.length === 0)
       context.addIssue({
         code: "custom",
         path: ["status"],
@@ -406,9 +441,11 @@ export const reconstructionObligationLedgerSchema = z
         path: ["closure_digest"],
         message: "Ledger closure digest does not match its contents",
       });
+    // Status and coverage must come from one reading of the limitations.
     if (
-      ledger.coverage.status !==
-      reconstructionObligationCoverage(closureLimitations).status
+      !(statusReadings.length === 0 ? readings : statusReadings).some(
+        ({ coverage }) => coverage === ledger.coverage.status,
+      )
     )
       context.addIssue({
         code: "custom",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type {
+  ReconstructionObligationLedger,
   ReconstructionObligationManifest,
   ReviewedReconstructionObligation,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
@@ -28,6 +29,18 @@ const retired = (
   disposition,
   disposition_reason: reason,
 });
+
+/** The only diagnostic is the retirement, and it carries the caller's reason. */
+const expectOnlyRetirement = (
+  obligation: ReconstructionObligationLedger["obligations"][number] | undefined,
+  code: "out-of-scope" | "not-applicable",
+  reason = REASON,
+): void => {
+  expect(obligation?.diagnostics.map(({ code: actual }) => actual)).toEqual([
+    code,
+  ]);
+  expect(obligation?.diagnostics[0]?.detail).toContain(reason);
+};
 
 /** Binding with an owner but no fixtures, original cases, or verifier. */
 const fixturelessBinding = (
@@ -84,13 +97,8 @@ describe("reconstruction obligation analyst disposition", () => {
         required: true,
         status: "out-of-scope",
         required_next_evidence: ["Bind an owner and verifier."],
-        diagnostics: [
-          {
-            code: "not-applicable",
-            detail: `Reviewed disposition marks this obligation not applicable; it remains visible. Reason: ${REASON}`,
-          },
-        ],
       });
+      expectOnlyRetirement(ledger.obligations[0], "not-applicable");
       expect(
         ledger.obligations[0]?.authority_references.map(
           ({ evidence_id: id }) => id,
@@ -126,13 +134,8 @@ describe("reconstruction obligation analyst disposition", () => {
       origin: "reviewed",
       required: true,
       status: "out-of-scope",
-      diagnostics: [
-        {
-          code: "out-of-scope",
-          detail: `Reviewed disposition marks this obligation out of scope; it remains visible. Reason: ${REASON}`,
-        },
-      ],
     });
+    expectOnlyRetirement(ledger.obligations[0], "out-of-scope");
     expect(ledger.summary.by_status).toContainEqual({
       key: "out-of-scope",
       count: 1,
@@ -392,12 +395,34 @@ describe("reconstruction obligation retired claim proof", () => {
   );
 });
 
+const LEDGER_RANK = { failed: 0, unknown: 1, open: 2, ready: 3 } as const;
+
+/** Build with the reviewed records in both input orders; both must agree. */
+const buildBothOrders = (
+  records: Parameters<typeof request>[0],
+  reviewed: readonly ReviewedReconstructionObligation[],
+): ReconstructionObligationLedger => {
+  const forward = build(
+    request(records, { reviewed_obligations: [...reviewed] }),
+  );
+  expect(
+    build(request(records, { reviewed_obligations: [...reviewed].reverse() })),
+  ).toEqual(forward);
+  return forward;
+};
+
+const codesOf = (
+  obligation: ReconstructionObligationLedger["obligations"][number] | undefined,
+): string[] => [...new Set(obligation?.diagnostics.map(({ code }) => code))];
+
 describe("reconstruction obligation competing retirements", () => {
   it.each([
-    ["different dispositions", "not-applicable"],
-    ["the same disposition", "out-of-scope"],
+    ["an active record", "active"],
+    ["a blocked record", "blocked"],
+    ["a retiring record with the same disposition", "out-of-scope"],
+    ["a retiring record with another disposition", "not-applicable"],
   ] as const)(
-    "reports two retiring records with %s for one generated ID as competing definitions in any order, keeping both reasons",
+    "treats a retiring record beside %s for one generated ID like any other duplicate, in either order",
     (_, secondDisposition) => {
       const capture = processEvidence();
       const review = proofEvidence("double-review");
@@ -410,37 +435,98 @@ describe("reconstruction obligation competing retirements", () => {
         "out-of-scope",
         "First sweep.",
       );
-      const second = retired(
-        generated.obligation_id,
-        review.evidence_id,
-        secondDisposition,
-        "Second sweep.",
+      const second =
+        secondDisposition === "active" || secondDisposition === "blocked"
+          ? {
+              ...reviewedObligation(
+                generated.obligation_id,
+                review.evidence_id,
+              ),
+              disposition: secondDisposition,
+            }
+          : retired(
+              generated.obligation_id,
+              review.evidence_id,
+              secondDisposition,
+              "Second sweep.",
+            );
+      // The plain duplicate path: one active reviewed record for the ID.
+      const plainDuplicate = build(
+        request([capture, review], {
+          reviewed_obligations: [
+            reviewedObligation(generated.obligation_id, review.evidence_id),
+          ],
+        }),
       );
-      const forward = build(
-        request([capture, review], { reviewed_obligations: [first, second] }),
-      );
-      const reversed = build(
-        request([capture, review], { reviewed_obligations: [second, first] }),
-      );
+      const ledger = buildBothOrders([capture, review], [first, second]);
 
-      expect(forward).toEqual(reversed);
-      expect(forward.obligations).toHaveLength(1);
-      expect(forward.obligations[0]).toMatchObject({
+      expect(ledger.obligations).toHaveLength(1);
+      // Same precedence and diagnostic codes as the plain duplicate: no
+      // retirement is applied, so the claim stays unknown and keeps demanding
+      // its closure work.
+      expect(plainDuplicate.obligations[0]?.status).toBe("unknown");
+      expect(ledger.obligations[0]).toMatchObject({
         origin: "generated",
         required: true,
-        status: "out-of-scope",
+        status: "unknown",
       });
-      const diagnostics = forward.obligations[0]?.diagnostics ?? [];
-      expect(diagnostics.map(({ code }) => code)).toContain(
-        "duplicate-definition",
+      expect(codesOf(ledger.obligations[0])).toEqual(
+        codesOf(plainDuplicate.obligations[0]),
       );
-      // Neither review silently wins: each reason stays in a diagnostic.
-      for (const reason of ["First sweep.", "Second sweep."])
+      expect(codesOf(ledger.obligations[0])).not.toContain("out-of-scope");
+      expect(codesOf(ledger.obligations[0])).not.toContain("not-applicable");
+      // No review silently wins: each retiring reason stays in a
+      // duplicate-definition diagnostic.
+      const reasons =
+        second.disposition === "out-of-scope" ||
+        second.disposition === "not-applicable"
+          ? ["First sweep.", "Second sweep."]
+          : ["First sweep."];
+      for (const reason of reasons)
         expect(
-          diagnostics.filter(({ detail }) => detail.includes(reason)),
+          ledger.obligations[0]?.diagnostics.filter(
+            ({ code, detail }) =>
+              code === "duplicate-definition" && detail.includes(reason),
+          ),
         ).toHaveLength(1);
-      expect(forward.summary).toMatchObject({ required: 1, required_open: 1 });
-      expect(forward.status).toBe("open");
+      expect(ledger.summary).toMatchObject({ required: 1, required_open: 1 });
+      expect(ledger.status).toBe("unknown");
+      expect(ledger.status).toBe(plainDuplicate.status);
+    },
+  );
+
+  it.each([
+    ["an active record", "active"],
+    ["a retiring record", "not-applicable"],
+  ] as const)(
+    "does not retire a reviewed obligation defined again by %s, in either order",
+    (_, secondDisposition) => {
+      const review = proofEvidence("reviewed-duplicate");
+      const first = retired(
+        "obl.review.twice",
+        review.evidence_id,
+        "out-of-scope",
+      );
+      const second =
+        secondDisposition === "active"
+          ? reviewedObligation("obl.review.twice", review.evidence_id)
+          : retired(
+              "obl.review.twice",
+              review.evidence_id,
+              secondDisposition,
+              "Second sweep.",
+            );
+      const ledger = buildBothOrders([review], [first, second]);
+
+      expect(ledger.obligations).toHaveLength(1);
+      expect(ledger.obligations[0]).toMatchObject({
+        origin: "reviewed",
+        status: "unknown",
+      });
+      expect(codesOf(ledger.obligations[0])).toContain("duplicate-definition");
+      expect(codesOf(ledger.obligations[0])).not.toContain("out-of-scope");
+      expect(codesOf(ledger.obligations[0])).not.toContain("not-applicable");
+      expect(ledger.status).toBe("unknown");
     },
   );
 
@@ -476,6 +562,50 @@ describe("reconstruction obligation competing retirements", () => {
     expect(codes).toContain("duplicate-definition");
     expect(codes).not.toContain("not-applicable");
     expect(ledger.status).toBe("unknown");
+  });
+});
+
+describe("reconstruction obligation retirement never improves the ledger", () => {
+  it("keeps the ledger unknown when a claim with unavailable authority is retired, in either order", () => {
+    const capture = processEvidence({
+      residual_unknowns: [{ scope: "network", reason: "Second run only." }],
+    });
+    const review = proofEvidence("unknown-review");
+    const sibling = reviewedObligation(
+      "obl.review.sibling",
+      review.evidence_id,
+    );
+    const before = build(
+      request([capture, review], { reviewed_obligations: [sibling] }),
+    );
+    const generated = before.obligations.find(
+      ({ origin }) => origin === "generated",
+    );
+    if (generated === undefined) throw new Error("Expected process obligation");
+    const after = buildBothOrders(
+      [capture, review],
+      [
+        retired(generated.obligation_id, review.evidence_id, "out-of-scope"),
+        sibling,
+      ],
+    );
+
+    expect(generated.status).toBe("unknown");
+    expect(before.status).toBe("unknown");
+    // The retired claim reports out-of-scope, but its unavailable authority
+    // stays visible and still keeps closure unknown rather than open.
+    const retiredClaim = after.obligations.find(
+      ({ obligation_id: id }) => id === generated.obligation_id,
+    );
+    expect(retiredClaim).toMatchObject({
+      required: true,
+      status: "out-of-scope",
+    });
+    expect(codesOf(retiredClaim)).toContain("unavailable-authority");
+    expect(after.status).toBe("unknown");
+    expect(LEDGER_RANK[after.status]).toBeLessThanOrEqual(
+      LEDGER_RANK[before.status],
+    );
   });
 });
 

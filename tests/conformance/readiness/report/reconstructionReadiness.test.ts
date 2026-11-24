@@ -552,7 +552,7 @@ describe("readiness failure semantics", () => {
     const uncommitted = {
       ...value.obligation_ledger,
       obligations,
-      status: reconstructionObligationLedgerStatus(obligations, []),
+      status: reconstructionObligationLedgerStatus(obligations, 0),
       summary: summarizeReconstructionObligations(obligations),
     };
     value.obligation_ledger = {

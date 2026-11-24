@@ -14,13 +14,21 @@ import {
   request,
   reviewedObligation,
 } from "./ReconstructionObligationLedger.fixture.js";
-import { OBLIGATION_OVERGENERATION_THRESHOLD } from "../domain/reconstructionObligationLedgerIntegrity.js";
-import { describe, expect, it } from "vitest";
+import {
+  OBLIGATION_OVERGENERATION_THRESHOLD,
+  reconstructionObligationLedgerClosureDigest,
+  reconstructionObligationOvergeneration,
+  reconstructionObligationOvergenerationLimitation,
+} from "../domain/reconstructionObligationLedgerIntegrity.js";
+import { describe, expect, it, vi } from "vitest";
 
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 import type { ApplicationNode } from "../domain/javascript/javascriptApplicationGraphSchemas.js";
-import type { ReconstructionObligationLedger } from "../domain/reconstructionObligationLedgerSchemas.js";
+import {
+  reconstructionObligationLedgerSchema,
+  type ReconstructionObligationLedger,
+} from "../domain/reconstructionObligationLedgerSchemas.js";
 import {
   emptyUnverifiedProcessCapture,
   FINALIZED_PROCESS_CAPTURE_EXAMPLE,
@@ -294,38 +302,61 @@ const decoyApplication = (count: number) =>
     Array.from({ length: count }, (_, index) => `decoy-${String(index)}`),
     { kind: "ipc-channel", label: "decoy:channel" },
   );
+/** Advisory limitations, selected by their recorded kind. */
 const overgeneration = (ledger: ReconstructionObligationLedger) =>
-  ledger.limitations.filter((limitation) =>
-    limitation.startsWith("obligation-overgeneration:"),
+  ledger.limitations.filter(
+    (_, index) =>
+      ledger.limitation_kinds?.[index] === "obligation-overgeneration",
   );
-/** Generated, unbound claims that still need runtime authority. */
+/**
+ * Over-generation facts derived from the obligations. The listed advisory
+ * text must be exactly what the owning formatter renders for them.
+ */
+const overgenerationFacts = (ledger: ReconstructionObligationLedger) => {
+  const facts = reconstructionObligationOvergeneration(ledger.obligations);
+  expect(overgeneration(ledger)).toEqual(
+    facts.map(reconstructionObligationOvergenerationLimitation),
+  );
+  return facts;
+};
+/** A generated, unbound claim that still needs runtime authority. */
+const isStaticUnbound = ({
+  origin,
+  binding,
+  source_state: sourceState,
+  required_original_authority: originalAuthority,
+}: ReconstructionObligationLedger["obligations"][number]) =>
+  origin === "generated" &&
+  binding === null &&
+  sourceState !== "observed" &&
+  originalAuthority !== "static";
 const staticUnbound = (ledger: ReconstructionObligationLedger) =>
-  ledger.obligations.filter(
-    ({
-      origin,
-      binding,
-      source_state: sourceState,
-      required_original_authority: originalAuthority,
-    }) =>
-      origin === "generated" &&
-      binding === null &&
-      sourceState !== "observed" &&
-      originalAuthority !== "static",
-  ).length;
+  ledger.obligations.filter(isStaticUnbound).length;
 /** Families the limitation names: static-authority families are not counted. */
 const countedFamilies = (ledger: ReconstructionObligationLedger) =>
   [
     ...new Set(
       ledger.obligations
         .filter(
-          ({ required_original_authority: authority }) =>
-            authority !== "static",
+          ({ required_original_authority: authority, target }) =>
+            authority !== "static" &&
+            target.artifact_sha256 === APPLICATION_GRAPH_DIGESTS.asar,
         )
         .map(({ family }) => family),
     ),
-  ]
-    .sort()
-    .join(", ");
+  ].sort();
+/** Expected facts for the flooded root artifact. */
+const rootFacts = (
+  ledger: ReconstructionObligationLedger,
+  total: number,
+  retired: number,
+) => ({
+  artifactSha256: APPLICATION_GRAPH_DIGESTS.asar,
+  total,
+  retired,
+  unreviewed: total - retired,
+  families: countedFamilies(ledger),
+});
 
 describe("reconstruction obligation over-generation", () => {
   it("reports one artifact-level limitation only above the threshold and keeps every candidate", () => {
@@ -358,12 +389,13 @@ describe("reconstruction obligation over-generation", () => {
     expect(ledger.obligations).toHaveLength(
       base.obligations.length + flooded.unknownNodes.length,
     );
-    expect(overgeneration(ledger)).toEqual([
-      `obligation-overgeneration: artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} generated obligations with no runtime authority and no manifest binding (families: ${countedFamilies(ledger)}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} still unreviewed, 0 retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`,
+    expect(overgenerationFacts(ledger)).toEqual([
+      rootFacts(ledger, OBLIGATION_OVERGENERATION_THRESHOLD + 1, 0),
     ]);
     // The graph is complete and nothing was truncated, so the count alone is
     // advisory: coverage and closure match the ledger just below the threshold.
     expect(ledger.limitations).toEqual(overgeneration(ledger));
+    expect(ledger.limitation_kinds).toEqual(["obligation-overgeneration"]);
     expect(atThreshold.limitations).toEqual([]);
     expect(ledger.coverage.status).toBe("complete");
     expect(ledger.status).toBe(atThreshold.status);
@@ -395,32 +427,27 @@ describe("reconstruction obligation over-generation", () => {
       }),
     );
     // Retired decoys stay in the count: retiring cannot erase the signal.
-    expect(overgeneration(ledger)).toHaveLength(1);
-    expect(overgeneration(ledger)[0]).toContain(
-      `has ${String(total)} generated obligations`,
-    );
-    expect(overgeneration(ledger)[0]).toContain(
-      `; ${String(OBLIGATION_OVERGENERATION_THRESHOLD)} still unreviewed, ${String(surplus)} retired by reviewed disposition.`,
-    );
+    expect(overgenerationFacts(ledger)).toEqual([
+      rootFacts(ledger, total, surplus),
+    ]);
     expect(ledger.status).toBe("open");
     expect(ledger.obligations).toHaveLength(open.obligations.length);
-    for (const decoy of decoys)
-      expect(
-        ledger.obligations.find(
-          ({ obligation_id: id }) => id === decoy.obligation_id,
-        ),
-      ).toMatchObject({
+    for (const decoy of decoys) {
+      const retiredDecoy = ledger.obligations.find(
+        ({ obligation_id: id }) => id === decoy.obligation_id,
+      );
+      expect(retiredDecoy).toMatchObject({
         origin: "generated",
         required: true,
         status: "out-of-scope",
-        diagnostics: [
-          {
-            code: "not-applicable",
-            detail:
-              "Reviewed disposition marks this obligation not applicable; it remains visible. Reason: Decoy channel in dead code.",
-          },
-        ],
       });
+      expect(retiredDecoy?.diagnostics.map(({ code }) => code)).toEqual([
+        "not-applicable",
+      ]);
+      expect(retiredDecoy?.diagnostics[0]?.detail).toContain(
+        "Decoy channel in dead code.",
+      );
+    }
     const retained = new Set(decoys.map(({ obligation_id: id }) => id));
     expect(
       ledger.obligations
@@ -474,9 +501,8 @@ describe("reconstruction obligation over-generation", () => {
     expect(ledger.status).not.toBe("ready");
     expect(ledger.status).toBe("open");
     expect(ledger.limitations).toEqual(overgeneration(ledger));
-    // The advisory text reads exactly as before it was made structured.
-    expect(overgeneration(ledger)).toEqual([
-      `obligation-overgeneration: artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(unbound)} generated obligations with no runtime authority and no manifest binding (families: ${countedFamilies(ledger)}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; 0 still unreviewed, ${String(unbound)} retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`,
+    expect(overgenerationFacts(ledger)).toEqual([
+      rootFacts(ledger, unbound, unbound),
     ]);
   });
 });
@@ -519,13 +545,9 @@ describe("reconstruction obligation over-generation group", () => {
         retiredDecoy?.authority_references.map(({ evidence_id: id }) => id),
       ).toContain(capture.evidence_id);
     }
-    expect(overgeneration(ledger)).toHaveLength(1);
-    expect(overgeneration(ledger)[0]).toContain(
-      `artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(total)} generated obligations`,
-    );
-    expect(overgeneration(ledger)[0]).toContain(
-      `; ${String(total - decoys.length)} still unreviewed, ${String(decoys.length)} retired by reviewed disposition.`,
-    );
+    expect(overgenerationFacts(ledger)).toEqual([
+      rootFacts(ledger, total, decoys.length),
+    ]);
     expect(ledger.status).toBe(open.status);
     expect(ledger.status).not.toBe("ready");
   });
@@ -560,17 +582,13 @@ describe("reconstruction obligation over-generation group", () => {
     );
     // Review provenance is not a runtime observation of the flooded artifact.
     expect(staticUnbound(after)).toBe(total);
-    expect(overgeneration(before)).toHaveLength(1);
-    expect(overgeneration(after)).toHaveLength(1);
-    expect(overgeneration(after)[0]).toContain(
-      `artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(total)} generated obligations`,
-    );
-    expect(overgeneration(after)[0]).toContain(
-      `; 0 still unreviewed, ${String(total)} retired by reviewed disposition.`,
-    );
+    expect(overgenerationFacts(before)).toEqual([rootFacts(before, total, 0)]);
+    expect(overgenerationFacts(after)).toEqual([
+      rootFacts(after, total, total),
+    ]);
     const others = (ledger: ReconstructionObligationLedger) =>
       ledger.limitations.filter(
-        (limitation) => !overgeneration(ledger).includes(limitation),
+        (_, index) => ledger.limitation_kinds?.[index] === "closure",
       );
     expect(others(after)).toEqual(others(before));
     expect(after.coverage.status).toBe(before.coverage.status);
@@ -616,30 +634,29 @@ describe("reconstruction obligation over-generation group", () => {
       );
 
       // Every later review of a generated claim attaches its Evidence without
-      // making the claim look observed, so the decoys stay in the count.
+      // making the claim look observed, so the decoys stay in the count. Two
+      // reviews of one claim compete, so neither retires it.
       for (const decoy of decoys) {
-        const retiredDecoy = ledger.obligations.find(
+        const contestedDecoy = ledger.obligations.find(
           ({ obligation_id: id }) => id === decoy.obligation_id,
         );
-        expect(retiredDecoy).toMatchObject({
+        expect(contestedDecoy).toMatchObject({
           origin: "generated",
-          status: "out-of-scope",
+          status: "unknown",
           source_state: decoy.source_state,
         });
-        expect(retiredDecoy?.source_state).not.toBe("observed");
-        expect(retiredDecoy?.diagnostics.map(({ code }) => code)).toContain(
+        expect(contestedDecoy?.source_state).not.toBe("observed");
+        expect(contestedDecoy?.diagnostics.map(({ code }) => code)).toContain(
           "duplicate-definition",
         );
         expect(
-          retiredDecoy?.authority_references.map(({ evidence_id: id }) => id),
+          contestedDecoy?.authority_references.map(({ evidence_id: id }) => id),
         ).toContain(capture.evidence_id);
       }
-      expect(overgeneration(ledger)).toHaveLength(1);
-      expect(overgeneration(ledger)[0]).toContain(
-        `; ${String(total - decoys.length)} still unreviewed, ${String(decoys.length)} retired by reviewed disposition.`,
-      );
-      expect(ledger.status).toBe(open.status);
-      expect(ledger.status).not.toBe("ready");
+      expect(overgenerationFacts(ledger)).toEqual([
+        rootFacts(ledger, total, 0),
+      ]);
+      expect(ledger.status).toBe("unknown");
       expect(ledger.coverage.status).toBe(open.coverage.status);
     },
   );
@@ -650,13 +667,22 @@ describe("reconstruction obligation over-generation group", () => {
     const total = staticUnbound(ledger);
 
     expect(total).toBeGreaterThanOrEqual(count);
-    expect(overgeneration(ledger)).toHaveLength(1);
-    expect(overgeneration(ledger)[0]).toContain(
-      `artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(total)} generated obligations`,
-    );
-    expect(overgeneration(ledger)[0]).toContain(
-      `; ${String(total)} still unreviewed, 0 retired by reviewed disposition.`,
-    );
+    expect(overgenerationFacts(ledger)).toEqual([rootFacts(ledger, total, 0)]);
+    // Each artifact's group is stored once and updated in place: grouping
+    // that copied the group per obligation would store it once per claim.
+    const set = vi.spyOn(Map.prototype, "set");
+    try {
+      reconstructionObligationOvergeneration(ledger.obligations);
+      expect(set).toHaveBeenCalledTimes(
+        new Set(
+          ledger.obligations
+            .filter(isStaticUnbound)
+            .map(({ target }) => target.artifact_sha256),
+        ).size,
+      );
+    } finally {
+      set.mockRestore();
+    }
   });
 
   it("does not count static-authority native families as lacking runtime authority", () => {
@@ -690,6 +716,224 @@ describe("reconstruction obligation over-generation group", () => {
     );
     expect(overgeneration(ledger)).toEqual([]);
   });
+});
+
+/** Re-commit an edited retained ledger so only the edit is under test. */
+const recommit = <
+  Ledger extends Omit<ReconstructionObligationLedger, "closure_digest">,
+>(
+  ledger: Ledger,
+) => ({
+  ...ledger,
+  closure_digest: reconstructionObligationLedgerClosureDigest(ledger),
+});
+
+describe("reconstruction obligation limitation kinds", () => {
+  /** A flooded artifact, optionally with an orphan manifest entry that bounds closure. */
+  const floodedLedger = (withClosureLimitation: boolean) => {
+    const flooded = decoyApplication(OBLIGATION_OVERGENERATION_THRESHOLD);
+    return build(
+      request(flooded.records, {
+        manifest: {
+          bindings: withClosureLimitation
+            ? [
+                {
+                  obligation_id: "obl.orphan",
+                  owner: {
+                    module_path: "src/orphan.ts",
+                    symbol: "orphan",
+                    owner_sha256: "9".repeat(64),
+                  },
+                  parser_type: null,
+                  original_cases: [],
+                  fixtures: [],
+                  verifier: null,
+                },
+              ]
+            : [],
+          contradictions: [],
+        },
+      }),
+    );
+  };
+  const cases = [
+    ["only an advisory limitation", false],
+    ["an advisory and a closure limitation", true],
+  ] as const;
+
+  it.each(cases)(
+    "records each kind, so a ledger with %s keeps coverage and status when every sentence is reworded",
+    (_, withClosure) => {
+      const ledger = floodedLedger(withClosure);
+      expect(ledger.limitation_kinds).toEqual(
+        expect.arrayContaining(["obligation-overgeneration"]),
+      );
+      expect(ledger.limitation_kinds).toHaveLength(ledger.limitations.length);
+      expect(
+        ledger.limitation_kinds?.filter((kind) => kind === "closure"),
+      ).toHaveLength(withClosure ? 1 : 0);
+      expect(ledger.coverage.status).toBe(withClosure ? "partial" : "complete");
+      expect(ledger.status).toBe(withClosure ? "unknown" : "open");
+
+      const reworded = reconstructionObligationLedgerSchema.parse(
+        recommit({
+          ...ledger,
+          limitations: ledger.limitations.map(
+            (_text, index) => `Reworded limitation ${String(index)}.`,
+          ),
+        }),
+      );
+      expect(reworded.coverage).toEqual(ledger.coverage);
+      expect(reworded.status).toBe(ledger.status);
+    },
+  );
+
+  it.each(cases)(
+    "parses a ledger with %s retained without kinds and keeps its coverage and status",
+    (_, withClosure) => {
+      const {
+        limitation_kinds: _kinds,
+        closure_digest: _digest,
+        ...retained
+      } = floodedLedger(withClosure);
+      const parsed = reconstructionObligationLedgerSchema.parse(
+        recommit(retained),
+      );
+
+      expect(parsed.limitation_kinds).toBeUndefined();
+      expect(parsed.coverage.status).toBe(withClosure ? "partial" : "complete");
+      expect(parsed.status).toBe(withClosure ? "unknown" : "open");
+    },
+  );
+
+  it("parses a ledger retained before advisory limitations with every limitation bounding closure", () => {
+    const ledger = floodedLedger(true);
+    const {
+      limitation_kinds: kinds,
+      closure_digest: _digest,
+      ...retained
+    } = ledger;
+    // Written before over-generation was reported: only the closure
+    // limitation is listed, although the obligations are over-generated.
+    const parsed = reconstructionObligationLedgerSchema.parse(
+      recommit({
+        ...retained,
+        limitations: retained.limitations.filter(
+          (_text, index) => kinds?.[index] === "closure",
+        ),
+      }),
+    );
+
+    expect(
+      reconstructionObligationOvergeneration(parsed.obligations),
+    ).toHaveLength(1);
+    expect(parsed.coverage.status).toBe("partial");
+    expect(parsed.status).toBe("unknown");
+  });
+
+  it("rejects kinds that mark a closure limitation advisory", () => {
+    const ledger = floodedLedger(true);
+    const result = reconstructionObligationLedgerSchema.safeParse(
+      recommit({
+        ...ledger,
+        limitation_kinds: ledger.limitations.map(
+          () => "obligation-overgeneration" as const,
+        ),
+      }),
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map(({ path }) => path)).toContainEqual([
+      "limitation_kinds",
+    ]);
+  });
+});
+
+describe("reconstruction obligation review authority", () => {
+  it.each([
+    ["another artifact", false],
+    ["the obligation's own artifact", true],
+  ] as const)(
+    "grants runtime authority to a non-retiring review citing a process capture of %s only for that artifact",
+    (_, ownArtifact) => {
+      const flooded = decoyApplication(1);
+      const capture = processEvidence();
+      const executable = build(request([capture])).obligations[0]?.target
+        .artifact_sha256;
+      if (executable === undefined || executable === null)
+        throw new Error("Expected the capture's executable artifact");
+      const review = {
+        ...reviewedObligation("obl.review.runtime", capture.evidence_id),
+        target: {
+          artifact_sha256: ownArtifact
+            ? executable
+            : APPLICATION_GRAPH_DIGESTS.asar,
+          application_node_id: null,
+          semantic_node_id: null,
+          location: "/reviewed/runtime",
+        },
+        required_original_authority: "runtime" as const,
+      };
+      const before = build(request([...flooded.records, capture]));
+      const decoy = before.obligations.find(
+        ({ target, required_original_authority: authority }) =>
+          target.application_node_id === flooded.unknownNodes[0]?.node_id &&
+          authority !== "static",
+      );
+      if (decoy === undefined) throw new Error("Expected a decoy obligation");
+      const ledger = build(
+        request([...flooded.records, capture], {
+          reviewed_obligations: [
+            review,
+            // An active review of the generated decoy cites the same capture.
+            reviewedObligation(decoy.obligation_id, capture.evidence_id),
+          ],
+        }),
+      );
+      const reviewed = ledger.obligations.find(
+        ({ obligation_id: id }) => id === review.obligation_id,
+      );
+      const reviewedDecoy = ledger.obligations.find(
+        ({ obligation_id: id }) => id === decoy.obligation_id,
+      );
+      const captureReference = (
+        obligation:
+          | ReconstructionObligationLedger["obligations"][number]
+          | undefined,
+      ) =>
+        obligation?.authority_references.find(
+          ({ evidence_id: id }) => id === capture.evidence_id,
+        );
+      const replayCount = (current: ReconstructionObligationLedger) =>
+        current.summary.by_evidence_authority.find(
+          ({ key }) => key === "controlled-replay",
+        )?.count;
+
+      // The decoy names the application artifact, which the capture does
+      // not observe, so the review grants it no runtime authority.
+      expect(decoy.diagnostics.map(({ code }) => code)).toContain(
+        "static-only",
+      );
+      expect(captureReference(reviewedDecoy)).toMatchObject({
+        authority: "controlled-replay",
+        state: "other-artifact",
+      });
+      expect(reviewedDecoy?.diagnostics.map(({ code }) => code)).toContain(
+        "static-only",
+      );
+      expect(captureReference(reviewed)).toMatchObject({
+        authority: "controlled-replay",
+        state: ownArtifact ? "observed" : "other-artifact",
+      });
+      expect(
+        reviewed?.diagnostics.some(({ code }) => code === "static-only"),
+      ).toBe(!ownArtifact);
+      // The process obligation always counts the capture; the reviewed
+      // obligation counts it only for its own artifact, the decoy never.
+      expect(replayCount(before)).toBe(1);
+      expect(replayCount(ledger)).toBe(ownArtifact ? 2 : 1);
+    },
+  );
 });
 
 it("keeps each semantic candidate bound to its own file and authority context", () => {
