@@ -241,10 +241,9 @@ const overgenerationLimitations = (
       obligation.required_original_authority === "static"
     )
       continue;
-    unboundByArtifact.set(sha256, [
-      ...(unboundByArtifact.get(sha256) ?? []),
-      obligation,
-    ]);
+    const group = unboundByArtifact.get(sha256);
+    if (group === undefined) unboundByArtifact.set(sha256, [obligation]);
+    else group.push(obligation);
   }
   return [...unboundByArtifact]
     .filter(([, group]) => group.length > OBLIGATION_OVERGENERATION_THRESHOLD)

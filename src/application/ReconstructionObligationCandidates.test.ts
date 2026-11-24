@@ -595,6 +595,21 @@ describe("reconstruction obligation over-generation group", () => {
     },
   );
 
+  it("groups several thousand unbound candidates of one artifact into one limitation", () => {
+    const count = 5000;
+    const ledger = build(request(decoyApplication(count).records));
+    const total = staticUnbound(ledger);
+
+    expect(total).toBeGreaterThanOrEqual(count);
+    expect(overgeneration(ledger)).toHaveLength(1);
+    expect(overgeneration(ledger)[0]).toContain(
+      `artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(total)} generated obligations`,
+    );
+    expect(overgeneration(ledger)[0]).toContain(
+      `; ${String(total)} still unreviewed, 0 retired by reviewed disposition.`,
+    );
+  });
+
   it("does not count static-authority native families as lacking runtime authority", () => {
     const flooded = applicationWithUnknowns(
       Array.from({ length: 25 }, (_, index) => `export-${String(index)}`),
