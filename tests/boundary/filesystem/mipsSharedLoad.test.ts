@@ -303,8 +303,13 @@ it("does not treat uncaptured ABI declaration headers as an inspected absence", 
   assert.ok(declarations.ok);
   assert.equal(declarations.value.abiFlags, null);
   assert.equal(declarations.value.sharedLoad?.status, "unavailable");
+  assert.equal(declarations.value.limitations.length, 1);
+  assert.equal(
+    declarations.value.limitations[0]?.kind,
+    "truncated_section_table",
+  );
   assert.match(
-    declarations.value.limitations.join(" "),
+    declarations.value.limitations[0]?.message ?? "",
     /extends beyond the captured file/u,
   );
 });

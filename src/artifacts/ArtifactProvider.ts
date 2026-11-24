@@ -657,15 +657,22 @@ const inspectInventory = async (
     await inventory(inventoryParameters),
   );
   const { subject, rootImage: image } = describe(inventoryResult);
-  const inventoryEvidence = createEvidence(subject, ARTIFACT_GRAPH_PROVIDER, {
-    operation: "inventory_artifact",
-    parameters: inventoryParameters,
-    result: inventoryResult,
-    rawResult: null,
-    limitations: inventoryResult.limitations,
-    // The nested inventory already names every occurrence's logical path.
-    locations: [],
-  });
+  // Sealed at creation, the nested Evidence is borrowed when the session
+  // records it as a source, rather than parsed and digested again.
+  const inventoryEvidence = createEvidence(
+    subject,
+    ARTIFACT_GRAPH_PROVIDER,
+    {
+      operation: "inventory_artifact",
+      parameters: inventoryParameters,
+      result: inventoryResult,
+      rawResult: null,
+      limitations: inventoryResult.limitations,
+      // The nested inventory already names every occurrence's logical path.
+      locations: [],
+    },
+    { immutable: true },
+  );
   // The returned execution and its Evidence then reuse this owned report.
   const result = freezeJsonSnapshot(
     createArtifactInspection(inventoryEvidence, image),

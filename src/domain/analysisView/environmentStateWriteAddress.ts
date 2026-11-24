@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  succeeded,
   ownMember,
   at,
   requestJson,
@@ -14,7 +15,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import { entityTarget, succeeded } from "./environmentStateWriteChecks.js";
+import { entityTarget } from "./environmentStateWriteChecks.js";
 import type { WriteIo } from "./environmentStateWriteEffects.js";
 import {
   pathValuesOf,

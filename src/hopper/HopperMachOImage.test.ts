@@ -832,3 +832,79 @@ it.each([0, 129])(
     });
   },
 );
+
+it("validates only the selected FAT64 slice's reserved word and thin header while rejecting overlap", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-fat64-isolate-");
+  const entryCount = 2;
+  const unit = 4096;
+  const sliceSize = 64;
+  const container = Buffer.alloc(unit * 2 + sliceSize);
+  container.writeUInt32BE(0xcafebabf, 0);
+  container.writeUInt32BE(entryCount, 4);
+  // Slice 0 (unselected x86_64): nonzero reserved field and corrupt thin header.
+  const entry0 = 8;
+  container.writeUInt32BE(CPU_TYPES.x86_64, entry0);
+  container.writeUInt32BE(3, entry0 + 4);
+  container.writeBigUInt64BE(BigInt(unit), entry0 + 8);
+  container.writeBigUInt64BE(BigInt(sliceSize), entry0 + 16);
+  container.writeUInt32BE(12, entry0 + 24);
+  container.writeUInt32BE(0xdeadbeef, entry0 + 28);
+  container.fill(0xff, unit, unit + 12);
+  // Slice 1 (selected arm64): valid reserved=0 and valid thin header.
+  const entry1 = 8 + 32;
+  const arm64Offset = unit * 2;
+  container.writeUInt32BE(CPU_TYPES.arm64, entry1);
+  container.writeUInt32BE(ARM64E, entry1 + 4);
+  container.writeBigUInt64BE(BigInt(arm64Offset), entry1 + 8);
+  container.writeBigUInt64BE(BigInt(sliceSize), entry1 + 16);
+  container.writeUInt32BE(12, entry1 + 24);
+  container.writeUInt32BE(0, entry1 + 28);
+  container.writeUInt32BE(0xfeedfacf, arm64Offset);
+  container.writeUInt32BE(CPU_TYPES.arm64, arm64Offset + 4);
+  container.writeUInt32BE(ARM64E, arm64Offset + 8);
+
+  const path = join(directory, "isolated.fat64");
+  await writeFile(path, container);
+  const target = {
+    path,
+    sha256: createHash("sha256").update(container).digest("hex"),
+    kind: "executable" as const,
+    format: "mach-o-universal" as const,
+    architecture: "arm64" as const,
+    availableArchitectures: ["x86_64", "arm64"] as const,
+    universalSlice: { offset: arm64Offset, size: sliceSize },
+  };
+  const resolved = requireResolved(await resolveHopperMachOImage(target));
+  expect(resolved).toMatchObject({
+    method: "fat64_thin_slice",
+    source_offset: arm64Offset,
+    byte_length: sliceSize,
+    cpu_type: CPU_TYPES.arm64,
+    cpu_subtype: ARM64E,
+  });
+
+  // Nonzero reserved on the SELECTED slice must still fail closed.
+  const badSelectedReserved = Buffer.from(container);
+  badSelectedReserved.writeUInt32BE(1, entry1 + 28);
+  await writeFile(path, badSelectedReserved);
+  expect(await resolveHopperMachOImage(target)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BinaryTargetError",
+      reason: "FAT64 architecture 1 has a nonzero reserved field",
+    },
+  });
+
+  // Overlapping slices must still fail closed.
+  const overlapping = Buffer.from(container);
+  overlapping.writeBigUInt64BE(BigInt(unit + sliceSize), entry0 + 16);
+  overlapping.writeBigUInt64BE(BigInt(unit + 32), entry1 + 8);
+  await writeFile(path, overlapping);
+  expect(await resolveHopperMachOImage(target)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BinaryTargetError",
+      reason: "FAT slices overlap",
+    },
+  });
+});

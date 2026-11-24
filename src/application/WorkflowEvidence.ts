@@ -252,9 +252,7 @@ export interface WorkflowEvidenceInput {
 
 const WORKFLOW_DERIVATION_LIMITATION = "Derived by an REA composed workflow.";
 
-const workflowLimitations = (
-  operation: AnalysisOperation,
-): readonly string[] =>
+const workflowLimitations = (operation: AnalysisOperation): readonly string[] =>
   operation === "trace_feature"
     ? [WORKFLOW_DERIVATION_LIMITATION, TRACE_FEATURE_REFERENCE_LIMITATION]
     : [WORKFLOW_DERIVATION_LIMITATION];

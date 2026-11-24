@@ -11,7 +11,10 @@ import {
   desktopCoverageSchema,
   type DesktopApplication,
 } from "../desktopApplication.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   completeWithinViewCoverage,
@@ -159,15 +162,8 @@ export const projectDesktopApplicationView = (
     SummaryAnalysisView | z.output<typeof desktopViewRequestSchema>
   >(admitted, "summary", "desktop-application");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Desktop directory Evidence supports summary and desktop-application views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Desktop directory Evidence supports summary and desktop-application views.",
     );
   const parsed = readDesktopApplication(parent);
   if (!parsed.ok) return parsed;
