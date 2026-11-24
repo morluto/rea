@@ -656,26 +656,41 @@ describe("PE resource ownership boundaries", () => {
     );
   });
 
-  it("refuses a resource tree crossing a section nested in its owner, as every PE reader does", () => {
+  it("refuses a resource tree crossing a section nested in its owner, as every PE reader does", async () => {
     const fixture = singleResource();
     const [entry] = fixture.dataOffsets;
     if (entry === undefined) throw new Error("Expected a resource data entry");
     const rva = fixture.bytes.readUInt32LE(entry);
     const bytes = secondSection(fixture, 1, rva - 2, 0);
-    // The nested section's zero-filled byte overlaps the owner's file bytes,
-    // so the shared mapping cannot choose one translation for the tree.
-    expect(() => readPeResourceLayout(bytes)).toThrow(
-      /ambiguously file-backed/iu,
+    // The nested section's zero-filled byte ends the file-backed run, so
+    // the tree's data entry and payload cannot be read with one translation.
+    await expect(parse(bytes)).rejects.toMatchObject({ kind: "malformed" });
+  });
+
+  it("reads a tree that fits before a later section when Size overstates it", async () => {
+    // An oversized Size must not require the next section's bytes to share
+    // the tree's file translation; the walk never reads them.
+    const baseline = peResourcesSchema.parse(
+      await parse(singleResource().bytes),
     );
+    const fixture = singleResource();
+    const declared = fixture.bytes.readUInt32LE(fixture.directoryAt + 4);
+    const sectionEnd =
+      0x2000 + fixture.bytes.readUInt32LE(fixture.sectionAt + 8);
+    fixture.bytes.writeUInt32LE(declared + 0x100, fixture.directoryAt + 4);
+    const bytes = secondSection(fixture, 0x100, sectionEnd, 0x100);
+    const result = peResourcesSchema.parse(await parse(bytes));
+    expect(result.resources).toEqual(baseline.resources);
+    expect(result.header_anomalies?.map(({ code }) => code)).toEqual([
+      "directory_size_past_file_backed_bytes",
+    ]);
   });
 
   it("still rejects a positive-extent section inside the resource interval", async () => {
     const fixture = singleResource();
     const bytes = secondSection(fixture, 4, 0x2001, 0);
-    await expect(parse(bytes)).rejects.toMatchObject({
-      kind: "malformed",
-      message: expect.stringMatching(/ambiguously file-backed/iu),
-    });
+    // The zero-filled bytes end the file-backed run one byte into the tree.
+    await expect(parse(bytes)).rejects.toMatchObject({ kind: "malformed" });
   });
 
   it("keeps a header-backed payload whose interval contains a zero-extent section", async () => {

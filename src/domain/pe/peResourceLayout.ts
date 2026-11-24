@@ -115,13 +115,12 @@ const mapPeResourceLayout = (image: PeImage, fileSize: number) => {
     const run =
       index.prefix(base + BigInt(rva), RVA_SPACE - rva)?.size ??
       map(rva, PE_RESOURCE_DIRECTORY_BYTES);
-    if (
-      declaredSize > run &&
-      tryMap(rva, Math.min(declaredSize, RVA_SPACE - rva)) === undefined
-    )
+    // Bytes past the run are unused by the walk, so an oversized Size needs
+    // no mapping there; it is reported, not checked.
+    if (declaredSize > run)
       headerAnomalies.push({
         code: "directory_size_past_file_backed_bytes",
-        message: `Data directory 2 (resource) declares Size ${String(declaredSize)}, but only ${String(run)} bytes from its RVA are file-backed; the tree was read within those bytes.`,
+        message: `Data directory 2 (resource) declares Size ${String(declaredSize)}, but only ${String(run)} bytes from its RVA are file-backed with one translation; the tree was read within those bytes.`,
       });
     size = run;
   }

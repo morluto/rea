@@ -197,7 +197,7 @@ describe("DirectoryArtifactReader input identity", () => {
       const entry = await sampleEntry(reader);
       await expect(
         reader.open({ ...entry, kind: "directory" }),
-      ).rejects.toMatchObject({ reason: "format" });
+      ).rejects.toMatchObject({ reason: "path" });
     } finally {
       await reader.close();
     }

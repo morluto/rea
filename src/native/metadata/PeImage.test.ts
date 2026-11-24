@@ -371,3 +371,13 @@ it("refuses mapped section bytes past the file but admits them for header-only r
     sections: [{ raw_size: 0x1000, file_backed: false }],
   });
 });
+
+it("keeps an unrecognized Windows signature malformed when the DOS module is invalid", () => {
+  // pe() declares no DOS pages, so the bytes are neither a DOS module nor a
+  // PE image once e_lfanew points at "PX".
+  const bytes = headerOnlyPe();
+  bytes.write("PX\0\0", 64, "latin1");
+  expect(() => readPeImage(bytes)).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
+});
