@@ -176,6 +176,8 @@ it("does not read a MAM prefix without the container version byte as Prefetch", 
 it.each([
   ["inside the version byte", 4],
   ["inside the uncompressed-size field", 5],
+  ["after the compression byte but inside the size field", 6],
+  ["inside the last size byte", 7],
 ] as const)(
   "routes a MAM capture truncated %s to the Prefetch reader",
   async (_label, length) => {

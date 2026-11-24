@@ -19,7 +19,10 @@ const SIGNATURE_OFFSET = 4;
 const SIGNATURE = Buffer.from("SCCA", "ascii");
 /** A MAM-compressed container replaces the whole header with "MAM" and a header size. */
 const MAM_MAGIC = Buffer.from("MAM", "ascii");
-const MAM_HEADER_BYTES = MAM_MAGIC.length + 4;
+// "MAM", the compression byte, and the uncompressed-size DWORD. The
+// compression byte is required, not merely the magic: `hasMamMagic` already
+// keys on it, so a capture shorter than this is a truncated container.
+const MAM_HEADER_BYTES = MAM_MAGIC.length + 1 + 4;
 
 /** Common header: generation, signature, unknown, file size, name, hash, flags. */
 const COMMON_HEADER_BYTES = 84;
