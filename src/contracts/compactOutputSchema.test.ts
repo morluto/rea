@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import { schemaDepth } from "./compactJsonSchema.js";
 import {
   compactAdvertisedOutputSchema,
-  listedOutputJsonSchema,
   presentAdvertisedOutputSchema,
 } from "./compactOutputSchema.js";
 import { COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES } from "./mcpSchemaPresentation.js";
@@ -179,31 +178,8 @@ describe("compact advertised output schema", () => {
   });
 });
 
-describe("listed output schema", () => {
-  it("stamps type object on a typeless object-shaped union before compaction", () => {
-    const union = {
-      oneOf: [
-        {
-          type: "object",
-          properties: { status: { const: "matches" } },
-          required: ["status"],
-          additionalProperties: false,
-        },
-        {
-          type: "object",
-          properties: { status: { const: "empty" } },
-          required: ["status"],
-          additionalProperties: false,
-        },
-      ],
-    };
-    const listed = listedOutputJsonSchema(union);
-    expect(listed).toEqual({ type: "object", ...union });
-    expect(listedOutputJsonSchema(listed)).toBe(listed);
-    expect(
-      listedOutputJsonSchema({ type: "array", items: { type: "string" } }),
-    ).toEqual({ type: "array", items: { type: "string" } });
-
+describe("compact object-union output schemas", () => {
+  it("uses the listed root type when reducing a wide output union", () => {
     const branch = {
       type: "object",
       properties: Object.fromEntries(
@@ -216,7 +192,7 @@ describe("listed output schema", () => {
     };
     const wide = { oneOf: [branch, branch] };
     const compacted = presentAdvertisedOutputSchema(
-      listedOutputJsonSchema(wide),
+      { type: "object", ...wide },
       { budgetBytes: 256 },
     );
     const unstamped = presentAdvertisedOutputSchema(wide, { budgetBytes: 256 });
@@ -227,34 +203,6 @@ describe("listed output schema", () => {
     });
   });
 
-  it("stamps a typeless $ref union of objects the way SDK 2.4.0 lists it", () => {
-    const schema = {
-      oneOf: [{ $ref: "#/$defs/matches" }, { $ref: "#/$defs/empty" }],
-      $defs: {
-        matches: {
-          type: "object",
-          properties: { status: { const: "matches" } },
-        },
-        empty: { type: "object", properties: { status: { const: "empty" } } },
-      },
-    };
-    expect(listedOutputJsonSchema(schema)).toEqual({
-      type: "object",
-      ...schema,
-    });
-    expect(
-      listedOutputJsonSchema({
-        oneOf: [{ $ref: "#/$defs/value" }],
-        $defs: { value: { type: "string" } },
-      }),
-    ).toEqual({
-      oneOf: [{ $ref: "#/$defs/value" }],
-      $defs: { value: { type: "string" } },
-    });
-  });
-});
-
-describe("compact object-union output schemas", () => {
   it("keeps an object-stamped union's alternatives when the canonical schema cannot inline", () => {
     // SDK 2.4.0 stamps type:object on a root that is only a $ref union of
     // objects. search_guidance is that shape and does not fit the compact

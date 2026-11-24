@@ -1,12 +1,12 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): 3403ec73c9cc89c2502a62e9a86bc2ac068e64d4f1402fa8c14dcf545c502530
+Runtime dependency fingerprint (SHA-256): 4633446d45ff711dcf262cc68c123e64a5fe45cc250b1b9800a165156f4c776e
 
-===== @babel/helper-string-parser@8.0.6 =====
+===== @babel/helper-string-parser@8.1.2 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-8.0.6.tgz
-Integrity: sha512-+6HYEBnsDRZHJtUTAEfMQd0zMDqdFHS7C+5vAsEZqBUr3vEMWOWlHJ0Jz1gS8jJIlCvLsuA6ivmeoqzH936YcA==
+Archive: https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-8.1.2.tgz
+Integrity: sha512-TRz5Z0MgfIfWqwEIq/pCpUpEXQxUt2Ig2ZbxG3SdmhSbHMAFFYGOix0kI4JLV371/TA+qWnQ4xWHPWjojkyRFA==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -65,10 +65,10 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-===== @babel/parser@8.0.4 =====
+===== @babel/parser@8.1.2 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@babel/parser/-/parser-8.0.4.tgz
-Integrity: sha512-srpptsAkEbbNIC/q8nT7o+m6CQe8CJUTV/t7MYc9NnWlgYVtHOb7JH6SorxMhN0kuRJjVqXbKClG6xSbPtzz+g==
+Archive: https://registry.npmjs.org/@babel/parser/-/parser-8.1.2.tgz
+Integrity: sha512-ZDKU7vaX0VORd2BhaO+3FKr/30TKjbUy3SMZcydiPngnAb+MesgUoh5SJcE5EwEyBj14M5J6fK56GuBqvYmOpw==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -93,11 +93,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-
-===== @babel/types@8.0.4 =====
+===== @babel/types@8.1.2 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@babel/types/-/types-8.0.4.tgz
-Integrity: sha512-eY+Yn3dCqTGmyiq2QRU66lA5FL8lqqqvecHt0fF3uHONIa7ToYsaCiWV8lOKqAs0Rb2SjixiKFROngnulPtt2g==
+Archive: https://registry.npmjs.org/@babel/types/-/types-8.1.2.tgz
+Integrity: sha512-uXt6qt2f5G61jZwNIzK1RKu7l5Xjt1VXtPPOGuVveha9fxbx0QM94U1kM4pFZKTRLjWK+X8vmwjwbIemJjiQTA==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -125,16 +124,15 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-
-===== @bufbuild/protobuf@2.16.0 =====
+===== @bufbuild/protobuf@2.17.0 =====
 Declared license: (Apache-2.0 AND BSD-3-Clause)
-Archive: https://registry.npmjs.org/@bufbuild/protobuf/-/protobuf-2.16.0.tgz
-Integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==
+Archive: https://registry.npmjs.org/@bufbuild/protobuf/-/protobuf-2.17.0.tgz
+Integrity: sha512-hcPkSz6D7MiTU/5VBBhK+kxaYDoOdQ6yJRFJ3kS8Nydp+VZXfg1vrpABKPNod8bXMufsVCmiUJVIKFzCzta4uw==
 Scope: npm runtime dependency, including optional platform packages.
 
-The locked archive omits standalone license files. The Apache license is preserved from its v2.16.0 upstream commit; the BSD notice is embedded in the integrity-verified archive.
+The locked archive omits standalone license files. The Apache license is preserved from its v2.17.0 upstream commit; the BSD notice is embedded in the integrity-verified archive.
 
---- licenses/protobuf-es-v2.16.0-LICENSE.txt (see upstream-sources.json) ---
+--- licenses/protobuf-es-v2.17.0-LICENSE.txt (see upstream-sources.json) ---
 
                                  Apache License
                            Version 2.0, January 2004
@@ -373,11 +371,10 @@ The locked archive omits standalone license files. The Apache license is preserv
 // standalone and requires a support library to be linked with it.  This
 // support library is itself covered by the above license.
 
-
-===== @clack/core@1.4.3 =====
+===== @clack/core@1.6.0 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@clack/core/-/core-1.4.3.tgz
-Integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==
+Archive: https://registry.npmjs.org/@clack/core/-/core-1.6.0.tgz
+Integrity: sha512-4GZynIB2IIe431odxesswvWTCP6orvqd6e2b07b3VFWBQRqUqIHc/EPIZwFoKS692QBp+ooPuXKaJV8g4kXuYA==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -392,11 +389,10 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-
-===== @clack/prompts@1.7.0 =====
+===== @clack/prompts@1.9.0 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@clack/prompts/-/prompts-1.7.0.tgz
-Integrity: sha512-y7/yvZ2TPAnR9+jnc00klvNNLkJiXFFrQA/hlLCcxA9a2A4zQIOimyFQ9XfwYKiGD1fb5GY8vbKIIgO8d5Tb2A==
+Archive: https://registry.npmjs.org/@clack/prompts/-/prompts-1.9.0.tgz
+Integrity: sha512-tEj8X2No2A1c9NDnZECxiiJ8TP3vmFlN9tLlLeSaMqVW4tUmVG2R4qpv/eP4zymWxnymYLkLcIYVV0VcWj3RCQ==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -410,7 +406,6 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 
 ===== @jridgewell/resolve-uri@3.1.2 =====
 Declared license: MIT
@@ -1774,10 +1769,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== @toon-format/toon@2.3.1 =====
+===== @toon-format/toon@4.4.0 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@toon-format/toon/-/toon-2.3.1.tgz
-Integrity: sha512-sWqEMeAJGMda9qRrfPKrX3C4c33CO9SJuvJzzrcBEn5sbDB+k6pSLkDsfN0rVnLQwR97MV3sDgVbcxQNsq8xVw==
+Archive: https://registry.npmjs.org/@toon-format/toon/-/toon-4.4.0.tgz
+Integrity: sha512-A6UcsVoWbNdhdLNhJbe6JpRlocmf/DZGG57fur3bd8oQtsjBaKWo2hHbOU2zTuy+byUmLIOyP1xJeitopCZzpQ==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -1803,7 +1798,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
 
 ===== @xmldom/xmldom@0.9.12 =====
 Declared license: MIT
@@ -1885,10 +1879,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-===== @zip.js/zip.js@2.15.0 =====
+===== @zip.js/zip.js@2.25.0 =====
 Declared license: BSD-3-Clause
-Archive: https://registry.npmjs.org/@zip.js/zip.js/-/zip.js-2.15.0.tgz
-Integrity: sha512-hYAuHAaWjt0axbofaDL5XUlmrQPsBDcK3f45ApZuh6N+8UGVk26GoGdtGDvcvzahsHytTQ6DtBVXwG9IcCMjjQ==
+Archive: https://registry.npmjs.org/@zip.js/zip.js/-/zip.js-2.25.0.tgz
+Integrity: sha512-oNRqUuU1XFu6G5d7Z0jufJ9dS9WteO0xiU/PNxsUrb4itZCsSbn191jpJzU00Gmc6S680X3DPZeF5EV4zAEMAg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -1921,38 +1915,6 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-
-===== abort-controller@3.0.0 =====
-Declared license: MIT
-Archive: https://registry.npmjs.org/abort-controller/-/abort-controller-3.0.0.tgz
-Integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==
-Scope: npm runtime dependency, including optional platform packages.
-
---- package/LICENSE ---
-
-MIT License
-
-Copyright (c) 2017 Toru Nagashima
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
 
 ===== ajv@8.20.0 =====
 Declared license: MIT
@@ -2209,37 +2171,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== buffer@6.0.3 =====
-Declared license: MIT
-Archive: https://registry.npmjs.org/buffer/-/buffer-6.0.3.tgz
-Integrity: sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==
-Scope: npm runtime dependency, including optional platform packages.
-
---- package/LICENSE ---
-
-The MIT License (MIT)
-
-Copyright (c) Feross Aboukhadijeh, and other contributors.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-
 ===== call-bind@1.0.9 =====
 Declared license: MIT
 Archive: https://registry.npmjs.org/call-bind/-/call-bind-1.0.9.tgz
@@ -2333,10 +2264,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== canonicalize@3.0.0 =====
+===== canonicalize@5.1.0 =====
 Declared license: Apache-2.0
-Archive: https://registry.npmjs.org/canonicalize/-/canonicalize-3.0.0.tgz
-Integrity: sha512-yYLfHyDMIXRyRqsKBRLX023riFLpXY2YOfdtqKXZRZy9qsfOJ9U+4F9YZL7MEzL5+ziN2x2nlBvY/Voi3EBljA==
+Archive: https://registry.npmjs.org/canonicalize/-/canonicalize-5.1.0.tgz
+Integrity: sha512-bab9+WefZljqQ8jT0qRwVmTyzAUU63K97QIQD3agynIBrb6sa5M2eAy8Hv8K3p4V9+ONVYZKtGYl4Dg+/5Gumw==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -2544,10 +2475,10 @@ Scope: npm runtime dependency, including optional platform packages.
    limitations under the License.
 
 
-===== cborg@6.1.3 =====
+===== cborg@7.0.0 =====
 Declared license: Apache-2.0
-Archive: https://registry.npmjs.org/cborg/-/cborg-6.1.3.tgz
-Integrity: sha512-Kb/wD/AFuVcqvVjR+HYNOjNiuhVJ2C+RWxQE2Yqq2WVlVkRjdvVLkkM6QsL3NMsBRh+rgNc+aXmcraA+X0HObQ==
+Archive: https://registry.npmjs.org/cborg/-/cborg-7.0.0.tgz
+Integrity: sha512-YYXJ+ozY26INm46oz2P+iOww/LhrfgPz2CuHaskDcitt0rKyh6LlWhNCfMlxxcdD+k7m0TspkRvcPPXAGYzZ8w==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -3503,70 +3434,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== event-target-shim@5.0.1 =====
-Declared license: MIT
-Archive: https://registry.npmjs.org/event-target-shim/-/event-target-shim-5.0.1.tgz
-Integrity: sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==
-Scope: npm runtime dependency, including optional platform packages.
-
---- package/LICENSE ---
-
-The MIT License (MIT)
-
-Copyright (c) 2015 Toru Nagashima
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-
-===== events@3.3.0 =====
-Declared license: MIT
-Archive: https://registry.npmjs.org/events/-/events-3.3.0.tgz
-Integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==
-Scope: npm runtime dependency, including optional platform packages.
-
---- package/LICENSE ---
-
-MIT
-
-Copyright Joyent, Inc. and other Node contributors.
-
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to permit
-persons to whom the Software is furnished to do so, subject to the
-following conditions:
-
-The above copyright notice and this permission notice shall be included
-in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-
 ===== eventsource@3.0.7 =====
 Declared license: MIT
 Archive: https://registry.npmjs.org/eventsource/-/eventsource-3.0.7.tgz
@@ -3630,13 +3497,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== evmole@0.9.3 =====
+===== evmole@0.9.4 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.3.tgz
-Integrity: sha512-UhO5HMAoEPCupSxvBJPlm/L0Qk/KVJ/OJo3r4EyhXADIEHqU5aTkAzsBfzk4lXGjqxVnaYbh1GPSmZtmSHFnQQ==
+Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.4.tgz
+Integrity: sha512-bXy0WM9YHff/wj4WWrfRH4jtQlxxBbC0oNx/AMzmrLrzzn63w5RKzQohNYNHjoclc/Yb3x6Rg8k/j33lbCmHtw==
 Scope: npm runtime dependency, including optional platform packages.
 
---- third_party/evmole/LICENSE (unchanged upstream 0.9.3 license) ---
+--- package/LICENSE ---
 
 MIT License
 
@@ -3659,7 +3526,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
 
 ===== fast-deep-equal@3.1.3 =====
 Declared license: MIT
@@ -4179,10 +4045,10 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-===== ignore@7.0.6 =====
+===== ignore@7.0.16 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/ignore/-/ignore-7.0.6.tgz
-Integrity: sha512-BAg6QkE8W+TuQLrrw0Ugr7HegXduRuuj8/ti2kSOc+jz1dmx8/WNcjr6XGnq5YpDWxFwwaavqD0+jIUOKelTsw==
+Archive: https://registry.npmjs.org/ignore/-/ignore-7.0.16.tgz
+Integrity: sha512-52N+Y4HRMOJmbLmr+DqO4iSRyyB7N52gm7PWCT6h0p978+oKbqHCB7gIJIwZvBUsjlSdWbrBFqUSmIFNZMpn0A==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE-MIT ---
@@ -4208,36 +4074,6 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-===== imurmurhash@0.1.4 =====
-Declared license: MIT
-Archive: https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz
-Integrity: sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==
-Scope: npm runtime dependency, including optional platform packages.
-
---- package/README.md: License (MIT) section ---
-
-License (MIT)
--------------
-Copyright (c) 2013 Gary Court, Jens Taylor
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 
 ===== incur@0.6.1 =====
 Declared license: MIT
@@ -4415,10 +4251,10 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
-===== isomorphic-git@1.38.7 =====
+===== isomorphic-git@1.44.15 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.38.7.tgz
-Integrity: sha512-2J2rCV7gTgcpscEDT7PjU5shbsKKI10E4RqBlPDI3LmMXDjSKsN2w1jTIKiay14v87sPDfXjJkgp/Rrxc0zlSg==
+Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.44.15.tgz
+Integrity: sha512-jm7drCsGNOuyAKCKiZ9n0WtGImsEjfTbms0HxLHJF3H8A+luGSerLnVFeAo/gADjF8PrdLzmO/p2G/0IqjNwig==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE.md ---
@@ -4431,6 +4267,38 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+--- package/index.umd.min.js.LICENSE.txt ---
+
+/*!
+ * The buffer module from node.js, for the browser.
+ *
+ * @author   Feross Aboukhadijeh <https://feross.org>
+ * @license  MIT
+ */
+
+/*!
+ * This code for `path.join` is directly copied from @zenfs/core/path for bundle size improvements.
+ * SPDX-License-Identifier: LGPL-3.0-or-later
+ * Copyright (c) James Prevett and other ZenFS contributors.
+ *
+ * Windows support added:
+ *   - Backslashes are normalised to forward slashes before processing.
+ *   - Drive-letter prefixes (e.g. "C:") are detected and preserved through
+ *     normalisation, so absolute Windows paths are handled correctly.
+ *   - An absolute argument passed to join() resets the accumulated path,
+ *     matching Node behaviour and handling worktree gitdir paths properly.
+ *
+ * Limitation: UNC paths (e.g. \\server\share) are not supported. The leading
+ *   backslashes are normalised to forward slashes and then collapsed by
+ *   normalizeString, losing the UNC root. Git on Windows works with
+ *   drive-letter paths, so this is not expected to be a practical issue.
+ */
+
+/*! crc32.js (C) 2014-present SheetJS -- http://sheetjs.com */
+
+/*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> */
+
+/*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
 
 --- package/managers/index.umd.min.js.LICENSE.txt ---
 
@@ -4465,7 +4333,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
 
-
 --- package/models/index.umd.min.js.LICENSE.txt ---
 
 /*!
@@ -4485,7 +4352,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
  *   normalizeString, losing the UNC root. Git on Windows works with
  *   drive-letter paths, so this is not expected to be a practical issue.
  */
-
 
 ===== ignore@5.3.2 =====
 Declared license: MIT
@@ -4610,10 +4476,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== lossless-json@4.3.1 =====
+===== lossless-json@4.3.3 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.1.tgz
-Integrity: sha512-SqD/Bg3ZfltBJ2Z14hJ/BihnvtV553WO4g9/ePtlp4lrnl9jF3AdIJt53A/Wkg/0Li+LMfxaBqgx1MiFZdQlpQ==
+Archive: https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.3.tgz
+Integrity: sha512-FGFrGArHsv7BRiYOf37ZRieT9HlKw+Kpu9HvtpYjcoOEo8lqNkjny8A2YAfWNWWQC+9pcLIrLZ+IviKJhaHwGQ==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE.md ---
@@ -4627,7 +4493,6 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 
 ===== math-intrinsics@1.1.0 =====
 Declared license: MIT
@@ -5067,10 +4932,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-===== parse5@8.0.1 =====
+===== parse5@8.1.1 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/parse5/-/parse5-8.0.1.tgz
-Integrity: sha512-z1e/HMG90obSGeidlli3hj7cbocou0/wa5HacvI3ASx34PecNjNQeaHNo5WIZpWofN9kgkqV1q5YvXe3F0FoPw==
+Archive: https://registry.npmjs.org/parse5/-/parse5-8.1.1.tgz
+Integrity: sha512-EcR/6WDcU7b2N3vQSxKALCk9lXGtUMQxXio008OEMBE0kavu/7JLfBEeFPzi43nMqVDSbEn3QCK+BMCc9zO//w==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -5095,11 +4960,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-
-===== entities@8.1.0 =====
+===== entities@9.0.0 =====
 Declared license: BSD-2-Clause
-Archive: https://registry.npmjs.org/entities/-/entities-8.1.0.tgz
-Integrity: sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA==
+Archive: https://registry.npmjs.org/entities/-/entities-9.0.0.tgz
+Integrity: sha512-oJFNDJg3kTPwAD1cNn2+WmUq4wFoo09npc3Ydf1D7ED4smRiWrsKnaLxykrTWgyGEcusc87P5dxlAleol9kpkg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -5115,7 +4979,6 @@ Redistributions in binary form must reproduce the above copyright notice, this l
 
 THIS IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 
 ===== path-key@3.1.1 =====
 Declared license: MIT
@@ -5265,10 +5128,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== playwright-core@1.64.1 =====
+===== playwright-core@1.65.1 =====
 Declared license: Apache-2.0
-Archive: https://registry.npmjs.org/playwright-core/-/playwright-core-1.64.1.tgz
-Integrity: sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==
+Archive: https://registry.npmjs.org/playwright-core/-/playwright-core-1.65.1.tgz
+Integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -5576,8 +5439,8 @@ THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
 
 The following npm packages are inlined into this bundle.
 
-- @hono/node-server@1.19.14 (https://github.com/honojs/node-server)
-- @modelcontextprotocol/sdk@1.29.0 (https://github.com/modelcontextprotocol/typescript-sdk)
+- @hono/node-server@2.1.5 (https://github.com/honojs/node-server)
+- @modelcontextprotocol/sdk@1.32.0 (https://github.com/modelcontextprotocol/typescript-sdk)
 - @sec-ant/readable-stream@0.4.1 (https://github.com/Sec-ant/readable-stream)
 - agent-base@9.0.0 (https://github.com/TooTallNate/proxy-agents)
 - ajv-formats@3.0.1 (https://github.com/ajv-validator/ajv-formats)
@@ -5585,7 +5448,7 @@ The following npm packages are inlined into this bundle.
 - ansi-colors@4.1.3 (https://github.com/doowb/ansi-colors)
 - ansi-regex@5.0.1 (https://github.com/chalk/ansi-regex)
 - balanced-match@4.0.4 (https://github.com/juliangruber/balanced-match)
-- brace-expansion@5.0.7 (https://github.com/juliangruber/brace-expansion)
+- brace-expansion@5.0.12 (https://github.com/juliangruber/brace-expansion)
 - buffer-crc32@1.0.0 (https://github.com/brianloveswords/buffer-crc32)
 - buffer-from@1.1.2 (https://github.com/LinusU/buffer-from)
 - bundle-name@4.1.0 (https://github.com/sindresorhus/bundle-name)
@@ -5605,11 +5468,12 @@ The following npm packages are inlined into this bundle.
 - eventsource-parser@3.1.0 (https://github.com/rexxars/eventsource-parser)
 - eventsource@3.0.7 (https://github.com/EventSource/eventsource)
 - fast-deep-equal@3.1.3 (https://github.com/epoberezkin/fast-deep-equal)
-- fast-uri@3.1.7 (https://github.com/fastify/fast-uri)
+- fast-uri@3.1.9 (https://github.com/fastify/fast-uri)
 - get-east-asian-width@1.6.0 (https://github.com/sindresorhus/get-east-asian-width)
 - get-stream@9.0.1 (https://github.com/sindresorhus/get-stream)
 - graceful-fs@4.2.11 (https://github.com/isaacs/node-graceful-fs)
 - has-flag@4.0.0 (https://github.com/sindresorhus/has-flag)
+- hono@4.13.12 (https://github.com/honojs/hono)
 - https-proxy-agent@9.1.0 (https://github.com/TooTallNate/proxy-agents)
 - ini@7.0.0 (https://github.com/npm/ini)
 - ip-address@10.7.2 (https://github.com/beaugunderson/ip-address)
@@ -5654,9 +5518,9 @@ The following npm packages are inlined into this bundle.
 - yauzl@3.4.0 (https://github.com/thejoshwolfe/yauzl)
 - yazl@3.3.1 (https://github.com/thejoshwolfe/yazl)
 - zod-to-json-schema@3.25.2 (https://github.com/StefanTerdell/zod-to-json-schema)
-- zod@4.4.3 (https://github.com/colinhacks/zod)
+- zod@4.6.7 (https://github.com/colinhacks/zod)
 
-%% @hono/node-server@1.19.14 NOTICES AND INFORMATION BEGIN HERE
+%% @hono/node-server@2.1.5 NOTICES AND INFORMATION BEGIN HERE
 =========================================
 MIT License
 
@@ -5680,9 +5544,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 =========================================
-END OF @hono/node-server@1.19.14 NOTICES AND INFORMATION
+END OF @hono/node-server@2.1.5 NOTICES AND INFORMATION
 
-%% @modelcontextprotocol/sdk@1.29.0 NOTICES AND INFORMATION BEGIN HERE
+%% @modelcontextprotocol/sdk@1.32.0 NOTICES AND INFORMATION BEGIN HERE
 =========================================
 MIT License
 
@@ -5706,7 +5570,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 =========================================
-END OF @modelcontextprotocol/sdk@1.29.0 NOTICES AND INFORMATION
+END OF @modelcontextprotocol/sdk@1.32.0 NOTICES AND INFORMATION
 
 %% @sec-ant/readable-stream@0.4.1 NOTICES AND INFORMATION BEGIN HERE
 =========================================
@@ -5881,7 +5745,7 @@ SOFTWARE.
 =========================================
 END OF balanced-match@4.0.4 NOTICES AND INFORMATION
 
-%% brace-expansion@5.0.7 NOTICES AND INFORMATION BEGIN HERE
+%% brace-expansion@5.0.12 NOTICES AND INFORMATION BEGIN HERE
 =========================================
 MIT License
 
@@ -5907,7 +5771,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 =========================================
-END OF brace-expansion@5.0.7 NOTICES AND INFORMATION
+END OF brace-expansion@5.0.12 NOTICES AND INFORMATION
 
 %% buffer-crc32@1.0.0 NOTICES AND INFORMATION BEGIN HERE
 =========================================
@@ -6370,7 +6234,7 @@ SOFTWARE.
 =========================================
 END OF fast-deep-equal@3.1.3 NOTICES AND INFORMATION
 
-%% fast-uri@3.1.7 NOTICES AND INFORMATION BEGIN HERE
+%% fast-uri@3.1.9 NOTICES AND INFORMATION BEGIN HERE
 =========================================
 Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae
 Copyright (c) 2021-present The Fastify team <https://github.com/fastify/fastify#team>
@@ -6403,7 +6267,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 The complete list of contributors can be found at:
 - https://github.com/garycourt/uri-js/graphs/contributors
 =========================================
-END OF fast-uri@3.1.7 NOTICES AND INFORMATION
+END OF fast-uri@3.1.9 NOTICES AND INFORMATION
 
 %% get-east-asian-width@1.6.0 NOTICES AND INFORMATION BEGIN HERE
 =========================================
@@ -6466,6 +6330,32 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 =========================================
 END OF has-flag@4.0.0 NOTICES AND INFORMATION
+
+%% hono@4.13.12 NOTICES AND INFORMATION BEGIN HERE
+=========================================
+MIT License
+
+Copyright (c) 2021 - present, Yusuke Wada and Hono contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+=========================================
+END OF hono@4.13.12 NOTICES AND INFORMATION
 
 %% https-proxy-agent@9.1.0 NOTICES AND INFORMATION BEGIN HERE
 =========================================
@@ -7430,7 +7320,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 =========================================
 END OF zod-to-json-schema@3.25.2 NOTICES AND INFORMATION
 
-%% zod@4.4.3 NOTICES AND INFORMATION BEGIN HERE
+%% zod@4.6.7 NOTICES AND INFORMATION BEGIN HERE
 =========================================
 MIT License
 
@@ -7454,11 +7344,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 =========================================
-END OF zod@4.4.3 NOTICES AND INFORMATION
+END OF zod@4.6.7 NOTICES AND INFORMATION
 
 SUMMARY
 =========================================
-Total Packages: 79
+Total Packages: 80
 =========================================
 
 --- package/lib/webp_codec.LICENSE ---
@@ -7636,11 +7526,10 @@ The third_party/ subdirectory contains code with other licenses. None of it is
 used by default, but certain options use it (e.g., the optional closure compiler
 flag will run closure compiler from third_party/).
 
-
-===== plist@5.0.0 =====
+===== plist@5.1.1 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/plist/-/plist-5.0.0.tgz
-Integrity: sha512-20N+g1DvMm/DFRbsvER7tT4wDryq0WunK7VMkDaiJcKNapAnUMkTsAnacFYf8n420F4Hf6/hefgmJRkMb1M0fg==
+Archive: https://registry.npmjs.org/plist/-/plist-5.1.1.tgz
+Integrity: sha512-n55fGiwWNHf6zFdP9qvtr1x7P898lfJ/rbDvB3pYqVRcO+iG3sl5SSkGSLiIoAI9ZZc2F3Ga/5wPtM8EqhgSqA==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -7669,7 +7558,6 @@ HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
-
 
 ===== possible-typed-array-names@1.1.0 =====
 Declared license: MIT
@@ -7700,38 +7588,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-
-===== process@0.11.10 =====
-Declared license: MIT
-Archive: https://registry.npmjs.org/process/-/process-0.11.10.tgz
-Integrity: sha512-cdGef/drWFoydD1JsMzuFf8100nZl+GT+yacc2bEced5f9Rjk4z+WtFUTBu9PhOi9j/jfmBPu0mMEY4wIdAF8A==
-Scope: npm runtime dependency, including optional platform packages.
-
---- package/LICENSE ---
-
-(The MIT License)
-
-Copyright (c) 2013 Roman Shtylman <shtylman@gmail.com>
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-'Software'), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ===== process-warning@5.0.0 =====
@@ -7796,63 +7652,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== readable-stream@4.7.0 =====
-Declared license: MIT
-Archive: https://registry.npmjs.org/readable-stream/-/readable-stream-4.7.0.tgz
-Integrity: sha512-oIGGmcpTLwPga8Bn6/Z75SVaH1z5dUut2ibSyAMVhmUggWpmDn2dapB0n7f8nwaSiRtepAsfJyfXIO5DCVAODg==
-Scope: npm runtime dependency, including optional platform packages.
-
---- package/LICENSE ---
-
-Node.js is licensed for use as follows:
-
-"""
-Copyright Node.js contributors. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to
-deal in the Software without restriction, including without limitation the
-rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-sell copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-IN THE SOFTWARE.
-"""
-
-This license applies to parts of Node.js originating from the
-https://github.com/joyent/node repository:
-
-"""
-Copyright Joyent, Inc. and other Node contributors. All rights reserved.
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to
-deal in the Software without restriction, including without limitation the
-rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-sell copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-IN THE SOFTWARE.
-"""
-
-
 ===== real-require@1.0.0 =====
 Declared license: MIT
 Archive: https://registry.npmjs.org/real-require/-/real-require-1.0.0.tgz
@@ -7915,10 +7714,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-===== rolldown@1.2.12 =====
+===== rolldown@1.3.2 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/rolldown/-/rolldown-1.2.12.tgz
-Integrity: sha512-8wafseiaG80xmXSfqidUNqZcylTlhmPZZt+za2m+js2sFZ8dTNlhIOV2WcbIPx2hgwPBJpEUGFAMZ9bgBBLTSQ==
+Archive: https://registry.npmjs.org/rolldown/-/rolldown-1.3.2.tgz
+Integrity: sha512-EFHqbVkXiYZA6akmYm2bvJhNbEGdUwAResRhYwl/BO8QhB5KxsG+t3RVHJSIOy5jBEb0XCACvrIGnnl6Z8sMGA==
 Scope: generated runtime helpers; the build compiler is not bundled.
 
 --- package/LICENSE ---
@@ -7949,6 +7748,41 @@ end of terms and conditions
 
 The licenses of externally maintained libraries from which parts of the Software is derived are listed [here](https://github.com/rolldown/rolldown/blob/main/THIRD-PARTY-LICENSE).
 
+--- package/THIRD-PARTY-LICENSE ---
+
+The MIT License (MIT)
+
+Copyright (c) 2017 [these people](https://github.com/rollup/rollup/graphs/contributors)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---
+
+MIT License
+
+Copyright (c) 2020 Evan Wallace
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ===== safe-buffer@5.2.1 =====
 Declared license: MIT
@@ -8012,10 +7846,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== semver@7.8.5 =====
+===== semver@7.8.6 =====
 Declared license: ISC
-Archive: https://registry.npmjs.org/semver/-/semver-7.8.5.tgz
-Integrity: sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==
+Archive: https://registry.npmjs.org/semver/-/semver-7.8.6.tgz
+Integrity: sha512-9lpSSU4Mly3mrtruwLs1eLK6+gzbzqeBFwRNjIjE+9LuDpWdYctrQlQ3ej1Ilgi7gknpsTRnPoLP8DpCHqHIJw==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -8035,7 +7869,6 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
 
 ===== set-function-length@1.2.2 =====
 Declared license: MIT
@@ -8251,10 +8084,10 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-===== sisteransi@1.0.5 =====
+===== sisteransi@2.0.0 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/sisteransi/-/sisteransi-1.0.5.tgz
-Integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==
+Archive: https://registry.npmjs.org/sisteransi/-/sisteransi-2.0.0.tgz
+Integrity: sha512-2WCqLdt12eN6ehLI50S2/ZxoowXU3DD1KVPRyVP0WEsFahrGZZmCdq1K59qjJljMRIDTwx1D9YaRK+hDneBUMg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/license ---
@@ -8281,11 +8114,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-
-===== smol-toml@1.9.0 =====
+===== smol-toml@1.9.1 =====
 Declared license: BSD-3-Clause
-Archive: https://registry.npmjs.org/smol-toml/-/smol-toml-1.9.0.tgz
-Integrity: sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ==
+Archive: https://registry.npmjs.org/smol-toml/-/smol-toml-1.9.1.tgz
+Integrity: sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -8314,7 +8146,6 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 
 ===== sonic-boom@4.2.1 =====
 Declared license: MIT
@@ -8370,10 +8201,10 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
-===== stream-chain@4.2.6 =====
+===== stream-chain@4.4.2 =====
 Declared license: BSD-3-Clause
-Archive: https://registry.npmjs.org/stream-chain/-/stream-chain-4.2.6.tgz
-Integrity: sha512-1zeJ8CrtJfmiba26ui8jXkq/xLRFvhzkdH02D5QLO9Cnovgeb28IJxg88DdraWnjnkbOol/++uIAybJbJhk7ig==
+Archive: https://registry.npmjs.org/stream-chain/-/stream-chain-4.4.2.tgz
+Integrity: sha512-6WQtf7XW70N8/IXV4DfpTswi0VHTahsB0nO5UlLGp5HarJN+Q7VHT5HvBMlH9x0x77e+kJFnQkhkCdvFkwv2Vw==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -8390,11 +8221,10 @@ Redistribution and use in source and binary forms, with or without modification,
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
-===== stream-json@3.7.0 =====
+===== stream-json@3.9.0 =====
 Declared license: BSD-3-Clause
-Archive: https://registry.npmjs.org/stream-json/-/stream-json-3.7.0.tgz
-Integrity: sha512-rCSBdcBP/bPk6T8QFcxAj1MSzAuc5i49cYW6IE7sYObNEPccBJIUiL6fU9c9BWt40aJK0siVynLX7lWaW8alXw==
+Archive: https://registry.npmjs.org/stream-json/-/stream-json-3.9.0.tgz
+Integrity: sha512-kL2w6owYCdzCRApK9/9HI7Vgrd+0iWE5tTGc8P/AS2AdPoHcFTQwUek66sbMpfaX73lgHvDN+u1AoRC/dzB1Hw==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -8410,7 +8240,6 @@ Redistribution and use in source and binary forms, with or without modification,
 3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 
 ===== string_decoder@1.3.0 =====
 Declared license: MIT
@@ -8532,10 +8361,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-===== tokenx@1.3.0 =====
+===== tokenx@2.2.0 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/tokenx/-/tokenx-1.3.0.tgz
-Integrity: sha512-NLdXTEZkKiO0gZuLtMoZKjCXTREXeZZt8nnnNeyoXtNZAfG/GKGSbQtLU5STspc0rMSwcA+UJfWZkbNU01iKmQ==
+Archive: https://registry.npmjs.org/tokenx/-/tokenx-2.2.0.tgz
+Integrity: sha512-VdOqWPybBSlPVATvuxkoa8XfrYOPmOUkpp1xesb0LZjmUBmXDVND2lPlm4tiEc5MHP1OlswxCY4s2KXkc5p3JA==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -8561,7 +8390,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
 
 ===== typed-array-buffer@1.0.3 =====
 Declared license: MIT
@@ -8676,10 +8504,10 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
-===== write-file-atomic@7.0.0 =====
+===== write-file-atomic@8.0.0 =====
 Declared license: ISC
-Archive: https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-7.0.0.tgz
-Integrity: sha512-YnlPC6JqnZl6aO4uRc+dx5PHguiR9S6WeoLtpxNT9wIG+BDya7ZNE1q7KOjVgaA73hKhKLpVPgJ5QA9THQ5BRg==
+Archive: https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-8.0.0.tgz
+Integrity: sha512-dYwyZredl67GyLLIHJnRM3h2PcOmN5SkcgC7eM5DPDEOEl6dLFqVrMg3F1Ea32usj4VSVZtd2H4MtKTNOf6nPg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE.md ---
@@ -8690,12 +8518,10 @@ Permission to use, copy, modify, and/or distribute this software for any purpose
 
 THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-
-
-===== ws@8.21.0 =====
+===== ws@8.23.0 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/ws/-/ws-8.21.0.tgz
-Integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==
+Archive: https://registry.npmjs.org/ws/-/ws-8.23.0.tgz
+Integrity: sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -8720,7 +8546,6 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 
 ===== xmlbuilder@15.1.1 =====
 Declared license: MIT
@@ -8753,10 +8578,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-===== yaml@2.9.0 =====
+===== yaml@2.9.1 =====
 Declared license: ISC
-Archive: https://registry.npmjs.org/yaml/-/yaml-2.9.0.tgz
-Integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==
+Archive: https://registry.npmjs.org/yaml/-/yaml-2.9.1.tgz
+Integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -8775,11 +8600,10 @@ OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
 TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 
-
-===== zod@4.6.6 =====
+===== zod@4.6.7 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/zod/-/zod-4.6.6.tgz
-Integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==
+Archive: https://registry.npmjs.org/zod/-/zod-4.6.7.tgz
+Integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -8805,8 +8629,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-
 
 ===== bindings@1.5.0 =====
 Declared license: MIT

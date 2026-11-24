@@ -2515,8 +2515,13 @@ const embeddedPackageFormat = async (
         nativeFormat,
         context.signal,
       );
-      if (classified !== undefined)
-        return { kind: "package", format: classified.format };
+      if (classified.status === "present")
+        return { kind: "package", format: classified.package.format };
+      if (classified.status === "unknown") {
+        for (const limitation of classified.limitations)
+          pushLimitation(state, `${location}: ${limitation}`);
+        return { kind: "unreadable" };
+      }
       // A negative probe clears member coverage, so it only stands for the
       // image inventory hashed: a replacement is a changed member, not an
       // image without a package.

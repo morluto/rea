@@ -7,6 +7,7 @@ import { MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES } from "../../../src/domain/native/elf
 import { elfUnwindFixture } from "../../../src/native/elf/ElfUnwindTables.fixture.js";
 import { compressedElfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("ELF unwind range stable filesystem boundary", () => {
   it("reports non-file and missing selections as caller input errors", async () => {
@@ -17,26 +18,11 @@ describe("ELF unwind range stable filesystem boundary", () => {
     await symlink(path, alias);
     const service = createElfUnwindRangesService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_elf_unwind_ranges",
-          issues: [
-            {
-              path: ["path"],
-              reason,
-              message: expect.any(String),
-            },
-          ],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_elf_unwind_ranges", {
+        root,
+        alias,
+        path,
+      });
     } finally {
       await service.close();
     }

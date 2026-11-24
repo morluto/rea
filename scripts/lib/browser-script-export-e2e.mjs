@@ -125,7 +125,8 @@ const verifyPassiveExport = async (attachment, { cli, call, save }) => {
     observation_ms: 100,
     include_script_sources: true,
   };
-  const page = await call("inspect_web_page", input);
+  // Export reads the complete capture with its script sources.
+  const page = await call("inspect_web_page", { ...input, detail: "complete" });
   const pageInput = await save("passive", page);
   const exported = await assertWebScriptExport(
     await call("export_web_scripts", pageInput),

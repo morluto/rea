@@ -1,5 +1,4 @@
 import { probeUefiFlashImage } from "../../uefi/UefiFormatProbe.js";
-import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   createCachedPrefixReader,
   readFileHandleRange,
@@ -12,10 +11,7 @@ import {
   abortIfNeeded,
   assertArtifactSelectedSource,
 } from "../../resources/index.js";
-import {
-  nesContainerFormat,
-  parseInesLayout,
-} from "../../domain/inesContainer.js";
+import { nesContainerFormat } from "../../domain/inesContainer.js";
 import {
   resolveArtifactReaderLimits,
   type ArtifactReaderLimits,
@@ -80,6 +76,11 @@ import {
   type MzWindowsHeaderRecordEvidence,
 } from "../../domain/dosMz.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
+import {
+  ISO9660_DESCRIPTOR_OFFSET,
+  ISO9660_RECOGNITION_BYTES,
+  ISO9660_SIGNATURE_BYTES,
+} from "../../domain/iso9660/iso9660Structures.js";
 
 interface RootClassification {
   readonly format: ArtifactOccurrence["artifact_format"];
@@ -205,18 +206,7 @@ export const classifyAndHashRootForInventory = async (
       ));
     const retainSource =
       artifactFormatDescriptor(format)?.retainClassifiedSource === true;
-    const bunRecognition = probes.completedFacts().bunStandalone;
-    const seaRecognition = probes.completedFacts().nodeSeaRecognitionFailure;
-    const recognitionLimitations = [
-      ...(bunRecognition?.status === "limited"
-        ? [
-            `Bun graph recognition remains unknown: ${bunRecognition.failure.message}`,
-          ]
-        : []),
-      ...(seaRecognition === undefined
-        ? []
-        : [`Node SEA recognition remains unknown: ${seaRecognition.message}`]),
-    ];
+    const recognitionLimitations = probes.recognitionLimitations();
     outcome = {
       kind: "completed",
       value: {
@@ -270,6 +260,17 @@ export type EmbeddedExecutablePackage =
   | { readonly format: "dotnet-bundle"; readonly headerOffset: number }
   | { readonly format: "pyinstaller"; readonly cookie: PyInstallerCookie };
 
+export type EmbeddedExecutablePackageProbe =
+  | {
+      readonly status: "present";
+      readonly package: EmbeddedExecutablePackage;
+    }
+  | { readonly status: "absent" }
+  | {
+      readonly status: "unknown";
+      readonly limitations: readonly string[];
+    };
+
 /**
  * Executable-branch package order for a native image.
  * Root classification and release-exposure probing both use this decision.
@@ -278,25 +279,44 @@ export const classifyEmbeddedExecutablePackage = async (
   probes: ArtifactEmbeddedFormatProbes,
   nativeFormat: string,
   signal?: AbortSignal,
-): Promise<EmbeddedExecutablePackage | undefined> => {
+): Promise<EmbeddedExecutablePackageProbe> => {
   const sea = await probes.nodeSea();
   abortIfNeeded(signal);
-  if (sea !== undefined) return { format: "node-sea", location: sea };
+  if (sea !== undefined)
+    return {
+      status: "present",
+      package: { format: "node-sea", location: sea },
+    };
   const bun = await probes.bunStandalone();
-  if (bun.status === "present") return { format: "bun-standalone", probe: bun };
+  if (bun.status === "present")
+    return {
+      status: "present",
+      package: { format: "bun-standalone", probe: bun },
+    };
   const deno = await probes.denoStandalone();
   if (deno.status === "present")
-    return { format: "deno-standalone", probe: deno };
+    return {
+      status: "present",
+      package: { format: "deno-standalone", probe: deno },
+    };
   const packaged = await probes.pyInstaller();
   abortIfNeeded(signal);
   if (nativeFormat !== "mach-o-universal") {
     const headerOffset = await probes.dotnetBundle();
     if (headerOffset !== undefined)
-      return { format: "dotnet-bundle", headerOffset };
+      return {
+        status: "present",
+        package: { format: "dotnet-bundle", headerOffset },
+      };
   }
   if (packaged !== undefined)
-    return { format: "pyinstaller", cookie: packaged };
-  return undefined;
+    return {
+      status: "present",
+      package: { format: "pyinstaller", cookie: packaged },
+    };
+  const limitations = probes.recognitionLimitations();
+  if (limitations.length > 0) return { status: "unknown", limitations };
+  return { status: "absent" };
 };
 
 const classifyRootFormat = async (
@@ -363,14 +383,7 @@ const classifyRootFormat = async (
       );
     return { kind: "esp-flash-image", source, location: selected.value };
   }
-  if (nesContainerFormat(evidence.prefix) !== undefined) {
-    const parsed = parseInesLayout(evidence.prefix, archiveBytes);
-    if (!parsed.ok)
-      throw new ArtifactReaderFailure("format", parsed.error.detail, {
-        cause: new ParseFailureError(parsed.error),
-      });
-    return "ines";
-  }
+  if (nesContainerFormat(evidence.prefix) !== undefined) return "ines";
   const classificationPath = artifactNameForClassification(
     selectedPath ?? path,
     path,
@@ -419,9 +432,16 @@ const classifyRootFormat = async (
     hasDfuSePrefix(evidence.prefix)
       ? await read(archiveBytes - DFUSE_SUFFIX_BYTES, DFUSE_SUFFIX_BYTES)
       : fatEvidence.suffix;
+  // Likewise the ISO 9660 descriptor signature lies past the bounded prefix.
+  const iso9660Descriptor =
+    fatEvidence.iso9660Descriptor === undefined &&
+    archiveBytes >= ISO9660_RECOGNITION_BYTES
+      ? await read(ISO9660_DESCRIPTOR_OFFSET, ISO9660_SIGNATURE_BYTES)
+      : fatEvidence.iso9660Descriptor;
   const classificationEvidence = {
     ...fatEvidence,
     ...(suffix === undefined ? {} : { suffix }),
+    ...(iso9660Descriptor === undefined ? {} : { iso9660Descriptor }),
     ...(mzWindowsHeaderSignature === undefined
       ? {}
       : { mzWindowsHeaderSignature }),
@@ -441,29 +461,47 @@ const classifyRootFormat = async (
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {
-    const embedded = await classifyEmbeddedExecutablePackage(
+    const embeddedProbe = await classifyEmbeddedExecutablePackage(
       embeddedProbes,
       format,
       signal,
     );
+    const embedded =
+      embeddedProbe.status === "present" ? embeddedProbe.package : undefined;
     if (embedded?.format === "node-sea") {
-      const decoded = await decodeNodeSeaBlob(
-        await readNodeSeaBlob(
-          source,
-          embedded.location,
+      try {
+        const decoded = await decodeNodeSeaBlob(
+          await readNodeSeaBlob(
+            source,
+            embedded.location,
+            signal,
+            readerLimits.node_sea,
+          ),
           signal,
           readerLimits.node_sea,
-        ),
-        signal,
-        readerLimits.node_sea,
-      );
-      return {
-        kind: "node-sea",
-        source,
-        location: embedded.location,
-        decoded,
-        limits: readerLimits.node_sea,
-      };
+        );
+        return {
+          kind: "node-sea",
+          source,
+          location: embedded.location,
+          decoded,
+          limits: readerLimits.node_sea,
+        };
+      } catch (cause: unknown) {
+        if (
+          cause instanceof ArtifactReaderFailure &&
+          (cause.reason === "format" ||
+            (cause.reason === "limit" &&
+              (cause.readerLimit?.parameter ===
+                "artifact_limits.node_sea.blob_bytes" ||
+                cause.readerLimit === undefined)))
+        ) {
+          abortIfNeeded(signal);
+          embeddedProbes.recordNodeSeaRecognitionFailure(cause);
+          return format;
+        }
+        throw cause;
+      }
     }
     if (embedded?.format === "bun-standalone")
       return { kind: "bun-standalone", source, probe: embedded.probe };
@@ -484,6 +522,22 @@ const classifyRootFormat = async (
         cookie: embedded.cookie,
         carrierPathDialect: format === "pe" ? "windows" : "posix",
       };
+  }
+  if (
+    format === "asar" &&
+    evidence.asarHeader.state === "matched" &&
+    evidence.asarHeader.extents.archiveBytes === archiveBytes
+  ) {
+    return {
+      kind: "asar",
+      source,
+      extents: {
+        archiveBytes,
+        headerBytes: evidence.asarHeader.extents.headerBytes,
+        jsonBytes: evidence.asarHeader.extents.jsonBytes,
+      },
+      headerAdmission: evidence.asarHeader.admission,
+    };
   }
   return format;
 };

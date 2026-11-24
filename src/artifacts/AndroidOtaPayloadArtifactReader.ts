@@ -55,6 +55,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
   #payload: AndroidOtaPayload | undefined;
+  #coverageStatus: "complete" | "unknown" = "complete";
+  #limitations: string[] = [];
   #closing = false;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
@@ -90,8 +92,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     });
     this.#assertOpen(signal);
     options?.onCoverage?.({
-      status: "complete",
-      limitations: this.#payload?.limitations ?? [],
+      status: this.#coverageStatus,
+      limitations: [...this.#limitations],
     });
     let index = 0;
     for (const entry of this.#entries.values()) {
@@ -187,6 +189,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     await this.#source.close();
     this.#entries.clear();
     this.#payload = undefined;
+    this.#coverageStatus = "complete";
+    this.#limitations = [];
   }
 
   provenance(): readonly [] {
@@ -241,10 +245,21 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
       payloadSignature === undefined
         ? payload
         : withAndroidOtaPayloadSignature(payload.value, payloadSignature);
-    if (!parsed.ok) throw parseFailure(parsed.error);
-    this.#payload = parsed.value;
+    if (parsed.ok) {
+      this.#payload = parsed.value;
+      this.#coverageStatus = "complete";
+      this.#limitations = [...parsed.value.limitations];
+    } else {
+      if (parsed.error.kind === "limit") throw parseFailure(parsed.error);
+      this.#payload = payload.value;
+      this.#coverageStatus = "unknown";
+      this.#limitations = [
+        ...payload.value.limitations,
+        `Optional trailing payload signature could not be parsed: ${parsed.error.message}`,
+      ];
+    }
     this.#entries.clear();
-    for (const partition of parsed.value.partitions) {
+    for (const partition of this.#payload.partitions) {
       const entry = entryFor(partition);
       this.#entries.set(entry.adapterKey, entry);
     }

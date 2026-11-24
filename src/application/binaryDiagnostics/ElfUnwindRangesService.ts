@@ -5,11 +5,11 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
-  ELF_UNWIND_LIMITATIONS,
   elfEhPointerEncodingName,
   inspectElfUnwindRangesInputSchema,
   elfUnwindRangesSchema,
   MAX_INSPECT_ELF_UNWIND_RANGES,
+  type ElfUnwindLimitationCode,
   type ElfUnwindRanges,
 } from "../../domain/native/elfUnwindRanges.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
@@ -17,18 +17,6 @@ import type { Result } from "../../domain/result.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_elf_unwind_ranges";
-const {
-  cfa: CFA_LIMITATION,
-  untrusted: UNTRUSTED_LIMITATION,
-  indirect: INDIRECT_LIMITATION,
-  headerMismatch: HEADER_MISMATCH,
-  frameAbsent: FRAME_ABSENT,
-  headerAbsent: HEADER_ABSENT,
-  debugPresent: DEBUG_PRESENT,
-  debugAbsent: DEBUG_ABSENT,
-  debugUnknown: DEBUG_UNKNOWN,
-  debugOutside: DEBUG_OUTSIDE,
-} = ELF_UNWIND_LIMITATIONS;
 
 type Range = { readonly offset: number; readonly bytes: number };
 type Encoding = { readonly raw: number; readonly name: string };
@@ -115,8 +103,10 @@ const rangesOf = (report: ElfUnwindRanges): Range[] => {
 const encodingOk = (encoding: Encoding | null): boolean =>
   encoding === null || encoding.name === elfEhPointerEncodingName(encoding.raw);
 
-const has = (report: ElfUnwindRanges, text: string): boolean =>
-  report.limitations.includes(text);
+const hasCode = (
+  report: ElfUnwindRanges,
+  code: ElfUnwindLimitationCode,
+): boolean => report.limitation_codes.includes(code);
 
 const frameOk = (report: ElfUnwindRanges): boolean => {
   const frame = report.eh_frame;
@@ -130,7 +120,7 @@ const frameOk = (report: ElfUnwindRanges): boolean => {
     )
       return false;
     if (frame.status === "unknown") return report.coverage.status === "partial";
-    return has(report, FRAME_ABSENT);
+    return hasCode(report, "eh_frame_absent");
   }
   if (frame.status === "present")
     return frame.source !== null && frame.location !== null;
@@ -164,7 +154,7 @@ const headerOk = (report: ElfUnwindRanges, maxRanges: number): boolean => {
     return (
       header.status === "unknown" ||
       report.eh_frame.status === "unknown" ||
-      has(report, HEADER_ABSENT)
+      hasCode(report, "eh_frame_hdr_absent")
     );
   }
   if (header.status === "incomplete")
@@ -201,20 +191,29 @@ const headerOk = (report: ElfUnwindRanges, maxRanges: number): boolean => {
   )
     return false;
   if (report.coverage.eh_frame_hdr_agreement === "agree")
-    return !has(report, HEADER_MISMATCH);
+    return !hasCode(report, "eh_frame_hdr_mismatch");
   if (report.coverage.eh_frame_hdr_agreement === "disagree")
-    return has(report, HEADER_MISMATCH);
+    return hasCode(report, "eh_frame_hdr_mismatch");
   return false;
 };
 
 const debugOk = (report: ElfUnwindRanges): boolean => {
   const debug = report.debug_frame;
   if (debug.status === "present")
-    return debug.location !== null && has(report, DEBUG_PRESENT);
+    return (
+      debug.location !== null &&
+      hasCode(report, "debug_frame_present_undecoded")
+    );
   if (debug.location !== null) return false;
   if (debug.status === "incomplete")
-    return report.coverage.status === "partial" && has(report, DEBUG_OUTSIDE);
-  return has(report, debug.status === "absent" ? DEBUG_ABSENT : DEBUG_UNKNOWN);
+    return (
+      report.coverage.status === "partial" &&
+      hasCode(report, "debug_frame_outside_file")
+    );
+  return hasCode(
+    report,
+    debug.status === "absent" ? "debug_frame_absent" : "debug_frame_unknown",
+  );
 };
 
 // The page returns exactly the CIEs its ranges name, in ascending index order,
@@ -364,9 +363,11 @@ const validReport = (
     report.page.offset !== offset ||
     report.page.limit !== limit ||
     !rangesOf(report).every(insideArtifact(report.artifact.bytes)) ||
-    !has(report, CFA_LIMITATION) ||
-    !has(report, UNTRUSTED_LIMITATION) ||
-    (indirectVisible(report) && !has(report, INDIRECT_LIMITATION))
+    report.limitations.length === 0 ||
+    !hasCode(report, "cfa_not_evaluated") ||
+    !hasCode(report, "untrusted_names") ||
+    (indirectVisible(report) &&
+      !hasCode(report, "indirect_pointers_not_dereferenced"))
   )
     return false;
   return (

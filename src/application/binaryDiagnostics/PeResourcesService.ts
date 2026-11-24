@@ -38,11 +38,7 @@ export class PeResourcesService {
         toParameters: (input) => input,
         validateReport: (report, parameters) =>
           report.artifact.path === parameters.path &&
-          validReport(
-            report,
-            parameters.max_entries,
-            parameters.max_file_bytes,
-          ),
+          validReport(report, parameters.max_entries),
         buildEvidence: (value, identity, parameters) => {
           const architecture = peSubjectArchitecture(
             value.machine,
@@ -74,16 +70,11 @@ export class PeResourcesService {
 }
 
 /** Check cross-field invariants before provider output becomes public Evidence. */
-const validReport = (
-  report: PeResources,
-  maxEntries: number,
-  maxBytes: number,
-): boolean => {
+const validReport = (report: PeResources, maxEntries: number): boolean => {
   const inside = insideArtifact(report.artifact.bytes);
   const identityInside = (identity: PeResourceIdentity): boolean =>
     identity.kind === "id" || inside(identity.location);
   if (
-    report.artifact.bytes > maxBytes ||
     report.coverage.resources !== report.resources.length ||
     report.coverage.examined_entries > maxEntries ||
     report.coverage.examined_entries !==

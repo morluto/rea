@@ -1,4 +1,7 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { evmInterfaceSchema } from "../evm/evmInterface.js";
@@ -60,15 +63,7 @@ export const projectEvmInterfaceView = (
     SummaryAnalysisView | z.output<typeof evmViewRequestSchema>
   >(admitted, "summary", "evm");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "EVM Evidence supports summary and evm views.",
-        },
-      ]),
-    );
+    return invalidAnalysisView("EVM Evidence supports summary and evm views.");
   const parsed = readEvmInterface(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;

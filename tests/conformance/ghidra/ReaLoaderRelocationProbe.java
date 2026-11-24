@@ -20,6 +20,7 @@ import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.mem.MemoryBlockSourceInfo;
 import ghidra.program.model.reloc.Relocation;
 import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.SymbolIterator;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -30,6 +31,7 @@ import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * Exercises the production loader-relocation boundary on a real imported
@@ -155,30 +157,10 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         return false;
     }
 
-    private Reference readerReference(Function reader, Address target) {
-        for (Instruction instruction : currentProgram.getListing().getInstructions(reader.getBody(), true)) {
-            for (Reference reference : instruction.getReferencesFrom()) {
-                if (reference.getToAddress().equals(target) && reference.getReferenceType().isRead())
-                    return reference;
-            }
-        }
-        return null;
-    }
-
-    private Reference writerReference(Function writer, Address target) {
-        for (Instruction instruction : currentProgram.getListing().getInstructions(writer.getBody(), true)) {
-            for (Reference reference : instruction.getReferencesFrom()) {
-                if (reference.getToAddress().equals(target) && reference.getReferenceType().isWrite())
-                    return reference;
-            }
-        }
-        return null;
-    }
-
-    private Reference readReference(Function function, Address target) {
+    private Reference referenceTo(Function function, Address target, Predicate<RefType> matches) {
         for (Instruction instruction : currentProgram.getListing().getInstructions(function.getBody(), true)) {
             for (Reference reference : instruction.getReferencesFrom()) {
-                if (reference.getToAddress().equals(target) && reference.getReferenceType().isRead())
+                if (reference.getToAddress().equals(target) && matches.test(reference.getReferenceType()))
                     return reference;
             }
         }
@@ -260,17 +242,17 @@ public final class ReaLoaderRelocationProbe extends GhidraScript {
         require("relocation_not_applied_by_importer",
             relocation.getStatus() != Relocation.Status.APPLIED &&
             relocation.getStatus() != Relocation.Status.APPLIED_OTHER);
-        Reference reference = readerReference(reader, pointer);
+        Reference reference = referenceTo(reader, pointer, RefType::isRead);
         require("reader_references_relocation", reference != null);
-        require("writer_references_relocation", writerReference(writer, pointer) != null);
+        require("writer_references_relocation", referenceTo(writer, pointer, RefType::isWrite) != null);
 
         Relocation functionGotRelocation = relocationForSymbol("rea_external");
         Relocation dataGotRelocation = relocationForSymbol("rea_external_value");
         require("got_function_relocation_present", functionGotRelocation != null);
         require("got_data_relocation_present", dataGotRelocation != null);
         require("got_caller_references_loader_relocation",
-            readReference(gotCaller, functionGotRelocation.getAddress()) != null ||
-            readReference(gotCaller, dataGotRelocation.getAddress()) != null);
+            referenceTo(gotCaller, functionGotRelocation.getAddress(), RefType::isRead) != null ||
+            referenceTo(gotCaller, dataGotRelocation.getAddress(), RefType::isRead) != null);
         // An initial-exec TLS slot only the runtime loader fills, in the same
         // read-only block as the applied GOT entries.
         Relocation tlsGotRelocation = relocationForSymbol("rea_external_tls");

@@ -119,6 +119,7 @@ it.each(["inspect_firmware_regions", "extract_firmware"] as const)(
     const coverage = {
       status: "unknown",
       reason: "No call graph examined",
+      limited_directions: ["callers", "callees"] as ["callers", "callees"],
     } as const;
     const observation = {
       ...execution,

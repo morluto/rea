@@ -23,6 +23,11 @@ import { ParseFailureError, unsupportedInput } from "./parseFailure.js";
  * subject's digest, format and architecture, so every Evidence ID changes.
  * Each record also declares `evidence_format`, so a standalone record names
  * its format too.
+ * Format-2 records produced before `limited_directions` became required on
+ * live provider replies may omit `relationship_coverage.limited_directions` on
+ * `partial` and `unknown` coverage; `evidenceRelationshipCoverageSchema`
+ * continues to read them with their original Evidence IDs until the revision
+ * advances.
  */
 export const EVIDENCE_FORMAT_REVISION = 2;
 
