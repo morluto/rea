@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics/elfUnwindRanges.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES } from "../../../src/domain/native/elfUnwindRanges.js";
 import { elfUnwindFixture } from "../../../src/native/elf/ElfUnwindTables.fixture.js";
 import { compressedElfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
@@ -122,12 +123,22 @@ describe("ELF unwind range budgets", () => {
           },
         },
       });
-      const remediation =
-        "remediationAction" in result.error
-          ? result.error.remediationAction
-          : undefined;
-      expect(remediation).toContain("smaller limit than 300");
-      expect(remediation).not.toContain("Raise max_ranges");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.remediation.action).toContain("smaller limit than 300");
+      expect(projected.remediation.action).not.toContain("Raise max_ranges");
+      expect(projected.details).toMatchObject({
+        refusal: {
+          kind: "fixed_ceiling",
+          operation: "inspect_elf_unwind_ranges",
+          allowance: "The ELF unwind symbol-name text allowance",
+          allowance_kind: "bytes",
+          limit: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
+          unit: "bytes",
+          narrowing: expect.stringContaining("smaller limit than 300"),
+        },
+        related_parameters: ["limit", "offset"],
+      });
+      expect(projected.details?.["limit"]).toBeUndefined();
       const smaller = await service.inspect({ path, limit: 200 });
       expect(smaller.ok).toBe(true);
     } finally {
@@ -148,6 +159,18 @@ describe("ELF unwind range budgets", () => {
         resource: "file-size",
         reportedLimits: { max_file_bytes: 64 },
       });
+      expect(projectAnalysisError(tooSmall.error).details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 536870912,
+          default_value: 67108864,
+          applies_at: "next_call",
+        },
+      });
       const tooMany = await service.inspect({ path, max_ranges: 1 });
       if (tooMany.ok) throw new Error("Expected range budget failure");
       expect(tooMany.error).toMatchObject({
@@ -164,6 +187,19 @@ describe("ELF unwind range budgets", () => {
           },
         },
       });
+      expect(projectAnalysisError(tooMany.error).details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_ranges",
+          effective_value: 1,
+          unit: "count",
+          minimum: 1,
+          maximum: 65536,
+          default_value: 8192,
+          applies_at: "next_call",
+        },
+      });
+      expect((await service.inspect({ path, max_ranges: 16 })).ok).toBe(true);
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

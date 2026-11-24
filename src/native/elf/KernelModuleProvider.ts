@@ -14,11 +14,13 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
+  KERNEL_MODULE_READ_BUDGETS,
   MAX_INSPECT_KERNEL_MODULE_ENTRIES,
   MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
   type InspectKernelModuleInput,
   type KernelModule,
 } from "../../domain/native/kernelModule.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -160,6 +162,15 @@ const kernelModuleFailure = (
                       }
                   : {
                       retryable: false as const,
+                      limit: elfReadBudgetLimit(
+                        KERNEL_MODULE_READ_BUDGETS,
+                        failure.boundary === "file-size"
+                          ? "max_file_bytes"
+                          : "max_entries",
+                        failure.boundary === "file-size"
+                          ? input.max_file_bytes
+                          : input.max_entries,
+                      ),
                       remediationAction: inputBudgetRemediation(
                         failure.boundary,
                         input,

@@ -4,6 +4,11 @@ import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
+import {
+  DEFAULT_ELF_READ_FILE_BYTES,
+  MINIMUM_ELF_READ_FILE_BYTES,
+  type ElfReadBudgetBounds,
+} from "./elfReadBudgets.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const hexAddress = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -20,6 +25,20 @@ export const MAX_INSPECT_ELF_UNWIND_PAGE = 4096;
 export const MAX_ELF_UNWIND_SYMBOLS = 65536;
 /** Fixed allowance on symbol-name text decoded for one returned page. */
 export const MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES = 16 * 1024 * 1024;
+
+/** Per-call read and record budgets for ELF unwind-range inspection. */
+export const ELF_UNWIND_RANGES_READ_BUDGETS = {
+  max_file_bytes: {
+    minimum: MINIMUM_ELF_READ_FILE_BYTES,
+    maximum: MAX_INSPECT_ELF_UNWIND_FILE_BYTES,
+    default_value: DEFAULT_ELF_READ_FILE_BYTES,
+  },
+  max_ranges: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_UNWIND_RANGES,
+    default_value: 8192,
+  },
+} as const satisfies Record<string, ElfReadBudgetBounds>;
 
 /**
  * Limitation texts the parser emits and the application layer checks for.
@@ -104,16 +123,16 @@ export const inspectElfUnwindRangesInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(64)
-    .max(MAX_INSPECT_ELF_UNWIND_FILE_BYTES)
-    .default(67108864)
+    .min(ELF_UNWIND_RANGES_READ_BUDGETS.max_file_bytes.minimum)
+    .max(ELF_UNWIND_RANGES_READ_BUDGETS.max_file_bytes.maximum)
+    .default(ELF_UNWIND_RANGES_READ_BUDGETS.max_file_bytes.default_value)
     .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
   max_ranges: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_UNWIND_RANGES)
-    .default(8192)
+    .min(ELF_UNWIND_RANGES_READ_BUDGETS.max_ranges.minimum)
+    .max(ELF_UNWIND_RANGES_READ_BUDGETS.max_ranges.maximum)
+    .default(ELF_UNWIND_RANGES_READ_BUDGETS.max_ranges.default_value)
     .describe(
       "Maximum CIE records and, separately, maximum FDEs to decode; exceeding either budget fails without partial success",
     ),

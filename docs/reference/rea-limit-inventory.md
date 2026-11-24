@@ -214,11 +214,23 @@ each operation's schema owns its bounds, and a refusal reports
 `details.limit` with `control_kind: "parameter"` and `applies_at: "next_call"`.
 These parameters report that limit:
 
-| Operation                                     | Parameter                | Default    | Floor |                   Maximum | Owner                                 |
-| --------------------------------------------- | ------------------------ | ---------- | ----: | ------------------------: | ------------------------------------- |
-| `inspect_il2cpp_metadata`                     | `max_native_index_bytes` | 1073741824 |     1 | `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts` |
-| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/elfReadBudgets.ts` |
-| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`            | 128        |     1 |                       256 | `src/domain/native/elfReadBudgets.ts` |
+| Operation                                     | Parameter                | Default    | Floor |                   Maximum | Owner                                    |
+| --------------------------------------------- | ------------------------ | ---------- | ----: | ------------------------: | ---------------------------------------- |
+| `inspect_il2cpp_metadata`                     | `max_native_index_bytes` | 1073741824 |     1 | `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts`    |
+| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/elfReadBudgets.ts`    |
+| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`            | 128        |     1 |                       256 | `src/domain/native/elfReadBudgets.ts`    |
+| `inspect_elf_dependencies`                    | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/elfDependencies.ts`   |
+| `inspect_elf_dependencies`                    | `max_needed`             | 1024       |     1 |                     65536 | `src/domain/native/elfDependencies.ts`   |
+| `inspect_elf_dependencies`                    | `max_versions`           | 4096       |     1 |                     65536 | `src/domain/native/elfDependencies.ts`   |
+| `inspect_elf_dependencies`                    | `max_imports`            | 65536      |     1 |                    262144 | `src/domain/native/elfDependencies.ts`   |
+| `inspect_elf_unwind_ranges`                   | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/elfUnwindRanges.ts`   |
+| `inspect_elf_unwind_ranges`                   | `max_ranges`             | 8192       |     1 |                     65536 | `src/domain/native/elfUnwindRanges.ts`   |
+| `inspect_kernel_module`                       | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/kernelModule.ts`      |
+| `inspect_kernel_module`                       | `max_entries`            | 8192       |     1 |                     65536 | `src/domain/native/kernelModule.ts`      |
+| `inspect_kernel_build_config`                 | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/kernelBuildConfig.ts` |
+| `inspect_kernel_build_config`                 | `max_entries`            | 16384      |     1 |                     65536 | `src/domain/native/kernelBuildConfig.ts` |
+| `inspect_kernel_build_config`                 | `max_config_bytes`       | 4194304    |    64 |                  33554432 | `src/domain/native/kernelBuildConfig.ts` |
+| `inspect_kernel_build_config`                 | `max_payload_bytes`      | 134217728  |    64 |                 536870912 | `src/domain/native/kernelBuildConfig.ts` |
 
 Refusals that still name a per-call control only in prose are counted by
 `scripts/verify/fixed-ceilings.mjs` against

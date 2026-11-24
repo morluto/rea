@@ -16,11 +16,13 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
+  ELF_UNWIND_RANGES_READ_BUDGETS,
   MAX_INSPECT_ELF_UNWIND_FILE_BYTES,
   MAX_INSPECT_ELF_UNWIND_RANGES,
   type ElfUnwindRanges,
   type InspectElfUnwindRangesInput,
 } from "../../domain/native/elfUnwindRanges.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -126,16 +128,31 @@ const elfUnwindFailure = (
       recognise: (failure) => {
         if (isParseLimit(failure, ELF_UNWIND_FORMAT)) {
           const { limit } = failure.failure;
-          const records = limit.name === ELF_UNWIND_RECORD_LIMIT;
+          if (limit.name === ELF_UNWIND_RECORD_LIMIT)
+            return parseLimitConstraint(OPERATION, "capacity", failure, {
+              legacyMaximumKey: "max_ranges",
+              reportedLimitContext: { max_file_bytes: input.max_file_bytes },
+              retryable: false,
+              limit: elfReadBudgetLimit(
+                ELF_UNWIND_RANGES_READ_BUDGETS,
+                "max_ranges",
+                input.max_ranges,
+              ),
+              remediationAction: recordBudgetRemediation(limit.maximum),
+            });
           return parseLimitConstraint(OPERATION, "capacity", failure, {
-            legacyMaximumKey: records ? "max_ranges" : "maximum_bytes",
-            reportedLimitContext: records
-              ? { max_file_bytes: input.max_file_bytes }
-              : { limit: input.limit },
-            retryable: false,
-            remediationAction: records
-              ? recordBudgetRemediation(limit.maximum)
-              : `Request a smaller limit than ${String(input.limit)}, or page with offset; the ${String(limit.maximum)}-byte symbol-name text allowance is fixed, and max_ranges and max_file_bytes do not raise it.`,
+            legacyMaximumKey: "maximum_bytes",
+            reportedLimitContext: { limit: input.limit },
+            related: { parameters: ["limit", "offset"] },
+            ...fixedAllowanceOptions(
+              "The ELF unwind symbol-name text allowance",
+              "bytes",
+              {
+                limit: limit.maximum,
+                unit: "bytes",
+                narrowing: `Request a smaller limit than ${String(input.limit)}, or page with offset; max_ranges and max_file_bytes do not raise this allowance.`,
+              },
+            ),
           });
         }
         if (failure instanceof BinaryResourceFailure)
@@ -163,6 +180,11 @@ const elfUnwindFailure = (
           {
             cause: failure,
             retryable: false,
+            limit: elfReadBudgetLimit(
+              ELF_UNWIND_RANGES_READ_BUDGETS,
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
             remediationAction: fileBudgetRemediation(input.max_file_bytes),
           },
         ),

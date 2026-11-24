@@ -96,7 +96,14 @@ Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `inspect_elf_notes` and `inspect_elf_debug_link` refuse a file above
 `max_file_bytes`, a decoded section-name table above it, or more notes than
 `max_entries` with `details.limit` naming that field
-(`control_kind: "parameter"`), its effective value, default and range. `inspect_il2cpp_metadata`
+(`control_kind: "parameter"`), its effective value, default and range. The
+other ELF and Linux kernel readers report `details.limit` the same way:
+`inspect_elf_dependencies` (`max_file_bytes`, `max_needed`, `max_versions`,
+`max_imports`), `inspect_elf_unwind_ranges` (`max_file_bytes`, `max_ranges`),
+`inspect_kernel_module` (`max_file_bytes`, `max_entries`), and
+`inspect_kernel_build_config` (`max_file_bytes`, `max_entries`,
+`max_config_bytes` including its derived compressed candidate allowance, and
+`max_payload_bytes`). `inspect_il2cpp_metadata`
 accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
 index of `binary_path`; its refusal reports the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).

@@ -3,6 +3,11 @@ import { z } from "zod";
 import { coverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  DEFAULT_ELF_READ_FILE_BYTES,
+  MINIMUM_ELF_READ_FILE_BYTES,
+  type ElfReadBudgetBounds,
+} from "./elfReadBudgets.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 
@@ -16,6 +21,30 @@ export const MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES = 33554432;
 export const MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES = 536870912;
 /** Hard ceiling on one page of CONFIG_* entries. */
 export const MAX_INSPECT_KERNEL_BUILD_CONFIG_PAGE = 4096;
+
+/** Per-call read, entry, and inflation budgets for kernel build-config inspection. */
+export const KERNEL_BUILD_CONFIG_READ_BUDGETS = {
+  max_file_bytes: {
+    minimum: MINIMUM_ELF_READ_FILE_BYTES,
+    maximum: MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES,
+    default_value: DEFAULT_ELF_READ_FILE_BYTES,
+  },
+  max_entries: {
+    minimum: 1,
+    maximum: MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
+    default_value: 16384,
+  },
+  max_config_bytes: {
+    minimum: 64,
+    maximum: MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES,
+    default_value: 4194304,
+  },
+  max_payload_bytes: {
+    minimum: 64,
+    maximum: MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES,
+    default_value: 134217728,
+  },
+} as const satisfies Record<string, ElfReadBudgetBounds>;
 
 export const KERNEL_BUILD_CONFIG_CODECS = [
   "gzip",
@@ -111,34 +140,34 @@ export const inspectKernelBuildConfigInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(64)
-    .max(MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES)
-    .default(67108864)
+    .min(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_file_bytes.minimum)
+    .max(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_file_bytes.maximum)
+    .default(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_file_bytes.default_value)
     .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
   max_entries: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES)
-    .default(16384)
+    .min(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_entries.minimum)
+    .max(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_entries.maximum)
+    .default(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_entries.default_value)
     .describe(
       "Maximum CONFIG_* options to examine; exceeding the budget fails without partial success",
     ),
   max_config_bytes: z
     .number()
     .int()
-    .min(64)
-    .max(MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES)
-    .default(4194304)
+    .min(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_config_bytes.minimum)
+    .max(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_config_bytes.maximum)
+    .default(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_config_bytes.default_value)
     .describe(
       "Maximum inflated bytes of one IKCFG gzip member (default 4 MiB)",
     ),
   max_payload_bytes: z
     .number()
     .int()
-    .min(64)
-    .max(MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES)
-    .default(134217728)
+    .min(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_payload_bytes.minimum)
+    .max(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_payload_bytes.maximum)
+    .default(KERNEL_BUILD_CONFIG_READ_BUDGETS.max_payload_bytes.default_value)
     .describe(
       "Maximum inflated bytes of a bzImage gzip payload (default 128 MiB)",
     ),

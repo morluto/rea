@@ -2,6 +2,7 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createElfDependenciesService } from "../../../src/composition/binaryDiagnostics/elfDependencies.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -71,6 +72,18 @@ describe("ELF dependency stable filesystem boundary", () => {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(projectAnalysisError(tooSmall.error).details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 536870912,
+          default_value: 67108864,
+          applies_at: "next_call",
+        },
+      });
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

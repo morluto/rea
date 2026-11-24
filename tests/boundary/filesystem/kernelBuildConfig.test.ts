@@ -1,6 +1,7 @@
 import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createKernelBuildConfigService } from "../../../src/composition/binaryDiagnostics/kernelBuildConfig.js";
@@ -48,12 +49,24 @@ describe("kernel build config stable filesystem boundary", () => {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(projectAnalysisError(tooSmall.error).details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 536870912,
+          default_value: 67108864,
+          applies_at: "next_call",
+        },
+      });
       const bootImage = join(root, "bzImage");
       await writeFile(bootImage, bzImageGzipFixture());
-      for (const [target, boundary, maximum] of [
-        [path, "max_entries", 1],
-        [path, "max_config_bytes", 64],
-        [bootImage, "max_payload_bytes", 64],
+      for (const [target, boundary, maximum, unit, min, max, def] of [
+        [path, "max_entries", 1, "count", 1, 65536, 16384],
+        [path, "max_config_bytes", 64, "bytes", 64, 33554432, 4194304],
+        [bootImage, "max_payload_bytes", 64, "bytes", 64, 536870912, 134217728],
       ] as const) {
         const result = await service.inspect({
           path: target,
@@ -66,6 +79,16 @@ describe("kernel build config stable filesystem boundary", () => {
           details: {
             resource: "capacity",
             reported_limits: { boundary, maximum, [boundary]: maximum },
+            limit: {
+              control_kind: "parameter",
+              parameter: boundary,
+              effective_value: maximum,
+              unit,
+              minimum: min,
+              maximum: max,
+              default_value: def,
+              applies_at: "next_call",
+            },
           },
           remediation: {
             action: expect.stringContaining(
@@ -74,6 +97,44 @@ describe("kernel build config stable filesystem boundary", () => {
           },
         });
       }
+      const plain = gzipSync("CONFIG_X=y\n");
+      const header = Buffer.from(plain.subarray(0, 10));
+      header[3] = 0x10;
+      const largeCompressed = join(root, "large-compressed-ikcfg");
+      await writeFile(
+        largeCompressed,
+        Buffer.concat([
+          Buffer.from("IKCFG_ST"),
+          header,
+          Buffer.alloc(1024 * 1024, 0x61),
+          Buffer.alloc(1),
+          plain.subarray(10),
+          Buffer.from("IKCFG_ED"),
+        ]),
+      );
+      const compressedRefused = await service.inspect({
+        path: largeCompressed,
+        max_config_bytes: 64,
+      });
+      if (compressedRefused.ok)
+        throw new Error("Expected compressed_candidate_bytes failure");
+      expect(
+        projectAnalysisError(compressedRefused.error).details,
+      ).toMatchObject({
+        resource: "memory",
+        reported_limits: { boundary: "compressed_candidate_bytes" },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_config_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 33554432,
+          default_value: 4194304,
+          applies_at: "next_call",
+        },
+      });
+      expect((await service.inspect({ path: largeCompressed })).ok).toBe(true);
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

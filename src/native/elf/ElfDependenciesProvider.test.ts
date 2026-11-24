@@ -5,6 +5,7 @@ import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { setImmediate as immediate } from "node:timers/promises";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectElfDependenciesInputSchema } from "../../domain/native/elfDependencies.js";
 import { elfDependencyFixture } from "./ElfDependencies.fixture.js";
 import { ElfDependenciesProvider } from "./ElfDependenciesProvider.js";
@@ -68,23 +69,55 @@ const countLimitOf = (
 };
 
 it.each([
-  ["max_needed", 65536],
-  ["max_versions", 65536],
-  ["max_imports", 262144],
+  ["max_needed", 1024, 65536],
+  ["max_versions", 4096, 65536],
+  ["max_imports", 65536, 262144],
 ] as const)(
   "reports which budget failed and recovers when %s is raised",
-  async (parameter, ceiling) => {
+  async (parameter, defaultValue, ceiling) => {
     const inspect = await inspectFixture(elfDependencyFixture());
-    expect(countLimitOf(await inspect({ [parameter]: 2 }))).toMatchObject({
+    const refused = await inspect({ [parameter]: 2 });
+    expect(countLimitOf(refused)).toMatchObject({
       boundary: parameter,
       maximum: 2,
       required: 3,
+    });
+    if (refused.ok) throw new Error("Expected a limit failure");
+    expect(projectAnalysisError(refused.error).details).toMatchObject({
+      limit: {
+        control_kind: "parameter",
+        parameter,
+        effective_value: 2,
+        unit: "count",
+        minimum: 1,
+        maximum: ceiling,
+        default_value: defaultValue,
+        applies_at: "next_call",
+      },
     });
     const raised = await inspect({ [parameter]: ceiling });
     if (!raised.ok) throw raised.error;
     expect(raised.value.coverage.status).toBe("complete");
   },
 );
+
+it("reports max_file_bytes in details.limit when the image exceeds the read budget", async () => {
+  const inspect = await inspectFixture(elfDependencyFixture());
+  const refused = await inspect({ max_file_bytes: 64 });
+  if (refused.ok) throw new Error("Expected a file-size limit failure");
+  expect(projectAnalysisError(refused.error).details).toMatchObject({
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_file_bytes",
+      effective_value: 64,
+      unit: "bytes",
+      minimum: 64,
+      maximum: 536870912,
+      default_value: 67108864,
+      applies_at: "next_call",
+    },
+  });
+});
 
 it("reports a fixed dynamic-symbol ceiling that a raised budget cannot clear", async () => {
   const imports = Array.from({ length: 262145 }, () => ({ name: "symbol" }));

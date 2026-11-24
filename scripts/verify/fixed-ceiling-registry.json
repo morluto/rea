@@ -415,6 +415,11 @@
       "class": "pending",
       "issue": 14235,
       "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    },
+    "\"The ELF unwind symbol-name text allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control; paging with limit and offset narrows one page."
     }
   },
   "src/native/elf/KernelModuleProvider.ts": {

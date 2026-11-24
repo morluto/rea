@@ -1,7 +1,6 @@
 import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-  ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -12,6 +11,7 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
+  KERNEL_BUILD_CONFIG_READ_BUDGETS,
   MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES,
   MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
   MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES,
@@ -19,6 +19,7 @@ import {
   type InspectKernelBuildConfigInput,
   type KernelBuildConfig,
 } from "../../domain/native/kernelBuildConfig.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_BUILD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
@@ -141,6 +142,33 @@ const parserBudgetRemediation = ({
   }
 };
 
+const parserBudgetLimit = (
+  name: KernelBuildConfigBudgetFailure["failure"]["limit"]["name"],
+  input: InspectKernelBuildConfigInput,
+) => {
+  switch (name) {
+    case "max_entries":
+      return elfReadBudgetLimit(
+        KERNEL_BUILD_CONFIG_READ_BUDGETS,
+        "max_entries",
+        input.max_entries,
+      );
+    case "max_config_bytes":
+    case "compressed_candidate_bytes":
+      return elfReadBudgetLimit(
+        KERNEL_BUILD_CONFIG_READ_BUDGETS,
+        "max_config_bytes",
+        input.max_config_bytes,
+      );
+    case "max_payload_bytes":
+      return elfReadBudgetLimit(
+        KERNEL_BUILD_CONFIG_READ_BUDGETS,
+        "max_payload_bytes",
+        input.max_payload_bytes,
+      );
+  }
+};
+
 const reportedBudgetContext = (input: InspectKernelBuildConfigInput) => ({
   max_file_bytes: input.max_file_bytes,
   max_entries: input.max_entries,
@@ -179,37 +207,30 @@ const kernelBuildConfigFailure = (
                 [limit.name]: limit.maximum,
               },
               retryable: false,
+              limit: parserBudgetLimit(limit.name, input),
               remediationAction: parserBudgetRemediation(limit),
-            },
-          );
-        }
-        if (
-          origin === "owned-or-classified" &&
-          failure instanceof ArtifactReaderFailure &&
-          failure.reason === "limit"
-        ) {
-          return new AnalysisResourceConstraintError(
-            OPERATION,
-            failure.boundary ?? "memory",
-            failure.message,
-            reportedBudgetContext(input),
-            {
-              cause: failure,
-              ...(failure.boundary !== "capacity" &&
-              failure.boundary !== "file-size"
-                ? {}
-                : {
-                    retryable: false as const,
-                    remediationAction:
-                      failure.boundary === "file-size"
-                        ? fileSizeRemediation(input)
-                        : "Select a smaller artifact. The caller-selected kernel build config budgets refused this image.",
-                  }),
             },
           );
         }
         return undefined;
       },
+      fileSize: (failure) =>
+        new AnalysisResourceConstraintError(
+          OPERATION,
+          "file-size",
+          failure.message,
+          reportedBudgetContext(input),
+          {
+            cause: failure,
+            retryable: false,
+            limit: elfReadBudgetLimit(
+              KERNEL_BUILD_CONFIG_READ_BUDGETS,
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
+            remediationAction: fileSizeRemediation(input),
+          },
+        ),
     }),
   );
   if (completed !== undefined) primary.retainPartialObservation(completed);

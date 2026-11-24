@@ -3,6 +3,11 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
+import {
+  DEFAULT_ELF_READ_FILE_BYTES,
+  MINIMUM_ELF_READ_FILE_BYTES,
+  type ElfReadBudgetBounds,
+} from "./elfReadBudgets.js";
 import { coverageStatusSchema } from "../coverage.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
@@ -16,6 +21,30 @@ export const MAX_INSPECT_ELF_DEPENDENCY_NEEDED = 65536;
 export const MAX_INSPECT_ELF_DEPENDENCY_VERSIONS = 65536;
 /** Hard ceiling on undefined dynamic symbols examined as imports. */
 export const MAX_INSPECT_ELF_DEPENDENCY_IMPORTS = 262144;
+
+/** Per-call read and table budgets for ELF dependency inspection. */
+export const ELF_DEPENDENCIES_READ_BUDGETS = {
+  max_file_bytes: {
+    minimum: MINIMUM_ELF_READ_FILE_BYTES,
+    maximum: MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
+    default_value: DEFAULT_ELF_READ_FILE_BYTES,
+  },
+  max_needed: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
+    default_value: 1024,
+  },
+  max_versions: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
+    default_value: 4096,
+  },
+  max_imports: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+    default_value: 65536,
+  },
+} as const satisfies Record<string, ElfReadBudgetBounds>;
 
 /** DT_FLAGS bits decoded by name. Unrecognized bits stay numeric. */
 export const DF_FLAG_BITS = [
@@ -209,34 +238,34 @@ export const inspectElfDependenciesInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(64)
-    .max(MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES)
-    .default(67108864)
+    .min(ELF_DEPENDENCIES_READ_BUDGETS.max_file_bytes.minimum)
+    .max(ELF_DEPENDENCIES_READ_BUDGETS.max_file_bytes.maximum)
+    .default(ELF_DEPENDENCIES_READ_BUDGETS.max_file_bytes.default_value)
     .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
   max_needed: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_DEPENDENCY_NEEDED)
-    .default(1024)
+    .min(ELF_DEPENDENCIES_READ_BUDGETS.max_needed.minimum)
+    .max(ELF_DEPENDENCIES_READ_BUDGETS.max_needed.maximum)
+    .default(ELF_DEPENDENCIES_READ_BUDGETS.max_needed.default_value)
     .describe(
       "Maximum DT_NEEDED entries to examine; exceeding the budget fails without partial success",
     ),
   max_versions: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_DEPENDENCY_VERSIONS)
-    .default(4096)
+    .min(ELF_DEPENDENCIES_READ_BUDGETS.max_versions.minimum)
+    .max(ELF_DEPENDENCIES_READ_BUDGETS.max_versions.maximum)
+    .default(ELF_DEPENDENCIES_READ_BUDGETS.max_versions.default_value)
     .describe(
       "Maximum GNU version requirement and definition records to examine; exceeding the budget fails without partial success",
     ),
   max_imports: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_DEPENDENCY_IMPORTS)
-    .default(65536)
+    .min(ELF_DEPENDENCIES_READ_BUDGETS.max_imports.minimum)
+    .max(ELF_DEPENDENCIES_READ_BUDGETS.max_imports.maximum)
+    .default(ELF_DEPENDENCIES_READ_BUDGETS.max_imports.default_value)
     .describe(
       "Maximum undefined dynamic symbols to examine as imports; exceeding the budget fails without partial success",
     ),
