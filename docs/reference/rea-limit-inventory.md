@@ -229,8 +229,8 @@ Fixed ceilings are listed with their class and reason in
 `scripts/verify/fixed-ceilings.mjs`; see
 [keep a fixed ceiling honest](limits-and-recovery.md#keep-a-fixed-ceiling-honest).
 Entries classed `pending` are resource limits awaiting a control, tracked in
-[#14175](https://github.com/morluto/rea/issues/14175) (IL2CPP),
-[#14235](https://github.com/morluto/rea/issues/14235) (native readers),
+[#14235](https://github.com/morluto/rea/issues/14235) (native readers,
+including IL2CPP's remaining allowances),
 [#14236](https://github.com/morluto/rea/issues/14236) (archive and container
 readers) and [#14237](https://github.com/morluto/rea/issues/14237) (producer
 output and capture).
