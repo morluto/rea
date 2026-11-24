@@ -113,6 +113,11 @@ export interface AndroidBootParse {
   /** Page-aligned end after the last component; trailing padding may be absent. */
   readonly imageEnd: number;
   readonly limitations: readonly string[];
+  /**
+   * Declared bytes that no child exposes. Coverage cannot be complete while one
+   * of these remains, because the layout claims bytes the inventory omits.
+   */
+  readonly unexposedDeclaredBytes: boolean;
   readonly tableRange: {
     readonly offset: number;
     readonly size: number;
@@ -126,6 +131,8 @@ export interface AndroidBootParse {
 export interface VendorRamdiskTableParse {
   readonly components: readonly AndroidBootComponentPlan[];
   readonly limitations: readonly string[];
+  /** Set when the table leaves declared section bytes with no child. */
+  readonly unexposedSectionBytes: boolean;
 }
 
 export interface AvbFooterFacts {
@@ -494,6 +501,7 @@ const bootParse = (
   bootconfigSize: null,
   tableRange: null,
   vendorRamdiskSection: null,
+  unexposedDeclaredBytes: false,
   ...fields,
 });
 
@@ -541,6 +549,8 @@ const layoutLegacyTail = (
   readonly recoveryDtboOffset: number | null;
   readonly dtbSize: number | null;
   readonly dtbAddr: number | null;
+  /** Set when recovery_dtbo starts after the sequential layout ends. */
+  readonly layoutGap: boolean;
 } => {
   if (version < 1)
     return {
@@ -549,6 +559,7 @@ const layoutLegacyTail = (
       recoveryDtboOffset: null,
       dtbSize: null,
       dtbAddr: null,
+      layoutGap: false,
     };
   const recoveryDtboSize = u32(prefix, LEGACY_V0_SIZE);
   const recoveryDtboOffset = u64(
@@ -557,6 +568,7 @@ const layoutLegacyTail = (
     "recovery_dtbo offset",
   );
   let next = cursor;
+  let layoutGap = false;
   if (recoveryDtboSize > 0) {
     if (recoveryDtboOffset % page !== 0)
       formatError(
@@ -565,7 +577,8 @@ const layoutLegacyTail = (
     endOf(recoveryDtboOffset, recoveryDtboSize);
     if (recoveryDtboOffset < cursor)
       formatError("recovery_dtbo overlaps an earlier component");
-    if (recoveryDtboOffset > cursor)
+    layoutGap = recoveryDtboOffset > cursor;
+    if (layoutGap)
       limitations.push(
         "Bytes between the sequential layout and recovery_dtbo were not exposed as entries.",
       );
@@ -587,6 +600,7 @@ const layoutLegacyTail = (
       recoveryDtboOffset,
       dtbSize: null,
       dtbAddr: null,
+      layoutGap,
     };
   const dtbSize = u32(prefix, LEGACY_V1_SIZE);
   const dtbAddr = u64(prefix, LEGACY_V1_SIZE + 4, "dtb address");
@@ -601,6 +615,7 @@ const layoutLegacyTail = (
     recoveryDtboOffset,
     dtbSize,
     dtbAddr,
+    layoutGap,
   };
 };
 
@@ -675,6 +690,7 @@ const parseLegacyBoot = (
   const dataEnd = requireFileCovers(fileSize, headerSize, components);
   return bootParse({
     imageKind: "boot",
+    unexposedDeclaredBytes: tail.layoutGap,
     magic: ANDROID_BOOT_MAGIC,
     headerVersion,
     pageSize,
@@ -905,7 +921,9 @@ const parseVendorHeader = (
       ? null
       : component("bootconfig", "bootconfig", cursor, bootconfigSize, null),
   );
-  if (table !== null && table.entryCount === 0 && vendorRamdiskSize > 0)
+  const sectionUnexposed =
+    table !== null && table.entryCount === 0 && vendorRamdiskSize > 0;
+  if (sectionUnexposed)
     limitations.push(
       "Vendor ramdisk section bytes outside the ramdisk table were not exposed as entries.",
     );
@@ -916,6 +934,7 @@ const parseVendorHeader = (
     requireVendorTableCapacity(table.entryCount, table.entrySize);
   return bootParse({
     imageKind: "vendor-boot",
+    unexposedDeclaredBytes: sectionUnexposed,
     magic: VENDOR_BOOT_MAGIC,
     headerVersion,
     pageSize,
@@ -1116,11 +1135,16 @@ const readVendorRamdiskTable = (
     limitations.push(
       `Vendor ramdisk table entries ${empty.join(", ")} declare no bytes and were omitted.`,
     );
-  if (!sectionCovered(components, input.sectionOffset, input.sectionSize))
+  const unexposedSectionBytes = !sectionCovered(
+    components,
+    input.sectionOffset,
+    input.sectionSize,
+  );
+  if (unexposedSectionBytes)
     limitations.push(
       "Vendor ramdisk section bytes outside the ramdisk table were not exposed as entries.",
     );
-  return { components, limitations };
+  return { components, limitations, unexposedSectionBytes };
 };
 
 /** Split a v4 vendor ramdisk table into non-overlapping section slices. */

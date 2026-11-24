@@ -102,7 +102,13 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
         throw formatFailure(`duplicate component path ${plan.path}`);
       entries.set(entry.adapterKey, entry);
     }
-    const degraded = tableResult.degraded || footerResult.degraded;
+    // Declared bytes that no child exposes make the inventory partial even when
+    // every table parsed: the layout claims bytes the entries cannot account for.
+    const degraded =
+      tableResult.degraded ||
+      footerResult.degraded ||
+      header.unexposedDeclaredBytes ||
+      tableResult.table?.unexposedSectionBytes === true;
     return {
       entries: [...entries.values()],
       formatMetadata: toMetadata(header, footerResult.avb, plans.length),

@@ -506,3 +506,26 @@ it("refuses a vendor ramdisk table with overlapping entries even when an entry a
     /overlaps entry/u,
   );
 });
+
+/**
+ * A vendor ramdisk table that covers only part of its declared section leaves
+ * bytes no child exposes, so the inventory cannot claim complete coverage even
+ * though every table entry parsed.
+ */
+it("reports unknown coverage when the vendor table leaves section bytes unexposed", async () => {
+  const section = Buffer.concat([Buffer.from("first"), Buffer.alloc(64, 0x41)]);
+  const path = await writeCarrier(
+    "vendor_boot.img",
+    buildVendorBootImage({
+      version: 4,
+      ramdisks: [{ bytes: Buffer.from("first"), type: 1 }],
+      section,
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("android-boot-image");
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations).toContain(
+    "Vendor ramdisk section bytes outside the ramdisk table were not exposed as entries.",
+  );
+});
