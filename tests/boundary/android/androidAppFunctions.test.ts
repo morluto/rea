@@ -25,6 +25,7 @@ import { androidPartialObservationSchema } from "../../../src/domain/android/and
 import { projectAnalysisView } from "../../../src/domain/analysisView/analysisView.js";
 import { androidAppFunctionsViewResultSchema } from "../../../src/domain/analysisView/summarySchemas/androidSummarySchemas.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { zipArchive } from "../../../src/domain/desktop/zipArchive.fixture.js";
 import { jsonValueByteLength } from "../../../src/domain/jsonValueByteLength.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import {
@@ -307,6 +308,78 @@ it("resolves relative asset filenames, companion XSD pointers, and wildcard asse
     inventory.schemas.flatMap((schema) => schema.functions.map((fn) => fn.id)),
   ).toEqual(["pkg#one", "pkg#two"]);
 });
+
+it.each([
+  { omitted: false, referenced: false },
+  { omitted: true, referenced: false },
+  { omitted: true, referenced: true },
+])(
+  "preserves AppFunctions ZIP coverage and schema facts (omitted: $omitted, referenced: $referenced)",
+  async ({ omitted, referenced }) => {
+    const root = await createTestTempDirectory("rea-appfunctions-coverage-");
+    const apk = join(root, "coverage.apk");
+    const visible = {
+      name: "assets/visible_app_functions.xml",
+      data: '<appfunctions><appfunction id="pkg#visible"/></appfunctions>',
+      method: 0,
+    };
+    const hidden = {
+      name: "assets/hidden_app_functions.xml",
+      data: '<appfunctions><appfunction id="pkg#hidden"/></appfunctions>',
+      method: 0,
+      listed: !omitted,
+    };
+    await writeFile(apk, zipArchive([visible, hidden]));
+    const observations: AndroidAppFunctionAssetCheckpoint[] = [];
+    const scan = await scanApkAssets(
+      apk,
+      referenced ? [hidden.name] : [],
+      (checkpoint) => {
+        observations.push(checkpoint);
+      },
+    );
+
+    expect(scan.status).toBe(omitted ? "partial" : "complete");
+    expect(scan.examinedEntries).toBe(omitted ? 1 : 2);
+    expect(scan.schemas).toHaveLength(omitted ? 1 : 2);
+    expect(scan.schemas[0]).toMatchObject({
+      path: visible.name,
+      source_path: visible.name,
+      sha256: createHash("sha256").update(visible.data).digest("hex"),
+      size: Buffer.byteLength(visible.data),
+      status: "complete",
+      functions: [{ id: "pkg#visible" }],
+      limitations: [],
+    });
+    expect(observations).toEqual([
+      {
+        scan_state: "completed",
+        status: scan.status,
+        examined_entries: scan.examinedEntries,
+        schemas: scan.schemas,
+        limitations: scan.limitations,
+      },
+    ]);
+    const inventory = projectAndroidAppFunctions(
+      extractAndroidAppFunctionManifestBindings(
+        parseAndroidManifestComponents("<manifest/>", "complete", "36"),
+      ),
+      scan,
+    );
+    expect(inventory.status).toBe(scan.status);
+    if (omitted) {
+      expect(scan.limitations).toEqual([
+        expect.stringContaining("ZIP central directory does not account for"),
+      ]);
+      expect(inventory.limitations).toEqual(
+        expect.arrayContaining(scan.limitations),
+      );
+    } else {
+      expect(scan.limitations).toEqual([]);
+      expect(scan.schemas[1]?.functions).toMatchObject([{ id: "pkg#hidden" }]);
+    }
+  },
+);
 
 it("records service binding and explicit limitation when referencing a compiled @xml/... resource", async () => {
   const root = await createTestTempDirectory("rea-appfunctions-compiled-xml-");

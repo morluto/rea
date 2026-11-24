@@ -4,6 +4,7 @@ import {
   streamChunkToBuffer,
   ZipArtifactReader,
   type ArtifactEntry,
+  type ArtifactReaderTraversal,
   type ArtifactResourceScope,
 } from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -676,6 +677,7 @@ export const readAndroidAppFunctionAssets = async (input: {
       };
       let status: "complete" | "partial" | "unavailable" = "complete";
       let exhaustedArchive = false;
+      let archiveCoverage: ArtifactReaderTraversal | undefined;
       let archiveDegraded = false;
       let examinedEntries = 0;
       let totalReadBytes = 0;
@@ -706,7 +708,14 @@ export const readAndroidAppFunctionAssets = async (input: {
       };
       try {
         let stoppedEarly = false;
-        for await (const entry of reader.entries(input.signal)) {
+        for await (const entry of reader.entries(input.signal, {
+          onCoverage: (coverage) => {
+            archiveCoverage = coverage;
+            if (coverage.status !== "complete") status = "partial";
+            for (const limitation of coverage.limitations)
+              diagnostics.pushParts([limitation]);
+          },
+        })) {
           throwIfJadxInterrupted(input.signal);
           examinedEntries += 1;
           if (examinedEntries > ANDROID_APP_FUNCTIONS_LIMITS.apkEntries) {
@@ -857,7 +866,15 @@ export const readAndroidAppFunctionAssets = async (input: {
             break;
           }
         }
-        if (!stoppedEarly) exhaustedArchive = true;
+        if (!stoppedEarly) {
+          exhaustedArchive = true;
+          if (archiveCoverage === undefined) {
+            status = "partial";
+            diagnostics.pushParts([
+              "APK archive reader did not declare listing coverage; remaining AppFunctions schema assets are unknown.",
+            ]);
+          }
+        }
         throwIfJadxInterrupted(input.signal);
       } catch (cause: unknown) {
         if (cause instanceof JadxInterruption) {
@@ -908,7 +925,7 @@ export const readAndroidAppFunctionAssets = async (input: {
               "; runtime asset resolution precedence is not established.",
             ]);
         }
-        if (exhaustedArchive) {
+        if (exhaustedArchive && archiveCoverage?.status === "complete") {
           for (const referencedPath of input.referencedPaths) {
             if (!seenPaths.has(referencedPath)) {
               status = "partial";
