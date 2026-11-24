@@ -224,6 +224,45 @@ try {
       ?.state,
     "aligned",
   );
+  // A registration that still names a previous bundle is the moved-directory
+  // failure: setup must repair it or refuse, never report ready against it.
+  reportStage("moved registration detection");
+  const configPath = join(workspace, ".codex/config.toml");
+  const registeredConfig = await readFile(configPath, "utf8");
+  const previousNode = join(workspace, "previous-bundle/runtime/node.exe");
+  const previousEntry = join(workspace, "previous-bundle/app/scripts/rea.mjs");
+  await writeFile(
+    configPath,
+    `[mcp_servers.rea]\ncommand = ${JSON.stringify(previousNode)}\nargs = [${JSON.stringify(previousEntry)}, "mcp"]\n`,
+    "utf8",
+  );
+  let afterMove;
+  try {
+    afterMove = JSON.parse((await launcher(setupArgs)).stdout);
+  } catch (cause) {
+    // A refused setup reports its plan; keep the captured JSON, if any.
+    const captured =
+      typeof cause === "object" && cause !== null && "stdout" in cause
+        ? String(cause.stdout)
+        : "";
+    if (captured.trim() === "") throw cause;
+    afterMove = JSON.parse(captured);
+  }
+  const movedRegistration = parseToml(await readFile(configPath, "utf8"))
+    .mcp_servers.rea;
+  if (afterMove.status === "ready")
+    assert.equal(
+      movedRegistration.command,
+      node,
+      "Setup cannot report ready while the registration names a previous bundle",
+    );
+  else
+    assert.equal(
+      movedRegistration.command,
+      previousNode,
+      "A refused setup must leave the previous registration unchanged",
+    );
+  await writeFile(configPath, registeredConfig, "utf8");
   const repeated = JSON.parse((await launcher(setupArgs)).stdout);
   assert.equal(repeated.status, "ready");
   assert.deepEqual(repeated.plannedActions, []);
