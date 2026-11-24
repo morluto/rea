@@ -1,7 +1,7 @@
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 
-import { AnalysisTargetFailureError } from "../../../src/domain/analysisErrorCore.js";
+import { unsupportedTarget } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { BinaryTargetError } from "../../../src/domain/configurationErrors.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -14,15 +14,11 @@ describe("MCP error delivery excludes CLI-only issue hints", () => {
   it.each([
     {
       name: "unsupported_target",
-      error: new AnalysisTargetFailureError(
-        "inspect_artifact",
+      error: unsupportedTarget(
+        "inspect-target",
         "/tmp/sample.bin",
-        {
-          kind: "unsupported",
-          format: "container",
-          detail: "Container format is unsupported.",
-          undecodedContent: false,
-        },
+        "fixture",
+        "Container format is unsupported.",
       ),
       expectedCode: "unsupported_target",
     },

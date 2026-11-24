@@ -18,6 +18,7 @@ import type { Readable } from "node:stream";
 import type {
   ArtifactCommand,
   ArtifactInventoryCoverage,
+  ArtifactLinkTarget,
   ArtifactTraversalOmissionKind,
 } from "../domain/artifactGraph.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
@@ -74,6 +75,8 @@ export interface ArtifactEntry {
   readonly unpacked: boolean;
   readonly limitations: readonly string[];
   readonly adapterKey: string;
+  /** A symlink's stored target, when the adapter read it; never followed. */
+  readonly linkTarget?: ArtifactLinkTarget;
   /** Filesystem identity captured during traversal, when supplied by an adapter. */
   readonly sourceIdentity?: {
     readonly device: bigint;
@@ -117,6 +120,9 @@ export const copyArtifactEntry = (entry: ArtifactEntry): ArtifactEntry => ({
   ...(entry.sourceIdentity === undefined
     ? {}
     : { sourceIdentity: { ...entry.sourceIdentity } }),
+  ...(entry.linkTarget === undefined
+    ? {}
+    : { linkTarget: { ...entry.linkTarget } }),
 });
 
 /**
@@ -249,6 +255,7 @@ export interface ArtifactReader {
     | "uimage"
     | "android-boot-image"
     | "android-ota-payload"
+    | "iso9660"
     | "uefi"
     | "pyinstaller"
     | "dotnet-bundle"
@@ -318,7 +325,7 @@ export class ArtifactReaderFailure extends Error {
     },
     details?: ArtifactIntegrityDetails,
   );
-  /** A target failure carries the format owner's structured facts. */
+  /** A format owner's refusal carries the owner's facts. */
   constructor(
     reason: FormatTargetFailure["kind"],
     message: string,
@@ -336,25 +343,15 @@ export class ArtifactReaderFailure extends Error {
     options?: ArtifactReaderFailureOptions,
     details?: ArtifactIntegrityDetails,
   );
-  /** Non-target rebuilds that may include `integrity` carry `integrityCheck` explicitly. */
-  constructor(
-    reason: Exclude<ArtifactReaderFailureReason, FormatTargetFailure["kind"]>,
-    message: string,
-    options: ArtifactReaderFailureOptions & {
-      readonly integrityCheck: ArtifactIntegrityCheck | undefined;
-    },
-    details?: ArtifactIntegrityDetails,
-  );
   /**
-   * A rebuild whose reason is not a literal carries the check and format facts
-   * explicitly, as {@link primaryFacts} does, so a rewrapped failure keeps them.
+   * A rebuild whose reason is not a literal carries the check explicitly, as
+   * {@link primaryFacts} does, so a rewrapped integrity failure keeps it.
    */
   constructor(
     reason: ArtifactReaderFailureReason,
     message: string,
     options: ArtifactReaderFailureOptions & {
       readonly integrityCheck: ArtifactIntegrityCheck | undefined;
-      readonly parseFailure: FormatTargetFailure | undefined;
     },
     details?: ArtifactIntegrityDetails,
   );
@@ -403,10 +400,8 @@ export class ArtifactReaderFailure extends Error {
     | "readerLimit"
     | "parserLimit"
     | "fixedAllowance"
-  > & {
-    readonly integrityCheck: ArtifactIntegrityCheck | undefined;
-    readonly parseFailure: FormatTargetFailure | undefined;
-  } {
+    | "parseFailure"
+  > & { readonly integrityCheck: ArtifactIntegrityCheck | undefined } {
     return {
       ...(this.userMessage === undefined
         ? {}
@@ -425,7 +420,9 @@ export class ArtifactReaderFailure extends Error {
       ...(this.fixedAllowance === undefined
         ? {}
         : { fixedAllowance: this.fixedAllowance }),
-      parseFailure: this.parseFailure,
+      ...(this.parseFailure === undefined
+        ? {}
+        : { parseFailure: this.parseFailure }),
       integrityCheck: this.integrityCheck,
     };
   }

@@ -322,6 +322,7 @@ cliTest(
     expect(graph.limitations).toContainEqual(expect.stringMatching(/magic/iu));
   },
 );
+
 cliTest(
   "refuses an empty-body SEA asset table over its record bound",
   async ({ cli }) => {

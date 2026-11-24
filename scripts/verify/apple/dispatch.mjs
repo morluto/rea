@@ -399,7 +399,12 @@ await withVerifierFixture(fixture, async () => {
     }
     assert.equal(cliFailure.code, "unsupported_target");
     assert.equal(cliFailure.category, "unsupported_target");
-    assert.deepEqual(cliFailure.details, {
+    // The refusal is the format owner's target failure: its kind and format
+    // are facts, beside the operation, path and the owner's description.
+    const { failure_kind: kind, format, ...located } = cliFailure.details;
+    assert.equal(kind, "malformed");
+    assert.equal(typeof format, "string");
+    assert.deepEqual(located, {
       operation: "inspect_native_dispatch_metadata",
       path: target.value.path,
       reason,

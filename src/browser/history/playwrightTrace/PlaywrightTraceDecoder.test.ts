@@ -248,10 +248,7 @@ it("refuses other declared trace versions with verified archive identity", async
     if (result.ok) throw new Error("Expected version refusal");
     expect(result.error).toMatchObject({
       _tag: "AnalysisTargetFailureError",
-      failure: {
-        kind: "unsupported",
-        format: "playwright-trace",
-      },
+      failure: { kind: "unsupported", format: "playwright-trace" },
     });
     expect(
       playwrightTraceSchema.parse(result.error.partialObservation).artifact

@@ -228,7 +228,7 @@ export class TarArtifactReader implements ArtifactReader {
   async #prepare(signal?: AbortSignal): Promise<void> {
     const { handle, initial } = await this.#source.read(signal);
     const magic = await readArtifactFileBytes(
-      this.format,
+      "tar",
       handle,
       0,
       Math.min(3, initial.size),
@@ -329,7 +329,7 @@ export class TarArtifactReader implements ArtifactReader {
       const toRead = Math.min(CHUNK_BYTES, end - position);
       this.#charge(toRead);
       const chunk = await readArtifactFileBytes(
-        this.format,
+        "tar",
         handle,
         position,
         toRead,

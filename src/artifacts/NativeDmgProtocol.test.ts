@@ -219,7 +219,11 @@ it("reports an hdiutil retained while the reader closes, after its own cleanup c
         /* consume */
       }
     })(),
-  ).rejects.toMatchObject({ reason: "unsupported" });
+  ).rejects.toMatchObject({
+    reason: "unsupported",
+    // hdiutil's verdict carries its facts, so it projects as a target failure.
+    parseFailure: { kind: "unsupported", format: "dmg" },
+  });
   const refused = await reader.close().catch((cause: unknown) => cause);
   expect(refused).toBeInstanceOf(ArtifactReaderFailure);
   expect((refused as ArtifactReaderFailure).cleanup?.resources).toEqual([

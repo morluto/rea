@@ -9,6 +9,20 @@ export interface ByteSource {
   readRange(offset: number, length: number): Promise<Buffer>;
 }
 
+/** Read up to the end of a source, borrowing its retained prefix when it covers the whole slice. */
+export const readByteSourceSlice = (
+  source: ByteSource,
+  offset: number,
+  length: number,
+): Promise<Buffer> => {
+  if (length <= 0 || offset >= source.size)
+    return Promise.resolve(Buffer.alloc(0));
+  const clamped = Math.min(length, source.size - offset);
+  if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
+    return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
+  return source.readRange(offset, clamped);
+};
+
 /** A byte source whose leading bytes were retained during admission. */
 export interface PrefixedByteSource extends ByteSource {
   readonly prefix: Buffer;

@@ -304,9 +304,9 @@ try {
       const failure = await inspect(mode, path, encoding, "unsupported_target");
       assert.equal(failure.code, "unsupported_target");
       assert.equal(failure.details.path, path);
+      assert.match(failure.details.reason, /EF00/);
       assert.equal(failure.details.failure_kind, "unsupported");
       assert.equal(failure.details.format, "evm-bytecode");
-      assert.match(failure.details.reason, /EF00/);
       cases++;
     }
   }
@@ -320,8 +320,10 @@ try {
     const path = join(root.path, name);
     await writeFile(path, data);
     for (const mode of ["cli", "mcp"]) {
+      // An undecodable hex carrier is the target's bytes, not the request.
       const failure = await inspect(mode, path, "hex", "unsupported_target");
       assert.equal(failure.details.failure_kind, "malformed");
+      assert.equal(failure.details.format, "evm-bytecode");
       cases++;
     }
   }

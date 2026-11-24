@@ -53,12 +53,17 @@ const failedFiles = files
   .filter(({ state }) => state === "failed")
   .map(({ name }) => name)
   .sort();
+const incompleteFiles = files.filter(
+  ({ state }) => state === "queued" || state === "pending",
+);
 const workflowPassed =
   groupResults.every((state) => state === "success") &&
   process.env.MERGE_RESULT === "success";
 const passed =
   workflowPassed &&
   report.success &&
+  (report.reason === undefined || report.reason === "passed") &&
+  incompleteFiles.length === 0 &&
   failedFiles.length === 0 &&
   (report.unhandledErrors ?? 0) === 0;
 // Successful shards and merged reports must account for the complete portable
@@ -102,6 +107,11 @@ const failureDetails =
   !passed || failedFiles.length > 0
     ? [
         `Failed test modules reported: ${failedFiles.length}.`,
+        ...(incompleteFiles.length
+          ? [
+              `Queued or pending test modules reported: ${incompleteFiles.length}.`,
+            ]
+          : []),
         ...failedFiles
           .slice(0, failureListLimit)
           .map((name) => `- ${JSON.stringify(name)}`),

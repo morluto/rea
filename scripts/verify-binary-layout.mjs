@@ -772,7 +772,7 @@ try {
           : await inspect(
               mode,
               path,
-              fixture.expectation === "invalid_input"
+              fixture.expectation === "malformed"
                 ? "unsupported_target"
                 : undefined,
             );

@@ -23,7 +23,11 @@ import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
 import {
+  GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
+  GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
+  GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
   ghidraRiscvCallingConvention,
+  ghidraRiscvCallingConventionFailure,
   ghidraRiscvLimitations,
   ghidraRiscvLoadPreparation,
   ghidraRiscvLoadPreparationFailure,
@@ -112,6 +116,12 @@ const ilp32 = (
     isa: riscvIsaDeclaration(arch),
     ...change,
   });
+// ESP-IDF 5.5 builds ESP32-H4 with -march=rv32imafc_zicsr_zifencei; LLVM records it so.
+const H4_ARCH = "rv32i2p1_m2p0_a2p1_f2p2_c2p0_zicsr2p0_zifencei2p0_zmmul1p0";
+const ilp32f = (
+  arch: string = H4_ARCH,
+  change: Partial<RiscvElfMetadata> = {},
+): BinaryTarget => ilp32(arch, { flags: 0x3, ...change });
 
 let installDir = "";
 let disposeInstallDir: (() => Promise<void>) | undefined;
@@ -344,8 +354,11 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     [{ flags: 0x1 }, "soft-float ABI (lp64) declared by e_flags"],
     [{ flags: 0x3 }, "single-float ABI (lp64f)"],
     [{ flags: 0x7 }, "quad-float ABI (lp64q)"],
-    [{ elfClass: 32, flags: 0x3 }, "single-float ABI (ilp32f)"],
-    [{ elfClass: 32, flags: 0x7 }, "the quad-float ABI declared by e_flags"],
+    [
+      { elfClass: 32, flags: 0x7 },
+      "declare the double-float, soft-float or single-float ABI; the quad-float ABI declared by e_flags",
+    ],
+    [{ elfClass: 32, flags: 0x3 }, "which was not inspected"],
     [{ elfClass: 32, flags: 0x1 }, "which was not inspected"],
     [{ elfClass: 32, flags: 0x1, isa: { status: "absent" } }, "declares none"],
     [
@@ -601,10 +614,134 @@ describe("RISC-V ilp32 admission", () => {
   });
 });
 
+describe("RISC-V ilp32f admission", () => {
+  it.each([
+    ["ESP32-H4 base", H4_ARCH],
+    [
+      "same base as GCC records it",
+      "rv32i2p1_m2p0_a2p1_f2p2_c2p0_zicsr2p0_zifencei2p0_zmmul1p0_zaamo1p0_zalrsc1p0_zca1p0_zcf1p0",
+    ],
+    ["bare F base", "rv32i2p1_f2p2_zicsr2p0"],
+  ])("admits the %s", (_label, arch) => {
+    const value = ilp32f(arch);
+    expect(ghidra().inspectTargetSupport(value).status).toBe("supported");
+    expect(ghidraPinnedLanguage(value)).toEqual({
+      languageId: "RISCV:LE:32:default",
+      compilerSpecId: "gcc",
+    });
+    expect(ghidraRiscvCallingConvention(value)).toBe("ilp32f-prototype-v1");
+  });
+
+  it.each([
+    [
+      "ESP-IDF's ESP32-P4 build with its PIE extension",
+      ilp32f(`${H4_ARCH}_xesppie1p0`),
+      "outside the set this lane decodes: xesppie.",
+    ],
+    [
+      "a declaration without F",
+      ilp32f(C3_ARCH),
+      `declares ${C3_ARCH} without f, which the single-float ABI (ilp32f) declared by e_flags requires.`,
+    ],
+    [
+      "the single-float ABI on D hardware",
+      ilp32f(
+        "rv32i2p1_m2p0_a2p1_f2p2_d2p2_c2p0_zicsr2p0_zmmul1p0_zca1p0_zcf1p0_zcd1p0",
+      ),
+      "with d, zcd: ilp32f then preserves only the low 32 bits of fs0-fs11",
+    ],
+    [
+      "Zcd declared without D",
+      ilp32f("rv32i2p1_f2p2_c2p0_zicsr2p0_zcd1p0"),
+      "with zcd: ilp32f then preserves only the low 32 bits of fs0-fs11",
+    ],
+    [
+      "an absent declaration",
+      ilp32f(H4_ARCH, { isa: { status: "absent" } }),
+      "declares none",
+    ],
+    [
+      "an RV64 string",
+      ilp32f("rv64i2p1_m2p0_a2p1_f2p2_c2p0"),
+      "requires the RV32I base",
+    ],
+  ])("refuses %s", async (_label, value, reason) => {
+    expect(ghidra().inspectTargetSupport(value)).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason: expect.stringContaining(reason),
+    });
+    expect((await ghidra().resolveAnalysisProfile(value)).ok).toBe(false);
+    expect(ghidraPinnedLanguage(value)).toBeUndefined();
+    expect(ghidraRiscvCallingConvention(value)).toBeUndefined();
+  });
+
+  it("commits the single-float lane, its declarations and its policy", async () => {
+    const resolved = await ghidra().resolveAnalysisProfile(ilp32f());
+    const soft = await ghidra().resolveAnalysisProfile(ilp32(H4_ARCH));
+    if (
+      !resolved.ok ||
+      !soft.ok ||
+      resolved.value.profile === null ||
+      soft.value.profile === null
+    )
+      throw new Error("expected ilp32f and ilp32 profiles");
+    const parameters = resolved.value.profile.parameters;
+    expect(parameters.riscv_elf).toEqual({
+      elf_class: 32,
+      byte_order: "little",
+      type: 2,
+      flags: 3,
+      float_abi_double: false,
+      float_abi: "single",
+      arch: H4_ARCH,
+      rvc_declared: true,
+      rve_declared: false,
+      tso_declared: false,
+    });
+    expect(parameters.riscv_calling_convention).toBe("ilp32f-prototype-v1");
+    expect(parameters.riscv_support_lane).toBe(
+      "elf32-exec-le-single-float-generic-v1",
+    );
+    expect(parameters.language_id).toBe("RISCV:LE:32:default");
+    // The same ISA under the soft-float ABI is another lane and profile.
+    expect(soft.value.profile.parameters.riscv_calling_convention).toBe(
+      "ilp32-prototype-v1",
+    );
+    expect(soft.value.profile.digest).not.toBe(resolved.value.profile.digest);
+  });
+
+  it("states the declared ABI and the applied prototype", () => {
+    const notes = ghidraRiscvLimitations(ilp32f());
+    // One note names the declared ABI, the ABI the pinned language models
+    // and the prototype REA applies, in any wording and order.
+    expect(notes).toContainEqual(
+      expect.stringMatching(
+        /^(?=.*\(ilp32f\))(?=.*\bilp32d\b)(?=.*`__rea_ilp32f`)/su,
+      ),
+    );
+    expect(notes).toContainEqual(expect.stringContaining(H4_ARCH));
+  });
+});
 const report: GhidraRiscvCallingConventionReport = {
   policy: "ilp32-prototype-v1",
   functions: 11,
   definitions: 11,
+};
+const singleReport: GhidraRiscvCallingConventionReport = {
+  policy: "ilp32f-prototype-v1",
+  functions: 17,
+  definitions: 16,
+};
+const refusal: GhidraRiscvCallingConventionReport = {
+  policy: "ilp32f-prototype-v1",
+  refused:
+    "1 of 17 functions and 1 function-pointer definition pass by-value types that __rea_ilp32f cannot express: rea_riscv_abi_half (_Float16).",
+};
+const languageRefusal: GhidraRiscvCallingConventionReport = {
+  policy: "ilp32-prototype-v1",
+  refused:
+    "DWARF compile units define 3 functions in Rust (DW_AT_language 0x1c), such as rea_riscv_entry. Their calling convention is not the C psABI this lane models, so REA cannot verify their storage.",
 };
 const sessionInfo = (
   value: BinaryTarget,
@@ -693,6 +830,33 @@ describe("RISC-V calling-convention handshake", () => {
           "11 functions and 11 function definitions use __rea_ilp32.",
         ),
         expect.stringContaining("variadic call's arguments"),
+        GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
+        GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
+      ]),
+    );
+    expect(health.value.limitations).not.toContain(
+      GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
+    );
+  });
+
+  it("launches the single-float policy and reports its outcome", async () => {
+    const { client, launches } = await session(ilp32f(), singleReport);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.launcher).toMatchObject({
+      options: { riscvCallingConvention: "ilp32f-prototype-v1" },
+    });
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "installs a program-specific `__rea_ilp32f` prototype",
+        ),
+        expect.stringContaining(
+          "17 functions and 16 function definitions use __rea_ilp32f.",
+        ),
+        GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
+        GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
       ]),
     );
   });
@@ -733,6 +897,18 @@ describe("RISC-V calling-convention handshake", () => {
       reported: report,
       operation: "list_procedures",
     },
+    {
+      reason: "an ilp32f refusal before any analysis call",
+      value: ilp32f(),
+      reported: refusal,
+      operation: "list_procedures",
+    },
+    {
+      reason: "an ilp32 refusal of another source language",
+      value: ilp32(),
+      reported: languageRefusal,
+      operation: "list_procedures",
+    },
   ] as const)("rejects $reason", async ({ value, reported, operation }) => {
     const { counts, client } = await session(value, reported);
     const failed = await client.execute(operation, {});
@@ -744,6 +920,14 @@ describe("RISC-V calling-convention handshake", () => {
         diagnostics: { reason: expect.any(String) },
       },
     });
+    // The handshake's reason is the user-facing message.
+    if (!failed.ok)
+      expect(failed.error.userMessage).toBe(
+        ghidraRiscvCallingConventionFailure(
+          ghidraRiscvCallingConvention(value),
+          reported,
+        ),
+      );
     expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
   });
 

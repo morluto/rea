@@ -110,12 +110,9 @@ it("does not publish a method-93 member with an incomplete final frame magic", a
   expect(result).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisTargetFailureError",
-      failure: {
-        kind: "malformed",
-        format: "zip",
-        detail: "ZIP archive is malformed: Invalid compressed data",
-      },
+      _tag: "ArtifactOperationError",
+      reason: "malformed",
+      detail: "ZIP archive is malformed: Invalid compressed data",
     },
   });
   expect(await readdir(root)).toEqual(["method93.zip"]);
@@ -801,27 +798,14 @@ const expectInventoryFailure = async (
   const result = await withArtifactClient(target.value, (client) =>
     client.execute("inventory_artifact", {}),
   );
-  const expectedDetail =
-    typeof detail === "string" ? detail : expect.stringMatching(detail);
   expect(result).toMatchObject({
     ok: false,
-    error:
-      reason === "malformed" ||
-      reason === "truncated" ||
-      reason === "unsupported"
-        ? {
-            _tag: "AnalysisTargetFailureError",
-            failure: {
-              kind: reason,
-              format: "zip",
-              detail: expectedDetail,
-            },
-          }
-        : {
-            _tag: "ArtifactOperationError",
-            reason,
-            detail: expectedDetail,
-          },
+    error: {
+      _tag: "ArtifactOperationError",
+      reason,
+      detail:
+        typeof detail === "string" ? detail : expect.stringMatching(detail),
+    },
   });
 };
 

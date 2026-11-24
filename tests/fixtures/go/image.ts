@@ -464,7 +464,6 @@ export const createGoBinaryDiagnosticFixtures = () => {
       code: "unsupported_target" as const,
       details: {
         operation: "inspect_go_binary",
-        failure_kind: "malformed",
         reason: "Only PE32 and PE32+ image optional headers are supported",
       },
     })),

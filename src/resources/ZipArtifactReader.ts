@@ -689,16 +689,17 @@ export const typedZipFailure = (
     ZIP_FAILURE_REASONS.get(cause.message) ??
     (invalidZstandard ? "malformed" : undefined);
   if (reason === undefined) return cause;
+  const failureCause = invalidZstandard ? codecCause : cause;
   return reason === "malformed"
     ? malformedArtifact(
         "zip",
         `ZIP archive is malformed: ${invalidZstandard ? ERR_INVALID_COMPRESSED_DATA : cause.message}`,
-        { cause: invalidZstandard ? codecCause : cause },
+        { cause: failureCause },
       )
     : new ArtifactReaderFailure(
         reason,
         `ZIP archive uses an unsupported feature: ${cause.message}`,
-        { cause: invalidZstandard ? codecCause : cause },
+        { cause: failureCause },
       );
 };
 

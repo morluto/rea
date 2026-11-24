@@ -346,37 +346,35 @@ describe("x64 PE exception directory refusals and absence", () => {
     [
       "a directory outside every file-backed section",
       { entries: [primary], directoryRva: 0x9000 },
-      "malformed",
     ],
     [
       "a declared size with a zero RVA",
       { entries: [primary], directoryRva: 0 },
-      "malformed",
     ],
     [
       "an oversized entry count whose directory leaves the file",
       { entries: [], directorySize: (2_097_152 + 1) * 12 },
-      "malformed",
     ],
     [
       "a directory whose trailing bytes leave the last section",
       { entries: [], directoryRva: 0x3ff4, directorySize: 13 },
-      "malformed",
     ],
     [
       "a file cut inside the directory",
       { entries: [primary], truncateTo: 0x2400 + 6 },
-      "truncated",
     ],
-  ] satisfies [string, PeUnwindFixtureOptions, "malformed" | "truncated"][])(
-    "refuses %s as a %s target",
-    async (_name, options, kind) => {
+  ] satisfies [string, PeUnwindFixtureOptions][])(
+    "refuses %s as a damaged target",
+    async (_name, options) => {
       const result = await inspect(options);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
-      expect((result.error as AnalysisTargetFailureError).failure.kind).toBe(
-        kind,
+      if (!(result.error instanceof AnalysisTargetFailureError))
+        throw result.error;
+      // A file cut inside the directory is truncated; the rest are malformed.
+      expect(result.error.failure.kind).toBe(
+        "truncateTo" in options ? "truncated" : "malformed",
       );
     },
   );

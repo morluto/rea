@@ -14,6 +14,7 @@ import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { serverInstructions } from "./serverInstructions.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
 import {
+  artifactAnalysisForAdmission,
   artifactExecutionParameters,
   managedAnalysisForAdmission,
 } from "./providerOperationFamilies.js";
@@ -426,6 +427,9 @@ export const createServer = (
             contracts: ARTIFACT_TOOL_CONTRACTS,
             activeTarget,
             parametersForExecution: artifactExecutionParameters,
+            analysisForAdmission: artifactAnalysisForAdmission(
+              capabilities.createArtifactPathInspection,
+            ),
           },
         },
         contractTools,
@@ -628,6 +632,7 @@ export const createServer = (
         environment,
         platform: host.platform,
         artifactResources,
+        createArtifactPathInspection: capabilities.createArtifactPathInspection,
         ...(availability === undefined
           ? {}
           : { availabilityPolicy: availability.policy }),

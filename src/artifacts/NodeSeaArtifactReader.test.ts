@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { writeFileSync } from "node:fs";
@@ -18,7 +19,6 @@ import { expect, it, vi } from "vitest";
 import * as artifactPaths from "../resources/ArtifactPaths.js";
 
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
-import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { artifactFormatDescriptor } from "./artifactFormats.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
@@ -62,14 +62,6 @@ const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
   return path;
 };
 
-const seaEntries = async (
-  reader: NodeSeaArtifactReader,
-): Promise<ArtifactEntry[]> => {
-  const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
-};
-
 const script = 'console.log("rea-node-sea")\n';
 const populated = {
   codePath: "app/main.js",
@@ -109,7 +101,7 @@ it("rechecks a lower SEA policy instead of reusing an earlier admitted decode", 
         argument_count: 1,
       });
       try {
-        await expect(seaEntries(refused)).rejects.toMatchObject({
+        await expect(collectEntries(refused)).rejects.toMatchObject({
           reason: "limit",
           readerLimit: {
             parameter: "artifact_limits.node_sea.argument_count",
@@ -125,7 +117,7 @@ it("rechecks a lower SEA policy instead of reusing an earlier admitted decode", 
         argument_count: 2,
       });
       try {
-        await seaEntries(recovered);
+        await collectEntries(recovered);
         expect(recovered.formatMetadata()?.exec_argv).toEqual(["one", "two"]);
       } finally {
         await recovered.close();
@@ -175,7 +167,7 @@ it("applies selected aggregate work before yielding SEA members", async () => {
     9,
   );
   try {
-    await expect(seaEntries(refused)).rejects.toMatchObject({
+    await expect(collectEntries(refused)).rejects.toMatchObject({
       reason: "limit",
       readerLimit: {
         parameter: "artifact_limits.expanded_bytes",
@@ -193,7 +185,7 @@ it("applies selected aggregate work before yielding SEA members", async () => {
     10,
   );
   try {
-    expect(await seaEntries(recovered)).toHaveLength(2);
+    expect(await collectEntries(recovered)).toHaveLength(2);
   } finally {
     await recovered.close();
   }
@@ -643,7 +635,7 @@ it("locates a SEA resource past a distant DOS stub", async () => {
   const path = await writeCarrier("distant-pe", image);
   const reader = new NodeSeaArtifactReader(path);
   try {
-    const entries = await seaEntries(reader);
+    const entries = await collectEntries(reader);
     expect(entries.map(({ path: member }) => member)).toContain("app/main.js");
   } finally {
     await reader.close();
@@ -792,29 +784,29 @@ it("isolates malformed located SEA blobs to outer native inventory while direct 
       name: "truncated",
       bytes: nodeSeaElf({ blob: Buffer.from([0x20, 0xda, 0x43]) }),
       outerFormat: "elf" as const,
-      reason: "truncated" as const,
       pattern: /Node SEA.*truncated/iu,
+      reason: "truncated",
     },
     {
       name: "bad-magic",
       bytes: nodeSeaMachO({ blob: Buffer.alloc(16) }),
       outerFormat: "mach-o" as const,
-      reason: "malformed" as const,
       pattern: /magic.*not.*0x143da20/iu,
+      reason: "malformed",
     },
     {
       name: "unknown-flags",
       bytes: nodeSeaPe({ blob: unknown }),
       outerFormat: "pe" as const,
-      reason: "malformed" as const,
       pattern: /flags.*unknown bits/iu,
+      reason: "malformed",
     },
     {
       name: "trailing-bytes",
       bytes: nodeSeaElf({ blob: trailing }),
       outerFormat: "elf" as const,
-      reason: "malformed" as const,
       pattern: /trailing bytes/iu,
+      reason: "malformed",
     },
   ];
   for (const item of cases) {
@@ -831,7 +823,7 @@ it("isolates malformed located SEA blobs to outer native inventory while direct 
     );
     const reader = new NodeSeaArtifactReader(path);
     try {
-      await expect(seaEntries(reader)).rejects.toMatchObject({
+      await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: item.reason,
         message: expect.stringMatching(item.pattern),
       });
@@ -866,7 +858,7 @@ it.each([
       readerLimits.node_sea,
     );
     try {
-      await expect(seaEntries(reader)).rejects.toMatchObject({
+      await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
         readerLimit: {
           parameter: "artifact_limits.node_sea.blob_bytes",

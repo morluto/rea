@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { writeFile } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { join } from "node:path";
@@ -96,12 +97,6 @@ it.each(['{"files":', '\uFEFF{"files":{}}'])(
     }
   },
 );
-
-async function collectEntries(reader: AsarArtifactReader) {
-  const entries = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
-}
 
 it("reuses admitted ASAR header extents from root classification without duplicating admitAsarHeader", async () => {
   const root = await createTestTempDirectory("rea-asar-admitted-extents-");

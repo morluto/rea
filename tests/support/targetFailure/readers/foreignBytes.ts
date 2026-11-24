@@ -8,14 +8,13 @@ const foreign = (
   operation: string,
   kind: TargetFailureKind,
   format: string,
-  bytes: () => Buffer = foreignBytes,
 ) => ({
   operation,
   cases: [
     {
       name: "foreign-bytes",
       kind,
-      bytes,
+      bytes: foreignBytes,
       facts: { format },
       identity: true,
     },

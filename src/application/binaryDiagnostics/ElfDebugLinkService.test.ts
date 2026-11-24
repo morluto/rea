@@ -1,3 +1,4 @@
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { resolvedAnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -308,27 +309,12 @@ it("rejects an unreadable-candidate verdict without its limitation", async () =>
 });
 
 it("retains a completed observation if the caller cancels while the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late elf debug link cancellation" };
-  const service = new ElfDebugLinkService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const late = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late elf debug link cancellation",
+    (inspect) => new ElfDebugLinkService({ identity, inspect }),
   );
-  expect(late).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError" },
-  });
-  if (late.ok) throw new Error("Expected late cancellation");
-  expect(late.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(late.error.cause).toBe(reason);
-  expect(parseEvidence(late.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_elf_debug_link",
     confidence: "observed",
     subject: { identity: { format: "elf", architecture: "x86_64" } },

@@ -1,3 +1,4 @@
+import { captureOutput } from "../../support/cli/capturedOutput.js";
 import { Writable } from "node:stream";
 
 import { describe, expect, it } from "vitest";
@@ -10,7 +11,7 @@ import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import {
   AnalysisInputError,
-  AnalysisTargetFailureError,
+  unsupportedTarget,
 } from "../../../src/domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -22,29 +23,14 @@ import { createCommandCli } from "../../support/cli/commandCli.js";
 
 const CLI_ISSUE_REPORT_URL = "https://github.com/morluto/rea/issues";
 
-const makeDestination = (terminal: boolean) => {
-  const chunks: Buffer[] = [];
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
-  if (terminal) Object.defineProperty(destination, "isTTY", { value: true });
-  return {
-    destination,
-    text: () => Buffer.concat(chunks).toString("utf8"),
-  };
-};
-
 const unsupportedTargetProjection = (): AnalysisErrorProjection =>
   projectAnalysisError(
-    new AnalysisTargetFailureError("inspect_artifact", "/tmp/sample.bin", {
-      kind: "unsupported",
-      format: "container",
-      detail: "Container format is unsupported.",
-      undecodedContent: false,
-    }),
+    unsupportedTarget(
+      "inspect-target",
+      "/tmp/sample.bin",
+      "fixture",
+      "Container format is unsupported.",
+    ),
     "invocation",
   );
 
@@ -94,7 +80,7 @@ describe("CLI human-TTY failure rendering", () => {
     const projection = unsupportedTargetProjection();
     expect(projection.code).toBe("unsupported_target");
 
-    const { destination, text } = makeDestination(true);
+    const { destination, text } = captureOutput(true);
     const output = createCliResultOutput(
       parseCliOutputArguments(["inspect-target"]),
       destination,
@@ -141,7 +127,7 @@ describe("CLI human-TTY failure rendering", () => {
     "appends the CLI-only issue hint in TTY human mode for $name",
     async ({ projection: build }) => {
       const projection = build();
-      const { destination, text } = makeDestination(true);
+      const { destination, text } = captureOutput(true);
       const output = createCliResultOutput(
         parseCliOutputArguments(["inspect-target"]),
         destination,
@@ -169,7 +155,7 @@ describe("CLI human-TTY failure rendering", () => {
     const projection = ordinaryInputProjection();
     expect(projection.code).toBe("invalid_request");
 
-    const { destination, text } = makeDestination(true);
+    const { destination, text } = captureOutput(true);
     const output = createCliResultOutput(
       parseCliOutputArguments(["inspect-target"]),
       destination,
@@ -193,7 +179,7 @@ describe("CLI human-TTY failure rendering", () => {
 
   it("keeps piped (non-TTY) stdout as machine-readable TOON without human prose or issue URL", async () => {
     const projection = unsupportedTargetProjection();
-    const { destination, text } = makeDestination(false);
+    const { destination, text } = captureOutput(false);
     const output = createCliResultOutput(
       parseCliOutputArguments(["inspect-target"]),
       destination,
@@ -237,7 +223,7 @@ describe("CLI human-TTY failure rendering", () => {
     "bypasses human rendering and emits no issue URL on a TTY when $name is passed",
     async ({ args }) => {
       const projection = unsupportedTargetProjection();
-      const { destination, text } = makeDestination(true);
+      const { destination, text } = captureOutput(true);
       const parsed = parseCliOutputArguments(["inspect-target", ...args]);
       expect(parsed.validation.ok).toBe(true);
       const output = createCliResultOutput(parsed, destination);
@@ -294,7 +280,7 @@ describe("CLI human-TTY failure rendering", () => {
   });
 
   it("does not misclassify an unhealthy completed report as an AnalysisErrorProjection on a TTY", async () => {
-    const { destination, text } = makeDestination(true);
+    const { destination, text } = captureOutput(true);
     const output = createCliResultOutput(
       parseCliOutputArguments(["doctor"]),
       destination,
@@ -315,7 +301,7 @@ describe("CLI human-TTY failure rendering", () => {
 
   it("re-evaluates the human presentation gate across begin() invocations", async () => {
     const projection = unsupportedTargetProjection();
-    const { destination, text } = makeDestination(true);
+    const { destination, text } = captureOutput(true);
     const output = createCliResultOutput(
       parseCliOutputArguments(["inspect-target", "--json"]),
       destination,
@@ -484,7 +470,7 @@ describe("CLI human-TTY failure rendering", () => {
     "preserves complete structured output on a TTY for $name",
     async ({ projection: build, expectedToken, expectedValue }) => {
       const projection = build();
-      const { destination, text } = makeDestination(true);
+      const { destination, text } = captureOutput(true);
       const output = createCliResultOutput(
         parseCliOutputArguments(["analyze-javascript-application"]),
         destination,

@@ -132,6 +132,7 @@ it("keeps Android parser refusal kinds and recovers through compiled MCP", async
         category: fixture.category,
         details: {
           operation: "inspect_artifact",
+          path,
           failure_kind: fixture.kind,
           format: fixture.format,
         },
