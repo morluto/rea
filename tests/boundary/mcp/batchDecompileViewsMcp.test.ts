@@ -481,8 +481,8 @@ it("recovers oversized batches and pages through smaller selections of the paren
   // The complete batch names a body-free first page of its retained parent.
   const first = constraint(
     await harness.reply("batch_decompile", {
-      detail: "complete",
       addresses: ["main", "emoji", "bodyless"],
+      detail: "complete",
     }),
   );
   const source = first.arguments.source;

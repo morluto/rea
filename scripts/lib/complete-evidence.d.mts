@@ -1,5 +1,6 @@
 export function completeEvidenceCliArguments(
   arguments_: readonly string[],
+  cwd?: string,
 ): Promise<readonly string[]>;
 
 export function completeEvidenceToolArguments(

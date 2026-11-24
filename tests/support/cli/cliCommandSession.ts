@@ -226,14 +226,19 @@ class SharedCliProcess implements CliCommandSession {
   }
 
   run(request: CliCommandRequest): Promise<CliCommandResult> {
-    const selected =
-      request.delivery === "budgeted"
-        ? request
-        : {
-            ...request,
-            arguments: completeEvidenceCliArguments(request.arguments),
-          };
-    const result = this.#queue.then(() => this.#invoke(selected));
+    const result = this.#queue.then(async () => {
+      const selected =
+        request.delivery === "budgeted"
+          ? request
+          : {
+              ...request,
+              arguments: await completeEvidenceCliArguments(
+                request.arguments,
+                request.cwd,
+              ),
+            };
+      return this.#invoke(selected);
+    });
     this.#queue = result.then(
       () => undefined,
       () => undefined,

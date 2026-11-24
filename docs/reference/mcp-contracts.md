@@ -336,8 +336,13 @@ and unknowns retain their separate meaning. Legacy replies keep their existing
 framing.
 
 `list_procedures`, `search_procedures`, `list_strings`, `search_strings` and
-`list_names` accept `detail: "summary"`. Complete inline delivery remains the
-default. Summary retains the original complete Evidence and returns its row
+`list_names` accept `detail: "complete"` or `detail: "summary"`. When `detail`
+is omitted, complete Evidence is returned inline when it fits the agent result
+budget (`delivery.agent_result_budget_bytes`, default 48 KiB), and otherwise
+the session retains it and returns its summary when `inspect_analysis_view` is
+advertised. A server that retains no Evidence or does not advertise
+`inspect_analysis_view` returns the complete Evidence. On a stripped 1.2 MB ELF (Debian 12 `zstd`), complete MCP results
+were 8.2 MB for `list_names` and 3.6 MB for `trace_feature` with `error`. Summary retains the original complete Evidence and returns its row
 count, provider identity, analysis-profile digest, original query, parent Evidence
 ID, limitations and explicit unknown discovery coverage. Delivery detail is excluded from provider arguments
 and original Evidence identity.
@@ -884,7 +889,10 @@ reachability. The CLI keeps complete trace JSON; save it and use
 
 ### Selected batch decompile results
 
-`batch_decompile` returns every pseudocode body by default. `detail: "summary"`
+`batch_decompile` returns every pseudocode body inline when the batch Evidence
+fits the agent result budget (`delivery.agent_result_budget_bytes`, default
+48 KiB); an omitted `detail` summarizes a larger batch, and
+`detail: "complete"` always returns every body. `detail: "summary"`
 retains the complete batch in the session first and returns its producer counts,
 `source_provider` (the composing workflow), `source_analysis_profile_digest`,
 `decompiling_provider`, procedure identity counts, total and largest

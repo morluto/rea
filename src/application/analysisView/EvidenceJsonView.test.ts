@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
 import { inspectAnalysisViewValidated } from "./AnalysisViewService.js";
 import { DEFAULT_EVIDENCE_JSON_PAGE_BYTES } from "../../domain/analysisView/evidenceJsonView.js";
@@ -118,6 +119,34 @@ describe("evidence-json view", () => {
     expect(Buffer.byteLength(JSON.stringify(projected.value))).toBeLessThan(
       DEFAULT_AGENT_RESULT_BUDGET_BYTES,
     );
+  });
+
+  it("rejects a starting offset inside a surrogate pair", () => {
+    const parent = parentEvidence();
+    const ledger = new EvidenceLedger();
+    expect(ledger.record(parent).ok).toBe(true);
+    const text = JSON.stringify(ledger.forAnalysis(parent.evidence_id));
+    const pair = text.indexOf("\u{1F600}");
+    const projected = inspectAnalysisViewValidated(
+      {
+        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+        view: { kind: "evidence-json", offset: pair + 1, limit: 8 },
+      },
+      (id) => ledger.forAnalysis(id),
+    );
+    expect(projected.ok).toBe(false);
+    if (projected.ok) return;
+    expect(projectAnalysisError(projected.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["view", "offset"],
+            reason: "invalid_value",
+          }),
+        ],
+      },
+    });
   });
 
   it("reports an exhausted empty page past the end", () => {

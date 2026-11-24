@@ -9,8 +9,9 @@ import { ok } from "../domain/result.js";
 type Parameters = Readonly<Record<string, JsonValue>>;
 
 /**
- * Summary delivery for one named operation: refuse it before analysis when
- * this server retains no Evidence, then return the retained summary view.
+ * Summary delivery for one named operation: refuse a requested summary before
+ * analysis when this server retains no Evidence, then return the retained
+ * summary view.
  */
 export const retainedSummaryDelivery = (
   operation: string,
@@ -23,15 +24,13 @@ export const retainedSummaryDelivery = (
     recordEvidence: options.recordEvidence,
     evidenceById: options.evidenceById,
   };
-  const selected = (parameters: Parameters): boolean =>
-    parameters.detail === "summary";
   return {
     preflight: (parameters: Parameters) =>
-      selected(parameters)
+      parameters.detail === "summary"
         ? requireAnalysisViewRetention(operation, retention)
         : ok(null),
     projectEvidence: (parameters: Parameters, evidence: Evidence) =>
-      selected(parameters)
+      parameters.detail === "summary"
         ? summarizeRetainedAnalysis(evidence, retention)
         : ok(evidence),
   };

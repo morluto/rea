@@ -212,6 +212,8 @@ export class ToolResultDelivery {
     private readonly noTargetRecovery?: string,
     /** REA_AGENT_RESULT_BUDGET_BYTES from the environment this server captured. */
     private readonly agentBudgetSeed?: string,
+    /** Whether this session advertises inspect_analysis_view to page summaries. */
+    private readonly advertisesViewTool: () => boolean = () => true,
   ) {
     this.maximumResponseBytes = maximumResponseBytes;
     this.resultBudgetBytes = maximumResponseBytes - 1024;
@@ -225,6 +227,20 @@ export class ToolResultDelivery {
       this.nativeContinuation,
       recovery,
       this.agentBudgetSeed,
+      this.advertisesViewTool,
+    );
+  }
+
+  /** Bind session tool advertisement without mutating a shared delivery policy. */
+  withAdvertisesViewTool(
+    advertisesViewTool: () => boolean,
+  ): ToolResultDelivery {
+    return new ToolResultDelivery(
+      this.maximumResponseBytes,
+      this.nativeContinuation,
+      this.noTargetRecovery,
+      this.agentBudgetSeed,
+      advertisesViewTool,
     );
   }
 
@@ -319,9 +335,9 @@ export class ToolResultDelivery {
         recorded.error,
         contract.returnsTargetContent,
       );
-    // Only a retained record can be replaced by its summary.
+    // Only a retained record that this session can page can be replaced by its summary.
     const budgeted =
-      recorded === undefined
+      recorded === undefined || !this.advertisesViewTool()
         ? undefined
         : overBudgetSummary(
             evidence,

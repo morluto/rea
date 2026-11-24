@@ -276,7 +276,9 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     )
       throw new Error("MCP catalog identity does not match runtime");
     this.recordEvidence = recordEvidence;
-    this.delivery = delivery;
+    this.delivery = delivery.withAdvertisesViewTool(() =>
+      this.advertisesTool("inspect_analysis_view"),
+    );
     this.identity = identity;
   }
 
@@ -322,6 +324,9 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
     super(info, { ...options, maxToolInputElements: maximumInputElements });
     this.maximumInputElements = maximumInputElements;
+    this.delivery = delivery.withAdvertisesViewTool(() =>
+      this.advertisesTool("inspect_analysis_view"),
+    );
     this.presentation = advertisedToolPresentation(
       outputSchemaProfile,
       compactPresentation,

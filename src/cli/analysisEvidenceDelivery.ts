@@ -239,9 +239,11 @@ const budgetDelivery = (
   input: CliEvidencePublication,
 ): ((recovery: AgentBudgetRecovery) => AgentBudgetDelivery) | undefined => {
   if (input.detail !== undefined) return undefined;
-  const budget = currentAgentResultBudget(
-    cliPublicationInvocation().agentBudgetSeed,
-  );
+  const invocation = cliPublicationInvocation();
+  // An explicit --filter-output selects fields directly from the command's
+  // Evidence; replacing it with {summary, delivery} would drop those paths.
+  if (invocation.hasFilterOutput === true) return undefined;
+  const budget = currentAgentResultBudget(invocation.agentBudgetSeed);
   if (budget === undefined) return undefined;
   const completeBytes = agentBudgetOverflowBytes(complete, budget);
   return completeBytes === undefined

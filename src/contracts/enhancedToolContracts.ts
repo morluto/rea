@@ -70,7 +70,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   enhanced(
     "batch_decompile",
     providerUiNetworkEvidenceEffects,
-    "Decompile an explicit list of procedure symbols/addresses in input order, with one provider read active per batch. Returns per-item pseudocode, unavailable or error outcomes and aggregate counts; input selectors and observed canonical procedure identities remain separate. Null pseudocode is unavailable, without an inferred capability or retry reason; failed counts include unavailable items. detail summary retains the batch for inspect_analysis_view item/body pages; complete includes every body. Per-function limits do not bound the whole batch.",
+    "Decompile an explicit list of procedure symbols/addresses in input order, with one provider read active per batch. Returns per-item pseudocode, unavailable or error outcomes and aggregate counts; input selectors and observed canonical procedure identities remain separate. Null pseudocode is unavailable, without an inferred capability or retry reason; failed counts include unavailable items. Select detail summary to retain the batch for inspect_analysis_view item/body pages; omitted detail is complete within the agent result budget, else the retained summary. Per-function limits do not bound the whole batch.",
     enhancedInputSchemas.batch_decompile.extend({
       detail: analysisDetailSchema,
     }),
@@ -121,8 +121,10 @@ export const ENHANCED_TOOL_CONTRACTS = [
       toolEffects({ mutatesSession: true, idempotent: false }),
       providerRemoteEffects,
     ),
-    "Search procedure/string inventories for the complete literal query, then query xrefs at matched start addresses. Interior-byte references are not searched; empty results or truncated: false never establish no references. Containment refusals preserve an unavailable owner, and reference kinds remain unknown. For typed incoming procedure references use procedure_references, comparing target addresses for exact-entry matches. detail summary retains matches/references/unknowns for inspect_analysis_view kind native-feature-trace.",
-    enhancedInputSchemas.trace_feature.extend({ detail: analysisDetailSchema }),
+    "Search procedure/string inventories for the complete literal query, then query xrefs at matched start addresses. Interior-byte references are not searched; empty results or truncated: false never establish no references. Containment refusals preserve an unavailable owner, and reference kinds remain unknown. For typed incoming procedure references use procedure_references, comparing target addresses for exact-entry matches. Select detail summary to retain matches/references/unknowns for inspect_analysis_view kind native-feature-trace; omitted detail is complete within the agent result budget, else the retained summary.",
+    enhancedInputSchemas.trace_feature.extend({
+      detail: analysisDetailSchema,
+    }),
   ),
   enhanced(
     "trace_call_path",

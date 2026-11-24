@@ -6,6 +6,8 @@ import type { JsonValue } from "../../src/domain/jsonValue.js";
 import {
   analysisViewCaptureEvidence,
   environmentManifestCaptureFixture,
+  captureParent,
+  timedCaptureEvidence,
   type TimedCaptureRow,
 } from "./analysisView.js";
 
@@ -451,19 +453,20 @@ export const environmentStateViewOf = (
   capture: Evidence,
   templateRules: readonly TemplateRule[] = [],
 ): EnvironmentStateView => {
-  const result = projectAnalysisView(
-    {
-      predicateType: capture.predicate_type,
-      evidenceId: capture.evidence_id,
-      operation: capture.operation,
-      normalizedResult: capture.normalized_result,
-      subject: capture.subject,
-      limitations: [],
-      parameters: capture.parameters,
-    },
-    { kind: "environment-state", template_rules: [...templateRules] },
-  );
+  const result = projectAnalysisView(captureParent(capture), {
+    kind: "environment-state",
+    template_rules: [...templateRules],
+  });
   if (!result.ok || result.value.kind !== "environment-state")
     throw new Error("Expected an environment state");
   return result.value;
+};
+
+/** The write plan inferred for one tool from a timed capture. */
+export const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
+  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
+    (candidate) => candidate.tool === tool,
+  );
+  if (plan === undefined) throw new Error(`No write plan for ${tool}`);
+  return plan;
 };

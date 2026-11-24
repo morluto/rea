@@ -109,8 +109,12 @@ export const bindBrowserObservationTools = (
           if (!ready.ok) return ready;
         }
         const analyzed = await analyzeWebBundle(browser, request, options);
-        return analyzed.ok && view !== undefined
-          ? projectRetainedAnalysis(analyzed.value, retention, view)
+        return analyzed.ok && detail === "summary"
+          ? projectRetainedAnalysis(
+              analyzed.value,
+              retention,
+              view ?? { kind: "summary" },
+            )
           : analyzed;
       },
     },

@@ -261,7 +261,9 @@ const registerDecompileCommand = (
 };
 
 /** Select static JavaScript analysis only when no binary-analysis option applies. */
-const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
+export const isJavaScriptApplicationPath = async (
+  path: string,
+): Promise<boolean> => {
   try {
     const canonical = await realpath(path);
     if (canonical.toLowerCase().endsWith(".asar")) return true;

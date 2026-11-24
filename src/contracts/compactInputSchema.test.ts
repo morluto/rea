@@ -13,7 +13,6 @@ import {
   schemaDepth,
   inlineWithinBudget,
   jsonValueSchema,
-  stripAnnotations,
 } from "./compactJsonSchema.js";
 import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
@@ -124,19 +123,23 @@ describe("compact advertised input schema", () => {
       description: "saved data",
       default: { keep: "me" },
     };
-    const schema = stripAnnotations({
+    const schema = inlineWithinBudget(
+      {
+        type: "object",
+        properties: {
+          mode: { enum: [literalMode] },
+          pinned: { const: { description: "literal" } },
+        },
+      },
+      16_384,
+      { stripAnnotations: true },
+    );
+    expect(schema).toEqual({
       type: "object",
       properties: {
         mode: { enum: [literalMode] },
         pinned: { const: { description: "literal" } },
       },
-    });
-    const properties = schema.properties as Record<string, unknown>;
-    expect((properties.mode as Record<string, unknown>).enum).toEqual([
-      literalMode,
-    ]);
-    expect((properties.pinned as Record<string, unknown>).const).toEqual({
-      description: "literal",
     });
   });
 
@@ -1183,50 +1186,77 @@ describe("reduced array item presentation", () => {
   });
 });
 
-describe("on-the-fly annotation stripping parity", () => {
-  it("matches pre-stripped inlining for map keys, empty schemas, ref siblings, and stripped pointers", () => {
-    const cases: readonly Record<string, unknown>[] = [
-      {
-        type: "object",
-        description: "Root doc stays.",
-        default: { x: 1 },
-        properties: {
-          default: { type: "boolean", default: true, title: "Default flag" },
-          any: { description: "Becomes json value schema." },
-          forbid: { not: { description: "Empty negation." } },
-          aliased: { $ref: "#/$defs/leaf", description: "Sibling doc drops." },
+describe("budgeted annotation stripping", () => {
+  it("preserves validation and refuses references to removed annotations", () => {
+    const cases: readonly [Record<string, unknown>, unknown][] = [
+      [
+        {
+          type: "object",
+          description: "Root doc stays.",
+          default: { x: 1 },
+          properties: {
+            default: { type: "boolean", default: true, title: "Default flag" },
+            any: { description: "Becomes json value schema." },
+            forbid: { not: { description: "Empty negation." } },
+            aliased: {
+              $ref: "#/$defs/leaf",
+              description: "Sibling doc drops.",
+            },
+          },
+          $defs: {
+            leaf: { type: "string", description: "Def doc drops.", title: "L" },
+          },
         },
-        $defs: {
-          leaf: { type: "string", description: "Def doc drops.", title: "L" },
+        {
+          type: "object",
+          description: "Root doc stays.",
+          properties: {
+            default: { type: "boolean" },
+            any: jsonValueSchema(),
+            forbid: { not: {} },
+            aliased: { type: "string" },
+          },
         },
-      },
-      {
-        $schema: "http://json-schema.org/draft-07/schema#",
-        type: "object",
-        definitions: { leaf: { type: "number", examples: [1] } },
-        properties: {
-          count: { $ref: "#/definitions/leaf", description: "Doc drops." },
+      ],
+      [
+        {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          definitions: { leaf: { type: "number", examples: [1] } },
+          properties: {
+            count: { $ref: "#/definitions/leaf", description: "Doc drops." },
+          },
         },
-      },
-      {
-        type: "object",
-        $defs: {
-          node: { type: "string", default: "fallback" },
+        {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          properties: { count: { type: "number" } },
         },
-        properties: {
-          bad: { $ref: "#/$defs/node/default" },
+      ],
+      [
+        {
+          type: "object",
+          $defs: {
+            node: { type: "string", default: "fallback" },
+          },
+          properties: {
+            bad: { $ref: "#/$defs/node/default" },
+          },
         },
-      },
-      {
-        type: "object",
-        properties: {
-          bad: { $ref: "#/properties/x/description" },
-          x: { type: "string", description: "Stripped doc" },
+        undefined,
+      ],
+      [
+        {
+          type: "object",
+          properties: {
+            bad: { $ref: "#/properties/x/description" },
+            x: { type: "string", description: "Stripped doc" },
+          },
         },
-      },
+        undefined,
+      ],
     ];
-    for (const schema of cases) {
-      const expected = inlineWithinBudget(stripAnnotations(schema), 16_384);
+    for (const [schema, expected] of cases) {
       const actual = inlineWithinBudget(schema, 16_384, {
         stripAnnotations: true,
         references: new JsonSchemaReferences(schema),

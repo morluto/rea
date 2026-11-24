@@ -264,7 +264,7 @@ await withVerifierCleanup(async () => {
         common_summary: summary,
         common_request: {
           name: "analyze_javascript_application",
-          arguments: { ...preparationRequest, detail: "complete" },
+          arguments: preparationRequest,
         },
         transcript,
       };

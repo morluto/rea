@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Evidence } from "../evidence.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
+import { jsonParts } from "../jsonSerialization.js";
 import { err, ok } from "../result.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
@@ -42,35 +43,101 @@ export const evidenceJsonViewRequestSchema = z.strictObject({
 
 type EvidenceJsonViewRequest = z.output<typeof evidenceJsonViewRequestSchema>;
 
-/**
- * One serialization per immutable retained record. Paging is then O(limit)
- * per call after the first; a mutable inline parent is serialized per call
- * because nothing proves it is unchanged.
- */
-const serialized = new WeakMap<object, string>();
+interface SerializedEvidenceJson {
+  readonly chunks: readonly string[];
+  /** Cumulative UTF-16 code unit start of each chunk, ending with `totalLength`. */
+  readonly starts: readonly number[];
+  readonly totalLength: number;
+}
 
-const serializeEvidence = (evidence: Evidence): string => {
-  if (!isImmutableJsonSnapshot(evidence)) return JSON.stringify(evidence);
+/**
+ * One chunked serialization per immutable retained record, built with
+ * `jsonParts` so records exceeding Node's single-string limit remain pageable.
+ * Paging is then O(log(chunks) + limit) per call after the first; a mutable
+ * inline parent is serialized per call because nothing proves it is unchanged.
+ */
+const serialized = new WeakMap<object, SerializedEvidenceJson>();
+
+const buildSerializedChunks = (evidence: Evidence): SerializedEvidenceJson => {
+  const chunks: string[] = [];
+  const starts: number[] = [];
+  let totalLength = 0;
+  for (const part of jsonParts(evidence)) {
+    if (part.length === 0) continue;
+    starts.push(totalLength);
+    chunks.push(part);
+    totalLength += part.length;
+  }
+  starts.push(totalLength);
+  return { chunks, starts, totalLength };
+};
+
+const serializeEvidence = (evidence: Evidence): SerializedEvidenceJson => {
+  if (!isImmutableJsonSnapshot(evidence))
+    return buildSerializedChunks(evidence);
   const known = serialized.get(evidence);
   if (known !== undefined) return known;
-  const text = JSON.stringify(evidence);
-  serialized.set(evidence, text);
-  return text;
+  const doc = buildSerializedChunks(evidence);
+  serialized.set(evidence, doc);
+  return doc;
+};
+
+/** Chunk index containing UTF-16 offset `index` (`0 <= index < doc.totalLength`). */
+const locateChunk = (doc: SerializedEvidenceJson, index: number): number => {
+  let low = 0;
+  let high = doc.chunks.length - 1;
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+    if (doc.starts[mid]! <= index) low = mid;
+    else high = mid - 1;
+  }
+  return low;
+};
+
+const codeUnitAt = (doc: SerializedEvidenceJson, index: number): number => {
+  const chunkIndex = locateChunk(doc, index);
+  return doc.chunks[chunkIndex]!.charCodeAt(index - doc.starts[chunkIndex]!);
+};
+
+const sliceChunks = (
+  doc: SerializedEvidenceJson,
+  start: number,
+  end: number,
+): string => {
+  if (end <= start) return "";
+  const first = locateChunk(doc, start);
+  const last = locateChunk(doc, end - 1);
+  if (first === last) {
+    const base = doc.starts[first]!;
+    return doc.chunks[first]!.slice(start - base, end - base);
+  }
+  const parts: string[] = [];
+  for (let index = first; index <= last; index += 1) {
+    const chunk = doc.chunks[index]!;
+    const base = doc.starts[index]!;
+    const from = index === first ? start - base : 0;
+    const to = index === last ? end - base : chunk.length;
+    parts.push(chunk.slice(from, to));
+  }
+  return parts.join("");
 };
 
 const isHigh = (unit: number): boolean => unit >= 0xd800 && unit <= 0xdbff;
 const isLow = (unit: number): boolean => unit >= 0xdc00 && unit <= 0xdfff;
 
-/** Whether a page ending at `end` would separate a surrogate pair. */
-const splitsPair = (text: string, end: number): boolean =>
-  end > 0 &&
-  end < text.length &&
-  isHigh(text.charCodeAt(end - 1)) &&
-  isLow(text.charCodeAt(end));
+/** Whether `boundary` sits between the two halves of a surrogate pair. */
+const splitsPair = (doc: SerializedEvidenceJson, boundary: number): boolean =>
+  boundary > 0 &&
+  boundary < doc.totalLength &&
+  isHigh(codeUnitAt(doc, boundary - 1)) &&
+  isLow(codeUnitAt(doc, boundary));
 
 /** UTF-8 bytes one code unit takes inside an escaped JSON string. */
-const escapedUnitBytes = (text: string, index: number): number => {
-  const unit = text.charCodeAt(index);
+const escapedUnitBytes = (
+  unit: number,
+  doc: SerializedEvidenceJson,
+  index: number,
+): number => {
   if (unit === 0x22 || unit === 0x5c) return 2;
   if (unit < 0x20)
     return unit === 0x08 ||
@@ -83,29 +150,43 @@ const escapedUnitBytes = (text: string, index: number): number => {
   if (unit < 0x80) return 1;
   if (unit < 0x800) return 2;
   // A paired surrogate is half of one four-byte character; a lone one is escaped.
-  if (isHigh(unit)) return isLow(text.charCodeAt(index + 1)) ? 2 : 6;
-  if (isLow(unit)) return isHigh(text.charCodeAt(index - 1)) ? 2 : 6;
+  if (isHigh(unit))
+    return index + 1 < doc.totalLength && isLow(codeUnitAt(doc, index + 1))
+      ? 2
+      : 6;
+  if (isLow(unit))
+    return index > 0 && isHigh(codeUnitAt(doc, index - 1)) ? 2 : 6;
   return 3;
 };
 
 /** The end of the page that `limit`, or the default byte size, selects. */
 const pageEnd = (
-  text: string,
+  doc: SerializedEvidenceJson,
   offset: number,
   limit: number | undefined,
 ): number => {
   let end = offset;
   if (limit === undefined) {
-    let bytes = 0;
-    while (end < text.length) {
-      const cost = escapedUnitBytes(text, end);
-      if (bytes + cost > DEFAULT_EVIDENCE_JSON_PAGE_BYTES && end > offset)
-        break;
-      bytes += cost;
-      end += 1;
+    if (offset < doc.totalLength) {
+      let chunkIndex = locateChunk(doc, offset);
+      let inChunk = offset - doc.starts[chunkIndex]!;
+      let bytes = 0;
+      while (end < doc.totalLength) {
+        const chunk = doc.chunks[chunkIndex]!;
+        const cost = escapedUnitBytes(chunk.charCodeAt(inChunk), doc, end);
+        if (bytes + cost > DEFAULT_EVIDENCE_JSON_PAGE_BYTES && end > offset)
+          break;
+        bytes += cost;
+        end += 1;
+        inChunk += 1;
+        if (inChunk === chunk.length) {
+          chunkIndex += 1;
+          inChunk = 0;
+        }
+      }
     }
-  } else end = Math.min(text.length, offset + limit);
-  if (!splitsPair(text, end)) return end;
+  } else end = Math.min(doc.totalLength, offset + limit);
+  if (!splitsPair(doc, end)) return end;
   // Keep the pair whole: end before it, or after it when it fills the page.
   return end - 1 > offset ? end - 1 : end + 1;
 };
@@ -126,9 +207,19 @@ export const projectEvidenceJsonView = (
         },
       ]),
     );
-  const text = serializeEvidence(parent.evidence);
-  const start = Math.min(view.offset, text.length);
-  const end = pageEnd(text, start, view.limit);
+  const doc = serializeEvidence(parent.evidence);
+  const start = Math.min(view.offset, doc.totalLength);
+  if (splitsPair(doc, start))
+    return err(
+      analysisViewInputError([
+        {
+          path: ["view", "offset"],
+          reason: "invalid_value",
+          message: "Evidence JSON offset splits a UTF-16 surrogate pair.",
+        },
+      ]),
+    );
+  const end = pageEnd(doc, start, view.limit);
   return ok({
     kind: "evidence-json" as const,
     view,
@@ -136,8 +227,8 @@ export const projectEvidenceJsonView = (
     parent_operation: parent.operation,
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
-    text: text.slice(start, end),
-    coverage: pageViewCoverage(view.offset, end - start, text.length),
+    text: sliceChunks(doc, start, end),
+    coverage: pageViewCoverage(view.offset, end - start, doc.totalLength),
     limitations: [
       "Pages are UTF-16 code unit ranges of the parent Evidence JSON text, not parsed records; join every page in offset order before parsing. Prefer the producer's own views to select facts.",
     ],
