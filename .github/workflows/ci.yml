@@ -90,6 +90,7 @@ jobs:
       test_selection: ${{ steps.plan.outputs.test_selection }}
       test_mode: ${{ steps.plan.outputs.test_mode }}
       test_shards: ${{ steps.plan.outputs.test_shards }}
+      test_shard_job: ${{ steps.plan.outputs.test_shard_job }}
       typed_lint_files: ${{ steps.plan.outputs.typed_lint_files }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -341,10 +342,10 @@ jobs:
   test-shard:
     name: Test shard (${{ matrix.shard }})
     needs: [changes, build]
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.test_shard_job == 'test-shard'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
+    strategy: &portable-shard-strategy
       # Failed PRs release the remaining matrix slots; qualification retains
       # every shard's diagnostics and coverage. Passing PRs run the full suite.
       fail-fast: ${{ github.event_name == 'pull_request' && needs.changes.outputs.tier == 'fast' }}
@@ -353,7 +354,7 @@ jobs:
         # built shards, twelve full-qualification shards with coverage, or one
         # job per group of a selected PR subset.
         shard: ${{ fromJSON(needs.changes.outputs.test_shards) }}
-    steps:
+    steps: &portable-shard-steps
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -393,6 +394,15 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 7
+
+  test-shard-broad:
+    name: Test shard (${{ matrix.shard }})
+    needs: [changes, build, static]
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.test_shard_job == 'test-shard-broad'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy: *portable-shard-strategy
+    steps: *portable-shard-steps
 
   reverse-tools-quality:
     name: Reverse tools quality
@@ -567,10 +577,12 @@ jobs:
 
   test:
     name: Portable tests
-    needs: [changes, test-source, test-shard]
+    needs: [changes, test-source, test-shard, test-shard-broad]
     if: ${{ !cancelled() && needs.changes.outputs.tier != 'reused' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      SHARD_RESULT: ${{ needs[needs.changes.outputs.test_shard_job].result }}
     steps:
       - name: Require successful change classification
         env:
@@ -591,7 +603,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: >-
           !cancelled() && needs.changes.outputs.code == 'true' &&
-          (needs.test-shard.result == 'success' || needs.test-shard.result == 'failure' ||
+          (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure' ||
            (needs.changes.outputs.tier == 'fast' &&
             (needs.test-source.result == 'success' || needs.test-source.result == 'failure')))
         with:
@@ -603,7 +615,7 @@ jobs:
         if: >-
           !cancelled() && needs.changes.outputs.code == 'true' &&
           needs.changes.outputs.tier == 'full' &&
-          (needs.test-shard.result == 'success' || needs.test-shard.result == 'failure')
+          (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure')
         run: >-
           npm run test:ci:merge --
           --coverage.reportsDirectory=coverage
@@ -621,7 +633,7 @@ jobs:
         if: >-
           !cancelled() && needs.changes.outputs.code == 'true' &&
           needs.changes.outputs.tier == 'fast' &&
-          (needs.test-shard.result == 'success' || needs.test-shard.result == 'failure' ||
+          (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure' ||
            needs.test-source.result == 'success' || needs.test-source.result == 'failure')
         run: >-
           npm exec -- vitest --merge-reports
@@ -634,7 +646,6 @@ jobs:
       - name: Summarize slowest test files
         if: needs.changes.outputs.code == 'true' && !cancelled()
         env:
-          SHARD_RESULT: ${{ needs.test-shard.result }}
           SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full' }}
           SOURCE_RESULT: ${{ needs.test-source.result }}
           MERGE_RESULT: ${{ needs.changes.outputs.tier == 'full' && steps.merge.outcome || steps.merge-fast.outcome }}
@@ -661,7 +672,7 @@ jobs:
         if: >-
           success() &&
           needs.changes.outputs.code == 'true' &&
-          needs.test-shard.result == 'success' &&
+          env.SHARD_RESULT == 'success' &&
           (
             needs.changes.outputs.tier == 'full' ||
             (needs.changes.outputs.tier == 'fast' && needs.test-source.result == 'success')
@@ -680,7 +691,6 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           CODE_REQUIRED: ${{ needs.changes.outputs.code }}
-          SHARD_RESULT: ${{ needs.test-shard.result }}
           SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full' }}
           SOURCE_RESULT: ${{ needs.test-source.result }}
         run: |
@@ -1348,6 +1358,7 @@ jobs:
         packet_capture,
         signal_recording,
         test-shard,
+        test-shard-broad,
         test-source,
         sqlite-runtime,
         test,

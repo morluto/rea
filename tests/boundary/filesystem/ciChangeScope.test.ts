@@ -513,6 +513,7 @@ it("selects the tests a pull request affects and runs everything when it cannot 
   });
   const output = await readFile(join(directory, "scope-output"), "utf8");
   expect(output).toContain("test_mode=selected\n");
+  expect(output).toContain("test_shard_job=test-shard\n");
   expect(output).toContain('test_shards=["1/1"]\n');
 
   // ci:full, main pushes and shared or untraced inputs run the complete suite.
@@ -534,9 +535,12 @@ it("selects the tests a pull request affects and runs everything when it cannot 
   ]) {
     const parent = previous;
     previous = await change(directory, [path]);
-    expect(await classify(directory, parent, previous)).toMatchObject({
+    expect(await runPlanScript(directory, parent, previous)).toMatchObject({
       testSelection: { mode: "full", reason: expect.stringContaining(path) },
     });
+    expect(await readFile(join(directory, "scope-output"), "utf8")).toContain(
+      "test_shard_job=test-shard-broad\n",
+    );
   }
   // A leaf owner's boundary tests cover its other modules.
   const unreached = await change(
