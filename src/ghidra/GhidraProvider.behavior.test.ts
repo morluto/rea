@@ -1577,12 +1577,12 @@ describe("Ghidra client projection", () => {
     expect(result.value.limitations.join("\n")).toContain("ghidra-9996");
     expect(result.value.limitations.join("\n")).not.toContain("ghidra-10154");
     expect(result.value.sessionLimitations).toEqual(
-      expect.arrayContaining(
-        ghidraKnownProviderDefectLimitations("12.2", {
+      expect.arrayContaining([
+        ...ghidraKnownProviderDefectLimitations("12.2", {
           architecture: "x86_64",
           operation: "list_procedures",
         }),
-      ),
+      ]),
     );
     expect(startCount).toBe(1);
   });
