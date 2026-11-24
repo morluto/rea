@@ -27,7 +27,7 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { LimitRef } from "../domain/parseFailure.js";
-import type { MalformedTargetFailure } from "../domain/analysisErrorCore.js";
+import type { MalformedTargetFailure } from "../domain/targetFailure.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */

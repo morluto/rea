@@ -86,7 +86,7 @@ describe("Windows shortcut stable filesystem boundary", () => {
     const malformedResult = await service.inspect({ path: malformed });
     if (malformedResult.ok) throw new Error("Expected a malformed target");
     expect(malformedResult.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       operation: "inspect_windows_shortcut",
       path: malformed,
     });

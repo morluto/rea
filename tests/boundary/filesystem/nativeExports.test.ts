@@ -490,7 +490,7 @@ describe("native export encoding and failures", () => {
       });
     // Malformed bytes are a target refusal, not a request-field error.
     expect(await failure({ path: malformed })).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       operation: "inspect_native_exports",
       path: malformed,
     });

@@ -1,7 +1,9 @@
+import type { TargetFailureFacts, TargetFailureOf } from "./targetFailure.js";
+
 /**
- * How a byte-format parser failed. One algebra for every format, so the
- * public category depends on what the parser established, not on which error
- * class it happened to throw.
+ * How a byte-format parser failed. The byte-structure outcomes are the
+ * {@link TargetFailureOf} variants themselves, so a parser's fact is the
+ * target failure every projection reads; only `limit` is parser-specific.
  *
  * - `malformed`: the bytes violate the format's structure.
  * - `truncated`: a declared structure starts in the bytes but ends past them.
@@ -14,16 +16,6 @@ export type ParseFailureKind =
   | "truncated"
   | "unsupported"
   | "limit";
-
-interface ParseFailureFacts {
-  /** The format being decoded, such as `elf` or `windows-shortcut`. */
-  readonly format: string;
-  readonly detail: string;
-  /** Byte offset of the structure that failed, when the parser knows it. */
-  readonly offset?: number;
-  /** The structure or field that failed, when the parser names it. */
-  readonly field?: string;
-}
 
 /**
  * The limit a parse stopped at: its stable name, the maximum in force, and,
@@ -46,20 +38,12 @@ export const reportedParseLimit = ({ name, maximum, required }: LimitRef) => ({
 });
 
 /** A parse outcome the parser established, carried with its facts. */
-export type ParseFailure = ParseFailureFacts &
-  (
-    | { readonly kind: "malformed" }
-    | { readonly kind: "truncated" }
-    | {
-        readonly kind: "unsupported";
-        /** The input holds the content, in a form this decoder cannot read. */
-        readonly undecodedContent: boolean;
-      }
-    | {
-        readonly kind: "limit";
-        readonly limit: LimitRef;
-      }
-  );
+export type ParseFailure =
+  | TargetFailureOf<"malformed" | "truncated" | "unsupported">
+  | (TargetFailureFacts & {
+      readonly kind: "limit";
+      readonly limit: LimitRef;
+    });
 
 /** The one throwable carrier for a {@link ParseFailure}. */
 export class ParseFailureError<
@@ -81,7 +65,7 @@ export class ParseFailureError<
 }
 
 /** Where the failure was found, and the failure that revealed it. */
-type ParseFailureSite = Pick<ParseFailureFacts, "offset" | "field"> & {
+type ParseFailureSite = Pick<TargetFailureFacts, "offset" | "field"> & {
   readonly cause?: unknown;
 };
 

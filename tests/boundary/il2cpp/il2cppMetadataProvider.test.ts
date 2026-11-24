@@ -667,7 +667,7 @@ it("retains the exact source when recognized magic has no complete version", asy
 
   if (result.ok) throw new Error("Expected truncated metadata prefix");
   expect(result.error).toMatchObject({
-    _tag: "AnalysisMalformedTargetError",
+    _tag: "AnalysisTargetFailureError",
     path,
     failure: {
       kind: "truncated",
@@ -878,7 +878,7 @@ it.each([false, true])(
       expect(ordinary).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisMalformedTargetError",
+          _tag: "AnalysisTargetFailureError",
           path: binary_path,
           failure: {
             kind: "malformed",
@@ -1173,7 +1173,7 @@ it("names the metadata, not the binary, when linking reads a malformed metadata 
     const result = await provider.inspect({ path, binary_path: binaryPath });
     if (result.ok) throw new Error("Expected the metadata name to be refused");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       path,
       failure: {
         kind: "malformed",

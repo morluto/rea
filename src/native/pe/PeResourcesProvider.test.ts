@@ -161,7 +161,7 @@ describe("PE resource provider budget reporting", () => {
     });
     if (result.ok) throw new Error("Expected malformed table refusal");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
     });
   });
 });

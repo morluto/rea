@@ -6,12 +6,13 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
+import { targetFailureRecovery } from "./targetFailure.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
   INFO_PLIST_DECODE_MIB,
@@ -133,8 +134,8 @@ export const analysisErrorRemediationAction = (
       error.remediationAction ??
       "Select a target supported by this operation or choose an operation supporting the reported target format."
     );
-  if (error instanceof AnalysisMalformedTargetError)
-    return `The selected target's ${error.failure.format} bytes are ${error.failure.kind} where ${error.operation} reads them; the request arguments are not at fault, so changing them will not help. Choose another operation or provider for this target, or select a complete, well-formed copy of it.`;
+  if (error instanceof AnalysisTargetFailureError)
+    return targetFailureRecovery(error.operation, error.failure);
   if (error instanceof AnalysisResourceConstraintError) {
     if (error.remediationAction !== undefined) return error.remediationAction;
     const refusal = analysisErrorRefusal(error);
@@ -418,7 +419,7 @@ export const composedCallerGuidance = (sources: {
 const outcomeUserMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisSnapshotMismatchError) return error.message;
   if (error instanceof AnalysisUnsupportedTargetError) return error.message;
-  if (error instanceof AnalysisMalformedTargetError) return error.message;
+  if (error instanceof AnalysisTargetFailureError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
   if (error instanceof AnalysisAccessDeniedError)
     return "Host filesystem permissions denied read access to the selected path.";
@@ -703,7 +704,7 @@ const KNOWN_ERROR_TAGS = {
   AnalysisOutputError: true,
   AnalysisCapabilityUnavailableError: true,
   AnalysisUnsupportedTargetError: true,
-  AnalysisMalformedTargetError: true,
+  AnalysisTargetFailureError: true,
   AnalysisCancelledError: true,
   AnalysisTimeoutError: true,
   AnalysisResourceConstraintError: true,

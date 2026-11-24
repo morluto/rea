@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisUnsupportedTargetError,
 } from "../analysisErrorCore.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
@@ -25,7 +25,7 @@ describe("managedInspectionTargetFailure", () => {
         0x2000,
       ),
     );
-    expect(failure).toBeInstanceOf(AnalysisMalformedTargetError);
+    expect(failure).toBeInstanceOf(AnalysisTargetFailureError);
     expect(projectAnalysisError(failure!)).toMatchObject({
       code: "unsupported_target",
       retryable: false,
@@ -48,10 +48,10 @@ describe("managedInspectionTargetFailure", () => {
       PATH,
       managedFailure("invalid-tables", "metadata.tables", "bad table"),
     );
-    expect(failure).toBeInstanceOf(AnalysisMalformedTargetError);
-    expect(
-      (failure as AnalysisMalformedTargetError).failure,
-    ).not.toHaveProperty("offset");
+    expect(failure).toBeInstanceOf(AnalysisTargetFailureError);
+    expect((failure as AnalysisTargetFailureError).failure).not.toHaveProperty(
+      "offset",
+    );
   });
 
   it.each(["unsupported-metadata", "unsupported-signature"] as const)(

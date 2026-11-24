@@ -1,4 +1,11 @@
-import { AnalysisCapabilityUnavailableError } from "./analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisTargetFailureError,
+} from "./analysisErrorCore.js";
+import {
+  TARGET_FAILURE_KINDS,
+  TARGET_FAILURE_PROJECTIONS,
+} from "./targetFailure.js";
 import {
   domainErrorTag,
   type AnalysisError,
@@ -40,6 +47,7 @@ export const RETRYABLE_CODES: ReadonlySet<ErrorCode> = new Set([
 
 /** Domain tags whose classification depends on the error's own facts. */
 type SpecializedErrorTag =
+  | "AnalysisTargetFailureError"
   | "ArtifactOperationError"
   | "BinaryTargetError"
   | "BrowserObservationError"
@@ -67,10 +75,6 @@ const STATIC_ERROR_CLASSIFICATIONS = {
     "unsupported_provider",
   ),
   AnalysisUnsupportedTargetError: classified(
-    "unsupported_target",
-    "unsupported_target",
-  ),
-  AnalysisMalformedTargetError: classified(
     "unsupported_target",
     "unsupported_target",
   ),
@@ -257,6 +261,7 @@ const staticClassification = (
   if (tag === undefined)
     throw new TypeError(`Unpresented provider error: ${error._tag}`);
   switch (tag) {
+    case "AnalysisTargetFailureError":
     case "ArtifactOperationError":
     case "BinaryTargetError":
     case "BrowserObservationError":
@@ -283,6 +288,10 @@ export const classifyAnalysisError = (
     return { code: owned.code, category: owned.category };
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return RETRYABLE_CAPABILITY_UNAVAILABLE;
+  if (error instanceof AnalysisTargetFailureError) {
+    const { code, category } = TARGET_FAILURE_PROJECTIONS[error.failure.kind];
+    return { code, category };
+  }
   if (error instanceof ProviderSelectionError)
     return PROVIDER_SELECTION_CLASSIFICATIONS[error.reason];
   if (error instanceof BrowserObservationError)
@@ -363,6 +372,15 @@ export const analysisErrorCatalogue =
       RETRYABLE_CAPABILITY_UNAVAILABLE,
       true,
     ),
+    ...TARGET_FAILURE_KINDS.map((kind) => {
+      const { code, category, retryable } = TARGET_FAILURE_PROJECTIONS[kind];
+      return catalogueRow(
+        "AnalysisTargetFailureError",
+        `kind=${kind}`,
+        { code, category },
+        retryable,
+      );
+    }),
     ...reasonRows("ArtifactOperationError", ARTIFACT_OPERATION_CLASSIFICATIONS),
     catalogueRow(
       "ArtifactOperationError",

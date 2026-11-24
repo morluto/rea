@@ -8,7 +8,7 @@ import {
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
 import {
   AnalysisInputError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import type { Il2cppBinaryArchitecture } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import { describe, expect, it } from "vitest";
@@ -145,7 +145,7 @@ const containerFailure = (
   try {
     link(bytes, architecture);
   } catch (cause) {
-    if (cause instanceof AnalysisMalformedTargetError)
+    if (cause instanceof AnalysisTargetFailureError)
       return { path: cause.path, ...cause.failure };
     throw cause;
   }

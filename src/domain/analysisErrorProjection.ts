@@ -22,13 +22,16 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
-  type MalformedTargetFailure,
 } from "./analysisErrorCore.js";
+import {
+  TARGET_FAILURE_PROJECTIONS,
+  targetFailureDetails,
+} from "./targetFailure.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
   BinaryTargetError,
@@ -560,7 +563,12 @@ const projectError = (
     category: analysisErrorCategory(error),
     message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
-      (RETRYABLE_CODES.has(code) &&
+      // A target failure's retryability is its kind's, from the one table.
+      (error instanceof AnalysisTargetFailureError &&
+        code !== "cleanup_incomplete" &&
+        TARGET_FAILURE_PROJECTIONS[error.failure.kind].retryable) ||
+      (!(error instanceof AnalysisTargetFailureError) &&
+        RETRYABLE_CODES.has(code) &&
         error.ownPresentation()?.retryable !== false) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
@@ -617,19 +625,6 @@ const errorDetails = (
   providerErrorDetails(error) ??
   lifecycleErrorDetails(error);
 
-/** The public facts of a format owner's malformed or truncated parse. */
-const parseFailureDetails = ({
-  kind,
-  format,
-  offset,
-  field,
-}: MalformedTargetFailure) => ({
-  format_failure: kind,
-  format,
-  ...(offset === undefined ? {} : { offset }),
-  ...(field === undefined ? {} : { field }),
-});
-
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
@@ -639,12 +634,12 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
     };
-  if (error instanceof AnalysisMalformedTargetError)
+  if (error instanceof AnalysisTargetFailureError)
     return {
       operation: error.operation,
       path: error.path,
       reason: error.failure.detail,
-      ...parseFailureDetails(error.failure),
+      ...targetFailureDetails(error.failure),
     };
   if (error instanceof AnalysisResourceConstraintError)
     return {
@@ -753,7 +748,7 @@ const artifactStateErrorDetails = (
         : { integrity_check: error.integrityCheck }),
       ...(error.parseFailure === undefined
         ? {}
-        : parseFailureDetails(error.parseFailure)),
+        : targetFailureDetails(error.parseFailure)),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
 import {
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "./analysisErrorCore.js";
@@ -36,16 +36,14 @@ it.each([
   "refuses $failure.kind bytes as a malformed target, not invalid input",
   (cause) => {
     const error = project(cause);
-    expect(error).toBeInstanceOf(AnalysisMalformedTargetError);
+    expect(error).toBeInstanceOf(AnalysisTargetFailureError);
     expect(error).toMatchObject({
       cause,
       operation: "inspect_example",
       path: "/tmp/sample.bin",
       failure: cause.failure,
     });
-    const projected = projectAnalysisError(
-      error as AnalysisMalformedTargetError,
-    );
+    const projected = projectAnalysisError(error as AnalysisTargetFailureError);
     expect(projected).toMatchObject({
       code: "unsupported_target",
       category: "unsupported_target",
@@ -81,7 +79,7 @@ it("keeps the parser's structure and offset on a malformed target", () => {
     field: "tensor data",
   });
   const error = project(cause);
-  if (!(error instanceof AnalysisMalformedTargetError))
+  if (!(error instanceof AnalysisTargetFailureError))
     throw new Error("Expected a malformed target");
   expect(projectAnalysisError(error).details).toMatchObject({
     format_failure: "truncated",
