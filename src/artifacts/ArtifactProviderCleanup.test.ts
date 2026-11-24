@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ArtifactProvider } from "./ArtifactProvider.js";
 import { malformedArtifact } from "../resources/ArtifactReader.js";
 import * as interfaceBuilder from "./apple/InterfaceBuilderAnalysis.js";
@@ -46,6 +47,38 @@ it("updates a bundle resource client's returned cleanup error after close retry"
     expect(failure.cause).toBe(cause);
   } finally {
     denied = false;
+    await client.close();
+    inspect.mockRestore();
+  }
+});
+
+it("preserves the caller-selected bundle path on target refusals when canonicalPath differs", async () => {
+  const inspect = vi
+    .spyOn(interfaceBuilder, "analyzeInterfaceBuilderBundle")
+    .mockRejectedValueOnce(
+      malformedArtifact("nib-archive", "corrupt keyed archive"),
+    );
+  const client = new ArtifactProvider({}, "darwin").createBundleResourceClient({
+    callerPath: "/fixture/Selected.app",
+    canonicalPath: "/fixture/Actual.app",
+    infoPlistPath: "/fixture/Actual.app/Info.plist",
+    layout: "root",
+    executableSha256: null,
+  });
+  try {
+    const outcome = await client.execute("decode_interface_builder", {});
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("Expected bundle decode refusal");
+    expect(projectAnalysisError(outcome.error)).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "decode_interface_builder",
+        path: "/fixture/Selected.app",
+        failure_kind: "malformed",
+        format: "nib-archive",
+      },
+    });
+  } finally {
     await client.close();
     inspect.mockRestore();
   }

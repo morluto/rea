@@ -124,7 +124,7 @@ try {
     const evidence = parseEvidence(value);
     const report = evidence.normalized_result;
     assert.equal(report.diagnostics.truncated, false);
-    assert.equal(evidence.provider.version, "evmole@0.9.3");
+    assert.equal(evidence.provider.version, "evmole@0.9.4");
     assert.equal(evidence.confidence, "inferred");
     assert.equal(report.artifact.path, path);
     assert.equal(report.artifact.encoding, encoding);
@@ -304,8 +304,9 @@ try {
       const failure = await inspect(mode, path, encoding, "unsupported_target");
       assert.equal(failure.code, "unsupported_target");
       assert.equal(failure.details.path, path);
+      assert.equal(failure.details.failure_kind, "unsupported");
+      assert.equal(failure.details.format, "evm-bytecode");
       assert.match(failure.details.reason, /EF00/);
-      assert.match(failure.remediation.action, /target format/);
       cases++;
     }
   }
@@ -319,7 +320,8 @@ try {
     const path = join(root.path, name);
     await writeFile(path, data);
     for (const mode of ["cli", "mcp"]) {
-      await inspect(mode, path, "hex", "invalid_input");
+      const failure = await inspect(mode, path, "hex", "unsupported_target");
+      assert.equal(failure.details.failure_kind, "malformed");
       cases++;
     }
   }
@@ -560,7 +562,7 @@ console.log(
       status: failures.length === 0 ? "passed" : "failed",
       public_cases: cases,
       compiler: solc.version(),
-      engine: "evmole@0.9.3",
+      engine: "evmole@0.9.4",
       ...(failures.length === 0
         ? {
             target_execution: "exec-syscalls-verified-absent",

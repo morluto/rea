@@ -45,10 +45,12 @@ import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
-import { createJebAnalysisService } from "../application/ProviderOperationServices.js";
-import { createPcapAnalysisService } from "../application/ProviderOperationServices.js";
-import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
-import { createFlutterBuildAnalysisService } from "../application/ProviderOperationServices.js";
+import {
+  createJebAnalysisService,
+  createPcapAnalysisService,
+  createApktoolResourceAnalysisService,
+  createFlutterBuildAnalysisService,
+} from "../application/ProviderOperationServices.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
@@ -196,6 +198,7 @@ export const createServer = (
     kernelModule,
     kernelBuildConfig,
     peLoadConfig,
+    peUnwindRanges,
     binaryHardening,
     peCertificates,
     peImports,
@@ -402,6 +405,7 @@ export const createServer = (
           kernelModule,
           kernelBuildConfig,
           peLoadConfig,
+          peUnwindRanges,
           releaseExposure,
           binaryHardening,
           peCertificates,

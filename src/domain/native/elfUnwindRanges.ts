@@ -21,9 +21,28 @@ export const MAX_ELF_UNWIND_SYMBOLS = 65536;
 /** Fixed allowance on symbol-name text decoded for one returned page. */
 export const MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES = 16 * 1024 * 1024;
 
+export const ELF_UNWIND_LIMITATION_CODES = [
+  "cfa_not_evaluated",
+  "untrusted_names",
+  "indirect_pointers_not_dereferenced",
+  "eh_frame_hdr_mismatch",
+  "eh_frame_absent",
+  "eh_frame_hdr_absent",
+  "debug_frame_present_undecoded",
+  "debug_frame_absent",
+  "debug_frame_unknown",
+  "debug_frame_outside_file",
+] as const;
+
+export const elfUnwindLimitationCodeSchema = z.enum(
+  ELF_UNWIND_LIMITATION_CODES,
+);
+export type ElfUnwindLimitationCode = z.infer<
+  typeof elfUnwindLimitationCodeSchema
+>;
+
 /**
- * Limitation texts the parser emits and the application layer checks for.
- * One owner keeps the producer and the report validation in step.
+ * Limitation texts the parser emits for user-facing reporting.
  */
 export const ELF_UNWIND_LIMITATIONS = {
   cfa: "CFA instructions are counted but not evaluated.",
@@ -231,6 +250,7 @@ export const elfUnwindRangesSchema = z.strictObject({
     eh_frame_hdr_agreement: z.enum(["agree", "disagree", "unavailable"]),
     examined_records: uint,
   }),
+  limitation_codes: z.array(elfUnwindLimitationCodeSchema),
   limitations: z.array(z.string()),
 });
 

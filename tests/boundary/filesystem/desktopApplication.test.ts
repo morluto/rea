@@ -1178,6 +1178,13 @@ it.each(
         : new ArtifactReaderFailure(
             "malformed",
             "invalid later format declaration",
+            {
+              parseFailure: {
+                kind: "malformed",
+                format: "godot-pck",
+                detail: "invalid later format declaration",
+              },
+            },
           );
     const validation = Object.assign(
       new Error("final descriptor stat failed"),

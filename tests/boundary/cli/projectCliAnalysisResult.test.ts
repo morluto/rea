@@ -12,6 +12,10 @@ import { createCli } from "../../../src/cli.js";
 import { cliCommand, cliCommands } from "../../../src/cli/commandRegistry.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import {
+  MCP_TARGET_FAILURE_SPELLING,
+  renderTargetFailureRecovery,
+} from "../../../src/domain/targetFailure.js";
+import {
   projectCliCommandOutput,
   projectCliInputFields,
 } from "../../../src/cli/projectCliAnalysisResult.js";
@@ -300,27 +304,151 @@ it("names a target failure's alternative operations and providers in each adapte
       },
     ),
   );
+  const facts = {
+    operation: "inspect_artifact",
+    kind: "unsupported" as const,
+    format: "directory",
+    alternatives: {
+      operations: ["inspect_desktop_application"],
+      providers: ["ghidra"],
+    },
+  };
   // MCP, and Evidence, name the tool and the open_binary argument.
   expect(projected).toMatchObject({
     remediation: {
-      action:
-        'The selected target\'s directory form is outside what inspect_artifact reads. Use inspect_desktop_application for this target, or reopen it with open_binary with provider_id "ghidra".',
+      action: renderTargetFailureRecovery(facts, MCP_TARGET_FAILURE_SPELLING),
     },
     details: {
       related_operations: ["inspect_desktop_application"],
       related_providers: ["ghidra"],
     },
   });
+  expect(projected.remediation.action).toContain("inspect_artifact");
+  expect(projected.remediation.action).toContain("inspect_desktop_application");
+  expect(projected.remediation.action).toContain(
+    'open_binary with provider_id "ghidra"',
+  );
   // The CLI renders the same table entry with its commands and option.
-  expect(
-    projectCliCommandOutput(projected, {
-      operations: entry.operations,
-      commands: entries,
-    }),
-  ).toMatchObject({
+  const cliProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  }) as { remediation: { action: string } };
+  expect(cliProjected).toMatchObject({
     remediation: {
-      action:
-        "The selected target's directory form is outside what rea inspect-artifact reads. Use rea inspect-desktop-application for this target, or reopen it with --provider ghidra.",
+      action: renderTargetFailureRecovery(facts, {
+        operation: (op) =>
+          op === "inspect_artifact"
+            ? "rea inspect-artifact"
+            : "rea inspect-desktop-application",
+        provider: (providerId) => `--provider ${providerId}`,
+      }),
     },
   });
+  expect(cliProjected.remediation.action).toContain("rea inspect-artifact");
+  expect(cliProjected.remediation.action).toContain(
+    "rea inspect-desktop-application",
+  );
+  expect(cliProjected.remediation.action).toContain("--provider ghidra");
+});
+
+it("omits MCP-only alternative operations from CLI target failure recovery", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-analysis-view");
+  if (entry === undefined) throw new Error("Expected inspect-analysis-view");
+  const projected = projectAnalysisError(
+    new AnalysisTargetFailureError(
+      "inspect_analysis_view",
+      "/selected/evidence.json",
+      {
+        kind: "unsupported",
+        format: "evidence",
+        detail:
+          "inspect_recorded_crash Evidence does not expose analysis views",
+        undecodedContent: false,
+      },
+      {
+        related: {
+          operations: ["get_evidence_bundle", "export_evidence_bundle"],
+        },
+      },
+    ),
+  );
+  const cliProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  }) as { remediation: { action: string } };
+  expect(cliProjected.remediation.action).toBe(
+    renderTargetFailureRecovery(
+      {
+        operation: "inspect_analysis_view",
+        kind: "unsupported",
+        format: "evidence",
+      },
+      {
+        operation: () => "rea inspect-analysis-view",
+        provider: (providerId) => `--provider ${providerId}`,
+      },
+    ),
+  );
+  expect(cliProjected.remediation.action).toContain(
+    "rea inspect-analysis-view",
+  );
+  expect(cliProjected.remediation.action).not.toContain("get_evidence_bundle");
+  expect(cliProjected.remediation.action).not.toContain(
+    "export_evidence_bundle",
+  );
+});
+
+it("rewrites conflict recovery input names to CLI flags even after renaming details.inputs", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-il2cpp-metadata");
+  if (entry === undefined) throw new Error("Expected inspect-il2cpp-metadata");
+  const projected = projectAnalysisError(
+    new AnalysisTargetFailureError(
+      "inspect_il2cpp_metadata",
+      "/selected/global-metadata.dat",
+      {
+        kind: "conflict",
+        format: "il2cpp-metadata",
+        detail: "code-registration-not-found: no registration matched",
+        inputs: [
+          { field: "path", path: "/selected/global-metadata.dat" },
+          { field: "binary_path", path: "/selected/GameAssembly.dylib" },
+        ],
+      },
+    ),
+  );
+  expect(projected.remediation.action).toContain("(path, binary_path)");
+
+  // Contract commands run projectCliInputFields before projectCliCommandOutput.
+  const fieldProjected = projectCliInputFields(projected, {
+    operation: "inspect_il2cpp_metadata",
+    fields: { binary_path: "binary" },
+    flags: { binary_path: "--binary" },
+    operations: entry.operations,
+  });
+  const cliProjected = projectCliCommandOutput(fieldProjected, {
+    operations: entry.operations,
+    commands: entries,
+  });
+  expect(cliProjected).toMatchObject({
+    details: {
+      inputs: [
+        { field: "path", path: "/selected/global-metadata.dat" },
+        { field: "binary", path: "/selected/GameAssembly.dylib" },
+      ],
+    },
+  });
+  expect(cliProjected.remediation.action).toContain("(path, --binary)");
+  expect(cliProjected.remediation.action).not.toContain("binary_path");
+
+  // Direct command-output projection without prior field renaming also maps flags.
+  const directProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  });
+  expect(directProjected.remediation.action).toContain("(path, --binary)");
+  expect(directProjected.remediation.action).not.toContain("binary_path");
 });

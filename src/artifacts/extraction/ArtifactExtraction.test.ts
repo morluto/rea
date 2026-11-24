@@ -379,7 +379,15 @@ it.each([false, true] as const)(
 vi.mock("../pyinstaller/CArchiveLayout.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   observePyInstallerCookie: () =>
-    Promise.reject(new ArtifactReaderFailure("malformed", "detection failed")),
+    Promise.reject(
+      new ArtifactReaderFailure("malformed", "detection failed", {
+        parseFailure: {
+          kind: "malformed",
+          format: "pyinstaller",
+          detail: "detection failed",
+        },
+      }),
+    ),
 }));
 
 vi.mock("../../filesystem/RegularFile.js", async (importOriginal) => {

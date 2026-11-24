@@ -69,6 +69,13 @@ const physicalFailure = (failure: FileOutcomeControl["failure"]): Error =>
       ? new ArtifactReaderFailure(
           "malformed",
           "controlled physical file failure",
+          {
+            parseFailure: {
+              kind: "malformed",
+              format: "zip",
+              detail: "controlled physical file failure",
+            },
+          },
         )
       : failure === "limit"
         ? // The stable reader names the bound it refused, as production does.

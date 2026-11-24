@@ -681,105 +681,6 @@ const readRecord = (
     restored,
   );
 
-const readRecordSlice = (
-  record: Uint8Array,
-  fileOffset: number,
-  restored: Buffer,
-): MftRecord => {
-  const recordBytes = restored.length;
-  const index = fileOffset / recordBytes;
-  const reader = mftReader(record);
-  const { totalBytes, updateSequence } = readRecordDeclarations(reader);
-  const { offset: usaOffset, entries: usaEntries } = updateSequence;
-  const flags = reader.u16(RECORD_HEADER.flags);
-  const baseRecordReference = reader.word(
-    RECORD_HEADER.baseRecordReference,
-    64,
-  );
-  const usedBytes = reader.u32(RECORD_HEADER.usedBytes);
-  const firstAttributeOffset = reader.u16(RECORD_HEADER.firstAttributeOffset);
-  const usaLayoutValid = updateSequenceArrayFits(
-    usaOffset,
-    usaEntries,
-    Math.floor(record.length / FIXUP_SECTOR_BYTES),
-  );
-  const fixups: MftRecordFixups = usaLayoutValid
-    ? verifyFixups(reader, updateSequence)
-    : {
-        sequenceNumber: 0,
-        entries: usaEntries,
-        verifiedSectors: 0,
-        coveredSectors: 0,
-        mismatchSector: null,
-        malformed: true,
-      };
-  const extentValid =
-    totalBytes === recordBytes &&
-    usedBytes >= NTFS_MFT_MIN_RECORD_BYTES &&
-    usedBytes % 8 === 0 &&
-    usedBytes <= totalBytes &&
-    firstAttributeOffset % 8 === 0 &&
-    firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
-    firstAttributeOffset + 4 <= usedBytes &&
-    (!usaLayoutValid || firstAttributeOffset >= usaOffset + usaEntries * 2);
-  let attributes: MftAttributeScan = {
-    attributeIssue: null,
-    fileNames: [],
-    attributes: [],
-    fileNameCoverage: "incomplete",
-    attributeCoverage: "incomplete",
-  };
-  if (
-    fixups.verifiedSectors === recordBytes / FIXUP_SECTOR_BYTES &&
-    extentValid
-  ) {
-    restored.set(record);
-    for (let sector = 1; sector <= fixups.verifiedSectors; sector += 1)
-      restored.writeUInt16LE(
-        reader.u16(usaOffset + sector * 2),
-        sector * FIXUP_SECTOR_BYTES - 2,
-      );
-    attributes = readMftAttributes(
-      restored,
-      firstAttributeOffset,
-      usedBytes,
-      fileOffset,
-    );
-  }
-
-  const declaredRecordNumber =
-    usaLayoutValid && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
-      ? reader.u32(RECORD_HEADER.recordNumber)
-      : null;
-
-  return {
-    index,
-    fileOffset,
-    sequenceNumber: reader.u16(RECORD_HEADER.sequenceNumber),
-    hardLinkCount: reader.u16(RECORD_HEADER.hardLinkCount),
-    flags: parseRecordFlags(flags),
-    inUse: (flags & FILE_RECORD_IN_USE) !== 0,
-    directory: (flags & FILE_RECORD_IS_DIRECTORY) !== 0,
-    usedBytes,
-    totalBytes,
-    extentValid,
-    baseRecordReference:
-      baseRecordReference === 0n
-        ? null
-        : decodeMftFileReference(baseRecordReference),
-    declaredRecordNumber,
-    recordNumberMatchesSlot:
-      declaredRecordNumber === null ? null : declaredRecordNumber === index,
-    logFileSequenceNumber: reader
-      .word(RECORD_HEADER.logFileSequenceNumber, 64)
-      .toString(),
-    firstAttributeOffset,
-    nextAttributeId: reader.u16(RECORD_HEADER.nextAttributeId),
-    fixups,
-    ...attributes,
-  };
-};
-
 interface MftRecordScanSummary {
   readonly header?: MftRecordHeader;
   readonly fileNameCount: number;
@@ -801,19 +702,30 @@ const readRecordSummary = (
   restored: Buffer,
   includeHeader: boolean,
 ): MftRecordScanSummary =>
-  readRecordSummarySlice(
+  readRecordSlice(
     bytes.subarray(fileOffset, fileOffset + restored.length),
     fileOffset,
     restored,
-    includeHeader,
+    includeHeader ? "header" : "summary",
   );
 
-const readRecordSummarySlice = (
+function readRecordSlice(
   record: Uint8Array,
   fileOffset: number,
   restored: Buffer,
-  includeHeader: boolean,
-): MftRecordScanSummary => {
+): MftRecord;
+function readRecordSlice(
+  record: Uint8Array,
+  fileOffset: number,
+  restored: Buffer,
+  mode: "summary" | "header",
+): MftRecordScanSummary;
+function readRecordSlice(
+  record: Uint8Array,
+  fileOffset: number,
+  restored: Buffer,
+  mode: "detail" | "summary" | "header" = "detail",
+): MftRecord | MftRecordScanSummary {
   const recordBytes = restored.length;
   const index = fileOffset / recordBytes;
   const reader = mftReader(record);
@@ -850,28 +762,15 @@ const readRecordSummarySlice = (
     firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
     firstAttributeOffset + 4 <= usedBytes &&
     (!usaLayoutValid || firstAttributeOffset >= usaOffset + usaEntries * 2);
-  let fileNameCount = 0;
-  let fileNameCoverage: "complete" | "incomplete" = "incomplete";
-  let attributeCoverage: "complete" | "incomplete" = "incomplete";
-  if (
-    fixups.verifiedSectors === recordBytes / FIXUP_SECTOR_BYTES &&
-    extentValid
-  ) {
+  const canReadAttributes =
+    extentValid && fixups.verifiedSectors === recordBytes / FIXUP_SECTOR_BYTES;
+  if (canReadAttributes) {
     restored.set(record);
     for (let sector = 1; sector <= fixups.verifiedSectors; sector += 1)
       restored.writeUInt16LE(
         reader.u16(usaOffset + sector * 2),
         sector * FIXUP_SECTOR_BYTES - 2,
       );
-    const summary = summarizeMftAttributes(
-      restored,
-      firstAttributeOffset,
-      usedBytes,
-      fileOffset,
-    );
-    fileNameCount = summary.fileNameCount;
-    fileNameCoverage = summary.fileNameCoverage;
-    attributeCoverage = summary.attributeCoverage;
   }
   const declaredRecordNumber =
     usaLayoutValid && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
@@ -879,38 +778,66 @@ const readRecordSummarySlice = (
       : null;
   const inUse = (flags & FILE_RECORD_IN_USE) !== 0;
   const directory = (flags & FILE_RECORD_IS_DIRECTORY) !== 0;
-  const header: MftRecordHeader | undefined = includeHeader
-    ? {
-        index,
-        fileOffset,
-        sequenceNumber: reader.u16(RECORD_HEADER.sequenceNumber),
-        hardLinkCount: reader.u16(RECORD_HEADER.hardLinkCount),
-        flags: parseRecordFlags(flags),
-        inUse,
-        directory,
-        usedBytes,
-        totalBytes,
-        extentValid,
-        baseRecordReference:
-          baseRecordReference === 0n
-            ? null
-            : decodeMftFileReference(baseRecordReference),
-        declaredRecordNumber,
-        recordNumberMatchesSlot:
-          declaredRecordNumber === null ? null : declaredRecordNumber === index,
-        logFileSequenceNumber: reader
-          .word(RECORD_HEADER.logFileSequenceNumber, 64)
-          .toString(),
+  let header: MftRecordHeader | undefined;
+  if (mode !== "summary") {
+    header = {
+      index,
+      fileOffset,
+      sequenceNumber: reader.u16(RECORD_HEADER.sequenceNumber),
+      hardLinkCount: reader.u16(RECORD_HEADER.hardLinkCount),
+      flags: parseRecordFlags(flags),
+      inUse,
+      directory,
+      usedBytes,
+      totalBytes,
+      extentValid,
+      baseRecordReference:
+        baseRecordReference === 0n
+          ? null
+          : decodeMftFileReference(baseRecordReference),
+      declaredRecordNumber,
+      recordNumberMatchesSlot:
+        declaredRecordNumber === null ? null : declaredRecordNumber === index,
+      logFileSequenceNumber: reader
+        .word(RECORD_HEADER.logFileSequenceNumber, 64)
+        .toString(),
+      firstAttributeOffset,
+      nextAttributeId: reader.u16(RECORD_HEADER.nextAttributeId),
+      fixups,
+    };
+    if (mode === "detail") {
+      const attributes: MftAttributeScan = canReadAttributes
+        ? readMftAttributes(
+            restored,
+            firstAttributeOffset,
+            usedBytes,
+            fileOffset,
+          )
+        : {
+            attributeIssue: null,
+            fileNames: [],
+            attributes: [],
+            fileNameCoverage: "incomplete",
+            attributeCoverage: "incomplete",
+          };
+      return { ...header, ...attributes };
+    }
+  }
+  const attributes = canReadAttributes
+    ? summarizeMftAttributes(
+        restored,
         firstAttributeOffset,
-        nextAttributeId: reader.u16(RECORD_HEADER.nextAttributeId),
-        fixups,
-      }
-    : undefined;
+        usedBytes,
+        fileOffset,
+      )
+    : ({
+        fileNameCount: 0,
+        fileNameCoverage: "incomplete",
+        attributeCoverage: "incomplete",
+      } as const);
   return {
     ...(header === undefined ? {} : { header }),
-    fileNameCount,
-    fileNameCoverage,
-    attributeCoverage,
+    ...attributes,
     inUse,
     directory,
     isExtension: baseRecordReference !== 0n,
@@ -922,7 +849,7 @@ const readRecordSummarySlice = (
       declaredRecordNumber !== null && declaredRecordNumber !== index,
     extentValid,
   };
-};
+}
 
 /**
  * Each sector's last two bytes are replaced on disk by the update sequence
@@ -1116,7 +1043,7 @@ class StreamingMftDecoder implements MftDecoder {
         this.#firstInvalidExtentOffset ??= offset;
       }
     } else {
-      const summary = readRecordSummarySlice(slice, offset, restored, false);
+      const summary = readRecordSlice(slice, offset, restored, "summary");
       this.#fileNameCount += summary.fileNameCount;
       if (summary.attributeCoverage === "incomplete")
         this.#incompleteAttributes += 1;

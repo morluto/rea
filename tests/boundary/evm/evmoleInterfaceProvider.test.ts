@@ -237,7 +237,7 @@ it.runIf(!unsupportedHost).each(["completed", "malformed-reply"] as const)(
             request.reply_path,
             JSON.stringify({
               ok: true,
-              version: "0.9.3",
+              version: "0.9.4",
               bytecode: {
                 sha256: createHash("sha256").update(bytes).digest("hex"),
                 bytes: bytes.length,
@@ -348,7 +348,7 @@ it.runIf(!unsupportedHost).each([1048576, 1048577])(
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: "0.9.4",
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -390,7 +390,7 @@ it
   .runIf(!unsupportedHost)
   .each([
     "success",
-    "format",
+    "malformed",
     "unsupported",
     "output-limit",
     "wrong-version",
@@ -425,16 +425,17 @@ it
         const bytes = Buffer.from(hex, "hex");
         const encodedReplies: Partial<Record<string, string | Buffer>> = {
           "invalid-utf8": Buffer.concat([
-            Buffer.from('{"ok":false,"reason":"format","message":"'),
+            Buffer.from('{"ok":false,"reason":"malformed","message":"'),
             Buffer.from([0xff]),
             Buffer.from('"}'),
           ]),
           "literal-replacement": JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "valid �",
           }),
-          "bom-reply": '\uFEFF{"ok":false,"reason":"format","message":"valid"}',
+          "bom-reply":
+            '\uFEFF{"ok":false,"reason":"malformed","message":"valid"}',
         };
         const encodedReply = encodedReplies[scenario];
         if (encodedReply !== undefined)
@@ -445,7 +446,9 @@ it
             scenario === "broken-reply"
               ? "broken"
               : JSON.stringify(
-                  ["format", "unsupported", "output-limit"].includes(scenario)
+                  ["malformed", "unsupported", "output-limit"].includes(
+                    scenario,
+                  )
                     ? {
                         ok: false,
                         reason: scenario,
@@ -457,7 +460,7 @@ it
                     : {
                         ok: true,
                         version:
-                          scenario === "wrong-version" ? "0.0.0" : "0.9.3",
+                          scenario === "wrong-version" ? "0.0.0" : "0.9.4",
                         bytecode: {
                           sha256: createHash("sha256")
                             .update(bytes)
@@ -507,7 +510,7 @@ it
         ok: false,
         error: {
           _tag:
-            scenario === "format" || scenario === "literal-replacement"
+            scenario === "malformed" || scenario === "literal-replacement"
               ? "AnalysisTargetFailureError"
               : scenario === "unsupported"
                 ? "AnalysisTargetFailureError"
@@ -570,7 +573,7 @@ it.runIf(!unsupportedHost)(
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: "0.9.4",
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -795,7 +798,7 @@ it.runIf(!unsupportedHost)(
           request.reply_path,
           JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "Odd selected hex.",
           }),
         );
@@ -856,7 +859,7 @@ it
           request.reply_path,
           JSON.stringify({
             ok: true,
-            version: "0.9.3",
+            version: "0.9.4",
             bytecode: {
               sha256: createHash("sha256").update(bytes).digest("hex"),
               bytes: bytes.length,

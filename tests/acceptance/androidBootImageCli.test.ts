@@ -117,10 +117,8 @@ cliTest(
         category: fixture.category,
         details: {
           operation: "inspect_artifact",
-          reason: fixture.kind,
-          ...("format" in fixture
-            ? { failure_kind: fixture.kind, format: fixture.format }
-            : {}),
+          failure_kind: fixture.kind,
+          format: fixture.format,
         },
       });
       expect((await readFile(path)).equals(fixture.bytes)).toBe(true);

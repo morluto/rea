@@ -8,7 +8,7 @@ import {
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -25,7 +25,7 @@ import {
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
@@ -145,14 +145,8 @@ export const projectRustBinaryView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "rust")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Rust Evidence supports summary, rust and cyclonedx views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Rust Evidence supports summary, rust and cyclonedx views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof rustBinaryViewRequestSchema>

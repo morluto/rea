@@ -10,7 +10,11 @@ it.each(["malformed", "unsupported"] as const)(
     expect(appleDispatchMetadataFailure(cause, "/selected")).toMatchObject({
       _tag: "AnalysisTargetFailureError",
       path: "/selected",
-      failure: { detail: "metadata format refused" },
+      failure: {
+        kind,
+        format: "native-binary",
+        detail: "metadata format refused",
+      },
     });
   },
 );

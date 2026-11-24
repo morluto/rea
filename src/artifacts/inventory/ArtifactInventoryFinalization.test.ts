@@ -178,6 +178,13 @@ it("keeps an earlier inventory failure primary when cleanup is cancelled", async
   const primary = new ArtifactReaderFailure(
     "malformed",
     "member enumeration failed",
+    {
+      parseFailure: {
+        kind: "malformed",
+        format: "zip",
+        detail: "member enumeration failed",
+      },
+    },
   );
   const enumeration = vi
     .spyOn(ZipArtifactReader.prototype, "entries")
