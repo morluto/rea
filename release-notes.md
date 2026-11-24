@@ -734,6 +734,7 @@
 * **native:** compose LLDB resolver cleanup through the shared owner ([3af56cc](https://github.com/morluto/rea/commit/3af56cc7d50a5f41ea4753d2d0570082611ee0a4)), refs [#11859](https://github.com/morluto/rea/issues/11859)
 * **native:** extract NativeAotPeImage from nativeAotPe ([#13998](https://github.com/morluto/rea/issues/13998)) ([4d5b059](https://github.com/morluto/rea/commit/4d5b059c640aa5b690116bdffefba4085a1c3ebd))
 * **native:** extract NativeMacosErrorProjection from NativeMacOSProvider ([#13741](https://github.com/morluto/rea/issues/13741)) ([3306133](https://github.com/morluto/rea/commit/33061332ef3e386a9412841925128160e31bd1a0))
+* **native:** isolate FAT Mach-O slice framing and consolidate Mach-O/PE/MZ gates ([#14366](https://github.com/morluto/rea/issues/14366)) ([b6e0616](https://github.com/morluto/rea/commit/b6e06169cd55d34dc33faa677e5e2943c295f00e))
 * **nuget,apk:** adopt ByteSource and drop the NuGet in-memory parse branch ([05b683b](https://github.com/morluto/rea/commit/05b683b72e8579ab4cf1cbb7181179d27b110965))
 * **nuget,apk:** adopt ByteSource and drop the NuGet in-memory parse branch ([a324181](https://github.com/morluto/rea/commit/a324181cccd428618f1bb839121789720fb1395d))
 * **nuget:** select declared manifest occurrences in one pass ([#13402](https://github.com/morluto/rea/issues/13402)) ([4bb5c87](https://github.com/morluto/rea/commit/4bb5c87d2b1a06abcdf26ccf68dfd2551aebd9bd))
