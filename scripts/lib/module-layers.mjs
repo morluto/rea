@@ -288,11 +288,7 @@ export const ENTRY_FILES = Object.freeze(
       electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],
       erlang: ["BeamProvider.ts", "ErlangBeamProviderIdentity.ts"],
       evm: ["EvmoleInterfaceProvider.ts", "EvmoleProviderIdentity.ts"],
-      uefi: [
-        "UefiAnalysisProvider.ts",
-        "UefiProviderIdentity.ts",
-        "UefiFormatProbe.ts",
-      ],
+      uefi: ["UefiAnalysisProvider.ts", "UefiFormatProbe.ts"],
       firmware: [
         "FirmwareCommand.ts",
         "FirmwareProvider.ts",
