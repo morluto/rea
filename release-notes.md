@@ -740,6 +740,7 @@
 * **readme:** link contributor avatars to the contributor directory ([08880c3](https://github.com/morluto/rea/commit/08880c3542894c7c0b721a6fe79cd61b9936ff90))
 * **readme:** refresh project badges ([c7bc743](https://github.com/morluto/rea/commit/c7bc7436b4c354aabd34723b22dae7e544ee9a5e))
 * **readme:** simplify setup and move target details to the reference ([a914bba](https://github.com/morluto/rea/commit/a914bba78df46985618598a8e4ef79145acd3784))
+* **reference:** say that pwntools memory failures carry no producer limit ([#14221](https://github.com/morluto/rea/issues/14221)) ([ff2f9d9](https://github.com/morluto/rea/commit/ff2f9d98803e3faf988a747c3792b95741562953))
 * remove tracked planning and architecture records ([#12856](https://github.com/morluto/rea/issues/12856)) ([a1dec2d](https://github.com/morluto/rea/commit/a1dec2d2d502ebb56da8902ccde9bf3dd9dfaf23))
 * **setup:** document Kilo Code registration and its config layers ([#13413](https://github.com/morluto/rea/issues/13413)) ([c445f56](https://github.com/morluto/rea/commit/c445f56ae39ad13016ef4511e4e95dd9e7adb86e))
 * **skill:** move WASM interface comparison under Offline WASM ([c5c0063](https://github.com/morluto/rea/commit/c5c0063d4ca8d27b57bb29588cfffaea04c23fe0)), closes [#8334](https://github.com/morluto/rea/issues/8334)
