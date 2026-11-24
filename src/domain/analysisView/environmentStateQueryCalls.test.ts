@@ -33,6 +33,8 @@ interface Call {
 /** How the read-only pass parses response bodies and charges what it keeps of them, when a test watches either. */
 interface Bodies {
   readonly withBody?: QueryCallIo["withBody"];
+  readonly request?: QueryCallIo["request"];
+  readonly rpcOperation?: QueryCallIo["rpcOperation"];
   readonly retain?: (bytes: number) => void;
 }
 
@@ -85,7 +87,10 @@ const readOnlyOf = (
       records,
       {
         withBody,
-        request: (ordinal) => calls[ordinal]?.request,
+        request: bodies.request ?? ((ordinal) => calls[ordinal]?.request),
+        ...(bodies.rpcOperation === undefined
+          ? {}
+          : { rpcOperation: bodies.rpcOperation }),
         retain: bodies.retain ?? (() => undefined),
       },
       new StateRecordChronology(records, timeline),
@@ -96,6 +101,110 @@ const readOnlyOf = (
 const JOBS = [{ id: "night-watch", status: "running" }];
 
 describe("POSTs that read state", () => {
+  it("reuses saved RPC facts without reading a request body for the fallback", () => {
+    let requestReads = 0;
+    let factsReads = 0;
+    const call: Call = {
+      method: "POST",
+      path: "/graphql",
+      tool: "post_graphql",
+      rpcOperation: { kind: "graphql", name: "GetViewer" },
+      response: { viewer: { id: "1" } },
+    };
+
+    expect(
+      readOnlyOf([call], {
+        rpcOperation: () => {
+          factsReads += 1;
+          return {
+            kind: "graphql",
+            name: "GetViewer",
+            graphqlDocument: "query",
+          };
+        },
+        request: () => {
+          requestReads += 1;
+          return { query: "mutation GetViewer { resetViewer { id } }" };
+        },
+      }),
+    ).toEqual(["post_graphql"]);
+    expect(requestReads).toBe(0);
+    expect(factsReads).toBe(1);
+  });
+
+  it.each([
+    {
+      label: "declared GraphQL",
+      path: "/graphql",
+      rpcOperation: { kind: "graphql", name: "GetViewer" } as const,
+      request: { query: "query GetViewer { viewer { id } }" },
+    },
+    {
+      label: "inferred JSON-RPC",
+      path: "/rpc",
+      request: { jsonrpc: "2.0", method: "users.get", id: 1 },
+    },
+    {
+      label: "ordinary operation",
+      path: "/rpc",
+      request: { operation: "getViewer" },
+    },
+    {
+      label: "query operation with an unavailable body",
+      path: "/rpc",
+      query: "?op=getViewer",
+      request: undefined,
+    },
+  ])("reads each $label fallback body once across both checks", (fixture) => {
+    const reads: number[] = [];
+    const calls: Call[] = [0, 1].map(() => ({
+      ...fixture,
+      method: "POST",
+      tool: "post_read",
+      response: { viewer: { id: "1" } },
+    }));
+
+    expect(
+      readOnlyOf(calls, {
+        request: (ordinal) => {
+          reads.push(ordinal);
+          return calls[ordinal]?.request;
+        },
+      }),
+    ).toEqual(["post_read"]);
+    expect(reads).toEqual([0, 1]);
+  });
+
+  it("uses saved mutation facts before repeated-response guesses without reading the body", () => {
+    let requestReads = 0;
+    const response = { viewer: { id: "1" } };
+    expect(
+      readOnlyOf(
+        [
+          { method: "GET", path: "/graphql", tool: "get_viewer", response },
+          {
+            method: "POST",
+            path: "/graphql",
+            tool: "post_reset",
+            response,
+          },
+        ],
+        {
+          rpcOperation: () => ({
+            kind: "graphql",
+            name: "GetViewer",
+            graphqlDocument: "mutation",
+          }),
+          request: () => {
+            requestReads += 1;
+            return { query: "query GetViewer { viewer { id } }" };
+          },
+        },
+      ),
+    ).toEqual([]);
+    expect(requestReads).toBe(0);
+  });
+
   it("reads a POST answering as the latest GET of its path did, with no write between", () => {
     const get = {
       method: "GET",
