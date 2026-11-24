@@ -1556,6 +1556,10 @@ export class BinarySession
               status: "unknown" as const,
               reason:
                 "Provider did not report relationship coverage for this observation.",
+              limited_directions:
+                name === "procedure_callers"
+                  ? (["callers"] as ["callers"])
+                  : (["callees"] as ["callees"]),
             },
           })
         : profiled;

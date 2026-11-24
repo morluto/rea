@@ -29,7 +29,10 @@ import {
   readPeSectionDirectory,
   type NativeSectionDirectory,
 } from "../../domain/native/nativeSectionDirectory.js";
-import type { ByteSource } from "../../domain/byteSource.js";
+import {
+  readByteSourceSlice,
+  type ByteSource,
+} from "../../domain/byteSource.js";
 
 const SHF_COMPRESSED = 0x800n;
 const ET_REL = 1;
@@ -136,12 +139,8 @@ const readSourceSlice = (
   offset: number,
   length: number,
 ): Promise<Buffer> => {
-  if (offset < 0 || length <= 0 || offset >= source.size)
-    return Promise.resolve(Buffer.alloc(0));
-  const clamped = Math.min(length, source.size - offset);
-  if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-    return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
-  return source.readRange(offset, clamped);
+  if (offset < 0) return Promise.resolve(Buffer.alloc(0));
+  return readByteSourceSlice(source, offset, length);
 };
 
 // A positional source can allocate per read. Keep total retained raw bytes

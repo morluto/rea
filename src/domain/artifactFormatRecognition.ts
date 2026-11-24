@@ -21,6 +21,7 @@ import {
 } from "./firmware/devicetreeHeader.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
+import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
 import {
   hasDdsHeader,
   hasGlbHeader,
@@ -38,6 +39,7 @@ export type RecognizedArtifactFormat = Extract<
   | "godot-pck"
   | "unityfs"
   | "wxapkg"
+  | "tar"
   | "dds"
   | "glb"
   | "ktx"
@@ -145,6 +147,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       "wxapkg",
       (prefix) => hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix),
     ),
+    // A ustar or GNU header, or a gzip member whose first block is one.
+    ({ prefix }) => {
+      if (recognizeTarPrefix(prefix) !== undefined)
+        return { state: "recognized", format: "tar" };
+      const reason = tarHeaderRefusal(prefix);
+      return reason === undefined
+        ? undefined
+        : { state: "refused", format: "tar", reason };
+    },
     when("dds", hasDdsHeader),
     when("glb", hasGlbHeader),
     when("ktx", hasKtx1Identifier),

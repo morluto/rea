@@ -37,10 +37,162 @@ const OWNERS = [
   "sqlite",
   "wasm",
 ];
-const ownedTests = (path) =>
-  OWNERS.filter((owner) => path.startsWith(`src/${owner}/`)).flatMap(
-    (owner) => [`tests/**/${owner}/**/*.test.ts`, `tests/**/${owner}*.test.ts`],
+const PACKAGED_BRIDGE_TESTS = [
+  "tests/boundary/process/packedBridgeVerification.test.ts",
+  "tests/boundary/process/packageTarListing.test.ts",
+  "tests/conformance/package/packedTarListing.test.ts",
+];
+// Bridge sources outside src/ whose portable tests are owned by adapter/packaging
+// suites rather than TS imports. Missing declared explicit owners fail closed;
+// unmatched bridge paths remain untraced and fall back to the complete suite.
+const BRIDGE_OWNERS = [
+  {
+    patterns: ["bridge/ghidra/*.java"],
+    explicitTests: PACKAGED_BRIDGE_TESTS,
+    ownerGlobs: [
+      "src/ghidra/**/*.test.ts",
+      "tests/**/ghidra/**/*.test.ts",
+      "tests/**/ghidra*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/hopper_bridge.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/providers/hopper/hopperBridgeFacade.test.ts",
+    ],
+    ownerGlobs: [
+      "src/hopper/**/*.test.ts",
+      "tests/**/hopper/**/*.test.ts",
+      "tests/**/hopper*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/test_hopper_bridge.py"],
+    explicitTests: [
+      "tests/boundary/providers/hopper/hopperBridgeFacade.test.ts",
+    ],
+    ownerGlobs: [
+      "src/hopper/**/*.test.ts",
+      "tests/**/hopper/**/*.test.ts",
+      "tests/**/hopper*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/ida/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "src/ida/IdaHexRaysProtocol.test.ts",
+    ],
+    ownerGlobs: [
+      "src/ida/**/*.test.ts",
+      "tests/**/ida/**/*.test.ts",
+      "tests/**/ida*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/cutter/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/providers/CutterBridgeClient.test.ts",
+    ],
+    ownerGlobs: [
+      "src/cutter/**/*.test.ts",
+      "tests/**/cutter/**/*.test.ts",
+      "tests/**/cutter*.test.ts",
+      "tests/**/*Cutter*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/android/*.java"],
+    explicitTests: PACKAGED_BRIDGE_TESTS,
+    ownerGlobs: [
+      "src/android/**/*.test.ts",
+      "tests/**/android/**/*.test.ts",
+      "tests/**/jadx*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/agentenv/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/providers/agentEnvCapture.test.ts",
+      "src/desktop/BuildComputerController.test.ts",
+    ],
+    ownerGlobs: [
+      "src/desktop/**/*.test.ts",
+      "tests/**/agentEnv*.test.ts",
+      "tests/**/agentenv/**/*.test.ts",
+      "tests/**/desktop*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/mitmproxy/*.py"],
+    explicitTests: PACKAGED_BRIDGE_TESTS,
+    ownerGlobs: [
+      "tests/**/mitmproxy*.test.ts",
+      "tests/**/webNetwork*.test.ts",
+      "tests/**/networkCapture*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/native/*.swift", "bridge/native/*.py"],
+    explicitTests: PACKAGED_BRIDGE_TESTS,
+    ownerGlobs: [
+      "src/native/**/*.test.ts",
+      "tests/**/native/**/*.test.ts",
+      "tests/**/native*.test.ts",
+      "tests/**/lldb*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/process/*.swift"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/process/darwinProcessRunTokenReader.test.ts",
+    ],
+    ownerGlobs: [],
+  },
+  {
+    patterns: ["bridge/pwndbg/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/native/PwndbgCoreContext.test.ts",
+    ],
+    ownerGlobs: ["tests/**/pwndbg*.test.ts", "tests/**/recordedCrash*.test.ts"],
+  },
+  {
+    patterns: ["bridge/pwntools/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/binaryDiagnostics/pwntoolsDecoderOwnership.test.ts",
+    ],
+    ownerGlobs: [
+      "tests/**/pwntools*.test.ts",
+      "tests/**/binaryLayout*.test.ts",
+      "tests/**/recordedCrash*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/nativeaot/*.java"],
+    explicitTests: ["tests/boundary/filesystem/ghidraBridgeSources.test.ts"],
+    ownerGlobs: [
+      "tests/**/nativeAot*.test.ts",
+      "tests/**/ghidra/**/*.test.ts",
+      "tests/**/ghidra*.test.ts",
+    ],
+  },
+];
+const bridgeOwnersFor = (path) =>
+  BRIDGE_OWNERS.filter(({ patterns }) =>
+    patterns.some((pattern) => matchesGlob(path, pattern)),
   );
+const ownedTests = (path) => [
+  ...OWNERS.filter((owner) => path.startsWith(`src/${owner}/`)).flatMap(
+    (owner) => [`tests/**/${owner}/**/*.test.ts`, `tests/**/${owner}*.test.ts`],
+  ),
+  ...bridgeOwnersFor(path).flatMap(({ ownerGlobs }) => ownerGlobs),
+];
 
 const isTest = (path) => path.endsWith(".test.ts");
 // Owners of what the built CLI and MCP server present: tool contracts,
@@ -65,6 +217,8 @@ const isCheckerInput = (path) =>
   path === "scripts/run-python-tests.py" ||
   /^tests\/support\/analysis-efficiency\/.+\.py$/u.test(path) ||
   /^scripts\/verify\/baselines\/[^/]+\.json$/u.test(path) ||
+  path === "scripts/verify/fixed-ceiling-registry.json" ||
+  path === "scripts/verify/untyped-budget-refusal-baseline.json" ||
   /^scripts\/verify\/advertised-schemas\/tools\/[^/]+\.json$/u.test(path);
 // Inputs whose owning tests are not reachable through the selection graph.
 const EXPLICIT_TEST_OWNERS = [
@@ -81,10 +235,14 @@ const EXPLICIT_TEST_OWNERS = [
     "src/dotnet/ManagedMemberPointers.test.ts",
   ],
 ];
-const explicitTestOwners = (path) =>
-  EXPLICIT_TEST_OWNERS.filter(([pattern]) => matchesGlob(path, pattern)).map(
-    ([, owner]) => owner,
-  );
+const explicitTestOwners = (path) => [
+  ...new Set([
+    ...EXPLICIT_TEST_OWNERS.filter(([pattern]) =>
+      matchesGlob(path, pattern),
+    ).map(([, owner]) => owner),
+    ...bridgeOwnersFor(path).flatMap(({ explicitTests }) => explicitTests),
+  ]),
+];
 // Verifier scripts are imported by their tests like source modules.
 const isVerifier = (path) =>
   /^scripts\/(verify-[^/]+|verify\/.+)\.mjs$/u.test(path);
@@ -356,7 +514,9 @@ export function traceAffectedTests({ files, snapshot }) {
           /\breaddir(?:Sync)?\s*\(/u.test(sources.get(test) ?? ""))
       )
         select(test, "beside");
-    // Leaf adapters' boundary tests.
+  }
+  for (const path of files) {
+    // Leaf adapters' and owned bridge sources' tests.
     const patterns = ownedTests(path);
     for (const test of tests)
       if (patterns.some((glob) => matchesGlob(test, glob)))

@@ -1,11 +1,10 @@
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { KernelModuleService } from "./KernelModuleService.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
 import type { KernelModule } from "../../domain/native/kernelModule.js";
 import { ok } from "../../domain/result.js";
-import { parseEvidence } from "../../domain/evidence.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -201,27 +200,12 @@ it.each([
 );
 
 it("retains a completed observation if the caller cancels while the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late kernel module cancellation" };
-  const service = new KernelModuleService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const late = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late kernel module cancellation",
+    (inspect) => new KernelModuleService({ identity, inspect }),
   );
-  expect(late).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError" },
-  });
-  if (late.ok) throw new Error("Expected late cancellation");
-  expect(late.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(late.error.cause).toBe(reason);
-  expect(parseEvidence(late.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_kernel_module",
     confidence: "observed",
     subject: { identity: { format: "elf", architecture: "x86_64" } },

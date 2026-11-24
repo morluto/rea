@@ -15,9 +15,10 @@ export const registerArtifactCommands = (
   cli: CliInstance,
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
   registerInventoryCommands(cli, logger, runProviderAnalysis);
-  registerArtifactComparisonCommand(cli, logger);
+  registerArtifactComparisonCommand(cli, logger, environment);
   registerAppleBundleCommands(cli, logger, runProviderAnalysis);
 };
 
@@ -74,6 +75,7 @@ const registerInventoryCommands = (
       sessionTarget: artifactTarget,
       jsonText: ["artifact_limits"],
       fields: artifactFields,
+      omit: { path: "The positional target is the selected file or directory" },
       evidenceDelivery: true,
     },
     run,

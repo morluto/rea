@@ -650,8 +650,14 @@ export class AnalysisSnapshotCache {
       RELATIONSHIP_OPERATIONS.has(operation)
         ? {
             relationshipCoverage: {
-              status: "unknown",
+              status: "unknown" as const,
               reason: "Snapshot entry does not report relationship coverage.",
+              limited_directions:
+                operation === "procedure_callers"
+                  ? (["callers"] as ["callers"])
+                  : operation === "procedure_callees"
+                    ? (["callees"] as ["callees"])
+                    : (["callers", "callees"] as ["callers", "callees"]),
             },
           }
         : cached.execution.relationship_coverage === null

@@ -17,6 +17,7 @@ import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js
 /** Calling-convention policy ids an analysis profile can commit. */
 export const GHIDRA_RISCV_CALLING_CONVENTION_IDS = [
   "ilp32-prototype-v1",
+  "ilp32f-prototype-v1",
 ] as const;
 export type GhidraRiscvCallingConvention =
   (typeof GHIDRA_RISCV_CALLING_CONVENTION_IDS)[number];
@@ -34,6 +35,7 @@ const GHIDRA_RISCV_CALLING_CONVENTIONS: Readonly<
   >
 > = {
   "ilp32-prototype-v1": { abi: "ilp32", prototype: "__rea_ilp32" },
+  "ilp32f-prototype-v1": { abi: "ilp32f", prototype: "__rea_ilp32f" },
 };
 
 /** Admitted load models for each lane. */
@@ -46,6 +48,13 @@ interface GhidraRiscvLane {
   readonly loadModels: readonly GhidraRiscvLoadModel[];
   /** Absent: Ghidra's stock double-float model applies unchanged. */
   readonly callingConvention?: GhidraRiscvCallingConvention;
+  /** Extensions `Tag_RISCV_arch` must declare for the float ABI to exist. */
+  readonly requiredExtensions?: readonly string[];
+  /** Extensions the lane's model is wrong with, and what goes wrong. */
+  readonly excludedExtensions?: {
+    readonly names: readonly string[];
+    readonly reason: string;
+  };
 }
 
 /** Every class and float ABI pair the Ghidra lane admits; others are refused. */
@@ -57,6 +66,18 @@ const GHIDRA_RISCV_LANES: readonly GhidraRiscvLane[] = [
     floatAbi: "soft",
     loadModels: ["exec"],
     callingConvention: "ilp32-prototype-v1",
+  },
+  {
+    elfClass: 32,
+    floatAbi: "single",
+    loadModels: ["exec"],
+    callingConvention: "ilp32f-prototype-v1",
+    requiredExtensions: ["f"],
+    excludedExtensions: {
+      names: ["d", "zcd"],
+      reason:
+        "ilp32f then preserves only the low 32 bits of fs0-fs11 across calls, and Ghidra's model preserves all 64",
+    },
   },
 ];
 
@@ -136,12 +157,25 @@ export type GhidraRiscvLoadPreparationReport =
       readonly refused: string;
     };
 
-/** Outcome the post-analysis script records for the bridge handshake. */
-export interface GhidraRiscvCallingConventionReport {
-  readonly policy: GhidraRiscvCallingConvention;
-  readonly functions: number;
-  readonly definitions: number;
-}
+/**
+ * Outcome the post-analysis script records for the bridge handshake. Every
+ * policy instead refuses an image whose DWARF defines functions in a language
+ * other than C, C++ or assembly, and the ilp32f policy also refuses one whose
+ * signatures its prototype misplaces.
+ */
+export type GhidraRiscvCallingConventionReport =
+  | {
+      readonly policy: GhidraRiscvCallingConvention;
+      readonly functions: number;
+      readonly definitions: number;
+    }
+  | { readonly policy: GhidraRiscvCallingConvention; readonly refused: string };
+
+/**
+ * Bound on the bridge's refusal reason. The script names at most eight
+ * signatures, each cut to 160 characters, so a longer report is malformed.
+ */
+export const GHIDRA_RISCV_REFUSAL_MAX_LENGTH = 2048;
 
 const EF_RISCV_RVC = 0x0001;
 const EF_RISCV_FLOAT_ABI = 0x0006;
@@ -175,16 +209,22 @@ const ghidraRiscvFloatAbiRefusal = (metadata: RiscvElfMetadata): string => {
   const admitted = GHIDRA_RISCV_LANES.filter(
     (lane) => lane.elfClass === metadata.elfClass,
   ).map((lane) => `${lane.floatAbi}-float`);
-  return `This Ghidra RISC-V lane admits ELF${metadata.elfClass} images that declare the ${admitted.join(
-    " or ",
-  )} ABI; the ${floatAbi}-float ABI${
+  return `This Ghidra RISC-V lane admits ELF${metadata.elfClass} images that declare the ${
+    admitted.length < 3
+      ? admitted.join(" or ")
+      : `${admitted.slice(0, -1).join(", ")} or ${admitted.slice(-1).join("")}`
+  } ABI; the ${floatAbi}-float ABI${
     name === null ? "" : ` (${name})`
   } declared by e_flags has no verified calling-convention policy.`;
 };
 
-/** Lanes with a calling-convention policy admit declared, decoded RV32I only. */
+/**
+ * Lanes with a calling-convention policy admit declared, decoded RV32I only,
+ * with every extension their float ABI requires and none their model excludes.
+ */
 const ghidraRiscvIsaRefusal = (
   isa: RiscvIsaDeclaration | undefined,
+  lane: GhidraRiscvLane,
 ): string | null => {
   if (isa === undefined)
     return "This RISC-V lane requires the image's .riscv.attributes ISA declaration, which was not inspected.";
@@ -197,13 +237,31 @@ const ghidraRiscvIsaRefusal = (
   const outside = isa.extensions.filter(
     (extension) => !GHIDRA_RISCV32_DECODED_EXTENSIONS.has(extension),
   );
-  return outside.length === 0
+  if (outside.length > 0)
+    return `Tag_RISCV_arch declares extensions outside the set this lane decodes: ${outside.join(
+      ", ",
+    )}. Ghidra 12.1.4's generic RV32 language implements only ${[
+      ...GHIDRA_RISCV32_DECODED_EXTENSIONS,
+    ].join(", ")} with p-code; see docs/providers/ghidra-riscv.md.`;
+  const missing = (lane.requiredExtensions ?? []).filter(
+    (extension) => !isa.extensions.includes(extension),
+  );
+  const name = riscvAbiName(lane.elfClass, lane.floatAbi);
+  if (missing.length > 0)
+    return `Tag_RISCV_arch declares ${isa.arch} without ${missing.join(
+      ", ",
+    )}, which the ${lane.floatAbi}-float ABI${
+      name === null ? "" : ` (${name})`
+    } declared by e_flags requires.`;
+  const exclusion = lane.excludedExtensions;
+  const excluded = (exclusion?.names ?? []).filter((extension) =>
+    isa.extensions.includes(extension),
+  );
+  return exclusion === undefined || excluded.length === 0
     ? null
-    : `Tag_RISCV_arch declares extensions outside the set this lane decodes: ${outside.join(
-        ", ",
-      )}. Ghidra 12.1.4's generic RV32 language implements only ${[
-        ...GHIDRA_RISCV32_DECODED_EXTENSIONS,
-      ].join(", ")} with p-code; see docs/providers/ghidra-riscv.md.`;
+    : `Tag_RISCV_arch declares ${isa.arch} with ${excluded.join(", ")}: ${
+        exclusion.reason
+      }; see docs/providers/ghidra-riscv.md.`;
 };
 
 const sectionLabel = (extent: ElfSectionExtent): string =>
@@ -280,7 +338,7 @@ export const ghidraRiscvUnsupportedReason = (
   const isa =
     lane.callingConvention === undefined
       ? null
-      : ghidraRiscvIsaRefusal(metadata.isa);
+      : ghidraRiscvIsaRefusal(metadata.isa, lane);
   return (
     isa ?? ghidraRiscvSectionOverlapRefusal(metadata.sectionOverlap, loadModel)
   );
@@ -438,16 +496,43 @@ export const ghidraRiscvLimitations = (
   ];
 };
 
-/** Fail closed unless the bridge applied exactly the committed policy. */
+/**
+ * Fail closed unless the bridge applied exactly the committed policy. A policy
+ * that refused the image's signatures is a failure with the bridge's reason.
+ */
 export const ghidraRiscvCallingConventionFailure = (
   expected: GhidraRiscvCallingConvention | undefined,
   report: GhidraRiscvCallingConventionReport | undefined,
 ): string | undefined =>
-  expected === report?.policy
-    ? undefined
-    : expected === undefined
+  expected !== report?.policy
+    ? expected === undefined
       ? "The Ghidra session reported a RISC-V calling-convention policy that the profile did not commit."
-      : `The Ghidra session did not report the committed RISC-V calling-convention policy ${expected}.`;
+      : `The Ghidra session did not report the committed RISC-V calling-convention policy ${expected}.`
+    : report !== undefined && "refused" in report
+      ? `RISC-V calling-convention policy ${report.policy} refused this image, so REA does not serve its analysis: ${report.refused} See docs/providers/ghidra-riscv.md.`
+      : undefined;
+
+/**
+ * Compilers pass such a class through a hidden pointer. Ghidra keeps only its
+ * fields, and GCC's DWARF does not record the rule, so no policy can detect it.
+ */
+export const GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION =
+  "Ghidra shows a C++ class with a non-trivial copy constructor or destructor as passed by value, although compilers pass it through a hidden pointer. REA cannot detect such a signature, so its storage is unverified.";
+
+/**
+ * The bridge refuses an image whose DWARF defines functions in another
+ * language. Code that DWARF does not describe cannot be checked.
+ */
+export const GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION =
+  "REA refuses an image whose DWARF compile units define functions in a language other than C, C++ or assembly, because the prototype models the C psABI. Functions that no DWARF compile unit describes, such as every function of a stripped image, are not checked and are taken to follow the C psABI.";
+
+/**
+ * Ghidra's DWARF import erases what these types' ilp32f storage depends on: it
+ * keeps no vector marker on an array, and resolves `_Atomic`, which GCC ignores
+ * and Clang does not, to its base type.
+ */
+export const GHIDRA_RISCV_ERASED_TYPE_LIMITATION =
+  "Ghidra's DWARF import erases two ilp32f distinctions, and REA does not refuse them, so their storage is unverified. A GNU vector in a structure shows as an array of floats, although compilers use integer registers. `_Atomic(float)` shows as a `float`, which matches GCC, although Clang uses integer registers.";
 
 /** State the prototype REA applies, and its outcome once the bridge reports it. */
 export const ghidraRiscvCallingConventionLimitations = (
@@ -458,12 +543,17 @@ export const ghidraRiscvCallingConventionLimitations = (
   const { abi, prototype } = GHIDRA_RISCV_CALLING_CONVENTIONS[expected];
   return [
     `RISC-V ${abi}: Ghidra's generic RV32 compiler specification models ilp32d. After analysis REA installs a program-specific \`${prototype}\` prototype, derived from the default prototype by policy ${expected} (docs/providers/ghidra-riscv.md), and assigns it with dynamic storage to every function, external function and function definition. Thunks follow their targets.`,
-    ...(report === undefined
+    ...(report === undefined || "refused" in report
       ? []
       : [
           `RISC-V calling-convention outcome: ${report.functions} functions and ${report.definitions} function definitions use ${prototype}.`,
         ]),
     "Ghidra recovers a variadic call's arguments from the registers the caller writes, not from their types: a padding register can appear as an argument, and arguments after an unwritten register are omitted.",
+    GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
+    GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
+    ...(expected === "ilp32f-prototype-v1"
+      ? [GHIDRA_RISCV_ERASED_TYPE_LIMITATION]
+      : []),
   ];
 };
 

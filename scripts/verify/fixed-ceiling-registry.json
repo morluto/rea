@@ -162,6 +162,18 @@
       "reason": "The release exposure input allowance bounds bytes read, a resource policy."
     }
   },
+  "src/artifacts/tar/TarWalk.ts": {
+    "\"The tar extended-header allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
+    },
+    "\"The tar member metadata allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
+    }
+  },
   "src/browser/WebBundleAnalysisWorker.ts": {
     "\"The web-bundle worker transfer allowance\"": {
       "class": "pending",
@@ -503,6 +515,13 @@
       "class": "pending",
       "issue": 14235,
       "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
+    }
+  },
+  "src/native/pe/PeUnwindRangesProvider.ts": {
+    "\"The PE exception-directory entry allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The 2,097,152-entry typed-array allowance bounds decoder memory like the other PE structural allowances; it is a resource policy pending #14235."
     }
   },
   "src/native/pe/PeResourcesProvider.ts": {

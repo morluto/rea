@@ -2097,7 +2097,8 @@ when both are omitted, storage is not compared.
 `compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
 ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
-ESP flash partitions (`esp-flash-partition`) and FIT images (`fit-image`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
+ESP flash partitions (`esp-flash-partition`), FIT images (`fit-image`) and tar
+members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
 only one side records, or that the other side records as another kind, is

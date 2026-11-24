@@ -15,6 +15,8 @@ import {
   unityFsMetadataSchema,
   wxapkgEntryMetadataSchema,
   wxapkgMetadataSchema,
+  tarMetadataSchema,
+  tarEntryMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
   dfuSeElementMetadataSchema,
@@ -57,6 +59,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   unityFsEntryMetadataSchema,
   wxapkgMetadataSchema,
   wxapkgEntryMetadataSchema,
+  tarMetadataSchema,
+  tarEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,
@@ -150,6 +154,22 @@ const declarationsByKind: {
   "wxapkg-entry": {
     notCompared:
       "index is layout. source_path keeps the declared name, including a producer root prefix the occurrence path strips.",
+  },
+  tar: {
+    notCompared:
+      "Its fields come from the archive's own bytes, which content comparison covers.",
+  },
+  /**
+   * What a header declares about a member beyond its bytes: its type, its
+   * permission bits and its link target. Offsets are layout; owners and
+   * times vary between otherwise equal builds.
+   */
+  "tar-entry": {
+    declaration: (metadata) => ({
+      typeflag: metadata.typeflag,
+      mode: metadata.mode,
+      link_name: metadata.link_name,
+    }),
   },
   pyinstaller: {
     notCompared:

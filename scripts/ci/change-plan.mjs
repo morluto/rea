@@ -232,13 +232,17 @@ export function planChanges(request, repository) {
   )
     throw new Error(`Unsupported CI event: ${event}`);
   const requestedFull =
-    event === "schedule" || event === "workflow_dispatch" || request.full;
+    (event === "schedule" && !request.scheduleFast) ||
+    event === "workflow_dispatch" ||
+    request.full;
   const tier =
     event === "schedule" && request.skipFull && !request.full
       ? "reused"
-      : requestedFull
-        ? "full"
-        : "fast";
+      : event === "push" && request.pushWarmOnly && !request.full
+        ? "warm"
+        : requestedFull
+          ? "full"
+          : "fast";
   /** Select the lanes one changed path owns. */
   const classifyFile = (file, base, head) => {
     selected.package ||= matchesAny(file, WINDOWS_EXECUTABLE_SELECTION_INPUTS);
@@ -381,11 +385,20 @@ export function planChanges(request, repository) {
   let files = [];
   if (tier === "reused") {
     reasons.push(
-      "Recent exact-SHA full qualification reused; no fresh provider observation",
+      "Recent exact-SHA qualification reused; no fresh provider observation",
+    );
+  } else if (tier === "warm") {
+    selected.code = true;
+    reasons.push(
+      "Main push warms shared static and build caches; scheduled fast sweeps verify full suites",
     );
   } else if (tier === "full") {
     full("Full baseline requested by event or ci:full label");
-  } else if (event === "pull_request" || event === "push") {
+  } else if (
+    event === "pull_request" ||
+    event === "push" ||
+    event === "schedule"
+  ) {
     const { head } = request;
     let base;
     if (event === "pull_request") {
@@ -396,16 +409,27 @@ export function planChanges(request, repository) {
       try {
         if (!candidate || !/^[0-9a-f]{40}$/i.test(candidate))
           throw new Error(
-            baselineReason || "No valid successful push baseline was found",
+            baselineReason || "No valid successful baseline was found",
           );
         if (!repository.isAncestor(candidate, head))
-          throw new Error("Push baseline is not an ancestor");
+          throw new Error("Baseline is not an ancestor");
         base = candidate;
       } catch {
-        full(
-          baselineReason ||
-            "No valid successful push baseline ancestor; selecting all lanes",
-        );
+        if (event === "schedule") {
+          // A scheduled fast sweep advances the verified schedule baseline.
+          // Without a proven ancestor, select every canonical lane rather than
+          // only code + runtime so changed providers cannot be skipped.
+          for (const flag of flags) selected[flag] = true;
+          reasons.push(
+            baselineReason ||
+              "No valid successful scheduled baseline ancestor; selecting all lanes",
+          );
+        } else {
+          full(
+            baselineReason ||
+              "No valid successful baseline ancestor; selecting all lanes",
+          );
+        }
       }
     }
     if (base) {
@@ -413,6 +437,9 @@ export function planChanges(request, repository) {
       files = repository.changedFiles(base, head);
       for (const file of files) classifyFile(file, base, head);
     }
+    // Scheduled fast sweeps always execute the complete portable suite and
+    // refresh test-timings-fast, even when only prose changed since the ancestor.
+    if (event === "schedule") selected.code = true;
   }
   selected.runtime ||= selected.package;
   const linux = { os: "ubuntu-latest", platform: "linux", architecture: "x64" };
