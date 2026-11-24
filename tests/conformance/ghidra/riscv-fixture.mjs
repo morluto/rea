@@ -9,7 +9,7 @@ import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
-/** One build per float ABI the lane verifies. */
+/** One build per float ABI the lane verifies, plus ESP-IDF's flash layout. */
 const BUILDS = {
   double: {
     sources: ["../c/riscv.c", "./riscv-probe.S"],
@@ -28,6 +28,44 @@ const BUILDS = {
     mabi: () => "ilp32",
     flags: 1,
   },
+  // ESP-IDF's ESP32-C6 base string and flash layout: the NOBITS
+  // .flash_rodata_dummy reserves .flash.text's addresses.
+  esp: {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-shared-window.ld",
+  },
+  // The same image with the reservation first in the section table.
+  "esp-reservation-first": {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-reservation-first.ld",
+  },
+  // The same image with the reservation named like the default address space.
+  "esp-reservation-named-ram": {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-reservation-named-ram.ld",
+  },
+  // The same image with the reservation and a disjoint section named like the
+  // preparation's temporary blocks.
+  "esp-edge-names": {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-edge-names.ld",
+  },
 };
 
 const readerOptions = {
@@ -36,11 +74,11 @@ const readerOptions = {
   maxBuffer: 1024 * 1024,
 };
 
-/** Independent reading of LLVM readelf's `-h -S -s -A` report. */
-const readRiscvElf = async (reader, path, floatAbi) => {
-  const { stdout, stderr } = await execute(
+/** Independent reading of LLVM readelf's `-h -l -S -s -A` report. */
+const readRiscvElf = async (reader, path, floatAbi, run = execute) => {
+  const { stdout, stderr } = await run(
     reader,
-    ["-h", "-S", "-s", "-A", "-W", path],
+    ["-h", "-l", "-S", "-s", "-A", "-W", path],
     readerOptions,
   );
   assert.equal(stderr.trim(), "", "Unexpected ELF reader diagnostics");
@@ -51,15 +89,17 @@ const readRiscvElf = async (reader, path, floatAbi) => {
   };
   const sections = [
     ...stdout.matchAll(
-      /^\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+([\da-f]+)\s+([\da-f]+)\s+([\da-f]+)\s+[\da-f]+\s+(\S*)\s+\d+\s+\d+\s+\d+\s*$/gmu,
+      /^\s*\[\s*(\d+)\]\s+(\S+)\s+(\S+)\s+([\da-f]+)\s+([\da-f]+)\s+([\da-f]+)\s+[\da-f]+\s+(\S*)\s+\d+\s+\d+\s+\d+\s*$/gmu,
     ),
-  ].map(([, name, type, address, offset, size, flags]) => ({
+  ].map(([, index, name, type, address, offset, size, flags]) => ({
+    index: Number(index),
     name,
     type,
     address: Number.parseInt(address, 16),
     offset: Number.parseInt(offset, 16),
     size: Number.parseInt(size, 16),
     allocated: flags.includes("A"),
+    executable: flags.includes("X"),
   }));
   assert.ok(sections.length > 0, "Missing readelf section table");
   // LLVM readelf prints each attribute as Tag, TagName and Value lines.
@@ -86,17 +126,68 @@ const readRiscvElf = async (reader, path, floatAbi) => {
   };
 };
 
+/** REA's section-overlap fact, recomputed from LLVM readelf's section table. */
+const sectionOverlapOf = (sections) => {
+  const hex = (value) => `0x${value.toString(16)}`;
+  const allocated = sections.filter(
+    (section) => section.allocated && section.size > 0,
+  );
+  const pairs = allocated
+    .filter((code) => code.executable && code.type === "PROGBITS")
+    .flatMap((code) =>
+      allocated
+        .filter(
+          (other) =>
+            other !== code &&
+            code.address < other.address + other.size &&
+            other.address < code.address + code.size,
+        )
+        .map((other) => [code, other]),
+    );
+  if (pairs.length === 0) return { status: "none" };
+  assert.equal(pairs.length, 1, "A fixture declares more than one overlap");
+  const [[code, reservation]] = pairs;
+  assert.equal(reservation.type, "NOBITS");
+  assert.equal(reservation.executable, false);
+  assert.equal(reservation.address, code.address);
+  assert.ok(reservation.size >= code.size);
+  return {
+    status: "code-reservation",
+    code: {
+      index: code.index,
+      name: code.name,
+      address: hex(code.address),
+      size: hex(code.size),
+      offset: hex(code.offset),
+    },
+    reservation: {
+      index: reservation.index,
+      name: reservation.name,
+      address: hex(reservation.address),
+      size: hex(reservation.size),
+    },
+  };
+};
+
 const sha256 = async (path) =>
   createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
 
 /** Build and independently inspect a source-owned ELF; never execute it. */
-export async function buildRiscvFixture(directory, bits, floatAbi = "double") {
+export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
+  const {
+    variant = "double",
+    pie = false,
+    execute: run = execute,
+  } = typeof buildOptions === "string"
+    ? { variant: buildOptions }
+    : buildOptions;
   assert.ok(bits === 32 || bits === 64);
-  const build = BUILDS[floatAbi];
-  assert.ok(build !== undefined, `No ${floatAbi}-float RISC-V fixture`);
-  assert.ok(floatAbi === "double" || bits === 32);
+  const build = BUILDS[variant];
+  assert.ok(build !== undefined, `No ${variant} RISC-V fixture`);
+  assert.ok(variant === "double" || bits === 32);
+  const floatAbi = variant === "double" ? "double" : "soft";
   const compiler = fixtureCommand(FIXTURE_TOOLS.riscvClang);
   const linker = fixtureCommand(FIXTURE_TOOLS.riscvLinker);
   const reader = fixtureCommand(FIXTURE_TOOLS.riscvReadelf);
@@ -105,33 +196,58 @@ export async function buildRiscvFixture(directory, bits, floatAbi = "double") {
   );
   const path = join(
     directory,
-    `rv${bits}${floatAbi === "double" ? "" : `-${floatAbi}`}.elf`,
+    `rv${bits}${variant === "double" ? "" : `-${variant}`}${pie ? "-pie" : ""}.elf`,
   );
+  const interpreter =
+    bits === 32
+      ? "/lib/ld-linux-riscv32-ilp32d.so.1"
+      : "/lib/ld-linux-riscv64-lp64d.so.1";
   const args = [
     `--target=riscv${bits}-unknown-elf`,
     `-march=${build.march(bits)}`,
     `-mabi=${build.mabi(bits)}`,
     `--ld-path=${linker}`,
     "-nostdlib",
-    "-static",
-    "-fno-pic",
+    ...(pie
+      ? ["-fPIE", "-Wl,-pie", `-Wl,--dynamic-linker=${interpreter}`]
+      : ["-static", "-fno-pic"]),
     "-O0",
     "-g",
-    "-Wl,-e,rea_riscv_entry",
+    `-Wl,-e,${build.entry ?? "rea_riscv_entry"}`,
     "-Wl,--build-id=none",
+    ...(build.linkerScript === undefined
+      ? []
+      : [
+          `-Wl,-T,${fileURLToPath(new URL(build.linkerScript, import.meta.url))}`,
+          // ESP-IDF's reservation overlaps the code it reserves by design.
+          "-Wl,--no-check-sections",
+        ]),
     ...sources,
     "-o",
     path,
   ];
   const options = { timeout: 10000, maxBuffer: 1024 * 1024 };
-  const compilerVersion = await execute(compiler, ["--version"], options);
-  const linkerVersion = await execute(linker, ["--version"], options);
-  const readerVersion = await execute(reader, ["--version"], options);
-  await execute(compiler, args, { ...options, timeout: 60000 });
-  const elf = await readRiscvElf(reader, path, floatAbi);
+  const compilerVersion = await run(compiler, ["--version"], options);
+  const linkerVersion = await run(linker, ["--version"], options);
+  const readerVersion = await run(reader, ["--version"], options);
+  await run(compiler, args, { ...options, timeout: 60000 });
+  const elf = await readRiscvElf(reader, path, floatAbi, run);
   assert.equal(elf.class, `ELF${bits}`);
   assert.match(elf.data, /little endian/u);
-  assert.match(elf.type, /^EXEC\b/u);
+  assert.match(elf.type, pie ? /^DYN\b/u : /^EXEC\b/u);
+  if (pie) {
+    assert.match(
+      elf.stdout,
+      /^\s*INTERP\b/mu,
+      "Expected PT_INTERP program header in PIE fixture",
+    );
+  } else {
+    assert.doesNotMatch(
+      elf.stdout,
+      /^\s*INTERP\b/mu,
+      "Unexpected PT_INTERP program header in static ET_EXEC fixture",
+    );
+  }
   assert.match(elf.machine, /^RISC-V\b/u);
   assert.equal(
     elf.flags,
@@ -147,17 +263,31 @@ export async function buildRiscvFixture(directory, bits, floatAbi = "double") {
     assert.equal(symbols[name], undefined, `Ambiguous readelf symbol ${name}`);
     symbols[name] = `0x${BigInt(`0x${value}`).toString(16)}`;
   }
+  // Linker-script symbols, with the section index or ABS that readelf reports.
+  const linkerSymbols = {};
+  for (const [, value, section, name] of elf.stdout.matchAll(
+    /^\s*\d+:\s+([\da-f]+)\s+0\s+NOTYPE\s+GLOBAL\s+\S+\s+(ABS|\d+)\s+(_\w+)\s*$/gmu,
+  )) {
+    assert.equal(linkerSymbols[name], undefined, `Ambiguous symbol ${name}`);
+    linkerSymbols[name] = {
+      address: `0x${BigInt(`0x${value}`).toString(16)}`,
+      section: section === "ABS" ? section : Number(section),
+    };
+  }
   return {
     path,
     sha256: await sha256(path),
     riscv: {
       elfClass: bits,
       byteOrder: "little",
-      type: 2,
+      type: pie ? 3 : 2,
       flags: elf.flags,
       isa: elf.isa,
+      ...(pie ? { hasInterpreter: true } : {}),
+      sectionOverlap: sectionOverlapOf(elf.sections),
     },
     symbols,
+    linkerSymbols,
     sections: elf.sections,
     toolchain: {
       compiler: { command: compiler, version: compilerVersion.stdout.trim() },
@@ -179,7 +309,7 @@ export async function buildRiscvFixture(directory, bits, floatAbi = "double") {
  * section must keep its address and bytes, so the typed build's symbol
  * addresses locate the same code in the stripped image.
  */
-export async function stripRiscvFixture(directory, typed) {
+export async function stripRiscvFixture(directory, typed, run = execute) {
   const path = join(
     directory,
     typed.path.split("/").at(-1).replace(".elf", "-stripped.elf"),
@@ -190,11 +320,16 @@ export async function stripRiscvFixture(directory, typed) {
     "-o",
     path,
   ];
-  await execute(typed.toolchain.compiler.command, args, {
+  await run(typed.toolchain.compiler.command, args, {
     timeout: 60000,
     maxBuffer: 1024 * 1024,
   });
-  const elf = await readRiscvElf(typed.toolchain.reader.command, path, "soft");
+  const elf = await readRiscvElf(
+    typed.toolchain.reader.command,
+    path,
+    "soft",
+    run,
+  );
   assert.equal(elf.flags, typed.riscv.flags);
   assert.deepEqual(elf.isa, typed.riscv.isa);
   assert.ok(

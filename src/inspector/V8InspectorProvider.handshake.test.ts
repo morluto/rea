@@ -1,11 +1,11 @@
 import { createServer } from "node:http";
 import type { Duplex } from "node:stream";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect, it, onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { WebSocketServer } from "ws";
 import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
@@ -26,7 +26,7 @@ const MODELED_INSPECTOR_COMMANDS = new Set([
 ]);
 
 it("cancels a held inspector WebSocket handshake and admits the next observation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspector-handshake-"));
+  const root = await createTestTempDirectory("rea-inspector-handshake-");
   const scriptPath = join(root, "target.js");
   await writeFile(scriptPath, "globalThis.fixture = true;\n");
   let endpoint = "";
@@ -109,7 +109,6 @@ it("cancels a held inspector WebSocket handshake and admits the next observation
         if (server.listening)
           await new Promise<void>((resolve) => server.close(() => resolve()));
       },
-      () => rm(root, { recursive: true, force: true }),
     ]);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

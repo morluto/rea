@@ -12,7 +12,7 @@ import {
 } from "../../../tests/fixtures/apkSignature/v1SignatureBlock.js";
 import { inspectPeCertificatesInputSchema } from "../../domain/native/peCertificates.js";
 import {
-  AnalysisInputError,
+  AnalysisMalformedTargetError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { peCertificateFixture } from "./PeCertificates.fixture.js";
@@ -50,9 +50,9 @@ const inspect = async (payload: Buffer) => {
 it.each([
   {
     name: "depth",
-    payload: () => encapsulated(40),
-    limits: { max_asn1_depth: 32 },
-    ceiling: { limit: 32, unit: "nesting levels per PKCS#7 payload" },
+    payload: () => encapsulated(72),
+    limits: { max_asn1_depth: 64 },
+    ceiling: { limit: 64, unit: "nesting levels per PKCS#7 payload" },
   },
   {
     name: "nodes",
@@ -84,12 +84,15 @@ it.each([
   },
 );
 
-it("accepts shallower valid BER and keeps malformed BER an input failure", async () => {
+it("accepts shallower valid BER and refuses malformed BER as a malformed target", async () => {
   expect((await inspect(encapsulated(1))).ok).toBe(true);
   const malformed = await inspect(Buffer.from([0x30, 0x03, 0x05]));
   expect(malformed.ok).toBe(false);
-  if (malformed.ok) throw new Error("Expected malformed input refusal");
-  expect(malformed.error).toBeInstanceOf(AnalysisInputError);
+  if (malformed.ok) throw new Error("Expected malformed target refusal");
+  expect(malformed.error).toBeInstanceOf(AnalysisMalformedTargetError);
+  expect(malformed.error).toMatchObject({
+    failure: { kind: "malformed", format: "pe-certificate-table" },
+  });
 });
 
 it.each([

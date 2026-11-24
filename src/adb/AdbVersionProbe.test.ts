@@ -1,7 +1,7 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
@@ -59,8 +59,7 @@ it("reports the fixed adb version-output cap", async () => {
     ),
   );
   if (process.platform !== "win32") {
-    const root = await mkdtemp(join(tmpdir(), "rea-adb-version-cap-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-adb-version-cap-");
     const selected = join(root, "adb");
     await writeFile(
       selected,
@@ -193,8 +192,7 @@ it.skipIf(process.platform === "win32").each([
     expectedPath: () => null,
   },
 ])("preserves the source identity for $name", async (testCase) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-adb-version-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-adb-version-");
   const binary = join(root, testCase.fileName);
   const output =
     "Android Debug Bridge version 1.0.41\nVersion 35.0.2-stub\n" +

@@ -6,6 +6,7 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   InesArtifactReader,
+  inesInventoryLimitation,
   type InesRegionScan,
 } from "../InesArtifactReader.js";
 
@@ -283,6 +284,7 @@ const scanCanonical = async (
       rootSource !== undefined &&
       (isZipPackageFormat(rootFormat) ||
         rootFormat === "ines" ||
+        rootFormat === "asar" ||
         (readerAdmission !== undefined && "kind" in readerAdmission))
         ? "transfer"
         : "release",
@@ -539,8 +541,9 @@ const buildInventorySnapshot = async (
     ...input.parentResolution.limitations,
     ...edgeResult.limitations,
   ];
+  const recognitionLimitations = input.recognitionLimitations ?? [];
   const coverage =
-    relationshipLimitations.length === 0
+    relationshipLimitations.length === 0 && recognitionLimitations.length === 0
       ? traversal.coverage
       : { ...traversal.coverage, status: "unknown" as const };
   return {
@@ -554,6 +557,7 @@ const buildInventorySnapshot = async (
     coverage,
     limitations: buildLimitations(
       [
+        ...(ines === undefined ? [] : [inesInventoryLimitation(ines.header)]),
         ...traversal.limitations,
         ...relationshipLimitations,
         ...(input.recognitionLimitations ?? []),

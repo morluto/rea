@@ -1,4 +1,5 @@
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import {
   isLinuxCoreNote,
   type RecordedCrash,
@@ -33,7 +34,13 @@ export function validateCoreFileMappingAuthority(
       start + Number(BigInt(note.descriptor_location.bytes)),
     );
     if (bytes.length < 16) return refuse("missing mapping table header");
-    const count = bytes.readBigUInt64LE(0);
+    // The count is the table's first 64-bit word; the shared reader checks that the
+    // retained range still holds it before reading.
+    const count = new BinaryReader(
+      bytes,
+      true,
+      "pwndbg-core-mapping-table",
+    ).word(0, 64);
     if (count > BigInt(Math.floor((bytes.length - 16) / 24)))
       return refuse("mapping count exceeds its descriptor");
     let position = 16 + Number(count) * 24;

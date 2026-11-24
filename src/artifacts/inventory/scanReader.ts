@@ -21,7 +21,6 @@ import {
   abortIfNeeded,
   DirectoryArtifactEntryAccessDenied,
   DirectoryArtifactReader,
-  DirectoryArtifactTraversalLimit,
 } from "../../resources/index.js";
 import {
   ArtifactTraversalObservation,
@@ -36,7 +35,7 @@ import {
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
 import {
   classifyArtifactContent,
-  classifyArtifactBytes,
+  classifyArtifactHeader,
   createArtifactNode,
   createOccurrence,
   noteUnreadContainerSuffix,
@@ -45,6 +44,7 @@ import {
   type ArtifactParentResolution,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
 import { hashReadable } from "../ArtifactHash.js";
 
@@ -119,6 +119,14 @@ export const scanReader = async (
       traversal: { status: "complete", limitations: [] },
       rootContradiction: undefined,
     };
+  const maximumEntries = acquisitionLimits?.maximumEntries;
+  if (
+    maximumEntries !== undefined &&
+    (!Number.isSafeInteger(maximumEntries) || maximumEntries < 0)
+  )
+    throw invariantViolation(
+      "Artifact inventory maximumEntries must be a nonnegative safe integer",
+    );
   const context: ScanContext = {
     acquisitionLimits,
     entriesExamined: 0,
@@ -196,6 +204,13 @@ class InventoryAcquisitionLimit extends ArtifactReaderFailure {
   }
 }
 
+const admitExaminedEntry = (context: ScanContext): void => {
+  if (context.acquisitionLimits === undefined) return;
+  if (context.entriesExamined >= context.acquisitionLimits.maximumEntries)
+    throw new InventoryAcquisitionLimit();
+  context.entriesExamined += 1;
+};
+
 const inventoryEntries = (
   context: ScanContext,
   reader: ArtifactReader,
@@ -206,8 +221,7 @@ const inventoryEntries = (
     ...(reader instanceof DirectoryArtifactReader &&
     context.acquisitionLimits !== undefined
       ? {
-          maximumEntries:
-            context.acquisitionLimits.maximumEntries - context.entriesExamined,
+          admitExaminedEntry: () => admitExaminedEntry(context),
         }
       : {}),
     onOmission: (omission) =>
@@ -247,12 +261,8 @@ const visitArtifactEntries = async (
         continue;
       }
       const entry = next.value;
-      if (
-        context.acquisitionLimits !== undefined &&
-        context.entriesExamined >= context.acquisitionLimits.maximumEntries
-      )
-        throw new InventoryAcquisitionLimit();
-      context.entriesExamined += 1;
+      if (!(frame.reader instanceof DirectoryArtifactReader))
+        admitExaminedEntry(context);
       const logicalPath = normalizeArtifactPath(
         frame.prefix.length === 0
           ? entry.path
@@ -362,10 +372,7 @@ const visitArtifactEntries = async (
       }
     }
   } catch (cause: unknown) {
-    if (
-      cause instanceof InventoryAcquisitionLimit ||
-      cause instanceof DirectoryArtifactTraversalLimit
-    )
+    if (cause instanceof InventoryAcquisitionLimit)
       context.traversal.record({
         status: "unknown",
         limitations: [cause.message],
@@ -465,12 +472,17 @@ const digestArtifactEntry = async (
       unpacked: entry.unpacked,
     });
   }
-  const classified =
+  const sliceHeader =
     entry.kind === "slice"
+      ? classifyArtifactHeader(digest, digest.bytes)
+      : undefined;
+  const classified =
+    sliceHeader !== undefined
       ? {
           kind: "universal-slice" as const,
           format: "mach-o" as const,
-          contentFormat: classifyArtifactBytes(digest, digest.bytes),
+          contentFormat: sliceHeader.format,
+          contentArchitecture: sliceHeader.architecture,
         }
       : classifyArtifactContent(logicalPath, digest, digest.bytes);
   return {
@@ -478,6 +490,7 @@ const digestArtifactEntry = async (
       sha256: digest.sha256,
       size: digest.bytes,
       format: classified.contentFormat,
+      architecture: classified.contentArchitecture,
       contentState: "embedded",
     }),
     mismatched,

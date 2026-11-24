@@ -119,12 +119,12 @@ const canonicalJson = (value: unknown): string => {
   return encoded;
 };
 
-/**
- * Digests of an already presented tool and prompt catalog. Exported so tests
- * can compare the composed combined document with whole-document
- * canonicalization.
- */
-export const digestPresentedCatalogs = (
+/** Hash a generated catalog projection using its strict canonical JSON representation. */
+export const digestCatalogProjection = (value: unknown): string =>
+  sha256Hex(canonicalJson(value));
+
+/** Digests of the presented tool and prompt catalog. */
+const digestPresentedCatalogs = (
   catalog: ReturnType<typeof presentToolCatalog>,
   prompts: ReturnType<typeof createPromptCatalog>,
   outputSchemaProfile: McpOutputSchemaProfile,

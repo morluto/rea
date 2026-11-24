@@ -112,7 +112,9 @@ the containing `SHF_ALLOC` section, an exact symbol name when a symbol starts
 at that address, the CIE index, LSDA, and personality. A function symbol is
 preferred, then an `STT_GNU_IFUNC` symbol, then an untyped one. An IFUNC name
 is the resolver that starts at that address, not the implementation it
-selects at run time, and a limitation says so. Symbol names, section names,
+selects at run time, and a limitation says so. On 32-bit ARM, bit 0 of a
+function or IFUNC symbol value marks Thumb code and is cleared before the
+match. Symbol names, section names,
 and augmentation strings are target-derived and untrusted. Indirect EH
 pointers are not dereferenced. An FDE whose initial location is indirect names
 a pointer slot, not its function, so it is not reported as a range; a

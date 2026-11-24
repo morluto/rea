@@ -23,6 +23,7 @@ import {
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
 import { CdpTargetDocument } from "./CdpTargetDocument.js";
+import { cdpRootDocument } from "./CdpTargetSession.js";
 import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
@@ -75,19 +76,15 @@ export const observeCdpSession = async (
     allowedOrigins,
     operation: "observe_web_session",
   });
-  const initialUrl = observedFrameUrl(initial.root.url) ?? "";
-  const mainFrameId = initial.root.facts.frameId;
-  if (mainFrameId === null)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const document = CdpTargetDocument.watch(context, {
-    frameId: mainFrameId,
-    loaderId: initial.root.facts.loaderId,
-    url: observedFrameUrl(initial.root.url),
-  });
+  const selected = cdpRootDocument(initial);
+  if (selected === undefined)
+    throw new BrowserObservationError("observe_web_session", "protocol_error");
+  const initialUrl = selected.url ?? "";
+  const document = CdpTargetDocument.watch(context, selected);
   const capture = new TimelineCapture(allowedOrigins, document, initialUrl);
   let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
-    capture.transportDisconnected(),
+    capture.recordTermination("transport_disconnected"),
   );
   try {
     await context.connection.send(
@@ -95,6 +92,14 @@ export const observeCdpSession = async (
       {},
       context.sessionId,
       context.signal,
+    );
+    // Page.enable can replay earlier Page history. Observe subsequent events
+    // before enabling Network so preparation retains new navigation and the
+    // request identities needed for failures inside the armed window.
+    removeListener = onCdpTargetEvent(
+      context.connection,
+      context.sessionId,
+      (event) => capture.ingest(event),
     );
     await context.connection.send(
       "Network.enable",
@@ -107,11 +112,6 @@ export const observeCdpSession = async (
       { timeDomain: "timeTicks" },
       context.sessionId,
       context.signal,
-    );
-    removeListener = onCdpTargetEvent(
-      context.connection,
-      context.sessionId,
-      (event) => capture.ingest(event),
     );
     // Host wall time marks command dispatch. The returned browser monotonic
     // timestamp is the authoritative cutoff for timestamped lifecycle facts.
@@ -274,10 +274,10 @@ class TimelineCapture {
         this.#lifecycle(registered.payload);
         return;
       case "Target.detachedFromTarget":
-        this.sessionDetached();
+        this.recordTermination("session_detached");
         return;
       case "Inspector.targetCrashed":
-        this.targetTerminated();
+        this.recordTermination("target_terminated");
         return;
       default:
         return;
@@ -340,40 +340,18 @@ class TimelineCapture {
     this.#listeners.clear();
   }
 
-  targetTerminated(): void {
+  recordTermination(
+    reason: "target_terminated" | "session_detached" | "transport_disconnected",
+  ): void {
     if (this.#endReason !== undefined) return;
     this.#add({
-      type: "target_terminated",
+      type: reason,
       timestamp: null,
       rawUrl: null,
       requestId: null,
-      detail: "target_terminated",
+      detail: reason,
     });
-    this.end("target_terminated");
-  }
-
-  sessionDetached(): void {
-    if (this.#endReason !== undefined) return;
-    this.#add({
-      type: "session_detached",
-      timestamp: null,
-      rawUrl: null,
-      requestId: null,
-      detail: "session_detached",
-    });
-    this.end("session_detached");
-  }
-
-  transportDisconnected(): void {
-    if (this.#endReason !== undefined) return;
-    this.#add({
-      type: "transport_disconnected",
-      timestamp: null,
-      rawUrl: null,
-      requestId: null,
-      detail: "transport_disconnected",
-    });
-    this.end("transport_disconnected");
+    this.end(reason);
   }
 
   setFinalUrl(rawUrl: string): void {
@@ -421,7 +399,7 @@ class TimelineCapture {
   }
 
   #navigationCommitted(
-    { facts, url: observation, transitionType }: CdpFrameEvent,
+    { facts, url: observation, navigationType }: CdpFrameEvent,
     contextOnly: boolean,
   ): void {
     const identity = selectCdpFrameIdentity(facts, this.#mainFrameId);
@@ -451,7 +429,7 @@ class TimelineCapture {
       destinationScope:
         destination.scope === "unknown" ? null : destination.scope,
       requestId: null,
-      detail: safeDetail(transitionType),
+      detail: safeDetail(navigationType),
     });
     if (observation.kind !== "observed") this.invalidateFinalUrl();
     if (this.#stopIfOutOfScope(destination)) return;
@@ -777,6 +755,10 @@ const captureFinalUrl = async (
     context.signal,
   );
   if (capture.scopeExcluded) return "target_left_scope";
+  if (cdpRootDocument(tree) === undefined) {
+    capture.invalidateFinalUrl();
+    return "window_elapsed";
+  }
   const observation = tree.root.url;
   const facts = classifyCdpFrameUrl(observation, allowedOrigins);
   if (observation.kind !== "observed") capture.invalidateFinalUrl();

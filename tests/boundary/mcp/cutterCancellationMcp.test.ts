@@ -12,6 +12,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { cutterMcpServer } from "../../fixtures/debuggerMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -29,6 +30,7 @@ it("propagates MCP cancellation into an active Cutter command", async () => {
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     execute: async ({ signal }) => {
       dispatch.arrive();
@@ -99,6 +101,7 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     confirmCommandCompletion: async () => {
       confirmations += 1;
@@ -259,6 +262,7 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
       ...(process.platform === "win32"
         ? {}
         : { bridge_directory_security: "private_verified" }),
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     });
     expect(connections).toBe(8);
   } finally {

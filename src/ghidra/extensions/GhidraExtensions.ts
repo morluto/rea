@@ -25,6 +25,8 @@ import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { nativeAotAdapter } from "./nativeaot/NativeAotAdapter.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import { ZIP_LOCAL_HEADER_SIGNATURE } from "../../domain/zip/zipLocalHeader.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 /** Exact executable extension artifact committed before the session starts. */
@@ -89,7 +91,11 @@ const readJar = (
     resources,
     signal,
     (bytes) => {
-      if (bytes.length < 4 || bytes.readUInt32LE(0) !== 0x04034b50)
+      if (
+        bytes.length < 4 ||
+        new BinaryReader(bytes, true, "jar").u32(0) !==
+          ZIP_LOCAL_HEADER_SIGNATURE
+      )
         throw new GhidraAdmissionError("not_jar", { path });
       return bytes;
     },

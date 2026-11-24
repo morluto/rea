@@ -292,6 +292,31 @@ it("records an AVB footer without treating it as a child", async () => {
   });
 });
 
+it("inventories an image whose final page padding is absent", async () => {
+  const kernel = Buffer.from("kernel-bytes");
+  const ramdisk = Buffer.from("ramdisk-bytes");
+  const padded = buildBootImage({ version: 0, kernel, ramdisk });
+  // The ramdisk starts on page 2; drop only the zero padding after it.
+  const unpadded = padded.subarray(0, 4096 + ramdisk.length);
+  expect(padded.subarray(unpadded.length).every((byte) => byte === 0)).toBe(
+    true,
+  );
+  const path = await writeCarrier("unpadded.img", unpadded);
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.coverage.status).toBe("complete");
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    component_count: 2,
+    avb_footer_present: false,
+    avb_footer_size: null,
+  });
+  const stored = await openAll(path);
+  expect(stored.get("kernel")?.equals(kernel)).toBe(true);
+  expect(stored.get("ramdisk")?.equals(ramdisk)).toBe(true);
+});
+
 it("fails closed on truncation and overlapping ranges", async () => {
   const truncated = await writeCarrier(
     "truncated.img",
@@ -327,4 +352,157 @@ it("fails closed on truncation and overlapping ranges", async () => {
       await writeCarrier("vendor-overlap.img", overlapped),
     ),
   ).rejects.toThrow(/overlaps entry/u);
+});
+
+it("finds an AVB footer before the final boot page boundary", async () => {
+  const pageSize = 32 * 1024;
+  const kernel = Buffer.alloc(64, 0x4b);
+  const padded = buildBootImage({
+    version: 0,
+    pageSize,
+    kernel,
+    ramdisk: Buffer.alloc(0),
+  });
+  const unpadded = padded.subarray(0, pageSize + kernel.length);
+  // avbtool append_vbmeta_image uses 4 KiB blocks independently of boot pages.
+  const path = await writeCarrier(
+    "early-footer.img",
+    appendAvbFooter(unpadded, {
+      vbmeta: Buffer.alloc(256),
+      vbmetaOffset: 36 * 1024,
+      partitionSize: 44 * 1024,
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  const root = snapshot.occurrences.find((row) => row.logical_path === ".");
+  expect(root?.format_metadata).toMatchObject({
+    avb_footer_present: true,
+    avb_original_image_size: unpadded.length,
+    avb_vbmeta_offset: 36 * 1024,
+    avb_vbmeta_size: 256,
+  });
+});
+
+it.each([1, 32])(
+  "refuses vbmeta starting at original image end minus %i",
+  async (overlap) => {
+    const image = buildBootImage({
+      version: 0,
+      kernel: Buffer.alloc(64),
+      ramdisk: Buffer.alloc(0),
+    });
+    const bytes = appendAvbFooter(image, {
+      vbmeta: Buffer.alloc(16),
+      vbmetaOffset: image.length - overlap,
+    });
+    const path = await writeCarrier("overlapping-original-image.img", bytes);
+    await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+      /AVB vbmeta overlaps the original boot image/u,
+    );
+  },
+);
+
+it("retains boot components with unknown coverage when optional trailing AVB footer parsing fails", async () => {
+  const kernel = Buffer.from("kernel-bytes");
+  const image = buildBootImage({
+    version: 0,
+    kernel,
+    ramdisk: Buffer.alloc(0),
+  });
+  // Append an AVB footer whose original_image_size is smaller than dataEnd (non-overlap parse failure).
+  const badFooter = Buffer.alloc(64);
+  badFooter.write("AVBf", 0, "ascii");
+  badFooter.writeUInt32BE(1, 4);
+  badFooter.writeBigUInt64BE(16n, 12);
+  const path = await writeCarrier(
+    "bad-avb-footer.img",
+    Buffer.concat([image, badFooter]),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("android-boot-image");
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations.join(" ")).toContain(
+    "Optional trailing AVB footer could not be parsed",
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "android-boot-image",
+    avb_footer_present: false,
+    component_count: 1,
+  });
+  expect((await openAll(path)).get("kernel")?.equals(kernel)).toBe(true);
+});
+
+it("retains header metadata and other components when vendor ramdisk table parsing fails without overlap", async () => {
+  const dtb = Buffer.from("vendor-dtb");
+  const bootconfig = Buffer.from("androidboot.hardware=test\n");
+  const vendor = buildVendorBootImage({
+    version: 4,
+    ramdisks: [{ name: "platform", type: 1, bytes: Buffer.from("platform") }],
+    dtb,
+    bootconfig,
+  });
+  const corrupted = Buffer.from(vendor);
+  // Header page (4096) + ramdisk page (4096) + dtb page (4096) = table at 12288.
+  // Corrupt entry 0's size so it overruns vendorRamdiskSize (non-overlap failure).
+  corrupted.writeUInt32LE(0x10_0000, 12288);
+  const path = await writeCarrier("bad-vendor-table.img", corrupted);
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("android-boot-image");
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations.join(" ")).toContain(
+    "Vendor ramdisk table could not be parsed",
+  );
+  expect(
+    snapshot.occurrences
+      .filter((row) => row.logical_path !== ".")
+      .map((row) => row.logical_path)
+      .sort(),
+  ).toEqual(["bootconfig", "dtb"]);
+  const stored = await openAll(path);
+  expect(stored.get("dtb")?.equals(dtb)).toBe(true);
+  expect(stored.get("bootconfig")?.equals(bootconfig)).toBe(true);
+});
+
+it("refuses an AVB footer whose vbmeta overlaps the boot header even when original_image_size is also invalid", async () => {
+  const image = buildBootImage({
+    version: 0,
+    kernel: Buffer.from("kernel-bytes"),
+    ramdisk: Buffer.alloc(0),
+  });
+  const badFooter = Buffer.alloc(64);
+  badFooter.write("AVBf", 0, "ascii");
+  badFooter.writeUInt32BE(1, 4);
+  // Both faults present: original_image_size < dataEnd AND vbmeta overlaps header at offset 0.
+  badFooter.writeBigUInt64BE(16n, 12);
+  badFooter.writeBigUInt64BE(0n, 20);
+  badFooter.writeBigUInt64BE(16n, 28);
+  const path = await writeCarrier(
+    "bad-avb-footer-overlap.img",
+    Buffer.concat([image, badFooter]),
+  );
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /AVB vbmeta overlaps the boot image header/u,
+  );
+});
+
+it("refuses a vendor ramdisk table with overlapping entries even when an entry also overruns the section", async () => {
+  const vendor = buildVendorBootImage({
+    version: 4,
+    ramdisks: [
+      { name: "one", type: 1, bytes: Buffer.from("aaa") },
+      { name: "two", type: 1, bytes: Buffer.from("bbbbb") },
+    ],
+  });
+  const corrupted = Buffer.from(vendor);
+  const entrySize = corrupted.readUInt32LE(2120);
+  // Entry 0 overruns vendorRamdiskSize AND entry 1 overlaps entry 0 at offset 0.
+  corrupted.writeUInt32LE(0x10_0000, 8192);
+  corrupted.writeUInt32LE(0, 8192 + entrySize + 4);
+  const path = await writeCarrier("vendor-overrun-and-overlap.img", corrupted);
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /overlaps entry/u,
+  );
 });

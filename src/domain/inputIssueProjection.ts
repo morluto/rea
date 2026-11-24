@@ -8,6 +8,7 @@ import {
   knownViewMistakeGuidance,
 } from "./inputArgumentGuidance.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { jsonValueByteLength } from "./jsonValueByteLength.js";
 
 const isRootArgument = (path: readonly unknown[]): boolean =>
   path.length === 0 || (path.length === 1 && path[0] === "input");
@@ -100,24 +101,39 @@ export const projectInputIssuesBounded = (
     // least one omitted field diagnostic each.
     const omittedIssueCount = issues.length - index;
     if (output.length > 0) return { issues: output, omittedIssueCount };
-    // One compound issue, such as `unrecognized_keys` naming hundreds of keys,
-    // can exceed the allowance on its own. Retain a diagnostic at its path so the
-    // caller keeps the location instead of only an omission notice.
+    // Report the first omitted location without copying a path that alone
+    // exceeds the allowance. Keep exact components of the nearest parent.
     const first = issues[0];
     if (first === undefined) return { issues: output, omittedIssueCount };
-    const path = first.path.flatMap((part) =>
-      typeof part === "string" || typeof part === "number" ? [part] : [],
-    );
-    return {
-      issues: [
-        {
-          path,
-          reason: "invalid_value",
-          message: `${String(omittedIssueCount)} field diagnostics at this location were omitted because they do not fit the response budget.`,
-        },
-      ],
-      omittedIssueCount,
+    const issue = {
+      path: [] as (string | number)[],
+      reason: "invalid_value" as const,
+      message: `${String(omittedIssueCount)} field diagnostics at this location were omitted because they do not fit the response budget.`,
     };
+    let remaining = budgetBytes - jsonValueByteLength(issue);
+    for (const part of first.path) {
+      if (typeof part !== "number" && typeof part !== "string") continue;
+      const separator = issue.path.length === 0 ? 0 : 1;
+      const bytes =
+        separator + jsonValueByteLength(part, remaining - separator);
+      if (bytes > remaining) {
+        const explanation =
+          " The diagnostic reports the nearest parent because the full location exceeds the response budget.";
+        const message = issue.message + explanation;
+        remaining -=
+          jsonValueByteLength(message) - jsonValueByteLength(issue.message);
+        while (remaining < 0 && issue.path.length > 0) {
+          const last = issue.path.pop()!;
+          remaining +=
+            jsonValueByteLength(last) + (issue.path.length === 0 ? 0 : 1);
+        }
+        issue.message = message;
+        break;
+      }
+      remaining -= bytes;
+      issue.path.push(part);
+    }
+    return { issues: [issue], omittedIssueCount };
   }
   return { issues: output, omittedIssueCount: 0 };
 };

@@ -1,4 +1,5 @@
-import { observeMzWindowsHeader } from "../domain/dosMz.js";
+import { hasDosMzMagic, observeMzWindowsHeader } from "../domain/dosMz.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import {
   hasGodotPckHeader,
@@ -25,6 +26,7 @@ import { hasMachoMagic } from "../domain/apple/machoContainer.js";
 import {
   hasUnityFsHeader,
   readUnityFsHeaderFacts,
+  UNITYFS_HEADER_PREFIX_BYTES,
 } from "../domain/unityfsFormat.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
@@ -69,7 +71,7 @@ class DesktopProbeLimit extends ArtifactReaderFailure {
   }
 }
 
-/** Inspect selected ranges on an already admitted descriptor; never hash payloads. */
+/** Inspect and hash selected ranges on an already admitted descriptor. */
 export const inspectDesktopFile = async (
   file: FileHandle,
   row: DesktopFile,
@@ -171,8 +173,18 @@ export const inspectDesktopFile = async (
       },
     });
   }
-  if (prefix.length >= 20 && hasUnityFsHeader(prefix)) {
-    const unityfsHeader = readUnityFsHeaderFacts(prefix);
+  if (hasUnityFsHeader(prefix)) {
+    let unityfsHeader = readUnityFsHeaderFacts(prefix);
+    const headerPrefixBytes = Math.min(size, UNITYFS_HEADER_PREFIX_BYTES);
+    // The generic probe can end inside a version string or the fixed tail.
+    // Continue only for UnityFS and charge the additional range to the same budget.
+    if (unityfsHeader === undefined && prefix.length < headerPrefixBytes)
+      unityfsHeader = readUnityFsHeaderFacts(
+        Buffer.concat([
+          prefix,
+          await read(prefix.length, headerPrefixBytes - prefix.length),
+        ]),
+      );
     if (unityfsHeader !== undefined)
       fact({
         kind: "unityfs-header",
@@ -193,8 +205,9 @@ export const inspectDesktopFile = async (
     prefix.toString("latin1", 0, 4) === "FORM" &&
     prefix.toString("latin1", 8, 12) === "GEN8"
   ) {
-    const containerBytes = prefix.readUInt32LE(4);
-    const chunkBytes = prefix.readUInt32LE(12);
+    const form = new BinaryReader(prefix, true, "gamemaker-form");
+    const containerBytes = form.u32(4);
+    const chunkBytes = form.u32(12);
     if (
       containerBytes >= 8 &&
       containerBytes <= size - 8 &&
@@ -243,7 +256,8 @@ export const inspectDesktopFile = async (
       if (!row.issues.includes(cause.message)) row.issues.push(cause.message);
     }
   };
-  if (prefix.length === 64 && prefix.readUInt16LE(0) === 0x5a4d)
+  const mz = hasDosMzMagic(prefix);
+  if (prefix.length === 64 && mz)
     await observe(() =>
       inspectPeFile(
         prefix,
@@ -255,10 +269,7 @@ export const inspectDesktopFile = async (
         signal,
       ),
     );
-  if (
-    (native || (prefix.length >= 2 && prefix.readUInt16LE(0) === 0x5a4d)) &&
-    size >= 12
-  )
+  if ((native || mz) && size >= 12)
     await observe(() => inspectPckTrailer(size, read, fact));
 };
 
@@ -364,12 +375,7 @@ const inspectPeFile = async (
         await setImmediate();
         abortIfNeeded(signal);
       }
-      const reference = readAssemblyReferenceName(
-        bytes,
-        layout,
-        index,
-        layout.strings.size,
-      );
+      const reference = readAssemblyReferenceName(bytes, layout, index);
       if (
         reference.name !== "UnityEngine" &&
         !reference.name.startsWith("UnityEngine.")

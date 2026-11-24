@@ -95,13 +95,8 @@ export class CliJavaScriptAnalysisHost {
 /** Process CLI host used when a caller does not pass its own host. */
 const processJavaScriptAnalysis = new CliJavaScriptAnalysisHost();
 
-/** Stop the process-owned JavaScript worker. */
-export const closeCliJavaScriptResources = (
-  host: CliJavaScriptAnalysisHost = processJavaScriptAnalysis,
-): Promise<void> => host.close();
-
 ownCliProcessResource("javascript-analysis", () =>
-  closeCliJavaScriptResources(),
+  processJavaScriptAnalysis.close(),
 );
 
 /** Execute the shared CLI boundary for static JavaScript analysis. */
@@ -209,6 +204,10 @@ export const javaScriptApplicationCliProjection = (target: string) =>
       semantic_precision: {
         description:
           "Inline JSON or JSON file with per-source semantic_precision evaluator budgets; independent of graph retention and worker memory.",
+      },
+      semantic_analysis: {
+        description:
+          "complete (default) builds semantic analysis for every selected source; structure-only returns static and application-graph facts without semantic analysis.",
       },
     },
     jsonInputs: {

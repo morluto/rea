@@ -120,14 +120,16 @@ it.each([
 );
 
 it.each([false, true])(
-  "fails closed and names a member whose token stays unreadable (sweep %s)",
+  "keeps an unreadable member unresolved through bounded re-reads (sweep %s)",
   async (sweep) => {
+    let readable = false;
     const { host, signalGroup, tokenReads } = darwinHost({
       members: [101],
-      token: () => unreadable,
+      token: () => (readable ? owned : unreadable),
     });
+    const group = ownership(sweep);
 
-    const result = await cleanupOwnedProcessGroup(ownership(sweep), host);
+    const result = await cleanupOwnedProcessGroup(group, host);
 
     expect(result).toEqual({
       cleaned: false,
@@ -157,10 +159,19 @@ it.each([false, true])(
     expect(tokenReads).toHaveLength(
       (1 + TOKEN_READ_RETRY_ATTEMPTS) * (sweep ? 2 : 1),
     );
+
+    if (sweep) {
+      readable = true;
+      await expect(cleanupOwnedProcessGroup(group, host)).resolves.toEqual({
+        cleaned: true,
+        signaled: true,
+      });
+      expect(signalGroup).toHaveBeenCalledExactlyOnceWith(LEADER, "SIGKILL");
+    }
   },
 );
 
-it("accepts a member that exits while its unreadable token is re-read", async () => {
+it("accepts native absence after an unreadable token", async () => {
   let exited = false;
   const { host, signalGroup } = darwinHost({
     members: [101],
@@ -382,27 +393,5 @@ it("re-reads a member whose refresh turns unreadable within the same bound", asy
   await expect(
     cleanupOwnedProcessGroup(ownership(false), host),
   ).resolves.toEqual({ cleaned: true, signaled: true });
-  expect(signalGroup).toHaveBeenCalledWith(LEADER, "SIGKILL");
-});
-
-it("signals on a cleanup retry once the retained member's token becomes readable", async () => {
-  let readable = false;
-  const { host, signalGroup } = darwinHost({
-    members: [101],
-    token: () => (readable ? owned : unreadable),
-  });
-  const group = ownership(true);
-
-  await expect(cleanupOwnedProcessGroup(group, host)).resolves.toMatchObject({
-    cleaned: false,
-    failures: [{ pid: 101, reason: "environment-unreadable" }],
-  });
-  expect(signalGroup).not.toHaveBeenCalled();
-
-  readable = true;
-  await expect(cleanupOwnedProcessGroup(group, host)).resolves.toEqual({
-    cleaned: true,
-    signaled: true,
-  });
   expect(signalGroup).toHaveBeenCalledWith(LEADER, "SIGKILL");
 });

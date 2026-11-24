@@ -1,4 +1,4 @@
-// This small, blocking head script applies the theme before the first paint.
+// Keep the theme in sync with user choices after the initial paint.
 (() => {
   const root = document.documentElement;
   const system = window.matchMedia("(prefers-color-scheme: dark)");

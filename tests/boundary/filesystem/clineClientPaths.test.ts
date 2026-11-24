@@ -75,32 +75,27 @@ it.each(["CLINE_MCP_SETTINGS_PATH", "CLINE_DATA_DIR", "CLINE_DIR"])(
   },
 );
 
-it("refuses a drive-relative Windows CLINE_DATA_DIR", () => {
-  expect(
-    cline("C:\\Users\\x", "win32", { CLINE_DATA_DIR: "D:\\cline" }).configPath,
-  ).toBe("D:\\cline\\settings\\cline_mcp_settings.json");
-  expect(
-    cline("C:\\Users\\x", "win32", { CLINE_DATA_DIR: "D:cline" })
-      .configPathError,
-  ).toContain("CLINE_DATA_DIR is relative");
-});
+it("requires a Windows CLINE_DATA_DIR to name one drive or share", () => {
+  const select = (value: string) =>
+    cline("C:\\Users\\x", "win32", { CLINE_DATA_DIR: value });
 
-it.each(["\\cline", "/cline"])(
-  "refuses a drive-less Windows CLINE_DATA_DIR %s that follows Cline's current drive",
-  (value) => {
-    const client = cline("C:\\Users\\x", "win32", { CLINE_DATA_DIR: value });
-    expect(client.configPathError).toBe(
-      "CLINE_DATA_DIR has no drive, so the location Cline CLI reads depends on its current drive. Set CLINE_DATA_DIR to a path with a drive letter or a UNC path before configuring Cline CLI.",
-    );
-  },
-);
-
-it("selects a UNC Windows CLINE_DATA_DIR", () => {
-  const client = cline("C:\\Users\\x", "win32", {
-    CLINE_DATA_DIR: "\\\\server\\share\\cline",
-  });
-  expect(client.configPathError).toBeUndefined();
-  expect(client.configPath).toBe(
+  for (const [value, diagnostic] of [
+    ["D:cline", "CLINE_DATA_DIR is relative"],
+    ["\\cline", "CLINE_DATA_DIR has no drive"],
+    ["/cline", "CLINE_DATA_DIR has no drive"],
+    ["\\\\server", "CLINE_DATA_DIR has no drive"],
+  ] as const) {
+    const unresolved = select(value);
+    expect(unresolved, value).toMatchObject({
+      configPath: value,
+      configPathError: expect.stringContaining(diagnostic),
+    });
+    expect(unresolved, value).not.toHaveProperty("markerPath");
+  }
+  expect(select("D:\\cline").configPath).toBe(
+    "D:\\cline\\settings\\cline_mcp_settings.json",
+  );
+  expect(select("\\\\server\\share\\cline").configPath).toBe(
     "\\\\server\\share\\cline\\settings\\cline_mcp_settings.json",
   );
 });

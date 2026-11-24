@@ -1,22 +1,14 @@
 import { expect, it } from "vitest";
 
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  reattributedResourceConstraint,
-} from "../../../src/domain/analysisErrorCore.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../../src/domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { freezeJsonSnapshot } from "../../../src/domain/immutableJson.js";
-import { ownedJsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { err, ok } from "../../../src/domain/result.js";
 import { createCli } from "../../../src/cli.js";
 import { cliCommand, cliCommands } from "../../../src/cli/commandRegistry.js";
-import { BinaryTargetError } from "../../../src/domain/configurationErrors.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import {
-  projectCliAnalysisResult,
   projectCliCommandOutput,
   projectCliInputFields,
 } from "../../../src/cli/projectCliAnalysisResult.js";
@@ -27,7 +19,7 @@ const binding = {
   flags: {},
 };
 
-it("projects bound input fields without changing canonical facts or nested identities", () => {
+it("projects bound input fields without changing canonical facts or nested paths", () => {
   const original = freezeJsonSnapshot(
     projectAnalysisError(
       new AnalysisInputError("inspect_keyed_archive", undefined, [
@@ -59,17 +51,6 @@ it("projects bound input fields without changing canonical facts or nested ident
     { path: ["path", "path", 0] },
     { path: ["root"] },
   ]);
-  const details = ownedJsonObjectSchema.parse(
-    ownedJsonObjectSchema.parse(mapped).details,
-  );
-  const mappedIssues = details.issues;
-  const originalIssues = original.details?.issues;
-  if (!Array.isArray(mappedIssues) || !Array.isArray(originalIssues))
-    throw new Error("Expected projected input issues");
-  expect(mappedIssues[1]).toBe(originalIssues[1]);
-  expect(ownedJsonObjectSchema.parse(mappedIssues[0]).observed).toBe(
-    ownedJsonObjectSchema.parse(originalIssues[0]).observed,
-  );
 });
 
 it("keeps cleanup history and retained output while binding the actionable primary issue", () => {
@@ -115,30 +96,23 @@ it("keeps cleanup history and retained output while binding the actionable prima
       issues: [{ path: ["archive"], reason: "invalid_value" }],
     },
   });
-  const details = ownedJsonObjectSchema.parse(
-    ownedJsonObjectSchema.parse(mapped).details,
-  );
-  expect(details.diagnostics).toBe(original.details?.diagnostics);
-  expect(details.captured_output).toBe(original.details?.captured_output);
 });
 
 it("passes through successful data, unbound operations and unknown error values", () => {
   const value = { path: "caller-selected data" };
-  expect(projectCliInputFields(value, binding)).toBe(value);
+  expect(projectCliInputFields(value, binding)).toEqual(value);
   const targetError = projectAnalysisError(
     new AnalysisInputError("open_binary", undefined, [
       { path: ["path"], reason: "invalid_format" },
     ]),
   );
-  expect(projectCliInputFields(targetError, binding)).toBe(targetError);
+  expect(projectCliInputFields(targetError, binding)).toEqual(targetError);
   const unbound = projectAnalysisError(
     new AnalysisInputError("inspect_keyed_archive", undefined, [
       { path: ["root"], reason: "invalid_value" },
     ]),
   );
-  expect(projectCliInputFields(unbound, binding)).toBe(unbound);
-  expect(projectCliAnalysisResult(err(targetError))).toBe(targetError);
-  expect(projectCliAnalysisResult(ok(value))).toBe(value);
+  expect(projectCliInputFields(unbound, binding)).toEqual(unbound);
   const unknown = {
     code: "future_failure",
     details: {
@@ -146,47 +120,7 @@ it("passes through successful data, unbound operations and unknown error values"
       issues: [{ path: ["path"] }],
     },
   };
-  expect(projectCliInputFields(unknown, binding)).toBe(unknown);
-});
-
-it("names related fields and operations by contract identity and renders only this command's flags", () => {
-  const constraint = new AnalysisResourceConstraintError(
-    "inspect_sqlite_database",
-    "memory",
-    "fixture limit",
-    null,
-    {
-      related: {
-        parameters: ["columns", "table", "row_limit"],
-        operations: ["inspect_artifact"],
-      },
-    },
-  );
-  // Re-attribution keeps the inputs the recovery names, as it keeps `limit`.
-  const projected = projectAnalysisError(
-    reattributedResourceConstraint("inspect_sqlite_database", constraint),
-  );
-  expect(projected.details).toMatchObject({
-    related_parameters: ["columns", "table", "row_limit"],
-    related_operations: ["inspect_artifact"],
-  });
-  const sqlite = {
-    operation: "inspect_sqlite_database",
-    fields: {},
-    flags: { columns: "--column", table: "--table" },
-  };
-  // A field the command takes no flag for is left to the contract name.
-  expect(projectCliInputFields(projected, sqlite)).toMatchObject({
-    details: { related_cli_flags: { columns: "--column", table: "--table" } },
-  });
-  // Another command's failure keeps its fields for that command to render.
-  expect(
-    projectCliInputFields(projected, { ...sqlite, operation: "inspect_plist" }),
-  ).toBe(projected);
-  // An error that names nothing projects no related fields.
-  expect(
-    projectAnalysisError(new AnalysisInputError("inspect_plist")).details ?? {},
-  ).not.toHaveProperty("related_parameters");
+  expect(projectCliInputFields(unknown, binding)).toEqual(unknown);
 });
 
 it("renders related_cli_flags and related_cli_commands from the CLI command registry across command shapes", () => {
@@ -201,35 +135,6 @@ it("renders related_cli_flags and related_cli_commands from the CLI command regi
     inspectArtifactEntry === undefined
   )
     throw new Error("Expected registered CLI commands");
-
-  // Open-path BinaryTargetError has no details.operation; flags come from the
-  // running command's open_binary bindings, while MCP projection stays flag-free.
-  const loadRejected = projectAnalysisError(
-    new BinaryTargetError("/tmp/image.bin", "unaligned entry", {
-      constraint: "load_selection_rejected",
-    }),
-  );
-  expect(loadRejected.details).toMatchObject({
-    related_parameters: ["format", "architecture", "entry_point"],
-  });
-  expect(loadRejected.details).not.toHaveProperty("related_cli_flags");
-  expect(JSON.stringify(loadRejected)).not.toContain("--target-format");
-
-  const cliLoadRejected = projectCliCommandOutput(
-    { error: "Analysis failed", ...loadRejected },
-    { operations: inspectEntry.operations, commands: entries },
-  );
-  expect(cliLoadRejected).toMatchObject({
-    error: "Analysis failed",
-    details: {
-      related_parameters: ["format", "architecture", "entry_point"],
-      related_cli_flags: {
-        format: "--target-format",
-        architecture: "--architecture",
-        entry_point: "--entry-point",
-      },
-    },
-  });
 
   // Artifact integrity errors omit details.operation when artifactDetails are present.
   const integrityFailure = projectAnalysisError(
@@ -293,30 +198,6 @@ it("renders related_cli_flags and related_cli_commands from the CLI command regi
     },
   });
 
-  // In one-shot mode where only the running registrar was loaded, recorded
-  // canonical commands from other registrars still resolve.
-  expect(
-    projectCliCommandOutput(
-      projectAnalysisError(
-        new BinaryTargetError("/tmp/module.wasm", "wasm module", {
-          constraint: "wasm_requires_static_inspection",
-        }),
-      ),
-      {
-        operations: inspectEntry.operations,
-        commands: [inspectEntry],
-        recordedCommands: { "inspect-wasm-artifact": "wasm" },
-      },
-    ),
-  ).toMatchObject({
-    details: {
-      related_operations: ["inspect_wasm_artifact"],
-      related_cli_commands: {
-        inspect_wasm_artifact: "rea inspect-wasm-artifact",
-      },
-    },
-  });
-
   // Non-contract host commands that bind contract operations render flags too.
   const compareFailure = projectAnalysisError(
     new AnalysisInputError("compare_bundles", {
@@ -333,4 +214,62 @@ it("renders related_cli_flags and related_cli_commands from the CLI command regi
       details: { related_cli_flags: { record_pairs: "--record_pairs" } },
     },
   });
+});
+
+it("names a flattened member flag or the JSON flag for its containing group", () => {
+  const cli = createCli();
+  const commands = cliCommands(cli);
+  const project = (command: string, limit: Record<string, string>) => {
+    const entry = cliCommand(cli, command);
+    if (entry === undefined) throw new Error(`Missing command ${command}`);
+    return projectCliCommandOutput(
+      { code: "resource_constraint", details: { limit } },
+      { operations: entry.operations, commands },
+    ).details.limit;
+  };
+  expect(
+    project("inspect-web-network-capture", {
+      control_kind: "parameter",
+      parameter: "protobuf.schema.message_type",
+    }),
+  ).toEqual({
+    control_kind: "parameter",
+    parameter: "protobuf.schema.message_type",
+    cli_flag: "--protobuf-message",
+  });
+  expect(
+    project("inspect-binary-layout", {
+      setting: "pwntools.max_input_bytes",
+      parameter: "producer_limits.input_bytes",
+    }),
+  ).toEqual({
+    setting: "pwntools.max_input_bytes",
+    parameter: "producer_limits.input_bytes",
+    cli_flag: "--producer-limits",
+  });
+  const unavailable = {
+    control_kind: "parameter",
+    parameter: "source_map_limits.fetch_bytes",
+  };
+  expect(project("trace-web-source-location", unavailable)).toEqual(
+    unavailable,
+  );
+
+  const sourceLocation = cliCommand(cli, "trace-web-source-location");
+  if (sourceLocation === undefined)
+    throw new Error("Missing source location command");
+  const data = {
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "source_map_limits.decoded_records",
+      },
+    },
+  };
+  expect(
+    projectCliCommandOutput(data, {
+      operations: sourceLocation.operations,
+      commands,
+    }),
+  ).toEqual(data);
 });

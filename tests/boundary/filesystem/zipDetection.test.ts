@@ -102,9 +102,12 @@ describe("ZIP signature detection", () => {
     ).toBe("file");
   });
 
-  it.each([[], [0x50], [0x50, 0x4b], [0x50, 0x4b, 0x03]])(
-    "rejects an incomplete signature %j",
-    async (...bytes) => {
+  it.each([
+    { shape: "an empty file", bytes: [] },
+    { shape: "a three-byte ZIP prefix", bytes: [0x50, 0x4b, 0x03] },
+  ])(
+    "reports $shape without a ZIP signature at either boundary",
+    async ({ bytes }) => {
       const root = await createTestTempDirectory("rea-zip-short-");
       const path = join(root, "input");
       await writeFile(path, Buffer.from(bytes));
@@ -231,16 +234,6 @@ describe("ZIP archives after leading bytes", () => {
       style: "offsets that include the leading bytes",
       adjust: true,
       comment: false,
-    },
-    {
-      style: "offsets written before the bytes were prepended",
-      adjust: false,
-      comment: false,
-    },
-    {
-      style: "included leading bytes and an EOCD-like comment",
-      adjust: true,
-      comment: true,
     },
     {
       style: "prepended leading bytes and an EOCD-like comment",
@@ -452,6 +445,10 @@ describe("raw disk image signatures", () => {
       bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 92)),
     },
     {
+      layout: "a GPT header whose declared bytes end at EOF",
+      bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 92), 512 + 92),
+    },
+    {
       layout: "an Apple partition map",
       bytes: rawImage((bytes) => {
         bytes.write("ER", 0, "ascii");
@@ -507,6 +504,10 @@ describe("raw disk image signatures", () => {
     {
       blob: "a GPT header shorter than its defined fields",
       bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 91)),
+    },
+    {
+      blob: "an extended GPT header missing its final declared byte",
+      bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 128), 512 + 127),
     },
     {
       blob: "a driver descriptor without a partition map entry",

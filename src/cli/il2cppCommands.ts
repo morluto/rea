@@ -8,10 +8,8 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import { err } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /**
@@ -84,6 +82,10 @@ export const registerIl2cppCommands = (
         generic_instances: {
           description:
             "Also link generic method instances (Type<Args>$$Method<Args>) and include them in --ghidra-seeds; needs --binary",
+        },
+        max_native_index_bytes: {
+          description:
+            "Estimated bytes for an ELF --binary's relocated-pointer index (default 1073741824); raise when linking stops at this allowance; needs --binary",
         },
       },
       cliOptions: {

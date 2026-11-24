@@ -36,11 +36,30 @@ export interface LimitRef {
   readonly required?: number | bigint;
 }
 
+/** JSON-safe public facts for the named limit a parser exhausted. */
+export const reportedParseLimit = ({ name, maximum, required }: LimitRef) => ({
+  boundary: name,
+  maximum,
+  ...(required === undefined
+    ? {}
+    : { required: typeof required === "bigint" ? String(required) : required }),
+});
+
+/**
+ * How far the input reached when a declared structure ran past it: the
+ * measured end of the input and the length the structure needs. Only a
+ * reader that measured the input's end reports it.
+ */
+export interface TruncatedExtent {
+  readonly availableBytes: number;
+  readonly requiredBytes: number;
+}
+
 /** A parse outcome the parser established, carried with its facts. */
 export type ParseFailure = ParseFailureFacts &
   (
     | { readonly kind: "malformed" }
-    | { readonly kind: "truncated" }
+    | { readonly kind: "truncated"; readonly extent?: TruncatedExtent }
     | {
         readonly kind: "unsupported";
         /** The input holds the content, in a form this decoder cannot read. */
@@ -94,9 +113,22 @@ export const malformedInput = (
 export const truncatedInput = (
   format: string,
   detail: string,
-  { cause, ...at }: ParseFailureSite = {},
+  {
+    cause,
+    extent,
+    ...at
+  }: ParseFailureSite & { readonly extent?: TruncatedExtent } = {},
 ): ParseFailureError<"truncated"> =>
-  failureWith({ kind: "truncated", format, detail, ...at }, cause);
+  failureWith(
+    {
+      kind: "truncated",
+      format,
+      detail,
+      ...at,
+      ...(extent === undefined ? {} : { extent }),
+    },
+    cause,
+  );
 
 /** The bytes use a form outside this decoder's coverage. */
 export const unsupportedInput = (

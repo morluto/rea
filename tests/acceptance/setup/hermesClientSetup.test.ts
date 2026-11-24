@@ -1,5 +1,6 @@
 import {
   access,
+  chmod,
   mkdir,
   readdir,
   readFile,
@@ -432,14 +433,16 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
   );
 }
 for (const selection of [
-  "missing",
+  "missing-native",
   "selected",
   "nested-selected",
-  "default",
+  "default-native",
   "symlink",
+  "unselected",
+  "missing-nested",
 ] as const) {
   cliTest(
-    `Hermes nested homes use the native profile root: ${selection}`,
+    `Hermes nested homes resolve selection from the override root: ${selection}`,
     async ({ cli }) => {
       const home = sharedHome;
       const native =
@@ -460,11 +463,17 @@ for (const selection of [
       const otherConfig = join(root, "profiles", "other", "config.yaml");
       await mkdir(join(root, "profiles", "other"), { recursive: true });
       await writeFile(otherConfig, "model: other\n");
-      await writeFile(join(root, "active_profile"), "other");
+      if (selection === "unselected") {
+        // No selection file: the override root itself is the home.
+      } else if (selection === "missing-nested") {
+        await writeFile(join(root, "active_profile"), "ghost");
+      } else {
+        await writeFile(join(root, "active_profile"), "other");
+      }
       await writeFile(join(root, "config.yaml"), "model: nested-root\n");
-      if (selection !== "default")
+      if (selection !== "default-native")
         await writeFile(join(native, "active_profile"), "coder");
-      if (selection === "missing" || selection === "nested-selected") {
+      if (selection === "missing-native" || selection === "nested-selected") {
         await mkdir(join(root, "profiles", "coder"), { recursive: true });
         await writeFile(
           join(root, "profiles", "coder", "config.yaml"),
@@ -472,7 +481,7 @@ for (const selection of [
         );
       }
       const profile = join(native, "profiles", "coder");
-      if (selection !== "missing" && selection !== "default") {
+      if (selection !== "missing-native" && selection !== "default-native") {
         await mkdir(profile, { recursive: true });
         await writeFile(join(profile, "config.yaml"), "model: native-coder\n");
       }
@@ -485,16 +494,17 @@ for (const selection of [
           HERMES_HOME: root,
         },
       });
-      if (selection === "missing") {
+      if (selection === "missing-nested") {
         expect(plan.exitCode).toBe(1);
         expect(plan.json).toMatchObject({
           status: "needs_human",
           plannedActions: [],
           appliedActions: [],
-          remediation: expect.stringContaining('Hermes profile "coder"'),
+          remediation: expect.stringContaining('Hermes profile "ghost"'),
         });
       } else {
-        const selected = selection === "default" ? root : profile;
+        const selected =
+          selection === "unselected" ? root : join(root, "profiles", "other");
         expect(plan.exitCode, plan.stdout).toBe(0);
         expect(plan.json).toMatchObject({
           status: "planned",
@@ -511,18 +521,23 @@ for (const selection of [
       expect(await readFile(join(root, "config.yaml"), "utf8")).toBe(
         "model: nested-root\n",
       );
-      expect(await readFile(join(root, "active_profile"), "utf8")).toBe(
-        "other",
-      );
-      if (selection !== "default")
+      if (selection === "missing-nested")
+        expect(await readFile(join(root, "active_profile"), "utf8")).toBe(
+          "ghost",
+        );
+      else if (selection !== "unselected")
+        expect(await readFile(join(root, "active_profile"), "utf8")).toBe(
+          "other",
+        );
+      if (selection !== "default-native")
         expect(await readFile(join(native, "active_profile"), "utf8")).toBe(
           "coder",
         );
-      if (selection !== "missing" && selection !== "default")
+      if (selection !== "missing-native" && selection !== "default-native")
         expect(await readFile(join(profile, "config.yaml"), "utf8")).toBe(
           "model: native-coder\n",
         );
-      if (selection === "missing" || selection === "nested-selected")
+      if (selection === "missing-native" || selection === "nested-selected")
         expect(
           await readFile(
             join(root, "profiles", "coder", "config.yaml"),
@@ -576,8 +591,9 @@ for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
       await writeFile(join(native, "active_profile"), "coder");
       for (const exists of [false, true]) {
         if (exists) await mkdir(root);
-        const usesNative = layout === "symlinked-default";
-        const selected = usesNative ? profile : root;
+        // Model C: the override root owns its selection, so a symlinked
+        // default home no longer redirects the plan to the native profile.
+        const selected = root;
         const plan = await cli.run({
           arguments: ["setup", "--client", "hermes", "--dry-run", "--json"],
           cwd: home,
@@ -595,8 +611,7 @@ for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
               id: "configure_client:hermes",
               kind: "configure_client",
               target: join(selected, "config.yaml"),
-              operation: usesNative ? "update" : "create",
-              ...(usesNative ? { backupPath: `${config}.rea.backup` } : {}),
+              operation: "create",
             }),
             expect.objectContaining({
               id: "install_skill:hermes",
@@ -607,12 +622,11 @@ for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
           ]),
           appliedActions: [],
         });
-        if (!usesNative)
-          expect(plan.json).not.toMatchObject({
-            plannedActions: expect.arrayContaining([
-              expect.objectContaining({ backupPath: expect.any(String) }),
-            ]),
-          });
+        expect(plan.json).not.toMatchObject({
+          plannedActions: expect.arrayContaining([
+            expect.objectContaining({ backupPath: expect.any(String) }),
+          ]),
+        });
         if (!exists)
           await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
         for (const directory of [native, root, profile]) {
@@ -643,18 +657,17 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
       const root = join(home, "hermes root");
       await mkdir(root);
       await writeFile(join(root, "active_profile"), name);
+      const config = join(root, "profiles", name, "config.yaml");
+      const deletionDirectory = join(root, "profiles", ".deleted");
+      const tombstone = join(deletionDirectory, name);
+      const original =
+        "model: custom\nmcp_servers: {rea: {command: rea, args: [mcp]}}\n";
       if (name === "deleted" || name === "ghost") {
         await mkdir(join(root, "profiles", name), { recursive: true });
         if (name === "deleted") {
-          await writeFile(
-            join(root, "profiles", name, "config.yaml"),
-            "model: custom\n",
-          );
-          await mkdir(join(root, "profiles", ".deleted"));
-          await writeFile(
-            join(root, "profiles", ".deleted", name),
-            "deleted\n",
-          );
+          await writeFile(config, original);
+          await mkdir(deletionDirectory);
+          await writeFile(tombstone, "deleted\n");
         }
       }
       const run = (args: readonly string[]) =>
@@ -663,13 +676,8 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
           cwd: home,
           environment: { USERPROFILE: home, HERMES_HOME: root },
         });
-      const rejected = await run([
-        "setup",
-        "--client",
-        "hermes",
-        "--yes",
-        "--json",
-      ]);
+      const setup = ["setup", "--client", "hermes", "--yes", "--json"];
+      const rejected = await run(setup);
       expect(rejected.exitCode).not.toBe(0);
       expect(rejected.json).toMatchObject({
         status: "needs_human",
@@ -683,6 +691,49 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
       await expect(access(join(root, "skills"))).rejects.toMatchObject({
         code: "ENOENT",
       });
+      if (
+        name === "deleted" &&
+        process.platform !== "win32" &&
+        process.getuid?.() !== 0
+      ) {
+        await chmod(deletionDirectory, 0o000);
+        try {
+          await expect(access(tombstone)).rejects.toMatchObject({
+            code: "EACCES",
+          });
+          const unavailable = await run(setup);
+          expect(await readFile(config, "utf8")).toBe(original);
+          await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          expect(unavailable.exitCode).not.toBe(0);
+          expect(unavailable.json).toMatchObject({
+            status: "needs_human",
+            plannedActions: [],
+            appliedActions: [],
+            remediation: expect.stringContaining(tombstone),
+          });
+
+          const removal = await run(["uninstall", "--json"]);
+          expect(await readFile(config, "utf8")).toBe(original);
+          await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          expect(removal.exitCode).not.toBe(0);
+          expect(removal.json).toMatchObject({
+            status: "failed",
+            items: expect.arrayContaining([
+              expect.objectContaining({
+                name: "hermes",
+                status: "failed",
+                configuration_path: tombstone,
+              }),
+            ]),
+          });
+        } finally {
+          await chmod(deletionDirectory, 0o700);
+        }
+      }
       if (name !== "missing") return;
       const doctor = await run(["doctor", "--client", "hermes", "--json"]);
       expect(doctor.exitCode).not.toBe(0);
@@ -714,17 +765,22 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
 cliTest.skipIf(process.platform === "win32")(
   "Hermes named-user home aligns setup, doctor, skill and uninstall despite an isolated HOME",
   async ({ cli }) => {
-    const home = sharedHome;
     const account = userInfo();
+    const accountHome = await realpath(account.homedir);
+    // Keep the unexpanded tilde path inside the fixture even after its ".." segments.
+    const home = join(sharedHome, relative("/", accountHome));
+    await mkdir(home, { recursive: true });
     const temporary = await createTestTempDirectory(
       "rea-hermes-named-profile-",
     );
-    const suffix = relative(await realpath(account.homedir), temporary);
+    const suffix = relative(accountHome, temporary);
     // Exercise the real named-account lookup without requiring a writable
     // account home. Resolve parent traversal from its physical directory while
     // keeping the named home's expanded spelling, including parent segments.
     const profile = `${account.homedir.replace(/\/+$/u, "")}/${suffix}`;
     const override = `~${account.username}//${suffix}`;
+    const literalProfile = join(home, override);
+    expect(literalProfile).not.toBe(temporary);
     const config = `${profile}/config.yaml`;
     const skill = `${profile}/skills/reverse-engineer-anything/SKILL.md`;
     const original =
@@ -785,7 +841,7 @@ cliTest.skipIf(process.platform === "win32")(
     expect((await run(["uninstall", "--json"])).exitCode).toBe(0);
     expect(parse(await readFile(config, "utf8"))).toEqual(parse(original));
     await expect(access(skill)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(access(join(home, override))).rejects.toMatchObject({
+    await expect(access(literalProfile)).rejects.toMatchObject({
       code: "ENOENT",
     });
   },

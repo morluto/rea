@@ -10,6 +10,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
   referenceEdgeSchema,
   unresolvedCallSchema,
@@ -19,6 +20,7 @@ import { nativeCallClassificationSchema } from "../domain/native/nativeCallRefer
 import { err, ok, type Result } from "../domain/result.js";
 import type { HopperClient } from "./HopperClient.js";
 import {
+  hopperReplyJson,
   HopperReplyContractError,
   type HopperReply,
 } from "./HopperReplyContracts.js";
@@ -62,6 +64,73 @@ type ScanFailure = {
   readonly destinations: Map<string, Destination>;
   readonly unreadPage?: JsonValue;
 };
+
+const UNAVAILABLE_REFERENCE_KIND = {
+  available: false as const,
+  reason:
+    "Hopper exposes partial CallReference classification, but not detailed reference flags",
+};
+const UNAVAILABLE_REFERENCE_KIND_BYTES = jsonValueByteLength(
+  UNAVAILABLE_REFERENCE_KIND,
+);
+
+/**
+ * The scan budget counted compact pages. Expanded edges repeat each
+ * identity, so measure that copy before allocating it.
+ */
+function measureExpandedReferenceBytes(
+  target: Identity,
+  selectedReferences: readonly {
+    readonly caller: Identity;
+    readonly edge: CompactEdge;
+  }[],
+): number {
+  if (selectedReferences.length === 0) return 2;
+  let bytes = 2;
+  const targetBytes = jsonValueByteLength(
+    hopperReplyJson(target),
+    HOPPER_CALLER_SCAN_RETENTION_BYTES,
+  );
+  if (targetBytes > HOPPER_CALLER_SCAN_RETENTION_BYTES) return targetBytes;
+  const identityBytes = new Map<Identity, number>();
+  const measuredIdentityBytes = (identity: Identity): number => {
+    let cached = identityBytes.get(identity);
+    if (cached === undefined) {
+      cached = jsonValueByteLength(
+        hopperReplyJson(identity),
+        HOPPER_CALLER_SCAN_RETENTION_BYTES,
+      );
+      identityBytes.set(identity, cached);
+    }
+    return cached;
+  };
+  for (const { caller, edge } of selectedReferences) {
+    const source =
+      edge.source_procedure === "caller"
+        ? caller
+        : edge.source_procedure === null
+          ? null
+          : edge.source_procedure;
+    const sourceBytes = source === null ? 4 : measuredIdentityBytes(source);
+    const callBytes =
+      edge.call === undefined
+        ? 0
+        : jsonValueByteLength(
+            hopperReplyJson(edge.call),
+            HOPPER_CALLER_SCAN_RETENTION_BYTES - bytes,
+          );
+    bytes +=
+      64 +
+      sourceBytes +
+      targetBytes +
+      UNAVAILABLE_REFERENCE_KIND_BYTES +
+      callBytes +
+      Buffer.byteLength(edge.source_address) +
+      Buffer.byteLength(edge.target_address);
+    if (bytes > HOPPER_CALLER_SCAN_RETENTION_BYTES) return bytes;
+  }
+  return bytes;
+}
 
 /** A child bridge request is a phase of the enclosing user operation. */
 export function reconciliationChildOptions(
@@ -220,8 +289,12 @@ async function buildIndex(
       };
       break;
     }
-    const pageBytes = Buffer.byteLength(JSON.stringify(page.value));
-    if (pageBytes > HOPPER_CALLER_SCAN_RETENTION_BYTES - bytes) {
+    const remainingRetention = HOPPER_CALLER_SCAN_RETENTION_BYTES - bytes;
+    const pageBytes = jsonValueByteLength(
+      hopperReplyJson(page.value),
+      remainingRetention,
+    );
+    if (pageBytes > remainingRetention) {
       stop = {
         code: "retention_budget",
         allowance_bytes: HOPPER_CALLER_SCAN_RETENTION_BYTES,
@@ -325,6 +398,30 @@ const compactForwardDestinations = (
     identities: [...identities.values()],
     destinations: rows,
   };
+};
+
+type HopperAddressTargetReply =
+  | HopperReply<"rea_caller_base">
+  | HopperReply<"procedure_references">;
+
+/**
+ * The public result for an explicit address outside every procedure: the
+ * callers list for `procedure_callers`, or the reference edges without the
+ * bridge's target marker for `procedure_references`.
+ */
+export const projectHopperAddressReferences = (
+  reply: HopperAddressTargetReply,
+): JsonValue => {
+  if ("callers" in reply) return [...reply.callers];
+  const { target_kind: _targetKind, ...references } = reply;
+  return hopperReplyJson(references);
+};
+
+export const hopperAddressReferencesReason = (
+  reply: HopperAddressTargetReply,
+): string => {
+  const target = "callers" in reply ? reply.target : reply.procedure;
+  return `${target.address} is outside every Hopper procedure, such as an import address-table slot, an imported name or a data label. The result is Hopper's recorded references to that address with their containing procedures; references Hopper did not record remain unknown.${"callers_complete" in reply && !reply.callers_complete ? " The caller list stopped at the bridge's reply allowance." : ""}`;
 };
 
 /** The validated native reply each reconciled operation starts from. */
@@ -520,42 +617,6 @@ export const reconcileHopperCallers = async (
     if (source !== null) callers.set(source.address, source);
     selectedReferences.push(item);
   }
-  const unavailableKind = {
-    available: false as const,
-    reason:
-      "Hopper exposes partial CallReference classification, but not detailed reference flags",
-  };
-  // The scan budget counted compact pages. Expanded edges repeat each
-  // identity, so measure that copy before allocating it.
-  const expandedReferenceBytes = (): number => {
-    let bytes = 2;
-    const targetBytes = Buffer.byteLength(JSON.stringify(target));
-    const kindBytes = Buffer.byteLength(JSON.stringify(unavailableKind));
-    for (const { caller, edge } of selectedReferences) {
-      const source =
-        edge.source_procedure === "caller"
-          ? caller
-          : edge.source_procedure === null
-            ? null
-            : edge.source_procedure;
-      const sourceBytes =
-        source === null ? 4 : Buffer.byteLength(JSON.stringify(source));
-      const callBytes =
-        edge.call === undefined
-          ? 0
-          : Buffer.byteLength(JSON.stringify(edge.call));
-      bytes +=
-        64 +
-        sourceBytes +
-        targetBytes +
-        kindBytes +
-        callBytes +
-        Buffer.byteLength(edge.source_address) +
-        Buffer.byteLength(edge.target_address);
-      if (bytes > HOPPER_CALLER_SCAN_RETENTION_BYTES) return bytes;
-    }
-    return bytes;
-  };
   const retainedNativeResult = omitInstructionPayload(original);
   const compactReferences = selectedReferences.map(({ caller, edge }) =>
     compactCallReference(caller, edge),
@@ -570,7 +631,8 @@ export const reconcileHopperCallers = async (
       siteCallers.set(caller.address, caller);
   if (
     operation !== "procedure_callers" &&
-    expandedReferenceBytes() > HOPPER_CALLER_SCAN_RETENTION_BYTES
+    measureExpandedReferenceBytes(target, selectedReferences) >
+      HOPPER_CALLER_SCAN_RETENTION_BYTES
   ) {
     const scan: HopperCallerScanFacts = {
       ...index.counts,
@@ -608,7 +670,7 @@ export const reconcileHopperCallers = async (
         target_address: edge.target_address,
         source_procedure: source,
         target_procedure: target,
-        kind: unavailableKind,
+        kind: UNAVAILABLE_REFERENCE_KIND,
         call: edge.call,
       });
     }

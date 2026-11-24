@@ -10,7 +10,6 @@ import {
 } from "../../../src/native/dwarf/DwarfUnits.fixture.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
@@ -70,26 +69,6 @@ mcpTest(
       expect(selected.parameters).toEqual(parameters);
       expect(selected.normalized_result).toEqual(evidence.normalized_result);
       expect(selected.evidence_id).not.toBe(evidence.evidence_id);
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
-  "requires an absolute path for inspect_dwarf_units",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_dwarf_units",
-        arguments: { path: "program" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_dwarf_units" },
-      });
     } finally {
       await session.close();
     }

@@ -256,9 +256,7 @@ it.each([
   },
 );
 
-const itOnLinux = process.platform === "linux" ? it : it.skip;
-
-itOnLinux(
+it.runIf(process.platform === "linux")(
   "verifies a real child exit between the native identity and follow-up read",
   async () => {
     const child = spawn(

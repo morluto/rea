@@ -143,6 +143,20 @@ it("keeps cancellation output and primary reason while exact command cleanup is 
       client.close(),
     ]);
     if (rootFailure.ok) throw new Error("Expected workspace cleanup failure");
+    expect(rootFailure.error.cause).toBeInstanceOf(AggregateError);
+    expect(rootFailure.error).toMatchObject({
+      operation: "close_binary",
+      cleanupResources: [workspace.path],
+      cause: {
+        errors: [
+          {
+            operation: "close_binary",
+            cleanupResources: [workspace.path],
+            cause: expect.any(AggregateError),
+          },
+        ],
+      },
+    });
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([workspace.path]);
     expect(refuseRootClose).toHaveBeenCalledTimes(1);

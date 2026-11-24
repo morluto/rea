@@ -41,13 +41,10 @@ import { GgufHeader } from "./GgufHeader.js";
 import { readSafetensorsHeader } from "./SafetensorsHeader.js";
 import {
   modelCapacityFailure,
-  modelCapacityLimitOf,
+  modelCapacityConstraint,
   MODEL_REPORT_BYTES,
-  modelCapacityRemediation,
-  modelCapacityReportedLimits,
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import { ParseFailureError } from "../domain/parseFailure.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -110,10 +107,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-      const capacity =
-        primary instanceof ParseFailureError
-          ? modelCapacityLimitOf(primary)
-          : undefined;
+      const capacityError = modelCapacityConstraint(OPERATION, primary);
       const formatError = parseFailureAnalysisError(
         OPERATION,
         input.path,
@@ -122,19 +116,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       let error: AnalysisError;
       if (origin === "owned-or-classified" && primary instanceof AnalysisError)
         error = primary;
-      else if (primary instanceof ParseFailureError && capacity !== undefined)
-        // A model allowance names its own recovery.
-        error = new AnalysisResourceConstraintError(
-          OPERATION,
-          "memory",
-          primary.message,
-          modelCapacityReportedLimits(capacity),
-          {
-            cause,
-            retryable: false,
-            remediationAction: modelCapacityRemediation(capacity),
-          },
-        );
+      else if (capacityError !== undefined) error = capacityError;
       else if (formatError !== undefined) error = formatError;
       else if (
         origin === "owned-or-classified" &&

@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { serveInProcessCli as serve } from "../../support/cli/serveInProcessCli.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -37,24 +38,6 @@ const advertisedInputSchema = z.object({
   args: advertisedGroupSchema.optional(),
   options: advertisedGroupSchema.optional(),
 });
-
-const serve = async (
-  cli: CliInstance,
-  argv: readonly string[],
-): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { stdout, exitCode };
-};
 
 const advertisedSchema = async (cli: CliInstance, command: string) => {
   const result = await serve(cli, [command, "--schema", "--json"]);
@@ -273,6 +256,48 @@ describe("CLI advertised input schemas", () => {
     );
     expect(advertised.args?.properties.scope).toBeDefined();
     expect(advertised.args?.required ?? []).not.toContain("scope");
+  });
+});
+
+describe("omittable defaults omission rules", () => {
+  it("preserves required status for strict and failing-default fields while marking valid omission wrappers optional", async () => {
+    const cli = createCommandCli();
+    registerCliCommand(cli, "fixture", {
+      args: z.object({
+        required: z.string(),
+        optional: z.string().optional(),
+        scope: z.enum(["all", "selected"]).default("all"),
+        prefaulted: z.string().prefault("fallback"),
+        caught: z.string().catch("safe"),
+        failingDefault: z
+          .string()
+          .default("bad")
+          .refine(() => false),
+        optionalTransform: z
+          .string()
+          .optional()
+          .transform((value) => value ?? "x"),
+      }),
+      run: () => ({ ok: true }),
+    });
+
+    presentOmittableDefaults(cli as unknown as CliInstance);
+
+    const advertised = await advertisedSchema(
+      cli as unknown as CliInstance,
+      "fixture",
+    );
+    expect(advertised.args?.required ?? []).toEqual(
+      expect.arrayContaining(["required", "failingDefault"]),
+    );
+    for (const key of [
+      "optional",
+      "scope",
+      "prefaulted",
+      "caught",
+      "optionalTransform",
+    ])
+      expect(advertised.args?.required ?? []).not.toContain(key);
   });
 });
 
@@ -706,6 +731,32 @@ describe("ADB activity extra input schema", () => {
       expect(parser.safeParse(input).success).toBe(expected);
       expect(validate(input)).toBe(expected);
     }
+    for (const extra of [
+      "boolean:key:yes",
+      "string:bad key:value",
+      `string:${"k".repeat(257)}:value`,
+      "string:key:value\0",
+      "float:key:garbage",
+      "int:key:",
+    ]) {
+      expect(parser.safeParse({ extra: [extra] }).success, extra).toBe(false);
+      expect(validate({ extra: [extra] }), extra).toBe(false);
+    }
+    for (const extra of [
+      "int:key:2147483648",
+      "int:key:-2147483649",
+      "long:key:9223372036854775808",
+      "long:key:-9223372036854775809",
+    ])
+      expect(parser.safeParse({ extra: [extra] }).success, extra).toBe(false);
+    expect(validate({ extra: ["string:key:value:rest"] })).toBe(true);
+    expect(parser.safeParse({ extra: ["string:key:"] }).success).toBe(true);
+    expect(parser.safeParse({ extra: ["int:key:2147483647"] }).success).toBe(
+      true,
+    );
+    expect(
+      parser.safeParse({ extra: ["long:key:-9223372036854775808"] }).success,
+    ).toBe(true);
   });
 });
 
@@ -750,8 +801,8 @@ describe("reference-source outline-depth input schema", () => {
     const outlineDepth = advertised.options?.properties?.outlineDepth;
     expect(outlineDepth).toMatchObject({
       anyOf: [
-        { type: "integer", minimum: 0 },
-        { type: "string", pattern: "^[0-9]+$" },
+        { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        { type: "string", pattern: expect.any(String) },
       ],
     });
 
@@ -801,8 +852,16 @@ describe("reference-source outline-depth input schema", () => {
       expect(validate(parsed.data)).toBe(true);
       expect(validate({ outlineDepth: token, detail: "summary" })).toBe(true);
     }
-    for (const token of ["0x2", "2e0", "-1"])
-      expect(validate({ outlineDepth: token, detail: "summary" })).toBe(false);
+    for (const token of [
+      "0x2",
+      "2e0",
+      "-1",
+      "9007199254740992",
+      "09007199254740992",
+    ])
+      expect(validate({ outlineDepth: token, detail: "summary" }), token).toBe(
+        false,
+      );
     expect(validate({ outlineDepth: -1 })).toBe(false);
     expect(validate({ outlineDepth: 9007199254740992 })).toBe(false);
     expect(validate({ outlineDepth: 2 })).toBe(false);

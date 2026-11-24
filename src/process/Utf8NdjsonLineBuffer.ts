@@ -11,6 +11,7 @@ export class Utf8NdjsonOversizeError extends ParseFailureError<"limit"> {
   constructor(
     readonly maximumBytes: number,
     readonly observedBytes: number,
+    readonly boundary: "line" | "tail" = "line",
   ) {
     super({
       kind: "limit",
@@ -55,8 +56,22 @@ export class Utf8NdjsonLineBuffer {
    * the iteration. A line or the tail still waiting for its LF above the
    * ceiling is yielded as `Utf8NdjsonOversizeError`, after discarding every
    * buffered byte, and ends the iteration.
+   * This bridge projection trims U+FEFF and other ECMAScript whitespace.
+   * Exact JSON parsers use `pushRaw` to keep the decoded line intact.
    */
   *push(chunk: Buffer): Generator<Utf8NdjsonLine> {
+    for (const line of this.pushRaw(chunk)) {
+      if (!line.ok) {
+        yield line;
+        return;
+      }
+      const trimmed = line.value.trim();
+      if (trimmed.length > 0) yield ok(trimmed);
+    }
+  }
+
+  /** Deliver exact decoded lines, including blanks and leading U+FEFF. */
+  *pushRaw(chunk: Buffer): Generator<Utf8NdjsonLine> {
     const maximumBytes = this.#maxLineBytes();
     this.#fragments.push(chunk);
     this.#fragmentBytes += chunk.length;
@@ -65,7 +80,10 @@ export class Utf8NdjsonLineBuffer {
       if (refused !== undefined) yield err(refused);
       return;
     }
-    this.#buffer = Buffer.concat([this.#buffer, ...this.#fragments]);
+    this.#buffer =
+      this.#buffer.length === 0 && this.#fragments.length === 1
+        ? this.#fragments[0]!
+        : Buffer.concat([this.#buffer, ...this.#fragments]);
     this.#fragments = [];
     this.#fragmentBytes = 0;
     if (this.#nextNewline < 0) this.#nextNewline = this.#buffer.indexOf(10);
@@ -82,32 +100,45 @@ export class Utf8NdjsonLineBuffer {
       this.#buffer = rest.length === 0 ? Buffer.alloc(0) : rest;
       this.#nextNewline = this.#buffer.indexOf(10);
       const line = this.#decode(encodedLine);
-      if (!line.ok) {
-        yield line;
-        return;
-      }
-      const trimmed = line.value.trim();
-      if (trimmed.length > 0) yield ok(trimmed);
+      yield line;
+      if (!line.ok) return;
     }
     const refused = this.#refuseTail(maximumBytes);
-    if (refused !== undefined) yield err(refused);
+    if (refused !== undefined) {
+      yield err(refused);
+      return;
+    }
+    // A short tail is a view into the drained frames. Copy it once after
+    // draining, when doing so releases more bytes than it copies.
+    if (
+      this.#buffer.buffer.byteLength >
+      Math.max(Buffer.poolSize, 2 * this.#buffer.length)
+    ) {
+      const tail = Buffer.allocUnsafeSlow(this.#buffer.length);
+      this.#buffer.copy(tail);
+      this.#buffer = tail;
+    }
   }
 
   /** Validate the unfinished tail at EOF without treating it as a complete response. */
   finish(): Result<null, ParseFailureError<"malformed">> {
-    const tail = this.#decode(
-      Buffer.concat([this.#buffer, ...this.#fragments]),
-    );
+    const raw =
+      this.#fragments.length === 0
+        ? this.#buffer
+        : this.#buffer.length === 0 && this.#fragments.length === 1
+          ? this.#fragments[0]!
+          : Buffer.concat([this.#buffer, ...this.#fragments]);
+    const tail = this.#decode(raw);
     return tail.ok ? ok(null) : tail;
   }
 
   #refuseTail(maximumBytes: number): Utf8NdjsonOversizeError | undefined {
-    const pendingBytes = this.#buffer.length + this.#fragmentBytes;
+    const pendingBytes = this.pendingBytes;
     if (this.#nextNewline >= 0 || pendingBytes <= maximumBytes)
       return undefined;
     // Drop the refused bytes rather than retaining them until reconnect.
     this.reset();
-    return new Utf8NdjsonOversizeError(maximumBytes, pendingBytes);
+    return new Utf8NdjsonOversizeError(maximumBytes, pendingBytes, "tail");
   }
 
   #decode(bytes: Buffer): Result<string, ParseFailureError<"malformed">> {
@@ -128,12 +159,16 @@ export class Utf8NdjsonLineBuffer {
     this.#nextNewline = -1;
   }
 
+  get pendingBytes(): number {
+    return this.#buffer.length + this.#fragmentBytes;
+  }
+
   /** Bytes still held after complete lines are removed. An empty tail keeps no drained frame. */
   retainedTail(): {
     readonly pendingBytes: number;
     readonly backingBytes: number;
   } {
-    const pendingBytes = this.#buffer.length + this.#fragmentBytes;
+    const pendingBytes = this.pendingBytes;
     const backingBytes =
       this.#buffer.buffer.byteLength +
       this.#fragments.reduce(

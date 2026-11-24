@@ -5,7 +5,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { isAbsolute, win32 } from "node:path";
+import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 import { findWindowsExecutable } from "../process/WindowsExecutable.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -65,11 +65,7 @@ export const resolveAdbBinary = async (
       pathSource: "path",
       environment: selectedEnvironment,
     };
-  if (
-    !(platform === "win32"
-      ? win32.isAbsolute(configured)
-      : isAbsolute(configured))
-  )
+  if (!isQualifiedCallerPath(configured, platform))
     throw new AdbConfigurationFailure(
       "not_absolute",
       `${ADB_BINARY_ENV} must be an absolute path to the adb binary`,

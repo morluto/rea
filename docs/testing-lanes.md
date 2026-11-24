@@ -37,29 +37,31 @@ commands. Check prerequisites before starting expensive work and name the
 missing command, target, and lane in any failure message. A lane must not imply
 that a host or target is covered when it was skipped.
 
-Provider admission accepts Ghidra 12.x (>=12.1) and the JDK range declared by that
-installation (`application.java.min` through `application.java.max`). Current
-12.1 releases require JDK 21 or newer and set no maximum. The lanes below still
-prove behavior on the verified Ghidra 12.1.4 and JDK 21 build.
+Ghidra lanes use the [supported Ghidra and JDK installation](getting-started/installation.md#ghidra).
 
-| Ghidra lane                                | Supported runner/target                                                                                          | Additional local tools                                                      |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `npm run verify:ghidra`                    | Linux x64/arm64 ELF or macOS x64/arm64 Mach-O                                                                    | Host C compiler, Ghidra 12.1.4, and full JDK 21                             |
-| `npm run verify:ghidra:project-coverage`   | POSIX host; selected-project call coverage, real MCP, retained Evidence and an unexecuted host fixture           | Host C compiler, Ghidra 12.1.4, and full JDK 21                             |
-| `npm run verify:ghidra:seeds`              | POSIX; raw x86 fixture; seed ordering, BSS labels, analyzer readback, not-applicable and unknown analyzer names  | Ghidra 12.1.4 and full JDK 21                                               |
-| `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                                                           | Host Swift compiler, Ghidra 12.1.4, and full JDK 21                         |
-| `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 double-float and RV32 ilp32 ELF through CLI and MCP           | RISC-V Clang, LLD, LLVM readelf and objdump, Ghidra 12.1.4, and full JDK 21 |
-| `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                                                  | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21            |
-| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; host ARM64 Mach-O                  | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21           |
-| `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O                               | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites         |
-| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                   | Ghidra 12.1.4, full JDK 21, and the matching native artifact                |
-| `npm run verify:ghidra:dol`                | Any supported Ghidra host; source-owned PowerPC GameCube DOL fixture built from a linker script (never executed) | Clang with PowerPC target, LLD, GNU readelf, Ghidra 12.1.4, and full JDK 21 |
+| Ghidra lane                                | Supported runner/target                                                                                                                                     | Additional local tools                                                |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `npm run verify:ghidra`                    | Linux x64/arm64 ELF or macOS x64/arm64 Mach-O                                                                                                               | Host C compiler, supported Ghidra and JDK                             |
+| `npm run verify:ghidra:project-coverage`   | POSIX host; selected-project call coverage, real MCP, retained Evidence and an unexecuted host fixture                                                      | Host C compiler, supported Ghidra and JDK                             |
+| `npm run verify:ghidra:seeds`              | POSIX; raw x86 fixture; seed ordering, BSS labels, analyzer readback, not-applicable and unknown analyzer names                                             | supported Ghidra and JDK                                              |
+| `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                                                                                                      | Host Swift compiler, supported Ghidra and JDK                         |
+| `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 double-float and RV32 ilp32 ELF through CLI and MCP                                                      | RISC-V Clang, LLD, LLVM readelf and objdump, supported Ghidra and JDK |
+| `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang `-O2` and stripped switch fixtures; does not cover the Clang `-O0` non-zero-base defect                                            | GCC, Clang, GNU nm/objdump/strip, supported Ghidra and JDK            |
+| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; `and #0xff` byte-offset table expected unrecovered on 12.2; host ARM64 Mach-O | Clang with AArch64 target support, supported Ghidra and JDK           |
+| `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O                                                                          | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites   |
+| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                                                              | supported Ghidra and JDK, and the matching native artifact            |
+| `npm run verify:ghidra:dol`                | Any supported Ghidra host; source-owned PowerPC GameCube DOL fixture built from a linker script (never executed)                                            | Clang with PowerPC target, LLD, GNU readelf, supported Ghidra and JDK |
+| `npm run verify:ghidra:ppc64`              | Linux/macOS Ghidra host; source-owned ELFv2 PPC64 executables in both byte orders through CLI and MCP (never executed)                                      | Clang with PowerPC target, LLD, GNU readelf, supported Ghidra and JDK |
 
 The optional Swift lane compiles a source-owned fixture and checks modern and
 provider-demangled procedure names through real stdio MCP, with and without the
 dSYM companion. It checks unfiltered, structs, and literal-name filters,
 same-address alias evidence, deduplication, and explicit unresolved categories.
-It does not add a Swift prerequisite to the host C fixture lane.
+It does not add a Swift prerequisite to the host C fixture lane. It does not
+compile the AArch64 `and #0xff` byte-offset switch from Ghidra #10154.
+`npm run verify:ghidra:aarch64-jump-table` assembles that shape with 256
+readable table bytes and expects Ghidra 12.2 to leave that jump table
+unrecovered. A compare-bounded byte switch in the same object must recover.
 
 The host lane also verifies namespaced C++ ABI symbols and annotation identity.
 That facet requires Ghidra's matching `demangler_gnu_v2_41` native component in
@@ -200,7 +202,7 @@ handler and can leave temporary workspace files. `verify:windows-native`
 separately checks binary input, backpressure, EOF and pending-write job closure.
 
 `npm run verify:android` requires an existing Java 17+ and an explicit
-`REA_JADX_MCP_JAR` for jadx-headless-mcp 0.7.1. Set `REA_ANDROID_TEST_APK` to the
+`REA_JADX_MCP_JAR` for jadx-headless-mcp 0.8.0. Set `REA_ANDROID_TEST_APK` to the
 fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit
 `npm run fixtures:android` command; files are SHA-256 verified and
 kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or
@@ -460,8 +462,9 @@ that code is absent, and selection does not establish that a stripped counterpar
 was verified; consult `results` for completed variants. `--report PATH` writes
 the JSON report.
 
-The first matrix run used Kuna 1.833 and Ghidra 12.1.4 with JDK 21 on macOS
-arm64. It covered zlib 1.3.2 `minigzip`, coreutils 9.9 `sort` and the sqlite
+The first matrix run was recorded on Ghidra 12.1.4 with JDK 21 (no longer
+accepted); not yet re-run on 12.2. It used Kuna 1.833 on macOS arm64 and covered
+zlib 1.3.2 `minigzip`, coreutils 9.9 `sort` and the sqlite
 3.54.0 shell, built at `-O2` for ELF x86-64, ELF AArch64, Mach-O arm64 and
 Mach-O x86-64, each with symbols and stripped. A separate Linux x86-64 run verified
 the fixture and system zlib 1.2.13 / SQLite 3.40.1 libraries through MCP, including
@@ -489,9 +492,15 @@ symbol-bearing and stripped Mach-O fixtures, including cold and warm reads,
 references, timeout recovery, and cleanup. Linux, other hosts, and the larger
 1.833 target matrix were not verified with 1.990.
 
+Kuna 1.1000 passed the real-provider lane on macOS arm64 with the generated
+symbol-bearing and stripped Mach-O fixtures. It passed cold and warm reads,
+string and reference queries, project export reuse, timeout recovery, and
+cleanup. Linux, other hosts, and the larger 1.833 target matrix were outside
+this run.
+
 ## DOS Ghidra analysis
 
-`npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
+`npm run verify:ghidra:dos` requires the [supported Ghidra and JDK installation](getting-started/installation.md#ghidra)
 on Linux x64, macOS x64/arm64, or Windows x64 P0. It generates a source-owned MZ fixture without
 a DOS emulator or compiler, then checks real 16-bit decoding, segment
 relocation, near/far calls, decompilation, disjoint function body ranges,
@@ -503,9 +512,11 @@ annotation edits are refused instead of exercising them. This lane is separate f
 verification. See [DOS analysis](providers/ghidra-dos.md).
 
 `npm run verify:ghidra:com` uses a generated headerless fixture with no compiler,
-DOS emulator or game data. It exercises explicit admission, BinaryLoader entry
-preparation, measured register context, whole-file byte readback, source offsets,
-unmapped PSP/partial reads, actual decompilation, CLI/MCP parity and owned cleanup.
+DOS emulator or game data. It exercises explicit admission, ComLoader import at
+`0000:0100` without a caller-supplied loader or base, the raw BinaryLoader
+fallback at `1000:0100` with its typed rejection, measured register context,
+whole-file byte readback, source offsets, the zero PSP placeholder and partial
+reads, actual decompilation, CLI/MCP parity and owned cleanup.
 Both segmented-address lanes reject oversized default, explicit-space and encoded-space
 coordinates through real reads, function queries and annotation attempts. Rejected
 annotations must preserve the live function dossier; CLI and MCP must report the
@@ -516,26 +527,28 @@ runtime or PC-98 device execution.
 `npm run verify:ghidra:6502` uses `ca65` and `ld65` to build the source-owned
 NMOS 6502 fixture from `tests/conformance/ghidra/6502.s` and `6502.cfg`. Set
 `REA_CA65` and `REA_LD65` for non-PATH installations (tested with cc65 `V2.19`).
-With an installed Ghidra 12.1.4 and full JDK, it verifies real CLI/stdio MCP
-mapping parity, exact source bytes, functions, a direct call reference,
-decompilation, 16-bit overflow rejection without replacing the active session,
-and runtime cleanup. Windows additionally requires the matching native addon;
+With the [supported Ghidra and JDK installation](getting-started/installation.md#ghidra),
+it verifies real CLI/stdio MCP mapping parity, exact source bytes, functions, a
+direct call reference, decompilation, 16-bit overflow rejection without
+replacing the active session, and runtime cleanup. Windows additionally requires the matching native addon;
 its verifier lineage remains explicitly unavailable outside the provider's
 retained Job Object, as in the other Windows lanes.
 
 `npm run verify:ghidra:m68k` needs no assembler: its 22-byte big-endian 68000
-fixture is source-owned annotated hex in the verifier, loaded at `0x1000`. With
-an installed Ghidra 12.1.4 and full JDK on Linux or macOS, it verifies the
-`68000:BE:32:default` BinaryLoader import, real CLI/stdio MCP load-image parity,
-exact source bytes, both functions, the `bsr.b` call reference, decompilation
-through address and file offset, rejection of a misaligned entry and of a mapping
-past `0xffffffff` without replacing the active session, and runtime cleanup.
-Windows Ghidra P0 does not admit m68k, so this is not a Windows lane. The lane
-has been run on macOS; Linux has not been exercised.
+fixture is source-owned annotated hex in the verifier, loaded at `0x1000`. On
+Linux or macOS it verifies the `68000:BE:32:default` BinaryLoader import, real
+CLI/stdio MCP load-image parity, exact source bytes, both functions, the
+`bsr.b` call reference, decompilation through address and file offset, rejection
+of a misaligned entry and of a mapping past `0xffffffff` without replacing the
+active session, and runtime cleanup. Windows Ghidra P0 does not admit m68k, so
+this is not a Windows lane. It passed on Ghidra 12.2 with JDK 25 on macOS
+arm64; Linux has not been exercised.
+The lane uses the [supported Ghidra and JDK installation](getting-started/installation.md#ghidra).
 
 `npm run verify:ghidra:raw` uses a generated ARM little-endian headerless image
-through the compiled CLI and stdio MCP server. With the same Ghidra/JDK
-prerequisites, it checks preparation and bridge startup, verified load mappings,
+through the compiled CLI and stdio MCP server. With the
+[supported Ghidra and JDK installation](getting-started/installation.md#ghidra),
+it checks preparation and bridge startup, verified load mappings,
 instruction and byte readback, canonical-entry session reuse, replacement when
 the entry changes without `provider_id`, preservation of a session annotation
 and the target/provider receipt after a rejected open, unchanged source bytes,
@@ -549,25 +562,62 @@ does not call CLI `search-bytes`, and does not page an overlay search across a
 snapshot reopen. AArch64 remains covered by deterministic tests rather than this
 real-provider lane. See [raw binary analysis](providers/raw-binary.md).
 
+`npm run verify:ghidra:cortex-m` checks ARM M-profile raw images through the
+compiled CLI and stdio MCP server. It needs the supported Ghidra and JDK
+installation and LLVM with Thumb targets and the Cortex-M55 CPU (`clang` and `llvm-objdump`, or
+`REA_CLANG` and `REA_LLVM_OBJDUMP`). Its source-owned fixtures are:
+
+- a Cortex-M0 (`armv6-m`) image at bases `0x0` and `0x08000000`;
+- the same image after a 256-byte boot2-style header, opened with
+  `vector_table_address`;
+- a Thumb-2 image (`movw`, `movt`, `ldr.w`, `it`, `cbz`) opened as `armv7-m` at
+  `0x0` and as `armv7e-m` at `0x08000000`;
+- an `armv8-m.base` image with `movw`, `movt`, `cbz` and `udiv`;
+- an `armv8-m.main` image that sets `MSPLIM`;
+- an `armv8.1-m.main` (Cortex-M55) image at `0x0` with a `wls`/`le`
+  low-overhead loop around the MVE instructions `vldrw`, `vctp` and `vstrw`.
+  Ghidra 12.1.4 does not follow the loop's exits, so for this image the lane
+  requires the code after the loop to stay undisassembled, records both loop
+  branches' flow, and checks that the results report the limitation.
+
+LLVM assembles each fixture's annotated source to the same bytes and names each
+instruction, with `-mcpu=cortex-m55 -mfloat-abi=hard` for the MVE fixture;
+Ghidra must decode the same mnemonics in Thumb state. The lane
+also checks:
+
+- the Reset-derived entry, and that it is the only entry Ghidra reports;
+- the `segments` load image and its `TMode` check;
+- decompilation of the Cortex-M0 image;
+- refusal of an odd entry with its code address, while the session is kept;
+- CLI/MCP parity and unchanged legacy identity;
+- snapshot reuse across base spellings, and refusal across variants;
+- unchanged source bytes and owned cleanup.
+
+It does not execute target code, model peripherals, or qualify Windows.
+
 `npm run verify:ghidra:loader-relocation` runs
 `tests/conformance/ghidra/ReaLoaderRelocationProbe.java` inside a real Linux
 Ghidra ELF import. The source-owned PIE fixture reads a `const` object from a
 provider library, which the linker copies into `.data.rel.ro` with a copy
-relocation that Ghidra imports as unapplied, the shape of #4177. The probe
-requires that relocation and the reader's read reference to it, a non-writable
-file-backed block, and the bridge's volatile marking and limitation. Source
-`FileBytes` and block permissions must be unchanged. Applied GOT relocations
+relocation that Ghidra imports as unapplied, the shape of #4177. It also reads
+an initial-exec TLS variable from the provider, whose unapplied
+`R_X86_64_TPOFF64` slot sits in the same read-only `.got` as the applied GOT
+entries. The probe requires those relocations and the reader's read reference,
+a non-writable file-backed block, and the bridge's limitation and volatile
+marking of each unapplied destination's data item. Source `FileBytes` and
+block permissions must be unchanged. The GOT block and its applied entries
 must stay non-volatile, and a full-RELRO `-fno-plt` GOT caller must decompile
-identically before and after protection. Ghidra 12.1.4 already shows this
-x86-64 read by name without protection, so the report records whether the
-baseline folded the file-backed zero and compares before and after only when it
-did. The decompiler effect on the original MIPS case was observed on the
-reporter's binary, not in this lane. The lane never executes the fixture and
-needs Ghidra/JDK with the native decompiler and a Linux C compiler. The
+identically before and after protection. Observed on 12.1.4; unverified on
+12.2: Ghidra shows this x86-64 read by name without protection. The report
+records whether the baseline folded the file-backed zero and compares before
+and after only when it did. The decompiler effect on the original MIPS case
+was observed on the reporter's binary, not in this lane. The lane never
+executes the fixture and needs the [supported Ghidra and JDK installation](getting-started/installation.md#ghidra)
+with the native decompiler and a Linux C compiler. The
 change-selected [Ghidra bridge CI lane](https://github.com/morluto/rea/blob/main/.github/workflows/ghidra-bridge-sources.yml)
 runs it with its checksum-verified Ghidra distribution. Read-only sessions
 (Windows P0 and caller-owned existing projects) record the same limitation but
-do not mark blocks volatile; no real-provider lane covers them.
+mark nothing volatile; no real-provider lane covers them.
 
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
@@ -661,8 +711,9 @@ sigrok verifier establishes the actual-tool observation. Edits to verifier entry
 workflows run static checks and the Linux suite. Website changes run website
 checks. Provider workflow changes validate the workflow and run that provider's
 verifier. Changes under `bridge/ghidra/` also select the `ghidra_bridge` lane,
-which compiles the packaged bridge sources against the pinned Ghidra 12.1.4
-jars with `npm run verify:ghidra:bridge-sources`. That compile step never
+which compiles the packaged bridge sources against the jars pinned for the
+[supported Ghidra release](getting-started/installation.md#ghidra) with
+`npm run verify:ghidra:bridge-sources`. That compile step never
 launches Ghidra or imports a target, so a missing import fails the PR instead
 of every Ghidra session. The launcher, compiler and package checks share named required source
 roles. The manifest must match the complete Java cohort, so deleting a helper
@@ -770,6 +821,8 @@ rejecting failed, cancelled, or unexpectedly skipped work. It rejects missing or
 unknown tiers and requires every canonical scope to be explicitly `true` or
 `false`; incomplete classification cannot silently omit verification lanes.
 The aggregate remains cancellable so superseded runs release their slots.
+After successful classification, `Portable tests` starts a runner only when
+the code scope is selected. Every code tier requires its merged report to pass.
 Branch protection
 should require this aggregate, `Static checks`, `Portable tests`, and
 `Conventional PR title`. Title validation runs separately on PR opening,
@@ -810,8 +863,8 @@ its own complete result at the exact released revision.
 Package lanes assert the actual Node platform/architecture before verification
 and record those values with the Node version. The package matrix runs up to
 four jobs concurrently on independent hosted runners with explicit
-timeouts and per-runner Node heap/thread limits; Windows retains its curated
-capability lane. Package checks cover installation, CLI/MCP discovery,
+timeouts and per-runner Node heap and thread limits. Windows runs its curated
+capabilities and installed-package suites in separate jobs. Package checks cover installation, CLI/MCP discovery,
 target-free analysis, configuration backups/recovery, Evidence and owned
 lifecycle; Inspector checks execute source-owned loopback targets and special
 filename cases.
@@ -838,13 +891,10 @@ catalog, and managed-conformance metadata. Each shard still installs the locked
 dependencies and runs its assigned tests; full qualification enables coverage. It no longer
 regenerates the same metadata independently.
 
-The build job finds the newest trusted timing artifact for its tier
-(`test-timings-fast` or `test-timings-full`) from a successful default-branch
-push, schedule, or manual CI run, and includes that same report in each shard's
-snapshot. The bounded lookup verifies the producer. Pull-request runs and other
-branches are not producers. A tier with no qualifying artifact leaves history
-unset, and Vitest uses its own assignment. A later schedule that reuses
-qualification without uploading timings leaves the previous artifact in place.
+The build job includes any
+[verified timing history for its tier](development/testing.md#coverage-and-timing)
+in each shard's snapshot. A later schedule that reuses qualification without
+uploading timings leaves the previous artifact in place.
 
 Each tier keeps its own history because stale weights from another tier, or
 from before a large test change, unbalance the shards.

@@ -1,14 +1,12 @@
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { expect } from "vitest";
+import { z } from "zod";
 import { elf, thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import {
-  observeOwnedProcessGroups,
-  systemProcessOwnershipHost,
-} from "../../../src/process/ProcessOwnershipObservation.js";
+import { observeOwnedProcessGroups } from "../../../src/process/ProcessOwnershipObservation.js";
+import { testWaitDeadline, waitFor } from "../../support/testWait.js";
 import { resolveProcessScenarioRuntimePaths } from "../../../src/process/capture/ProcessScenarioRuntimeValidation.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 
@@ -39,7 +37,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for([
       await mkdir(path, { recursive: true });
     await writeFile(
       join(install, "Ghidra/application.properties"),
-      "application.version=12.1.4\napplication.java.min=21\n",
+      "application.version=12.2\napplication.java.min=25\n",
     );
     await writeFile(
       join(install, "support/analyzeHeadless"),
@@ -135,7 +133,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
     await mkdir(join(install, "Ghidra"), { recursive: true });
     await writeFile(
       join(install, "Ghidra/application.properties"),
-      "application.version=12.1.4\napplication.java.min=21\n",
+      "application.version=12.2\napplication.java.min=25\n",
     );
     await writeFile(
       join(jdk, "bin/java"),
@@ -145,49 +143,39 @@ process.on("SIGTERM", () => {});
 fs.writeFileSync(${JSON.stringify(`${started}.tmp`)}, JSON.stringify({ pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID }));
 fs.renameSync(${JSON.stringify(`${started}.tmp`)}, ${JSON.stringify(started)});
 setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) process.exit(0); }, 50);
-setTimeout(() => process.exit(92), 12000);
+setTimeout(() => process.exit(92), ${testWaitDeadline()});
 `,
       { mode: 0o700 },
     );
-    const pending = cli.run({
-      arguments: ["doctor", "--provider", "ghidra", "--json"],
-      environment: {
-        JAVA_HOME: jdk,
-        GHIDRA_INSTALL_DIR: install,
-        REA_LOG_LEVEL: "silent",
-      },
+    const receipt = z.object({
+      pid: z.number().int().positive(),
+      runId: z.string().min(1),
     });
-    // Capture the actual group while the selected process is alive; the PID
-    // alone is never used as cleanup authority. Release is a private protocol.
-    let identity: { pid: number; runId: string } | undefined;
-    let processGroupId: number | undefined;
-    try {
-      for (let attempt = 0; attempt < 80; attempt++) {
-        try {
-          identity = JSON.parse(
-            await readFile(started, "utf8"),
-          ) as typeof identity;
-        } catch (cause: unknown) {
-          if (
-            !(
-              cause instanceof Error &&
-              "code" in cause &&
-              cause.code === "ENOENT"
-            )
-          )
-            throw cause;
-        }
-        if (identity !== undefined) break;
-        await delay(50);
+    const readAcknowledgement = async () => {
+      try {
+        return receipt.parse(JSON.parse(await readFile(started, "utf8")));
+      } catch (cause: unknown) {
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          cause.code === "ENOENT"
+        )
+          return undefined;
+        throw cause;
       }
-      if (identity === undefined)
-        throw new Error("Selected Java command did not start");
-      expect(identity.runId).toEqual(expect.any(String));
-      processGroupId = (await systemProcessOwnershipHost.listProcesses()).find(
-        (entry) => entry.pid === identity?.pid,
-      )?.processGroupId;
-      expect(processGroupId).toBeDefined();
-      const result = await pending;
+    };
+    const observeGroup = async ({ pid, runId }: z.infer<typeof receipt>) =>
+      (await observeOwnedProcessGroups(runId, [pid])).get(pid);
+    let identity: z.infer<typeof receipt> | undefined;
+    try {
+      const result = await cli.run({
+        arguments: ["doctor", "--provider", "ghidra", "--json"],
+        environment: {
+          JAVA_HOME: jdk,
+          GHIDRA_INSTALL_DIR: install,
+          REA_LOG_LEVEL: "silent",
+        },
+      });
       expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
       expect(result.signal).toBeNull();
       expect(result.json).toMatchObject({
@@ -206,28 +194,20 @@ setTimeout(() => process.exit(92), 12000);
           }),
         ]),
       });
-      if (processGroupId !== undefined) {
-        const observed = await observeOwnedProcessGroups(identity.runId, [
-          processGroupId,
-        ]);
-        expect(observed.get(processGroupId)).toEqual({ state: "empty" });
-      }
+      // The POSIX owned-command launcher starts Java as its process-group leader.
+      // Read the durable acknowledgement after doctor settles, with the run ID
+      // that identifies the owned group even if its leader has already exited.
+      identity = await readAcknowledgement();
+      if (identity === undefined)
+        throw new Error("Selected Java command did not start");
+      expect(await observeGroup(identity)).toEqual({ state: "empty" });
     } finally {
       await writeFile(release, "release");
-      await pending;
-      if (identity !== undefined && processGroupId !== undefined) {
-        for (let attempt = 0; attempt < 40; attempt++) {
-          const observed = await observeOwnedProcessGroups(identity.runId, [
-            processGroupId,
-          ]);
-          if (observed.get(processGroupId)?.state === "empty") break;
-          await delay(50);
-        }
-        const observed = await observeOwnedProcessGroups(identity.runId, [
-          processGroupId,
-        ]);
-        expect(observed.get(processGroupId)).toEqual({ state: "empty" });
-      }
+      const acknowledged = identity ?? (await readAcknowledgement());
+      if (acknowledged !== undefined)
+        await waitFor(async () => {
+          expect(await observeGroup(acknowledged)).toEqual({ state: "empty" });
+        });
     }
   },
 );
@@ -260,7 +240,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
     await mkdir(join(install, "support"), { recursive: true });
     await writeFile(
       join(install, "Ghidra/application.properties"),
-      "application.version=12.1.4\napplication.java.min=21\n",
+      "application.version=12.2\napplication.java.min=25\n",
     );
     await writeFile(marker, "unexecuted");
     const launcher = `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "executed");\n`;

@@ -26,6 +26,8 @@ import type {
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import type { LimitRef } from "../domain/parseFailure.js";
+import type { MalformedTargetFailure } from "../domain/analysisErrorCore.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
@@ -42,10 +44,16 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Named admission whose recovery must not be inferred from other limit text. */
   readonly admission?: ArtifactAdmissionLimit;
   readonly readerLimit?: ArtifactReaderLimitFact;
+  readonly parserLimit?: LimitRef;
   /** For a `limit` failure, the release-fixed allowance that refused the input. */
   readonly fixedAllowance?: ArtifactFixedLimit;
   /** For an `integrity` failure, the check that failed, when the reader names it. */
   readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
+  /**
+   * For a `malformed` or `truncated` failure, the format owner's parsed facts.
+   * Set by {@link artifactParseFailure} from the owner's `ParseFailureError`.
+   */
+  readonly parseFailure?: MalformedTargetFailure | undefined;
 }
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
@@ -233,9 +241,15 @@ export interface ArtifactReader {
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
+    | "tar"
+    | "dds"
+    | "glb"
+    | "ktx"
+    | "ktx2"
     | "uimage"
     | "android-boot-image"
     | "android-ota-payload"
+    | "uefi"
     | "pyinstaller"
     | "dotnet-bundle"
     | "bun-standalone"
@@ -288,8 +302,10 @@ export class ArtifactReaderFailure extends Error {
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  readonly parserLimit: LimitRef | undefined;
   readonly fixedAllowance: ArtifactFixedLimit | undefined;
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
+  readonly parseFailure: MalformedTargetFailure | undefined;
 
   /** An `integrity` failure names the check that failed. */
   constructor(
@@ -339,8 +355,13 @@ export class ArtifactReaderFailure extends Error {
     this.boundary = options?.boundary;
     this.admission = options?.admission;
     this.readerLimit = options?.readerLimit;
+    this.parserLimit = options?.parserLimit;
     this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
+    this.parseFailure =
+      reason === "malformed" || reason === "truncated"
+        ? options?.parseFailure
+        : undefined;
   }
 
   /**
@@ -354,7 +375,9 @@ export class ArtifactReaderFailure extends Error {
     | "boundary"
     | "admission"
     | "readerLimit"
+    | "parserLimit"
     | "fixedAllowance"
+    | "parseFailure"
   > & { readonly integrityCheck: ArtifactIntegrityCheck | undefined } {
     return {
       ...(this.userMessage === undefined
@@ -368,9 +391,15 @@ export class ArtifactReaderFailure extends Error {
       ...(this.readerLimit === undefined
         ? {}
         : { readerLimit: this.readerLimit }),
+      ...(this.parserLimit === undefined
+        ? {}
+        : { parserLimit: this.parserLimit }),
       ...(this.fixedAllowance === undefined
         ? {}
         : { fixedAllowance: this.fixedAllowance }),
+      ...(this.parseFailure === undefined
+        ? {}
+        : { parseFailure: this.parseFailure }),
       integrityCheck: this.integrityCheck,
     };
   }
