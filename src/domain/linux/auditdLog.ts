@@ -173,6 +173,8 @@ class AuditdLogScanner {
   readonly #malformed: AuditRecordDiagnostic[] = [];
   #outOfOrderCount = 0;
   #duplicateCount = 0;
+  /** Sampled events whose type map exceeded the inline type limit. */
+  #typeSampleLimitedEventCount = 0;
   /** Every retained event seen out of sequence, not just the sampled ones. */
   #interleavedEventCount = 0;
   /** Records whose event already held its full digest quota, so not checked. */
@@ -255,6 +257,10 @@ class AuditdLogScanner {
     const events = this.#sampleOrder.map((key) =>
       this.#summarize(this.#events.get(key)!),
     );
+    if (this.#typeSampleLimitedEventCount > 0)
+      limitations.push(
+        `${String(AUDITD_INLINE_EVENT_TYPE_LIMIT)} record types are listed per sampled event, ordered by name; ${String(this.#typeSampleLimitedEventCount)} sampled event(s) hold more, so their record_types omits the remaining types even though record_count counts every record`,
+      );
     return ok({
       metadata: {
         kind: "auditd-log",
@@ -444,6 +450,8 @@ class AuditdLogScanner {
   }
 
   #summarize(event: PendingEvent): AuditEventSummary {
+    if (event.typeCounts.size > AUDITD_INLINE_EVENT_TYPE_LIMIT)
+      this.#typeSampleLimitedEventCount += 1;
     return {
       event_id: eventId(event),
       node: event.node ?? null,

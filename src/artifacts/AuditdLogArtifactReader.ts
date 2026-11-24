@@ -4,10 +4,12 @@ import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js
 import { auditdLogMetadataSchema } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
+  AUDITD_LOG_MAX_FILE_BYTES,
   createAuditdLogDecoder,
   type AuditdLogInventory,
 } from "../domain/linux/auditdLog.js";
 import {
+  artifactFixedLimitFailure,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
@@ -144,6 +146,17 @@ export class AuditdLogArtifactReader implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
+    if (failure.kind === "limit")
+      return artifactFixedLimitFailure(
+        {
+          name: "The auditd log file-size ceiling",
+          kind: "input",
+          limit: AUDITD_LOG_MAX_FILE_BYTES,
+          unit: "bytes",
+        },
+        `auditd log exceeds a fixed limit: ${failure.message}`,
+        failure.boundary ?? "capacity",
+      );
     return failure.kind === "format"
       ? new ArtifactReaderFailure(
           "format",

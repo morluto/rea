@@ -320,6 +320,18 @@ it("reports the tail event total as an upper bound when a run repeats", async ()
   );
 });
 
+it("names the type sample omission for a wide event", async () => {
+  const wide = Array.from({ length: 18 }, (_unused, index) =>
+    record(`T${String(index).padStart(2, "0")}`, 1700000000, 100, 1000, "x=1"),
+  );
+  const metadata = await metadataOf(`${wide.join("\n")}\n`);
+  expect(metadata.events[0]?.record_count).toBe(18);
+  expect(metadata.events[0]?.record_types).toHaveLength(16);
+  expect(metadata.limitations.join(" ")).toContain(
+    "record_types omits the remaining types",
+  );
+});
+
 it("stops retaining record digests within one event and says so", async () => {
   const eventLines = Array.from(
     { length: AUDITD_RETAINED_RECORD_LIMIT + 3 },
