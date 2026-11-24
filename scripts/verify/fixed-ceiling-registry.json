@@ -317,10 +317,10 @@
     }
   },
   "src/il2cpp/Il2cppMetadataProvider.ts": {
-    "\"The IL2CPP native-link allowance\"": {
+    "cause.reason === \"wasm-memory-capacity\" ? \"The wasm32 linear-memory reconstruction allowance\" : cause.reason === \"wasm-module-capacity\" ? \"The wasm32 module parser allowance\" : \"The IL2CPP native-link allowance\"": {
       "class": "pending",
       "issue": 14235,
-      "reason": "IL2CPP metadata input, native-link candidate and Ghidra seed allowances are resource policies; the ELF pointer index became max_native_index_bytes."
+      "reason": "IL2CPP metadata input, native-link candidate and Ghidra seed allowances, plus the wasm32 module parser and linear-memory reconstruction allowances, are resource policies; the ELF pointer index became max_native_index_bytes."
     },
     "\"the fixed IL2CPP input allowance\"": {
       "class": "pending",
