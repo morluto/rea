@@ -404,14 +404,23 @@ export const reconstructionObligationLedgerSchema = z
           message: "Advisory limitation kinds do not match the obligations",
         });
     }
+    // A ledger retained without kinds may also carry the status rule it was
+    // written under; a ledger with kinds is read by the current rule only.
+    const rules = kinds === undefined ? [false, true] : [false];
     const readings = reconstructionObligationClosureLimitationCounts(
       ledger.obligations,
       ledger.limitations,
       kinds,
-    ).map((count) => ({
-      status: reconstructionObligationLedgerStatus(ledger.obligations, count),
-      coverage: reconstructionObligationCoverage(count).status,
-    }));
+    ).flatMap((count) =>
+      rules.map((legacy) => ({
+        status: reconstructionObligationLedgerStatus(
+          ledger.obligations,
+          count,
+          legacy,
+        ),
+        coverage: reconstructionObligationCoverage(count).status,
+      })),
+    );
     const statusReadings = readings.filter(
       ({ status }) => status === ledger.status,
     );

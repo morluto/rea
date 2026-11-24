@@ -256,8 +256,9 @@ result does not depend on the order the records are listed.
 
 Observed runtime Evidence cited by a review is authority only for the
 artifact it observes. When the obligation names a target artifact, a cited
-process capture or other observed runtime record for another artifact, or for
-no known artifact, is listed with reference `state` `other-artifact`: it does
+process capture, other observed runtime record, or controlled-replay record
+for another artifact, or for no known artifact, is listed with reference
+`state` `other-artifact`: it does
 not satisfy the obligation's original authority, so `static-only` remains, and
 `summary.by_evidence_authority` does not count it.
 
@@ -409,10 +410,16 @@ retiring claims never makes a ledger `ready`. Proof that was supplied for a
 retired obligation is still checked: a failing fixture or verifier proof on
 its binding reports `fixture-failed` or `verifier-failed` and fails the
 ledger. An authenticated contradiction on a retired obligation reports a
-`contradiction` diagnostic and also fails the ledger. Residual unknowns and
-unavailable authority remain visible on it and keep the ledger `unknown`, as
-they would on an unretired claim, so retiring a claim never improves the
-ledger status. A contested retirement is not applied: when several reviewed
+`contradiction` diagnostic and also fails the ledger. Residual unknowns,
+unavailable authority, and duplicate definitions remain visible on it and keep
+the ledger `unknown`, as they would on an unretired claim, so retiring a claim
+never improves the ledger status. This reading applies to retired claims only:
+an active or `blocked` claim is read by its status, so a `blocked` claim with
+residual unknowns or unavailable authority does not by itself make the ledger
+`unknown`. A ledger retained without `limitation_kinds` predates these
+retirement rules and may also carry the status read before them, where only a
+`contradicted` or `unknown` status, a failed fixture or verifier, or a closure
+limitation decides it. A contested retirement is not applied: when several reviewed
 records name one obligation, every retiring one is reported as a
 `duplicate-definition` diagnostic that carries its disposition and reason, so
 no review reason is dropped, and the obligation stays `unknown`.

@@ -934,6 +934,54 @@ describe("reconstruction obligation review authority", () => {
       expect(replayCount(ledger)).toBe(ownArtifact ? 2 : 1);
     },
   );
+
+  it.each([
+    ["another artifact", "c".repeat(64), false],
+    ["the obligation's own artifact", APPLICATION_GRAPH_DIGESTS.asar, true],
+  ] as const)(
+    "counts a non-process controlled-replay record of %s cited by a review only for that artifact",
+    (_, sha256, ownArtifact) => {
+      const replay = createEvidence(
+        { path: "/fixture/replayed", sha256, format: "mach-o" },
+        { id: "fixture-replay", name: "Fixture replay", version: "1" },
+        {
+          operation: "replay_fixture",
+          parameters: {},
+          result: { replayed: true },
+          confidence: "observed",
+          authority: "controlled-replay",
+        },
+      );
+      const ledger = build(
+        request([replay], {
+          reviewed_obligations: [
+            {
+              ...reviewedObligation("obl.review.replay", replay.evidence_id),
+              target: {
+                artifact_sha256: APPLICATION_GRAPH_DIGESTS.asar,
+                application_node_id: null,
+                semantic_node_id: null,
+                location: "/reviewed/replay",
+              },
+            },
+          ],
+        }),
+      );
+
+      expect(ledger.obligations[0]?.authority_references).toEqual([
+        expect.objectContaining({
+          evidence_id: replay.evidence_id,
+          authority: "controlled-replay",
+          state: ownArtifact ? "reviewed" : "other-artifact",
+        }),
+      ]);
+      expect(
+        ledger.summary.by_evidence_authority.find(
+          ({ key }) => key === "controlled-replay",
+        )?.count,
+      ).toBe(ownArtifact ? 1 : 0);
+    },
+  );
 });
 
 it("keeps each semantic candidate bound to its own file and authority context", () => {

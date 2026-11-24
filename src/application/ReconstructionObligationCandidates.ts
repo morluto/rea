@@ -473,21 +473,25 @@ const graphReference = (
 /**
  * Runtime Evidence cited by a review is authority only for the artifact it
  * observes: when the obligation names a target artifact, Evidence observing
- * another (or no known) artifact is `other-artifact`.
+ * another (or no known) artifact is `other-artifact`. That includes
+ * controlled-replay records that are not process captures.
  */
 const reviewedEvidenceState = (
   evidence: Evidence,
   artifactSha256: string | null,
 ): ReconstructionObligation["authority_references"][number]["state"] => {
-  if (
+  const observed =
     evidenceSupportsOriginalAuthority(evidence, "process") ||
     (evidence.authority === "external-service" &&
-      evidence.confidence === "observed")
-  )
-    return artifactSha256 === null ||
-      observedArtifactSha256(evidence) === artifactSha256
-      ? "observed"
-      : "other-artifact";
+      evidence.confidence === "observed");
+  if (observed || evidence.authority === "controlled-replay") {
+    if (
+      artifactSha256 !== null &&
+      observedArtifactSha256(evidence) !== artifactSha256
+    )
+      return "other-artifact";
+    return observed ? "observed" : "reviewed";
+  }
   if (evidence.authority === "shipped-artifact") return "candidate";
   return "reviewed";
 };

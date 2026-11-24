@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import type {
-  ReconstructionObligationLedger,
-  ReconstructionObligationManifest,
-  ReviewedReconstructionObligation,
+import { reconstructionObligationLedgerClosureDigest } from "../domain/reconstructionObligationLedgerIntegrity.js";
+import {
+  reconstructionObligationLedgerSchema,
+  type ReconstructionObligationLedger,
+  type ReconstructionObligationManifest,
+  type ReviewedReconstructionObligation,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import {
   boundProofEvidence,
@@ -606,6 +608,98 @@ describe("reconstruction obligation retirement never improves the ledger", () =>
     expect(LEDGER_RANK[after.status]).toBeLessThanOrEqual(
       LEDGER_RANK[before.status],
     );
+  });
+});
+
+/** Re-commit a ledger as main retained it: no limitation kinds, given status. */
+const retainedFromMain = (
+  ledger: ReconstructionObligationLedger,
+  status: ReconstructionObligationLedger["status"],
+) => {
+  const {
+    limitation_kinds: _kinds,
+    closure_digest: _digest,
+    ...retained
+  } = ledger;
+  const legacy = { ...retained, status };
+  return {
+    ...legacy,
+    closure_digest: reconstructionObligationLedgerClosureDigest(legacy),
+  };
+};
+
+describe("reconstruction obligation ledgers retained from main", () => {
+  it.each([
+    ["a residual unknown", "residual-unknown"],
+    ["unavailable authority", "unavailable-authority"],
+  ] as const)(
+    "parses a blocked claim with %s stored open, unchanged",
+    (_, code) => {
+      const review = proofEvidence("blocked-residue");
+      const ledger = build(
+        request([review], {
+          reviewed_obligations: [
+            {
+              ...reviewedObligation("obl.review.blocked", review.evidence_id),
+              disposition: "blocked",
+              ...(code === "residual-unknown"
+                ? { residual_unknown_ids: ["unk.network"] }
+                : { unavailable_authority: ["Second run only."] }),
+            },
+          ],
+        }),
+      );
+      const retained = retainedFromMain(ledger, "open");
+
+      expect(retained).not.toHaveProperty("limitation_kinds");
+      expect(reconstructionObligationLedgerSchema.parse(retained)).toEqual(
+        retained,
+      );
+      // A blocked claim keeps main's status rule, so new output agrees.
+      expect(ledger.obligations[0]).toMatchObject({
+        required: true,
+        status: "blocked",
+      });
+      expect(codesOf(ledger.obligations[0])).toEqual(
+        expect.arrayContaining(["blocked", code]),
+      );
+      expect(ledger.status).toBe("open");
+    },
+  );
+
+  it("reads a retired claim with unavailable authority stored open only without limitation kinds", () => {
+    const capture = processEvidence({
+      residual_unknowns: [{ scope: "network", reason: "Second run only." }],
+    });
+    const review = proofEvidence("legacy-review");
+    const generated = build(request([capture])).obligations[0];
+    if (generated === undefined) throw new Error("Expected process obligation");
+    const ledger = build(
+      request([capture, review], {
+        reviewed_obligations: [
+          retired(generated.obligation_id, review.evidence_id, "out-of-scope"),
+        ],
+      }),
+    );
+    const retained = retainedFromMain(ledger, "open");
+    const { closure_digest: _digest, ...current } = ledger;
+    const relabeled = { ...current, status: "open" as const };
+
+    expect(ledger.status).toBe("unknown");
+    // Main read this ledger open; a ledger retained before limitation kinds
+    // keeps that reading.
+    expect(reconstructionObligationLedgerSchema.parse(retained)).toEqual(
+      retained,
+    );
+    // With limitation kinds recorded, retirement must not read as open.
+    const result = reconstructionObligationLedgerSchema.safeParse({
+      ...relabeled,
+      closure_digest: reconstructionObligationLedgerClosureDigest(relabeled),
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map(({ path }) => path)).toContainEqual([
+      "status",
+    ]);
   });
 });
 

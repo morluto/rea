@@ -197,10 +197,13 @@ export const reconstructionObligationClosureLimitationCounts = (
 /**
  * Derive closure status from required obligations, their diagnostic facts,
  * and the number of limitations that bound closure (advisory ones excluded).
+ * `legacy` is the rule a ledger retained before limitation kinds were
+ * recorded was written under, where diagnostics never outranked statuses.
  */
 export const reconstructionObligationLedgerStatus = (
   obligations: readonly ReconstructionObligation[],
   closureLimitationCount: number,
+  legacy = false,
 ): ReconstructionObligationLedger["status"] => {
   if (obligations.length === 0) return "unknown";
   const requiredOpen = obligations.filter(
@@ -213,29 +216,37 @@ export const reconstructionObligationLedgerStatus = (
     requiredOpen.some(
       ({ status, diagnostics }) =>
         status === "contradicted" ||
-        hasReconstructionObligationDiagnostic(diagnostics, "contradiction") ||
+        (!legacy &&
+          hasReconstructionObligationDiagnostic(
+            diagnostics,
+            "contradiction",
+          )) ||
         hasReconstructionObligationDiagnostic(diagnostics, "verifier-failed") ||
         hasReconstructionObligationDiagnostic(diagnostics, "fixture-failed"),
     )
   )
     return "failed";
   if (closureLimitationCount > 0) return "unknown";
+  // Only retirement may hide unknown residue behind its status; any other
+  // claim is read by its status alone, as ledgers always have been.
   if (
     requiredOpen.some(
       ({ status, diagnostics }) =>
         status === "unknown" ||
-        hasReconstructionObligationDiagnostic(
-          diagnostics,
-          "duplicate-definition",
-        ) ||
-        hasReconstructionObligationDiagnostic(
-          diagnostics,
-          "residual-unknown",
-        ) ||
-        hasReconstructionObligationDiagnostic(
-          diagnostics,
-          "unavailable-authority",
-        ),
+        (!legacy &&
+          status === "out-of-scope" &&
+          (hasReconstructionObligationDiagnostic(
+            diagnostics,
+            "duplicate-definition",
+          ) ||
+            hasReconstructionObligationDiagnostic(
+              diagnostics,
+              "residual-unknown",
+            ) ||
+            hasReconstructionObligationDiagnostic(
+              diagnostics,
+              "unavailable-authority",
+            ))),
     )
   )
     return "unknown";
