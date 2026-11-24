@@ -278,7 +278,11 @@ goMcpTest(
         name: "inspect_go_binary",
         arguments: { path },
       });
-      expect(parseMcpToolError(response)).toMatchObject({
+      expect(
+        response.isError,
+        `${fixture.name} returned a non-error result: ${JSON.stringify(response).slice(0, 2000)}`,
+      ).toBe(true);
+      expect(parseMcpToolError(response), fixture.name).toMatchObject({
         error: {
           code: fixture.code,
           details: {

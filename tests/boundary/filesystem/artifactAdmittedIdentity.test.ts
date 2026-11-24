@@ -65,7 +65,7 @@ it.skipIf(process.platform === "win32").each(["zip", "asar"])(
           ok: false,
           error: {
             reason: "integrity",
-            integrityCheck: "container-identity",
+            integrityCheck: "admitted-identity",
           },
         });
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -167,7 +167,7 @@ it.each([
           ok: false,
           error: {
             reason: "integrity",
-            integrityCheck: "container-identity",
+            integrityCheck: "admitted-identity",
           },
         });
       }
@@ -234,7 +234,7 @@ it.skipIf(process.platform === "win32")(
           ok: false,
           error: {
             reason: "integrity",
-            integrityCheck: "container-identity",
+            integrityCheck: "admitted-identity",
           },
         });
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -344,7 +344,7 @@ it("checks embedded native packs before acceptance while preserving unsupported 
       ok: false,
       error: {
         reason: "integrity",
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
       },
     });
     await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });

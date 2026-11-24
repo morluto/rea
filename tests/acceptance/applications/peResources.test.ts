@@ -525,7 +525,9 @@ cliTest(
       ).toBe(false);
     }
     const damaged = peResourceFixture();
-    damaged.bytes.writeUInt32LE(17, damaged.directoryAt + 4);
+    // A subdirectory entry pointing back at the root is a cycle. A short
+    // directory Size is not damage: the loader ignores it.
+    damaged.bytes.writeUInt32LE(0x80000000, (damaged.entryOffsets[0] ?? 0) + 4);
     const badPath = join(root, "damaged.exe");
     await writeFile(badPath, damaged.bytes);
     const rejected = await call({ path: badPath });

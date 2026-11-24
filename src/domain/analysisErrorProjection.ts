@@ -28,11 +28,15 @@ import {
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
 import {
+  TARGET_FAILURE_PROJECTIONS,
   targetFailureDetails,
   targetFailureRetry,
   type TargetFailureRetry,
 } from "./targetFailure.js";
-import { ArtifactOperationError } from "./artifactOperationError.js";
+import {
+  ArtifactOperationError,
+  integrityCheckMeansChanged,
+} from "./artifactOperationError.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -595,6 +599,9 @@ const projectError = (
     code !== "cleanup_incomplete"
       ? { retry: targetFailureRetry(error.failure) }
       : {}),
+    ...(error instanceof ArtifactOperationError && code === "artifact_changed"
+      ? { retry: TARGET_FAILURE_PROJECTIONS.changed.retry }
+      : {}),
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
   };
@@ -742,6 +749,10 @@ const artifactStateErrorDetails = (
     return {
       operation: error.operation,
       reason: error.reason,
+      ...(error.reason === "integrity" &&
+      integrityCheckMeansChanged(error.integrityCheck)
+        ? { failure_kind: "changed" }
+        : {}),
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),

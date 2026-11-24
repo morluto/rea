@@ -128,7 +128,7 @@ export const classifyAndHashRootForInventory = async (
       "integrity",
       `Artifact root changed after target admission: expected an admitted file at ${path}, observed a directory`,
       {
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
         userMessage:
           "The opened file was replaced by a directory. Select the intended artifact and reopen it before retrying.",
       },
@@ -493,10 +493,10 @@ const readRootFatSliceHeaders = async (
   evidence: ArtifactClassificationEvidence,
   signal?: AbortSignal,
 ): Promise<ArtifactClassificationEvidence> => {
-  const existing = evidence.fatSliceHeaders;
-  if (existing === undefined) return evidence;
-  const fatSliceHeaders = await readFatSliceHeaders(
-    existing.header,
+  const { fatHeader } = evidence;
+  if (fatHeader.state !== "parsed") return evidence;
+  const { sliceHeadersByOffset } = await readFatSliceHeaders(
+    fatHeader,
     async (offset, length) => {
       const thinHeader = await readFileHandleRange(handle, offset, length, () =>
         abortIfNeeded(signal),
@@ -504,9 +504,9 @@ const readRootFatSliceHeaders = async (
       abortIfNeeded(signal);
       return thinHeader;
     },
-    { existing: existing.sliceHeadersByOffset, minSliceSize: 4 },
+    { existing: evidence.fatSliceHeadersByOffset, minSliceSize: 4 },
   );
-  return { ...evidence, fatSliceHeaders };
+  return { ...evidence, fatSliceHeadersByOffset: sliceHeadersByOffset };
 };
 
 /** Read the missing PE record bytes requested by bounded MZ classification. */
@@ -592,7 +592,7 @@ export const assertAdmittedRootDigest = (
       "integrity",
       `Artifact root changed after target admission at ${path}: expected ${expected}, observed ${observed}`,
       {
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
         userMessage:
           "The artifact changed after it was opened. Reopen the selected artifact, then retry.",
       },

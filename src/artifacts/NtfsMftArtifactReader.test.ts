@@ -14,7 +14,11 @@ import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 const MFT_DEFAULT_RECORD_BYTES = 1024;
 import { linkedMftFixture } from "../../tests/fixtures/ntfsMftExtension.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
-import { ArtifactFileSource } from "../resources/index.js";
+import {
+  ArtifactFileSource,
+  translateArtifactFailure,
+} from "../resources/index.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 /** A 1 KiB FILE record whose update sequence array covers both sectors. */
 const recordBytes = (options: {
@@ -344,9 +348,33 @@ it("reports a $MFT stream that shrinks during decoding as a changed file, not ma
       return admitted;
     });
   try {
-    await expect(
-      reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    const failure = await reader
+      .entries()
+      [Symbol.asyncIterator]()
+      .next()
+      .then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+    expect(failure).toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
+    // The public projection names the model's kind: a changed target.
+    expect(
+      projectAnalysisError(
+        translateArtifactFailure(
+          "inspect_artifact",
+          "/selected/artifact",
+          failure,
+        ),
+      ),
+    ).toMatchObject({
+      code: "artifact_changed",
+      retry: "backoff",
+      retryable: true,
+      details: { failure_kind: "changed" },
+    });
   } finally {
     spy.mockRestore();
     await reader.close();
