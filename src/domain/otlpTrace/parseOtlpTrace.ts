@@ -52,6 +52,28 @@ const retainedRaw = (
   return parsed.data;
 };
 
+/** A repeated field may be omitted when it is empty; a wrong-typed value stays unknown. */
+const elementCount = (value: Json): number | null => {
+  if (!isRecord(value)) return null;
+  if (value.values === undefined) return 0;
+  return Array.isArray(value.values) ? value.values.length : null;
+};
+
+/** A value retained as raw evidence is refused when JSON.parse rounded it into
+ * an integer, which would otherwise report a number the export never held. */
+const retainedNumber = (
+  rawValue: Json,
+  kind: string,
+  capture: RawCapture,
+): boolean => {
+  if (!isRecord(rawValue)) return false;
+  const value = rawValue[kind];
+  if (typeof value !== "number" || !Number.isInteger(value)) return false;
+  if (capture.lossyNumber?.(rawValue, kind) !== true) return false;
+  capture.problem ??= `The numeric ${kind} at ${capture.pointer} cannot be verified exactly within the numeric limits; use the verified source file.`;
+  return true;
+};
+
 /** OTLP JSON encodes 64-bit integers as decimal strings. */
 const UINT64_MAX = (1n << 64n) - 1n;
 const INT64_MAX = (1n << 63n) - 1n;
@@ -181,6 +203,7 @@ const readAttribute = (
   const value = kind === undefined ? undefined : rawValue[kind];
   switch (kind) {
     case "stringValue":
+      if (retainedNumber(rawValue, kind, capture)) return { ...empty, value_kind: "string" };
       return {
         ...empty,
         value_kind: "string",
@@ -193,6 +216,7 @@ const readAttribute = (
             : retainedRaw(value, capture, "attribute"),
       };
     case "boolValue":
+      if (retainedNumber(rawValue, kind, capture)) return { ...empty, value_kind: "bool" };
       return {
         ...empty,
         value_kind: "bool",
@@ -232,6 +256,7 @@ const readAttribute = (
       };
     }
     case "bytesValue":
+      if (retainedNumber(rawValue, kind, capture)) return { ...empty, value_kind: "bytes" };
       return {
         ...empty,
         value_kind: "bytes",
@@ -249,19 +274,13 @@ const readAttribute = (
       return {
         ...empty,
         value_kind: "array",
-        element_count:
-          isRecord(value) && Array.isArray(value.values)
-            ? value.values.length
-            : null,
+        element_count: elementCount(value),
       };
     case "kvlistValue":
       return {
         ...empty,
         value_kind: "key-value-list",
-        element_count:
-          isRecord(value) && Array.isArray(value.values)
-            ? value.values.length
-            : null,
+        element_count: elementCount(value),
       };
     default:
       return { ...empty, value_kind: "empty" };

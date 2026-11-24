@@ -67,6 +67,48 @@ it.each([
   },
 );
 
+it.each(["stringValue", "boolValue", "bytesValue"])(
+  "refuses a rounded JSON number %s retained as raw evidence",
+  async (field) => {
+    const input =
+      `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","attributes":[{"key":"count","value":{"${field}":9007199254740993}}]}]}]}]}`;
+    const path = join(
+      await createTestTempDirectory("rea-otlp-raw-number-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const result = await inspectOtlpTraceEvidence({ path }, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected numeric refusal");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(input).digest("hex"),
+    });
+  },
+);
+
+it("keeps a fractional JSON number retained as raw evidence", async () => {
+  const input =
+    '{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","attributes":[{"key":"count","value":{"stringValue":1.5}}]}]}]}]}';
+  const path = join(
+    await createTestTempDirectory("rea-otlp-raw-fraction-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("Expected an inventory");
+  expect(result.value.evidence.normalized_result).toMatchObject({
+    spans: [{ attributes: [{ string_value: null, string_value_raw: 1.5 }] }],
+  });
+});
+
 it.each(["timestamp", "span attribute", "resource attribute"])(
   "retains the file identity when a rejected %s value cannot fit Evidence",
   async (kind) => {

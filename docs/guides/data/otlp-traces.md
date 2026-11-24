@@ -67,9 +67,11 @@ completeness is unknown, the live collector is not contacted, protobuf encodings
 are unsupported and clock skew is not corrected. An absent span never proves that
 an operation did not occur.
 
-File admission is 32 MiB by default (`max_file_bytes`) and the export-level span
-allowance is 50,000. Exceeding either is reported as a diagnostic and as a
-limitation; it never silently shortens the inventory without saying so.
+File admission is 32 MiB by default (`max_file_bytes`); a larger file is refused
+before parsing and the inspection fails with a resource-constraint error naming
+the `file-size` limit, never a partial inventory. The export-level span allowance
+is 50,000 and behaves differently: spans beyond it are dropped from the inventory
+and reported as a diagnostic with a matching limitation.
 
 Diagnostics retain the first 1000 findings in processing order, sorted by ID
 for display. If more occur, a limitation gives the omitted count; later findings

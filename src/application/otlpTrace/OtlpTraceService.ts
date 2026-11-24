@@ -126,12 +126,13 @@ const decodeExport = (
       ),
     );
   try {
-    // If there are no escapes and no numeric candidate at any relevant key,
-    // the native fast parser cannot lose an integer the OTLP reader consumes.
-    // Escaped keys must take the loss-aware path even when no literal matches.
+    // If there are no escapes and no numeric candidate at a key the reader
+    // consumes — whether as a parsed number or as retained raw evidence — the
+    // native fast parser cannot lose an integer. Escaped keys must take the
+    // loss-aware path even when no literal matches.
     if (
       !text.includes("\\") &&
-      !/"(?:parentSpanId|startTimeUnixNano|endTimeUnixNano|intValue)"\s*:\s*-?[0-9]/u.test(
+      !/"(?:parentSpanId|startTimeUnixNano|endTimeUnixNano|intValue|stringValue|boolValue|bytesValue)"\s*:\s*-?[0-9]/u.test(
         text,
       )
     )

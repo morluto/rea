@@ -12,10 +12,24 @@ type Plan =
       readonly item: Plan;
       readonly attributes?: "span" | "resource";
     }
-  | { readonly kind: "number" };
+  | {
+      readonly kind: "number";
+      // A field kept as raw evidence holds whatever JSON.parse produced, so a
+      // rounded literal only matters when the value reads as an integer.
+      readonly retained?: true;
+    };
 
 const numeric: Plan = { kind: "number" };
-const value: Plan = { kind: "object", fields: { intValue: numeric } };
+const retainedNumeric: Plan = { kind: "number", retained: true };
+const value: Plan = {
+  kind: "object",
+  fields: {
+    intValue: numeric,
+    stringValue: retainedNumeric,
+    boolValue: retainedNumeric,
+    bytesValue: retainedNumeric,
+  },
+};
 const attribute: Plan = { kind: "object", fields: { value } };
 const attributes = (kind: "span" | "resource"): Plan => ({
   kind: "array",
@@ -137,9 +151,16 @@ export const scanOtlpNumbers = (
             (text[from] !== undefined &&
               text[from]! >= "0" &&
               text[from]! <= "9");
+          // A retained field only has to be exact when it reads as an integer;
+          // rounding a literal the parser never turns into a number is evidence
+          // the source file still holds.
+          const integral =
+            child.retained !== true ||
+            (typeof current === "number" && Number.isInteger(current));
           if (
             typeof current === "number" &&
             numericSource &&
+            integral &&
             (end - from > 256 || !exact(current, text.slice(from, end)))
           ) {
             if (marked >= OTLP_MAX_LOSSY_FIELDS)

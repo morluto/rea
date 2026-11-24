@@ -284,6 +284,37 @@ describe("parseOtlpTrace attributes", () => {
     });
   });
 
+  it("reports an omitted values field as an empty collection", () => {
+    // trace.proto omits an empty repeated field, so a missing `values` is an
+    // empty array. A present value of the wrong type stays unknown.
+    const report = parse(
+      envelope([
+        span({
+          attributes: [
+            { key: "empty-array", value: { arrayValue: {} } },
+            { key: "empty-kvlist", value: { kvlistValue: {} } },
+            { key: "wrong-typed", value: { arrayValue: { values: "nope" } } },
+          ],
+        }),
+      ]),
+    );
+    const attributes = new Map(
+      report.spans[0]!.attributes.map((a) => [a.key, a]),
+    );
+    expect(attributes.get("empty-array")).toMatchObject({
+      value_kind: "array",
+      element_count: 0,
+    });
+    expect(attributes.get("empty-kvlist")).toMatchObject({
+      value_kind: "key-value-list",
+      element_count: 0,
+    });
+    expect(attributes.get("wrong-typed")).toMatchObject({
+      value_kind: "array",
+      element_count: null,
+    });
+  });
+
   it("keeps equal-length byte values distinct", () => {
     const report = parse(
       envelope([
