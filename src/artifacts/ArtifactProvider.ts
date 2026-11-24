@@ -226,7 +226,7 @@ class BundleResourceArtifactClient implements AnalysisClient {
       return err(
         translateArtifactFailure(
           operation as ArtifactAnalysisOperation,
-          this.root.canonicalPath,
+          this.root.callerPath,
           cause,
         ),
       );
