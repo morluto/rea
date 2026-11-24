@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 import {
   BINARY_ARCHITECTURES,
@@ -156,6 +157,8 @@ const imageSchema = z.strictObject({
   byte_order: z.enum(["little", "big"]).nullable(),
   machine: uint.nullable(),
   slice: sliceSchema.nullable(),
+  /** PE images only. */
+  image_base: peImageBaseSchema,
   rows: z.array(rowSchema),
 });
 export type BinaryHardeningImage = z.infer<typeof imageSchema>;

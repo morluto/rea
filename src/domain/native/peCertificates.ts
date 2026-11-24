@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
@@ -139,6 +140,7 @@ export const peCertificatesSchema = z.strictObject({
   }),
   format: z.enum(["pe32", "pe32-plus"]),
   machine: uint,
+  image_base: peImageBaseSchema,
   table: z
     .strictObject({
       location: range,

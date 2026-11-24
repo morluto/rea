@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
@@ -59,6 +60,7 @@ export const peResourcesSchema = z.strictObject({
   }),
   format: z.enum(["pe32", "pe32-plus"]),
   machine: uint,
+  image_base: peImageBaseSchema,
   directory: z
     .strictObject({
       rva: uint,

@@ -5,6 +5,7 @@ import { isUtf8 } from "node:buffer";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
 import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 /** ELF strings declare bytes rather than an encoding; Latin-1 is only a lossless display fallback. */
 export const decodeElfExportName = (bytes: Buffer) => {
@@ -135,6 +136,7 @@ export const peNativeExportsSchema = z.strictObject({
   format: z.literal("pe"),
   architecture: z.string().min(1),
   bits: z.union([z.literal(32), z.literal(64)]),
+  image_base: peImageBaseSchema,
   /** Null when the image declares no export directory. */
   export_directory: z
     .strictObject({
