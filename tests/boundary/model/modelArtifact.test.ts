@@ -26,12 +26,10 @@ import {
   safetensorsFixture,
 } from "../../fixtures/model/model.js";
 
-/** A malformed model header is an invalid `path`, like every format failure. */
-const INVALID_FORMAT = {
-  _tag: "AnalysisInputError",
-  issues: [
-    expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
-  ],
+/** A malformed model header is a malformed target, like every format failure. */
+const MALFORMED_TARGET = {
+  _tag: "AnalysisMalformedTargetError",
+  operation: "inspect_model_artifact",
 } as const;
 
 const hash = (bytes: Buffer) =>
@@ -96,7 +94,7 @@ it("continues refusing the unsupported big-endian GGUF v2 layout", async () => {
   const result = await provider.inspect({ path, hash: "header" });
   if (result.ok) throw new Error("Big-endian GGUF v2 admitted");
   expect(result.error).toMatchObject({
-    ...INVALID_FORMAT,
+    ...MALFORMED_TARGET,
   });
 });
 
@@ -225,7 +223,7 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Expected format refusal");
     expect(result.error).toMatchObject({
-      ...INVALID_FORMAT,
+      ...MALFORMED_TARGET,
     });
   },
 );
@@ -276,7 +274,7 @@ it.each([0, 1, 2, 4, 12])(
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Invalid alignment accepted");
     expect(result.error).toMatchObject({
-      ...INVALID_FORMAT,
+      ...MALFORMED_TARGET,
     });
   },
 );
@@ -301,7 +299,7 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Invalid metadata key accepted");
     expect(result.error).toMatchObject({
-      ...INVALID_FORMAT,
+      ...MALFORMED_TARGET,
     });
   },
 );
@@ -394,7 +392,7 @@ it("separates impossible string lengths from nesting capacity", async () => {
   const invalid = await providerAt(oversized.bytes);
   expect(
     await invalid.provider.inspect({ path: invalid.path, hash: "header" }),
-  ).toMatchObject({ ok: false, error: INVALID_FORMAT });
+  ).toMatchObject({ ok: false, error: MALFORMED_TARGET });
   for (const [label, bytes, allowance] of [
     ["nesting", deep.bytes, "32 array frames"],
   ] as const) {
@@ -671,13 +669,8 @@ it.each(ggufKLayouts)(
     const rejected = await provider.inspect({ path, hash: "header" });
     if (rejected.ok) throw new Error("Incomplete common K row admitted");
     expect(rejected.error).toMatchObject({
-      ...INVALID_FORMAT,
-      issues: [
-        expect.objectContaining({
-          reason: "invalid_format",
-          message: expect.stringContaining("multiple of 64 elements"),
-        }),
-      ],
+      ...MALFORMED_TARGET,
+      failure: { detail: expect.stringContaining("multiple of 64 elements") },
     });
   },
 );
@@ -859,7 +852,7 @@ it("validates booleans beyond an array preview without allocating the full value
   const result = await provider.inspect({ path, hash: "header" });
   if (result.ok) throw new Error("Invalid omitted boolean was accepted");
   expect(result.error).toMatchObject({
-    ...INVALID_FORMAT,
+    ...MALFORMED_TARGET,
   });
 });
 
@@ -942,13 +935,10 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Invalid omitted UTF-8 string was accepted");
     expect(result.error).toMatchObject({
-      ...INVALID_FORMAT,
-      issues: [
-        expect.objectContaining({
-          reason: "invalid_format",
-          message: expect.stringContaining("GGUF string is not valid UTF-8"),
-        }),
-      ],
+      ...MALFORMED_TARGET,
+      failure: {
+        detail: expect.stringContaining("GGUF string is not valid UTF-8"),
+      },
     });
   },
 );
@@ -1214,17 +1204,14 @@ const malformed = [
         .bytes,
   ],
 ] as const;
-it.each(malformed)(
-  "rejects %s as an invalid_format path",
-  async (_name, make) => {
-    const { provider, path } = await providerAt(make());
-    const result = await provider.inspect({ path, hash: "header" });
-    if (result.ok) throw new Error("Malformed model was accepted");
-    expect(result.error).toMatchObject({
-      ...INVALID_FORMAT,
-    });
-  },
-);
+it.each(malformed)("rejects %s as a malformed target", async (_name, make) => {
+  const { provider, path } = await providerAt(make());
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Malformed model was accepted");
+  expect(result.error).toMatchObject({
+    ...MALFORMED_TARGET,
+  });
+});
 
 it("retains GGUF representation capacity when declared string bytes can fit", async () => {
   const base = ggufFixture({ tensors: [] });
@@ -1305,7 +1292,7 @@ it.each([
       else await handle.truncate(stringEnd);
       const malformed = await provider.inspect({ path, hash: "header" });
       if (malformed.ok) throw new Error("Missing GGUF framing was accepted");
-      expect.soft(malformed.error).toMatchObject(INVALID_FORMAT);
+      expect.soft(malformed.error).toMatchObject(MALFORMED_TARGET);
 
       await handle.write(tail, 0, tail.length, stringEnd);
       if (following === "tensor descriptor")
@@ -1352,7 +1339,7 @@ it("retains GGUF declarations and metadata when storage overlap is refused", asy
   const result = await provider.inspect({ path, hash: "header" });
   if (result.ok) throw new Error("Overlapping tensors admitted");
   expect(result.error).toMatchObject({
-    ...INVALID_FORMAT,
+    ...MALFORMED_TARGET,
   });
   const evidence = parseEvidence(result.error.partialObservation);
   expect(evidence.subject.identity.kind).toBe("unknown");
@@ -1501,7 +1488,7 @@ it("reports a truncated safetensors header whose length resembles a pickle marke
   const result = await provider.inspect({ path, hash: "header" });
   if (result.ok) throw new Error("Truncated model was accepted");
   expect(result.error).toMatchObject({
-    ...INVALID_FORMAT,
+    ...MALFORMED_TARGET,
   });
 });
 
@@ -1705,7 +1692,7 @@ it.each([false, true])(
       const { provider, path } = await providerAt(bytes);
       expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
         ok: false,
-        error: INVALID_FORMAT,
+        error: MALFORMED_TARGET,
       });
     }
   },
@@ -1726,7 +1713,7 @@ it("rejects impossible safetensors header and data extents before numeric conver
     const { provider, path } = await providerAt(bytes);
     expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
       ok: false,
-      error: INVALID_FORMAT,
+      error: MALFORMED_TARGET,
     });
   }
 });
@@ -1740,7 +1727,7 @@ it("rejects a tensor directory whose old 20-byte estimate fits but fixed fields 
   await truncate(path, 24 + 65537 * 20);
   expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
     ok: false,
-    error: INVALID_FORMAT,
+    error: MALFORMED_TARGET,
   });
 });
 
@@ -1762,7 +1749,7 @@ it.each([false, true])(
     );
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Truncated GGUF directory admitted");
-    expect(result.error).toMatchObject(INVALID_FORMAT);
+    expect(result.error).toMatchObject(MALFORMED_TARGET);
     expect(
       parseEvidence(result.error.partialObservation).normalized_result,
     ).toMatchObject({ declared_tensor_count: 2, tensor_declarations: [] });

@@ -75,20 +75,17 @@ it("inflates section names once per artifact while preserving build-ID compariso
 });
 
 describe("ELF debug-link stable filesystem boundary", () => {
-  it("reports non-file and malformed ELF selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-files-");
     const path = join(root, "prog");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elfDebugLinkFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createElfDebugLinkService();
     try {
       for (const [candidate, reason] of [
         [root, "invalid_format"],
         [alias, "invalid_format"],
-        [malformed, "invalid_format"],
         [join(root, "missing"), "invalid_value"],
         [join(path, "child"), "invalid_value"],
       ] as const) {

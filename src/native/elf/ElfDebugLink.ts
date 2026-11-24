@@ -1,14 +1,19 @@
 import { crc32 } from "node:zlib";
 
 import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  ArtifactReaderFailure,
   assertArtifactReadActive,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
-import { hasElfMagic } from "../../domain/binaryContainer.js";
+import {
+  hasElfMagic,
+  BinaryReader,
+  type ImageSection,
+  BinaryResourceFailure,
+} from "../../domain/binaryContainer.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   zstandardFrameAllowanceCause,
@@ -30,12 +35,6 @@ import {
   type ElfDebugLink,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
-import {
-  BinaryReader,
-  type ImageSection,
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../../domain/binaryContainer.js";
 import {
   readElfImage,
   readElfImageCooperative,
@@ -446,12 +445,7 @@ const observeBuildId = (
       zstandardFrameAllowanceCause(cause) !== undefined
     )
       throw cause;
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
-      return unknownBuildId(
-        "note_tables_malformed",
-        `ELF note tables could not be decoded: ${cause.message}`,
-      );
-    if (cause instanceof BinaryFormatFailure)
+    if (cause instanceof ParseFailureError && cause.kind !== "limit")
       return unknownBuildId(
         cause.kind === "unsupported"
           ? "note_tables_unsupported"

@@ -1,8 +1,8 @@
 # Offline WebAssembly artifacts
 
 `inspect_wasm_artifact` / `inspect-wasm-artifact` inspects explicitly selected
-local WASM bytes using caller-supplied WABT 1.0.42 or a later 1.0.x release
-(verified with 1.0.42). No active binary target is required. REA does not install tools or fetch artifacts and does not execute WASM.
+local WASM bytes using caller-supplied WABT tools
+([accepted releases](#configure-wabt)). No active binary target is required. REA does not install tools or fetch artifacts and does not execute WASM.
 
 `open_binary` is not the WASM inspection route. A recognized WASM v1 header
 returns `target_unavailable` with category `unsupported_target` and constraint
@@ -17,6 +17,8 @@ The recognized WASM header is checked before automatic database routing from a
 .hop filename. Renaming a module to .hop therefore keeps the static-inspection
 diagnostic. An explicit database selection or raw/COM format selection retains
 the caller's requested interpretation; ordinary .hop database routing is unchanged.
+
+## Configure WABT
 
 Set `REA_WABT_BIN_DIRECTORY` to an absolute directory containing executable
 `wasm-validate`, `wasm-objdump` and `wasm2wat` (with `.exe` on Windows). Missing
@@ -41,6 +43,8 @@ CLI calls, set the environment before the next invocation. For
 MCP, change the server's launch environment and restart/reconnect that server;
 exporting a variable in a different shell does not update a running server.
 REA never installs tools or relaxes version admission to recover.
+
+## Inspect a module
 
 ```bash
 REA_WABT_BIN_DIRECTORY=/absolute/wabt/bin rea inspect-wasm-artifact \

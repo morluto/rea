@@ -6,10 +6,7 @@ import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import {
-  ArtifactReaderFailure,
-  assertArtifactReadActive,
-} from "../../resources/index.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   readElfFixedHeader,
   type ElfFixedHeader,
@@ -36,7 +33,12 @@ import {
   BinaryFormatFailure,
   BinaryReader,
 } from "../../domain/binaryContainer.js";
-import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+  truncatedInput,
+} from "../../domain/parseFailure.js";
 import {
   decodeElfSectionNameRequest,
   decodeElfSectionNameRequestCooperative,
@@ -82,8 +84,13 @@ interface TextBudget {
   readonly scans: Map<string, number>;
 }
 
+// The image's bytes, not the request, violate the format: a target refusal.
 const fail = (message: string): never => {
-  throw new ArtifactReaderFailure("format", message);
+  throw malformedInput("elf", message);
+};
+
+const failTruncated = (message: string): never => {
+  throw truncatedInput("elf", message);
 };
 
 const chargeText = (
@@ -1393,7 +1400,7 @@ const readNoteWindow = function* (
   length: number,
 ): Generator<NoteRangeRead, Buffer, Buffer> {
   const bytes = yield { kind: "read", offset, length };
-  if (bytes.length !== length) fail("ELF note range is truncated.");
+  if (bytes.length !== length) failTruncated("ELF note range is truncated.");
   return bytes;
 };
 
@@ -1495,7 +1502,8 @@ export function* readGnuPropertyWordsSteps(
     let window = new BinaryReader(Buffer.alloc(0), little, "elf-notes");
     while (cursor < size) {
       assertArtifactReadActive(signal);
-      if (size - cursor < 8) fail("ELF GNU property record is truncated.");
+      if (size - cursor < 8)
+        failTruncated("ELF GNU property record is truncated.");
       if (cursor + Math.min(12, size - cursor) > base + window.bytes.length) {
         base = cursor;
         window = new BinaryReader(
@@ -1513,7 +1521,8 @@ export function* readGnuPropertyWordsSteps(
       if (dataSize > size - cursor - 8)
         fail("ELF GNU property data extends outside the note descriptor.");
       const step = Math.ceil((8 + dataSize) / propertyAlign) * propertyAlign;
-      if (cursor + step > size) fail("ELF GNU property record is truncated.");
+      if (cursor + step > size)
+        failTruncated("ELF GNU property record is truncated.");
       if (
         type === GNU_PROPERTY_X86_FEATURE_1_AND ||
         type === GNU_PROPERTY_AARCH64_FEATURE_1_AND
