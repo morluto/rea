@@ -29,8 +29,12 @@ for (const bits of [32, 64] as const) {
         });
         expect(result.exitCode).toBe(1);
         expect(result.json).toMatchObject({
-          code: "invalid_request",
-          details: { operation: "inspect_pe_load_config" },
+          code: "unsupported_target",
+          details: {
+            operation: "inspect_pe_load_config",
+            path,
+            format_failure: "malformed",
+          },
         });
         const response = await call("inspect_pe_load_config", { path });
         expect(response.isError).toBe(true);

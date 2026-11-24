@@ -319,12 +319,12 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: { operation: "inspect_rust_binary" },
     });
     const response = await call("inspect_rust_binary", { path });
     expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: { operation: "inspect_rust_binary" },
     });
     await client.ping();
