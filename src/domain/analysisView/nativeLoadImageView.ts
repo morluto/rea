@@ -13,14 +13,14 @@ import {
 } from "../native/nativeLoadImage.js";
 import { nativeAddressObservationSchema } from "../native/nativeAddress.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -225,15 +225,8 @@ export const projectNativeLoadImageView = (
     SummaryAnalysisView | z.output<typeof nativeLoadImageViewRequestSchema>
   >(admitted, "summary", "native-load-image");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native load-image Evidence supports summary and native-load-image views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native load-image Evidence supports summary and native-load-image views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
