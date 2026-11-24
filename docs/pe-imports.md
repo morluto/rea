@@ -25,8 +25,13 @@ preserve that exact selection:
 
 The inline Evidence result contains the artifact path, SHA-256, byte length and
 the optional-header `image_base`. Each function row gives its import address
-table slot as `iat_rva` and as `iat_va` (`image_base` plus `iat_rva`); pass the
-VA to `xrefs` and other provider tools.
+table slot as `iat_rva` and as `iat_va` (`image_base` plus `iat_rva`). `iat_va`
+is relative to the `ImageBase` the file declares, which is where a provider
+loads the image unless its database was rebased. Pass `iat_va` to `xrefs` and
+other provider tools for a database at the file's base. For a rebased database,
+such as an IDA database moved before REA attached, add `iat_rva` to the base
+that provider reports for the image instead; REA does not observe that base
+from the file.
 `import_directory` and `delay_import_directory` report the data directory RVA
 and size, or `null` when a directory is absent or zero. Their `locations` are
 the file spans actually read for the descriptor array and its terminator. When
