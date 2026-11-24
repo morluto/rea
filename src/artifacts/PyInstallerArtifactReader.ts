@@ -202,7 +202,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       );
       if (entry.kind !== "file")
         throw new ArtifactReaderFailure(
-          "format",
+          "path",
           `PyInstaller entry is not a regular file: ${entry.path}`,
         );
       if (entry.encrypted)

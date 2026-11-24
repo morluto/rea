@@ -35,10 +35,14 @@ cliTest(
     const badAlignment = Buffer.from(valid.subarray(0, valid.length - 1));
     badAlignment.writeUInt32LE(table.length * 2 - 1, tableSizeAt);
     const call = await cli.sharedMcpCall!();
-    for (const { bytes, message } of [
+    for (const { bytes, message, kind } of [
       { bytes: valid },
-      { bytes: badLength, message: "dwLength exceeds" },
-      { bytes: badAlignment, message: "alignment padding is truncated" },
+      { bytes: badLength, message: "dwLength exceeds", kind: "malformed" },
+      {
+        bytes: badAlignment,
+        message: "alignment padding is truncated",
+        kind: "truncated",
+      },
     ]) {
       const expectedError =
         message === undefined
@@ -50,14 +54,11 @@ cliTest(
               },
             }
           : {
-              code: "invalid_request",
+              code: "unsupported_target",
               details: {
-                issues: [
-                  expect.objectContaining({
-                    reason: "invalid_format",
-                    message: expect.stringContaining(message),
-                  }),
-                ],
+                format_failure: kind,
+                format: "pe-certificate-table",
+                reason: expect.stringContaining(message),
               },
             };
       await writeFile(path, bytes);
@@ -101,15 +102,11 @@ cliTest.for([false, true])(
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     const error = {
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-          }),
-        ],
+        format_failure: "truncated",
+        format: "pe-certificate-table",
       },
     };
     expect.soft(invalid.exitCode, invalid.stdout).toBe(1);
@@ -189,16 +186,12 @@ cliTest.for([0x00, 0xff, null])(
         );
       } else {
         expect(value).toMatchObject({
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
             operation: "inspect_pe_certificates",
-            issues: [
-              expect.objectContaining({
-                path: ["path"],
-                reason: "invalid_format",
-                message: expect.stringContaining("critical"),
-              }),
-            ],
+            format_failure: "malformed",
+            format: "pe-certificate-table",
+            reason: expect.stringContaining("critical"),
           },
         });
       }
@@ -228,16 +221,12 @@ cliTest(
     });
     expect(result.exitCode, result.stdout).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("Name RDN"),
-          }),
-        ],
+        format_failure: "malformed",
+        format: "pe-certificate-table",
+        reason: expect.stringContaining("Name RDN"),
       },
     });
     const call = await cli.sharedMcpCall!();
@@ -268,16 +257,12 @@ cliTest(
     });
     expect(invalid.exitCode).toBe(1);
     expect(invalid.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("padding"),
-          }),
-        ],
+        format_failure: "malformed",
+        format: "pe-certificate-table",
+        reason: expect.stringContaining("padding"),
       },
     });
     // Only zero the advertised unused bit; all ASN.1 lengths stay unchanged.
@@ -449,8 +434,12 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_pe_certificates" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_pe_certificates",
+        format_failure: "malformed",
+        format: "pe-certificate-table",
+      },
     });
   },
 );
