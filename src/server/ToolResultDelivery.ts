@@ -303,6 +303,8 @@ export class ToolResultDelivery {
     contract: ToolContract,
     recorded: Result<unknown, AnalysisError> | undefined,
     viewSource?: JsonValue | (() => JsonValue | undefined),
+    /** Retains a budget summary as `detail: "summary"` would; none, no budget. */
+    recordSummary?: EvidenceWriter["recordEvidence"],
   ): CallToolResult {
     if (recorded !== undefined && !recorded.ok)
       return this.toErrorToolResult(
@@ -313,7 +315,7 @@ export class ToolResultDelivery {
     const budgeted =
       recorded === undefined
         ? undefined
-        : overBudgetSummary(evidence, contract);
+        : overBudgetSummary(evidence, contract, recordSummary);
     if (budgeted !== undefined) {
       const delivered = this.successResult(budgeted.summary, contract, {
         evidence_id: budgeted.summary.evidence_id,
@@ -633,6 +635,7 @@ export class ToolResultDelivery {
 const overBudgetSummary = (
   evidence: Evidence,
   contract: ToolContract,
+  recordSummary: EvidenceWriter["recordEvidence"] | undefined,
 ):
   | { readonly summary: Evidence; readonly delivery: AgentBudgetDelivery }
   | undefined => {
@@ -646,6 +649,10 @@ const overBudgetSummary = (
   if (completeBytes === undefined) return undefined;
   const summary = summarizeOverBudgetEvidence(evidence);
   if (!summary.ok || !contract.outputSchema.safeParse(summary.value).success)
+    return undefined;
+  // The summary is retained like an explicit one, so its own ID resolves;
+  // a summary that cannot be retained leaves complete delivery in place.
+  if (recordSummary === undefined || !recordSummary(summary.value).ok)
     return undefined;
   return {
     summary: summary.value,

@@ -184,6 +184,15 @@ it("delivers a retained summary with a cursor when complete Evidence exceeds the
   expect(parseEvidence(explicit.structuredContent).evidence_id).toBe(
     summary.evidence_id,
   );
+  // The delivered summary is itself retained, as an explicit one is.
+  const summaryRecord = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: summary.evidence_id },
+      view: { kind: "evidence-json", offset: 0 },
+    },
+  });
+  expect(summaryRecord.isError).not.toBe(true);
 
   // An explicit per-call detail keeps complete inline delivery.
   const complete = await client.callTool({

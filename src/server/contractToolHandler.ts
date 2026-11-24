@@ -73,6 +73,7 @@ export const deliverEvidenceResult = (
     contract,
     recorded,
     viewSource,
+    recordEvidence,
   );
 };
 
@@ -585,6 +586,8 @@ export const createAnalysisToolHandler =
                   analyzed.value.evidence,
                   contract,
                   analyzed.value.recorded,
+                  undefined,
+                  retention.recordEvidence,
                 );
         return progress.complete(response);
       },

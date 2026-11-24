@@ -167,6 +167,8 @@ export const createProviderOperationToolHandler =
               projected.value,
               contract,
               recorded,
+              undefined,
+              dependencies.recordEvidence,
             ),
           );
         },
