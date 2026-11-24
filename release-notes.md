@@ -1337,6 +1337,7 @@
 * compare frozen selections with observed test failures ([#14301](https://github.com/morluto/rea/issues/14301)) ([54f6fd4](https://github.com/morluto/rea/commit/54f6fd4f907caef76127c7e377ef181c0b5a4a82))
 * **limits:** enforce numeric inventory drift on documentation changes ([#12881](https://github.com/morluto/rea/issues/12881)) ([aaf151f](https://github.com/morluto/rea/commit/aaf151f5d6cca927823ac605699e587dfca2c043))
 * measure portable runner time for recorded selection predictions ([#14304](https://github.com/morluto/rea/issues/14304)) ([24f35b4](https://github.com/morluto/rea/commit/24f35b401867904e23869698d3490a1894916fe1))
+* publish the portable build cache only for selected consumers ([#14307](https://github.com/morluto/rea/issues/14307)) ([2b818e0](https://github.com/morluto/rea/commit/2b818e0dbf6df8583cd36307b29406fc0d047f55))
 * record affected-test predictions above the live cutoff ([#14300](https://github.com/morluto/rea/issues/14300)) ([e6bf4af](https://github.com/morluto/rea/commit/e6bf4af1c913dd1b3d04c632298c6db045f1e95f))
 * **release:** preserve unpublished versions and verify npm before tagging ([#12770](https://github.com/morluto/rea/issues/12770)) ([ad2b34c](https://github.com/morluto/rea/commit/ad2b34ca9b30769ec8ff8ef26025a38a9a32c589))
 * validate workflow anchors with actionlint 1.7.12 ([#14298](https://github.com/morluto/rea/issues/14298)) ([f919526](https://github.com/morluto/rea/commit/f9195263d0ae23df996d28f4a7bf848067d936fa))
