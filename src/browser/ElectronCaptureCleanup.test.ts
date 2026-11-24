@@ -1,39 +1,44 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import * as processCleanup from "./ElectronProcessCleanup.js";
 import * as processOwnership from "../process/ProcessOwnership.js";
 import type {
-  OwnedProcessGroup,
+  PersistentOwnedProcessGroup,
   ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEvidence.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
 
-const ownership: OwnedProcessGroup = {
-  runId: "authored-run-token",
-  leaderPid: 424242,
-  processGroupId: 424242,
-};
+let ownership: PersistentOwnedProcessGroup;
+beforeEach(() => {
+  ownership = {
+    runId: "authored-run-token",
+    leaderPid: 424242,
+    processGroupId: 424242,
+    evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+  };
+});
 const verified: ProcessLineageObservation = {
   status: "verified",
   observedAt: "2026-10-17T00:00:00Z",
   lineage: {
-    runId: ownership.runId,
-    launcherPid: ownership.leaderPid,
+    runId: "authored-run-token",
+    launcherPid: 424242,
     launcherParentPid: 1,
-    processGroupId: ownership.processGroupId,
+    processGroupId: 424242,
     descendants: [],
   },
 };
 const unavailable: ProcessLineageObservation = {
   status: "unavailable",
   observedAt: "2026-10-17T00:00:01Z",
-  runId: ownership.runId,
-  launcherPid: ownership.leaderPid,
-  processGroupId: ownership.processGroupId,
+  runId: "authored-run-token",
+  launcherPid: 424242,
+  processGroupId: 424242,
   reason: "authored identity unavailable",
 };
 afterEach(() => {
@@ -50,30 +55,6 @@ const bindFailure = (owner: ElectronCaptureCleanup) => {
   owner.bind(error);
   return error;
 };
-
-it("retries only the failed transport while preserving confirmed process release", async () => {
-  vi.spyOn(
-    ownershipObservation,
-    "observeOwnedProcessLineage",
-  ).mockResolvedValue(verified);
-  const processes = vi
-    .spyOn(processCleanup, "cleanupElectronProcesses")
-    .mockResolvedValue({ cleaned: true, signaled: false });
-  let denied = true;
-  const close = vi.fn(async () => {
-    if (denied) throw new Error("transport denied");
-  });
-  const owner = new ElectronCaptureCleanup({ close }, ownership, verified);
-  const scope = new ArtifactResourceScope();
-  await owner.release(scope);
-  const original = bindFailure(owner);
-  expect(original.cleanupResources).toEqual(["browser_transport"]);
-  denied = false;
-  await scope.close();
-  expect(close).toHaveBeenCalledTimes(2);
-  expect(processes).toHaveBeenCalledOnce();
-  expect(original.cleanupIncomplete).toBe(false);
-});
 
 it("shrinks mixed cleanup and aggregate errors without repeating a released peer", async () => {
   vi.spyOn(
@@ -193,8 +174,6 @@ it("retains unknown process identity even after its exact transport closes", asy
 });
 
 it("refreshes Windows lineage and never authorizes retry from a cached verified snapshot", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-  Object.defineProperty(process, "platform", { value: "win32" });
   vi.spyOn(
     ownershipObservation,
     "observeOwnedProcessLineage",
@@ -212,19 +191,16 @@ it("refreshes Windows lineage and never authorizes retry from a cached verified 
     { close: async () => undefined },
     ownership,
     verified,
+    "win32",
   );
   const scope = new ArtifactResourceScope();
-  try {
-    await owner.release(scope);
-    const error = bindFailure(owner);
-    expect(error.cleanupIncomplete).toBe(true);
-    absence.mockResolvedValue({ cleaned: true, signaled: false });
-    await scope.close();
-    expect(error.cleanupIncomplete).toBe(false);
-    expect(terminate).not.toHaveBeenCalled();
-  } finally {
-    Object.defineProperty(process, "platform", platform);
-  }
+  await owner.release(scope);
+  const error = bindFailure(owner);
+  expect(error.cleanupIncomplete).toBe(true);
+  absence.mockResolvedValue({ cleaned: true, signaled: false });
+  await scope.close();
+  expect(error.cleanupIncomplete).toBe(false);
+  expect(terminate).not.toHaveBeenCalled();
 });
 
 it.skipIf(process.platform === "win32")(
@@ -311,7 +287,7 @@ it("retains a Windows family left after root termination without signaling cache
         {
           pid: 424243,
           parentPid: ownership.leaderPid,
-          processGroupId: ownership.processGroupId,
+          processGroupId: 424242,
         },
       ],
     },

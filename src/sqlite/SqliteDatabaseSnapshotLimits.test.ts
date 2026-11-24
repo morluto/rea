@@ -1,23 +1,114 @@
-import { lstat, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, mkdir, open, readdir, writeFile } from "node:fs/promises";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { StableArtifactFileSystem } from "../artifacts/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import type { StableArtifactFileSystem } from "../resources/readStableArtifact.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { captureSqliteDatabaseSnapshot } from "./SqliteDatabaseSnapshot.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
-import { sqliteDatabaseFailure } from "./SqliteDatabaseFailures.js";
+import { sqliteDatabaseDialect } from "./SqliteDatabaseFailures.js";
+
+it("tags an exact caller reason at snapshot admission", async () => {
+  const workspace = await createTestTempDirectory("rea-sqlite-snapshot-entry-");
+  const reason = { requested: "cancel at snapshot admission" };
+  const controller = new AbortController();
+  controller.abort(reason);
+  const resourceScope = new ArtifactResourceScope();
+
+  try {
+    const failure = await captureSqliteDatabaseSnapshot(
+      join(workspace, "selected.db"),
+      join(workspace, "private"),
+      resourceScope,
+      controller.signal,
+    ).then(
+      () => {
+        throw new Error("Expected cancellation at snapshot admission");
+      },
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    expect(failure).toMatchObject({
+      reason: "cancelled",
+      cancellation: { reason },
+    });
+    const projected = classifyProviderFailure(
+      failure,
+      sqliteDatabaseDialect(
+        join(workspace, "selected.db"),
+        "artifact-read",
+        controller.signal,
+      ),
+    );
+    expect(projected).toBeInstanceOf(AnalysisCancelledError);
+    expect(projected.cause).toBe(reason);
+  } finally {
+    await resourceScope.close();
+  }
+});
+
+it("keeps the exact caller reason when cancellation lands at final snapshot verification", async () => {
+  const workspace = await createTestTempDirectory(
+    "rea-sqlite-snapshot-cancel-",
+  );
+  const databasePath = join(workspace, "selected.db");
+  const privateRoot = join(workspace, "private");
+  const journalPath = `${databasePath}-journal`;
+  const reason = { requested: "cancel after snapshot copy" };
+  const controller = new AbortController();
+  await writeFile(databasePath, "tiny fixture");
+  await mkdir(privateRoot);
+  let journalStats = 0;
+  const fileSystem: StableArtifactFileSystem = {
+    lstat: async (path) => {
+      if (path === journalPath) {
+        journalStats += 1;
+        if (journalStats === 2) controller.abort(reason);
+        throw Object.assign(new Error("journal absent"), { code: "ENOENT" });
+      }
+      return lstat(path, { bigint: true });
+    },
+    open: async (path, flags) => open(path, flags),
+  };
+  const resourceScope = new ArtifactResourceScope();
+
+  try {
+    const failure = await captureSqliteDatabaseSnapshot(
+      databasePath,
+      privateRoot,
+      resourceScope,
+      controller.signal,
+      fileSystem,
+    ).then(
+      () => {
+        throw new Error("Expected cancellation during final verification");
+      },
+      (cause: unknown) => cause,
+    );
+    const projected = classifyProviderFailure(
+      failure,
+      sqliteDatabaseDialect(databasePath, "artifact-read", controller.signal),
+    );
+    expect(journalStats).toBe(2);
+    expect(projected).toBeInstanceOf(AnalysisCancelledError);
+    expect(projected.cause).toBe(reason);
+  } finally {
+    await resourceScope.close();
+  }
+});
 
 it("reports filesystem sizes above the safe-integer range exactly before opening files", async () => {
   const databaseBytes = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
   const walBytes = 17n;
-  const workspace = await mkdtemp(join(tmpdir(), "rea-sqlite-budget-"));
+  const workspace = await createTestTempDirectory("rea-sqlite-budget-");
   const databasePath = join(workspace, "selected.db");
   const walPath = `${databasePath}-wal`;
   const journalPath = `${databasePath}-journal`;
@@ -61,7 +152,10 @@ it("reports filesystem sizes above the safe-integer range exactly before opening
       (cause: unknown) => cause,
     );
     const projected = projectAnalysisError(
-      sqliteDatabaseFailure(failure, databasePath, "artifact-read"),
+      classifyProviderFailure(
+        failure,
+        sqliteDatabaseDialect(databasePath, "artifact-read"),
+      ),
     );
     expect(failure).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
@@ -98,7 +192,6 @@ it("reports filesystem sizes above the safe-integer range exactly before opening
     });
   } finally {
     await resourceScope.close();
-    await rm(workspace, { force: true, recursive: true });
   }
 });
 
@@ -108,7 +201,7 @@ it.each([
 ])(
   "preserves $label when a late read-limit failure becomes changed evidence",
   async ({ retainCleanup }) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-sqlite-read-cleanup-"));
+    const workspace = await createTestTempDirectory("rea-sqlite-read-cleanup-");
     const databasePath = join(workspace, "selected.db");
     await writeFile(databasePath, "tiny fixture");
     const stat = await lstat(databasePath, { bigint: true });
@@ -174,10 +267,9 @@ it.each([
           cause: expect.any(ArtifactReaderFailure),
         });
       expect(failure).toMatchObject({ partialObservation, details });
-      const projectedFailure = sqliteDatabaseFailure(
+      const projectedFailure = classifyProviderFailure(
         failure,
-        databasePath,
-        "artifact-read",
+        sqliteDatabaseDialect(databasePath, "artifact-read"),
       );
       if (retainCleanup) {
         expect(projectedFailure).toBeInstanceOf(ProviderCleanupError);
@@ -188,7 +280,6 @@ it.each([
       }
     } finally {
       await resourceScope.close();
-      await rm(workspace, { force: true, recursive: true });
     }
   },
 );

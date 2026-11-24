@@ -28,7 +28,12 @@ type NativeImplementation =
  * Display label for a metadata name. Metadata may hold an empty name; the
  * graph then has no label, while the node's properties keep the source value.
  */
-const metadataLabel = (name: string): string | null =>
+import {
+  managedModuleRow,
+  type ManagedModuleRow,
+} from "./managedModuleIdentity.js";
+
+const metadataLabel = (name: string | null): string | null =>
   name === "" ? null : name;
 
 /** Options for a managed contains relationship edge. */
@@ -138,7 +143,7 @@ export const addArtifactIdentityNodes = (
 };
 
 interface ManagedModuleSource {
-  readonly module: NonNullable<ManagedArtifactInspection["module"]>;
+  readonly module: ManagedModuleRow;
   readonly evidence: Evidence;
   readonly coverageState: ManagedArtifactInspection["coverage"]["state"];
 }
@@ -146,31 +151,25 @@ interface ManagedModuleSource {
 const selectModuleSource = (
   parsed: ParsedManagedGraphInput,
 ): ManagedModuleSource | null => {
-  const sources = [
-    parsed.artifact?.result.module == null
-      ? null
-      : {
-          module: parsed.artifact.result.module,
-          evidence: parsed.artifact.evidence,
-          coverageState: parsed.artifact.result.coverage.state,
-        },
-    parsed.members?.result.module == null
-      ? null
-      : {
-          module: parsed.members.result.module,
-          evidence: parsed.members.evidence,
-          coverageState: parsed.members.result.coverage.state,
-        },
-    parsed.boundaries?.result.module == null
-      ? null
-      : {
-          module: parsed.boundaries.result.module,
-          evidence: parsed.boundaries.evidence,
-          coverageState: parsed.boundaries.result.coverage.state,
-        },
-  ].filter((source): source is ManagedModuleSource => source !== null);
+  const sources: ManagedModuleSource[] = [];
+  for (const source of [parsed.artifact, parsed.members, parsed.boundaries]) {
+    if (source === null) continue;
+    const module = managedModuleRow(source.result);
+    if (module !== null)
+      sources.push({
+        module,
+        evidence: source.evidence,
+        coverageState: source.result.coverage.state,
+      });
+  }
   return (
-    sources.find(({ module }) => module.mvid !== null) ?? sources[0] ?? null
+    sources.find(
+      ({ module }) => module.mvid !== null && module.name !== null,
+    ) ??
+    sources.find(({ module }) => module.mvid !== null) ??
+    sources.find(({ module }) => module.name !== null) ??
+    sources[0] ??
+    null
   );
 };
 
@@ -502,7 +501,7 @@ const artifactLocalIdentity = (
 });
 
 /** Build managed static-analysis evidence for a graph observation. */
-const sourceManagedEvidence = (
+export const sourceManagedEvidence = (
   state: GraphBuildState,
   source: Evidence,
   coverageState: ManagedArtifactInspection["coverage"]["state"],

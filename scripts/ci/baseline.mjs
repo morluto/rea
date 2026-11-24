@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
+import { normalizeWorkflowRun } from "./workflow-run.mjs";
 
 const repository = process.env.CI_REPOSITORY;
 const branch = process.env.CI_DEFAULT_BRANCH;
@@ -56,7 +57,10 @@ if (!repository || !branch || !head || !shaPattern.test(head)) {
     const base = runs.find(
       (run) =>
         run?.event === "push" &&
-        run?.conclusion === "success" &&
+        run.status === "completed" &&
+        run.conclusion === "success" &&
+        normalizeWorkflowRun(run).workflowPath?.file ===
+          ".github/workflows/ci.yml" &&
         run?.head_branch === branch &&
         run?.head_repository?.full_name === repository &&
         typeof run?.head_sha === "string" &&

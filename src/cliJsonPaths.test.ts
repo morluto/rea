@@ -2,7 +2,10 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveCliJsonPaths } from "./cliJsonInput.js";
+import {
+  cliJsonCallerPathSchema,
+  resolveCliJsonPaths,
+} from "./cli/cliJsonInput.js";
 import { electronActiveObservationInputSchema } from "./domain/javascript/electronActiveObservation.js";
 
 const paths = [
@@ -12,31 +15,32 @@ const paths = [
 ] as const;
 
 describe("CLI JSON path normalization", () => {
-  it.each([
-    ["executable_path", ""],
-    ["executable_path", " \t "],
-    ["application_path", ""],
-    ["application_path", " \t "],
-    ["application_root", ""],
-    ["application_root", " \t "],
-  ])(
-    "keeps blank %s (%j) invalid at the shared input boundary",
-    (field, value) => {
-      const input = {
-        executable_path: "/synthetic/electron",
-        application_path: "/synthetic/app",
-        application_root: "/synthetic",
-        [field]: value,
-      };
-      const parsed = electronActiveObservationInputSchema.safeParse(
-        resolveCliJsonPaths(input, paths),
-      );
-      expect(parsed.success).toBe(false);
+  it.each([" ", "\t\r\n", "\u00a0", "\u2003", "\ufeff"])(
+    "refuses blank caller path %j before normalization",
+    (path) => {
+      expect(cliJsonCallerPathSchema.safeParse(path).success).toBe(false);
+      expect(resolveCliJsonPaths({ executable_path: path }, paths)).toEqual({
+        executable_path: path,
+      });
+    },
+  );
+  it.each(["", " \t "])(
+    "keeps blank Electron paths %j invalid after normalization",
+    (value) => {
+      const input = Object.freeze({
+        executable_path: value,
+        application_path: value,
+        application_root: value,
+      });
+      const normalized = resolveCliJsonPaths(input, paths);
+      expect(normalized).toEqual(input);
+      const parsed = electronActiveObservationInputSchema.safeParse(normalized);
       if (parsed.success) throw new Error("Expected blank path rejection");
       expect(parsed.error.issues).toEqual(
-        expect.arrayContaining([expect.objectContaining({ path: [field] })]),
+        expect.arrayContaining(
+          paths.map((path) => expect.objectContaining({ path })),
+        ),
       );
-      expect(input).toHaveProperty(field, value);
     },
   );
 
@@ -62,21 +66,22 @@ describe("CLI JSON path normalization", () => {
     "FILE:electron",
     "https://example.test/app",
   ])("keeps URL %j distinguishable from a local path", (value) => {
-    const input = {
+    const expected = {
       executable_path: value,
       application_path: resolve("/synthetic/app"),
     };
+    const input = { ...expected };
     const normalized = resolveCliJsonPaths(input, paths);
-    expect(normalized).toEqual(input);
+    expect(normalized).toEqual(expected);
+    expect(input).toEqual(expected);
     const parsed = electronActiveObservationInputSchema.safeParse(normalized);
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error("Expected URL path rejection");
     expect(parsed.error.issues).toEqual([
       expect.objectContaining({
         path: ["executable_path"],
-        message: expect.stringContaining(
-          "must be absolute local filesystem paths",
-        ),
+        code: "invalid_format",
+        format: "regex",
       }),
     ]);
   });

@@ -1,33 +1,75 @@
 import { createHash } from "node:crypto";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
-/**
- * Streaming SHA-256 over canonical JSON. Hashing owner (avoids assembling
- * aggregate strings); `comparisonSemantics.canonicalJson` (canonicalize lib)
- * is the string-comparison owner. JSON object keys follow RFC 8785's UTF-16
- * code-unit order in both; entity-list ordering is a separate concern.
- */
+/** Streaming SHA-256 over the canonical bytes used by stored REA evidence. */
 export const digestCanonicalValue = (
   value: unknown,
   context = "Comparison",
 ): string => {
+  if (typeof value === "number" && !Number.isFinite(value))
+    throw new CanonicalDigestError(Number.isNaN(value) ? "nan" : "infinity");
+  if (value === null || typeof value !== "object") {
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined)
+      throw new TypeError(`${context} could not canonicalize data`);
+    return sha256Hex(encoded);
+  }
   const hash = createHash("sha256");
-  // Batch small emitted parts to cut hash.update crossings.
-  // Flush cuts only at part boundaries, so the hashed byte stream is unchanged.
+  // Batch small emitted parts to cut hash.update crossings. A large part is
+  // hashed as is: appending it to the buffer would hold a second copy of it
+  // while the concatenation flattens. Flush cuts only at part boundaries, so
+  // the hashed byte stream is unchanged.
   let buffered = "";
+  const flush = (): void => {
+    if (buffered.length === 0) return;
+    hash.update(buffered);
+    buffered = "";
+  };
   const emit = (part: string): void => {
-    buffered += part;
-    if (buffered.length >= 8192) {
-      hash.update(buffered);
-      buffered = "";
+    if (part.length >= 8192) {
+      flush();
+      hash.update(part);
+      return;
     }
+    buffered += part;
+    if (buffered.length >= 8192) flush();
   };
   const encoded = emitCanonical(value, emit, new Set());
   if (!encoded) throw new TypeError(`${context} could not canonicalize data`);
-  if (buffered) hash.update(buffered);
+  flush();
   return hash.digest("hex");
 };
 
+/** Preserve existing evidence identities, including escaped unpaired UTF-16. */
+export const serializeCanonicalValue = (value: unknown): string | undefined => {
+  let text = "";
+  const encoded = emitCanonical(
+    value,
+    (part) => {
+      text += part;
+    },
+    new Set(),
+  );
+  return encoded ? text : undefined;
+};
+
 type Emit = (part: string) => void;
+
+/** Canonical-JSON refusal. The code is the stable identity. */
+export class CanonicalDigestError extends Error {
+  readonly _tag = "CanonicalDigestError";
+
+  constructor(readonly code: "nan" | "infinity" | "circular") {
+    super(
+      {
+        nan: "NaN is not allowed",
+        infinity: "Infinity is not allowed",
+        circular: "Circular reference detected",
+      }[code],
+    );
+    this.name = "CanonicalDigestError";
+  }
+}
 
 const emitCanonical = (
   value: unknown,
@@ -35,16 +77,14 @@ const emitCanonical = (
   ancestors: Set<object>,
 ): boolean => {
   if (typeof value === "number" && !Number.isFinite(value))
-    throw new Error(
-      Number.isNaN(value) ? "NaN is not allowed" : "Infinity is not allowed",
-    );
+    throw new CanonicalDigestError(Number.isNaN(value) ? "nan" : "infinity");
   if (value === null || typeof value !== "object") {
     const encoded = JSON.stringify(value);
     if (encoded === undefined) return false;
     emit(encoded);
     return true;
   }
-  if (ancestors.has(value)) throw new Error("Circular reference detected");
+  if (ancestors.has(value)) throw new CanonicalDigestError("circular");
   ancestors.add(value);
   try {
     if ("toJSON" in value && typeof value.toJSON === "function") {
@@ -69,14 +109,23 @@ const emitCanonical = (
     } else {
       emit("{");
       let first = true;
-      // Match canonicalize/RFC 8785, including supplementary-plane keys.
-      for (const key of Object.keys(value).sort()) {
-        if (
-          Reflect.get(value, key) === undefined ||
-          typeof Reflect.get(value, key) === "symbol"
-        )
+      const record = value as Readonly<Record<string, unknown>>;
+      const keys = Object.keys(record);
+      if (keys.length === 2) {
+        if (keys[0]! > keys[1]!) {
+          const firstKey = keys[0]!;
+          keys[0] = keys[1]!;
+          keys[1] = firstKey;
+        }
+      } else if (keys.length > 2) {
+        // Match canonicalize/RFC 8785, including supplementary-plane keys.
+        keys.sort();
+      }
+      for (let index = 0; index < keys.length; index += 1) {
+        const key = keys[index]!;
+        if (record[key] === undefined || typeof record[key] === "symbol")
           continue;
-        const item: unknown = Reflect.get(value, key);
+        const item: unknown = record[key];
         if (!first) emit(",");
         first = false;
         emit(JSON.stringify(key));

@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { verifyNoTokenOwnedProcesses } from "../../dist/process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../../dist/process/ProcessOwnershipEvidence.js";
 import {
   observeProcessStartIdentity,
   signalProcessWithStartIdentity,
@@ -18,8 +17,6 @@ import {
   requireMcpLifecycleResult,
 } from "./mcp-verifier-results.mjs";
 
-const execFileAsync = promisify(execFile);
-
 /** Prove actual MCP owner exit releases the demo singleton for subsequent CLI/MCP sessions. */
 export async function verifyLinuxHopperOwnerExit({
   primary,
@@ -27,7 +24,12 @@ export async function verifyLinuxHopperOwnerExit({
   serverCommand,
   serverArgs,
   environment,
+  commands,
 }) {
+  if (commands === undefined)
+    throw new Error(
+      "Linux Hopper owner-exit verification requires the supervised command owner",
+    );
   const sentinel = await startUnrelatedHopperSentinel();
   const outcomes = [];
   try {
@@ -64,6 +66,7 @@ export async function verifyLinuxHopperOwnerExit({
         const relation = {
           leaderPid: ownerPid,
           processGroupId: ownerProcess.processGroupId,
+          evidenceOwner: new ProcessOwnershipEvidenceOwner(),
         };
         requireMcpLifecycleResult(
           await client.callTool(
@@ -93,16 +96,16 @@ export async function verifyLinuxHopperOwnerExit({
         const runId = status.analysis_run?.run_id;
         assert.equal(typeof runId, "string");
         assert.equal(status.analysis_provider_binding?.provider.id, "hopper");
-        assert.equal(
-          (
-            await verifyNoTokenOwnedProcesses(
-              runId,
-              systemProcessOwnershipHost,
-              baseline,
-              relation,
-            )
-          ).cleaned,
-          false,
+        const active = await verifyNoTokenOwnedProcesses(
+          runId,
+          systemProcessOwnershipHost,
+          baseline,
+          relation,
+        );
+        assert.equal(active.cleaned, false, JSON.stringify(active));
+        assert.ok(
+          relation.evidenceOwner.coverage.retainedOwned > 0,
+          `The active Hopper session has no token-verified process ownership evidence: ${JSON.stringify(active)}`,
         );
         if (mode === "graceful") await client.close();
         else {
@@ -127,10 +130,10 @@ export async function verifyLinuxHopperOwnerExit({
           if (cleanup.cleaned) break;
           await delay(100);
         } while (Date.now() < deadline);
-        assert.equal(cleanup.cleaned, true, cleanup.reason);
+        assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
         // The SIGKILL case must recover the stale lease for both target identities.
         for (const target of [primary, secondary]) {
-          const result = await execFileAsync(
+          const result = await commands.exec(
             process.execPath,
             [
               "scripts/rea.mjs",
@@ -141,7 +144,11 @@ export async function verifyLinuxHopperOwnerExit({
               "--format",
               "json",
             ],
-            { env: environment, timeout: 180_000, maxBuffer: 16 * 1024 * 1024 },
+            {
+              env: environment,
+              timeout: 180_000,
+              maxBuffer: 16 * 1024 * 1024,
+            },
           );
           assert.ok(JSON.parse(result.stdout).normalized_result);
         }

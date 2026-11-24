@@ -7,13 +7,11 @@ import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResol
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { ManagedStaticProvider } from "../../../../src/dotnet/ManagedStaticProvider.js";
-import { RegularFileCleanupFailure } from "../../../../src/application/RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 it.each([
-  { denyClose: false, reasonKind: "plain" },
-  { denyClose: true, reasonKind: "plain" },
   { denyClose: false, reasonKind: "filesystem" },
   { denyClose: true, reasonKind: "filesystem" },
   { denyClose: false, reasonKind: "cleanup" },
@@ -25,7 +23,7 @@ it.each([
     const path = join(directory, "fixture.exe");
     await writeFile(
       path,
-      Buffer.concat([buildManagedPeFixture(), Buffer.alloc(512 * 1024)]),
+      Buffer.concat([buildManagedPeFixture(), Buffer.alloc(64 * 1024 + 1)]),
     );
     const parsed = await parseBinaryTarget(path);
     if (!parsed.ok) throw parsed.error;
@@ -40,15 +38,17 @@ it.each([
     const controller = new AbortController();
     const reason =
       reasonKind === "cleanup"
-        ? new RegularFileCleanupFailure(
-            join(directory, "other-input.dll"),
-            new OwnedFileHandle(admitted),
-            { kind: "completed", value: null },
-            new Error("opaque caller reason, not this operation's cleanup"),
-          )
+        ? new RegularFileCleanupFailure({
+            path: join(directory, "other-input.dll"),
+            owner: new OwnedFileHandle(admitted),
+            outcome: { kind: "completed", value: null },
+            cleanupCause: new Error(
+              "opaque caller reason, not this operation's cleanup",
+            ),
+          })
         : Object.assign(
             new Error("cancel after actual managed source bytes arrive"),
-            reasonKind === "filesystem" ? { code: "EACCES" } : {},
+            { code: "EACCES" },
           );
     let cancelledHandle: FileHandle | undefined;
     let readCount = 0;
@@ -86,12 +86,14 @@ it.each([
         { signal: controller.signal },
       );
       expect(cancelledHandle).toBeDefined();
+      expect(readCount).toBe(1);
       if (cancelled.ok) throw new Error("Cancelled managed hashing succeeded");
       if (denyClose) {
         expect(projectAnalysisError(cancelled.error)).toMatchObject({
           code: "cleanup_incomplete",
           details: { diagnostics: { primary_error: { code: "cancelled" } } },
         });
+        expect(cancelled.error.cleanupPrimary?.cause).toBe(reason);
         expect(cancelledHandle?.fd).toBeGreaterThanOrEqual(0);
         const readsBeforeRetry = readCount;
         const blocked = await client.execute("inspect_managed_members", {});

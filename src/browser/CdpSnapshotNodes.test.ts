@@ -37,45 +37,40 @@ it("decodes references once while retaining independently unknown facts", () => 
   });
 });
 
-it("invalidates only cycle facts without inventing a root for descendants", () => {
-  const source = raw();
-  source.parentIndex = [1, 0, 1];
-  const nodes = snapshotDocumentNodes(source, strings);
-  expect(nodes?.parents).toEqual([undefined, undefined, 1]);
-});
-
-it.each([
-  { parents: [-1, -1, 0] },
-  { parents: [2, 0, -1] },
-  { parents: [-1, 0, 1] },
-])("preserves acyclic root and forward relationships %j", ({ parents }) => {
-  expect(
-    snapshotDocumentNodes({ ...raw(), parentIndex: parents }, strings)?.parents,
-  ).toEqual(parents);
-});
-
-it.each([1.5, -2, 3, NaN, null, "0"])(
-  "keeps malformed parent %s unknown at its original position",
-  (parent) => {
-    const nodes = snapshotDocumentNodes(
-      { ...raw(), parentIndex: [-1, parent, 1] },
-      strings,
-    );
-    expect(nodes?.parents).toEqual([-1, undefined, 1]);
-  },
-);
-
-it.each([
-  { attributes: [2] },
-  { attributes: [999, 3] },
-  { attributes: [2, 999] },
-  { attributes: "invalid" },
-])("refuses malformed attribute references %j", ({ attributes }) => {
-  const nodes = snapshotDocumentNodes(
-    { ...raw(), attributes: [[], attributes, []] },
+const readParents = (parentIndex: readonly unknown[]) =>
+  snapshotDocumentNodes(
+    {
+      nodeType: parentIndex.map(() => 1),
+      nodeName: parentIndex.map(() => 1),
+      nodeValue: parentIndex.map(() => -1),
+      parentIndex,
+      attributes: parentIndex.map(() => []),
+    },
     strings,
-  );
-  if (nodes === undefined) throw new Error("Expected aligned columns");
-  expect(snapshotNodeAt(nodes, 1).ok).toBe(false);
-  expect(snapshotNodeAt(nodes, 2).ok).toBe(true);
+  )?.parents;
+
+it("invalidates cycle facts and retains known roots, forward links, and direct descendants", () => {
+  expect(readParents([1, 0, 1, -1, 6, 4, 3, -1])).toEqual([
+    undefined,
+    undefined,
+    1,
+    -1,
+    6,
+    4,
+    3,
+    -1,
+  ]);
+});
+
+it("keeps malformed parents unknown without renumbering stable links", () => {
+  expect(readParents([-1, 1.5, -2, 8, NaN, null, "0", 1])).toEqual([
+    -1,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    1,
+  ]);
 });

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { analyzeCommonJsSemanticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+
 import {
   programScope,
   bindingById,
@@ -50,9 +52,9 @@ describe("JavaScript semantic analysis: ESM import origins", () => {
 });
 
 describe("JavaScript semantic analysis: structure 1", () => {
-  it("resolves imports, require destructuring, aliases, assignments, and shadowing", () => {
-    const ir = analyzeJavaScriptSemantics(`
-      import { ipcRenderer as ir } from "electron";
+  it("resolves CommonJS require destructuring, aliases, assignments, and shadowing", () => {
+    const ir = analyzeCommonJsSemanticFixture(`
+      const { ipcRenderer: ir } = require("electron");
       const { ipcMain: bus } = require("electron");
       const forwarded = bus;
       let assigned;
@@ -73,6 +75,7 @@ describe("JavaScript semantic analysis: structure 1", () => {
     expect(origin(topLevelBinding(ir, "ir"))).toEqual({
       specifier: "electron",
       importedPath: ["ipcRenderer"],
+      resolutionMode: "require",
     });
     expect(origin(topLevelBinding(ir, "bus"))).toEqual({
       specifier: "electron",
@@ -207,6 +210,7 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
       ({ name, role }) => name === "value" && role === "read",
     );
     expect(reads).toHaveLength(2);
+    expect(reads[0]?.bindingId).toEqual(expect.any(String));
     expect(reads[0]?.bindingId).not.toBe(reads[1]?.bindingId);
     expect(reads[1]?.bindingId).toBe(topLevelBinding(ir, "value").bindingId);
   });
@@ -221,6 +225,7 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
       ({ name, role }) => name === "value" && role === "read",
     );
     expect(reads).toHaveLength(2);
+    expect(reads[0]?.bindingId).toEqual(expect.any(String));
     expect(reads[0]?.bindingId).not.toBe(
       topLevelBinding(ir, "value").bindingId,
     );
@@ -239,11 +244,14 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
     const binding = onlyBinding(ir, "value");
     const callable = ir.callables.find(({ name }) => name === "run");
     expect(binding.scopeId).toBe(callable?.bodyScopeId);
-    expect(
-      ir.references
-        .filter(({ name, role }) => name === "value" && role === "read")
-        .every(({ bindingId }) => bindingId === binding.bindingId),
-    ).toBe(true);
+    const reads = ir.references.filter(
+      ({ name, role }) => name === "value" && role === "read",
+    );
+    expect(reads).toHaveLength(2);
+    expect(reads.map(({ bindingId }) => bindingId)).toEqual([
+      binding.bindingId,
+      binding.bindingId,
+    ]);
   });
 });
 
@@ -265,6 +273,9 @@ describe("JavaScript semantic analysis: class expression lexical names", () => {
       ({ name, role }) => name === "Service" && role === "read",
     );
     expect(references).toHaveLength(2);
+    expect(references[1]?.bindingId).toBe(
+      topLevelBinding(ir, "Service").bindingId,
+    );
     expect(references[0]?.bindingId).not.toBe(references[1]?.bindingId);
     expect(references[0]?.resolution).toBe("resolved");
     const classScope = ir.scopes.find(({ kind }) => kind === "class");
@@ -322,12 +333,8 @@ describe("JavaScript semantic analysis: class member keys", () => {
         marker(value?: number) {}
       }
     `);
-    // Only the computed abstract key evaluates the outer binding.
-    expect(
-      ir.references
-        .filter(({ name }) => name === "marker")
-        .map(({ role, location }) => `${role}@${location.start.line}`),
-    ).toEqual(["read@6"]);
+    // Abstract signatures, including computed keys, are erased.
+    expect(ir.references.filter(({ name }) => name === "marker")).toEqual([]);
   });
 
   it("does not capture an outer binding through a noncomputed method name", () => {
@@ -360,17 +367,19 @@ describe("JavaScript semantic analysis: class member keys", () => {
 });
 
 describe("JavaScript semantic analysis: structure 2", () => {
-  it("retains ESM, re-export, require, and CommonJS export relationships", () => {
+  it("retains ESM and CommonJS relationships in their respective runtime contexts", () => {
     const ir = analyzeJavaScriptSemantics(`
       export { ipcRenderer as bridge } from "electron";
       export * from "./wrapper.js";
       export const localValue = 1;
-      const addon = require("./native.node");
-      module.exports.addon = addon;
       export default function namedDefault() {}
     `);
+    const commonJs = analyzeCommonJsSemanticFixture(`
+      const addon = require("./native.node");
+      module.exports.addon = addon;
+    `);
 
-    expect(ir.moduleLinks).toEqual(
+    expect([...ir.moduleLinks, ...commonJs.moduleLinks]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           kind: "re-export",
@@ -756,19 +765,32 @@ describe("JavaScript semantic analysis: write references", () => {
 });
 
 describe("JavaScript semantic analysis: dynamic and case scopes", () => {
-  it("marks with and eval as unresolved dynamic scope instead of staying silent", () => {
+  it("resolves with receivers and local bindings while leaving outer reads unknown", () => {
     const ir = analyzeJavaScriptSemantics(`
-      function load(source) {
-        with (host) { consume(target); }
-        eval("var injected = 1;");
+      const host = getHost();
+      const outer = 3;
+      function inspect() {
+        with (host) {
+          const local = 1;
+          consume(local, outer);
+        }
       }
     `);
-    const reasons = ir.frontiers
-      .filter(({ kind }) => kind === "dynamic-scope")
-      .map(({ reason }) => reason);
-    expect(reasons).toHaveLength(2);
-    expect(reasons.join("\n")).toContain("`with`");
-    expect(reasons.join("\n")).toContain("`eval`");
+    const host = topLevelBinding(ir, "host");
+    const hostRead = ir.references.find(
+      ({ name, role }) => name === "host" && role === "read",
+    );
+    const outerRead = ir.references.find(
+      ({ name, role }) => name === "outer" && role === "read",
+    );
+    const localRead = ir.references.find(
+      ({ name, role }) => name === "local" && role === "read",
+    );
+    expect(hostRead?.bindingId).toBe(host.bindingId);
+    expect(hostRead?.resolution).toBe("resolved");
+    expect(outerRead?.resolution).toBe("unknown");
+    expect(localRead?.resolution).toBe("resolved");
+    expect(outerRead?.bindingId).toBeNull();
   });
 
   it("does not assign CommonJS exports to lexically shadowed module or exports", () => {
@@ -786,30 +808,53 @@ describe("JavaScript semantic analysis: dynamic and case scopes", () => {
     ).toEqual([]);
   });
 
-  it("shares one lexical scope across switch cases and isolates static blocks", () => {
-    const switchIr = analyzeJavaScriptSemantics(`
-      const kind = select();
-      switch (kind) {
-        case "a": let shared = 1; break;
-        case "b": shared = 2; break;
+  it("resolves a switch discriminant outside the case scope and writes across cases", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const selected = choose();
+      switch (selected) {
+        case 1: let selected = 1; let shared = 1; break;
+        case 2: shared = 2; break;
       }
     `);
-    // One declaration, one binding — and it belongs to a scope of its own, so
-    // it cannot leak past the switch statement.
-    const shared = switchIr.bindings.filter(({ name }) => name === "shared");
+    const outer = topLevelBinding(ir, "selected");
+    const shared = bindingsNamed(ir, "shared");
     expect(shared).toHaveLength(1);
-    expect(shared[0]?.scopeId).not.toBe(
-      topLevelBinding(switchIr, "kind").scopeId,
+    expect(shared[0]?.scopeId).not.toBe(outer.scopeId);
+    expect(
+      ir.references.filter(({ name }) => name === "selected"),
+    ).toMatchObject([
+      { role: "read", resolution: "resolved", bindingId: outer.bindingId },
+    ]);
+    expect(ir.references.filter(({ name }) => name === "shared")).toMatchObject(
+      [
+        {
+          role: "write",
+          resolution: "resolved",
+          bindingId: shared[0]?.bindingId,
+        },
+      ],
     );
-    const classIr = analyzeJavaScriptSemantics(`
+  });
+
+  it("isolates let and var bindings between static blocks", () => {
+    const ir = analyzeJavaScriptSemantics(`
       class Holder {
-        static { let isolated = 1; }
-        static { let isolated = 2; }
+        static { let isolated = 1; var first = 1; }
+        static { let isolated = 2; var second = 2; consume(first); }
       }
     `);
-    expect(
-      classIr.bindings.filter(({ name }) => name === "isolated"),
-    ).toHaveLength(2);
+    const lexical = bindingsNamed(ir, "isolated");
+    const first = bindingsNamed(ir, "first");
+    const second = bindingsNamed(ir, "second");
+    expect(lexical).toHaveLength(2);
+    expect(lexical[0]?.scopeId).not.toBe(lexical[1]?.scopeId);
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(first[0]?.scopeId).not.toBe(second[0]?.scopeId);
+    expect(ir.references.find(({ name }) => name === "first")).toMatchObject({
+      resolution: "unbound",
+      bindingId: null,
+    });
   });
 
   it("keeps function, class, and method identities separate from bindings", () => {

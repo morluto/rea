@@ -11,6 +11,44 @@ returned inline. When complete `inspect_binary_layout` or
 `inspect_analysis_view` for a summary, one section/symbol/module, or a stable
 page instead of repeating the producer.
 
+For any logical Evidence source that advertises retained references, pass
+`{kind: "retained-evidence", evidence_id}` instead of copying the complete
+record back into a call. The same contract covers individual, optional, array
+and nested sources across native, process, JavaScript, managed, mobile and WASM
+workflows. Sources can independently mix inline records and exact references.
+Resolution preserves the source's identity, provenance, coverage, partial facts
+and unknowns; it neither reruns analysis nor makes incomplete facts complete.
+Keep domain role and identity requirements: a native dossier cannot substitute
+for a managed member observation, for example.
+
+When starting from a summary or inspection page, use its
+`normalized_result.parent_evidence_id` to reference the complete source.
+The view's own `evidence_id` names
+only that view. `compare_artifacts` explicitly supports artifact summary inputs
+and resolves their parents; do not assume every consumer does. When a workflow
+follows source links, keep those linked records available too.
+
+MCP references belong to the current connection's ledger. If the ID is known,
+pass it directly; no discovery call or provider setup is needed. If it is missing,
+import the exported bundle or supply complete inline Evidence. Do not retry an
+unchanged reference or rerun a producer merely to move an existing record.
+Export before closing the session when the source must survive it. For CLI JSON
+workflows that advertise `--evidence-bundle`, the same reference JSON resolves
+against one explicitly selected authenticated bundle:
+
+```bash
+rea trace-application-feature request.json --evidence-bundle /absolute/path/evidence.json --json
+```
+
+This includes JavaScript traces/comparisons and runtime reconciliation, managed
+reconstruction/native verification/graph projection, Android/Apple/Harmony graph
+projection, WASM interface comparison and retained analysis views. The managed
+member comparison CLI still takes two assembly paths; process comparison takes
+two capture Evidence JSON paths. Check command help for the installed version.
+An input bundle grants no implicit file lookup: `evidence-file` and historical
+graph file selectors are accepted only by contracts advertising them. See the
+[CLI reuse guide](https://github.com/morluto/rea/blob/main/docs/getting-started/cli.md#import-export-and-compare-evidence).
+
 Completed `inspect_artifact` inventory also supports a summary and
 `view: {kind: "inventory", collection: "occurrences", logical_paths: ["package.json", "main.js"]}`.
 Omit `logical_paths` to page all available occurrences; `[]` selects none.
@@ -24,6 +62,25 @@ retain its complete source and receive that view immediately. Without that
 advertised choice, keep the existing complete call. CLI inspection returns
 portable complete Evidence; save it before projecting a selected inline view.
 
+For native procedure/name/string inventories, select `detail: "summary"` when
+the connected tool advertises it and the task needs counts or selected rows.
+Use its parent Evidence ID with
+`view: {kind: "native-inventory", offset: 0, limit: 32, fields: ["value"]}`.
+Search tools retain the existing pattern/mode/case/document selection. Omit
+`fields` for complete records; `record.address` and `source_index` remain on
+selected rows. Selecting `value` keeps its string/decoding qualifications.
+Parent Evidence ID plus source index preserves same-address
+alternatives. Follow `coverage.next_offset` only as far as the question needs;
+exhausting retained rows does not establish complete program discovery.
+
+`batch_decompile` returns every body unless you select `detail: "summary"` when
+the connected tool advertises it. Use its parent Evidence ID with
+`view: {kind: "batch-decompile", collection: "items"}` for body-free rows and
+exact `where.indices`, `addresses`, `procedure_addresses` or `statuses`. Add
+`include_pseudocode: true` for several chosen bodies, or use
+`collection: "pseudocode"` with one row's `index` to page a large body. Batch
+limitations aggregate every item, so do not attribute them to one successful row.
+
 ## Keep competing explanations testable
 
 For an unanswered question, state what observation would distinguish the
@@ -34,106 +91,74 @@ Keep a negative result bounded by the searched artifact, selected records,
 capture interval and coverage. A missing provider or truncated search leaves a
 gap; repeating an unchanged call does not close it.
 
-Use `record_unknown` for a question that must survive the investigation. For
-example, after static analysis identifies a candidate cache file but no runtime
-observation establishes a startup change:
+Use `record_unknown` to track unresolved questions in the user's investigation
+and name the authority or environment still required. Supply supporting and
+contradicting evidence IDs. It updates the session registry directly. Its
+`recommended_probes` record a proposed probe; they do not run or authorize it.
+Keep static findings available when runtime execution is outside the request.
 
-```json
-{
-  "question": "Does the selected application create or modify the candidate cache file during startup?",
-  "severity": "medium",
-  "domain": "startup-cache",
-  "required_authority": "controlled-replay",
-  "required_confidence": "observed",
-  "required_environment": null,
-  "recommended_probes": [
-    {
-      "operation": "capture_process_scenario",
-      "rationale": "Compare before and final snapshots of the selected cache file during the startup scenario."
-    }
-  ],
-  "relationships": []
-}
-```
+`list_unknowns` returns current heads; keep the same exact filters and follow
+`next_offset` until it is null when paging. `update_unknown` appends a
+full-state revision, so start from the current head, keep its evidence links,
+requirements and relationships, and send its revision as `expected_revision`.
+After a stale revision, reread and reconcile the new head instead of retrying
+blindly. Only qualifying observed evidence can verify a resolution.
 
-Add returned supporting or contradicting Evidence IDs when available. Choose
-requirements that match the question; this example records a proposed probe
-and does not run or authorize it. Keep static findings available if runtime
-execution is outside the request.
-Filesystem snapshots can show changes; unchanged snapshots do not establish
-that the application never read or opened the cache file.
+`verify_unknown_resolution` inspects the current disposition; it does not run a
+probe or discover new evidence. `result.valid` is true for any resolved head,
+including withdrawn and out-of-scope dispositions; only `result.truthVerified`
+reports a verified disposition. Cite the resolution's Evidence and its coverage,
+not the boolean alone. Registry mutation Evidence is not proof of an answer.
 
-`list_unknowns` returns current heads; use exact filters and its `next_offset`
-when paging. `update_unknown` replaces all mutable fields, not just those that
-changed. Start from the current head, preserve its evidence links, requirements
-and relationships, and send its revision as `expected_revision`. On a stale
-revision, reread and reconcile the new evidence before submitting an update.
+## Hand off an investigation
 
-Use `verify_unknown_resolution` with the returned `unknown_id` to inspect the
-current disposition. It does not run a probe or discover new evidence. A
-verified resolution must satisfy the recorded authority, confidence and
-environment requirements; registry mutation Evidence is not proof of an
-answer. `result.valid` can be true for withdrawn or out-of-scope questions;
-only `result.truthVerified` indicates a verified disposition. Cite the actual
-resolution evidence and its coverage, not the boolean alone.
+Retained Evidence IDs and Unknown history belong to the current MCP connection.
+`close_binary` releases the engine but keeps them; `reset_investigation` clears
+them, and loses them unless `save_path` is supplied. Export with
+`export_evidence_bundle` before ending the session or handing off work when the
+records must survive it. Existing files require `overwrite: true`; keep the
+original export when it is the handoff baseline.
 
-## Resume with portable Evidence
+Record the bundle path, artifact digests, relevant Evidence and Unknown IDs, the
+answered question, competing explanations, coverage gaps and next useful probe.
+Reference the bundle rather than copying complete payloads into the handoff.
+Preserve external captures and exported scripts, maps or manifests needed by
+later tools; a bundle does not recreate those files. A failure's
+`details.partial_observation` of kind `retained-evidence` is in the ledger and
+is exported; any other partial observation is not retained, so save it
+separately. An empty bundle does not prove that no partial work or side effect
+occurred.
 
-Retained IDs belong to the current MCP session. `close_binary` clears its ledger,
-including unknown revisions. Target switches preserve retained Evidence, even
-when provider retirement fails; a failed switch clears the current snapshot,
-not the Evidence ledger. Export before closing, switching providers or handing
-off work when the observations must survive the current session:
-
-1. Call `export_evidence_bundle` with a caller-selected absolute local path,
-   such as `{"path":"/work/investigation/evidence.json"}`. Existing files
-   require an explicit `overwrite: true`; preserve the original export when
-   it is the handoff baseline.
-2. Record the bundle path, artifact digests, relevant Evidence IDs and unknown
-   IDs, the answered question, competing explanations, coverage gaps and next
-   useful probe. Reference the bundle rather than copying complete payloads
-   into the handoff. Preserve any external captures or exported source/map
-   files needed by later tools; a bundle does not recreate those files. Raw
-   `details.partial_observation` without a recorded Evidence ID is not bundled;
-   preserve received error receipts separately. An empty bundle does not prove
-   that no partial work or side effect occurred.
-3. In the destination MCP session, open the intended target first only if the
-   next operation requires an active target. Then call `import_evidence_bundle`
-   with the saved absolute path. Import validates IDs, manifests and unknown
-   revision history before merging atomically; it does not select a target,
-   restore an analysis database, start a provider, or refresh runtime facts.
-4. Discover imported records with `get_evidence_bundle` using
-   `{"detail":"summary","filters":{"operation":"analyze_javascript_application"}}`,
-   adding an exact target SHA-256 when several artifacts are present. Summary
-   returns all matching metadata; it does not accept `offset` or `limit`. If
-   the result exceeds transport limits, narrow the filters or inspect the
-   exported bundle locally. Use returned IDs for supported retained views and
-   `list_unknowns` for current heads. Recheck any claimed resolution with
-   `verify_unknown_resolution`.
-
-The handoff is usable when the selected records and unknown heads can be read
-in the destination session and any next required external artifact is
-available. Historical observations remain historical even when import succeeds.
-Evidence import is distinct from `open_binary` analysis-snapshot restoration,
-which requires the matching target, provider and analysis profile. The CLI
-`evidence-import` validates a file; it does not populate a future MCP session.
-
-## Compare only the stated scope
+In the destination MCP session, call `import_evidence_bundle` with the saved
+absolute path. Import validates every Evidence ID and manifest, merges
+atomically and restores the Unknown entries in the bundle; questions embedded
+only in Evidence do not become Unknown entries. Import does not open a target,
+start a provider or refresh runtime facts, and historical observations remain
+historical. Open the intended target first only when the next operation needs
+one; `open_binary` snapshot restoration is separate and requires the matching
+target, provider and analysis profile. CLI `rea evidence-import` validates a
+file in its own process; it does not populate an MCP session.
 
 Use comparisons with complete, compatible page sets when claiming equivalence
 or absence:
 
 - `compare_artifacts` compares inventory pages by occurrence path, content,
-  metadata, and graph relations.
+  metadata, and graph relations. Name each side as
+  `{kind: "retained-evidence", evidence_id}` (an `inspect_artifact` result,
+  its nested inventory or its summary) or
+  `{kind: "evidence-file", path, evidence_id?}` instead of resending Evidence.
 - `compare_functions` compares explicit function Evidence, not fuzzy
-  whole-binary matches.
+  whole-binary matches. It rejects an `analyze_function` summary reply; pass
+  the summary's `parent_evidence_id` as a `retained-evidence` reference or
+  the complete dossier.
 - `compare_bundles` compares canonical bundle membership and unknown history.
 - `find_changed_behavior` combines existing comparisons; static differences
-  remain candidates, not causal proof.
+  remain candidates, not causal proof. Its `comparisons` accept exact references.
 - `build_call_path` needs explicit function dossiers from one artifact/provider;
-  an incomplete frontier makes absence unknown.
+  pass complete parent IDs in `functions`. An incomplete frontier makes absence
+  unknown.
 - `correlate_static_and_runtime` uses explicit mappings; matching patterns are
-  hypotheses, not causality.
+  hypotheses, not causality. Both comparison arrays accept exact references.
 - `verify_reconstruction` evaluates a finite typed specification. A pass covers
   only declared comparable claims, not global equivalence.
 
@@ -158,3 +183,62 @@ When the connected schema advertises `include_query_parameter_names`, select
 it in the view for distinct observed names with original record ordinals. Query
 values are omitted; the names establish neither required parameters nor a
 complete server schema. Keep the original parent Evidence for exact URLs.
+
+Use `inspect_analysis_view` with `view: {kind: "environment-manifest"}` on the
+same retained HAR Evidence to project the primary origin's request lines into
+named tools with path templates, parameters, observed query names, value-free
+body shapes and record pointers for an agent environment. Opt into
+`template_rules` only when recorded identifiers need them; every template,
+parameter and merged sibling is an inference, no header, cookie or body value is
+copied, and the three stated unknowns stay unresolved.
+
+Use `view: {kind: "environment-state"}` with the manifest's `template_rules` to
+extract the data those reads observed instead: entity types and identity
+fields, entities with recorded values, documents, and per-tool render plans
+checked against the recordings. The state comes only from reads before the
+first related write; types, identity and list membership are inferences. The
+view also gives each state-changing tool a write plan, served only when a later
+recorded read confirms its effect and none contradicts it.
+`rea environment-serve manifest.json --evidence capture.json` derives that
+state at startup, answers read tools from it, serves the write tools whose plan
+is served, each applying its effect to that state, and serves `data/reset`,
+`data/add` and `data/get` on `/agentenv`; other write tools are not served, and
+each plan states why in its `reason`. It replays the capture instead with
+`--replay-only` or when the state is unavailable (not derivable, or a catalog
+over the discovery budget), and its stopped document's `state` says which
+applied.
+Use `view: {kind: "environment-coverage"}` with the same rules to see what an
+environment built from a capture would serve: read tools answered from the
+state or replayed with their reason, and each write tool served or withheld
+with a hint about what to record next; it does not apply the serve-time
+catalog and state size checks. `rea environment-build <capture.har> <dir>`
+inspects, projects and exports in one step and prints the same coverage, or
+`null` when the bundle serves replay.
+
+For a PE/ELF export question, `inspect_native_exports` accepts `detail: "summary"`
+and retains the complete table. Query `inspect_analysis_view` with
+`view: {kind: "native-exports", collection: "exports", names: ["selected_name"],
+fields: ["name"], offset: 0, limit: 32}` and the reported parent Evidence ID.
+All same-name versions and aliases survive; use `source_index` with the parent ID
+for stable identity. `collection: "issues"` pages interpretation failures. Page
+coverage describes selected retained rows; `summary.coverage` or `exports.coverage`
+still describes the source table, so an empty partial page does not prove absence.
+CLI `inspect-native-exports --detail summary --evidence_output PATH` saves the
+complete bundle for later `inspect-analysis-view --evidence-bundle PATH` requests.
+
+For an ELF load-time dependency question, `inspect_elf_dependencies` accepts
+`detail: "summary"` and retains the complete inventory. Query
+`inspect_analysis_view` with `view: {kind: "elf-dependencies", collection:
+"needed" | "versions" | "definitions" | "maxima" | "imports", names:
+["selected_name"], fields: ["name"], offset: 0, limit: 32}` and the reported
+parent Evidence ID. Collection `"maxima"` matches `names` against namespaces
+such as `GLIBC` and selects `fields` from `namespace`, `maximum`, and
+`evidence_kind`, for example `fields: ["namespace", "maximum"]`. Collection
+`"issues"` takes only `indices`, `offset`, and `limit`.
+Duplicate `DT_NEEDED` names survive; use `source_index` with the parent ID for
+stable identity. Page coverage describes selected retained rows;
+`summary.coverage` or `dependencies.coverage` still describes the source
+tables, so an empty partial page does not prove absence. CLI
+`inspect-elf-dependencies --detail summary --evidence_output PATH` saves the
+complete bundle for later `inspect-analysis-view --evidence-bundle PATH`
+requests.

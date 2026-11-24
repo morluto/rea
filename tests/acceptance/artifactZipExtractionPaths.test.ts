@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -56,8 +57,14 @@ cliTest(
         collisions.map(({ artifact_id }) =>
           artifact_id === null ? null : nodesById.get(artifact_id),
         ),
-      ).size,
-    ).toBe(2);
+      ),
+    ).toEqual(
+      new Set(
+        ["NFC bytes", "NFD bytes"].map((bytes) =>
+          createHash("sha256").update(bytes).digest("hex"),
+        ),
+      ),
+    );
 
     for (const integrityPolicy of ["fail", "record-and-continue"] as const) {
       const result = await cli.run({

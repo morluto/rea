@@ -21,11 +21,13 @@ page with `list_browser_targets` and request `inspect_web_page` with
 }
 ```
 
-Save the complete Evidence from MCP `structuredContent`, or the normalized
-result, as UTF-8 JSON. `export_web_scripts` accepts saved `inspect_web_page` or
-`capture_browser_scenario` results. It does not accept `observe_web_execution` or
-`inspect_web_event_listeners` results. An existing scenario must have retained
-`capture.network.response_body`; do not initiate browser actions merely to fill
+Save the complete Evidence from MCP `structuredContent`, or its normalized
+result, as UTF-8 JSON. `export_web_scripts` accepts only saved `inspect_web_page`
+or `capture_browser_scenario` captures; other browser operations, such as
+`observe_web_execution` or `inspect_web_event_listeners`, are rejected. A
+`capture_browser_scenario` reply delivered with `detail: "summary"` is a view, not
+the capture, so save a complete capture. An existing scenario must have selected
+`capture.network.response_body`; do not start browser actions merely to fill
 this gap. Keep the recorded capture coverage and source-body limitations.
 
 Call `export_web_scripts` with an absent output directory whose parent exists:
@@ -37,22 +39,27 @@ Call `export_web_scripts` with an absent output directory whose parent exists:
 }
 ```
 
-Use returned `manifest.path` and select the zero-based index in `scripts`, not a
-CDP script ID. Check `content.state`, `content.sha256`, `content.bytes`, and the
-source identity: `script_key`/`frame_id` for page scripts, or
-`transaction_id`/event sequence references for scenario responses. Preserve
-`source_evidence_id`, `capture_sha256` and manifest identity in the evidence chain.
-Multiple entries sharing a URL remain separate candidates. Scenario bytes come
-from Playwright's `Response.body()`, which may reload the request URL with
-credentials when CDP has no body. Transaction/event references therefore do not
-verify that those bytes came from the original network transaction. Preserve
-this [source-body limitation](https://github.com/morluto/rea/blob/main/docs/website-script-export.md).
+Use the returned `manifest.path`, and select a zero-based index in `scripts`, not
+a CDP script ID. For each candidate, check `content.state` and, when exported,
+`content.sha256` and `content.bytes`. Read its identity from `source`:
+`script_key` and `frame_id` for a page script, or `transaction_id`,
+`request_sequence` and `response_sequence` for a scenario response. Preserve
+`source_evidence_id`, `capture_sha256` and the manifest digest in the evidence
+chain. Entries that share a URL remain separate candidates.
 
-If `analysis_input` is non-null, pass that returned object to
-`analyze_javascript_application` when local file/module inventory is needed.
-This analyzes exported bytes; its filesystem resolution cannot establish browser
-import-map behavior. If `analysis_input` is null, stop static analysis and report
-the unavailable source reasons. Export neither refetches assets nor executes them.
+Scenario bytes come from Playwright's `Response.body()`, which can load the
+request URL again with credentials when CDP has no body. Transaction and event
+references therefore do not verify that those bytes came from the original
+network transaction. Keep this
+[source-body limitation](https://github.com/morluto/rea/blob/main/docs/guides/web/website-script-export.md)
+with any claim about the exported bytes.
+
+If `analysis_input` is not null, pass that object to
+`analyze_javascript_application` when local file or module inventory is needed.
+That analysis describes the exported files; its filesystem resolution cannot
+establish browser import-map behavior. If `analysis_input` is null, stop static
+analysis and report the unavailable source reasons from the manifest. Export
+does not fetch or execute assets.
 
 ## Map one generated point to original source
 
@@ -75,36 +82,54 @@ call `trace_web_source_location`:
 
 Replace the example index and point with the selected entry and known position.
 The map URL is a name-resolution context, not a fetch request. The operation
-verifies manifest, script and map bytes; map pairing remains caller-selected.
-If only a local map is available, its absolute file URL, such as
-`file:///analysis/app.js.map`, supplies local resolution context. Report the
+verifies the manifest, script and map bytes; the map pairing remains
+caller-selected. If only a local map is available, its absolute file URL, such
+as `file:///analysis/app.js.map`, supplies local resolution context. Report the
 deployment URL as unknown; local resolution does not recover browser source URLs.
 
+Complete delivery returns raw map text and embedded source content. For a large
+map, add `detail: "summary"` to retain the complete parent and receive point
+metadata only. Page further matches with `inspect_analysis_view` and
+`view: {kind: "source-location", collection: "matches"}`, and read a bounded text
+snippet with `collection: "source-text"` and a `match_index`. A refusal names the
+exhausted `source_map_limits` field or `decode_timeout_ms`; retry with the same
+manifest, map and point and only that control changed. See
+[source locations](https://github.com/morluto/rea/blob/main/docs/guides/web/web-source-location.md)
+for the budgets.
+
 Lines here are one-based and script-relative; columns are zero-based UTF-16.
-For a runtime callback/request location, retain the available session `script_id`,
-source digest and enclosing-resource coordinates. Separately captured matching
-text establishes byte correspondence, not the same runtime instance; do not join
-captures by script ID or URL alone. Convert an external-script line with
-`line_number + 1`; an empty script ID does not prevent that coordinate conversion.
-For an associated inline script with known `resource_start`, use
-`line_number - resource_start.line_number + 1`, subtracting the start column only
-on that first resource line. Keep columns unchanged on later lines. Missing
-columns or an unknown inline association/start leave the conversion unknown.
-See [coordinate semantics](https://github.com/morluto/rea/blob/main/docs/web-runtime.md)
+Runtime callsite and listener `line_number`/`column_number` values are CDP's
+zero-based coordinates in the enclosing resource named by `url`. For a runtime
+callback or request location, retain the session `script_id`, source digest and
+`resource_start` when available. Separately captured matching text establishes
+byte correspondence, not the same runtime instance; do not join captures by
+script ID or URL alone.
+
+- External script, or an empty-`script_id` initiator position in a script file:
+  use `line_number + 1` and keep the column.
+- Inline script with a `script_id` and known `resource_start`: use
+  `line_number - resource_start.line_number + 1`. Subtract
+  `resource_start.column_number` only on that first resource line; keep later
+  columns unchanged.
+- An empty-`script_id` position has no session-script association, so it cannot
+  be joined to captured source or `resource_start`. Missing columns or an
+  unknown inline start leave the conversion unknown.
+
+See [coordinate semantics](https://github.com/morluto/rea/blob/main/docs/guides/web/web-runtime.md)
 before transferring a runtime point.
 
 Read `lookup.matched_generated_position` and every `matches` entry. Lookup uses
 the greatest generated position at or before the request, including earlier
 lines; it is not necessarily an exact-point match. Keep generated-only segments,
-duplicate sources and indexed section identities. An original position outside
-embedded text has no verified text offset. `sourcesContent` hashes identify the
-map's embedded text, not an independently captured original file. A mapped point
-does not establish coverage of an entire function or execution.
+duplicate sources and indexed-section identities. An original position outside
+embedded text has a null offset. `sourcesContent` hashes identify the map's
+embedded text, not an independently captured original file. A mapped point does
+not establish coverage of an entire function or execution.
 
 ## Trace an outgoing module edge when it answers the question
 
-For a selected import or re-export, use `trace_web_module_imports`. Supply explicit
-inline/document-base context and a local import map only when known:
+For a selected import or re-export, use `trace_web_module_imports`. Supply
+explicit inline or document-base context and a local import map only when known:
 
 ```json
 {
@@ -118,27 +143,30 @@ inline/document-base context and a local import map only when known:
 }
 ```
 
-Omit optional context when unavailable; the reported source URL is then used as
-the importer, which cannot establish an inline script's document base. Literal
-imports require caller-supplied Chromium via absolute `REA_BROWSER_EXECUTABLE`.
-Only REA's resolver stub executes; captured application code is parsed as data.
-The selected import map is context, not proof that the page installed it.
+Omit optional context when unavailable; the trace then uses the reported source
+URL as the importer (`importer.basis: "reported-source-url"`), which cannot
+establish an inline script's document base. Literal imports require a
+caller-supplied Chromium through an absolute `REA_BROWSER_EXECUTABLE`; a source
+with no literal imports does not start a browser. Only REA's resolver stub runs;
+captured application code is parsed as data. The selected import map is context,
+not proof that the page installed it.
 
-Retain each resolved URL or rejection and all `captured_candidates`. Query and
-fragment variants are distinct; `response-url-without-fragment` is weaker than
-`exact-reported-url`. Candidate metadata is recorded capture evidence; only the
-selected script's bytes are reverified. Computed imports remain unknown, and a
-resolved URL with no captured candidate does not prove the dependency was absent.
-Do not fetch missing modules or replace native edges with guessed bundler IDs.
+Retain each resolved URL or rejection message and all `captured_candidates`.
+Query and fragment variants are distinct; a `response-url-without-fragment`
+candidate is weaker than an `exact-reported-url` candidate. Candidate metadata
+is recorded capture evidence; only the selected script's bytes are verified
+again. Computed imports remain unknown, and a resolved URL with no captured
+candidate does not prove the dependency was absent. Do not fetch missing modules
+or replace native edges with guessed bundler IDs.
 
 ## Finish with a bounded conclusion
 
-Report the selected script/digest, requested and matched coordinates, source/map
-Evidence links, candidate module edges and unresolved alternatives. Separate
-captured text, map derivation and any inference connecting them to the feature.
-Existing execution observations cover their recorded window, not prior activity;
-missing coverage is unknown, and a listener or initiator association alone does
-not prove feature causality.
+Report the selected script and digest, requested and matched coordinates, source
+and map Evidence links, candidate module edges and unresolved alternatives.
+Separate captured text, map derivation and any inference that connects them to
+the feature. Existing execution observations cover their recorded window, not
+prior activity; missing coverage is unknown, and a listener or initiator
+association alone does not prove feature causality.
 
 Stop when the selected source question is answered. Otherwise name one useful
 next probe: retain missing source bytes, obtain an explicitly selected local map,

@@ -1,5 +1,18 @@
 import { expect, it } from "vitest";
-import { javaScriptAnalysisResourceControlsSchema } from "./javascriptAnalysisResourceControls.js";
+import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import { projectAnalysisError } from "../analysisErrorProjection.js";
+import {
+  JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
+  JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION,
+  JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
+  JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+  JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
+  JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
+  javaScriptAnalysisResourceControlsSchema,
+  javaScriptWorkerHeapExhaustionRecovery,
+  javaScriptSemanticCeilingCoverage,
+  javaScriptWorkerHeapRemediation,
+} from "./javascriptAnalysisResourceControls.js";
 
 it("keeps omitted operational choices absent and validates explicit semantic budgets", () => {
   expect(javaScriptAnalysisResourceControlsSchema.parse({})).toEqual({});
@@ -28,4 +41,213 @@ it("keeps omitted operational choices absent and validates explicit semantic bud
           .success,
       ).toBe(false);
   }
+});
+
+it("names max_heap_mb, its range, and the budgets it does not raise", () => {
+  const heapMb = JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb;
+  const error = new AnalysisResourceConstraintError(
+    "analyze_javascript_application",
+    "memory",
+    `Owned JavaScript worker exhausted its ${String(heapMb)} MiB V8 old-space heap (max_heap_mb) while analyzing app.js during static`,
+    { worker_old_space_mb: heapMb },
+    { remediationAction: javaScriptWorkerHeapRemediation(heapMb) },
+  );
+  const projected = projectAnalysisError(error);
+  expect(projected.message).toContain(`max_heap_mb`);
+  expect(projected.message).toContain(`${String(heapMb)} MiB`);
+  expect(projected.remediation.action).toContain("max_heap_mb");
+  expect(projected.remediation.action).toContain(
+    String(JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM),
+  );
+  expect(projected.remediation.action).toContain(
+    String(JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM),
+  );
+  expect(projected.remediation.action).not.toContain("--");
+  expect(projected.remediation.action).toContain("next analysis");
+  expect(projected.remediation.action).toContain("new worker");
+  expect(projected.remediation.action).toContain("parent result budget");
+  expect(projected.remediation.action).toContain("transfer");
+  expect(projected.remediation.action).not.toMatch(/available host memory/u);
+  const maximum = projectAnalysisError(
+    new AnalysisResourceConstraintError(
+      "analyze_javascript_application",
+      "memory",
+      "heap",
+      null,
+      {
+        remediationAction: javaScriptWorkerHeapRemediation(
+          JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
+        ),
+      },
+    ),
+  );
+  expect(maximum.remediation.action).toContain("Do not increase it further");
+});
+
+it("names the parent heap control for the parent result budget", () => {
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain(
+    "parent result budget",
+  );
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain("NODE_OPTIONS");
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain(
+    "--max-old-space-size=<MiB>",
+  );
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain("max_heap_mb");
+  expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).not.toContain(
+    "no runtime override",
+  );
+});
+
+it("names the parent heap control for checkpoint decode", () => {
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "parent process heap",
+  );
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "NODE_OPTIONS",
+  );
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "--max-old-space-size=<MiB>",
+  );
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "admit this checkpoint",
+  );
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "Increasing max_heap_mb does not raise it",
+  );
+});
+
+it("attributes V8 heap exhaustion to max_heap_mb only when that flag is enforced", () => {
+  const node = javaScriptWorkerHeapExhaustionRecovery({
+    heapFlagsEnforced: true,
+    heapMb: 1024,
+    path: "app.js",
+    phase: "static",
+  });
+  expect(node.reason).toContain(
+    "exhausted its 1024 MiB V8 old-space heap (max_heap_mb)",
+  );
+  expect(node.remediationAction).toContain("max_heap_mb");
+  expect(node.remediationAction).not.toContain("--");
+  const bun = javaScriptWorkerHeapExhaustionRecovery({
+    heapFlagsEnforced: false,
+    heapMb: 1024,
+    path: "app.js",
+    phase: "static",
+  });
+  expect(bun.reason).toContain("Bun ignores the V8 old-space flag");
+  expect(bun.reason).not.toContain(
+    "exhausted its 1024 MiB V8 old-space heap (max_heap_mb)",
+  );
+  expect(bun.remediationAction).toContain("Bun ignores V8 heap flags");
+  expect(bun.remediationAction).not.toContain("Increase max_heap_mb");
+});
+
+it("names the four semantic arguments on ceiling coverage", () => {
+  const both = { total: true, perFile: true };
+  const nodes = javaScriptSemanticCeilingCoverage("nodes", 50, 30, both);
+  const unknowns = javaScriptSemanticCeilingCoverage("unknowns", 3, 2, both);
+  const perFileOnly = javaScriptSemanticCeilingCoverage("nodes", 50, 30, {
+    total: false,
+    perFile: true,
+  });
+  const totalOnly = javaScriptSemanticCeilingCoverage("unknowns", 3, 2, {
+    total: true,
+    perFile: false,
+  });
+  expect(nodes.limits).toEqual(perFileOnly.limits);
+  expect(nodes.limits).toEqual(
+    expect.arrayContaining([
+      { name: "semantic_graph_node_ceiling", value: 50, unit: "items" },
+      { name: "semantic_graph_file_node_ceiling", value: 30, unit: "items" },
+      { name: "max_semantic_nodes", value: 50, unit: "items" },
+      { name: "max_semantic_nodes_per_file", value: 30, unit: "items" },
+    ]),
+  );
+  expect(unknowns.limits).toEqual(totalOnly.limits);
+  expect(unknowns.limits).toEqual(
+    expect.arrayContaining([
+      { name: "semantic_graph_unknown_ceiling", value: 3, unit: "items" },
+      { name: "semantic_graph_file_unknown_ceiling", value: 2, unit: "items" },
+      { name: "max_semantic_unknowns", value: 3, unit: "items" },
+      { name: "max_semantic_unknowns_per_file", value: 2, unit: "items" },
+    ]),
+  );
+  expect(nodes.limitation).toContain("1 to");
+  expect(nodes.limitation).toContain(String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM));
+  // The producer records controls by contract field; adapters name options.
+  expect(nodes.limitation).not.toContain("--");
+  expect(nodes.controls).toEqual([
+    {
+      control_kind: "parameter",
+      parameter: "max_semantic_nodes",
+      effective_value: 50,
+      unit: "count",
+      minimum: 1,
+      maximum: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+      default_value: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodes,
+      applies_at: "next_call",
+    },
+    expect.objectContaining({
+      parameter: "max_semantic_nodes_per_file",
+      effective_value: 30,
+      default_value: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
+    }),
+  ]);
+  expect(nodes.limitation).toContain("Raising them does not raise");
+  expect(unknowns.controls.map(({ parameter }) => parameter)).toEqual([
+    "max_semantic_unknowns",
+    "max_semantic_unknowns_per_file",
+  ]);
+  expect(unknowns.limitation).toContain("max_semantic_nodes");
+  expect(perFileOnly.controls).toEqual([
+    {
+      control_kind: "parameter",
+      parameter: "max_semantic_nodes_per_file",
+      effective_value: 30,
+      unit: "count",
+      minimum: 1,
+      maximum: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+      default_value: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
+      applies_at: "next_call",
+    },
+  ]);
+  expect(perFileOnly.limitation).toContain("Raising it does not raise");
+  expect(perFileOnly.limitation).not.toContain("max_semantic_nodes is 50");
+
+  expect(totalOnly.controls).toEqual([
+    {
+      control_kind: "parameter",
+      parameter: "max_semantic_unknowns",
+      effective_value: 3,
+      unit: "count",
+      minimum: 1,
+      maximum: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+      default_value: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticUnknowns,
+      applies_at: "next_call",
+    },
+  ]);
+  expect(totalOnly.limitation).not.toContain(
+    "max_semantic_unknowns_per_file is 2",
+  );
+
+  const capped = javaScriptSemanticCeilingCoverage(
+    "nodes",
+    JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+    30,
+    { total: true, perFile: false },
+  );
+  expect(capped.controls).toEqual([
+    expect.objectContaining({
+      parameter: "max_semantic_nodes",
+      effective_value: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+      maximum: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+    }),
+  ]);
+  expect(capped.limitation).not.toContain("max_semantic_nodes_per_file is 30");
+  expect(() =>
+    javaScriptSemanticCeilingCoverage("nodes", 50, 30, {
+      total: false,
+      perFile: false,
+    }),
+  ).toThrow("ceiling that stopped retention");
 });
