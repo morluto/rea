@@ -16,6 +16,7 @@ import type {
   AnalysisOperationPort,
 } from "../ports/AnalysisProvider.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
+import { declaresSizeAwareDetail } from "../contracts/analysisDetail.js";
 import { ok } from "../domain/result.js";
 import type { RecoveryAdmission } from "../application/investigation/InvestigationRetention.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -79,7 +80,11 @@ export const createProviderOperationToolHandler =
     const delivery =
       contract.retainedSummary === undefined
         ? undefined
-        : retainedSummaryDelivery(contract.name, dependencies);
+        : retainedSummaryDelivery(
+            contract.name,
+            dependencies,
+            declaresSizeAwareDetail(contract.inputSchema),
+          );
     return async (
       input: unknown,
       context: ServerContext,
