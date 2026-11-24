@@ -328,6 +328,7 @@ export const ENTRY_FILES = Object.freeze(
         "HopperProvider.ts",
         "HopperProviderMetadata.ts",
         "LinuxPrivateDisplayProbe.ts",
+        "MacHopperPython.ts",
       ],
       ida: [
         "IdaConfiguration.ts",

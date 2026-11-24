@@ -16,7 +16,7 @@ import {
   ArtifactResourceScope,
 } from "../resources/index.js";
 import { constants } from "node:fs";
-import { access, readdir, realpath, stat } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
@@ -87,11 +87,6 @@ import {
   type DoctorScopeReport,
 } from "./DoctorScope.js";
 import { selectedDesktopBuildChecks } from "./DesktopBuildDoctor.js";
-import {
-  macHopperPythonCheck,
-  macHopperPythonCommandEnvironment,
-  readMacHopperPythonFacts,
-} from "./MacHopperPython.js";
 import type {
   DesktopBuildFacts,
   DesktopBuildFactsInput,
@@ -136,7 +131,7 @@ export interface DoctorHost {
     path: string,
   ): Promise<Result<VerifiedLinuxHopperLauncher, HopperReleaseError>>;
   linuxDemoRuntimeCheck(): Promise<DoctorCheck>;
-  /** macOS Hopper Python observations; omitted hosts report no check. */
+  /** macOS Hopper Python observations; an uncomposed host reports no check. */
   macHopperPythonCheck?(launcherPath: string): Promise<DoctorCheck>;
   /** Homebrew cask launcher; consulted only where macOS bundles are probed. */
   brewHopperPath(): Promise<string | undefined>;
@@ -752,6 +747,14 @@ export interface SystemDoctorHostOptions {
     signal: AbortSignal,
     environment: Readonly<NodeJS.ProcessEnv>,
   ) => Promise<DoctorCheck>;
+  readonly macHopperPythonCheck?: (input: {
+    readonly launcherPath: string;
+    /** Bounded, owner-tracked command execution. */
+    readonly run: typeof execFileOutput;
+    readonly resourceScope: RetainedResourceScope;
+    readonly signal: AbortSignal;
+    readonly environment: Readonly<NodeJS.ProcessEnv>;
+  }) => Promise<DoctorCheck>;
   readonly desktopBuildFacts?: (
     input: DesktopBuildFactsInput,
   ) => Promise<DesktopBuildFacts>;
@@ -925,36 +928,18 @@ export const systemDoctorHost = (
               inspectionSignal,
               probeEnvironment,
             ),
-      macHopperPythonCheck: async (launcherPath) =>
-        macHopperPythonCheck(
-          await readMacHopperPythonFacts(
-            {
-              run: hostExecFileOutput,
-              env: macHopperPythonCommandEnvironment(probeEnvironment),
-              fileState: async (path) => {
-                try {
-                  return (await stat(path)).isFile()
-                    ? { state: "file" }
-                    : { state: "missing" };
-                } catch (cause: unknown) {
-                  return absentPathCode(cause)
-                    ? { state: "missing" }
-                    : { state: "unknown", reason: errorMessage(cause) };
-                }
-              },
-              listDirectory: async (path) => {
-                try {
-                  return { state: "listed", entries: await readdir(path) };
-                } catch (cause: unknown) {
-                  return absentPathCode(cause)
-                    ? { state: "missing" }
-                    : { state: "unknown", reason: errorMessage(cause) };
-                }
-              },
-            },
-            launcherPath,
-          ),
-        ),
+      ...(options.macHopperPythonCheck === undefined
+        ? {}
+        : {
+            macHopperPythonCheck: (launcherPath: string) =>
+              options.macHopperPythonCheck!({
+                launcherPath,
+                run: hostExecFileOutput,
+                resourceScope,
+                signal: inspectionSignal,
+                environment: probeEnvironment,
+              }),
+          }),
       inspectLinuxHopper: (path) =>
         inspectLinuxHopperLauncher(path, probeEnvironment),
       async brewHopperPath() {
@@ -1196,12 +1181,6 @@ export const systemDoctorHost = (
             }),
           ),
       };
-};
-
-/** Only these errors confirm that a probed path does not exist. */
-const absentPathCode = (cause: unknown): boolean => {
-  const code = cause instanceof Error ? Reflect.get(cause, "code") : undefined;
-  return code === "ENOENT" || code === "ENOTDIR";
 };
 
 const readMacosVersion = async (
