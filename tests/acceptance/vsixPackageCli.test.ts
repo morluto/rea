@@ -5,6 +5,8 @@ import { expect } from "vitest";
 import { VSIX_PACKAGE_TOOL_CONTRACTS } from "../../src/contracts/vsix/vsixPackageToolContracts.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
+import { parseEvidence } from "../../src/domain/evidence.js";
+import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import {
   vsixPackageFixture,
@@ -93,19 +95,14 @@ cliTest("refuses a non-ZIP file through the public CLI", async ({ cli }) => {
   const result = await cli.run({
     arguments: ["inspect-vsix-package", path, "--json"],
   });
-  expect(result.exitCode).not.toBe(0);
+  expect(result.exitCode, result.stderr).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    category: "invalid_input",
+    code: "unsupported_target",
+    category: "unsupported_target",
     details: {
       operation: "inspect_vsix_package",
-      issues: [
-        expect.objectContaining({
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining("not a ZIP"),
-        }),
-      ],
+      format_failure: "malformed",
+      reason: expect.stringContaining("not a ZIP"),
     },
   });
 });
@@ -267,5 +264,24 @@ cliTest(
     });
     expect(mcpReport.coverage.examined_manifest_bytes).toBeGreaterThan(2048);
     expect(mcpReport).toEqual(cliReport);
+  },
+);
+
+cliTest(
+  "points first-contact inspection of a .vsix to the VSIX reader",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-vsix-first-contact-");
+    const path = join(root, "demo.hello.vsix");
+    await writeFile(path, await vsixPackageFixture());
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    expect(inspection.next_probes.map((probe) => probe.operation)).toContain(
+      "inspect_vsix_package",
+    );
   },
 );
