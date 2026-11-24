@@ -368,7 +368,9 @@ cliTest(
     });
     expect(cliSingle.exitCode, cliSingle.stderr).toBe(0);
     const cliEvidence = parseEvidence(cliSingle.json);
-    expect(cliEvidence.subject?.format).toBe("file");
+    expect(cliEvidence.subject).toMatchObject({
+      identity: { kind: "file", format: "file" },
+    });
     const cliResult = javascriptApplicationAnalysisResultSchema.parse(
       cliEvidence.normalized_result,
     );

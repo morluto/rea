@@ -140,6 +140,7 @@ export class SingleFileJavaScriptArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `JavaScript source file changed during read: ${this.entryPath}`,
+          { integrityCheck: "read-coverage" },
         );
     } finally {
       onDone();
