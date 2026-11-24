@@ -45,6 +45,7 @@ import {
   COMPACT_INPUT_SCHEMA_PRESENTATION,
 } from "../contracts/mcpSchemaPresentation.js";
 import { ErrorEvidenceTransport } from "./ErrorEvidenceTransport.js";
+import type { UpdateNotices } from "./UpdateNotices.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 /** Capture caller selections and issues at the canonical SDK validation boundary. */
@@ -133,6 +134,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   /** Transport-owned Evidence uses the same lifetime as application writes. */
   withAdmittedAnalysis: WithAdmittedAnalysis | undefined;
   private identity: ReturnType<typeof createCatalogIdentity> | undefined;
+  updateNoticeFactory: (() => UpdateNotices) | undefined;
+  private readonly noticeOwners = new Set<UpdateNotices>();
 
   /** Register an awaitable cleanup hook settled during {@link close}. */
   registerCloseHook(
@@ -167,9 +170,30 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     };
   }
 
-  /** Close only the underlying MCP protocol/transport without running registered hooks. */
-  protected closeProtocol(): Promise<void> {
-    return super.close();
+  /**
+   * Close only the underlying MCP protocol/transport without running registered
+   * hooks. Release lookups belong to the connections, so this also cancels and
+   * joins them, even after the SDK has discarded a closed transport.
+   */
+  protected async closeProtocol(): Promise<void> {
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => super.close()),
+      ...[...this.noticeOwners].map((notices) => this.closeNotices(notices)),
+    ]);
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures,
+        "MCP server and update lookup cleanup failed",
+      );
+  }
+
+  private async closeNotices(notices: UpdateNotices): Promise<void> {
+    await notices.close();
+    this.noticeOwners.delete(notices);
   }
 
   /** Settle all registered close hooks without closing the underlying transport. */
@@ -180,7 +204,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
 
   override async close(): Promise<void> {
     await this.settleCloseTasks([
-      super.close(),
+      this.closeProtocol(),
       ...this.closeHooks.map((hook) => hook.close()),
     ]);
   }
@@ -507,20 +531,37 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   }
 
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
-  override connect(transport: Transport): Promise<void> {
+  override async connect(transport: Transport): Promise<void> {
     // HTTP reuses the analysis server after draining the previous transport.
     // Reset visibility while disconnected, before the next initialize/list.
     if (!this.isConnected()) this.progressiveCatalog?.reset();
-    return super.connect(
-      new ErrorEvidenceTransport(
-        transport,
-        () => this.recordEvidence,
-        () => this.delivery,
-        () => this.withAdmittedAnalysis,
-        this.presentation.output,
-        this.maximumInputElements,
-        this.evidenceReferenceAlternatives,
-      ),
-    );
+    // Each connection owns its release lookup state, cache and cancellation.
+    const notices = this.updateNoticeFactory?.();
+    if (notices !== undefined) this.noticeOwners.add(notices);
+    try {
+      if (notices !== undefined)
+        this.server.registerCapabilities({ logging: {} });
+      await super.connect(
+        new ErrorEvidenceTransport(
+          transport,
+          () => this.recordEvidence,
+          () => this.delivery,
+          () => this.withAdmittedAnalysis,
+          this.presentation.output,
+          this.maximumInputElements,
+          this.evidenceReferenceAlternatives,
+          notices,
+          (params) =>
+            this.server.sendLoggingMessage(params, transport.sessionId),
+          () =>
+            notices === undefined
+              ? Promise.resolve()
+              : this.closeNotices(notices),
+        ),
+      );
+    } catch (cause) {
+      if (notices !== undefined) await this.closeNotices(notices);
+      throw cause;
+    }
   }
 }

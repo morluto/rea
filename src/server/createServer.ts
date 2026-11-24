@@ -9,6 +9,7 @@ import {
 } from "../contracts/toolFamilyIds.js";
 import { toolFamilyId } from "../contracts/toolFamilies.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
+import { configuredUpdateNoticeFactory } from "./UpdateNotices.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { serverInstructions } from "./serverInstructions.js";
@@ -241,6 +242,8 @@ export const createServer = (
       advertisedToolFamilies,
       environment.REA_MCP_MAX_INPUT_ELEMENTS,
     );
+  if (options.mcpServer === undefined)
+    server.updateNoticeFactory = configuredUpdateNoticeFactory(environment);
   server.analysisSettings = analysisSettings;
   if (options.mcpServer !== undefined) {
     server.attachRuntime(
