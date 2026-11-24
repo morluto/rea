@@ -10,7 +10,11 @@ import {
   DIRECTORY_TREE_DIGEST_ALGORITHM,
   DIRECTORY_TREE_DIGEST_VERSION,
 } from "./directoryTreeDigest.js";
-import { rawBinaryEntryPointSchema } from "./rawBinary.js";
+import {
+  rawBinaryEntryPointSchema,
+  rawLoadIdentity,
+  rawLoadIdentitySchema,
+} from "./rawBinary.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const flashOffsetSchema = z.number().int().min(0).max(0xffff_ffff).nullable();
@@ -21,6 +25,10 @@ export const fileTargetSelectionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("entry-point"),
     entry_point: rawBinaryEntryPointSchema,
+    // A raw load that is not legacy-equivalent also selects its base, variant,
+    // vector table and the entry's role and basis. Absent otherwise, so a
+    // legacy load keeps the identity it had before these inputs.
+    raw_load: rawLoadIdentitySchema.exactOptional(),
   }),
   z.strictObject({
     kind: z.literal("esp-flash"),
@@ -260,21 +268,38 @@ const universalSliceSelection = (
   };
 };
 
+/** A raw load's entry, with its versioned load identity when it has one. */
+const rawBinarySelection = (
+  load: Parameters<typeof rawLoadIdentity>[0],
+): FileTargetSelection => {
+  const identity = rawLoadIdentity(load);
+  return {
+    kind: "entry-point",
+    entry_point: load.entryPoint,
+    ...(identity === undefined ? {} : { raw_load: identity }),
+  };
+};
+
 /** The selection an open binary target makes inside its bytes, if any. */
 export const binaryTargetSelection = (
   target: BinaryTarget,
 ): FileTargetSelection | null =>
-  target.format === "raw-binary" || target.format === "gamecube-dol"
-    ? { kind: "entry-point", entry_point: target.entryPoint }
-    : target.format === "esp-flash-image"
-      ? {
-          kind: "esp-flash",
-          flash_offset: target.espFlash.flashOffset,
-          partition_table_offset: target.espFlash.partitionTableOffset,
-        }
-      : target.format === "mach-o-universal"
-        ? universalSliceSelection(target.universalSlice, target.universalSlices)
-        : null;
+  target.format === "raw-binary"
+    ? rawBinarySelection(target.rawLoad)
+    : target.format === "gamecube-dol"
+      ? { kind: "entry-point", entry_point: target.entryPoint }
+      : target.format === "esp-flash-image"
+        ? {
+            kind: "esp-flash",
+            flash_offset: target.espFlash.flashOffset,
+            partition_table_offset: target.espFlash.partitionTableOffset,
+          }
+        : target.format === "mach-o-universal"
+          ? universalSliceSelection(
+              target.universalSlice,
+              target.universalSlices,
+            )
+          : null;
 
 /** The one projection of an open binary target into its target identity. */
 export const binaryTargetIdentity = (
@@ -300,3 +325,44 @@ export const sameTargetIdentity = (
   left: TargetIdentity,
   right: TargetIdentity,
 ): boolean => targetIdentityKey(left) === targetIdentityKey(right);
+
+/**
+ * The facts of an identity that place addresses. A raw load that is not
+ * legacy-equivalent maps file offset 0 at its base, so its entry's address,
+ * instruction set, role and basis, and the vector table it was read from,
+ * choose where analysis starts and move no coordinates; its base and variant
+ * remain. Every other identity, a legacy raw load included (it maps offset 0
+ * at its entry), places addresses by all of its facts. The provider's function
+ * coordinate context commits the rest. Sessions, snapshots and Evidence
+ * subjects keep the full identity.
+ */
+const coordinateKey = (identity: TargetIdentity): string => {
+  const load =
+    identity.kind === "file" && identity.selection?.kind === "entry-point"
+      ? identity.selection.raw_load
+      : undefined;
+  if (identity.kind !== "file" || load === undefined)
+    return targetIdentityKey(identity);
+  const encoded = serializeCanonicalValue({
+    kind: "raw-load-coordinates",
+    sha256: identity.sha256,
+    format: identity.format,
+    architecture: identity.architecture,
+    version: load.version,
+    base_address: load.base_address,
+    architecture_variant: load.architecture_variant ?? null,
+  });
+  if (encoded === undefined)
+    throw new TypeError("RFC 8785 canonicalization rejected a target identity");
+  return `coordinates_${sha256Hex(encoded)}`;
+};
+
+/**
+ * Whether two identities place the same bytes at the same addresses, so that
+ * comparison workflows can relate their functions by address. Narrower than
+ * {@link sameTargetIdentity}: it ignores how a raw load chose its entry.
+ */
+export const sameTargetCoordinates = (
+  left: TargetIdentity,
+  right: TargetIdentity,
+): boolean => coordinateKey(left) === coordinateKey(right);

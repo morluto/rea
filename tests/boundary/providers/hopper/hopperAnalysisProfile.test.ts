@@ -18,6 +18,7 @@ import {
   resolveHopperAnalysisProfile,
 } from "../../../../src/hopper/HopperAnalysisProfile.js";
 import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderMetadata.js";
+import { rawLoadAtEntry } from "../../../../src/domain/rawBinary.fixture.js";
 import { hopperProducerIdentity } from "../../../../src/hopper/HopperBridgeSources.js";
 import { packagedSourcesDigest } from "../../../../src/filesystem/ProducerIdentity.js";
 import { PRODUCT_IDENTITY } from "../../../../src/identity.js";
@@ -53,8 +54,7 @@ describe("Hopper analysis profiles", () => {
         format: "raw-binary",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x8000000",
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x8000000"),
       }),
     ).toMatchObject({
       ok: false,
