@@ -1157,8 +1157,11 @@ or when transport delivery fails; uncertain delivery is not retried.
 The notice compares the running version with a published release, not the
 installation on disk. It suggests `rea update` for global installations and
 caller-owned updates for source or pinned package-runner installations. No
-installation, configuration write or automatic reconnection occurs. Restart or
-reconnect the MCP client after updating. Existing `binary_session` expected
+installation, configuration write or automatic reconnection occurs. `rea setup`
+does not forward `REA_MCP_UPDATE_CHECK` into client registrations: its
+registration environment is an allowlist that excludes it, so the opt-in stays
+in the client's own MCP configuration. Restart or reconnect the MCP client after
+updating. Existing `binary_session` expected
 identity comparison separately reports `mcp_server_restart_required` for an
 observed mismatch; absent expected identity stays unknown.
 
