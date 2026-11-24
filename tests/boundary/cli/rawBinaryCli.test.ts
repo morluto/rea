@@ -244,8 +244,14 @@ cliTest(
       code: "target_unavailable",
       details: {
         constraint: "directory_requires_file",
-        related_operations: ["analyze_javascript_application"],
+        related_operations: [
+          "inspect_desktop_application",
+          "audit_release_exposure",
+          "analyze_javascript_application",
+        ],
         related_cli_commands: {
+          inspect_desktop_application: "rea inspect-desktop-application",
+          audit_release_exposure: "rea audit-release-exposure",
           analyze_javascript_application: "rea analyze-javascript-application",
         },
       },

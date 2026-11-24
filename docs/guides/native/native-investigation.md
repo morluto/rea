@@ -101,9 +101,12 @@ its address when selecting the containing function. `search_procedures` matches
 the same names, in leaf or qualified spelling: the function appears once with
 its primary name as `value`, and `matched_aliases` lists the qualified names of
 the secondary symbols that matched.
-For Ghidra case-insensitive literal searches of procedures or strings,
-`raw_result` contains bridge candidates before REA applies Unicode-aware
-matching. Use `normalized_result` for matches; a raw candidate need not match.
+For Ghidra case-insensitive literal searches of procedures or strings, use
+`normalized_result` for matches. REA applies Unicode-aware matching to the
+bridge's candidates. When that removes a candidate or a matched secondary
+name, `raw_result` contains the bridge candidates, which need not match, and
+`limitations` says so. When it removes nothing, the candidates are the matches
+and `raw_result` is `null`; that is not missing evidence.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 

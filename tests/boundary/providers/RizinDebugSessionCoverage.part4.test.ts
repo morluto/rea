@@ -180,7 +180,7 @@ it.skipIf(process.platform === "win32").each([
     };
     expect(result.value.evidence).toMatchObject({
       normalized_result: expected,
-      raw_result: expected,
+      raw_result: null,
     });
     expect(result.value.result.output_invalid_utf8).toBe(
       "invalidUtf8" in flags ? true : undefined,

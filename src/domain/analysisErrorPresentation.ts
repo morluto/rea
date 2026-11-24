@@ -179,7 +179,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
   )
-    return `For a JavaScript/Electron application directory, call analyze_javascript_application with input_path. For binary analysis, select its executable file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+    return `For a desktop installation or native build directory, call inspect_desktop_application or audit_release_exposure with the directory; for a JavaScript/Electron application directory, call analyze_javascript_application with input_path. To analyze one program, select its file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "bundle_type_unsupported"
@@ -477,7 +477,7 @@ const outcomeUserMessage = (error: AnalysisError): string => {
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
-      ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application.`
+      ? `This operation opens a file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}); this target is another directory. Directory-capable operations are inspect_desktop_application, audit_release_exposure, and analyze_javascript_application for JavaScript/Electron applications.`
       : error.constraint === undefined
         ? `${error.message}. Check that the path exists, is readable, and points to a supported file.`
         : `${error.message}.`;
@@ -601,7 +601,13 @@ const presentedRelatedInputs = (
 ): AnalysisRelatedInputs | undefined => {
   if (error instanceof BinaryTargetError) {
     if (error.constraint === "directory_requires_file")
-      return { operations: ["analyze_javascript_application"] };
+      return {
+        operations: [
+          "inspect_desktop_application",
+          "audit_release_exposure",
+          "analyze_javascript_application",
+        ],
+      };
     if (error.remediationAction !== undefined) return undefined;
     if (
       (error.constraint === "bundle_executable_undeclared" ||

@@ -4,7 +4,8 @@ REA accepts **Binwalk 3.1.x** for region inspection and **Unblob 26.6.x** for
 explicit extraction. The report parsers are verified with Binwalk 3.1.0 and
 Unblob 26.6.4. Another build on those lines is accepted, the observed version
 is reported, and a limitation records that the parser was not verified against
-that build. This first firmware milestone is verified on Linux x64.
+that build. Binwalk and Unblob operations run only on Linux; other hosts
+report the capability as unavailable. Verification covers Linux x64.
 No device, root privilege, mount, emulation or execution of extracted programs
 is needed. Arbitrary firmware bytes do not pass native executable admission;
 select a returned ELF separately for supported Ghidra analysis.

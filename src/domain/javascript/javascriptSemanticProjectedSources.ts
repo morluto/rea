@@ -109,7 +109,7 @@ export const hasFreshProjectedReceiver = (
     paths.add(key);
     examined.set(node, paths);
     if (++selections > state.precision.alias_selections) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return false;
     }
     if (current.path.length === 0) {
@@ -133,7 +133,7 @@ export const hasFreshProjectedReceiver = (
       selections + pending.length + sources.length >
       state.precision.alias_selections
     ) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return false;
     }
     pending.push(
