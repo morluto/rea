@@ -34,6 +34,7 @@ const executeTimingReport = async (
       SOURCE_RESULT: "",
       CI_VERIFY_TEST_INVENTORY: "false",
       CI_TEST_SELECTION: "",
+      CI_COMPARE_TEST_SHADOW: "false",
       ...environment,
       GITHUB_STEP_SUMMARY: summary,
     },
@@ -757,6 +758,65 @@ it("caps the failed file list and limits partial diagnostics to reported modules
   expect(stdout).not.toContain("passed.test.ts");
   expect(stdout).toContain("2 more in the test report.");
   expect(stdout).toContain("Unhandled Vitest errors reported: 2.");
+});
+
+it("compares a frozen prediction with partial failing reports without changing their outcome", async () => {
+  const root = await createTestTempDirectory("rea-ci-selection-shadow-");
+  await workflowGit(root, ["init"]);
+  const names = ["src/a.test.ts", "src/b.test.ts", "src/c.test.ts"];
+  await mkdir(join(root, "src"));
+  for (const name of names) await writeFile(join(root, name), "");
+  await workflowGit(root, ["add", "src"]);
+  const sha = "a".repeat(40);
+  const directory = join(root, ".cache/ci-test-shadow");
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, "test-selection-shadow.json");
+  await writeFile(
+    path,
+    JSON.stringify({ version: 1, sha, files: names.slice(0, 2) }),
+  );
+  await writeFile(
+    join(root, "test-timings.json"),
+    JSON.stringify({
+      version: 1,
+      success: false,
+      files: [names[0], names[2]].map((name) => ({
+        name,
+        state: "failed",
+        durationMs: 25,
+      })),
+    }),
+  );
+  const env = {
+    CI_VERIFY_TEST_INVENTORY: "true",
+    CI_COMPARE_TEST_SHADOW: "true",
+    GITHUB_SHA: sha,
+    SHARD_RESULT: "failure",
+    MERGE_RESULT: "failure",
+  };
+  await executeTimingReport(root, env);
+  expect(
+    JSON.parse(
+      await readFile(join(root, "test-selection-comparison.json"), "utf8"),
+    ),
+  ).toMatchObject({
+    sha,
+    candidates: 2,
+    observedCandidates: 1,
+    reportedFiles: 2,
+    completeInventory: false,
+    capturedFailures: [names[0]],
+    missedFailures: [names[2]],
+    candidateReportedDurationMs: 25,
+    totalReportedDurationMs: 50,
+  });
+  expect(
+    (await executeTimingReport(root, { ...env, GITHUB_SHA: "b".repeat(40) }))
+      .summary,
+  ).toContain("prediction unavailable");
+  await expect(
+    readFile(join(root, "test-selection-comparison.json")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("verifies exactly the selected subset and never publishes it as timing history", async () => {

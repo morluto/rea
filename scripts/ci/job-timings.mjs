@@ -28,6 +28,7 @@ const STEP_COSTS = [
     key: "artifactDownload",
     pattern: /download.*artifact/iu,
     names: new Set([
+      "Download the classifier's affected-test prediction",
       "Download previous timing report",
       "Download the original qualified package",
     ]),
