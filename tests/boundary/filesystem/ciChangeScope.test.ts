@@ -2472,6 +2472,31 @@ it("reads blobs at the requested revision with tabs and newlines in their paths"
     );
 });
 
+it("keeps a non-UTF-8 Git name distinct from a literal replacement character", async () => {
+  const { directory, base } = await fixture();
+  const blob = await git(directory, ["rev-parse", `${base}:README.md`]);
+  // Write the raw tree object so this also runs on UTF-8-only filesystems.
+  await writeFile(
+    join(directory, "raw-tree"),
+    Buffer.concat([
+      Buffer.from("100644 "),
+      Buffer.from([0xff]),
+      Buffer.from(".ts\0"),
+      Buffer.from(blob, "hex"),
+    ]),
+  );
+  const tree = await git(directory, [
+    "hash-object",
+    "-w",
+    "-t",
+    "tree",
+    "raw-tree",
+  ]);
+  expect(() => gitRepository(directory).readFiles(tree, ["\uFFFD.ts"])).toThrow(
+    `Git could not read ${tree}:\uFFFD.ts`,
+  );
+});
+
 it("outputs only changed, tracked JS and TS paths for fast PR typed lint", async () => {
   const { directory, base } = await fixture();
   await git(directory, ["rm", "src/provider.ts"]);

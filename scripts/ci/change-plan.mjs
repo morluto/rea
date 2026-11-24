@@ -500,7 +500,9 @@ export const gitRepository = (cwd = process.cwd()) => {
       });
       const objects = new Map();
       for (const entry of tree.split("\0")) {
-        if (!entry) continue;
+        // Let Git resolve replacement characters so invalid UTF-8 bytes
+        // cannot alias a requested path when the listing is decoded.
+        if (!entry || entry.includes("\uFFFD")) continue;
         // Git separates the header from the raw path at the first tab.
         const tab = entry.indexOf("\t");
         const [, , oid] = entry.slice(0, tab).split(" ");
