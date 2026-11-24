@@ -1,26 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
+import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import {
   HELD_FIXED_TAG_ROWS,
   misshelvedRows,
   referencedCreateRows,
   shelvedRows,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
-import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
+import { planOf } from "../../../tests/fixtures/environmentStateWrites.js";
 import { mergedCreatePlan } from "./environmentStateWriteCreateCalls.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
 
-const createPlan = (rows: readonly TimedCaptureRow[], tool = "post_books") => {
-  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === tool,
-  );
-  if (plan === undefined) throw new Error("No create plan");
-  return plan;
-};
+const createPlan = (rows: readonly TimedCaptureRow[], tool = "post_books") =>
+  planOf(rows, tool);
 
 const OPTIONAL_SHELF = {
   served: true,
