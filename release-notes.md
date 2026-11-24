@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **cli:** camelCase option spellings such as `--maxRows` or `--dryRun` are refused; use the kebab-case flag that `--help` lists.
 * **pwntools:** for a request-sourced pwntools input ceiling, details.limit is now a control_kind "parameter" limit instead of a setting limit carrying setting, source, update_mode and scope fields.
 * **uefi:** MCP callers that need every published file inline must pass detail: "complete" to extract_uefi_firmware.
 * **uefi:** MCP callers that need every volume, file and section inline must pass detail: "complete" to inspect_uefi_firmware.
@@ -117,6 +118,7 @@
 * **ci:** track configuration inputs across cached checks ([#14015](https://github.com/morluto/rea/issues/14015)) ([4fdacbf](https://github.com/morluto/rea/commit/4fdacbf982c1bb409dda50cb80ba3eec74dd259e))
 * **ci:** use retry start times in PR health reporting ([#14085](https://github.com/morluto/rea/issues/14085)) ([caf5f4e](https://github.com/morluto/rea/commit/caf5f4e38a1ec1a71dacf77130c211d6b0e3229b))
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
+* **cli:** accept only the documented kebab-case option spelling ([#14204](https://github.com/morluto/rea/issues/14204)) ([c4fa5b4](https://github.com/morluto/rea/commit/c4fa5b475c26b6cce0e301154dad928634d84f2b))
 * **cli:** complete inline option values ([#13366](https://github.com/morluto/rea/issues/13366)) ([0451a86](https://github.com/morluto/rea/commit/0451a8688d55c389c67048fa7764af0c0d5a8ab1))
 * **cli:** preserve doctor routing with empty output values ([#13262](https://github.com/morluto/rea/issues/13262)) ([a06e04b](https://github.com/morluto/rea/commit/a06e04b4dfcd994a426cc6b6ab77082260b95a3f))
 * **cli:** preserve explicit null output ([#13342](https://github.com/morluto/rea/issues/13342)) ([d4f78cb](https://github.com/morluto/rea/commit/d4f78cb5922d9fd83222514dda85db8bf5287f1b))
@@ -714,6 +716,7 @@
 * **cli:** explain Ghidra annotation lifetime in command help ([f8192bd](https://github.com/morluto/rea/commit/f8192bd39d233ccf6e3dd8fd06b1e21082316ddf)), closes [#8242](https://github.com/morluto/rea/issues/8242)
 * **cli:** list the desktop_build doctor scope in provider selection ([4bd9327](https://github.com/morluto/rea/commit/4bd9327325b75a4632a3a50f0500ae2bfbd00718)), closes [#10251](https://github.com/morluto/rea/issues/10251)
 * codify pagination, schema-flatness, DDIA, and flat-ownership guidance in tool-design docs and skills ([#13865](https://github.com/morluto/rea/issues/13865)) ([69e96c3](https://github.com/morluto/rea/commit/69e96c3564e58be6c7062a7f7fd506a0218916d8))
+* correct, re-verify and prune getting-started, provider and reference pages ([#14202](https://github.com/morluto/rea/issues/14202)) ([be47922](https://github.com/morluto/rea/commit/be47922331c4df05f4217f0ff9178bc49415db48))
 * **dev:** clarify how to review duplicate ownership ([fb691dc](https://github.com/morluto/rea/commit/fb691dc98b7384fa9e6dd93f4a459b50c700400c))
 * **development:** document streaming, reader/queue reuse, and O(limit) view hot-path patterns ([#13778](https://github.com/morluto/rea/issues/13778)) ([0f2437c](https://github.com/morluto/rea/commit/0f2437cca384d174a4791d1c0b69bfeee027049e))
 * **development:** route first contact by parsed facts and split admission limits from delivery budgets ([#14193](https://github.com/morluto/rea/issues/14193)) ([a1d53d3](https://github.com/morluto/rea/commit/a1d53d39565fe0976e0c86aeca9130901f4db7c6))
