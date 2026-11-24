@@ -86,7 +86,8 @@ it("records only the parameters the caller selected in Evidence", async () => {
       { path, max_file_bytes: CARGO_MANIFEST_MAX_FILE_BYTES },
       resources,
     );
-    if (!selected.ok || !explicit.ok) throw new Error("Expected inventories");
+    if (!selected.ok) throw selected.error;
+    if (!explicit.ok) throw explicit.error;
     expect(selected.value.evidence.parameters).toEqual({ path });
     expect(explicit.value.evidence.parameters).toEqual({
       path,
