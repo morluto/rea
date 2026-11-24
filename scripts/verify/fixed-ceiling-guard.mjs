@@ -8,11 +8,16 @@ import ts from "typescript6";
 // which must be listed with its reason, and a refusal whose only recovery is
 // authored prose, which names no control a caller can adjust.
 
-/** Helpers whose first argument names (or is) a fixed ceiling. */
-const FIXED_CEILING_HELPERS = new Set([
-  "fixedAllowanceOptions",
-  "fixedProducerInputAllowance",
-  "artifactFixedLimitFailure",
+/**
+ * Helpers that declare a fixed ceiling, with the index of the argument that
+ * names (or is) the allowance. A wrapper that forwards its own parameter is
+ * listed here so its callers are checked, not only the wrapper.
+ */
+const FIXED_CEILING_HELPERS = new Map([
+  ["fixedAllowanceOptions", 0],
+  ["fixedNativeAllowance", 0],
+  ["fixedProducerInputAllowance", 1],
+  ["artifactFixedLimitFailure", 0],
 ]);
 
 /** Option keys that bind a refusal to its owner. */
@@ -47,8 +52,7 @@ const parse = (content, path) =>
 
 /**
  * Each fixed-ceiling declaration in one file, keyed by the allowance text it
- * names: a `fixedAllowanceOptions`, `fixedProducerInputAllowance` or
- * `artifactFixedLimitFailure` call, or an inline `fixedAllowance: { ... }`
+ * names: a call to one of `FIXED_CEILING_HELPERS`, or an inline `fixedAllowance: { ... }`
  * object. Forwarding an existing allowance (`fixedAllowance: cause.fixedAllowance`)
  * declares nothing and is not listed.
  *
@@ -71,10 +75,12 @@ export const fixedCeilingDeclarations = (content, path) => {
     if (
       ts.isCallExpression(node) &&
       ts.isIdentifier(node.expression) &&
-      FIXED_CEILING_HELPERS.has(node.expression.text) &&
-      node.arguments[0] !== undefined
-    )
-      record(node.arguments[0], node);
+      FIXED_CEILING_HELPERS.has(node.expression.text)
+    ) {
+      const allowance =
+        node.arguments[FIXED_CEILING_HELPERS.get(node.expression.text)];
+      if (allowance !== undefined) record(allowance, node);
+    }
     if (
       ts.isPropertyAssignment(node) &&
       propertyName(node) === "fixedAllowance" &&

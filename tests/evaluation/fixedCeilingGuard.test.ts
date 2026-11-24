@@ -14,19 +14,23 @@ it("finds each fixed-ceiling declaration by the allowance it names", () => {
   const found = fixedCeilingDeclarations(
     [
       'const a = fixedAllowanceOptions("The probe table allowance", "count", { limit: 4 });',
-      "const b = fixedProducerInputAllowance(MAX_PROBE_BYTES, NAME);",
+      // The producer input helper takes the bytes first and the name second.
+      'const b = fixedProducerInputAllowance(MAX_PROBE_BYTES, "The probe input allowance");',
       'const c = artifactFixedLimitFailure({ name: "The probe path allowance", kind: "parser" }, "x");',
       'const d = { fixedAllowance: { name:\n  "The inline allowance", kind: "capture" } };',
       // Forwarding an existing allowance declares nothing.
       "const e = { fixedAllowance: cause.fixedAllowance };",
+      // A wrapper's callers declare their own allowances.
+      'const f = fixedNativeAllowance("The probe native allowance", "parser", 8, "bytes");',
     ].join("\n"),
     PATH,
   );
   expect([...found.keys()]).toEqual([
     '"The probe table allowance"',
-    "MAX_PROBE_BYTES",
+    '"The probe input allowance"',
     '"The probe path allowance"',
     '"The inline allowance"',
+    '"The probe native allowance"',
   ]);
   expect(found.get('"The inline allowance"')).toBe(4);
 });
