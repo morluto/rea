@@ -128,13 +128,13 @@ const formatOpenSwitchDefect = (
 /**
  * Operations whose output cannot depend on jump-table or function-body flow
  * recovery: byte, string, name, segment, and data-type reads, and edits.
- * Every other operation keeps the switch defects.
+ * Every other operation keeps the switch defects, including search_bytes,
+ * whose matches name the function that contains them.
  */
 const FLOW_INDEPENDENT_OPERATIONS: ReadonlySet<string> = new Set([
   "health",
   "inspect_native_load_image",
   "read_bytes",
-  "search_bytes",
   "address_to_file_offset",
   "address_name",
   "list_documents",

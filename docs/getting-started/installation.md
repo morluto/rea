@@ -1217,7 +1217,7 @@ Each record is attached only where its declared scope can apply. `ghidra-9996`
 applies to x86-64 targets and `ghidra-10154` to arm64 and arm64_32 targets; a
 target whose architecture is unknown keeps both. The compiler is rarely
 observable, so it never excludes a record. Operations whose output cannot
-depend on jump-table or function-body recovery (`read_bytes`, `search_bytes`,
+depend on jump-table or function-body recovery (`read_bytes`,
 `search_strings`, `list_strings`, `list_names`, `list_segments`,
 `inspect_native_load_image`, `inspect_native_data_type`, address lookups,
 renames and `health`) carry neither.

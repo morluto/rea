@@ -11,13 +11,19 @@ import { BinarySession } from "../../../src/application/binary/BinarySession.js"
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import type { AnalysisClient } from "../../../src/ports/AnalysisProvider.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
+import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
+import { completedOperationEvidence } from "../../../src/application/binary/SessionEvidenceReuse.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const validation = createMcpSchemaValidation();
 afterAll(() => validation.clear());
 
-const provider = { id: "fixture", name: "Fixture", version: "1" };
+const provider = {
+  id: "fixture",
+  name: "Fixture analysis provider",
+  version: "1",
+};
 const SESSION = [
   "Fixture session limitation: auto-analysis completed before results.",
   "Fixture session limitation: closing discards metadata edits.",
@@ -144,6 +150,61 @@ it("keeps shared limitations inline in a one-call session", async () => {
     if (!result.ok) throw result.error;
     expect(result.value.limitations).toEqual([CALL, ...SESSION]);
     expect(result.value.sourceEvidence).toBeUndefined();
+  } finally {
+    await session.close();
+  }
+});
+
+it("reuses the retained record and exports a snapshot that carries its linked context", async () => {
+  const profile = createAnalysisProfile(provider, {
+    fixture: "session-limitations",
+  });
+  const session = new BinarySession(
+    createTestProviderRouter(client, {
+      resolveAnalysisProfile: () => Promise.resolve(ok({ profile })),
+    }),
+    new InvestigationRecords(),
+    undefined,
+    "reference",
+  );
+  try {
+    const opened = await session.open(process.execPath);
+    if (!opened.ok) throw opened.error;
+    const result = await session.execute("inspect_native_instruction", {
+      address: "0x1000",
+      document: "fixture",
+    });
+    if (!result.ok) throw result.error;
+    const context = result.value.sourceEvidence?.at(-1)?.evidence_id;
+    if (context === undefined) throw new Error("Missing session context");
+    // The adapter reuses the record the session retained instead of copying
+    // and hashing the result again, although the execution carries a source.
+    const retained =
+      result.value.evidenceId === undefined
+        ? undefined
+        : session.evidenceForAnalysis(result.value.evidenceId);
+    expect(retained?.evidence_links).toEqual([context]);
+    const delivered = completedOperationEvidence(
+      "inspect_native_instruction",
+      { address: "0x1000", document: "fixture" },
+      result.value,
+      {
+        target: null,
+        evidenceById: (id) => session.evidenceForAnalysis(id),
+      },
+    );
+    if (!delivered.ok) throw delivered.error;
+    expect(delivered.value).toBe(retained);
+    // A persisted snapshot authenticates entries against their Evidence, so
+    // entries keep the referenced form; its bundle carries the linked record,
+    // so a replay in another process can still resolve the reference.
+    const snapshot = session.exportAnalysisSnapshot();
+    if (!snapshot.ok) throw snapshot.error;
+    expect(
+      snapshot.value.evidence_bundle.records.find(
+        (record) => record.evidence_id === context,
+      )?.limitations,
+    ).toEqual(SESSION);
   } finally {
     await session.close();
   }

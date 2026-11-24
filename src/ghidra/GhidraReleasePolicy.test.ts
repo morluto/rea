@@ -143,7 +143,7 @@ describe("Ghidra known-defect applicability", () => {
     ["mips", "xrefs", []],
     [undefined, "procedure_pseudo_code", ["ghidra-9996", "ghidra-10154"]],
     ["x86_64", "read_bytes", []],
-    ["x86_64", "search_bytes", []],
+    ["x86_64", "search_bytes", ["ghidra-9996"]],
     ["x86_64", "search_strings", []],
     ["x86_64", "list_names", []],
     ["x86_64", "health", []],
