@@ -58,6 +58,11 @@ or its inputs and regenerate.
 Do not write the number of tools in living prose; link the generated catalog
 instead. `docs:check` refuses a count of ten or more tools outside dated
 records (`docs/releases/` and `docs/verification/`).
+Keep a verification record only while a document, test or script cites it;
+otherwise put its measurements in the PR or issue, as the
+[repository guidance](https://github.com/morluto/rea/blob/main/AGENTS.md#development)
+directs for plans and design records. Test data that a test reads belongs in
+`tests/fixtures/`, not `docs/verification/`.
 
 Run `npm run docs:check` for documentation facts and generated consistency, and
 `npm run verify:docs:routes` to build the complete production site and check local

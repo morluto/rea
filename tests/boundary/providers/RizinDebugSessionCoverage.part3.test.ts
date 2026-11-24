@@ -31,7 +31,7 @@ it.skipIf(process.platform === "win32")(
     const result = await manager.execute(started.value.session_id, "wait");
     if (!result.ok) throw result.error;
     expect(result.value.result.completion_status).toBe("unknown");
-    expect(result.value.evidence.raw_result).toEqual(result.value.result);
+    expect(result.value.evidence.raw_result).toBeNull();
     expect(result.value.evidence.normalized_result).toEqual(
       result.value.result,
     );
@@ -194,7 +194,8 @@ it.skipIf(process.platform === "win32")(
     expect(result.error.capturedOutput?.stdout).toBe("registers");
     expect(result.error.partialObservation).toMatchObject({
       parameters: { session_id: started.value.session_id, command: "dr" },
-      raw_result: { output: "registers", completion_status: "unknown" },
+      normalized_result: { output: "registers", completion_status: "unknown" },
+      raw_result: null,
     });
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
@@ -227,7 +228,8 @@ it.skipIf(process.platform === "win32")(
     expect(result.error.capturedOutput?.stdout).toBe("");
     expect(result.error.partialObservation).toMatchObject({
       parameters: { session_id: started.value.session_id, command: "wait" },
-      raw_result: { output: "", completion_status: "unknown" },
+      normalized_result: { output: "", completion_status: "unknown" },
+      raw_result: null,
     });
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
@@ -329,7 +331,7 @@ it.skipIf(process.platform === "win32")(
         completion_status: "unknown",
         backend: null,
       });
-      expect(result.value.evidence.raw_result).toEqual(result.value.result);
+      expect(result.value.evidence.raw_result).toBeNull();
       expect(result.value.evidence.limitations).toEqual([
         expect.stringMatching(
           /session target is the launch file.*do not rebind/iu,

@@ -1227,18 +1227,23 @@ export const createGhidraProviderClient = (input: {
         input.value.case_sensitive === false &&
         typeof input.value.pattern === "string"
       ) {
-        normalized = filterGhidraLiteralCandidates(
+        const filtered = filterGhidraLiteralCandidates(
           normalized,
           input.value.pattern,
         );
-        executionMetadata = {
-          ...executionMetadata,
-          rawResult: called.value,
-          limitations: [
-            ...(executionMetadata.limitations ?? []),
-            GHIDRA_LITERAL_CANDIDATES_LIMITATION,
-          ],
-        };
+        // Retain the bridge reply only when it is a distinct representation:
+        // an unnarrowed candidate list would repeat the matches in full.
+        if (filtered.narrowed) {
+          normalized = filtered.value;
+          executionMetadata = {
+            ...executionMetadata,
+            rawResult: called.value,
+            limitations: [
+              ...(executionMetadata.limitations ?? []),
+              GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+            ],
+          };
+        }
       }
       if (
         operation === "inspect_native_data_type" &&
