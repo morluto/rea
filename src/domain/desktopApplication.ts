@@ -177,7 +177,6 @@ export const desktopProbeSchema = z.strictObject({
     "inspect_il2cpp_metadata",
     "open_binary",
     "analyze_javascript_application",
-    "inspect_artifact",
     "inspect_pe_imports",
     "inspect_pe_resources",
     "inspect_binary_hardening",

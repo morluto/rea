@@ -74,3 +74,35 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "keeps deferred runtime-facade counts in the default MCP summary",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-desktop-deferred-mcp-");
+    const assembly = buildManagedPeFixture({ references: ["System.Runtime"] });
+    for (const name of ["Game.dll", "System.Xml.dll", "System.Linq.dll"])
+      await writeFile(join(root, name), assembly);
+    await writeFile(join(root, "Game.runtimeconfig.json"), "{}");
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_desktop_application", { path: root });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    const summary = parseEvidence(response.structuredContent)
+      .normalized_result as {
+      summary: { deferred_probes: unknown; next_probe_groups: unknown };
+    };
+    expect(summary.summary.deferred_probes).toEqual([
+      expect.objectContaining({
+        operation: "inspect_managed_artifact",
+        reason: "runtime-facade",
+        count: 2,
+      }),
+    ]);
+    expect(summary.summary.next_probe_groups).toEqual([
+      expect.objectContaining({
+        operation: "inspect_managed_artifact",
+        count: 1,
+        example: expect.objectContaining({ priority: "application" }),
+      }),
+    ]);
+  },
+);

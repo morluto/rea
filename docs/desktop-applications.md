@@ -138,7 +138,8 @@ the Microsoft Visual C++ runtime (`vcruntime140.dll`, `msvcp140.dll`;
 `runtime_presence: "unknown"`. A native candidate's main executables get
 `inspect_pe_imports` and `inspect_pe_resources` probes (ELF and Mach-O get
 `inspect_binary_hardening` and `open_binary`). Each Godot pack carrier, including
-an executable with a trailer pack, gets an `inspect_artifact` probe.
+an executable with a trailer pack, gets an `open_binary` probe that selects it
+for `inspect_artifact`.
 
 ## Probe ranking
 
@@ -153,7 +154,8 @@ release names as its own:
 `dependency` probes read the other managed assemblies. Runtime and framework
 facades (`System.*`, `Microsoft.*`, `mscorlib`, `netstandard`, WPF assemblies,
 `Mono.*`, `UnityEngine.*`) get no probe each. Instead, `deferred_probes` counts
-them as one `runtime-facade` group with an example file. For example, a
+them as one `runtime-facade` group with an example file, and the default summary
+keeps that group. For example, a
 self-contained OpenRA release lists 25 managed probes, led by `OpenRA.Game.dll`,
 plus a deferred group of 167.
 

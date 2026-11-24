@@ -44,7 +44,7 @@ const COMPONENT_MARKERS = [
   },
   {
     expression:
-      /(?:^|\/)(?:lib)?wx(?:msw|gtk[23]u?|base|osx)[^/]*\.(?:dll|so(?:\.[0-9]+)*|dylib)$/iu,
+      /(?:^|\/)(?:lib)?wx_?(?:msw|gtk[23]u?|base|osx)[^/]*\.(?:dll|so(?:\.[0-9]+)*|dylib)$/iu,
     name: "wxWidgets",
     category: "ui-framework" as const,
   },
@@ -390,9 +390,9 @@ export const projectDesktopApplication = (
   );
   for (const file of godot)
     probe(
-      "inspect_artifact",
+      "open_binary",
       file,
-      "Inventory the members of this Godot pack, including a pack embedded in an executable's trailer; encrypted packs report their members as unavailable.",
+      "Select this Godot pack carrier with open_binary, then call inspect_artifact to inventory its members, including a pack embedded in an executable's trailer; encrypted packs report their members as unavailable.",
       "application",
     );
   for (const file of unityfs)

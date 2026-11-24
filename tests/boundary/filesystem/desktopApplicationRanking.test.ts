@@ -120,7 +120,7 @@ it("ranks a self-contained .NET release's own assemblies above counted runtime f
   ]);
 });
 
-it("gives each Godot pack carrier an artifact inventory probe", async () => {
+it("gives each Godot pack carrier a selection probe for its inventory", async () => {
   const root = await createTestTempDirectory("rea-desktop-godot-probe-");
   const pck = Buffer.alloc(20);
   pck.write("GDPC");
@@ -135,5 +135,20 @@ it("gives each Godot pack carrier an artifact inventory probe", async () => {
       probe.operation,
       pathsOf(report, [probe.file_id])[0],
     ]),
-  ).toEqual([["inspect_artifact", "Pixelorama.pck"]]);
+  ).toEqual([["open_binary", "Pixelorama.pck"]]);
+  expect(report.next_probes[0]!.rationale).toContain("inspect_artifact");
+});
+
+it.each([
+  "wxmsw32u_core_vc14x_x64.dll",
+  "libwx_gtk3u_core-3.2.so.0",
+  "libwx_baseu-3.2.so.0",
+  "libwx_osx_cocoau_core-3.2.dylib",
+])("marks %s as wxWidgets", async (name) => {
+  const root = await createTestTempDirectory("rea-desktop-wx-");
+  await put(root, name, "library");
+  const report = await inspect(root);
+  expect(report.components.map(({ name: marker }) => marker)).toEqual([
+    "wxWidgets",
+  ]);
 });
