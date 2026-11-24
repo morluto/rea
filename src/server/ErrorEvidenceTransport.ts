@@ -489,7 +489,12 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     message: JSONRPCMessage,
     requestId: RequestId,
   ): void {
-    if (!isJSONRPCResultResponse(message) || !isCallToolResult(message.result))
+    // A failed call keeps the notice for the next successful result.
+    if (
+      !isJSONRPCResultResponse(message) ||
+      !isCallToolResult(message.result) ||
+      message.result.isError === true
+    )
       return;
     const notice = this.updateNotices?.peek();
     if (notice === undefined) return;

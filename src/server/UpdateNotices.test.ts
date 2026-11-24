@@ -40,8 +40,8 @@ it("keeps networking opt-in", () => {
 });
 
 const receivedNotices = new WeakMap<Client, unknown[]>();
-const createClient = () => {
-  const client = new Client({ name: "update-test", version: "1" });
+const createClient = (options?: ConstructorParameters<typeof Client>[1]) => {
+  const client = new Client({ name: "update-test", version: "1" }, options);
   const notices: unknown[] = [];
   client.setNotificationHandler("notifications/message", (message) => {
     notices.push(message.params);
@@ -76,12 +76,16 @@ const createFixtureServer = (factory: () => UpdateNotices, budget = 16384) => {
   return server;
 };
 
-const connect = async (notices: UpdateNotices, budget = 16384) => {
+const connect = async (
+  notices: UpdateNotices,
+  budget = 16384,
+  options?: ConstructorParameters<typeof Client>[1],
+) => {
   const server = createFixtureServer(() => notices, budget);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = createClient();
+  const client = createClient(options);
   await client.connect(clientTransport);
   cleanups.push(async () => {
     await client.close();
@@ -149,6 +153,43 @@ it("leaves errors unchanged and retains notices when the receive budget is full"
   expect(notices.peek()).toBeDefined();
   expect(receivedNotices.get(client)).toHaveLength(0);
 });
+
+it.each(["2025-03-26", undefined])(
+  "keeps the notice for the next successful result after a failed call (protocol %s)",
+  async (revision) => {
+    const notices = new UpdateNotices("1.0.0", async () => ok("1.1.0"));
+    notices.refresh();
+    await waitFor(() => expect(notices.peek()).toBeDefined());
+    const client = await connect(
+      notices,
+      16384,
+      revision === undefined
+        ? undefined
+        : { supportedProtocolVersions: [revision] },
+    );
+    if (revision !== undefined)
+      expect(client.getNegotiatedProtocolVersion()).toBe(revision);
+    const failed = await client.callTool({
+      name: "fixture",
+      arguments: { fail: true },
+    });
+    expect(failed.isError).toBe(true);
+    expect(notices.peek()).toBeDefined();
+    expect(receivedNotices.get(client)).toHaveLength(0);
+    const success = await client.callTool({ name: "fixture", arguments: {} });
+    expect(success.structuredContent).toEqual({ result: 42 });
+    await waitFor(() =>
+      expect(receivedNotices.get(client)).toEqual([
+        {
+          level: "notice",
+          logger: "rea.update",
+          data: expect.stringContaining("latest published 1.1.0"),
+        },
+      ]),
+    );
+    expect(notices.peek()).toBeUndefined();
+  },
+);
 
 it("backs off failures for 24 hours, retries on demand, and ignores malformed or older versions", async () => {
   let now = 0;
