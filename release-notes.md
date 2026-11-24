@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **pe:** import and delay-import walks continue to the null descriptor past a short directory Size instead of stopping with a malformed_entry issue, and inspect-pe-resources reports an unsupported optional-header magic as unsupported_target.
 * **desktop:** the desktop application result adds the native family, the ui-framework and runtime-library component categories, new probe operations, a required probe priority and deferred_probes.
 * **macho:** inspect_go_binary, inspect_rust_binary, inspect_dwarf_units, inspect_native_initializers, inspect_native_dispatch_metadata, the IL2CPP binary readers and the macOS provider's lipo-selected slice reads now report a FAT header or table cut off by the file's end with details.format_failure "truncated" (previously "malformed", or an unsupported or not-universal result for a table past the end), plus details.available_bytes and details.required_bytes.
 * **doctor:** audit-wide doctor reports omit scope_checks; read checks. Passing providerInspections checks report classification "healthy".
@@ -34,6 +35,7 @@
 * **analysis-view:** select retained JavaScript facts by property value ([25e93a8](https://github.com/morluto/rea/commit/25e93a8139abf3ad398d0366d84c53c75fcd0d82))
 * **android:** add optional limit and offset paging to search_android_classes ([#13846](https://github.com/morluto/rea/issues/13846)) ([f47dbd9](https://github.com/morluto/rea/commit/f47dbd9351ac8624c409d4e37ea630c1cc35edd9))
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
+* **artifacts:** report declared DDS, GLB, KTX and KTX2 headers and regions ([#14248](https://github.com/morluto/rea/issues/14248)) ([78d2593](https://github.com/morluto/rea/commit/78d2593a4543592636a49c0cead0ca64dcef78ea))
 * **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
 * **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
 * **cli:** add list-procedures to produce function-matching inventories ([#14241](https://github.com/morluto/rea/issues/14241)) ([e2c0071](https://github.com/morluto/rea/commit/e2c00712fd421fc77f335d7b9f87ce162808a437))
@@ -281,6 +283,7 @@
 * **pe:** exclude section padding from RVA metadata reads ([#12755](https://github.com/morluto/rea/issues/12755)) ([c5b5d9f](https://github.com/morluto/rea/commit/c5b5d9f7ea3f0f32a3ebf0834314ae3888ab4132))
 * **pe:** keep pefile's unrounded raw offset for a sub-page section ([985fa2f](https://github.com/morluto/rea/commit/985fa2fac939d0da5de31d59a4df055d90df1cd8))
 * **pe:** preserve TLS section ownership across named ranges ([#13743](https://github.com/morluto/rea/issues/13743)) ([9808545](https://github.com/morluto/rea/commit/9808545d6f57e3a3d4d0f87773f8111d4531ac6f))
+* **pe:** share one loader-equivalent PE header owner across static readers ([#14253](https://github.com/morluto/rea/issues/14253)) ([f585acc](https://github.com/morluto/rea/commit/f585acc748058ca24da5f03395a37b3cc36e941f))
 * **process:** find dotted Windows command names on PATH ([#13833](https://github.com/morluto/rea/issues/13833)) ([dc9db1f](https://github.com/morluto/rea/commit/dc9db1f35a00c5b384a12ce463dce579f826c3f1))
 * **process:** name the fixed finalization delivery grace ([ab47c97](https://github.com/morluto/rea/commit/ab47c970a7bdbcda8df9e54242c05fce8b068d02))
 * **process:** record PTY session-leader SIGHUP limitation in Evidence ([95dfbae](https://github.com/morluto/rea/commit/95dfbae68e31a01901deab358db572c472866bcf))
