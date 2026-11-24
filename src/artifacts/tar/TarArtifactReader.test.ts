@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { open, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
+
+import { waitFor } from "../../../tests/support/testWait.js";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -19,6 +21,7 @@ import type {
   ArtifactTraversalOmission,
 } from "../../resources/index.js";
 import { TarArtifactReader } from "./TarArtifactReader.js";
+import { GzipTarStream } from "./TarByteStream.js";
 import {
   gzipTarFixture,
   RELEASE_TAR_MEMBERS,
@@ -285,6 +288,40 @@ describe("gzip expansion", () => {
       reason: "limit",
       readerLimit: { parameter: "artifact_limits.expanded_bytes" },
     });
+  });
+
+  it("charges expansion as zlib produces it, so an idle reader cannot queue past the allowance", async () => {
+    const path = await write(
+      "zeros.tar.gz",
+      gzipTarFixture([
+        { name: "zeros.bin", data: Buffer.alloc(4 * 1024 * 1024) },
+      ]),
+    );
+    const allowance = 64 * 1024;
+    let charged = 0;
+    let refused = false;
+    const handle = await open(path, "r");
+    const { size } = await handle.stat();
+    const stream = new GzipTarStream(handle, size, (bytes) => {
+      if (charged + bytes > allowance) {
+        refused = true;
+        throw new Error("allowance exhausted");
+      }
+      charged += bytes;
+    });
+    try {
+      expect((await stream.read(1)).length).toBe(1);
+      // Read nothing more; production alone must reach the allowance.
+      await waitFor(() => expect(refused).toBe(true));
+      expect(charged).toBeLessThanOrEqual(allowance);
+      await expect(stream.skip(size * 2000)).rejects.toThrow(
+        "allowance exhausted",
+      );
+      expect(stream.position).toBeLessThanOrEqual(allowance);
+    } finally {
+      stream.close();
+      await handle.close();
+    }
   });
 
   it("serves members opened out of archive order from a fresh decompression", async () => {

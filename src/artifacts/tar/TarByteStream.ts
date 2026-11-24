@@ -98,7 +98,8 @@ const QUEUE_HIGH_WATER_BYTES = 1024 * 1024;
  * iterator: zlib can report a damaged trailer in the same input chunk that
  * produced the data, and destroying a paused stream would drop that data.
  * Bytes that arrived before a failure are therefore served first, and the
- * failure follows them. The queue is bounded by pausing the inflater.
+ * failure follows them. The queue is bounded by pausing the inflater, and
+ * every chunk is charged when zlib produces it, before it is queued.
  */
 export class GzipTarStream implements TarByteStream {
   #position = 0;
@@ -123,6 +124,17 @@ export class GzipTarStream implements TarByteStream {
       () => undefined,
     );
     this.#output.on("data", (chunk: Buffer) => {
+      if (this.#state !== "open") return;
+      // Charge expansion as zlib produces it, so bytes queued for an idle
+      // reader can never exceed the allowance.
+      try {
+        this.charge(chunk.length);
+      } catch (failure: unknown) {
+        this.#state = { failure };
+        this.#output.destroy();
+        this.#notify();
+        return;
+      }
       this.#queue.push(chunk);
       this.#queuedBytes += chunk.length;
       if (this.#queuedBytes > QUEUE_HIGH_WATER_BYTES) this.#output.pause();
@@ -211,7 +223,6 @@ export class GzipTarStream implements TarByteStream {
     if (this.#pending.length === 0) {
       const next = await this.#next(signal);
       if (next === undefined) return undefined;
-      this.charge(next.length);
       this.#pending = next;
     }
     const chunk = this.#pending.subarray(0, length);
