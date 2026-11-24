@@ -62,7 +62,7 @@ it.skipIf(process.platform === "win32")(
     if (outcome.state !== "completed")
       throw new Error("Artifact inventory waited for a FIFO writer");
     expect(outcome.result).toMatchObject({
-      reason: "format",
+      reason: "path",
       message: `Artifact root is not a regular file: ${fifoPath}`,
     });
   },
