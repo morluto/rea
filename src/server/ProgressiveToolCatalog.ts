@@ -13,6 +13,11 @@ import {
   progressiveCatalogIdentity,
   type CatalogIdentity,
 } from "../contracts/catalog/catalogDiscovery.js";
+import {
+  createSearchableCatalogTool,
+  rankCatalogToolMatches,
+  type SearchableCatalogTool,
+} from "./toolCatalogSearch.js";
 
 type CatalogListing = {
   registered: RegisteredTool;
@@ -34,7 +39,7 @@ export class ProgressiveToolCatalog {
   /** In-scope domain tools; the adapter is never a search result or reset. */
   private readonly tools: ReadonlyMap<
     string,
-    CatalogListing & { search: string }
+    CatalogListing & SearchableCatalogTool
   >;
   /** Exact names and counts also cover the always-advertised adapter. */
   private readonly inventory: ReadonlyMap<string, CatalogListing>;
@@ -60,8 +65,7 @@ export class ProgressiveToolCatalog {
           name,
           {
             ...catalogListing(registered),
-            search:
-              `${name} ${name.replaceAll("_", " ")} ${registered.description ?? ""}`.toLowerCase(),
+            ...createSearchableCatalogTool(name, registered.description),
           },
         ]),
     );
@@ -95,28 +99,7 @@ export class ProgressiveToolCatalog {
 
   private rankMatches(query: string | undefined): readonly string[] {
     const words = (query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
-    const ranked: { readonly name: string; readonly score: number }[] = [];
-    for (const [name, tool] of this.tools) {
-      let matchesAll = true;
-      for (let i = 0; i < words.length; i++) {
-        if (!tool.search.includes(words[i]!)) {
-          matchesAll = false;
-          break;
-        }
-      }
-      if (!matchesAll) continue;
-      let score = 0;
-      for (let i = 0; i < words.length; i++) {
-        if (name.includes(words[i]!)) score += 1;
-      }
-      ranked.push({ name, score });
-    }
-    ranked.sort(
-      (left, right) =>
-        right.score - left.score ||
-        (left.name < right.name ? -1 : left.name > right.name ? 1 : 0),
-    );
-    return ranked.map((entry) => entry.name);
+    return rankCatalogToolMatches(this.tools.values(), words);
   }
 
   discover(input: z.infer<typeof DISCOVER_TOOLS.inputSchema>) {

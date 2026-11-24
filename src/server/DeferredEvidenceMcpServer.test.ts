@@ -618,3 +618,17 @@ it("keeps one accepted settings snapshot through a deferred handler while the ne
   await f.client.callTool({ name: "fixture", arguments: {} });
   expect(seen).toEqual([undefined, 33554432]);
 });
+
+it("suggests advertised deferred tools for an unknown tool call without loading the runtime", async () => {
+  const f = await fixture();
+  let message = "";
+  try {
+    await f.client.callTool({ name: "fixture-call", arguments: {} });
+  } catch (error) {
+    expect(error).toMatchObject({ code: -32602 });
+    message = error instanceof Error ? error.message : String(error);
+  }
+  expect(message).toContain("Closest advertised tool: fixture.");
+  expect(f.loads()).toBe(0);
+  expect(f.calls).not.toHaveBeenCalled();
+});

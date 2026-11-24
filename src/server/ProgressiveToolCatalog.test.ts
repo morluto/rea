@@ -79,7 +79,7 @@ const connect = async (
   client.setNotificationHandler("notifications/tools/list_changed", changed);
   const discover = (args: Record<string, unknown>) =>
     client.callTool({ name: "discover_tools", arguments: args });
-  return { client, changed, discover, forbidden, bulkNames };
+  return { server, client, changed, discover, forbidden, bulkNames };
 };
 
 it("bounds both discovery refusals, then loads the same inventory in fitting pages", async () => {
@@ -262,4 +262,80 @@ it("ranks name matches ahead of description-only matches and caches projected in
     firstPage.tools[0]?.input_schema,
   );
   expect(repeatPage.loaded_count).toBe(5);
+});
+
+it("points unknown tool calls to discover_tools and only suggests currently advertised tools", async () => {
+  const f = await connect();
+  const callUnknown = async (name: string): Promise<string> => {
+    try {
+      await f.client.callTool({ name, arguments: {} });
+    } catch (error) {
+      expect(error).toMatchObject({ code: -32602 });
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error(`expected unknown tool call ${name} to fail`);
+  };
+
+  // Cold tools (alpha_sqlite, beta_sqlite) and excluded tools are disabled and
+  // must not be leaked; remediation points to discover_tools instead of tools/list.
+  const coldNoMatch = await callUnknown("unknown_decompile");
+  expect(coldNoMatch).toContain(
+    "Call discover_tools to find and load an in-scope tool, then retry; do not repeat the unknown tool name.",
+  );
+  expect(coldNoMatch).not.toContain("alpha_sqlite");
+  expect(coldNoMatch).not.toContain("excluded_sqlite");
+  expect(coldNoMatch).not.toContain("tools/list");
+
+  const coldSqliteQuery = await callUnknown("alpha-sqlite");
+  expect(coldSqliteQuery).toContain("call discover_tools");
+  expect(coldSqliteQuery).not.toContain("alpha_sqlite");
+  expect(coldSqliteQuery).not.toContain("excluded_sqlite");
+  expect(coldSqliteQuery).not.toContain("tools/list");
+
+  // Hot advertised tools and discover_tools itself are suggested when close.
+  const hotQuery = await callUnknown("binary-session");
+  expect(hotQuery).toContain("Closest advertised tool: binary_session.");
+  expect(hotQuery).toContain("call discover_tools");
+
+  const discoveryAlias = await callUnknown("discover-tools");
+  expect(discoveryAlias).toContain("Closest advertised tool: discover_tools.");
+  expect(discoveryAlias).toContain("call discover_tools");
+
+  // After loading alpha_sqlite through discover_tools, it becomes eligible for
+  // suggestions, while unloaded beta_sqlite and excluded_sqlite remain hidden.
+  expect((await f.discover({ names: ["alpha_sqlite"] })).isError).not.toBe(
+    true,
+  );
+  const loadedQuery = await callUnknown("alpha-sqlite");
+  expect(loadedQuery).toContain("Closest advertised tool: alpha_sqlite.");
+  expect(loadedQuery).not.toContain("beta_sqlite");
+  expect(loadedQuery).not.toContain("excluded_sqlite");
+
+  // Calling an unloaded or excluded tool directly still returns the SDK disabled error.
+  await expect(
+    f.client.callTool({ name: "beta_sqlite", arguments: {} }),
+  ).rejects.toThrow("disabled");
+
+  // Reconnecting the server resets cold visibility, so a later session does
+  // not receive suggestions for tools loaded only in the previous session.
+  await f.client.close();
+  await f.server.close();
+  const [nextClientTransport, nextServerTransport] =
+    InMemoryTransport.createLinkedPair();
+  const nextClient = new Client({ name: "catalog-client-2", version: "1" });
+  cleanup.push(
+    () => nextClient.close(),
+    () => f.server.close(),
+  );
+  await f.server.connect(nextServerTransport);
+  await nextClient.connect(nextClientTransport);
+  let reconnectMessage = "";
+  try {
+    await nextClient.callTool({ name: "alpha-sqlite", arguments: {} });
+  } catch (error) {
+    expect(error).toMatchObject({ code: -32602 });
+    reconnectMessage = error instanceof Error ? error.message : String(error);
+  }
+  expect(reconnectMessage).toContain("call discover_tools");
+  expect(reconnectMessage).not.toContain("alpha_sqlite");
 });

@@ -45,6 +45,10 @@ import {
   COMPACT_INPUT_SCHEMA_PRESENTATION,
 } from "../contracts/mcpSchemaPresentation.js";
 import { ErrorEvidenceTransport } from "./ErrorEvidenceTransport.js";
+import type {
+  AdvertisedToolCatalog,
+  AdvertisedToolDescriptor,
+} from "./toolCatalogSearch.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 /** Capture caller selections and issues at the canonical SDK validation boundary. */
@@ -127,6 +131,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   private readonly transportCloseHooks: (() => void)[] = [];
   private transportOncloseInstalled = false;
   private progressiveCatalog: ProgressiveToolCatalog | undefined;
+  private discoveryTool: RegisteredTool | undefined;
   private catalogChangeDepth = 0;
   private catalogChanged = false;
   analysisSettings: AnalysisSettings | undefined;
@@ -250,6 +255,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       },
       () => this.delivery,
     );
+    this.discoveryTool = adapter;
     this.progressiveCatalog = catalog;
   }
 
@@ -506,6 +512,25 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     return registered;
   }
 
+  /** Snapshot currently enabled (advertised) tools for unknown-tool hints. */
+  private advertisedToolCatalog(): AdvertisedToolCatalog {
+    const tools: AdvertisedToolDescriptor[] = [];
+    for (const [name, registered] of this.registrations) {
+      if (registered.enabled)
+        tools.push({ name, description: registered.description });
+    }
+    const discoveryAvailable =
+      this.progressiveCatalog !== undefined &&
+      this.discoveryTool?.enabled === true;
+    if (discoveryAvailable)
+      tools.push({
+        name: DISCOVER_TOOLS.name,
+        description:
+          this.discoveryTool?.description ?? DISCOVER_TOOLS.description,
+      });
+    return { tools, discoveryAvailable };
+  }
+
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
   override connect(transport: Transport): Promise<void> {
     // HTTP reuses the analysis server after draining the previous transport.
@@ -520,6 +545,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         this.presentation.output,
         this.maximumInputElements,
         this.evidenceReferenceAlternatives,
+        () => this.advertisedToolCatalog(),
       ),
     );
   }
