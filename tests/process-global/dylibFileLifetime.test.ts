@@ -219,7 +219,7 @@ it.skipIf(process.platform === "win32")(
     });
     if (result.ok) throw new Error("Expected nonregular admission failure");
     expect(result.error).toMatchObject({
-      reason: "format",
+      reason: "path",
       cleanupIncomplete: true,
     });
     expect(result.error.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
@@ -302,7 +302,7 @@ it.skipIf(process.platform === "win32").each(["magic", "image", "digest"])(
           parameters: stage === 'magic' ? {} : { roots: ['Main'] } });
         throw new Error('Unexpected FIFO success');
       } catch (error) {
-        if (error.reason !== 'format') throw error;
+        if (error.reason !== 'path') throw error;
         process.stdout.write(JSON.stringify({ stage, opens, substituted, reason: error.reason }));
       }
     `;
@@ -315,7 +315,7 @@ it.skipIf(process.platform === "win32").each(["magic", "image", "digest"])(
       stage,
       opens: stage === "digest" ? 2 : 1,
       substituted: true,
-      reason: "format",
+      reason: "path",
     });
   },
 );
