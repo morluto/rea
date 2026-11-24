@@ -28,11 +28,23 @@ export class ManagedReaderFailure extends Error {
 /** Refuse a heap-dependent row whose shared stream issue is reported by layout inventory. */
 export class ManagedHeapAmbiguityFailure extends ManagedReaderFailure {}
 
-/** A resource or unsupported layout leaves metadata unknown, not malformed. */
+/**
+ * Whether a reader stopped on a valid construct REA does not implement: a
+ * metadata layout or signature form outside decoder coverage. Every other
+ * code except `resource-limit` names a rule the bytes broke.
+ */
+export const isManagedCoverageGap = (code: ManagedParseIssue["code"]) =>
+  code === "unsupported-metadata" || code === "unsupported-signature";
+
+/**
+ * Metadata status after a reader stopped. A budget or a construct outside
+ * coverage leaves metadata unknown (`partial`); only a broken rule makes it
+ * `malformed`.
+ */
 export const managedMetadataFailureStatus = (
   issue: ManagedParseIssue,
 ): "partial" | "malformed" =>
-  issue.code === "resource-limit" || issue.code === "unsupported-metadata"
+  issue.code === "resource-limit" || isManagedCoverageGap(issue.code)
     ? "partial"
     : "malformed";
 
@@ -59,7 +71,7 @@ export const managedInspectionTargetFailure = (
   if (!(cause instanceof ManagedReaderFailure)) return undefined;
   const { code, scope, offset, detail } = cause.issue;
   if (code === "resource-limit") return undefined;
-  if (code === "unsupported-metadata" || code === "unsupported-signature")
+  if (isManagedCoverageGap(code))
     return new AnalysisUnsupportedTargetError(operation, path, detail, {
       cause,
     });
@@ -86,14 +98,19 @@ export const managedFailure = (
 ): ManagedReaderFailure =>
   new ManagedReaderFailure({ code, scope, offset, detail });
 
-/** Retain a local malformed fact; capacity and unexpected failures still escape. */
+/**
+ * Retain one value's malformed or unsupported fact so independent values can
+ * still be read. A budget or an unsupported metadata layout stops the whole
+ * read, and unexpected failures still escape.
+ */
 export const retainManagedValueFailure = (
   cause: unknown,
   issues: ManagedParseIssue[],
 ): ManagedReaderFailure => {
   if (
     !(cause instanceof ManagedReaderFailure) ||
-    managedMetadataFailureStatus(cause.issue) === "partial"
+    cause.issue.code === "resource-limit" ||
+    cause.issue.code === "unsupported-metadata"
   )
     throw cause;
   if (!(cause instanceof ManagedHeapAmbiguityFailure)) issues.push(cause.issue);
