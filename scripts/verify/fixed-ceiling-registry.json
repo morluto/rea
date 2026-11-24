@@ -162,6 +162,18 @@
       "reason": "The release exposure input allowance bounds bytes read, a resource policy."
     }
   },
+  "src/artifacts/tar/TarWalk.ts": {
+    "\"The tar extended-header allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
+    },
+    "\"The tar member metadata allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
+    }
+  },
   "src/browser/WebBundleAnalysisWorker.ts": {
     "\"The web-bundle worker transfer allowance\"": {
       "class": "pending",
