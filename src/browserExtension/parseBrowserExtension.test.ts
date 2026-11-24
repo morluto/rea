@@ -393,6 +393,25 @@ describe("parseBrowserExtension message placeholders", () => {
     },
   );
 
+  it("ends each placeholder at the first closing delimiter", async () => {
+    const report = await inspect(
+      manifest({
+        manifest_version: 3,
+        name: "__MSG_first____MSG_second__",
+        short_name: "__MSG_prefix__MSG_literal__",
+        description: "__MSG_trailing___ __MSG_@@ui_locale__",
+      }),
+      "/work/manifest.json",
+    );
+    expect(report.manifest.message_keys).toEqual([
+      "first",
+      "second",
+      "prefix",
+      "trailing",
+      "@@ui_locale",
+    ]);
+  });
+
   it("collects placeholders from every manifest string", async () => {
     const report = await inspect(
       storedZip(

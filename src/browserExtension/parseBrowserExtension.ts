@@ -24,7 +24,14 @@ import {
   type InspectBrowserExtensionInput,
 } from "../domain/browserExtension/browserExtension.js";
 
-const MESSAGE_KEY = /__MSG_([A-Za-z0-9_@]+)__/gu;
+/**
+ * A `__MSG_name__` placeholder ends at the first `__` after its name, so
+ * adjacent placeholders stay separate and a trailing `_` is literal text.
+ * Firefox localizes with this lazy pattern (ExtensionCommon.sys.mjs); Chromium
+ * ends the name at the first `__` (MessageBundle::ReplaceVariables) and
+ * agrees except that it skips a placeholder whose name would start with `__`.
+ */
+const MESSAGE_KEY = /__MSG_([A-Za-z0-9_@]+?)__/gu;
 const KNOWN_KEYS = new Set([
   "manifest_version",
   "name",
