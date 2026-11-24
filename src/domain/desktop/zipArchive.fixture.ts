@@ -25,7 +25,7 @@ const UTF8_NAME = 0x800;
 
 /** A version-1 Info-ZIP Unicode Path claim bound to the stored filename bytes. */
 export const unicodePathExtra = (
-  name: string,
+  name: string | Uint8Array,
   path: string | Uint8Array,
 ): Buffer => {
   const text = Buffer.from(path);
@@ -33,7 +33,10 @@ export const unicodePathExtra = (
   field.writeUInt16LE(0x7075);
   field.writeUInt16LE(field.length - 4, 2);
   field[4] = 1;
-  field.writeUInt32LE(crc32(Buffer.from(name)), 5);
+  field.writeUInt32LE(
+    crc32(typeof name === "string" ? Buffer.from(name) : name),
+    5,
+  );
   text.copy(field, 9);
   return field;
 };

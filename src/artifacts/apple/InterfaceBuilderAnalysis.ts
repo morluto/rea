@@ -40,6 +40,7 @@ import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   decodeNibArchive,
   nibCollectionMembers,
+  trimTrailingNul,
   type NibArchiveDocument,
 } from "./NibArchive.js";
 import {
@@ -57,7 +58,10 @@ import {
   type InterfaceBuilderAnalysis,
 } from "../../domain/apple/interfaceBuilderGraph.js";
 import { projectNibViewHierarchy } from "./NibViewHierarchy.js";
-import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
+import {
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../../domain/jsonValue.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
@@ -269,9 +273,7 @@ const decodeInterfaceBuilderBundle = async (
         documents.push({
           relativePath: entry.path,
           archiveSha256: documentHash,
-          documentKind: entry.path.includes(".storyboardc/")
-            ? "storyboard_scene"
-            : "nib",
+          documentKind: entry.documentKind,
           raw,
           ...(numberLiterals === undefined ? {} : { numberLiterals }),
           ...(nib === null || nib.omitted === 0
@@ -366,6 +368,10 @@ const decodeInterfaceBuilderBundle = async (
   return finalOutcome.value;
 };
 
+type InterfaceBuilderCandidate = ArtifactEntry & {
+  readonly documentKind: InterfaceBuilderDocumentInput["documentKind"];
+};
+
 /** Select lexically earliest document paths independent of host traversal order. */
 const selectInterfaceBuilderCandidates = async (
   reader: DirectoryArtifactReader,
@@ -373,7 +379,7 @@ const selectInterfaceBuilderCandidates = async (
   maximumDocuments: number,
   traversal: ArtifactTraversalObservation,
 ): Promise<{
-  readonly selected: readonly ArtifactEntry[];
+  readonly selected: readonly InterfaceBuilderCandidate[];
   readonly omittedSamples: readonly ArtifactEntry[];
   readonly symlinkSamples: readonly ArtifactEntry[];
   readonly omitted: number;
@@ -382,18 +388,18 @@ const selectInterfaceBuilderCandidates = async (
   readonly unreportedOmitted: number;
 }> => {
   const capacity = maximumDocuments + MAX_REPORTED_OMITTED_ARCHIVES;
-  const candidates: ArtifactEntry[] = [];
+  const candidates: InterfaceBuilderCandidate[] = [];
   const symlinkSamples: ArtifactEntry[] = [];
   let symlinks = 0;
   let unclassifiedSymlinks = 0;
   let firstUnclassifiedSymlink: string | undefined;
   let total = 0;
   for await (const entry of traversal.entries(reader, signal)) {
+    if (entry.kind !== "file" && entry.kind !== "symlink") continue;
+    const normalizedPath = entry.path.toLowerCase();
+    const isNib = normalizedPath.endsWith(".nib");
     if (entry.kind === "symlink") {
-      if (
-        isInterfaceBuilderArchive(entry.path) ||
-        entry.path.toLowerCase().endsWith(".storyboardc")
-      ) {
+      if (isNib || normalizedPath.endsWith(".storyboardc")) {
         symlinks += 1;
         retainCandidate(symlinkSamples, entry, MAX_REPORTED_OMITTED_ARCHIVES);
       } else {
@@ -402,10 +408,12 @@ const selectInterfaceBuilderCandidates = async (
       }
       continue;
     }
-    if (entry.kind !== "file" || !isInterfaceBuilderArchive(entry.path))
-      continue;
+    if (!isNib) continue;
     total += 1;
-    retainCandidate(candidates, entry, capacity);
+    const documentKind = normalizedPath.includes(".storyboardc/")
+      ? "storyboard_scene"
+      : "nib";
+    retainCandidate(candidates, { ...entry, documentKind }, capacity);
   }
   if (unclassifiedSymlinks > 0)
     traversal.record({
@@ -430,9 +438,9 @@ const selectInterfaceBuilderCandidates = async (
 };
 
 /** Keep the earliest bounded path set; directory iteration order is host-defined. */
-const retainCandidate = (
-  candidates: ArtifactEntry[],
-  entry: ArtifactEntry,
+const retainCandidate = <Entry extends ArtifactEntry>(
+  candidates: Entry[],
+  entry: Entry,
   maximum: number,
 ): void => {
   let low = 0;
@@ -534,36 +542,29 @@ const finalizeHierarchyCoverage = (
       ...result.graph,
       coverage: [
         ...result.graph.coverage.map((facet) => {
-          const omittedConnection = unresolvedConnections.get(
-            facet.facet.replace(/^connections:/u, ""),
-          );
           const [kind, ...pathParts] = facet.facet.split(":");
-          const source = (
-            unexaminedSources.get(pathParts.join(":")) ?? []
-          ).find((source) =>
-            source.facets.some((affected) => affected === kind),
-          );
-          if (source !== undefined)
-            return {
-              ...facet,
-              status: "partial" as const,
-              reason: facet.reason ?? source.reason,
-            };
-          return facet.facet.startsWith("connections:") &&
-            omittedConnection !== undefined
-            ? {
-                ...facet,
-                status: "partial" as const,
-                // A connection dropped by the limit is recoverable by raising
-                // it, so that cause keeps the reason the graph already named.
-                // Only a facet with no other cause reports the omission.
-                reason: facet.reason ?? "connection_unresolved",
-                omitted:
-                  facet.omitted === null
-                    ? null
-                    : facet.omitted + omittedConnection,
-              }
-            : facet;
+          const path = pathParts.join(":");
+          const source = unexaminedSources
+            .get(path)
+            ?.find((source) =>
+              source.facets.some((affected) => affected === kind),
+            );
+          const omittedConnections =
+            kind === "connections"
+              ? unresolvedConnections.get(path)
+              : undefined;
+          if (source === undefined && omittedConnections === undefined)
+            return facet;
+          return {
+            ...facet,
+            status: "partial" as const,
+            // A caller can recover a limit omission by raising that limit.
+            reason: facet.reason ?? source?.reason ?? "connection_unresolved",
+            omitted:
+              facet.omitted === null
+                ? null
+                : facet.omitted + (omittedConnections ?? 0),
+          };
         }),
         {
           facet: "archive_decode",
@@ -677,7 +678,7 @@ const projectNibArchive = (
 ) => {
   const unexaminedSources: NibUnexaminedSource[] = [];
   for (const object of archive.objects) {
-    const name = object.class_name.replace(/\0+$/u, "");
+    const name = trimTrailingNul(object.class_name);
     if (
       name === "UINib" &&
       ["UINib.archiveData", "archiveData"].some((key) =>
@@ -701,7 +702,7 @@ const projectNibArchive = (
   const normalizeClassName = (value: string): string => {
     const known = normalizedClassNames.get(value);
     if (known !== undefined) return known;
-    const normalized = value.replace(/\0+$/u, "");
+    const normalized = trimTrailingNul(value);
     normalizedClassNames.set(value, normalized);
     return normalized;
   };
@@ -1020,7 +1021,7 @@ const projectNibArchive = (
     unresolvedConnections,
     nonFiniteRealCount,
     negativeZeroRealCount,
-    raw: jsonValueSchema.parse({
+    raw: ownedJsonValueSchema.parse({
       "com.apple.ibtool.document.objects": objects,
       "com.apple.ibtool.document.connections": connections,
       "com.apple.ibtool.document.hierarchy": viewHierarchy.hierarchy ?? [],
@@ -1033,11 +1034,6 @@ const projectNibArchive = (
       ),
     }),
   };
-};
-
-const isInterfaceBuilderArchive = (path: string): boolean => {
-  const lower = path.toLowerCase();
-  return lower.endsWith(".nib") || lower.endsWith("/objects.nib");
 };
 
 const readEntry = async (

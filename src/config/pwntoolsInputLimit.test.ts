@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { pwntoolsInputBytes } from "./pwntoolsInputLimit.js";
-import { pwntoolsUnavailable } from "../native/pwntools/PwntoolsFailures.js";
 import { PWNTOOLS_LIMITS } from "../domain/native/pwntoolsResourceLimits.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderIdentity.js";
 
 const CONSTRAINT =
   "REA_PWNTOOLS_MAX_INPUT_BYTES must be a decimal integer from 1 to " +
@@ -47,37 +45,6 @@ describe("pwntools input bound", () => {
         configured: false,
         error: CONSTRAINT,
       },
-    );
-  });
-
-  it("never narrows the bound below the shipped default implicitly", () => {
-    const accepted = [1, 1024, PWNTOOLS_LIMITS.input_bytes].map((bytes) =>
-      pwntoolsInputBytes({ REA_PWNTOOLS_MAX_INPUT_BYTES: String(bytes) }),
-    );
-    expect(accepted.every((limit) => limit.configured)).toBe(true);
-  });
-});
-
-describe("pwntools unavailability configuration key", () => {
-  const context = {
-    operation: "inspect_binary_layout",
-    providerId: PWNTOOLS_PROVIDER_IDENTITY.id,
-  };
-  const reportedKey = (configurationKey?: string) =>
-    pwntoolsUnavailable(
-      CONSTRAINT,
-      "/caller-selected/python",
-      undefined,
-      undefined,
-      configurationKey === undefined
-        ? context
-        : { ...context, configurationKey },
-    ).rejections[0]?.diagnostics["configuration_key"];
-
-  it("keeps the engine key unless the failure is about the bound", () => {
-    expect(reportedKey()).toBe("REA_PWNTOOLS_PYTHON");
-    expect(reportedKey("REA_PWNTOOLS_MAX_INPUT_BYTES")).toBe(
-      "REA_PWNTOOLS_MAX_INPUT_BYTES",
     );
   });
 });

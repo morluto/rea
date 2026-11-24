@@ -7,16 +7,23 @@ import type { z } from "zod";
 
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import {
+  deliversRetainedSummary,
+  RETAINED_SUMMARY_VIEW_TOOL,
+} from "./retainedSummaryDelivery.js";
+import { declaresSizeAwareDetail } from "../contracts/analysisDetail.js";
 import type {
   AnalysisOperationPort,
   ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
 import {
   projectRetainedAnalysis,
-  requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
-  type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
+import {
+  requireAnalysisViewRetention,
+  type AnalysisViewRetention,
+} from "../application/analysisView/AnalysisViewRetention.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
@@ -57,7 +64,7 @@ export const deliverEvidenceResult = (
   result: Result<Evidence, AnalysisError>,
   contract: ToolContract,
   recordEvidence?: EvidenceWriter["recordEvidence"],
-  viewSource?: JsonValue,
+  viewSource?: JsonValue | (() => JsonValue | undefined),
 ): CallToolResult => {
   if (!result.ok)
     return server.delivery.toPartialErrorToolResult(
@@ -111,6 +118,22 @@ export const createRetainedSummaryToolHandler = <
   return createEvidenceToolHandler(
     server,
     async (rawInput, options) => {
+      if (operation.admission === "sdk") {
+        // The MCP SDK already validated `rawInput` against `contract.inputSchema`.
+        const { detail, view, ...input } = rawInput as z.output<InputSchema>;
+        if (detail === "summary") {
+          const ready = requireAnalysisViewRetention(contract.name, retention);
+          if (!ready.ok) return ready;
+        }
+        const inspected = await operation.summary(input, options);
+        return detail === "summary" && inspected.ok
+          ? projectRetainedAnalysis(
+              inspected.value,
+              retention,
+              view ?? { kind: "summary" },
+            )
+          : inspected;
+      }
       const parsed = contract.inputSchema.safeParse(rawInput);
       if (!parsed.success)
         return err(
@@ -121,23 +144,21 @@ export const createRetainedSummaryToolHandler = <
             { cause: parsed.error },
           ),
         );
-      const { detail, view, ...input } = parsed.data;
+      const { detail, view } = parsed.data;
       if (detail === "summary") {
         const ready = requireAnalysisViewRetention(contract.name, retention);
         if (!ready.ok) return ready;
       }
-      const inspected = await (operation.admission === "sdk"
-        ? operation.summary(input, options)
-        : operation.summary(
-            isRecord(rawInput)
-              ? Object.fromEntries(
-                  Object.entries(rawInput).filter(
-                    ([field]) => field !== "detail" && field !== "view",
-                  ),
-                )
-              : rawInput,
-            options,
-          ));
+      const inspected = await operation.summary(
+        isRecord(rawInput)
+          ? Object.fromEntries(
+              Object.entries(rawInput).filter(
+                ([field]) => field !== "detail" && field !== "view",
+              ),
+            )
+          : rawInput,
+        options,
+      );
       return detail === "summary" && inspected.ok
         ? projectRetainedAnalysis(
             inspected.value,
@@ -187,7 +208,7 @@ export const createEvidenceToolHandler =
           result,
           contract,
           recordEvidence,
-          viewSource?.(input),
+          viewSource === undefined ? undefined : () => viewSource(input),
         );
       },
     );
@@ -546,7 +567,12 @@ export const createAnalysisToolHandler =
           analyze(input, analysis, { signal, progress }),
         );
         const response =
-          !analyzed.ok || detail === "summary"
+          !analyzed.ok ||
+          deliversRetainedSummary(detail, analyzed.value.evidence, {
+            sizeAware: declaresSizeAwareDetail(contract.inputSchema),
+            retained: requireAnalysisViewRetention(contract.name, retention).ok,
+            pageable: server.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
+          })
             ? deliverEvidenceResult(
                 server,
                 analyzed.ok

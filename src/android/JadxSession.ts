@@ -19,8 +19,8 @@ import {
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
-  jsonObjectSchema,
-  jsonValueSchema,
+  ownedJsonObjectSchema,
+  ownedJsonValueSchema,
   type JsonValue,
 } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -73,6 +73,7 @@ export class JadxSession {
     version: "1",
   });
   #loaded: ReturnType<typeof jadxLoadSchema.parse> | undefined;
+  #runtime: ReturnType<typeof jadxRuntimeSchema.parse> | undefined;
   #connected = false;
   #partialContext:
     | {
@@ -178,9 +179,9 @@ export class JadxSession {
           `Expected ${expected.name} ${expected.version}; server reported ${server?.name ?? "unknown"} ${server?.version ?? "unknown"}.`,
         );
       const tools = this.#tools(request, target, signal, timeoutMs);
-      const runtime = jadxRuntimeSchema.parse(
-        await tools.json("rea_jvm_status", {}),
-      );
+      const runtime =
+        this.#runtime ??
+        jadxRuntimeSchema.parse(await tools.json("rea_jvm_status", {}));
       this.#engineVersion = runtime.engine_reported_version;
       if (runtime.engine_reported_version !== JADX_RELEASE.version)
         throw new AnalysisCapabilityUnavailableError(
@@ -188,6 +189,7 @@ export class JadxSession {
           request.operation,
           `Expected engine ${JADX_RELEASE.version}; JAR reported ${runtime.engine_reported_version}.`,
         );
+      this.#runtime = runtime;
       const loaded =
         request.operation === "inspect_android_jni_bindings"
           ? undefined
@@ -281,7 +283,7 @@ export class JadxSession {
               },
             }),
       });
-      const raw = jsonObjectSchema.parse({
+      const raw = ownedJsonObjectSchema.parse({
         server,
         bridge_sha256: context.bridgeHash,
         jar_sha256: jarHash,
@@ -381,7 +383,7 @@ export class JadxSession {
         { name, arguments: input },
         { timeout: timeoutMs, signal },
       );
-      const observedResponse = jsonValueSchema.parse(response);
+      const observedResponse = ownedJsonValueSchema.parse(response);
       const call = { operation: name, input, response: observedResponse };
       const observation: JadxCallObservation = { complete: call };
       this.#observedCalls.push(observation);

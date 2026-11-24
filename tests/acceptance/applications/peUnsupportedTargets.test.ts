@@ -29,10 +29,7 @@ cliTest.for(cases)(
               ? format
               : "NE",
           );
-    const malformed =
-      format === "unknown" ||
-      format === "truncated PE" ||
-      format === "truncated MZ";
+    const malformed = format === "truncated PE" || format === "truncated MZ";
     if (format === "truncated MZ") bytes = Buffer.from("MZ");
     if (format === "unknown") bytes.write("ZZ", 128, "ascii");
     if (format === "truncated PE") {
@@ -58,17 +55,22 @@ cliTest.for(cases)(
         error = parseMcpToolError(response).error;
       }
       expect(error).toMatchObject({
-        code: malformed ? "invalid_request" : "unsupported_target",
-        category: malformed ? "invalid_input" : "unsupported_target",
+        // Malformed bytes and unsupported layouts are both target refusals.
+        code: "unsupported_target",
+        category: "unsupported_target",
         retryable: false,
         details: { operation: `inspect_pe_${operation}` },
       });
       if (malformed) {
         expect(error).toMatchObject({
-          details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+          details: {
+            path,
+            format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+          },
         });
       } else {
         expect(error).toMatchObject({ details: { path } });
+        expect(error).not.toHaveProperty("details.format_failure");
         expect(JSON.stringify(error)).not.toContain("inspect_input_contract");
       }
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);

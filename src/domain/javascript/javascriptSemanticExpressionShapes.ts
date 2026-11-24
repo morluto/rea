@@ -66,7 +66,7 @@ export const createSemanticExpressionShapeResolver = (
       node = unwrapped.node;
       depth += unwrapped.depth;
       if (depth > state.precision.expression_depth) {
-        state.valueResourceLimits.add("expression-depth");
+        state.observations.valueResourceLimits.add("expression-depth");
         return "unknown";
       }
       if (seen.has(node)) return "unknown";

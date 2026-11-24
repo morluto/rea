@@ -23,7 +23,8 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { ok } from "../../../src/domain/result.js";
 import {
@@ -571,6 +572,21 @@ describe("MCP investigation history snapshot replay", () => {
   );
 });
 
+const expectSourceReplay = (
+  evidence: Evidence,
+  parentId: string,
+  sourceId: string,
+) => {
+  expect(evidence.evidence_links.toSorted()).toEqual(
+    [parentId, sourceId].toSorted(),
+  );
+  expect(evidence.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("did not re-run the provider"),
+    ]),
+  );
+};
+
 it("replays a source-bearing observation through an exported MCP snapshot", async () => {
   const { targetPaths, snapshotPath } = await createWorkflowFiles(
     "rea-mcp-source-replay-",
@@ -604,37 +620,66 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
       };
     },
   };
-  const { mcp } = await connectWorkflowMcp(
-    createWorkflowSession(provider),
-    "source-replay",
-  );
+  const session = createWorkflowSession(provider);
+  const { mcp } = await connectWorkflowMcp(session, "source-replay");
   await openWorkflowTarget(mcp, targetPath);
-  const read = (client: Client) =>
-    client.callTool({
-      name: "list_strings",
-      arguments: { document: "fixture" },
-    });
-  const first = await read(mcp);
-  const firstEvidence = toolContract("list_strings").outputSchema.parse(
-    first.structuredContent,
-  );
+  const read = async (client: Client) =>
+    toolContract("list_strings").outputSchema.parse(
+      (
+        await client.callTool({
+          name: "list_strings",
+          arguments: { document: "fixture" },
+        })
+      ).structuredContent,
+    );
+  const firstEvidence = await read(mcp);
   expect(firstEvidence.evidence_links).toHaveLength(1);
-  const second = await read(mcp);
-  const secondEvidence = toolContract("list_strings").outputSchema.parse(
-    second.structuredContent,
+  const secondEvidence = await read(mcp);
+  const sourceId = firstEvidence.evidence_links[0]!;
+  expectSourceReplay(secondEvidence, firstEvidence.evidence_id, sourceId);
+  const original = await session.execute("list_strings", {
+    document: "fixture",
+  });
+  if (!original.ok) throw original.error;
+  const source = original.value.sourceEvidence?.find(
+    (record) => record.evidence_id === sourceId,
   );
-  expect(secondEvidence.evidence_links).toEqual(
-    expect.arrayContaining([
-      ...firstEvidence.evidence_links,
-      firstEvidence.evidence_id,
-    ]),
+  if (!source) throw new Error("Expected the cached source");
+  const relocatedPath = join(dirname(targetPath), "relocated-source.hop");
+  const sourcePath = join(dirname(snapshotPath), "display-update.json");
+  await writeFile(
+    sourcePath,
+    JSON.stringify(
+      createEvidenceBundle([
+        {
+          ...source,
+          subject: displayedEvidenceSubject(source.subject, {
+            local_path: relocatedPath,
+            name: "relocated-source.hop",
+          }),
+        },
+      ]),
+    ),
   );
-  expect(secondEvidence.evidence_links).toHaveLength(2);
-  expect(secondEvidence.limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("did not re-run the provider"),
-    ]),
+  expect(
+    (
+      await mcp.callTool({
+        name: "import_evidence_bundle",
+        arguments: { path: sourcePath },
+      })
+    ).isError,
+  ).not.toBe(true);
+  const refreshed = await session.execute("list_strings", {
+    document: "fixture",
+  });
+  if (!refreshed.ok) throw refreshed.error;
+  expect(refreshed.value.sourceEvidence).toContainEqual(
+    expect.objectContaining({
+      evidence_id: sourceId,
+      subject: expect.objectContaining({ local_path: relocatedPath }),
+    }),
   );
+  expect(source.subject).toMatchObject({ local_path: targetPath });
   expect(
     calls.filter((operation) => operation === "list_strings"),
   ).toHaveLength(1);
@@ -658,21 +703,8 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
       })
     ).isError,
   ).not.toBe(true);
-  const replayed = toolContract("list_strings").outputSchema.parse(
-    (await read(reopened)).structuredContent,
-  );
-  expect(replayed.evidence_links).toEqual(
-    expect.arrayContaining([
-      ...firstEvidence.evidence_links,
-      firstEvidence.evidence_id,
-    ]),
-  );
-  expect(replayed.evidence_links).toHaveLength(2);
-  expect(replayed.limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("did not re-run the provider"),
-    ]),
-  );
+  const replayed = await read(reopened);
+  expectSourceReplay(replayed, firstEvidence.evidence_id, sourceId);
   expect(
     calls.filter((operation) => operation === "list_strings"),
   ).toHaveLength(1);
@@ -693,6 +725,7 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
       {
         evidence_id: firstEvidence.evidence_links[0],
         normalized_result: "historical source",
+        subject: { local_path: relocatedPath },
       },
     ],
   });
@@ -760,15 +793,7 @@ const expectRestoredSourceReplay = async (
       record.evidence_links.includes(source.evidence_id),
   );
   if (parent === undefined) throw new Error("Expected original observation");
-  expect(replayed.evidence_links).toEqual(
-    expect.arrayContaining([source.evidence_id, parent.evidence_id]),
-  );
-  expect(replayed.evidence_links).toHaveLength(2);
-  expect(replayed.limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("did not re-run the provider"),
-    ]),
-  );
+  expectSourceReplay(replayed, parent.evidence_id, source.evidence_id);
   expect(
     calls.filter((operation) => operation === "list_strings"),
   ).toHaveLength(1);

@@ -1,4 +1,7 @@
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 
@@ -14,7 +17,6 @@ import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { err, ok } from "../domain/result.js";
 import {
@@ -309,7 +311,11 @@ export class KunaProvider implements AnalysisProviderCandidate {
     if (!configuration.ok)
       return {
         execute: async (operation) =>
-          err(kunaUnavailable(operation, configuration.error.reason)),
+          err(
+            kunaUnavailable(operation, configuration.error.reason, {
+              remediationAction: configuration.error.remediation,
+            }),
+          ),
         close: async () => ok(null),
       };
     return new KunaSessionClient(target, profile, {

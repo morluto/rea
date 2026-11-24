@@ -37,7 +37,8 @@ const HOPPER_CLASSIFICATIONS = {
 const hopperRemoteClassification = (
   diagnosticType: HopperDiagnosticType,
 ): AnalysisErrorClassification =>
-  diagnosticType === "invalid_request"
+  diagnosticType === "invalid_request" ||
+  diagnosticType === "selector_not_found"
     ? { code: "invalid_request", category: "invalid_input" }
     : {
         code: "execution_failure",
@@ -239,35 +240,102 @@ export class HopperProtocolError extends HopperError {
   }
 }
 
-export type HopperDiagnosticType =
-  | "remote"
-  | "authorization"
-  | "invalid_request"
-  | "capability_unavailable"
-  | "bridge_exception";
+export const HOPPER_DIAGNOSTIC_TYPES = [
+  "remote",
+  "authorization",
+  "invalid_request",
+  "selector_not_found",
+  "capability_unavailable",
+  "bridge_exception",
+] as const;
+
+export type HopperDiagnosticType = (typeof HOPPER_DIAGNOSTIC_TYPES)[number];
 
 /** Hopper's JSON-RPC endpoint returned an expected remote error response. */
 export interface HopperRemoteErrorContext extends AnalysisErrorOptions {
   readonly diagnosticType?: HopperDiagnosticType | undefined;
   readonly operation?: string | undefined;
   readonly requestId?: number | undefined;
+  readonly selector?: HopperSelectorResolution | undefined;
 }
+
+/**
+ * How the bridge resolved a selector that named no procedure: an unknown name,
+ * a symbol or address outside every procedure, or the cursor.
+ */
+export type HopperSelectorResolution =
+  | { readonly value: string; readonly source: "unresolved" }
+  | {
+      readonly value: string;
+      readonly source: "symbol" | "address";
+      readonly address: string;
+    }
+  | {
+      readonly value: null;
+      readonly source: "cursor";
+      readonly address: string;
+    };
+
+interface HopperSelectorMissRecovery {
+  readonly remediation: string;
+  readonly operations: readonly string[];
+}
+
+/**
+ * The recovery for a selector miss, naming operations by contract name; each
+ * adapter renders its own spelling. A name Hopper resolves outside every
+ * procedure, such as an import address-table slot, is answered by `xrefs` on
+ * its address.
+ */
+const hopperSelectorMissRecovery = (
+  selector: HopperSelectorResolution | undefined,
+): HopperSelectorMissRecovery => {
+  const inventory =
+    "Choose an observed procedure name or entry address from the current Hopper document; search_procedures or list_procedures reports them.";
+  if (selector === undefined || selector.source === "unresolved")
+    return {
+      remediation: `${inventory} An inventory miss leaves the function's presence in the artifact unknown.`,
+      operations: ["search_procedures", "list_procedures"],
+    };
+  if (selector.source === "symbol")
+    return {
+      remediation: `Name ${selector.value} resolves to ${selector.address}, which is not inside a Hopper procedure, such as an import address-table slot or a data label. Hopper procedure operations accept only names and addresses inside procedures. To list references to that symbol, call xrefs with address ${selector.address}; each result is a referencing address, not its containing procedure.`,
+      operations: ["xrefs"],
+    };
+  return {
+    remediation: `No Hopper procedure contains ${selector.address}. ${inventory} To list references to ${selector.address} itself, call xrefs with that address.`,
+    operations: ["search_procedures", "list_procedures", "xrefs"],
+  };
+};
 
 export class HopperRemoteError extends HopperError {
   readonly _tag = providerErrorTag("HopperRemoteError");
   readonly diagnosticType: HopperDiagnosticType;
   readonly operation: string | undefined;
   readonly requestId: number | undefined;
+  readonly selector: HopperSelectorResolution | undefined;
 
   constructor(
     readonly code: number,
     readonly safeMessage: string,
     context: HopperRemoteErrorContext = {},
   ) {
-    super(`Hopper request failed (${String(code)}): ${safeMessage}`, context);
-    this.diagnosticType = context.diagnosticType ?? "remote";
+    const diagnosticType = context.diagnosticType ?? "remote";
+    super(`Hopper request failed (${String(code)}): ${safeMessage}`, {
+      ...context,
+      related:
+        context.related ??
+        (diagnosticType === "selector_not_found"
+          ? {
+              operations: hopperSelectorMissRecovery(context.selector)
+                .operations,
+            }
+          : undefined),
+    });
+    this.diagnosticType = diagnosticType;
     this.operation = context.operation;
     this.requestId = context.requestId;
+    this.selector = context.selector;
   }
 
   override providerRequest(): ProviderRequestFailure {
@@ -283,22 +351,28 @@ export class HopperRemoteError extends HopperError {
           operation,
           requestId: this.requestId,
           diagnosticType: this.diagnosticType,
+          selector: this.selector,
         }),
     };
   }
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
+    const lookupMiss = this.diagnosticType === "selector_not_found";
     return {
       ...hopperRemoteClassification(this.diagnosticType),
       message: `Hopper ${this.operation ?? "analysis"} failed (${String(this.code)}, ${this.diagnosticType}): ${this.safeMessage}`,
-      remediation:
-        this.diagnosticType === "invalid_request"
+      remediation: lookupMiss
+        ? hopperSelectorMissRecovery(this.selector).remediation
+        : this.diagnosticType === "invalid_request"
           ? "Correct the reported address, document, or arguments and retry."
           : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.",
       details: {
         stage: "analysis",
         provider_code: this.code,
         diagnostic_type: this.diagnosticType,
+        ...(lookupMiss && this.selector !== undefined
+          ? { selector: { ...this.selector } }
+          : {}),
         ...(this.operation === undefined ? {} : { operation: this.operation }),
         ...(this.requestId === undefined ? {} : { request_id: this.requestId }),
       },
@@ -595,14 +669,6 @@ export class HopperStartError extends HopperError {
   }
 }
 
-const HOPPER_DIAGNOSTIC_TYPES = {
-  remote: true,
-  authorization: true,
-  invalid_request: true,
-  capability_unavailable: true,
-  bridge_exception: true,
-} as const satisfies Record<HopperDiagnosticType, true>;
-
 /** Hopper's rows in the generated error catalogue. */
 export const hopperErrorCatalogue =
   (): readonly AnalysisErrorCatalogueEntry[] => [
@@ -621,11 +687,11 @@ export const hopperErrorCatalogue =
       "",
       HOPPER_CLASSIFICATIONS.protocol,
     ),
-    ...Object.keys(HOPPER_DIAGNOSTIC_TYPES).map((diagnosticType) =>
+    ...HOPPER_DIAGNOSTIC_TYPES.map((diagnosticType) =>
       catalogueRow(
         providerErrorTag("HopperRemoteError"),
         `diagnostic_type=${diagnosticType}`,
-        hopperRemoteClassification(diagnosticType as HopperDiagnosticType),
+        hopperRemoteClassification(diagnosticType),
       ),
     ),
     catalogueRow(

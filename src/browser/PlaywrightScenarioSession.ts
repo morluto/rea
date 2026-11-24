@@ -6,7 +6,7 @@ import type { BrowserContext } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -560,7 +560,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
               { cause },
             );
       failure.retainDiagnostics({
-        collected_artifacts: jsonValueSchema.parse(artifacts),
+        collected_artifacts: ownedJsonValueSchema.parse(artifacts),
       });
       throw failure;
     }

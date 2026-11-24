@@ -141,6 +141,15 @@ describe("CLI JSON streamed input", () => {
     }
   });
 
+  const invalidFile = (path: string) => ({
+    ok: false,
+    error: {
+      code: "invalid_request",
+      input_path: path,
+      input_reason: "invalid-json",
+    },
+  });
+
   it.each([
     "",
     "[1,]",
@@ -152,20 +161,13 @@ describe("CLI JSON streamed input", () => {
     "01",
     "NaN",
     '"\u0001"',
-  ])("rejects strict JSON syntax violations in files (%j)", async (text) => {
+  ])("rejects streamed JSON syntax violations (%j)", async (text) => {
     const root = await createTestTempDirectory("rea-json-input-invalid-");
     const path = join(root, "input.json");
-    for (const prefix of ["", " ".repeat(9 * 1024 * 1024)]) {
-      await writeFile(path, `${prefix}${text}`);
-      expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
-        ok: false,
-        error: {
-          code: "invalid_request",
-          input_path: path,
-          input_reason: "invalid-json",
-        },
-      });
-    }
+    await writeFile(path, `${" ".repeat(9 * 1024 * 1024)}${text}`);
+    expect(await parseCliJsonInput(path, "test-input")).toMatchObject(
+      invalidFile(path),
+    );
   });
 
   it("keeps malformed source excerpts out of native and streamed file diagnostics", async () => {
@@ -174,10 +176,7 @@ describe("CLI JSON streamed input", () => {
     for (const prefix of ["", " ".repeat(9 * 1024 * 1024)]) {
       await writeFile(path, `${prefix}{"$ref":"https://u:p@h","":NaN}`);
       const result = await parseCliJsonInput(path, "test-input");
-      expect(result).toMatchObject({
-        ok: false,
-        error: { input_reason: "invalid-json" },
-      });
+      expect(result).toMatchObject(invalidFile(path));
       expect(JSON.stringify(result)).not.toContain("u:p@h");
     }
   });

@@ -13,14 +13,17 @@ it("carries the reason an abortable wait observed into its cancellation", async 
   controller.abort(reason);
 
   const waited = await waiting;
-  expect(waited).toBeInstanceOf(AbortedWait);
-  if (!(waited instanceof AbortedWait)) return;
+  if (!(waited instanceof AbortedWait))
+    throw new Error("Expected the abort to win", { cause: waited });
   expect(cancelledBy("wait", waited).cause).toBe(reason);
 });
 
-it("carries the reason of a signal that aborted before the wait began", async () => {
-  const controller = new AbortController();
-  controller.abort("already");
-  const waited = await waitForAbortable(Promise.resolve(1), controller.signal);
-  expect(waited).toEqual(new AbortedWait("already"));
+it("returns the pre-abort reason and still observes a producer rejection", async () => {
+  const reason = "already cancelled";
+  const rejected = Promise.reject(new Error("late producer failure"));
+  const waited = await waitForAbortable(rejected, AbortSignal.abort(reason));
+
+  expect(waited).toEqual(new AbortedWait(reason));
+  // Give Node a turn to report a rejection if the waiter never observed it.
+  await new Promise<void>((resolve) => setImmediate(resolve));
 });

@@ -8,7 +8,7 @@ import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { registerMcpClient } from "./McpClientRegistration.js";
 import { parseGooseConfigurationYaml } from "./GooseConfigurationYaml.js";
-import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import {
   mcpClientRegistrationProfile,
   type McpRegistrationClient,
@@ -184,6 +184,11 @@ it.each([
   {
     name: "V1 disable migrated into native V2",
     text: '{"mcp":{"rea":{"type":"local","command":["old"],"enabled":false,"environment":{"KEEP":"1"}},"servers":{"peer":{"type":"local","command":["peer"]}}}}',
+    native: true,
+  },
+  {
+    name: "V1 disabled fallback migrated into native V2",
+    text: '{"mcp":{"rea":{"type":"local","command":["old"],"disabled":true,"environment":{"KEEP":"1"}},"servers":{"peer":{"type":"local","command":["peer"]}}}}',
     native: true,
   },
 ])(

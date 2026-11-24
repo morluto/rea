@@ -170,27 +170,55 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+const userOverride = async (contents: string | Buffer) => {
+  const { home, environment } = await fixture();
+  const applications = join(environment.XDG_DATA_HOME, "applications");
+  await mkdir(applications, { recursive: true });
+  const file = join(applications, "org.example.notes.desktop");
+  await writeFile(file, contents);
+  const inspect = (desktopEntry = "org.example.notes") =>
+    inspectLinuxApplication({
+      desktopEntry,
+      executable: undefined,
+      arguments: [],
+      environment,
+      home,
+      callerDirectory: home,
+    });
+  return { inspect, file };
+};
+
+it.skipIf(process.platform === "win32")(
+  "skips an unavailable TryExec by ID and refuses the explicit file",
+  async () => {
+    const { inspect, file } = await userOverride(
+      "[Desktop Entry]\nType=Application\nName=User notes\nExec=notes-app\nTryExec=rea-missing-tryexec\n",
+    );
+    expect(await inspect()).toMatchObject({
+      ok: true,
+      value: { inventory: { desktop_entry: { name: "Notes" } } },
+    });
+    expect(await inspect(file)).toMatchObject({
+      ok: false,
+      error: {
+        reason: "executable_not_found",
+        program: "rea-missing-tryexec",
+      },
+    });
+    await writeFile(
+      file,
+      "[Desktop Entry]\nType=Application\nName=User notes\nExec=notes-app\nTryExec=notes-app\n",
+    );
+    expect(await inspect()).toMatchObject({
+      ok: true,
+      value: { inventory: { desktop_entry: { name: "User notes" } } },
+    });
+  },
+);
+
 describe.skipIf(process.platform === "win32")(
   "desktop entry ID masking",
   () => {
-    const userOverride = async (contents: string | Buffer) => {
-      const { home, environment } = await fixture();
-      const applications = join(environment.XDG_DATA_HOME, "applications");
-      await mkdir(applications, { recursive: true });
-      const file = join(applications, "org.example.notes.desktop");
-      await writeFile(file, contents);
-      const inspect = (desktopEntry = "org.example.notes") =>
-        inspectLinuxApplication({
-          desktopEntry,
-          executable: undefined,
-          arguments: [],
-          environment,
-          home,
-          callerDirectory: home,
-        });
-      return { inspect, file };
-    };
-
     it.each([
       { setting: "Hidden=true", exec: true, found: false },
       { setting: "Hidden=true", exec: false, found: false },
@@ -255,6 +283,8 @@ describe.skipIf(process.platform === "win32")(
       { before: "[Other]\nName=Other\n", extra: "", invalidLine: 1 },
       { header: "\u00a0[Desktop Entry]", invalidLine: 1 },
       { header: "[Desktop Entry]\u00a0", invalidLine: 1 },
+      { before: "", extra: "\u00a0Name=Injected\n", invalidLine: 3 },
+      { before: "", extra: "\u00a0\n", invalidLine: 3 },
       {
         before: "",
         extra: "",

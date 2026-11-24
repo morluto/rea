@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { isRecord } from "../kernel/isRecord.js";
+import { setOwnSchemaProperty } from "./jsonSchemaKeywords.js";
 import {
   ADVERTISED_BOUND_LIMIT,
   ADVERTISED_DESCRIPTION_MAX_CHARACTERS,
@@ -164,8 +165,10 @@ const inclusiveBounds = (source: Schema, out: Schema): void => {
       : source.exclusiveMaximum;
     maximum = typeof maximum === "number" ? Math.min(maximum, upper) : upper;
   }
-  if (typeof minimum === "number") out.minimum = minimum;
-  if (typeof maximum === "number") out.maximum = maximum;
+  if (typeof minimum === "number" && minimum !== Number.MIN_SAFE_INTEGER)
+    out.minimum = minimum;
+  if (typeof maximum === "number" && maximum !== Number.MAX_SAFE_INTEGER)
+    out.maximum = maximum;
 };
 
 /** Length and item bounds clients can compile, and the portable pattern. */
@@ -209,30 +212,143 @@ const isStringEnum = (branch: unknown): branch is Schema =>
   Array.isArray(branch.enum) &&
   onlyKeys(branch, ["type", "enum", "description"]);
 
-/** `[T, "null"]` becomes the single nullable form: a typed branch or null. */
-const nullableForm = (out: Schema): Schema => {
+const isNonEmptyStringEnum = (branch: unknown): branch is Schema =>
+  isStringEnum(branch) && isStringList(branch.enum) && branch.enum.length > 0;
+
+const sameNonPropertyKeywords = (left: Schema, right: Schema): boolean => {
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  for (const key of leftKeys) {
+    if (key === "properties") continue;
+    if (!Object.hasOwn(right, key) || !isDeepStrictEqual(left[key], right[key]))
+      return false;
+  }
+  return true;
+};
+
+const singleDifferingStringEnumKey = (
+  left: Schema,
+  right: Schema,
+): string | undefined => {
   if (
-    !isStringList(out.type) ||
-    out.type.length !== 2 ||
-    !out.type.includes("null")
+    left.type !== "object" ||
+    right.type !== "object" ||
+    !isRecord(left.properties) ||
+    !isRecord(right.properties) ||
+    !sameNonPropertyKeywords(left, right)
   )
-    return out;
-  const { type, description, ...constraints } = out;
-  const nonNull = (type as readonly string[]).find(
-    (member) => member !== "null",
-  )!;
+    return undefined;
+  const leftProps = left.properties;
+  const rightProps = right.properties;
+  if (Object.keys(leftProps).length !== Object.keys(rightProps).length)
+    return undefined;
+  let diffKey: string | undefined;
+  for (const key in leftProps) {
+    if (!Object.hasOwn(leftProps, key)) continue;
+    if (!Object.hasOwn(rightProps, key)) return undefined;
+    if (isDeepStrictEqual(leftProps[key], rightProps[key])) continue;
+    if (diffKey !== undefined) return undefined;
+    diffKey = key;
+  }
+  if (diffKey === undefined) return undefined;
+  const leftProp = leftProps[diffKey];
+  const rightProp = rightProps[diffKey];
+  if (!isNonEmptyStringEnum(leftProp) || !isNonEmptyStringEnum(rightProp))
+    return undefined;
+  return leftProp.description === rightProp.description ? diffKey : undefined;
+};
+
+const mergeBranchOnEnumProperty = (
+  groupBranch: Schema,
+  incomingBranch: Schema,
+  diffKey: string,
+): Schema => {
+  const leftProps = groupBranch.properties as Schema;
+  const rightProps = incomingBranch.properties as Schema;
+  const leftEnum = leftProps[diffKey] as Schema;
+  const rightEnum = rightProps[diffKey] as Schema;
+  const nextProps = { ...leftProps };
+  setOwnSchemaProperty(nextProps, diffKey, {
+    ...leftEnum,
+    enum: [
+      ...new Set([
+        ...(leftEnum.enum as readonly string[]),
+        ...(rightEnum.enum as readonly string[]),
+      ]),
+    ],
+  });
+  return { ...groupBranch, properties: nextProps };
+};
+
+/**
+ * Exact product-union factoring: object branches that agree on every keyword
+ * and property except one string-enum discriminator collapse into one branch.
+ */
+const factorObjectEnumUnions = (branches: readonly unknown[]): unknown[] => {
+  const groups: { branch: unknown; diffKey?: string }[] = [];
+  for (const branch of branches) {
+    if (
+      !isRecord(branch) ||
+      branch.type !== "object" ||
+      !isRecord(branch.properties)
+    ) {
+      groups.push({ branch });
+      continue;
+    }
+    let matched = false;
+    for (const group of groups) {
+      if (!isRecord(group.branch)) continue;
+      const diffKey = singleDifferingStringEnumKey(group.branch, branch);
+      if (
+        diffKey !== undefined &&
+        (group.diffKey === undefined || group.diffKey === diffKey)
+      ) {
+        group.branch = mergeBranchOnEnumProperty(group.branch, branch, diffKey);
+        group.diffKey = diffKey;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) groups.push({ branch });
+  }
+  return groups.map((group) => group.branch);
+};
+
+/** Multi-type lists (`["string", "null"]`, JSON-value lists) become `anyOf` branches per type. */
+const typeListForm = (out: Schema): Schema => {
+  if (!isStringList(out.type)) return out;
+  const { type, description, items, ...constraints } = out;
+  const branches: Schema[] = [];
+  for (const member of type as readonly string[]) {
+    if (member === "null") {
+      branches.push({ type: "null" });
+    } else if (member === "array") {
+      branches.push({
+        type: "array",
+        ...constraints,
+        // An open item schema can require reduced presentation, but it
+        // cannot imply that the array accepts only object items.
+        items: isRecord(items) ? items : {},
+      });
+    } else {
+      branches.push({ type: member, ...constraints });
+    }
+  }
   return {
     ...(description === undefined ? {} : { description }),
-    anyOf: [{ type: nonNull, ...constraints }, { type: "null" }],
+    anyOf: branches,
   };
 };
 
 /** One projection: guidance sentences accumulate while the schema is built. */
 class DialectProjection {
   readonly notes: string[] = [];
+  readonly #seenNotes = new Set<string>();
 
   note(sentence: string): void {
-    if (!this.notes.includes(sentence)) this.notes.push(sentence);
+    if (this.#seenNotes.has(sentence)) return;
+    this.#seenNotes.add(sentence);
+    this.notes.push(sentence);
   }
 
   project(value: unknown, path: string): unknown {
@@ -252,7 +368,7 @@ class DialectProjection {
         `${label(path)} must not be ${source.not.enum.map((item) => JSON.stringify(item)).join(" or ")}.`,
       );
     this.unionKeywords(source, out, path);
-    return nullableForm(out);
+    return typeListForm(out);
   }
 
   /** Name and count constraints are dropped; an object's own cross-field
@@ -334,7 +450,9 @@ class DialectProjection {
         ? source.oneOf
         : undefined;
     if (alternatives === undefined) return;
-    const branches = this.unionBranches(alternatives, path, out.type);
+    const branches = factorObjectEnumUnions(
+      this.unionBranches(alternatives, path, out.type),
+    );
     if (
       branches.length > 0 &&
       out.enum === undefined &&
@@ -398,7 +516,8 @@ class DialectProjection {
         branchNotes.push(projection.notes);
         return isRecord(projected) &&
           Array.isArray(projected.anyOf) &&
-          onlyKeys(projected, ["anyOf"])
+          (onlyKeys(projected, ["anyOf"]) ||
+            onlyKeys(projected, ["anyOf", "type"]))
           ? projected.anyOf
           : [projected];
       }),

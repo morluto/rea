@@ -11,6 +11,17 @@ import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 /** Exact upstream release whose tool profile REA verified. */
 export const WABT_VERSION = "1.0.42";
+/**
+ * Releases admitted for caller-configured tools; REA does not download WABT.
+ * WABT changes `wasm-validate`, `wasm-objdump` and `wasm2wat` output only by
+ * addition within a minor version. The upper bound is exclusive of 1.1.0 so
+ * admission matches the `1.0.x` banners `wasmArtifactSchema` accepts; letting
+ * 1.1.0 through would admit a tool profile whose report the schema then
+ * rejects after inspection ran.
+ */
+export const WABT_ACCEPTED_RANGE = `>=${WABT_VERSION} <1.1.0`;
+/** Caller-facing accepted releases, naming the verified build. */
+export const WABT_RELEASE_LINE = `WABT ${WABT_ACCEPTED_RANGE} (verified with ${WABT_VERSION})`;
 const WABT_MINIMUM_PATCH = Number(WABT_VERSION.split(".")[2]);
 /** Upstream revision known for the verified release only. */
 export const WABT_SOURCE_COMMIT = "ff0ef7e0009402740c805a9744c09b05be063e48";

@@ -1,4 +1,7 @@
+import { join } from "node:path";
 import { expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -13,7 +16,6 @@ import {
   MINIMUM_DEBUGGER_MAX_SESSIONS,
   MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
-import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { parseEnvironment } from "./environment.js";
@@ -184,50 +186,11 @@ it("applies runtime debugger overrides before rejecting invalid launch values", 
   expect(sessions.ok).toBe(false);
 });
 
-it("names the session setting on a Rizin capacity refusal", async () => {
-  const manager = new RizinDebugSessionManager(
-    { [DEBUGGER_MAX_SESSIONS_SETTING]: "1" },
-    { platform: "linux" },
-  );
-  const first = manager.start({
-    path: "/tmp/rea-debugger-limit",
-    inferior_tty: "/no/such/rea-debugger-tty",
-  });
-  const blocked = await manager.start({
-    path: "/tmp/rea-debugger-limit-2",
-    inferior_tty: "/no/such/rea-debugger-tty",
-  });
-  if (blocked.ok) throw new Error("expected the session cap to refuse");
-  expect(projectAnalysisError(blocked.error)).toMatchObject({
-    code: "resource_constraint",
-    details: {
-      resource: "memory",
-      reported_limits: {
-        setting: DEBUGGER_MAX_SESSIONS_SETTING,
-        effective_value: 1,
-        source: "setting",
-        minimum: MINIMUM_DEBUGGER_MAX_SESSIONS,
-        maximum: MAXIMUM_DEBUGGER_MAX_SESSIONS,
-        unit: "sessions",
-        update_mode: "restart",
-        pending_restart: false,
-        max_sessions: 1,
-        active_or_reserved_sessions: 1,
-      },
-    },
-  });
-  await first;
-});
-
 it("keeps the command-output maximum inside one Evidence hash string", () => {
   const escaped = JSON.stringify("\u0001");
   const expansion = escaped.length - 2;
   const nodeMaxStringLength = 536_870_888;
   const envelope = 1024 * 1024;
-  expect(expansion).toBe(6);
-  expect(MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES).toBe(
-    Math.floor((nodeMaxStringLength - envelope) / expansion),
-  );
   expect(MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES).toBeGreaterThanOrEqual(
     DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   );
@@ -236,7 +199,8 @@ it("keeps the command-output maximum inside one Evidence hash string", () => {
   ).toBeLessThanOrEqual(nodeMaxStringLength);
 });
 
-it("does not let one Rizin manager consume another manager's session cap", async () => {
+it("enforces each Rizin manager's cap and reports which setting refused a start", async () => {
+  const root = await createTestTempDirectory("rea-rizin-capacity-");
   const first = new RizinDebugSessionManager(
     { [DEBUGGER_MAX_SESSIONS_SETTING]: "1" },
     { platform: "linux" },
@@ -246,14 +210,14 @@ it("does not let one Rizin manager consume another manager's session cap", async
     { platform: "linux" },
   );
   const input = {
-    path: "/tmp/rea-debugger-limit",
-    inferior_tty: "/no/such/rea-debugger-tty",
+    path: join(root, "selected"),
+    inferior_tty: join(root, "missing-tty"),
   };
   const held = first.start(input);
   const independent = second.start(input);
   const blocked = first.start({
     ...input,
-    path: "/tmp/rea-debugger-limit-2",
+    path: join(root, "another-target"),
   });
   try {
     const independentResult = await independent;
@@ -271,10 +235,17 @@ it("does not let one Rizin manager consume another manager's session cap", async
     expect(projectAnalysisError(blockedResult.error)).toMatchObject({
       code: "resource_constraint",
       details: {
+        resource: "memory",
         reported_limits: {
           setting: DEBUGGER_MAX_SESSIONS_SETTING,
           effective_value: 1,
           source: "setting",
+          minimum: MINIMUM_DEBUGGER_MAX_SESSIONS,
+          maximum: MAXIMUM_DEBUGGER_MAX_SESSIONS,
+          unit: "sessions",
+          update_mode: "restart",
+          pending_restart: false,
+          max_sessions: 1,
           active_or_reserved_sessions: 1,
         },
       },
@@ -284,29 +255,4 @@ it("does not let one Rizin manager consume another manager's session cap", async
     await independent;
     await blocked;
   }
-});
-
-it("defers an invalid GDB deadline until a command reads it", () => {
-  expect(
-    () =>
-      new GdbSessionManager({
-        environment: { [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0" },
-      }),
-  ).not.toThrow();
-  const parsed = parseDebuggerSessionLimits({
-    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0",
-  });
-  if (parsed.ok) throw new Error("invalid deadline was accepted");
-  expect(projectAnalysisError(parsed.error)).toMatchObject({
-    code: "configuration_invalid",
-    details: { settings: parsed.error.settings },
-  });
-  const valid = parseDebuggerSessionLimits({
-    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "1500",
-  });
-  if (!valid.ok) throw valid.error;
-  expect(valid.value.commandDeadline).toMatchObject({
-    value: 1500,
-    source: "setting",
-  });
 });

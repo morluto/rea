@@ -63,7 +63,7 @@ it("uses the captured server environment to resolve reverse-engineering provider
   });
   const response = await executeRizinCommand(client, artifact);
   expect(response.structuredContent).toMatchObject({
-    raw_result: { stdout: "captured-environment-provider" },
+    normalized_result: { stdout: "captured-environment-provider" },
   });
 });
 
@@ -88,7 +88,7 @@ it("prefers an explicit provider environment over the captured server environmen
 
   const response = await executeRizinCommand(client, artifact);
   expect(response.structuredContent).toMatchObject({
-    raw_result: { stdout: "explicit-override" },
+    normalized_result: { stdout: "explicit-override" },
   });
   expect(JSON.stringify(response.structuredContent)).not.toContain(
     '"captured"',
@@ -118,7 +118,7 @@ it("snapshots an explicit provider environment when the server is created", asyn
 
   const response = await executeRizinCommand(client, artifact);
   expect(response.structuredContent).toMatchObject({
-    raw_result: { stdout: "explicit-snapshot" },
+    normalized_result: { stdout: "explicit-snapshot" },
   });
   expect(JSON.stringify(response.structuredContent)).not.toContain(
     '"captured"',

@@ -1,5 +1,5 @@
 import { isSafeNumber } from "lossless-json";
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { safeParseJson } from "./safeJson.js";
 
 /**
@@ -26,6 +26,6 @@ export const parseExactJson = (text: string): JsonValue | undefined => {
     return value;
   });
   if (!parsed.ok) return undefined;
-  const value = jsonValueSchema.safeParse(parsed.value);
+  const value = ownedJsonValueSchema.safeParse(parsed.value);
   return value.success ? value.data : undefined;
 };

@@ -7,11 +7,7 @@ import {
   spawnOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
-import {
-  LINUX_SYSTEM_PS_LOCATIONS,
-  describeSystemPs,
-  resolveSystemPs,
-} from "./systemPs.js";
+import { describeSystemPs, resolveSystemPs } from "./systemPs.js";
 import { waitFor } from "../../tests/support/testWait.js";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -21,50 +17,40 @@ const present =
   async (path: string): Promise<boolean> =>
     paths.includes(path);
 
-it("selects Linux ps from the first fixed system location before REA's PATH", async () => {
+const binPs = "/bin/ps";
+const usrBinPs = "/usr/bin/ps";
+const nixPs = "/run/current-system/sw/bin/ps";
+
+it.each([
+  [[binPs, usrBinPs, nixPs], binPs, "system"],
+  [[usrBinPs, nixPs], usrBinPs, "system"],
+  [[nixPs], nixPs, "system"],
+  [[], "ps", "path"],
+] as const)("selects Linux ps from %j", async (executable, command, source) => {
   await expect(
-    resolveSystemPs("linux", {
-      isExecutable: present(...LINUX_SYSTEM_PS_LOCATIONS),
-    }),
-  ).resolves.toEqual({ command: "/bin/ps", source: "system" });
-  await expect(
-    resolveSystemPs("linux", { isExecutable: present("/usr/bin/ps") }),
-  ).resolves.toEqual({ command: "/usr/bin/ps", source: "system" });
-  await expect(
-    resolveSystemPs("linux", {
-      isExecutable: present("/run/current-system/sw/bin/ps"),
-    }),
-  ).resolves.toEqual({
-    command: "/run/current-system/sw/bin/ps",
-    source: "system",
-  });
-  await expect(
-    resolveSystemPs("linux", { isExecutable: present() }),
-  ).resolves.toEqual({
-    command: "ps",
-    source: "path",
-  });
+    resolveSystemPs("linux", { isExecutable: present(...executable) }),
+  ).resolves.toEqual({ command, source });
 });
 
-it("runs /bin/ps on macOS and keeps PATH on other ps platforms", async () => {
-  await expect(
-    resolveSystemPs("darwin", { isExecutable: present() }),
-  ).resolves.toEqual({
-    command: "/bin/ps",
-    source: "system",
-  });
-  await expect(
-    resolveSystemPs("freebsd", { isExecutable: present("/bin/ps") }),
-  ).resolves.toEqual({ command: "ps", source: "path" });
-});
+it.each([
+  ["darwin", [], binPs, "system"],
+  ["freebsd", [binPs], "ps", "path"],
+] as const)(
+  "selects ps on %s",
+  async (platform, executable, command, source) => {
+    await expect(
+      resolveSystemPs(platform, { isExecutable: present(...executable) }),
+    ).resolves.toEqual({ command, source });
+  },
+);
 
-it("names which ps ran, and the fixed locations checked before PATH", () => {
-  expect(describeSystemPs({ command: "/usr/bin/ps", source: "system" })).toBe(
-    "ps at /usr/bin/ps",
+it("names the executable or the fixed locations tried before PATH", () => {
+  expect(describeSystemPs({ command: usrBinPs, source: "system" })).toContain(
+    usrBinPs,
   );
-  expect(describeSystemPs({ command: "ps", source: "path" })).toBe(
-    `ps from REA's PATH (none of ${LINUX_SYSTEM_PS_LOCATIONS.join(", ")} is executable)`,
-  );
+  const fallback = describeSystemPs({ command: "ps", source: "path" });
+  for (const detail of ["PATH", binPs, usrBinPs, nixPs])
+    expect(fallback).toContain(detail);
 });
 
 it.runIf(process.platform === "darwin")(

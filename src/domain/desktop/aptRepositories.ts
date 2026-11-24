@@ -1,5 +1,6 @@
 import type { AptRepository } from "./desktopCapture.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
+import { trimEdges } from "../../kernel/trimEdges.js";
 import { err, ok, type Result } from "../result.js";
 import { isStrictUtf8 } from "../strictUtf8.js";
 
@@ -518,8 +519,15 @@ export const parseOneLineSources = (
   });
 
 // Match the ASCII whitespace recognized by APT's tag reader within a line.
+const isDeb822LineWhitespace = (character: string): boolean =>
+  character === " " ||
+  character === "\t" ||
+  character === "\v" ||
+  character === "\f" ||
+  character === "\r";
+
 const trimDeb822Line = (value: string): string =>
-  value.replace(/^[ \t\v\f\r]+|[ \t\v\f\r]+$/gu, "");
+  trimEdges(value, isDeb822LineWhitespace);
 
 /** Fields of each deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
 export const deb822Paragraphs = (
