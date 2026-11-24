@@ -1058,6 +1058,24 @@ checkCounted(
   ],
 );
 
+// Application services load the analysis-view module only when a summary or
+// view is actually requested (await import), so one-shot CLI chunks do not
+// statically link it. The remaining static importers are the two synchronous
+// view-projection helpers and Frida's synchronous status path, counted here
+// so new static links cannot return silently (see #14112).
+checkCounted(
+  "static AnalysisViewService import in an application service (load it with await import on the summary branch, or shrink this baseline with its own change)",
+  "static-analysis-view-import",
+  files.filter(
+    (file) =>
+      file.path.startsWith("src/application/") &&
+      !file.path.startsWith("src/application/analysisView/") &&
+      !file.path.endsWith(".test.ts"),
+  ),
+  /from\s+["'][^"']*analysisView\/AnalysisViewService\.js["']/gu,
+  [],
+);
+
 // Scripts covered by tsconfig.scripts.json declare and check their types in
 // JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
 // creates a second, unchecked type source that hides signature drift.

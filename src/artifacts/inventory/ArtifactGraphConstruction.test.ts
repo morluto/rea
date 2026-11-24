@@ -15,10 +15,7 @@ import {
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import {
-  translateArtifactFailure,
-  createAsarHeaderSignatureProbe,
-} from "../../resources/index.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
@@ -144,24 +141,20 @@ describe("native header admission", () => {
 it("projects the parsed ASAR header size when admission rejects an archive", () => {
   const bytes = asarHeaderBytes("{}", { padding: Buffer.alloc(8, 0x20) });
   const headerBytes = bytes.readUInt32LE(4);
-  const probe = createAsarHeaderSignatureProbe({
+  const probe = createArtifactClassificationProbe({
     maximumBytes: headerBytes - 1,
     source: "setting",
   });
   probe.write(bytes);
-  const asarHeader = probe.finish(bytes.length);
-  expect(asarHeader).toMatchObject({
+  const evidence = probe.finish(bytes.length);
+  expect(evidence.asarHeader).toMatchObject({
     state: "limit",
     extents: { headerBytes },
   });
 
   let failure: unknown;
   try {
-    classifyArtifactContent(
-      "app.asar",
-      { prefix: bytes, asarHeader },
-      bytes.length,
-    );
+    classifyArtifactContent("app.asar", evidence, bytes.length);
   } catch (cause) {
     failure = cause;
   }
@@ -567,6 +560,7 @@ it("keeps byte content format separate from path-specific package role", () => {
     kind: "container",
     format: "apk",
     contentFormat: "zip",
+    contentArchitecture: null,
   });
 });
 
@@ -680,15 +674,18 @@ it("classifies a FIT by a /images node within the first 4 KiB", () => {
       kind: "container",
       format: "fit",
     });
-  for (const bytes of [
-    devicetreeFixture(),
-    fitFixture({ images, version: 15 }),
-    late,
-  ])
+  for (const bytes of [devicetreeFixture(), late])
     expect(classifyArtifactBytesAtPath("firmware/board.dtb", bytes)).toEqual({
       kind: "resource",
-      format: "file",
+      format: "devicetree",
     });
+  // The devicetree header owner refuses FDT v15, so those bytes stay a file.
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/board.dtb",
+      fitFixture({ images, version: 15 }),
+    ),
+  ).toEqual({ kind: "resource", format: "file" });
 });
 
 describe("FAT prefix observation coverage", () => {
@@ -715,12 +712,9 @@ describe("FAT prefix observation coverage", () => {
     probe.write(bytes.subarray(0, 8_192));
     const evidence = probe.finish(bytes.length);
 
-    expect(
-      evidence.fatSliceHeaders?.sliceHeadersByOffset.get(4_096)?.magic,
-    ).toBe(0xcffaedfe);
-    expect(evidence.fatSliceHeaders?.sliceHeadersByOffset.has(8_192)).toBe(
-      false,
-    );
+    expect(evidence.fatHeader.state).toBe("parsed");
+    expect(evidence.fatSliceHeadersByOffset.get(4_096)?.magic).toBe(0xcffaedfe);
+    expect(evidence.fatSliceHeadersByOffset.has(8_192)).toBe(false);
   });
 });
 
@@ -735,6 +729,26 @@ describe("bounded FAT inventory classification", () => {
       });
     },
   );
+});
+
+it("classifies a streamed XML plist whose prolog passes the retained prefix", () => {
+  const prolog = `<?xml version="1.0"?><!--${" ".repeat(9_000)}-->`;
+  const probe = createArtifactClassificationProbe();
+  const plist = Buffer.from(`${prolog}<plist version="1.0"><dict/></plist>`);
+  for (let offset = 0; offset < plist.length; offset += 4_096)
+    probe.write(plist.subarray(offset, offset + 4_096));
+  const evidence = probe.finish(plist.length);
+  expect(evidence.xmlPlistSignature).toBe(true);
+  expect(
+    classifyArtifactContent("state.archive", evidence, plist.length),
+  ).toMatchObject({
+    kind: "plist",
+    format: "plist",
+  });
+  const other = createArtifactClassificationProbe();
+  const root = Buffer.from(`${prolog}<root><plist/></root>`);
+  other.write(root);
+  expect(other.finish(root.length).xmlPlistSignature).toBe(false);
 });
 
 it("preserves path-selected inventory roles for XML content", () => {

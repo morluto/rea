@@ -4,10 +4,7 @@ import { ElfNotesService } from "./ElfNotesService.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
 import { createHash } from "node:crypto";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import {
-  elfNoteByteSource,
-  elfNoteFixture,
-} from "../../native/elf/ElfNotes.fixture.js";
+import { elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import { parseElfNotesFromHandle } from "../../native/elf/ElfNoteParser.js";
 import { ok } from "../../domain/result.js";
 import {
@@ -15,12 +12,13 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const identity = ELF_NOTES_PROVIDER;
 const path = "/artifacts/app";
 const bytes = elfNoteFixture({ ownership: "none" });
 const report = await parseElfNotesFromHandle(
-  elfNoteByteSource(bytes),
+  bufferByteSource(bytes, 4096),
   {
     path,
     sha256: createHash("sha256").update(bytes).digest("hex"),

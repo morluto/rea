@@ -724,7 +724,7 @@ it("keeps runtime options as declarations with literal names and distinct source
         entry_count: 3,
       });
       await expect(reader.open(options[0]!)).rejects.toMatchObject({
-        reason: "format",
+        reason: "path",
       });
     },
   );

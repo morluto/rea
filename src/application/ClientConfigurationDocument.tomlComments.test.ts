@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../tests/support/expectResultValue.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { expect, it } from "vitest";
 
@@ -34,7 +35,7 @@ it.each([
   "keeps real comments through %s %j %s",
   (format, lineBreak, operation) => {
     const source = original.replaceAll("\n", lineBreak);
-    const parsed = parseClientConfiguration(source, format);
+    const parsed = expectResultValue(parseClientConfiguration(source, format));
     const other = { command: "other" };
     const servers =
       operation === "replace"
@@ -64,7 +65,10 @@ it.each([
       "literal # value token",
     ])
       expect(result.value).not.toContain(stringContent);
-    expect(parseClientConfiguration(result.value, format).document).toEqual({
+    expect(
+      expectResultValue(parseClientConfiguration(result.value, format))
+        .document,
+    ).toEqual({
       root: "retained # root string",
       mcp_servers: servers,
     });
@@ -78,7 +82,7 @@ it("retains comments from dotted REA assignments and nested inline values", () =
     'mcp_servers.rea.command = "old # string token" # dotted note\n',
     'mcp_servers = { rea = { args = ["old # string token", # inline value note\n] }, other = { command = "other" } }\n',
   ]) {
-    const parsed = parseClientConfiguration(source, "toml");
+    const parsed = expectResultValue(parseClientConfiguration(source, "toml"));
     const { rea: removed, ...servers } = parsed.servers;
     expect(removed).toBeDefined();
     const result = serializeClientConfiguration(
@@ -95,9 +99,9 @@ it("retains comments from dotted REA assignments and nested inline values", () =
     expect(result.value).not.toContain("# string token");
     if (source.includes("# inline value note"))
       expect(result.value.split("\n")[0]).not.toContain("# inline value note");
-    expect(parseClientConfiguration(result.value, "toml").servers).toEqual(
-      servers,
-    );
+    expect(
+      expectResultValue(parseClientConfiguration(result.value, "toml")).servers,
+    ).toEqual(servers);
   }
 });
 
@@ -106,7 +110,7 @@ it.each(["toml", "grok"] as const)(
   (format) => {
     const source =
       'mcp_servers = { rea = { command = "old", large = 1e20, exact = 9007199254740992.0, limit = inf, floor = -inf, unknown = nan, zero = -0.0, date = 2026-11-10, clock = 12:34:56, local = 2026-11-10T12:34:56, offset = 2026-11-10T12:34:56-05:00 }, peer = { command = "peer" } } # retained\n';
-    const parsed = parseClientConfiguration(source, format);
+    const parsed = expectResultValue(parseClientConfiguration(source, format));
     const previous = parsed.servers.rea as Record<string, unknown>;
     const servers = {
       ...parsed.servers,
@@ -118,9 +122,9 @@ it.each(["toml", "grok"] as const)(
       source,
     );
     if (!result.ok) throw new Error("TOML edit was refused");
-    expect(parseClientConfiguration(result.value, format).servers).toEqual(
-      servers,
-    );
+    expect(
+      expectResultValue(parseClientConfiguration(result.value, format)).servers,
+    ).toEqual(servers);
     expect(result.value).toContain("# retained");
   },
 );

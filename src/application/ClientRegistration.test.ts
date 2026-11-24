@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../tests/support/expectResultValue.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { expect, it } from "vitest";
 
@@ -135,9 +136,11 @@ it.each([{ envs: { KEEP: "1" } }, {}])(
 );
 
 it("keeps a native Goose leading-zero string when normalizing the env alias", () => {
-  const parsed = parseClientConfiguration(
-    "extensions:\n  rea:\n    cmd: old\n    env:\n      VALUE: 0123\n",
-    "goose",
+  const parsed = expectResultValue(
+    parseClientConfiguration(
+      "extensions:\n  rea:\n    cmd: old\n    env:\n      VALUE: 0123\n",
+      "goose",
+    ),
   );
   const result = replaceClientRegistrationLauncher(
     gooseTarget,
@@ -202,7 +205,7 @@ it.each([
   "reads a null Goose env alias as a malformed environment, not an empty one: %j",
   (text) => {
     const result = clientRegistrationEnvironment(
-      parseClientConfiguration(text, "goose"),
+      expectResultValue(parseClientConfiguration(text, "goose")),
       {
         name: "goose",
         registrationProfile: supportedClientRegistrationProfile("goose"),

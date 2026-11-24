@@ -3,8 +3,8 @@ import {
   readUniversalMachoImageFromReader,
   readUniversalMachoSlice,
   validateUniversalMachoSliceFromReader,
+  type MachoImageSelectionFailure,
 } from "./machoImageSelection.js";
-import type { NativeByteSource } from "../native/nativeSectionDirectory.js";
 import {
   readMachoHeaderPrefixFacts,
   type FatSliceDeclaration,
@@ -16,10 +16,17 @@ import {
   type MachoSliceArchitecture,
   type MachoTargetSelection,
 } from "./machoTargetSelection.js";
-import { AnalysisInputError } from "../analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisMalformedTargetError,
+  AnalysisUnsupportedTargetError,
+} from "../analysisErrorCore.js";
+import type { AnalysisError } from "../analysisErrorBase.js";
+import { ParseFailureError } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
 import { MACHO_ARCHITECTURE_POLICIES } from "./machoArchitectureSelection.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import type { ByteSource } from "../byteSource.js";
 
 const cpuName = (cpuType: number, cpuSubtype: number): string => {
   const name = Object.entries(MACHO_CPU_TYPES).find(
@@ -43,19 +50,17 @@ export interface SelectedNativeImage {
 }
 
 /**
- * The caller's input fields and spellings for a slice selection. Messages name
- * selectors through `spelling`, and a selector without a spelling is never
- * offered as a choice.
+ * The caller's architecture field and spellings for a slice selection.
+ * Messages name selectors through `spelling`, and a selector without a
+ * spelling is never offered as a choice.
  */
 export interface SliceSelectionInput {
-  readonly pathField: string;
   readonly architectureField: string;
   readonly spelling: Readonly<Partial<Record<MachoSliceArchitecture, string>>>;
 }
 
-/** The shared `path` and `architecture` inputs, spelled as the selector values. */
+/** The shared `architecture` input, spelled as the selector values. */
 export const SHARED_SLICE_SELECTION_INPUT: SliceSelectionInput = {
-  pathField: "path",
   architectureField: "architecture",
   spelling: {
     x86: "x86",
@@ -104,10 +109,42 @@ export interface MachoSliceSelectionRefusal {
   readonly message: string;
 }
 
-/** Why no image could be selected: a refused request, or a malformed container. */
+/**
+ * Why no image could be selected: a refused request, or the universal
+ * file's own format failure.
+ */
 export type MachoSliceSelectionFailure =
   | MachoSliceSelectionRefusal
-  | { readonly kind: "malformed"; readonly message: string };
+  | MachoImageSelectionFailure;
+
+/**
+ * The public refusal for a failed architecture selection. A refused request
+ * is the caller's `architecture` value; a format failure belongs to the
+ * selected file's bytes, so it is a malformed or unsupported target at
+ * `path`, never an invalid `path` argument.
+ */
+const selectionError = (
+  operation: string,
+  path: string,
+  failure: MachoSliceSelectionFailure,
+  input: SliceSelectionInput,
+): AnalysisError => {
+  if (failure.kind !== "format")
+    return new AnalysisInputError(operation, undefined, [
+      {
+        path: [input.architectureField],
+        reason: "invalid_value",
+        message: failure.message,
+      },
+    ]);
+  const parsed = failure.failure;
+  const cause = new ParseFailureError(parsed);
+  return parsed.kind === "unsupported"
+    ? new AnalysisUnsupportedTargetError(operation, path, parsed.detail, {
+        cause,
+      })
+    : new AnalysisMalformedTargetError(operation, path, parsed, { cause });
+};
 
 interface FatSlice {
   readonly cpuType: number;
@@ -383,7 +420,7 @@ const selectArchitectureSlice = (
 
 /** The one thin image an inspector reads over a random-access handle, and where it lies in the selected file. */
 export interface SelectedNativeImageSource {
-  readonly source: NativeByteSource;
+  readonly source: ByteSource;
   /** File offset of `source`; add it to image-relative offsets to locate them in the file. */
   readonly fileOffset: number;
   /** Selected universal slice identity; null when the file is not a universal Mach-O. */
@@ -393,10 +430,10 @@ export interface SelectedNativeImageSource {
 }
 
 const sliceByteSource = (
-  source: NativeByteSource,
+  source: ByteSource,
   sliceOffset: number,
   sliceSize: number,
-): NativeByteSource => ({
+): ByteSource => ({
   size: sliceSize,
   ...(source.prefix !== undefined && sliceOffset < source.prefix.length
     ? {
@@ -421,35 +458,15 @@ const sliceByteSource = (
 export const requireSelectedNativeImageFromReader = async (
   operation: string,
   path: string,
-  source: NativeByteSource,
+  source: ByteSource,
   architecture: MachoSliceArchitecture | undefined,
   input: SliceSelectionInput = SHARED_SLICE_SELECTION_INPUT,
 ): Promise<SelectedNativeImageSource> => {
-  const container = await readUniversalMachoImageFromReader(source);
-  if (!container.ok) {
-    throw new AnalysisInputError(operation, undefined, [
-      {
-        path: [input.pathField],
-        reason: "invalid_format",
-        message: `Selected artifact ${path}: ${container.error.message}`,
-      },
-    ]);
-  }
   const failSelection = (failure: MachoSliceSelectionFailure): never => {
-    throw new AnalysisInputError(operation, undefined, [
-      failure.kind !== "malformed"
-        ? {
-            path: [input.architectureField],
-            reason: "invalid_value",
-            message: failure.message,
-          }
-        : {
-            path: [input.pathField],
-            reason: "invalid_format",
-            message: `Selected artifact ${path}: ${failure.message}`,
-          },
-    ]);
+    throw selectionError(operation, path, failure, input);
   };
+  const container = await readUniversalMachoImageFromReader(source);
+  if (!container.ok) return failSelection(container.error);
   const parsed = container.value;
   const steps = selectArchitectureSliceSteps(
     parsed?.header ?? null,
@@ -493,9 +510,9 @@ export const requireSelectedNativeImageFromReader = async (
 };
 
 /**
- * Select the image for one inspection, or fail with the input to correct:
- * the architecture field for a missing or mismatched selection, the path field
- * for a malformed universal container.
+ * Select the image for one inspection, or fail: the architecture field for a
+ * missing or mismatched selection, and a malformed, truncated or unsupported
+ * target at `path` for the universal file's own format failure.
  */
 export const requireSelectedNativeImage = (
   operation: string,
@@ -510,14 +527,5 @@ export const requireSelectedNativeImage = (
     input,
   });
   if (selected.ok) return selected.value;
-  const { kind, message } = selected.error;
-  throw new AnalysisInputError(operation, undefined, [
-    kind !== "malformed"
-      ? { path: [input.architectureField], reason: "invalid_value", message }
-      : {
-          path: [input.pathField],
-          reason: "invalid_format",
-          message: `Selected artifact ${path}: ${message}`,
-        },
-  ]);
+  throw selectionError(operation, path, selected.error, input);
 };

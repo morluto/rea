@@ -8,7 +8,6 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
@@ -17,7 +16,10 @@ import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvid
 import { inspectIl2cppMetadataV108 } from "../../../src/il2cpp/Il2cppMetadataV108.js";
 import { Il2cppGhidraSeedWriter } from "../../../src/il2cpp/Il2cppGhidraSeedWriter.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
-import { il2cppMetadataSchema } from "../../../src/domain/il2cpp/il2cppMetadata.js";
+import {
+  il2cppMetadataSchema,
+  inspectIl2cppMetadataInputSchema,
+} from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import * as zstandard from "../../../src/domain/compression/zstandardExactFrame.js";
 import {
   createElfFixture,
@@ -667,16 +669,15 @@ it("retains the exact source when recognized magic has no complete version", asy
 
   if (result.ok) throw new Error("Expected truncated metadata prefix");
   expect(result.error).toMatchObject({
-    _tag: "AnalysisInputError",
-    issues: [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: expect.stringMatching(
-          /truncated-header:.*metadata version is unknown/u,
-        ),
-      },
-    ],
+    _tag: "AnalysisMalformedTargetError",
+    path,
+    failure: {
+      kind: "truncated",
+      format: "il2cpp-metadata",
+      detail: expect.stringMatching(
+        /truncated-header:.*metadata version is unknown/u,
+      ),
+    },
   });
   expect(result.error.partialObservation).toMatchObject({
     operation: "observe_il2cpp_metadata_source",
@@ -879,8 +880,13 @@ it.each([false, true])(
       expect(ordinary).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisInputError",
-          issues: [{ path: ["binary_path"], reason: "invalid_format" }],
+          _tag: "AnalysisMalformedTargetError",
+          path: binary_path,
+          failure: {
+            kind: "malformed",
+            format: "il2cpp-binary",
+            detail: expect.stringMatching(/^malformed-container:/u),
+          },
         },
       });
     } finally {
@@ -914,16 +920,20 @@ it("refuses duplicate MethodDef tokens before publishing linked Evidence or Ghid
       { path, binary_path: binaryPath, detail: "complete" },
       { path: duplicateSeeds },
     );
-    expect(refused.ok).toBe(false);
     if (refused.ok)
       throw new Error("Duplicate MethodDef identity was accepted");
-    if (!(refused.error instanceof AnalysisInputError))
-      throw new Error("Duplicate MethodDef identity was not an input refusal");
-    expect(refused.error.issues[0]?.message).toContain("invalid-method-token");
-    expect(refused.error.issues[0]?.message).toContain("share MethodDef token");
-    expect(refused.error.partialObservation).toMatchObject({
-      normalized_result: { artifact: { path } },
+    // The reused row is in the metadata's own records, so the metadata alone
+    // is malformed; the binary is not named.
+    expect(projectAnalysisError(refused.error)).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        path,
+        format: "il2cpp-metadata",
+        format_failure: "malformed",
+        reason: expect.stringMatching(/^invalid-method-definition-token:/u),
+      },
     });
+    expect(projectAnalysisError(refused.error)).not.toHaveProperty("recovery");
     await expect(readFile(duplicateSeeds)).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -958,9 +968,44 @@ it("retains both observed file identities and the selected architecture when nat
   try {
     const result = await provider.inspect({ path, binary_path });
     if (result.ok) throw new Error("Unresolved registration accepted");
+    // Both files parse; neither is called malformed. The conflict lists each
+    // selecting field and keeps each file's identity.
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      conformsToInputContract: true,
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: expect.stringContaining(
+            `Selected metadata ${path} does not link to the selected binary: code-registration-not-found:`,
+          ),
+        },
+        {
+          path: ["binary_path"],
+          reason: "invalid_value",
+          message: expect.stringContaining(
+            `Selected binary ${binary_path} does not link to the metadata: code-registration-not-found:`,
+          ),
+        },
+      ],
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      retryable: false,
+      remediation: {
+        action: expect.stringContaining("from the same build"),
+      },
+    });
+    expect(projectAnalysisError(result.error)).not.toHaveProperty("recovery");
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: {
-        artifact: { path },
+        artifact: {
+          path,
+          sha256: createHash("sha256")
+            .update(createLinkedIl2cppMetadataFixture().bytes)
+            .digest("hex"),
+        },
         selected_binary: {
           path: binary_path,
           identity_status: "observed",
@@ -1134,16 +1179,13 @@ it("names the metadata, not the binary, when linking reads a malformed metadata 
     const result = await provider.inspect({ path, binary_path: binaryPath });
     if (result.ok) throw new Error("Expected the metadata name to be refused");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      issues: [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining(
-            `Selected artifact ${path} is corrupt: invalid-string:`,
-          ),
-        },
-      ],
+      _tag: "AnalysisMalformedTargetError",
+      path,
+      failure: {
+        kind: "malformed",
+        format: "il2cpp-metadata",
+        detail: expect.stringMatching(/^invalid-string:/u),
+      },
     });
 
     const corrected = Buffer.from(metadata);
@@ -1200,6 +1242,72 @@ it("refuses generic rows that exceed the report budget and keeps the requested p
   } finally {
     await provider.close();
   }
+});
+
+it("bounds the ELF pointer index by the caller's max_native_index_bytes", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-index-budget-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "libil2cpp.so");
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+  await writeFile(binaryPath, createElfFixture(createIl2cppBinaryFixture()));
+  const provider = new Il2cppMetadataProvider();
+  try {
+    // One 2 KiB reservation admits a single relocated address; the fixture
+    // relocates several, so the selected allowance stops linking.
+    const refused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_index_bytes: 2048,
+    });
+    if (refused.ok) throw new Error("Expected the pointer index refusal");
+    expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(refused.error).toMatchObject({
+      resource: "memory",
+      retryable: false,
+      fixedAllowance: undefined,
+      reportedLimits: {
+        boundary: "virtual-pointer-index-bytes",
+        maximum: 2048,
+      },
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_native_index_bytes",
+        effective_value: 2048,
+        unit: "bytes",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        default_value: 1024 * 1024 * 1024,
+        applies_at: "next_call",
+      },
+    });
+    // The same complete pair links once the caller raises the allowance,
+    // and the default admits it without any selection.
+    expect(
+      (
+        await provider.inspect({
+          path,
+          binary_path: binaryPath,
+          max_native_index_bytes: 1024 * 1024,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await provider.inspect({ path, binary_path: binaryPath })).ok).toBe(
+      true,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("refuses max_native_index_bytes without binary_path", () => {
+  const parsed = inspectIl2cppMetadataInputSchema.safeParse({
+    path: "/tmp/global-metadata.dat",
+    max_native_index_bytes: 4096,
+  });
+  expect(parsed.success).toBe(false);
+  expect(parsed.error?.issues).toEqual([
+    expect.objectContaining({ path: ["max_native_index_bytes"] }),
+  ]);
 });
 
 it("reports the exceeded native-link maximum in the public refusal", async () => {

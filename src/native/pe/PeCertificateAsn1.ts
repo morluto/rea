@@ -45,6 +45,8 @@ export class PeCertificateAsn1Failure extends Error {
     message: string,
     /** Set when a fixed decoder allowance, not malformed DER, refused the payload. */
     readonly exhausted: PeCertificateDecodeAllowance | null = null,
+    /** Set when valid DER uses a form this decoder does not implement. */
+    readonly unsupportedForm = false,
   ) {
     super(message);
     this.name = "PeCertificateAsn1Failure";
@@ -228,8 +230,10 @@ const decodeDirectoryString = (
       // OpenSSL also assumes ISO-8859-1 when converting legacy T61String.
       return node.content.toString("latin1");
     default:
-      return fail(
+      throw new PeCertificateAsn1Failure(
         `Unsupported certificate name encoding (DER tag 0x${byteToHex(node.tag)}).`,
+        null,
+        true,
       );
   }
 };
