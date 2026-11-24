@@ -69,6 +69,16 @@
       "reason": "The NTFS journal file allowance bounds bytes read, a resource policy."
     }
   },
+  "src/application/otlpTrace/OtlpTraceService.ts": {
+    "\"The OTLP imprecise-numeric-field allowance\"": {
+      "class": "representation",
+      "reason": "Source-coordinate metadata retained for imprecise numeric fields is bounded independently of the export's byte size; the OTLP JSON format states no such maximum."
+    },
+    "\"The OTLP export file allowance\"": {
+      "class": "forwarding",
+      "reason": "Relays the caller-selected max_file_bytes read budget from the shared stable-artifact reader; the ceiling is declared where that input limit is chosen."
+    }
+  },
   "src/artifacts/AndroidBootImageArtifactReader.ts": {
     "ceiling.name": {
       "class": "forwarding",
