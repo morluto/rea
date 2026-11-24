@@ -165,17 +165,35 @@ it("distinguishes an examined empty table from historical evidence without this 
   );
 });
 
-it("keeps admitted member facts when accessor representation capacity is exhausted", () => {
+it("keeps admitted accessor rows and diagnostics when capacity is exhausted", () => {
   const bytes = buildManagedAccessorFixture({
-    semantics: Array.from({ length: 1200 }, () => [2, 1, 3] as const),
+    semantics: [
+      [0x8002, 1, 3],
+      ...Array.from({ length: 1200 }, () => [2, 1, 3] as const),
+    ],
   });
+  const complete = inspect(bytes);
   const result = inspect(bytes, { maxRepresentationBytes: 48000 });
+  expect(result.methods).toEqual(complete.methods);
   expect(result.methods).toHaveLength(4);
+  expect(result.coverage).toEqual(complete.coverage);
   expect(result.signature_resolution).toBe("type-names-v2");
-  expect(result.accessors?.state).toBe("partial");
-  expect(result.accessors?.issues).toContainEqual(
-    expect.objectContaining({ code: "resource-limit" }),
+  if (result.accessors == null || complete.accessors == null)
+    throw new Error("Missing accessor inventory");
+  const retained = result.accessors.declarations;
+  expect(result.accessors.state).toBe("partial");
+  expect(retained.length).toBeGreaterThan(0);
+  expect(retained.length).toBeLessThan(1201);
+  expect(retained).toEqual(
+    complete.accessors.declarations.slice(0, retained.length),
   );
+  expect(result.accessors.issues).toEqual([
+    ...complete.accessors.issues,
+    expect.objectContaining({
+      code: "resource-limit",
+      scope: "metadata.MethodSemantics",
+    }),
+  ]);
 });
 
 it("skips unrelated relationship heaps before charging a selected-method representation", () => {

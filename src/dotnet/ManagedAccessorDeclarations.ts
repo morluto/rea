@@ -42,10 +42,10 @@ const readDeclarations = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   report: AccessorMembers,
+  declarations: Declaration[],
+  issues: ManagedParseIssue[],
 ): Accessors => {
   const budget = managedDecodeBudget(layout);
-  const declarations: Declaration[] = [];
-  const issues: ManagedParseIssue[] = [];
   const completeNames = (report.unresolved_definitions?.rows.length ?? 0) === 0;
   const table = layout.table(24);
   if (report.methods.length === 0 || (table?.rowCount ?? 0) === 0)
@@ -66,6 +66,7 @@ const readDeclarations = (
     { rowOffset: number; flags: number; name: string | null }
   >();
   const addIssue = (issue: ManagedParseIssue): void => {
+    budget.reserve(1, issue.offset);
     issues.push(admitManagedProjection(issue, budget));
   };
   try {
@@ -153,6 +154,8 @@ const readDeclarations = (
           detail: `MethodSemantics Association coded index 0x${associationRaw.toString(16)} does not identify a Property or Event row: ${association.kind === "null" ? "null index" : association.reason}`,
         });
       }
+      // Charge the array entry and its full projection before retaining it.
+      budget.reserve(1, offset);
       declarations.push(
         admitManagedProjection(
           {
@@ -200,38 +203,32 @@ export const readManagedAccessorDeclarations = (
   report: AccessorMembers,
 ): Accessors | null => {
   const budget = managedDecodeBudget(layout);
-  let recovery: Accessors;
+  const capacityIssue = {
+    ...new ManagedRepresentationFailure(
+      Number.MAX_SAFE_INTEGER,
+      budget.maximumBytes,
+    ).issue,
+    scope: "metadata.MethodSemantics",
+  };
   try {
-    recovery = admitManagedProjection(
-      {
-        state: "partial",
-        declarations: [],
-        issues: [
-          {
-            ...new ManagedRepresentationFailure(
-              Number.MAX_SAFE_INTEGER,
-              budget.maximumBytes,
-            ).issue,
-            scope: "metadata.MethodSemantics",
-          },
-        ],
-      },
+    // Prepay the envelope, longest state and capacity diagnostic. Each
+    // retained row or issue pays its own projection and array entry before
+    // it is appended, so recovery needs no further representation allowance.
+    admitManagedProjection(
+      { state: "complete", declarations: [], issues: [capacityIssue] },
       budget,
     );
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedRepresentationFailure)) throw cause;
     return null;
   }
+  const declarations: Declaration[] = [];
+  const issues: ManagedParseIssue[] = [];
   try {
-    return admitManagedProjection(
-      readDeclarations(bytes, layout, report),
-      budget,
-    );
+    return readDeclarations(bytes, layout, report, declarations, issues);
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedRepresentationFailure)) throw cause;
-    return {
-      ...recovery,
-      issues: [{ ...recovery.issues[0]!, offset: cause.issue.offset }],
-    };
+    issues.push({ ...capacityIssue, offset: cause.issue.offset });
+    return { state: "partial", declarations, issues };
   }
 };
