@@ -4156,7 +4156,7 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
 
 describe("ReleaseExposureReader cleanup-bearing read failures", () => {
   const cleanupFailure = (
-    reason: "limit" | "format",
+    reason: "limit" | "malformed",
     resource: string,
   ): ArtifactReaderFailure =>
     ArtifactReaderFailure.withCleanup(
@@ -4233,7 +4233,7 @@ describe("ReleaseExposureReader cleanup-bearing read failures", () => {
     const selected = join(root, "app");
     await writeFile(selected, "selected");
     inventoryRead.impl = () =>
-      Promise.reject(cleanupFailure("format", selected));
+      Promise.reject(cleanupFailure("malformed", selected));
     const reader = new ReleaseExposureReader();
     try {
       const result = await reader.inspect(
