@@ -193,3 +193,33 @@ it("checks the stored OTA operation bytes when a partition hash is absent", asyn
     }
   }
 });
+
+it("retains payload header and partitions when optional trailing payloadSignature parsing fails", async () => {
+  const path = await writeCarrier(
+    "bad-trailing-sig.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+      // Invalid protobuf wire type 7 in optional trailing payload signature blob.
+      payloadSignature: Buffer.from([0x0f, 0xff, 0xff, 0xff]),
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("android-ota-payload");
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations.join(" ")).toContain(
+    "Optional trailing payload signature could not be parsed",
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "android-ota-payload",
+    payload_signature_count: null,
+    partitions: [{ name: "boot" }],
+  });
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "boot.img"),
+  ).toMatchObject({ hash_status: "verified" });
+});

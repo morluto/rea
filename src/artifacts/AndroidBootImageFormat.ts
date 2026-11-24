@@ -1097,8 +1097,10 @@ const readVendorRamdiskTable = (
       current !== undefined &&
       previous.offset + previous.size > current.offset
     )
-      formatError(
+      throw malformedInput(
+        ANDROID_BOOT_FORMAT,
         `vendor ramdisk table entry ${current.index} overlaps entry ${previous.index}`,
+        { field: "vendor_ramdisk_table_overlap" },
       );
   }
   const limitations: string[] = [];
@@ -1129,7 +1131,9 @@ export const parseVendorRamdiskTable = (
 ): Result<VendorRamdiskTableParse, ParseFailureError> =>
   parsed(() => readVendorRamdiskTable(table, input));
 
-const absentFooter = (limitations: readonly string[] = []): AvbFooterFacts => ({
+export const absentAvbFooter = (
+  limitations: readonly string[] = [],
+): AvbFooterFacts => ({
   present: false,
   footerSize: null,
   versionMajor: null,
@@ -1140,6 +1144,10 @@ const absentFooter = (limitations: readonly string[] = []): AvbFooterFacts => ({
   limitations,
 });
 
+const avbOverlapError = (message: string): never => {
+  throw malformedInput(ANDROID_BOOT_FORMAT, message, { field: "avb_overlap" });
+};
+
 const rejectVbmetaOverlap = (
   vbmeta: { readonly offset: number; readonly size: number },
   fileSize: number,
@@ -1148,7 +1156,7 @@ const rejectVbmetaOverlap = (
 ): void => {
   if (vbmeta.size === 0) return;
   if (endOf(vbmeta.offset, vbmeta.size) > fileSize - AVB_FOOTER_SIZE)
-    formatError("AVB vbmeta overlaps the footer");
+    avbOverlapError("AVB vbmeta overlaps the footer");
   const occupied = [{ offset: 0, size: headerOccupied }, ...components];
   for (const componentRange of occupied)
     if (
@@ -1156,7 +1164,7 @@ const rejectVbmetaOverlap = (
       vbmeta.offset < componentRange.offset + componentRange.size &&
       componentRange.offset < vbmeta.offset + vbmeta.size
     )
-      formatError(
+      avbOverlapError(
         componentRange.offset === 0
           ? "AVB vbmeta overlaps the boot image header"
           : `AVB vbmeta overlaps a component at offset ${componentRange.offset}`,
@@ -1195,8 +1203,8 @@ const readAvbFooter = (input: {
     return formatError("AVB footer bytes were not supplied");
   if (offset === null || !tail?.subarray(0, 4).equals(AVB_FOOTER_MAGIC_BYTES)) {
     const trailing = input.fileSize - input.imageEnd;
-    if (trailing <= 0) return absentFooter();
-    return absentFooter([
+    if (trailing <= 0) return absentAvbFooter();
+    return absentAvbFooter([
       trailing < AVB_FOOTER_SIZE
         ? `${trailing} trailing bytes follow the boot image and are shorter than a 64-byte AVB footer.`
         : `${trailing} trailing bytes follow the boot image and were not decoded as an AVB footer.`,
@@ -1210,7 +1218,7 @@ const readAvbFooter = (input: {
       `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
     );
   if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
-    formatError(
+    avbOverlapError(
       `AVB original image size ${originalImageSize} overlaps the footer`,
     );
   rejectVbmetaOverlap(
@@ -1222,7 +1230,7 @@ const readAvbFooter = (input: {
   // vbmeta is appended after the original image, including any padding
   // within that image. Existing component checks name specific collisions.
   if (vbmetaSize > 0 && vbmetaOffset < originalImageSize)
-    formatError("AVB vbmeta overlaps the original boot image");
+    avbOverlapError("AVB vbmeta overlaps the original boot image");
   return {
     present: true,
     footerSize: AVB_FOOTER_SIZE,
