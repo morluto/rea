@@ -11,6 +11,9 @@ import {
 } from "../application/artifacts/ArtifactPathInspection.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
+import type { Evidence } from "../domain/evidence.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -28,16 +31,24 @@ export const registerArtifactComparisonCommand = (
     contractNamed(SESSION_TOOL_CONTRACTS, "compare_artifacts"),
     {
       description:
-        'Compare two artifact inventories, including FIT and legacy uImage firmware components, named as {left, right}: complete Evidence, {kind:"evidence-file",path,evidence_id?}, or {kind:"path",path} to inventory a file or directory in place. A one-shot command retains no session Evidence for retained-evidence references.',
+        'Compare two artifact inventories, including FIT and legacy uImage firmware components, named as {left, right}: complete Evidence, {kind:"evidence-file",path,evidence_id?}, or {kind:"path",path} to inventory a file or directory in place. Pass --evidence_output to publish the comparison and both source inventories as a canonical bundle. A one-shot command retains no session Evidence for retained-evidence references.',
       document: "Inline workflow JSON or JSON file path",
       // Evidence-file paths are resolved against the operator's working directory.
       callerPaths: [
         ["left", "path"],
         ["right", "path"],
       ],
+      cliOptions: {
+        evidence_output: localPathStringSchema
+          .optional()
+          .describe(
+            "Save comparison Evidence and both source inventories as a canonical bundle; never overwrites.",
+          ),
+      },
     },
-    async (document, { signal, operation }) => {
+    async (document, { signal, operation, cliOptions }) => {
       const resources = new ArtifactResourceScope();
+      let sourceEvidence: readonly Evidence[] = [];
       const result = await finishAnalysisCommand(
         async () => {
           const sources = await resolveArtifactComparisonSources(
@@ -59,6 +70,7 @@ export const registerArtifactComparisonCommand = (
             },
           );
           if (!sources.ok) return sources;
+          sourceEvidence = [sources.value.left, sources.value.right];
           const compared = compareArtifactEvidence(sources.value);
           return compared.ok
             ? { ok: true as const, value: compared.value.evidence }
@@ -69,8 +81,12 @@ export const registerArtifactComparisonCommand = (
         operation,
         signal,
       );
-      return result.ok
-        ? result.value
-        : { error: "Application workflow failed", ...result.error };
+      return publishCliAnalysisEvidence(result, {
+        operation,
+        signal,
+        detail: "complete",
+        evidenceOutput: cliOptions.evidence_output,
+        sourceEvidence,
+      });
     },
   );

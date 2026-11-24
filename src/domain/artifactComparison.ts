@@ -409,6 +409,9 @@ const compareOccurrences = (
         leftRelationsFor(leftOccurrence),
         rightRelationsFor(rightOccurrence),
       ),
+      rootContentIdentityUnknown:
+        path === "." &&
+        (hasPartialRootDigest(left) || hasPartialRootDigest(right)),
       rootCovered: coverage.root,
       entriesCovered: coverage.entries,
       evidenceLinks,
@@ -444,6 +447,7 @@ interface ClassifyPathInput {
   readonly leftNode: ArtifactNode | undefined;
   readonly rightNode: ArtifactNode | undefined;
   readonly relations: FactComparison;
+  readonly rootContentIdentityUnknown: boolean;
   readonly rootCovered: boolean;
   readonly entriesCovered: boolean;
   readonly evidenceLinks: readonly string[];
@@ -541,6 +545,7 @@ const classifyPath = (input: ClassifyPathInput): ArtifactChange | null => {
   const dimensions = changedDimensions(input);
   const occurrence = occurrenceDifferences(input);
   if (
+    input.rootContentIdentityUnknown ||
     declarationUnknown(input.metadata) ||
     occurrence.kindUnknown ||
     occurrence.formatUnknown ||
@@ -805,6 +810,7 @@ const changedDimensions = (input: {
   readonly leftOccurrence: ArtifactOccurrence | undefined;
   readonly rightOccurrence: ArtifactOccurrence | undefined;
   readonly relations: FactComparison;
+  readonly rootContentIdentityUnknown: boolean;
 }): z.infer<typeof comparisonDimensionSchema>[] => {
   const left = input.leftNode;
   const right = input.rightNode;
@@ -814,7 +820,10 @@ const changedDimensions = (input: {
     z.infer<typeof comparisonDimensionSchema>,
     boolean,
   ][] = [
-    ["content", left.sha256 !== right.sha256],
+    [
+      "content",
+      !input.rootContentIdentityUnknown && left.sha256 !== right.sha256,
+    ],
     ["kind", occurrence.kind],
     [
       "format",
@@ -956,6 +965,13 @@ const summarize = (
   };
 };
 
+/**
+ * A partial directory root's node digest is only an addressable graph key,
+ * not a content identity. Keep it out of content comparisons.
+ */
+const hasPartialRootDigest = (inventory: InventorySet): boolean =>
+  inventory.rootDigest?.status === "partial";
+
 // Differing manifest root digests prove a root content change even when node
 // details are unavailable. Fold that fact into an existing root row so one
 // logical path keeps one classification.
@@ -965,7 +981,12 @@ const applyRootHashChange = (
   changes: ArtifactChange[],
   evidenceLinks: readonly string[],
 ): void => {
-  if (left.manifest.root_sha256 === right.manifest.root_sha256) return;
+  if (
+    hasPartialRootDigest(left) ||
+    hasPartialRootDigest(right) ||
+    left.manifest.root_sha256 === right.manifest.root_sha256
+  )
+    return;
   const index = changes.findIndex((change) => change.logical_path === ".");
   const existing = changes[index];
   if (existing !== undefined) {

@@ -16,7 +16,10 @@ import type {
   ExecutionOptions,
   RetainedResourceScope,
 } from "../../ports/AnalysisProvider.js";
-import type { ArtifactResourceScope } from "../../resources/index.js";
+import {
+  translateArtifactFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { InspectArtifactDirectory } from "../../ports/artifacts/ArtifactDirectoryInspectionPort.js";
 import type { DirectAnalysisDependencies } from "../DirectAnalysisDependencies.js";
 import {
@@ -48,6 +51,22 @@ export const selectedArtifactDirectory = async (
 };
 
 /**
+ * Retry any retained failed cleanup in `retained` before starting new path
+ * inspection work, and refuse new acquisitions while cleanup stays unresolved.
+ */
+export const runInRetainedArtifactScope = async <T>(
+  retained: RetainedResourceScope | undefined,
+  operation: () => Promise<Result<T, AnalysisError>>,
+): Promise<Result<T, AnalysisError>> => {
+  if (retained === undefined) return operation();
+  try {
+    return await retained.run(operation);
+  } catch (cause: unknown) {
+    return err(translateArtifactFailure("inspect_artifact", cause));
+  }
+};
+
+/**
  * Inspect the artifact at a caller-selected path, independently of any open
  * session target: a directory is inventoried as a tree, and any other path
  * is admitted as a target in its own artifact-only session that closes
@@ -60,41 +79,42 @@ export const executeArtifactPathInspection = async (
   parameters: Readonly<Record<string, JsonValue>>,
   options: ExecutionOptions = {},
   retained?: RetainedResourceScope,
-): Promise<Result<AnalysisExecution, AnalysisError>> => {
-  const directory = await selectedArtifactDirectory(path);
-  if (directory !== undefined)
-    return dependencies.inspectArtifactDirectory(
-      directory,
-      parameters,
-      options,
-      retained,
-    );
-  const session = await dependencies.createArtifactBinarySession();
-  return withSessionCleanup(
-    session,
-    async () => {
-      const opened = await session.open(
-        path,
-        options.signal === undefined ? {} : { signal: options.signal },
+): Promise<Result<AnalysisExecution, AnalysisError>> =>
+  runInRetainedArtifactScope(retained, async () => {
+    const directory = await selectedArtifactDirectory(path);
+    if (directory !== undefined)
+      return dependencies.inspectArtifactDirectory(
+        directory,
+        parameters,
+        options,
+        retained,
       );
-      if (!opened.ok) return opened;
-      return session.execute("inspect_artifact", parameters, options);
-    },
-    (value, error) => {
-      retained?.retain(
-        {
-          close: async () => {
-            const closed = await session.close();
-            if (!closed.ok) throw closed.error;
+    const session = await dependencies.createArtifactBinarySession();
+    return withSessionCleanup(
+      session,
+      async () => {
+        const opened = await session.open(
+          path,
+          options.signal === undefined ? {} : { signal: options.signal },
+        );
+        if (!opened.ok) return opened;
+        return session.execute("inspect_artifact", parameters, options);
+      },
+      (value, error) => {
+        retained?.retain(
+          {
+            close: async () => {
+              const closed = await session.close();
+              if (!closed.ok) throw closed.error;
+            },
+            cleanupResources: error.cleanupResources,
           },
-          cleanupResources: error.cleanupResources,
-        },
-        `artifact inspection session for ${path}`,
-      );
-      return managedAnalysisCleanupFailure(value, error);
-    },
-  );
-};
+          `artifact inspection session for ${path}`,
+        );
+        return managedAnalysisCleanupFailure(value, error);
+      },
+    );
+  });
 
 /** Keep an inspection's failed cleanup in an artifact resource scope. */
 export const retainedInArtifactScope = (

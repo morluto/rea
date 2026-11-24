@@ -4,7 +4,10 @@ import {
   type DirectEnhancedToolName,
 } from "./oneShotOperationInput.js";
 import { completedOperationEvidence } from "./binary/SessionEvidenceReuse.js";
-import { selectedArtifactDirectory } from "./artifacts/ArtifactPathInspection.js";
+import {
+  runInRetainedArtifactScope,
+  selectedArtifactDirectory,
+} from "./artifacts/ArtifactPathInspection.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import type { TargetFormatHint } from "../domain/targetFormats.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
@@ -420,11 +423,16 @@ const runAnalysis = async (
         ? await selectedArtifactDirectory(path)
         : undefined;
     if (directory !== undefined && dependencies.inspectArtifactDirectory) {
-      const execution = await dependencies.inspectArtifactDirectory(
-        directory,
-        arguments_,
-        { signal },
+      const inspectDirectory = dependencies.inspectArtifactDirectory;
+      const execution = await runInRetainedArtifactScope(
         session.resourceScope,
+        () =>
+          inspectDirectory(
+            directory,
+            arguments_,
+            { signal },
+            session.resourceScope,
+          ),
       );
       if (!execution.ok) return execution;
       const evidence = withEvidenceCallerInputPath(

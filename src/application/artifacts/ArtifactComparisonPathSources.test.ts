@@ -17,6 +17,14 @@ import {
   compareArtifactEvidence,
   resolveArtifactComparisonSources,
 } from "./ArtifactComparisonEvidence.js";
+import {
+  executeArtifactPathInspection,
+  retainedInArtifactScope,
+  type ArtifactPathInspectionDependencies,
+} from "./ArtifactPathInspection.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 
 const inventoryEvidence = async (
   path: string,
@@ -173,4 +181,120 @@ it("settles a structural-artifact claim from two complete directory inventories"
   // Identical trees at two paths are one observation, so they cannot serve
   // as independent original and reconstruction sources.
   expect((await verify(same)).status).toBe("unknown");
+});
+
+it("keeps a partial directory root unknown instead of reporting a false content change against a complete scan", async () => {
+  const base = await createTestTempDirectory("rea-compare-partial-root-");
+  const root = join(base, "build");
+  await build(root, ["a.txt", "b.txt", "c.txt"]);
+  const complete = await inventoryEvidence(root);
+  const partial = await inventoryEvidence(root, {
+    maximumEntries: 1,
+    maximumBytes: 1 << 20,
+  });
+
+  const mixed = compareArtifactEvidence({ left: complete, right: partial });
+  if (!mixed.ok) throw mixed.error;
+  const mixedRoot = mixed.value.comparison.changes.find(
+    ({ logical_path }) => logical_path === ".",
+  );
+  expect(mixedRoot).toMatchObject({
+    logical_path: ".",
+    classification: "unknown",
+    dimensions: ["availability"],
+  });
+
+  const bothPartial = compareArtifactEvidence({
+    left: partial,
+    right: partial,
+  });
+  if (!bothPartial.ok) throw bothPartial.error;
+  const partialRoot = bothPartial.value.comparison.changes.find(
+    ({ logical_path }) => logical_path === ".",
+  );
+  expect(partialRoot).toMatchObject({
+    logical_path: ".",
+    classification: "unknown",
+    dimensions: ["availability"],
+  });
+});
+
+it("retries retained cleanup before starting later path inspections and blocks while cleanup fails", async () => {
+  const base = await createTestTempDirectory("rea-path-cleanup-retry-");
+  const dir = join(base, "dir");
+  await build(dir, ["a.txt"]);
+  const scope = new ArtifactResourceScope();
+  const retained = retainedInArtifactScope(scope);
+  let closeAttempts = 0;
+  let allowClose = false;
+  let inspectCalls = 0;
+
+  const dependencies: ArtifactPathInspectionDependencies = {
+    inspectArtifactDirectory: async (
+      _path,
+      _parameters,
+      _options,
+      scopeRef,
+    ) => {
+      inspectCalls += 1;
+      if (inspectCalls === 1) {
+        scopeRef?.retain(
+          {
+            close: async () => {
+              closeAttempts += 1;
+              if (!allowClose) throw new Error("reader still busy");
+            },
+          },
+          "directory reader",
+        );
+        return err(
+          new ProviderCleanupError(
+            ARTIFACT_GRAPH_PROVIDER.id,
+            ["directory reader"],
+            { reason: "reader still busy" },
+          ),
+        );
+      }
+      return ok(createAnalysisExecution(null, ARTIFACT_GRAPH_PROVIDER));
+    },
+    createArtifactBinarySession: async () => {
+      throw new Error("unexpected binary session for directory");
+    },
+  };
+
+  const first = await executeArtifactPathInspection(
+    dependencies,
+    dir,
+    {},
+    {},
+    retained,
+  );
+  expect(first.ok).toBe(false);
+  expect(inspectCalls).toBe(1);
+
+  const blocked = await executeArtifactPathInspection(
+    dependencies,
+    dir,
+    {},
+    {},
+    retained,
+  );
+  expect(blocked.ok).toBe(false);
+  if (!blocked.ok)
+    expect(projectAnalysisError(blocked.error).code).toBe("cleanup_incomplete");
+  expect(closeAttempts).toBe(1);
+  expect(inspectCalls).toBe(1);
+
+  allowClose = true;
+  const recovered = await executeArtifactPathInspection(
+    dependencies,
+    dir,
+    {},
+    {},
+    retained,
+  );
+  expect(recovered.ok).toBe(true);
+  expect(closeAttempts).toBe(2);
+  expect(inspectCalls).toBe(2);
+  await scope.close();
 });

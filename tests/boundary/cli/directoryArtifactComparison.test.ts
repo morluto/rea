@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect } from "vitest";
@@ -9,6 +9,7 @@ import {
 } from "../../../src/domain/artifactComparison.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -116,6 +117,7 @@ cliTest(
     });
     expect(inspection.subject.root_format).toBe("directory");
 
+    const bundlePath = join(root, "comparison-bundle.json");
     const compared = await cli.run({
       arguments: [
         "compare-artifacts",
@@ -123,13 +125,16 @@ cliTest(
           left: { kind: "path", path: "buildA" },
           right: { kind: "path", path: "buildB" },
         }),
+        "--evidence_output",
+        bundlePath,
         "--json",
       ],
       cwd: root,
     });
     expect(compared.exitCode, compared.stderr).toBe(0);
+    const comparedEvidence = parseEvidence(compared.json);
     const comparison = artifactComparisonResultSchema.parse(
-      parseEvidence(compared.json).normalized_result,
+      comparedEvidence.normalized_result,
     );
     expect(comparison.status).toBe("changed");
     expect(classifications(comparison)).toEqual(EXPECTED_CHANGES);
@@ -139,6 +144,15 @@ cliTest(
       changed: 3,
       unknown: 0,
     });
+    const publishedBundle = parseEvidenceBundle(
+      JSON.parse(await readFile(bundlePath, "utf8")),
+    );
+    const bundledIds = new Set(
+      publishedBundle.records.map(({ evidence_id }) => evidence_id),
+    );
+    expect(bundledIds.has(comparedEvidence.evidence_id)).toBe(true);
+    for (const sourceId of comparedEvidence.evidence_links)
+      expect(bundledIds.has(sourceId)).toBe(true);
 
     // The zipped workaround classifies every member path the same way.
     await writeZip(join(root, "buildA.zip"), BUILD_A);

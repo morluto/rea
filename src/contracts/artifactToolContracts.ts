@@ -11,6 +11,7 @@ import { distinctItems } from "../domain/schemaConstraints.js";
 import type { EffectAudit } from "./toolEffects.js";
 import {
   toolContractMetadata,
+  artifactInspectionEffects,
   evidenceEffects,
   nativeEvidenceEffects,
   toolEffects,
@@ -120,11 +121,7 @@ const artifact = <
 export const ARTIFACT_TOOL_CONTRACTS = [
   artifact(
     "inspect_artifact",
-    toolEffects({
-      mutatesSession: true,
-      launchesProcess: true,
-      writesFilesystem: true,
-    }),
+    artifactInspectionEffects,
     "Inventory an archive, app package, directory, firmware container or supported packaged executable without running it: the path given, else the open target. A directory's subject is its content-addressed root digest; a walk a limit stops is partial and has none. Returns nested content-addressed inventory Evidence with integrity observations, unexplored branches and next probes. Default complete returns the full graph; detail summary retains it for inspect_analysis_view kind inventory using parent_evidence_id, exact paths/IDs, path globs, size order, fields and paging. Summary changes delivery, not inventory coverage. Bun/Node SEA/Deno carriers expose stored modules/assets and recorded metadata; opaque bytecode and npm snapshots are not decoded. Local Evidence can include environment-file values and certificate bytes. iNES and NES 2.0 add file-region/reconstruction facts, not mapper execution. Integrity mismatches fail unless record-and-continue explicitly retains untrusted contradictions. Supported macOS DMGs are mounted read-only. Use extract_artifact to materialize regular contents; DMGs instead need a caller-managed read-only mount.",
     artifactInspectionInputSchema,
     { evidenceParameters: "preserve-detail" },
