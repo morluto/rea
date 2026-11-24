@@ -58,7 +58,8 @@ export async function createVerifierCommands(){return {
     );
     await writeFile(
       fixture,
-      `export async function createOpenAiModelFixture(){return {baseUrl:'http://127.0.0.1:1',async close(){}};}`,
+      `export { toolCallMessage } from ${JSON.stringify(new URL("../../../scripts/verify/clients/model-fixture.mjs", import.meta.url).href)};
+export async function createOpenAiModelFixture(){return {baseUrl:'http://127.0.0.1:1',async close(){}};}`,
     );
     await writeFile(
       hook,
