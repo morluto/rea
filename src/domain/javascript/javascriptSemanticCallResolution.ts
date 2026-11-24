@@ -9,11 +9,8 @@ import type {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import {
-  runtimeFunctionParameters,
-  unwrapPureJavaScriptSequenceExpression,
-} from "./javascriptAstValues.js";
-import { isIntrinsicGlobalReference } from "./javascriptSemanticGlobalReference.js";
+import { runtimeFunctionParameters } from "./javascriptAstValues.js";
+import { unwrapPureSemanticSequenceExpression } from "./javascriptSemanticGlobalReference.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -61,14 +58,7 @@ export const resolveLocalCallables = (
     bindingCache: input.bindingCache,
   });
 
-/** Strip transparent syntax wrappers and pure-leading comma sequences. */
-export const unwrapPureSemanticSequenceExpression = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): t.Node =>
-  unwrapPureJavaScriptSequenceExpression(node, (identifier) =>
-    isIntrinsicGlobalReference(identifier, state, "undefined"),
-  );
+export { unwrapPureSemanticSequenceExpression };
 
 const resolveCallables = (
   node: t.Node,

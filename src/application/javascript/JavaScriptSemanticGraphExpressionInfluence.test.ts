@@ -316,6 +316,123 @@ it("scopes return aliases to the unwrapped pure sequence value without spurious 
   ).toBe(false);
 });
 
+it.each([
+  ["numeric prefix", "(0, base)"],
+  ["undefined prefix", "(undefined, base)"],
+])(
+  "traces forward influence through unwrapped pure sequence initializer aliases (%s)",
+  (_label, initializer) => {
+    const graph = graphForJavaScript(
+      `const base = "unique"; const alias = ${initializer}; fetch(alias);`,
+    );
+    const baseNode = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "base",
+    );
+    const aliasNode = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "alias",
+    );
+    if (baseNode === undefined || aliasNode === undefined)
+      throw new Error("Expected base and alias binding nodes");
+    const aliasInputs = graph.relations.filter(
+      (edge) =>
+        edge.relation === "aliases" &&
+        edge.target_node_id === aliasNode.node_id,
+    );
+    expect(aliasInputs).toHaveLength(1);
+    expect(aliasInputs[0]?.resolution).toBe("resolved");
+    expect(
+      graph.nodes.find(
+        (node) => node.node_id === aliasInputs[0]?.source_node_id,
+      )?.label,
+    ).toBe("base");
+    const fromBase = queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: baseNode.node_id },
+        direction: "forward-influence",
+      }),
+    );
+    expect(fromBase.status).toBe("found");
+    expect(fromBase.unknowns).toEqual([]);
+    expect(fromBase.nodes.map((node) => node.label)).toEqual(
+      expect.arrayContaining(["base", "alias", "argument 0"]),
+    );
+    expect(fromBase.nodes.some((node) => node.label === "undefined")).toBe(
+      false,
+    );
+    const fromLiteral = queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "literal", value: "unique" },
+        direction: "forward-influence",
+      }),
+    );
+    expect(fromLiteral.unknowns).toEqual([]);
+    expect(fromLiteral.nodes.map((node) => node.label)).toEqual(
+      expect.arrayContaining(["alias", "argument 0"]),
+    );
+    const dynamicGraph = graphForJavaScript(
+      `function wrap(base) { const alias = ${initializer}; fetch(alias); }`,
+    );
+    const paramNode = dynamicGraph.nodes.find(
+      (node) => node.kind === "parameter" && node.label === "base",
+    );
+    if (paramNode === undefined) throw new Error("Expected base parameter");
+    const fromParam = queryJavaScriptSemanticGraph(
+      dynamicGraph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: paramNode.node_id },
+        direction: "forward-influence",
+      }),
+    );
+    expect(fromParam.nodes.map((node) => node.label)).toEqual(
+      expect.arrayContaining(["alias", "argument 0"]),
+    );
+  },
+);
+
+it.each([
+  [
+    "side-effecting prefix",
+    'const base = "unique"; const alias = (sideEffect(), base); fetch(alias);',
+  ],
+  [
+    "shadowed undefined prefix",
+    'let undefined = "shadow"; const base = "unique"; const alias = (undefined, base); fetch(alias);',
+  ],
+])(
+  "keeps %s sequence initializer aliases conservative without direct alias shortcuts",
+  (_label, source) => {
+    const graph = graphForJavaScript(source);
+    const baseNode = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "base",
+    );
+    const aliasNode = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "alias",
+    );
+    if (baseNode === undefined || aliasNode === undefined)
+      throw new Error("Expected base and alias binding nodes");
+    expect(
+      graph.relations.some(
+        (edge) =>
+          edge.relation === "aliases" &&
+          edge.target_node_id === aliasNode.node_id,
+      ),
+    ).toBe(false);
+    const fromBase = queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: baseNode.node_id },
+        direction: "forward-influence",
+      }),
+    );
+    expect(fromBase.status).toBe("partial");
+    expect(
+      fromBase.unknowns.some((unknown) => unknown.reason === "unknown-value"),
+    ).toBe(true);
+  },
+);
+
 it("keeps older call-site literal evidence searchable when argument literals are absent", () => {
   const graph = graphForJavaScript('consume("only-direct");');
   const legacy = {

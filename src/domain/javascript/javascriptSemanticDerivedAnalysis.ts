@@ -21,7 +21,10 @@ import {
   readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { unwrapPureSemanticSequenceExpression } from "./javascriptSemanticCallResolution.js";
+import {
+  isIntrinsicGlobalReference,
+  unwrapPureSemanticSequenceExpression,
+} from "./javascriptSemanticGlobalReference.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "./javascriptAnalysisResourceControls.js";
 
@@ -205,7 +208,11 @@ function* collectExpressionFlowsSteps(
         node.init != null
       ) {
         const init = unwrapPureSemanticSequenceExpression(node.init, state);
-        if (isInfluenceExpression(init)) {
+        if (
+          isInfluenceExpression(init) ||
+          (t.isIdentifier(init) &&
+            !isIntrinsicGlobalReference(init, state, "undefined"))
+        ) {
           if (initializers.length < budget)
             initializers.push({ target: range(node.id), source: range(init) });
           else truncated = true;
