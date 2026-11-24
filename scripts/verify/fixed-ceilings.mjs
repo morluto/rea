@@ -1,4 +1,4 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -135,6 +135,45 @@ export const compareAuthoredOnlyRefusals = (counts, baseline, shrink) => {
   return { failures, baseline: compared.baseline };
 };
 
+/** The baseline file's text, or undefined once its last count was removed. */
+const readBaselineText = async (path) => {
+  try {
+    return await readFile(path, "utf8");
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      return undefined;
+    throw cause;
+  }
+};
+
+/**
+ * Compare the authored-only counts with the baseline file at `path` and, when
+ * shrinking, rewrite it or delete it once no count remains. An absent file is
+ * an empty baseline. Returns failure lines.
+ *
+ * @param {string} path
+ * @param {ReadonlyMap<string, number>} counts
+ * @param {boolean} shrink
+ * @returns {Promise<string[]>}
+ */
+export const checkAuthoredOnlyBaseline = async (path, counts, shrink) => {
+  const text = await readBaselineText(path);
+  const refusals = compareAuthoredOnlyRefusals(
+    counts,
+    text === undefined ? {} : JSON.parse(text),
+    shrink,
+  );
+  const failures = [...refusals.failures];
+  const file = reconcileBaselineFile(text, refusals.baseline, shrink);
+  if (file.action === "write") await writeFile(path, file.text);
+  else if (file.action === "delete") await rm(path);
+  else if (file.action === "reject")
+    failures.push(
+      `${BASELINE} is not in its written form (paths sorted by code unit), or has no counts left; rewrite or remove it with \`node scripts/verify/fixed-ceilings.mjs --shrink-baselines\`.`,
+    );
+  return failures;
+};
+
 const main = async () => {
   const declarations = new Map();
   const authored = new Map();
@@ -148,25 +187,13 @@ const main = async () => {
   }
   const registry = JSON.parse(await readFile(registryPath, "utf8"));
   const failures = compareFixedCeilings(declarations, registry);
-  const shrink = process.argv.includes("--shrink-baselines");
-  const baselineText = await readFile(join(root, BASELINE), "utf8");
-  const refusals = compareAuthoredOnlyRefusals(
-    authored,
-    JSON.parse(baselineText),
-    shrink,
+  failures.push(
+    ...(await checkAuthoredOnlyBaseline(
+      join(root, BASELINE),
+      authored,
+      process.argv.includes("--shrink-baselines"),
+    )),
   );
-  failures.push(...refusals.failures);
-  const baselineFile = reconcileBaselineFile(
-    baselineText,
-    refusals.baseline,
-    shrink,
-  );
-  if (baselineFile.action === "write")
-    await writeFile(join(root, BASELINE), baselineFile.text);
-  else if (baselineFile.action === "reject")
-    failures.push(
-      `${BASELINE} is not in its written form (paths sorted by code unit); rewrite it with \`node scripts/verify/fixed-ceilings.mjs --shrink-baselines\`.`,
-    );
   if (failures.length > 0) {
     console.error(failures.join("\n"));
     process.exitCode = 1;

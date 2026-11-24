@@ -1,12 +1,16 @@
+import { access, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it } from "vitest";
 import {
   authoredOnlyRefusalCount,
   fixedCeilingDeclarations,
 } from "../../scripts/verify/fixed-ceiling-guard.mjs";
 import {
+  checkAuthoredOnlyBaseline,
   compareAuthoredOnlyRefusals,
   compareFixedCeilings,
 } from "../../scripts/verify/fixed-ceilings.mjs";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const PATH = "src/probe/Probe.ts";
 
@@ -109,4 +113,22 @@ it("lets the authored-only refusal count shrink but never grow", () => {
     failures: [],
     baseline: {},
   });
+});
+
+it("deletes the baseline when its last authored-only refusal is removed", async () => {
+  const root = await createTestTempDirectory("rea-fixed-ceiling-baseline-");
+  const path = join(root, "untyped-budget-refusal-baseline.json");
+  await writeFile(path, `${JSON.stringify({ [PATH]: 1 }, null, 2)}\n`);
+  // Without shrinking, the removed refusal is reported as stale.
+  expect(await checkAuthoredOnlyBaseline(path, new Map(), false)).toEqual([
+    expect.stringContaining("--shrink-baselines"),
+  ]);
+  // Shrinking removes the file, and the next run treats it as empty.
+  expect(await checkAuthoredOnlyBaseline(path, new Map(), true)).toEqual([]);
+  await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await checkAuthoredOnlyBaseline(path, new Map(), false)).toEqual([]);
+  // A new refusal still fails against the absent baseline.
+  expect(
+    await checkAuthoredOnlyBaseline(path, new Map([[PATH, 1]]), false),
+  ).toEqual([expect.stringContaining(`${PATH}: 1 (baseline 0)`)]);
 });

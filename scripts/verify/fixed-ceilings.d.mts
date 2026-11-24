@@ -11,3 +11,8 @@ export function compareAuthoredOnlyRefusals(
   baseline: Record<string, number>,
   shrink: boolean,
 ): { failures: string[]; baseline: Record<string, number> };
+export function checkAuthoredOnlyBaseline(
+  path: string,
+  counts: ReadonlyMap<string, number>,
+  shrink: boolean,
+): Promise<string[]>;
