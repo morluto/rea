@@ -189,10 +189,26 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
       load_config: null,
     });
   });
+  it("treats a TLS directory with a zero RVA as absent, as the loader does", async () => {
+    expect((await parse({ bits, malformed: "tls-half" })).tls).toBeNull();
+  });
+  it("reads the TLS structure at its RVA when the directory Size is short", async () => {
+    // corkami tls.exe and 16 siblings declare TLS Size 0; the loader reads
+    // IMAGE_TLS_DIRECTORY at the RVA and ignores Size.
+    const report = await parse({ bits, malformed: "tls-truncated" });
+    expect(report.tls?.directory.size).toBe(8);
+    expect(report.tls?.callbacks).toEqual(
+      (await parse({ bits })).tls?.callbacks,
+    );
+    expect(report.header_anomalies).toEqual([
+      {
+        code: "directory_size_below_structure",
+        message: expect.stringContaining("Data directory 9 (TLS)"),
+      },
+    ]);
+  });
   it.each([
     "tls-unmapped",
-    "tls-truncated",
-    "tls-half",
     "load-config-oversize",
     "load-config-truncated",
     "load-config-half",

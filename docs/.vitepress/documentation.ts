@@ -518,6 +518,11 @@ export const documentationSections = [
         source: "tar-archives.md",
         route: "/tar-archives",
       },
+      {
+        text: "GPU asset headers: DDS, GLB, KTX and KTX2",
+        source: "gpu-asset-headers.md",
+        route: "/gpu-asset-headers",
+      },
     ],
   },
   {

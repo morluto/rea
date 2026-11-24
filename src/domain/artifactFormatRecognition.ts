@@ -21,6 +21,12 @@ import {
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
 import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
+import {
+  hasDdsHeader,
+  hasGlbHeader,
+  hasKtx1Identifier,
+  hasKtx2Identifier,
+} from "./gpuAssetFormats.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
 
@@ -33,6 +39,10 @@ export type RecognizedArtifactFormat = Extract<
   | "unityfs"
   | "wxapkg"
   | "tar"
+  | "dds"
+  | "glb"
+  | "ktx"
+  | "ktx2"
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
@@ -144,6 +154,10 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
         ? undefined
         : { state: "refused", format: "tar", reason };
     },
+    when("dds", hasDdsHeader),
+    when("glb", hasGlbHeader),
+    when("ktx", hasKtx1Identifier),
+    when("ktx2", hasKtx2Identifier),
     when("uimage", hasUImageMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
     ({ prefix }) => {
