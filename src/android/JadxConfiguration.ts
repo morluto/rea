@@ -317,6 +317,8 @@ const projectConfigurationFailure = (
     {
       cause,
       userMessage: cause.message,
+      // The configuration boundary owns the repair for each failure kind.
+      remediationAction: jadxFailureRemediation(cause.kind),
       diagnostics: {
         ...facts,
         failure_kind: cause.kind,

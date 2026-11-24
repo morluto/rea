@@ -232,13 +232,9 @@ export const createCliResultOutput = (
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
-    // A completed report with a failed verdict stays a result for
-    // --filter-output; the JSONL and full-output envelopes still mark it failed.
     const operationFailure = metadata.failure
       ? value
-      : format === "jsonl" ||
-          options.fullOutput ||
-          (filterPaths !== undefined && !isCliCompletedFailureReport(value))
+      : format === "jsonl" || options.fullOutput || filterPaths !== undefined
         ? cliOperationFailurePayload(value)
         : undefined;
     // These presentations own complete documents. A terminal notice must not
@@ -315,7 +311,7 @@ export const createCliResultOutput = (
   async function writeResult(
     value: unknown,
     metadata: CliResultOutputMetadata,
-    operationFailure: unknown,
+    reportedFailure: unknown,
   ): Promise<boolean> {
     completed = {
       metadata,
@@ -325,6 +321,25 @@ export const createCliResultOutput = (
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
+    // A completed report with a failed verdict, such as an unhealthy doctor
+    // report, is still the command's result: --filter-output selects from it.
+    // The selection then stands in for the report in the full-output envelope,
+    // which keeps ok: false. JSONL frames every classified failure whole.
+    const reportSelection =
+      reportedFailure !== undefined &&
+      filterPaths !== undefined &&
+      format !== "csv" &&
+      format !== "tsv" &&
+      format !== "jsonl" &&
+      isCliCompletedFailureReport(value)
+        ? applyCliOutputFilter(value, filterPaths)
+        : undefined;
+    const operationFailure =
+      reportSelection === undefined
+        ? reportedFailure
+        : reportSelection.ok
+          ? reportSelection.value
+          : undefined;
     const failure = options.fullOutput ? operationFailure : undefined;
     const ownsFilteredOutput =
       operationFailure === undefined &&

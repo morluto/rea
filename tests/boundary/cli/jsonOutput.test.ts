@@ -378,11 +378,26 @@ describe("CLI result output surface", () => {
 });
 
 it.each([
-  { flags: ["--filter-output", "healthy"], expected: "false" },
+  { flags: ["--json", "--filter-output", "healthy"], expected: "false" },
   {
-    flags: ["--filter-output", "checks[0].name", "--token-count"],
+    flags: ["--json", "--filter-output", "checks[0].name", "--token-count"],
     // The estimate for the selected `"provider"`, not the whole report.
     expected: "5",
+  },
+  {
+    flags: ["--json", "--full-output", "--filter-output", "healthy"],
+    expected: { ok: false, error: false },
+  },
+  {
+    flags: [
+      "--json",
+      "--full-output",
+      "--filter-output",
+      "checks[0].name",
+      "--token-count",
+    ],
+    // The envelope around the selection; the whole report is over 100.
+    expected: "<60",
   },
 ])(
   "applies $flags to an unhealthy doctor report and keeps exit 1",
@@ -394,7 +409,7 @@ it.each([
         callback();
       },
     });
-    const argv = ["fixture", "--json", ...flags];
+    const argv = ["fixture", ...flags];
     const output = createCliResultOutput(
       parseCliOutputArguments(argv),
       destination,
@@ -415,7 +430,13 @@ it.each([
     } finally {
       process.exitCode = previousExitCode;
     }
-    expect(Buffer.concat(chunks).toString("utf8").trim()).toBe(expected);
+    const text = Buffer.concat(chunks).toString("utf8").trim();
+    // The selection replaces the report; its detail never reaches output.
+    expect(text).not.toContain("x".repeat(400));
+    if (expected.toString().startsWith("<"))
+      expect(Number(text)).toBeLessThan(Number(String(expected).slice(1)));
+    else if (typeof expected === "string") expect(text).toBe(expected);
+    else expect(JSON.parse(text)).toMatchObject(expected);
   },
 );
 
