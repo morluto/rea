@@ -9,7 +9,6 @@ import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.j
 import { protobufHar } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const oracleSchema = z.object({
   producer: z.literal("google.protobuf 6.33.5"),
@@ -80,7 +79,6 @@ cliTest(
         const result = await cli.run({
           arguments: [
             "inspect-web-network-capture",
-            ...COMPLETE_DETAIL,
             capturePath,
             "har",
             "--record",
@@ -98,7 +96,6 @@ cliTest(
         output = result.json;
       } else {
         const response = await call("inspect_web_network_capture", {
-          detail: "complete",
           capture_path: capturePath,
           format: "har",
           record_ordinals: [0, 1],

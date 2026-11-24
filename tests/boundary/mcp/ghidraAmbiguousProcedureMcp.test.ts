@@ -83,7 +83,7 @@ it.each(["compact"] as const)(
     try {
       const response = await harness.mcp.callTool({
         name: "procedure_pseudo_code",
-        arguments: { detail: "complete", procedure: "file-offset:0x400" },
+        arguments: { procedure: "file-offset:0x400" },
       });
       const { error } = parseMcpToolError(response);
       expect(error).toMatchObject({

@@ -23,7 +23,7 @@ it("preserves Map omission and uncertain endpoint Evidence through public MCP", 
   const { client } = await connectLocalToolsMcp();
   const output = await client.callTool({
     name: "analyze_javascript_application",
-    arguments: { detail: "complete", input_path: root },
+    arguments: { input_path: root },
   });
   expect(output.isError).not.toBe(true);
   const evidence = parseEvidence(output.structuredContent);

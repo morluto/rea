@@ -7,7 +7,6 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { pythonPycFixture } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const fileCommands = [
   "inspect-sqlite-database",
@@ -192,12 +191,7 @@ cliTest(
     const path = join(cwd, "selected.pyc");
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: [
-        "inspect-python-pyc",
-        ...COMPLETE_DETAIL,
-        "./selected.pyc",
-        "--json",
-      ],
+      arguments: ["inspect-python-pyc", "./selected.pyc", "--json"],
       cwd,
     });
     expect(result.exitCode, result.stderr).toBe(0);

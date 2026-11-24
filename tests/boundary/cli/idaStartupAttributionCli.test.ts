@@ -4,7 +4,6 @@ import { expect } from "vitest";
 import { z } from "zod";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const tools = [
   "idb_open",
@@ -222,15 +221,7 @@ workspaceCliTest.for([
       );
       const target = await workspace.write("target.elf", elf(2, 1, 62));
       const result = await cli.run({
-        arguments: [
-          "decompile",
-          ...COMPLETE_DETAIL,
-          target,
-          "main",
-          "--provider",
-          "ida",
-          "--json",
-        ],
+        arguments: ["decompile", target, "main", "--provider", "ida", "--json"],
         environment: {
           ...workspace.environment,
           REA_IDA_MCP_CONFIG: registration,

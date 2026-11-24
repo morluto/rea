@@ -98,7 +98,7 @@ it("refuses ESP image inventory Evidence without flash_dump", async () => {
   const { call } = await connectLocalToolsMcp();
   const opened = await call("open_binary", { path });
   expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-  const inspected = await call("inspect_artifact", { detail: "complete" });
+  const inspected = await call("inspect_artifact", {});
   expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
   const current = parseEvidence(
     artifactInspectionResultSchema

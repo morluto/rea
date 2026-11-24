@@ -88,7 +88,7 @@ it.each(["compact"] as const)(
       corrupted[kernel] = (corrupted[kernel] ?? 0) ^ 1;
       await writeFile(path, corrupted);
       await call("open_binary", { path });
-      const invalid = await call("inspect_artifact", { detail: "complete" });
+      const invalid = await call("inspect_artifact", {});
       expect(parseMcpToolError(invalid).error).toMatchObject({
         category: "integrity_mismatch",
         details: {

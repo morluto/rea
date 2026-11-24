@@ -11,7 +11,6 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
-import { completeArguments } from "../support/completeDetail.js";
 
 const cases = [
   {
@@ -48,7 +47,7 @@ cliTest.for(cases)(
     const source = join(directory, name);
     await writeFile(source, text);
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -149,7 +148,7 @@ cliTest("rejects a malformed record through the CLI", async ({ cli }) => {
   const source = join(directory, "firmware.hex");
   await writeFile(source, INTEL_HEX_I32_GAP.replace("BEEFC3", "BEEFC4"));
   const result = await cli.run({
-    arguments: completeArguments("inspect-artifact", source),
+    arguments: ["inspect-artifact", source, "--json"],
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({

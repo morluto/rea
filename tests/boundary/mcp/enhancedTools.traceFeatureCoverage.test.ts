@@ -134,7 +134,7 @@ const trace = async (analysis: AnalysisOperationPort) => {
   const client = await connect(analysis);
   const result = await client.callTool({
     name: "trace_feature",
-    arguments: { detail: "complete", query: "hello" },
+    arguments: { query: "hello" },
   });
   expect(result.isError).not.toBe(true);
   return result.structuredContent as {
@@ -675,7 +675,7 @@ it.each([
     });
     const result = await client.callTool({
       name: "trace_feature",
-      arguments: { detail: "complete", query: "hello" },
+      arguments: { query: "hello" },
     });
     expect(JSON.stringify(result.content)).not.toContain(
       "Output validation error",

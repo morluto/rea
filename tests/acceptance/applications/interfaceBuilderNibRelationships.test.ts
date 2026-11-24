@@ -380,7 +380,7 @@ cliTest(
     const client = await openBundleResourcesTarget(mcp, onTestFinished, app);
     const result = await client.callTool({
       name: "decode_interface_builder",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
     expect(
@@ -390,7 +390,7 @@ cliTest(
     ).toEqual(report);
     const rejectedOnly = await client.callTool({
       name: "decode_interface_builder",
-      arguments: { detail: "complete", max_documents: 1 },
+      arguments: { max_documents: 1 },
     });
     expect(rejectedOnly.isError, JSON.stringify(rejectedOnly)).not.toBe(true);
     const rejected = interfaceBuilderAnalysisSchema.parse(

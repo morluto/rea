@@ -28,7 +28,6 @@ import {
 } from "../../fixtures/environmentStateWrites.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 describe("rea environment-compare difference coverage", () => {
   cliTest(
@@ -97,13 +96,7 @@ describe("rea environment-compare difference coverage", () => {
         await writeFile(har, text);
         originals.set(har, text);
         const captured = await cli.run({
-          arguments: [
-            "inspect-web-network-capture",
-            ...COMPLETE_DETAIL,
-            har,
-            "har",
-            "--json",
-          ],
+          arguments: ["inspect-web-network-capture", har, "har", "--json"],
         });
         expect(captured.exitCode, captured.stderr).toBe(0);
         const path = join(root, `${name}.json`);

@@ -1,7 +1,6 @@
 import { describe, expect } from "vitest";
 
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const selectors = [
   ["function", "procedure", "analyze_function"],
@@ -21,7 +20,6 @@ describe("CLI analysis selector boundaries", () => {
       const selected = await cli.run({
         arguments: [
           "decompile",
-          ...COMPLETE_DETAIL,
           "does-not-exist",
           "--file-offset=0x210",
           "--json",
@@ -32,7 +30,6 @@ describe("CLI analysis selector boundaries", () => {
       const conflicting = await cli.run({
         arguments: [
           "decompile",
-          ...COMPLETE_DETAIL,
           "does-not-exist",
           "0x140001010",
           "--file-offset=0x210",

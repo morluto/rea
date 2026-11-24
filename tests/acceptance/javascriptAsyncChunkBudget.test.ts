@@ -7,7 +7,6 @@ import { JAVASCRIPT_STATIC_FACT_BYTES } from "../../src/domain/javascript/javasc
 import { javascriptAsyncChunkCapacity } from "../fixtures/javascriptAsyncChunkCapacity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 cliTest(
   "reports the complete-fact ceiling for wide async chunk metadata",
@@ -20,7 +19,6 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         root,
         "--max-semantic-nodes",
         "1",

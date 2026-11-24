@@ -4,17 +4,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { describe, expect } from "vitest";
 
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 describe("scenario CLI schema diagnostics", () => {
   cliTest("reports browser scenario schema paths", async ({ cli }) => {
     const result = await cli.run({
-      arguments: [
-        "capture-browser-scenario",
-        ...COMPLETE_DETAIL,
-        "{}",
-        "--json",
-      ],
+      arguments: ["capture-browser-scenario", "{}", "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
 

@@ -13,7 +13,6 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
-import { completeArguments } from "../support/completeDetail.js";
 
 cliTest(
   "inspects and extracts a uImage through the compiled CLI",
@@ -37,7 +36,7 @@ cliTest(
       }),
     );
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(

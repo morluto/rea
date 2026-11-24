@@ -9,7 +9,6 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const progressLine = z.object({
   rea_progress: z.object({
@@ -70,7 +69,6 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         join(root, "absent"),
         "--json",
       ],

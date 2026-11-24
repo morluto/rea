@@ -5,7 +5,6 @@ import { z } from "zod";
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest(
   "traces reassignment inputs through the public analysis and trace commands",
@@ -36,7 +35,7 @@ cliTest(
           ? {}
           : { SDKROOT: process.env.SDKROOT };
       const analyzed = await cli.run({
-        arguments: completeApplicationAnalysis(directory),
+        arguments: ["analyze-javascript-application", directory, "--json"],
         environment,
       });
       expect(analyzed.exitCode, `${name} analyzed: ${analyzed.stderr}`).toBe(0);

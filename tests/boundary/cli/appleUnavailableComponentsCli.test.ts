@@ -9,7 +9,6 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest(
   "Apple CLI preserves unread paths and distinguishes readable coverage",
@@ -31,7 +30,7 @@ cliTest(
       );
       await writeFile(path, await writer.close());
       const inspected = await cli.run({
-        arguments: completeArguments("inspect-artifact", path),
+        arguments: ["inspect-artifact", path, "--json"],
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const inspection = artifactInspectionResultSchema.parse(

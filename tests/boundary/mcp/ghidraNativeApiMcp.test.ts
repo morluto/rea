@@ -67,9 +67,7 @@ it("retains complete load-image facts and pages selected relocations through the
       expect(reply.isError).not.toBe(true);
       return sessionEvidence(harness.session, reply.structuredContent);
     };
-    const complete = await call("inspect_native_load_image", {
-      detail: "complete",
-    });
+    const complete = await call("inspect_native_load_image", {});
     const summary = await call("inspect_native_load_image", {
       detail: "summary",
     });
@@ -166,7 +164,7 @@ it.each([
     try {
       const reply = await harness.mcp.callTool({
         name: "inspect_native_load_image",
-        arguments: { detail: "complete" },
+        arguments: {},
       });
       expect(reply.isError).not.toBe(true);
       const evidence = sessionEvidence(

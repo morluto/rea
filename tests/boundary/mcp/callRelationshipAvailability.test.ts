@@ -193,7 +193,7 @@ const assertDirectExecution = async (
     const nextAddress = direction === "forward" ? "0x2000" : "0x1000";
     const graph = await mcp.callTool({
       name: "get_call_graph",
-      arguments: { detail: "complete", address: start, direction },
+      arguments: { address: start, direction },
     });
     const trace = await mcp.callTool({
       name: "trace_call_path",

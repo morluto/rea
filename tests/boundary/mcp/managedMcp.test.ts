@@ -45,7 +45,7 @@ const assertFieldMemberRefToken = async (
   const fieldToken = structured(
     await client.callTool({
       name: "inspect_managed_members",
-      arguments: { detail: "complete", path },
+      arguments: { path },
     }),
   );
   const inspection = managedMemberInspectionSchema.parse(
@@ -104,7 +104,7 @@ it("runs every managed static inspection independently of an active native targe
   const artifact = structured(
     await client.callTool({
       name: "inspect_managed_artifact",
-      arguments: { detail: "complete", path },
+      arguments: { path },
     }),
   );
   expect(artifact).toMatchObject({
@@ -114,12 +114,12 @@ it("runs every managed static inspection independently of an active native targe
   });
   const misspelledPath = await client.callTool({
     name: "inspect_managed_members",
-    arguments: { detail: "complete", pth: otherPath },
+    arguments: { pth: otherPath },
   });
   expect(misspelledPath.isError).toBe(true);
   const invalidSelection = await client.callTool({
     name: "inspect_managed_artifact",
-    arguments: { detail: "complete", path: join(directory, "missing.dll") },
+    arguments: { path: join(directory, "missing.dll") },
   });
   expect(invalidSelection.isError).toBe(true);
   const nativePath = join(directory, "native.elf");
@@ -128,7 +128,7 @@ it("runs every managed static inspection independently of an active native targe
     parseMcpToolError(
       await client.callTool({
         name: "inspect_managed_artifact",
-        arguments: { detail: "complete", path: nativePath },
+        arguments: { path: nativePath },
       }),
     ).error,
   ).toMatchObject({
@@ -137,10 +137,7 @@ it("runs every managed static inspection independently of an active native targe
     details: { operation: "inspect_managed_artifact", path: nativePath },
   });
   const members = structured(
-    await client.callTool({
-      name: "inspect_managed_members",
-      arguments: { detail: "complete" },
-    }),
+    await client.callTool({ name: "inspect_managed_members", arguments: {} }),
   );
   expect(members).toMatchObject({
     operation: "inspect_managed_members",
@@ -150,17 +147,14 @@ it("runs every managed static inspection independently of an active native targe
   const otherArtifact = structured(
     await client.callTool({
       name: "inspect_managed_artifact",
-      arguments: { detail: "complete", path: otherPath },
+      arguments: { path: otherPath },
     }),
   );
   expect(otherArtifact).toMatchObject({
     subject: { local_path: otherPath, identity: { format: "pe" } },
   });
   const reusedOtherTarget = structured(
-    await client.callTool({
-      name: "inspect_managed_members",
-      arguments: { detail: "complete" },
-    }),
+    await client.callTool({ name: "inspect_managed_members", arguments: {} }),
   );
   expect(reusedOtherTarget).toMatchObject({
     operation: "inspect_managed_members",
@@ -181,7 +175,7 @@ it("runs every managed static inspection independently of an active native targe
   const partial = structured(
     await client.callTool({
       name: "inspect_managed_members",
-      arguments: { detail: "complete", path: partialPath },
+      arguments: { path: partialPath },
     }),
   );
   expect(partial).toMatchObject({
@@ -232,7 +226,7 @@ it("compares observed call-target names through the managed MCP contract", async
       structured(
         await client.callTool({
           name: "inspect_managed_members",
-          arguments: { detail: "complete", path },
+          arguments: { path },
         }),
       ),
     );
@@ -395,7 +389,7 @@ const inspectManagedStaticWorkflow = async (
   const inspected = structured(
     await client.callTool({
       name: "inspect_managed_artifact",
-      arguments: { detail: "complete", path },
+      arguments: { path },
     }),
   );
   await outputAssertion.assert("inspect_managed_artifact", inspected);
@@ -414,7 +408,7 @@ const inspectManagedStaticWorkflow = async (
     structured(
       await client.callTool({
         name: "inspect_managed_members",
-        arguments: { detail: "complete", path },
+        arguments: { path },
       }),
     ),
   );
@@ -479,7 +473,7 @@ const verifyManagedComparisonAndReconstruction = async (
     structured(
       await client.callTool({
         name: "inspect_managed_members",
-        arguments: { detail: "complete" },
+        arguments: {},
       }),
     ),
   );
@@ -600,11 +594,7 @@ const verifyManagedTypeSelection = async (
   const selected = structured(
     await client.callTool({
       name: "inspect_managed_members",
-      arguments: {
-        detail: "complete",
-        path,
-        type_names: ["Fixture.Program", "Missing.Type"],
-      },
+      arguments: { path, type_names: ["Fixture.Program", "Missing.Type"] },
     }),
   );
   expect(selected).toMatchObject({
@@ -620,11 +610,7 @@ const verifyManagedTypeSelection = async (
   });
   const repeatedSelection = await client.callTool({
     name: "inspect_managed_members",
-    arguments: {
-      detail: "complete",
-      path,
-      type_names: ["Fixture.Program", "Fixture.Program"],
-    },
+    arguments: { path, type_names: ["Fixture.Program", "Fixture.Program"] },
   });
   expect(parseMcpToolError(repeatedSelection).error.code).toBe(
     "invalid_request",
@@ -632,7 +618,7 @@ const verifyManagedTypeSelection = async (
   const reselectedOtherTarget = structured(
     await client.callTool({
       name: "inspect_managed_artifact",
-      arguments: { detail: "complete", path: otherPath },
+      arguments: { path: otherPath },
     }),
   );
   expect(reselectedOtherTarget).toMatchObject({

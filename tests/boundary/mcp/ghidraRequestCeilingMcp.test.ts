@@ -56,12 +56,12 @@ it("reports local Ghidra admission through SDK MCP without dispatching or losing
     expect(opened.isError).not.toBe(true);
     const first = await harness.client.callTool({
       name: "list_strings",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     expect(first.isError).not.toBe(true);
     const refused = await harness.client.callTool({
       name: "search_strings",
-      arguments: { detail: "complete", pattern: "\u0000".repeat(1500) },
+      arguments: { pattern: "\u0000".repeat(1500) },
     });
     expect(refused.isError).toBe(true);
     const projected = parseMcpToolError(refused);
@@ -88,7 +88,7 @@ it("reports local Ghidra admission through SDK MCP without dispatching or losing
     expect(raw?.isReady()).toBe(true);
     const after = await harness.client.callTool({
       name: "list_strings",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     expect(after.isError).not.toBe(true);
     await waitFor(() =>

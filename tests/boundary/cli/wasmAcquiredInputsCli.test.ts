@@ -137,7 +137,6 @@ ${body}
     const { client, call } = await connectLocalToolsMcp(environment);
     try {
       const response = await call("inspect_wasm_artifact", {
-        detail: "complete",
         path: selected,
         candidate_paths: [candidate],
         glue_paths: [glue],

@@ -9,7 +9,6 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
-import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const routeViewFromEvidence = (evidence: unknown) =>
   javaScriptRoutesViewResultSchema.parse(
@@ -407,7 +406,6 @@ it.each(["compact"] as const)(
       });
     for (const source_paths of [[], [""], [1]]) {
       const invalid = await call("analyze_javascript_application", {
-        detail: "complete",
         input_path: path,
         source_paths,
       });

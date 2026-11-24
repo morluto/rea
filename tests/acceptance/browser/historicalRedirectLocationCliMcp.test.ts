@@ -8,7 +8,6 @@ import { historicalHar } from "../../fixtures/historicalHar.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 // Chrome 156 / Playwright 1.58.2 follows a real HTTP 302 with this Location
 // to /next@name and retains the exact header in its exported HAR.
@@ -101,13 +100,7 @@ cliTest(
       const path = join(root, `redirects.${format}`);
       await writeFile(path, format === "har" ? harBytes() : await sazBytes());
       const output = await cli.run({
-        arguments: [
-          "inspect-web-network-capture",
-          ...COMPLETE_DETAIL,
-          path,
-          format,
-          "--json",
-        ],
+        arguments: ["inspect-web-network-capture", path, format, "--json"],
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const evidence = parseEvidence(output.json);
@@ -159,7 +152,6 @@ cliTest(
         /source-pass|redirect-pass/u,
       );
       const reply = await call("inspect_web_network_capture", {
-        detail: "complete",
         capture_path: path,
         format,
       });

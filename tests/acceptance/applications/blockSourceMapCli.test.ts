@@ -10,7 +10,6 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { resolveJavaScriptApplicationMcpCall } from "../../support/cli/javascriptApplication.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest(
   "links a block source-map URL containing an asterisk through CLI and stdio MCP",
@@ -34,12 +33,11 @@ cliTest(
     );
     await writeFile(archive, Buffer.concat([header, script, mapText]));
     const cliResult = await cli.run({
-      arguments: completeApplicationAnalysis(archive),
+      arguments: ["analyze-javascript-application", archive, "--json"],
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const call = await resolveJavaScriptApplicationMcpCall(cli, undefined);
     const mcpResult = await call("analyze_javascript_application", {
-      detail: "complete",
       input_path: archive,
       format: "asar",
     });

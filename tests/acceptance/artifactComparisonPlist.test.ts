@@ -7,7 +7,6 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { completeArguments } from "../support/completeDetail.js";
 
 const plist =
   '<?xml version="1.0"?><plist version="1.0"><dict><key>label</key><string>hello</string></dict></plist>';
@@ -24,7 +23,7 @@ cliTest(
     ]);
 
     const cliResult = await driver.run({
-      arguments: completeArguments("inspect-artifact", leftPath),
+      arguments: ["inspect-artifact", leftPath, "--json"],
       environment: process.env,
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
@@ -45,7 +44,7 @@ cliTest(
     const { call } = await connectLocalToolsMcp();
     const opened = await call("open_binary", { path: rightPath });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const inspected = await call("inspect_artifact", { detail: "complete" });
+    const inspected = await call("inspect_artifact", {});
     expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
     const mcpEvidence = parseEvidence(inspected.structuredContent);
     const mcpInspection = artifactInspectionResultSchema.parse(

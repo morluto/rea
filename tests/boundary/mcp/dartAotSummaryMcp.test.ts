@@ -148,12 +148,8 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
     expect(complete.parameters).toEqual(parent.parameters);
   }
   const preferred = parseEvidence(
-    (
-      await client.callTool({
-        name: "inspect_dart_aot",
-        arguments: { detail: "complete", path },
-      })
-    ).structuredContent,
+    (await client.callTool({ name: "inspect_dart_aot", arguments: { path } }))
+      .structuredContent,
   );
   expect(
     flutterResultSchemas.inspect_dart_aot.parse(preferred.normalized_result)

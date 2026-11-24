@@ -113,10 +113,7 @@ it.skipIf(missingNative)(
         { maxBufferSize: 32 * 1024 * 1024 },
       );
       try {
-        const response = await call("inspect_pcap_capture", {
-          detail: "complete",
-          path,
-        });
+        const response = await call("inspect_pcap_capture", { path });
         expect(JSON.stringify(response).includes(credential)).toBe(false);
         const error = parseMcpToolError(response).error;
         if (direct) verifyOriginalError(error);

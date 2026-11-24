@@ -9,7 +9,6 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest.for(["promise", "awaited", "reassigned", "opaque"] as const)(
   "distinguishes the FileHandle carrier %s through CLI and MCP",
@@ -48,7 +47,7 @@ cliTest.for(["promise", "awaited", "reassigned", "opaque"] as const)(
       writeFile(join(root, "main.js"), source),
     ]);
     const response = await cli.run({
-      arguments: completeApplicationAnalysis(root),
+      arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(response.exitCode, response.stdout).toBe(0);
     const args = { input_path: root };

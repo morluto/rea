@@ -12,7 +12,6 @@ import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascr
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "keeps full endpoint evidence usable without copying large values into metadata",
@@ -42,7 +41,6 @@ cliTest(
     const cliResponse = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         root,
         "--artifact-format",
         "directory",
@@ -57,7 +55,7 @@ cliTest(
     const { client } = await connectLocalToolsMcp();
     const response = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { detail: "complete", input_path: root, format: "directory" },
+      arguments: { input_path: root, format: "directory" },
     });
     expect(response.isError).not.toBe(true);
     const evidence = toolContract(
@@ -217,7 +215,7 @@ const verifyEndpointWorkflows = async ({
   await writeFile(sourcePath, `// next artifact version\n${source}`);
   const nextResponse = await client.callTool({
     name: "analyze_javascript_application",
-    arguments: { detail: "complete", input_path: root, format: "directory" },
+    arguments: { input_path: root, format: "directory" },
   });
   expect(nextResponse.isError).not.toBe(true);
   const nextEvidence = toolContract(

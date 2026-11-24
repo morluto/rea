@@ -35,7 +35,7 @@ it.each(["compact"] as const)(
       expect(opened.structuredContent).toMatchObject({
         result: { kind: "archive", format: "uimage", architecture: null },
       });
-      const reply = await call("inspect_artifact", { detail: "complete" });
+      const reply = await call("inspect_artifact", {});
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const inspection = artifactInspectionResultSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,

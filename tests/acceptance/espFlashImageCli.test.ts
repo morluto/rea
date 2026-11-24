@@ -19,10 +19,6 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
-import {
-  COMPLETE_DETAIL,
-  completeArguments,
-} from "../support/completeDetail.js";
 
 const rootMetadata = (json: unknown) => {
   const graph = artifactInventoryResultSchema.parse(
@@ -55,7 +51,7 @@ cliTest(
     });
     await writeFile(source, dump);
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const { graph, root } = rootMetadata(inspected.json);
@@ -111,7 +107,6 @@ cliTest(
     const unpaired = await cli.run({
       arguments: [
         "inspect-artifact",
-        ...COMPLETE_DETAIL,
         source,
         "--flash-offset",
         "0x1000",
@@ -125,7 +120,7 @@ cliTest(
     // Without the format, the bootloader is read as one ESP image, and the
     // table at file offset 0x7000 says how to reopen the dump.
     const automatic = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(automatic.exitCode, automatic.stdout + automatic.stderr).toBe(0);
     const guessed = rootMetadata(automatic.json);
@@ -153,7 +148,6 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-artifact",
-        ...COMPLETE_DETAIL,
         source,
         "--target-format",
         "esp-flash-image",

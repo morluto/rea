@@ -5,6 +5,10 @@ import { z } from "zod";
 
 import { waitForExit } from "../process/processFixture.js";
 import {
+  completeEvidenceCliArguments,
+  type TestDelivery,
+} from "../completeEvidenceByDefault.js";
+import {
   createCliSessionFrameReader,
   encodeCliSessionFrame,
 } from "./cliCommandSessionFrames.mjs";
@@ -34,6 +38,8 @@ export interface CliCommandRequest {
   readonly arguments: readonly string[];
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string>>;
+  /** The harness requests complete Evidence unless this is `"budgeted"`. */
+  readonly delivery?: TestDelivery;
 }
 
 /** Captured result from one shared CLI command. */
@@ -220,7 +226,14 @@ class SharedCliProcess implements CliCommandSession {
   }
 
   run(request: CliCommandRequest): Promise<CliCommandResult> {
-    const result = this.#queue.then(() => this.#invoke(request));
+    const selected =
+      request.delivery === "budgeted"
+        ? request
+        : {
+            ...request,
+            arguments: completeEvidenceCliArguments(request.arguments),
+          };
+    const result = this.#queue.then(() => this.#invoke(selected));
     this.#queue = result.then(
       () => undefined,
       () => undefined,

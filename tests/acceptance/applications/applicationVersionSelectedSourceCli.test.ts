@@ -6,10 +6,6 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import {
-  COMPLETE_DETAIL,
-  completeApplicationAnalysis,
-} from "../../support/completeDetail.js";
 
 cliTest(
   "keeps unexamined identical sources unknown in both comparison directions",
@@ -28,10 +24,13 @@ cliTest(
       expect(result.exitCode, result.stderr).toBe(0);
       return parseEvidence(result.json);
     };
-    const complete = await run(completeApplicationAnalysis(root));
+    const complete = await run([
+      "analyze-javascript-application",
+      root,
+      "--json",
+    ]);
     const selected = await run([
       "analyze-javascript-application",
-      ...COMPLETE_DETAIL,
       root,
       "--source-path",
       "main.js",

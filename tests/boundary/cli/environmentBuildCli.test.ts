@@ -14,7 +14,6 @@ import { environmentBuildReportSchema } from "../../../src/domain/environmentBun
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const RULES = [
   "after-uid-literal",
@@ -160,7 +159,6 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
         selectedCapture,
         "har",
         "--format",

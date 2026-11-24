@@ -18,7 +18,6 @@ import { writeOrderedZip } from "../fixtures/artifactEntryOrder.js";
 import { ZIP_PACKAGE_FORMATS } from "../../src/domain/zipPackageFormat.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { buildBinary } from "plist";
-import { completeArguments } from "../support/completeDetail.js";
 
 cliTest(
   "refuses extraction after an already open plist is replaced through MCP",
@@ -122,7 +121,7 @@ cliTest(
     });
     await writeFile(path, bytes);
     const cliResult = await cli.run({
-      arguments: completeArguments("inspect-artifact", path),
+      arguments: ["inspect-artifact", path, "--json"],
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const inventory = inventoryFrom(cliResult.json);
@@ -182,7 +181,7 @@ cliTest(
     const { call } = await connectLocalToolsMcp();
     const opened = await call("open_binary", { path });
     if (opened.isError) throw new Error(JSON.stringify(opened));
-    const inspected = await call("inspect_artifact", { detail: "complete" });
+    const inspected = await call("inspect_artifact", {});
     expect(
       inspected.isError,
       JSON.stringify(inspected.structuredContent),
@@ -278,7 +277,7 @@ cliTest(
     });
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: completeArguments("inspect-artifact", path),
+      arguments: ["inspect-artifact", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const inventory = inventoryFrom(result.json);
@@ -336,7 +335,7 @@ cliTest(
       const path = join(root, `${name}.nes`);
       await writeFile(path, bytes);
       const refused = await cli.run({
-        arguments: completeArguments("inspect-artifact", path),
+        arguments: ["inspect-artifact", path, "--json"],
       });
       expect(refused.exitCode).not.toBe(0);
       expect(JSON.stringify(refused.json)).toContain(reason);
@@ -344,7 +343,7 @@ cliTest(
       expect(switched.isError).toBe(true);
       expect(JSON.stringify(parseMcpToolError(switched))).toContain(reason);
     }
-    const retained = await call("inspect_artifact", { detail: "complete" });
+    const retained = await call("inspect_artifact", {});
     expect(
       retained.isError,
       JSON.stringify(retained.structuredContent),

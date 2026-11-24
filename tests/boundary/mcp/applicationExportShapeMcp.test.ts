@@ -175,7 +175,7 @@ describe("application workflow MCP parity", () => {
       const selectedPath = `${leftRoot}${sep}.`;
       const selectedApplication = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: { detail: "complete", input_path: selectedPath },
+        arguments: { input_path: selectedPath },
       });
       expect(selectedApplication.isError).not.toBe(true);
       const selectedEvidence = parseEvidence(

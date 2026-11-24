@@ -8,7 +8,6 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "keeps dependency manifests out of application roots and Electron entries through %s",
@@ -45,14 +44,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     let document: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
-        arguments: completeApplicationAnalysis(root),
+        arguments: ["analyze-javascript-application", root, "--json"],
       });
       expect(response.exitCode).toBe(0);
       document = response.json;
     } else {
       const { call } = await connectLocalToolsMcp();
       const response = await call("analyze_javascript_application", {
-        detail: "complete",
         input_path: root,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
@@ -97,7 +95,7 @@ cliTest(
     );
     await writeFile(join(dependency, "index.js"), "module.exports = {};");
     const response = await cli.run({
-      arguments: completeApplicationAnalysis(root),
+      arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(response.exitCode, response.stderr).toBe(0);
     const { graph } = z

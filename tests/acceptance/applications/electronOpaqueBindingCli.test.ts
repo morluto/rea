@@ -8,7 +8,6 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "retains only the pre-eval Electron window through %s",
@@ -34,7 +33,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       const response = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          ...COMPLETE_DETAIL,
           root,
           "--json",
           "--max-heap-mb",
@@ -48,7 +46,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     } else {
       const { call } = await connectLocalToolsMcp();
       const response = await call("analyze_javascript_application", {
-        detail: "complete",
         input_path: root,
         max_heap_mb: 128,
         analysis_timeout_ms: 10000,

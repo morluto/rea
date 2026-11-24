@@ -4,7 +4,6 @@ import { parseConfig } from "../../../src/config/parseConfig.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
 import { IdaProvider } from "../../../src/ida/IdaProvider.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 workspaceCliTest(
   "returns an unready IDA registration's repair for an explicit --provider selection",
@@ -24,15 +23,7 @@ workspaceCliTest(
       throw new Error("A missing registration must be unavailable");
 
     const result = await cli.run({
-      arguments: [
-        "decompile",
-        ...COMPLETE_DETAIL,
-        target,
-        "main",
-        "--provider",
-        "ida",
-        "--json",
-      ],
+      arguments: ["decompile", target, "main", "--provider", "ida", "--json"],
       environment: {
         ...workspace.environment,
         REA_IDA_MCP_CONFIG: registration,

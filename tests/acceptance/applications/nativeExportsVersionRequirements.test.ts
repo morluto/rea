@@ -6,7 +6,6 @@ import { nativeExportsSchema } from "../../../src/domain/native/nativeExports.js
 import { elfExportImage } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeArguments } from "../../support/completeDetail.js";
 
 const contract = toolContract("inspect_native_exports");
 
@@ -24,7 +23,7 @@ cliTest(
       }),
     );
     const result = await cli.run({
-      arguments: completeArguments("inspect-native-exports", path),
+      arguments: ["inspect-native-exports", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = nativeExportsSchema.parse(
@@ -54,7 +53,7 @@ cliTest(
     await writeFile(path, bytes);
 
     const result = await cli.run({
-      arguments: completeArguments("inspect-native-exports", path),
+      arguments: ["inspect-native-exports", path, "--json"],
     });
     expect(result.exitCode).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
@@ -89,7 +88,7 @@ cliTest(
     );
 
     const result = await cli.run({
-      arguments: completeArguments("inspect-native-exports", path),
+      arguments: ["inspect-native-exports", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);

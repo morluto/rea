@@ -17,7 +17,6 @@ import { protobufHar } from "../../fixtures/protobufCapture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const sha256 = (bytes: string | Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -161,7 +160,6 @@ cliTest.for([
         const output = await cli.run({
           arguments: [
             "inspect-web-network-capture",
-            ...COMPLETE_DETAIL,
             capture,
             "har",
             "--record",
@@ -177,7 +175,6 @@ cliTest.for([
         expect(output.json, variant).toMatchObject(expected);
       }
       const response = await call("inspect_web_network_capture", {
-        detail: "complete",
         capture_path: capture,
         format: "har",
         record_ordinals: [0],
@@ -244,7 +241,6 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
         capture,
         "har",
         "--record",
@@ -302,7 +298,6 @@ cliTest(
     expect(decoded?.fields).toHaveLength(5);
     const call = await cli.sharedMcpCall!();
     const response = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: capture,
       format: "har",
       record_ordinals: [0],

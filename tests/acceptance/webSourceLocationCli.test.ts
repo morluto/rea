@@ -12,7 +12,6 @@ import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const silentCliEnv = { REA_LOG_LEVEL: "silent" } as const;
 const defaultMcp = lazyLocalToolsMcp();
@@ -27,7 +26,6 @@ const traceCliArgs = (
   column = 0,
 ) => [
   "trace-web-source-location",
-  ...COMPLETE_DETAIL,
   manifest,
   "0",
   path,
@@ -253,7 +251,6 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "trace-web-source-location",
-        ...COMPLETE_DETAIL,
         process.platform === "win32"
           ? "manifest.json"
           : "lexical/link/../manifest.json",
@@ -333,7 +330,6 @@ cliTest(
     const pastColumn = await client.callTool({
       name: "trace_web_source_location",
       arguments: {
-        detail: "complete",
         manifest_path: manifest,
         script_index: 0,
         source_map: { path: map, url: fixture.sourceMap.url },
@@ -344,7 +340,6 @@ cliTest(
     const invalid = await cli.run({
       arguments: [
         "trace-web-source-location",
-        ...COMPLETE_DETAIL,
         manifest,
         "0",
         map,
@@ -402,7 +397,6 @@ cliTest(
       const path = join(root, `nested-${index}.map`);
       await writeFile(path, text);
       const response = await call("trace_web_source_location", {
-        detail: "complete",
         manifest_path: manifest,
         script_index: 0,
         source_map: { path, url: fixture.sourceMap.url },
@@ -559,7 +553,6 @@ cliTest(
         }),
       );
       const response = await call("trace_web_source_location", {
-        detail: "complete",
         manifest_path: manifest,
         script_index: 0,
         source_map: { path, url: fixture.sourceMap.url },
@@ -677,7 +670,6 @@ cliTest(
     });
     const { call } = await browserUnconfiguredMcp();
     const response = await call("trace_web_source_location", {
-      detail: "complete",
       manifest_path: manifest,
       script_index: 0,
       source_map: { path: map, url },
@@ -710,7 +702,6 @@ cliTest(
     await writeFile(map, fixture.sourceMap.text);
     const args = [
       "trace-web-source-location",
-      ...COMPLETE_DETAIL,
       manifest,
       "0",
       map,

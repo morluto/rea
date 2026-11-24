@@ -53,11 +53,7 @@ cliTest(
       const report = flutterResultSchemas.inspect_dart_aot.parse(
         evidence.normalized_result,
       );
-      const response = await call("inspect_dart_aot", {
-        detail: "complete",
-        path,
-        abi: "x86_64",
-      });
+      const response = await call("inspect_dart_aot", { path, abi: "x86_64" });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       const digest = createHash("sha256").update(image).digest("hex");
@@ -169,10 +165,7 @@ cliTest(
       const evidence = toolContract("inspect_dart_aot").outputSchema.parse(
         cliReply.json,
       );
-      const reply = await call("inspect_dart_aot", {
-        detail: "complete",
-        path,
-      });
+      const reply = await call("inspect_dart_aot", { path });
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       expect(
         assertions.validate(tool.outputSchema, reply.structuredContent),
@@ -353,10 +346,7 @@ cliTest(
       evidence.normalized_result,
     );
     const { call } = await connectLocalToolsMcp();
-    const response = await call("inspect_dart_aot", {
-      detail: "complete",
-      path,
-    });
+    const response = await call("inspect_dart_aot", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expect(parseEvidence(response.structuredContent).normalized_result).toEqual(
       evidence.normalized_result,

@@ -7,7 +7,6 @@ import { analysisViewResultSchema } from "../../../src/domain/analysisView/analy
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "pages only module units for a CommonJS file that exports symbols",
@@ -25,13 +24,7 @@ cliTest(
       ].join("\n"),
     );
     const analyzed = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
-        root,
-        "--format",
-        "json",
-      ],
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
     });
     expect(analyzed.exitCode, analyzed.stdout + analyzed.stderr).toBe(0);
     const evidence = parseEvidence(analyzed.json);

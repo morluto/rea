@@ -27,10 +27,6 @@ import {
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
-import {
-  COMPLETE_DETAIL,
-  completeArguments,
-} from "../../support/completeDetail.js";
 
 const memberFixture = (): Buffer =>
   buildManagedPeFixture({
@@ -224,7 +220,7 @@ cliTest(
       }),
     );
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-managed-members", path),
+      arguments: ["inspect-managed-members", path, "--json"],
     });
     expect(inspected.exitCode).toBe(0);
     const evidence = parseEvidence(inspected.json);
@@ -251,7 +247,6 @@ cliTest(
     const typeNames = ["Fixture.Program", "Missing.Type"];
     const arguments_ = [
       "inspect-managed-members",
-      ...COMPLETE_DETAIL,
       path,
       ...typeNames.flatMap((type) => ["--type", type]),
       "--json",
@@ -264,7 +259,8 @@ cliTest(
     const explicit = await cli.run({
       arguments: [
         ...arguments_,
-        ...COMPLETE_DETAIL,
+        "--detail",
+        "complete",
         "--evidence_output",
         completeBundlePath,
       ],
@@ -405,7 +401,7 @@ cliTest(
     const bytes = buildManagedPeFixture();
     await writeFile(path, bytes);
     const complete = await cli.run({
-      arguments: completeArguments("inspect-managed-members", path),
+      arguments: ["inspect-managed-members", path, "--json"],
     });
     expect(complete.exitCode).toBe(0);
     const parent = parseEvidence(complete.json);
@@ -451,7 +447,7 @@ cliTest(
     const path = join(root, "absent.dll");
     const destination = join(root, "bundle.json");
     const complete = await cli.run({
-      arguments: completeArguments("inspect-managed-members", path),
+      arguments: ["inspect-managed-members", path, "--json"],
     });
     const summary = await cli.run({
       arguments: [
@@ -527,7 +523,7 @@ cliTest(
     await writeFile(path, buildManagedPeFixture({ ilBody: body }));
 
     const result = await cli.run({
-      arguments: completeArguments("inspect-managed-members", path),
+      arguments: ["inspect-managed-members", path, "--json"],
     });
     expect(result.exitCode).toBe(0);
     const evidence = parseEvidence(result.json);
@@ -631,7 +627,6 @@ cliTest.for(managedCancellation)(
     const reply = await cli.run({
       arguments: [
         "inspect-managed-members",
-        ...COMPLETE_DETAIL,
         target,
         "--type",
         "Fixture.Program",

@@ -4,7 +4,6 @@ import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { nodeSeaOverlappingMachO } from "../../fixtures/nodeSeaOverlapping.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest(
   "reports excessive SEA duplicate verification through the public CLI",
@@ -14,7 +13,7 @@ cliTest(
     const { bytes } = nodeSeaOverlappingMachO();
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: completeArguments("inspect-artifact", path),
+      arguments: ["inspect-artifact", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

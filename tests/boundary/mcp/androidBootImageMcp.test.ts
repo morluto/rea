@@ -47,7 +47,7 @@ it("retains Android boot image facts through compiled MCP", async () => {
         architecture: null,
       },
     });
-    const reply = await call("inspect_artifact", { detail: "complete" });
+    const reply = await call("inspect_artifact", {});
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(
       parseEvidence(reply.structuredContent).normalized_result,
@@ -126,9 +126,7 @@ it("keeps Android parser refusal kinds and recovers through compiled MCP", async
       await writeFile(path, fixture.bytes);
       const opened = await call("open_binary", { path });
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-      const { error } = parseMcpToolError(
-        await call("inspect_artifact", { detail: "complete" }),
-      );
+      const { error } = parseMcpToolError(await call("inspect_artifact", {}));
       expect(error).toMatchObject({
         code: fixture.code,
         category: fixture.category,
@@ -146,9 +144,7 @@ it("keeps Android parser refusal kinds and recovers through compiled MCP", async
     const path = join(root, "valid.img");
     await writeFile(path, buildBootImage({ version: 0 }));
     expect((await call("open_binary", { path })).isError).not.toBe(true);
-    expect(
-      (await call("inspect_artifact", { detail: "complete" })).isError,
-    ).not.toBe(true);
+    expect((await call("inspect_artifact", {})).isError).not.toBe(true);
   } finally {
     await call("close_binary", {});
   }

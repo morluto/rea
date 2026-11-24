@@ -11,7 +11,6 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "omits HAR extension payloads from capture previews while retaining complete records",
@@ -48,13 +47,7 @@ cliTest(
       }),
     );
     const capture = await cli.run({
-      arguments: [
-        "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
-        path,
-        "har",
-        "--json",
-      ],
+      arguments: ["inspect-web-network-capture", path, "har", "--json"],
     });
     expect(capture.exitCode, capture.stderr).toBe(0);
     const evidence = parseEvidence(capture.json);
@@ -167,7 +160,6 @@ cliTest(
       const invocation = {
         arguments: [
           "inspect-web-network-capture",
-          ...COMPLETE_DETAIL,
           path,
           "har",
           "--record",
@@ -197,7 +189,6 @@ cliTest(
       ).toMatchObject(expected);
       expect(output.json).not.toHaveProperty("evidence_id");
       const reply = await call("inspect_web_network_capture", {
-        detail: "complete",
         capture_path: path,
         format: "har",
         record_ordinals: [0],
@@ -256,13 +247,7 @@ cliTest(
     const path = join(root, "bodies.har");
     await writeFile(path, text);
     const output = await cli.run({
-      arguments: [
-        "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
-        path,
-        "har",
-        "--json",
-      ],
+      arguments: ["inspect-web-network-capture", path, "har", "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const evidence = parseEvidence(output.json);
@@ -280,7 +265,6 @@ cliTest(
     expect(capture.records[2]?.binary_fields).toEqual([]);
     const { call } = await connectLocalToolsMcp();
     const imported = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "har",
     });
@@ -348,7 +332,6 @@ cliTest(
     const capture = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
         path,
         "har",
         "--capture-timeout-ms",

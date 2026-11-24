@@ -6,7 +6,6 @@ import { expect } from "vitest";
 import { historicalHar } from "../../fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 /** A HAR whose entries copy the fixture entry with each request URL. */
 const harWithRequestUrls = (urls: readonly string[]) => {
@@ -54,13 +53,7 @@ cliTest(
     const urls = [rewrittenByWhatwg, ...BROWSER_SERIALIZED];
     const har = await writeHar(urls);
     const inspected = await cli.run({
-      arguments: [
-        "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
-        har,
-        "har",
-        "--json",
-      ],
+      arguments: ["inspect-web-network-capture", har, "har", "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     expect(inspected.json).toMatchObject({
@@ -87,13 +80,7 @@ cliTest(
   async ({ cli }) => {
     const har = await writeHar(["/a|b"]);
     const result = await cli.run({
-      arguments: [
-        "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
-        har,
-        "har",
-        "--json",
-      ],
+      arguments: ["inspect-web-network-capture", har, "har", "--json"],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

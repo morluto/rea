@@ -8,7 +8,6 @@ import { lz4DistanceFixture } from "../../fixtures/lz4Distance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { buildUnityFs } from "../../fixtures/unityfs.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest(
   "preserves a liblz4 long-distance block's bytes and identity through UnityFS CLI inspection and extraction",
@@ -26,7 +25,7 @@ cliTest(
     });
     await writeFile(path, bytes);
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", path),
+      arguments: ["inspect-artifact", path, "--json"],
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const inventory = artifactInspectionResultSchema.parse(

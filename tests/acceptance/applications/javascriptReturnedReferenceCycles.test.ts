@@ -8,7 +8,6 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { findSourceModule } from "../../support/javascriptApplicationFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const verify = (value: unknown) => {
   const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -121,7 +120,6 @@ fetch("/copied-module");`,
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         root,
         "--max-heap-mb",
         "256",
@@ -136,7 +134,6 @@ fetch("/copied-module");`,
 
     const { call } = await connectLocalToolsMcp();
     const analyzed = await call("analyze_javascript_application", {
-      detail: "complete",
       input_path: root,
       max_heap_mb: 256,
       analysis_timeout_ms: 30_000,

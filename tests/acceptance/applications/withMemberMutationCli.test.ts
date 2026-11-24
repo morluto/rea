@@ -7,7 +7,6 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "preserves uncertainty from a member write through with scope",
@@ -35,13 +34,7 @@ module.exports.plain = function readPlain() { return plain.value; };
 `,
     );
     const analysis = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
-        root,
-        "--format",
-        "json",
-      ],
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
     });
     expect(analysis.exitCode, analysis.stderr).toBe(0);
     const application = parseEvidence(analysis.json);

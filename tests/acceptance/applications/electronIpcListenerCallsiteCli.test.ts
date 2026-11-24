@@ -14,7 +14,6 @@ import {
   assertSpawnArgumentsWithinLimit,
   LINUX_4K_SINGLE_ARGUMENT_BYTES,
 } from "../../support/process/spawnArgumentLimit.js";
-import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "counts exposed IPC listener callsites once and retains bridge paths through %s",
@@ -56,13 +55,12 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     let applicationEvidence: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
-        arguments: completeApplicationAnalysis(root),
+        arguments: ["analyze-javascript-application", root, "--json"],
       });
       expect(response.exitCode, response.stderr).toBe(0);
       applicationEvidence = response.json;
     } else {
       const response = await mcp!.call("analyze_javascript_application", {
-        detail: "complete",
         input_path: root,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);

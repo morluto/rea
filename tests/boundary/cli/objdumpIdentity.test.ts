@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "does not attribute a caller-selected command to GNU objdump",
@@ -13,7 +12,6 @@ cliTest(
     const result = await cli.run({
       arguments: [
         "inspect-with-objdump",
-        ...COMPLETE_DETAIL,
         process.execPath,
         "file_headers",
         "--format",
@@ -59,7 +57,6 @@ cliTest(
     const failed = await cli.run({
       arguments: [
         "inspect-with-objdump",
-        ...COMPLETE_DETAIL,
         process.execPath,
         "file_headers",
         "--format",

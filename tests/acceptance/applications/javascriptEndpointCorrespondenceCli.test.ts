@@ -6,7 +6,6 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "keeps unresolved endpoint text separate from an equal exact literal through version comparison",
@@ -21,13 +20,7 @@ cliTest(
       await mkdir(path);
       await writeFile(join(path, "main.js"), source);
       const analyzed = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          ...COMPLETE_DETAIL,
-          path,
-          "--format",
-          "json",
-        ],
+        arguments: ["analyze-javascript-application", path, "--format", "json"],
       });
       expect(analyzed.exitCode, analyzed.stderr).toBe(0);
       applications.push(parseEvidence(analyzed.json));

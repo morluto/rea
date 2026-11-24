@@ -78,10 +78,7 @@ cliTest.skipIf(process.platform !== "linux")(
     });
     const { client, call } = await connectLocalToolsMcp(environment);
     try {
-      const reply = await call("inspect_pcap_capture", {
-        detail: "complete",
-        path,
-      });
+      const reply = await call("inspect_pcap_capture", { path });
       expect(reply.isError).toBe(true);
       const text = reply.content.find((item) => item.type === "text");
       if (text?.type !== "text") throw new Error("Missing MCP error text");

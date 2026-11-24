@@ -28,7 +28,7 @@ it.each(["compact"] as const)(
     let outputRoot: string | undefined;
     try {
       expect((await call("open_binary", { path })).isError).not.toBe(true);
-      const reply = await call("inspect_artifact", { detail: "complete" });
+      const reply = await call("inspect_artifact", {});
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const inspection = artifactInspectionResultSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,
@@ -58,9 +58,7 @@ it.each(["compact"] as const)(
       // Encrypted PC-client packages remain represented without member guesses.
       await writeFile(path, wxapkgEncryptedBytes());
       await call("open_binary", { path });
-      const unknownReply = await call("inspect_artifact", {
-        detail: "complete",
-      });
+      const unknownReply = await call("inspect_artifact", {});
       expect(unknownReply.isError, JSON.stringify(unknownReply)).not.toBe(true);
       const unknown = artifactInspectionResultSchema.parse(
         parseEvidence(unknownReply.structuredContent).normalized_result,

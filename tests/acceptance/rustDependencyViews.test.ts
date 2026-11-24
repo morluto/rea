@@ -23,7 +23,6 @@ import {
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 /** One synthetic cargo-auditable artifact for each supported container. */
 const rustArtifact = (
@@ -337,10 +336,7 @@ cliTest(
         ],
       });
       await writeFile(path, rustArtifact(format, payload));
-      const fullReply = await call("inspect_rust_binary", {
-        detail: "complete",
-        path,
-      });
+      const fullReply = await call("inspect_rust_binary", { path });
       expect(fullReply.isError).not.toBe(true);
       const full = parseEvidence(fullReply.structuredContent);
       const report = rustBinarySchema.parse(full.normalized_result);
@@ -470,10 +466,7 @@ cliTest(
       }),
     );
     const { call } = await connectLocalToolsMcp();
-    const captured = await call("inspect_rust_binary", {
-      detail: "complete",
-      path,
-    });
+    const captured = await call("inspect_rust_binary", { path });
     expect(captured.isError, JSON.stringify(captured.content)).not.toBe(true);
     const full = parseEvidence(captured.structuredContent);
     const explicit = await call("inspect_rust_binary", {
@@ -621,7 +614,7 @@ cliTest(
     for (const args of [
       ["--detail", "summary"],
       ["--view", "{"],
-      [...COMPLETE_DETAIL, "--view", '{"collection":"packages"}'],
+      ["--detail", "complete", "--view", '{"collection":"packages"}'],
     ]) {
       const refused = await cli.run({
         arguments: ["inspect-rust-binary", missing, ...args, "--json"],

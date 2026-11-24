@@ -10,7 +10,6 @@ import {
   type FakeCdpBrowser,
   type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const browsers: FakeCdpBrowser[] = [];
 
@@ -607,7 +606,6 @@ describe("browser CLI capture parity", () => {
       const analyzedInvocation = await cli.run({
         arguments: [
           "analyze-web-bundle",
-          ...COMPLETE_DETAIL,
           browser.endpoint,
           "allowed-page",
           ...scopeArgs,

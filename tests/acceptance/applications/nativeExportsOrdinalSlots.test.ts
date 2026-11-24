@@ -7,7 +7,6 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { peExportImage } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest(
   "reports the last PE ordinal when an unused EAT slot follows it",
@@ -24,7 +23,7 @@ cliTest(
     );
 
     const result = await cli.run({
-      arguments: completeArguments("inspect-native-exports", path),
+      arguments: ["inspect-native-exports", path, "--json"],
     });
 
     expect(result.exitCode, result.stderr).toBe(0);
@@ -88,17 +87,14 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       let document: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
-          arguments: completeArguments("inspect-native-exports", path),
+          arguments: ["inspect-native-exports", path, "--json"],
         });
         expect(response.exitCode, response.stderr).toBe(0);
         document = toolContract("inspect_native_exports").outputSchema.parse(
           response.json,
         );
       } else {
-        const response = await mcp!.call("inspect_native_exports", {
-          detail: "complete",
-          path,
-        });
+        const response = await mcp!.call("inspect_native_exports", { path });
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
         document = response.structuredContent;
       }
@@ -149,13 +145,10 @@ cliTest.for([32, 64] as const)(
       bytes.writeUInt32LE(size, virtualSizeField);
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: completeArguments("inspect-native-exports", path),
+        arguments: ["inspect-native-exports", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const response = await mcp.call("inspect_native_exports", {
-        detail: "complete",
-        path,
-      });
+      const response = await mcp.call("inspect_native_exports", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       for (const value of [result.json, response.structuredContent]) {
         const report = nativeExportsSchema.parse(

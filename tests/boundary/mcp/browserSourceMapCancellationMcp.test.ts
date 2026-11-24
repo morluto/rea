@@ -40,7 +40,6 @@ it("retains completed source maps through MCP cancellation for later Evidence re
     {
       name: "analyze_web_bundle",
       arguments: {
-        detail: "complete",
         cdp_endpoint: browser.endpoint,
         allowed_origins: [browser.allowedOrigin],
         target_id: "allowed-page",

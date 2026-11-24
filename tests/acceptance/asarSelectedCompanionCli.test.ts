@@ -18,7 +18,6 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import { completeArguments } from "../support/completeDetail.js";
 
 cliTest.skipIf(process.platform === "win32")(
   "public ASAR inspection and extraction use the selected alias companion",
@@ -42,7 +41,7 @@ cliTest.skipIf(process.platform === "win32")(
     expect(extractFile(selected, "native.node").equals(bytes)).toBe(true);
 
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", selected),
+      arguments: ["inspect-artifact", selected, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     expect(parseEvidence(inspected.json).subject?.local_path).toBe(selected);

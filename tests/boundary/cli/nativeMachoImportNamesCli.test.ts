@@ -5,7 +5,6 @@ import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeArguments } from "../../support/completeDetail.js";
 
 describe.skipIf(process.platform !== "darwin")(
   "native Mach-O CLI chained import names",
@@ -46,7 +45,7 @@ describe.skipIf(process.platform !== "darwin")(
           /__Z3inli {2}\(from <weak-def-coalesce>\)/u,
         );
         const result = await cli.run({
-          arguments: completeArguments("inspect-macho", library),
+          arguments: ["inspect-macho", library, "--json"],
           environment: {
             REA_LOG_LEVEL: "silent",
             REA_ANALYSIS_PROVIDER: "auto",

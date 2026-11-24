@@ -14,7 +14,6 @@ import {
 } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest.for([
   { format: "directory", command: "analyze" },
@@ -275,7 +274,6 @@ cliTest.for([
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         directory,
         "--source-paths-json",
         value,
@@ -338,7 +336,6 @@ cliTest(
       const response = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          ...COMPLETE_DETAIL,
           archive,
           "--source-path",
           "main.mjs",
@@ -384,7 +381,6 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         archive,
         "--format",
         "json",

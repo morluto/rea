@@ -15,10 +15,6 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import {
-  COMPLETE_DETAIL,
-  completeArguments,
-} from "../support/completeDetail.js";
 
 const paddingDiagnostic = /FDT structure padding contains/iu;
 
@@ -43,7 +39,7 @@ cliTest(
     const inspect = async (bytes: Buffer) => {
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: completeArguments("inspect-devicetree", path),
+        arguments: ["inspect-devicetree", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       return toolContract("inspect_devicetree").outputSchema.parse(result.json);
@@ -67,10 +63,7 @@ cliTest(
     });
 
     const { call } = await connectLocalToolsMcp();
-    const reply = await call("inspect_devicetree", {
-      detail: "complete",
-      path,
-    });
+    const reply = await call("inspect_devicetree", { path });
     expect(reply.isError).not.toBe(true);
     const mcp = toolContract("inspect_devicetree").outputSchema.parse(
       reply.structuredContent,
@@ -90,9 +83,7 @@ cliTest(
       images: [{ name: "kernel", data: Buffer.from([1, 2, 3, 4]) }],
     });
     const inspect = () =>
-      cli.run({
-        arguments: completeArguments("inspect-artifact", path),
-      });
+      cli.run({ arguments: ["inspect-artifact", path, "--json"] });
 
     await writeFile(path, bytes);
     const control = await inspect();
@@ -184,7 +175,7 @@ cliTest(
     const bytes = devicetreeFixture();
     await writeFile(path, bytes);
     const original = await cli.run({
-      arguments: completeArguments("inspect-devicetree", path),
+      arguments: ["inspect-devicetree", path, "--json"],
     });
     expect(original.exitCode, original.stderr).toBe(0);
     const evidence = toolContract("inspect_devicetree").outputSchema.parse(
@@ -274,7 +265,6 @@ cliTest("inspects a relative DTB and preserves the source", async ({ cli }) => {
   const result = await cli.run({
     arguments: [
       "inspect-devicetree",
-      ...COMPLETE_DETAIL,
       "board.dtb",
       "--max-file-bytes",
       "4096",
@@ -306,7 +296,7 @@ for (const version of [16, 17] as const) {
       const bytes = emptyStringsAtReservationBoundaryFixture(version);
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: completeArguments("inspect-devicetree", path),
+        arguments: ["inspect-devicetree", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const report = toolContract("inspect_devicetree").outputSchema.parse(
@@ -361,7 +351,7 @@ cliTest(
       }),
     );
     const result = await cli.run({
-      arguments: completeArguments("inspect-devicetree", path),
+      arguments: ["inspect-devicetree", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = toolContract("inspect_devicetree").outputSchema.parse(
@@ -476,13 +466,7 @@ for (const [name, build, flags, code] of [
     const path = join(root, "board.dtb");
     await writeFile(path, build());
     const result = await cli.run({
-      arguments: [
-        "inspect-devicetree",
-        ...COMPLETE_DETAIL,
-        path,
-        ...flags,
-        "--json",
-      ],
+      arguments: ["inspect-devicetree", path, ...flags, "--json"],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({ code });

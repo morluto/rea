@@ -27,7 +27,6 @@ import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 type CaptureRequest = z.input<typeof inspectWebNetworkCaptureInputSchema>;
 
@@ -94,7 +93,6 @@ captureTest(
       ),
     );
     const textExcluded = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: textPath,
       format: "har",
       record_ordinals: [0],
@@ -129,7 +127,6 @@ captureTest(
       ),
     );
     const credential = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: credentialPath,
       format: "har",
       record_ordinals: [0],
@@ -214,7 +211,6 @@ captureTest(
     await writeFile(capacityPath, protobufHar(protobufFrame(repeated)));
     const replyBudget = 8 * 1024 * 1024;
     const capacity = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: capacityPath,
       format: "har",
       max_reply_bytes: replyBudget,
@@ -302,7 +298,6 @@ captureTest(
       const path = join(root, `credential-${name}.har`);
       await writeFile(path, protobufHar(body, mimeType));
       const response = await call("inspect_web_network_capture", {
-        detail: "complete",
         capture_path: path,
         format: "har",
         record_ordinals: [0],
@@ -435,13 +430,7 @@ captureTest(
     await writeFile(capture, protobufHar());
     await writeFile(descriptor, protobufCaptureDescriptor());
     const original = await cli.run({
-      arguments: [
-        "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
-        capture,
-        "har",
-        "--json",
-      ],
+      arguments: ["inspect-web-network-capture", capture, "har", "--json"],
     });
     expect(original.exitCode, original.stderr).toBe(0);
     expect(
@@ -538,7 +527,6 @@ captureTest(
     const cliResult = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
         capture,
         "har",
         "--record",
@@ -662,7 +650,6 @@ captureTest.for(
     const response = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
         path,
         "har",
         ...ordinals.flatMap((ordinal) => ["--record", String(ordinal)]),
@@ -716,7 +703,6 @@ captureTest.for(
         ]);
     }
     const reply = await mcp.call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "har",
       record_ordinals: ordinals,
@@ -735,7 +721,6 @@ captureTest(
     const path = join(root, "capture.har");
     await writeFile(path, protobufHar());
     const reply = await mcp.call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "har",
       record_ordinals: [0],

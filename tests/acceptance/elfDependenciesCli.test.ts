@@ -6,10 +6,6 @@ import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/bi
 import { elfDependencyFixture } from "../../src/native/elf/ElfDependencies.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import {
-  COMPLETE_DETAIL,
-  completeArguments,
-} from "../support/completeDetail.js";
 
 const dependenciesContract = contractNamed(
   BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
@@ -23,7 +19,7 @@ cliTest(
     const path = join(root, "program");
     await writeFile(path, elfDependencyFixture());
     const result = await cli.run({
-      arguments: completeArguments("inspect-elf-dependencies", path),
+      arguments: ["inspect-elf-dependencies", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = dependenciesContract.outputSchema.parse(result.json);
@@ -31,7 +27,6 @@ cliTest(
     const selected = await cli.run({
       arguments: [
         "inspect-elf-dependencies",
-        ...COMPLETE_DETAIL,
         path,
         "--max-needed",
         "1024",
@@ -86,7 +81,7 @@ cliTest(
       }),
     );
     const result = await cli.run({
-      arguments: completeArguments("inspect-elf-dependencies", path),
+      arguments: ["inspect-elf-dependencies", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const { normalized_result: report } =
@@ -118,12 +113,7 @@ cliTest(
       elfDependencyFixture({ omitDynamic: true, interpreter: null }),
     );
     const result = await cli.run({
-      arguments: [
-        "inspect-elf-dependencies",
-        ...COMPLETE_DETAIL,
-        "program",
-        "--json",
-      ],
+      arguments: ["inspect-elf-dependencies", "program", "--json"],
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -147,7 +137,7 @@ cliTest(
     const path = join(root, "module.o");
     await writeFile(path, elfDependencyFixture({ type: 1 }));
     const result = await cli.run({
-      arguments: completeArguments("inspect-elf-dependencies", path),
+      arguments: ["inspect-elf-dependencies", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
     expect(JSON.stringify(result.json)).toContain("inspect_kernel_module");
@@ -184,7 +174,7 @@ for (const tableAvailable of [true, false]) {
       await writeFile(path, image);
 
       const result = await cli.run({
-        arguments: completeArguments("inspect-elf-dependencies", path),
+        arguments: ["inspect-elf-dependencies", path, "--json"],
       });
       expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
       const report = dependenciesContract.outputSchema.parse(
@@ -253,7 +243,7 @@ cliTest(
       elfDependencyFixture({ stripped: true, versymZeroFillOffset: 7 }),
     );
     const result = await cli.run({
-      arguments: completeArguments("inspect-elf-dependencies", path),
+      arguments: ["inspect-elf-dependencies", path, "--json"],
     });
     expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
     const { normalized_result: report } =
@@ -302,7 +292,7 @@ cliTest(
       }),
     );
     const result = await cli.run({
-      arguments: completeArguments("inspect-elf-dependencies", path),
+      arguments: ["inspect-elf-dependencies", path, "--json"],
     });
     expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
     const report = dependenciesContract.outputSchema.parse(
@@ -341,7 +331,7 @@ cliTest(
       }),
     );
     const truncatedResult = await cli.run({
-      arguments: completeArguments("inspect-elf-dependencies", truncatedPath),
+      arguments: ["inspect-elf-dependencies", truncatedPath, "--json"],
     });
     expect(truncatedResult.exitCode, JSON.stringify(truncatedResult.json)).toBe(
       0,
@@ -372,7 +362,7 @@ cliTest(
       }),
     );
     const pastEofResult = await cli.run({
-      arguments: completeArguments("inspect-elf-dependencies", pastEofPath),
+      arguments: ["inspect-elf-dependencies", pastEofPath, "--json"],
     });
     expect(pastEofResult.exitCode, JSON.stringify(pastEofResult.json)).toBe(0);
     const pastEof = dependenciesContract.outputSchema.parse(

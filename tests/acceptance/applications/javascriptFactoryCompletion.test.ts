@@ -9,7 +9,6 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const scenarios = [
   {
@@ -377,7 +376,6 @@ cliTest(
       )
         expect(runtime).toEqual([["test:copy"], []]);
       const response = await call("analyze_javascript_application", {
-        detail: "complete",
         input_path: directory,
         format: "directory",
       });
@@ -406,7 +404,6 @@ cliTest(
         const analyzed = await cli.run({
           arguments: [
             "analyze-javascript-application",
-            ...COMPLETE_DETAIL,
             directory,
             "--artifact-format",
             "directory",
@@ -461,7 +458,6 @@ cliTest(
       await writeFile(join(directory, "package.json"), '{"type":"commonjs"}');
       await writeFile(join(directory, "main.js"), source);
       const response = await call("analyze_javascript_application", {
-        detail: "complete",
         input_path: directory,
         format: "directory",
       });
@@ -491,7 +487,6 @@ cliTest(
       const analyzed = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          ...COMPLETE_DETAIL,
           directory,
           "--artifact-format",
           "directory",

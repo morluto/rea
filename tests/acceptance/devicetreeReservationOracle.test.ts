@@ -9,7 +9,6 @@ import { devicetreeFixture } from "../../src/domain/firmware/devicetree.fixture.
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import { completeArguments } from "../support/completeDetail.js";
 
 const devicetreeContract = (() => {
   const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
@@ -79,7 +78,7 @@ cliTest(
       const bytes = carrier(sample.version, sample.table_hex);
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: completeArguments("inspect-devicetree", path),
+        arguments: ["inspect-devicetree", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = devicetreeContract.outputSchema.parse(result.json);
@@ -100,10 +99,7 @@ cliTest(
       );
       expect(report.coverage.status).toBe("complete");
       if (sample.version === 17) {
-        const response = await call("inspect_devicetree", {
-          detail: "complete",
-          path,
-        });
+        const response = await call("inspect_devicetree", { path });
         expect(response.isError).not.toBe(true);
         const mcp = devicetreeContract.outputSchema.parse(
           response.structuredContent,

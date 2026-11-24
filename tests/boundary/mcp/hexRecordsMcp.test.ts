@@ -82,9 +82,7 @@ it("retains and extracts a high-address S28 region and projects a reserved-recor
     await writeFile(invalidPath, "S208FEDCBADEADBEEF2B\nS4030000FC\n");
     const invalidTarget = await call("open_binary", { path: invalidPath });
     expect(invalidTarget.isError, JSON.stringify(invalidTarget)).not.toBe(true);
-    const invalid = parseMcpToolError(
-      await call("inspect_artifact", { detail: "complete" }),
-    );
+    const invalid = parseMcpToolError(await call("inspect_artifact", {}));
     expect(invalid.error).toMatchObject({
       code: "artifact_operation_failed",
       details: { operation: "inspect_artifact", reason: "format" },

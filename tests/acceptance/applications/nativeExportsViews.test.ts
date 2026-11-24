@@ -14,7 +14,6 @@ import {
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeArguments } from "../../support/completeDetail.js";
 
 const exportsContract = toolContract("inspect_native_exports");
 const viewContract = toolContract("inspect_analysis_view");
@@ -43,7 +42,7 @@ cliTest.for(["pe", "elf"] as const)(
     await writeFile(path, bytes);
     const run = cli.run.bind(cli);
     const complete = await run({
-      arguments: completeArguments("inspect-native-exports", path),
+      arguments: ["inspect-native-exports", path, "--json"],
     });
     expect(complete.exitCode, complete.stderr).toBe(0);
     const parent = exportsContract.outputSchema.parse(complete.json);

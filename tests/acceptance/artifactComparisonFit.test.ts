@@ -76,7 +76,7 @@ it("compares FIT declarations while preserving layout independence and unknowns"
     );
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const response = await call("inspect_artifact", { detail: "complete" });
+    const response = await call("inspect_artifact", {});
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     return parseEvidence(response.structuredContent);
   };

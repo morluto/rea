@@ -116,7 +116,7 @@ it.each(["compact"] as const)(
         partition_table: { flash_address: 0x8000, method: "default" },
       });
       // The summary view gives each image's summary; complete keeps segments.
-      const complete = await call("inspect_artifact", { detail: "complete" });
+      const complete = await call("inspect_artifact", {});
       expect(complete.isError, JSON.stringify(complete)).not.toBe(true);
       const { facts } = completeBootloaderSchema.parse(
         artifactInventoryResultSchema
@@ -259,7 +259,7 @@ it("summarizes a populated app slot and an erased one, and retains their full fa
     new Set(ota0?.load_ranges.map(({ classification }) => classification)),
   ).toEqual(new Set(["mapped", "loaded"]));
   // The summary points at the inventory Evidence, which keeps full facts.
-  const complete = await call("inspect_artifact", { detail: "complete" });
+  const complete = await call("inspect_artifact", {});
   expect(complete.isError, JSON.stringify(complete)).not.toBe(true);
   const inventory = artifactInspectionResultSchema.parse(
     parseEvidence(complete.structuredContent).normalized_result,

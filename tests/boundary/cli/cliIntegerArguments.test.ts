@@ -5,7 +5,6 @@ import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type CliResult } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const SESSION_ID = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
 const NON_INTEGER_TEXT = [
@@ -53,7 +52,6 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "inspect-android-method",
-          ...COMPLETE_DETAIL,
           "/nonexistent/missing.apk",
           "com.example.Main",
           "run",
@@ -72,7 +70,6 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "inspect-android-method",
-          ...COMPLETE_DETAIL,
           "/nonexistent/missing.apk",
           "com.example.Main",
           "run",
@@ -114,7 +111,6 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "trace-web-source-location",
-          ...COMPLETE_DETAIL,
           "/nonexistent/manifest.json",
           "0",
           "/nonexistent/app.js.map",
@@ -179,7 +175,6 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "inspect-web-network-capture",
-          ...COMPLETE_DETAIL,
           "/nonexistent/capture.qlog",
           "qlog",
           "--record",
@@ -210,7 +205,6 @@ describe("byte-entropy window options", () => {
         const result = await cli.run({
           arguments: [
             "inspect-byte-entropy",
-            ...COMPLETE_DETAIL,
             await entropySample(),
             `${flag}=${value}`,
             "--json",
@@ -228,13 +222,7 @@ describe("byte-entropy window options", () => {
       const path = await entropySample();
       const window = async (...flags: string[]): Promise<unknown> => {
         const result = await cli.run({
-          arguments: [
-            "inspect-byte-entropy",
-            ...COMPLETE_DETAIL,
-            path,
-            ...flags,
-            "--json",
-          ],
+          arguments: ["inspect-byte-entropy", path, ...flags, "--json"],
         });
         expect(result.exitCode, result.stdout).toBe(0);
         const { normalized_result: report } = JSON.parse(result.stdout) as {

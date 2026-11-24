@@ -7,7 +7,6 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "preserves exact empty events and unresolved property queries through public Evidence",
@@ -21,7 +20,6 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         root,
         "--source-path",
         "main.cjs",
@@ -118,13 +116,7 @@ cliTest(
       "function parse(raw) { const n = Number(raw); return n; } module.exports = parse;",
     );
     const analysis = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
-        root,
-        "--format",
-        "json",
-      ],
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
     });
     expect(analysis.exitCode, analysis.stderr).toBe(0);
     const application = parseEvidence(analysis.json);
@@ -175,13 +167,7 @@ cliTest(
       'const { contextBridge, ipcRenderer } = require("electron"); contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });',
     );
     const analysis = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
-        root,
-        "--format",
-        "json",
-      ],
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
     });
     expect(analysis.exitCode, analysis.stderr).toBe(0);
     const application = parseEvidence(analysis.json);

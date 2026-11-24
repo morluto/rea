@@ -5,7 +5,6 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "preserves literal percent bytes in Next route source segments",
@@ -24,13 +23,7 @@ cliTest(
       "app/hello world/page.js": page("Space"),
     });
     const response = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
-        root,
-        "--format",
-        "json",
-      ],
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
     });
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const analysis = javascriptApplicationAnalysisResultSchema.parse(

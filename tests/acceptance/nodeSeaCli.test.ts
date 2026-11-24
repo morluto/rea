@@ -15,7 +15,6 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
-import { completeArguments } from "../support/completeDetail.js";
 
 cliTest.for(["elf", "mach-o", "pe"] as const)(
   "inventories and extracts %s SEA through the compiled CLI",
@@ -36,7 +35,7 @@ cliTest.for(["elf", "mach-o", "pe"] as const)(
       }),
     );
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -114,7 +113,7 @@ cliTest(
     // Node produces the blob; only its ELF carrier is synthetic.
     await writeFile(source, nodeSeaElf({ blob: await readFile(blobPath) }));
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -235,7 +234,7 @@ cliTest(
     };
 
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     checkInventory(parseEvidence(inspected.json).normalized_result);
@@ -250,7 +249,7 @@ cliTest(
     if (call === undefined) throw new Error("Expected a stdio MCP session");
     const opened = await call("open_binary", { path: source });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const mcpInspected = await call("inspect_artifact", { detail: "complete" });
+    const mcpInspected = await call("inspect_artifact", {});
     expect(mcpInspected.isError, JSON.stringify(mcpInspected)).not.toBe(true);
     checkInventory(
       parseEvidence(mcpInspected.structuredContent).normalized_result,
@@ -273,7 +272,7 @@ cliTest(
       nodeSeaElf({ codePath: "main", main: "void 0;\n", fuse: "set" }),
     );
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -305,7 +304,7 @@ cliTest("rejects a malformed SEA blob through the CLI", async ({ cli }) => {
   const source = join(root, "application");
   await writeFile(source, nodeSeaElf({ blob: Buffer.alloc(16) }));
   const result = await cli.run({
-    arguments: completeArguments("inspect-artifact", source),
+    arguments: ["inspect-artifact", source, "--json"],
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
@@ -335,7 +334,7 @@ cliTest(
       }),
     );
     const result = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(result.exitCode).not.toBe(0);
     expect(result.json).toMatchObject({

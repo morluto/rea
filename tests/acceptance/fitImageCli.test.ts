@@ -23,7 +23,6 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
-import { completeArguments } from "../support/completeDetail.js";
 
 const cases = [
   { mode: "embedded", bytes: FIT_EMBEDDED },
@@ -37,7 +36,7 @@ cliTest.for(cases)(
     const source = join(directory, "boot.itb");
     await writeFile(source, bytes);
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -108,7 +107,7 @@ cliTest("reports the fixed FIT devicetree depth limit", async ({ cli }) => {
       }),
     );
     return await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
   };
   const admitted = await inspect(64);
@@ -141,7 +140,7 @@ cliTest("rejects a FIT hash mismatch through the CLI", async ({ cli }) => {
   bytes[kernel] = (bytes[kernel] ?? 0) ^ 1;
   await writeFile(source, bytes);
   const result = await cli.run({
-    arguments: completeArguments("inspect-artifact", source),
+    arguments: ["inspect-artifact", source, "--json"],
   });
   expect(result.exitCode).not.toBe(0);
   expect(result.stdout + result.stderr).toContain(
@@ -184,7 +183,7 @@ cliTest.for([
       }),
     );
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -228,7 +227,7 @@ cliTest.for([true, false])(
       }),
     );
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     if (!equal) {
       expect(inspected.exitCode).not.toBe(0);
@@ -287,7 +286,7 @@ cliTest(
       }),
     );
     const response = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -449,7 +448,7 @@ cliTest.for([
     }),
   );
   const reply = await cli.run({
-    arguments: completeArguments("inspect-artifact", source),
+    arguments: ["inspect-artifact", source, "--json"],
   });
   expect(reply.exitCode, reply.stdout + reply.stderr).toBe(0);
   const inspection = artifactInspectionResultSchema.parse(
@@ -497,7 +496,7 @@ cliTest.for([
       }),
     );
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(

@@ -25,7 +25,7 @@ describe("packaged application known-answer evaluation", () => {
     try {
       const result = await harness.client.callTool({
         name: "analyze_javascript_application",
-        arguments: { detail: "complete", input_path: targets.javascript },
+        arguments: { input_path: targets.javascript },
       });
       expect(result.isError).not.toBe(true);
       const evidence = resultEvidence(result);
@@ -103,7 +103,7 @@ describe("packaged application known-answer evaluation", () => {
     try {
       const result = await harness.client.callTool({
         name: "analyze_javascript_application",
-        arguments: { detail: "complete", input_path: unrelated },
+        arguments: { input_path: unrelated },
       });
       const manifest = claimManifest(claims, resultEvidence(result));
       const events = [
@@ -134,7 +134,7 @@ describe("known-answer packaged artifact digest binding", () => {
     try {
       const result = await harness.client.callTool({
         name: "analyze_javascript_application",
-        arguments: { detail: "complete", input_path: targets.javascript },
+        arguments: { input_path: targets.javascript },
       });
       const evidence = resultEvidence(result);
       expect(fileIdentity(evidence.subject).sha256).toEqual(expect.any(String));
@@ -165,17 +165,11 @@ describe("source-produced parser comparison known answers", () => {
     try {
       const left = await harness.client.callTool({
         name: "analyze_javascript_application",
-        arguments: {
-          detail: "complete",
-          input_path: targets.javascriptShapeLeft,
-        },
+        arguments: { input_path: targets.javascriptShapeLeft },
       });
       const right = await harness.client.callTool({
         name: "analyze_javascript_application",
-        arguments: {
-          detail: "complete",
-          input_path: targets.javascriptShapeRight,
-        },
+        arguments: { input_path: targets.javascriptShapeRight },
       });
       const comparison = await harness.client.callTool({
         name: "compare_javascript_export_shapes",
@@ -538,7 +532,7 @@ const notesWorkflow = async (
 ) => {
   const analysis = await harness.client.callTool({
     name: "analyze_javascript_application",
-    arguments: { detail: "complete", input_path: inputPath },
+    arguments: { input_path: inputPath },
   });
   expect(analysis.isError).not.toBe(true);
   const application = resultEvidence(analysis);

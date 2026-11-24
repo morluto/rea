@@ -164,7 +164,7 @@ it.each(["compact"] as const)(
       expect((await call("close_binary", {})).isError).not.toBe(true);
       await writeFile(path, nodeSeaPe({ blob: Buffer.alloc(16) }));
       expect((await call("open_binary", { path })).isError).not.toBe(true);
-      const invalid = await call("inspect_artifact", { detail: "complete" });
+      const invalid = await call("inspect_artifact", {});
       expect(parseMcpToolError(invalid).error).toMatchObject({
         code: "artifact_operation_failed",
         details: {
@@ -208,7 +208,7 @@ it("reports the PE parser budget when Node SEA inventory exhausts it", async () 
   const { call } = await connectLocalToolsMcp();
   const opened = await call("open_binary", { path });
   expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-  const reply = await call("inspect_artifact", { detail: "complete" });
+  const reply = await call("inspect_artifact", {});
   expect(parseMcpToolError(reply).error).toMatchObject({
     code: "truncated",
     retryable: false,

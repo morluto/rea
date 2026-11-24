@@ -83,7 +83,7 @@ it("preserves queue failure diagnostics through the provider, CLI adapter and SD
     });
     const mcp = await harness.mcp.callTool({
       name: "list_procedures",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     expect(mcp.isError).toBe(true);
     expect(parseMcpToolError(mcp)).toMatchObject({ error: parsed });
@@ -203,7 +203,7 @@ it.each(
       });
       const result = await harness.mcp.callTool({
         name: "list_procedures",
-        arguments: { detail: "complete" },
+        arguments: {},
       });
       expect(parseMcpToolError(result)).toMatchObject({ error: cli });
       await lease.release();

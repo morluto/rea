@@ -8,7 +8,6 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "keeps unenumerated ELF dynamic exports unsupported through %s",
@@ -35,15 +34,12 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         let document: unknown;
         if (surface === "CLI") {
           const response = await cli.run({
-            arguments: completeArguments("inspect-native-exports", path),
+            arguments: ["inspect-native-exports", path, "--json"],
           });
           expect(response.exitCode, response.stderr).toBe(0);
           document = response.json;
         } else {
-          const response = await mcp!.call("inspect_native_exports", {
-            detail: "complete",
-            path,
-          });
+          const response = await mcp!.call("inspect_native_exports", { path });
           expect(response.isError, JSON.stringify(response)).not.toBe(true);
           document = response.structuredContent;
         }
@@ -95,15 +91,12 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       let error: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
-          arguments: completeArguments("inspect-native-exports", path),
+          arguments: ["inspect-native-exports", path, "--json"],
         });
         expect(response.exitCode).toBe(1);
         error = response.json;
       } else {
-        const response = await mcp!.call("inspect_native_exports", {
-          detail: "complete",
-          path,
-        });
+        const response = await mcp!.call("inspect_native_exports", { path });
         expect(response.isError).toBe(true);
         error = parseMcpToolError(response).error;
       }
@@ -121,15 +114,11 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         surface === "CLI"
           ? (
               await cli.run({
-                arguments: completeArguments("inspect-native-exports", path),
+                arguments: ["inspect-native-exports", path, "--json"],
               })
             ).json
-          : (
-              await mcp!.call("inspect_native_exports", {
-                detail: "complete",
-                path,
-              })
-            ).structuredContent;
+          : (await mcp!.call("inspect_native_exports", { path }))
+              .structuredContent;
       const evidence = toolContract(
         "inspect_native_exports",
       ).outputSchema.parse(document);
@@ -164,15 +153,12 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       let document: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
-          arguments: completeArguments("inspect-native-exports", path),
+          arguments: ["inspect-native-exports", path, "--json"],
         });
         expect(response.exitCode, response.stderr).toBe(0);
         document = response.json;
       } else {
-        const response = await mcp!.call("inspect_native_exports", {
-          detail: "complete",
-          path,
-        });
+        const response = await mcp!.call("inspect_native_exports", { path });
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
         document = response.structuredContent;
       }

@@ -18,10 +18,6 @@ import {
   uf2File,
   uf2Image,
 } from "../../src/domain/firmware/uf2.fixture.js";
-import {
-  COMPLETE_DETAIL,
-  completeArguments,
-} from "../support/completeDetail.js";
 
 const RP2040_APP = patternBytes(300, 1);
 const RP2350_APP = patternBytes(300, 2);
@@ -80,7 +76,7 @@ cliTest.for(cases)(
     const source = join(directory, name);
     await writeFile(source, bytes);
     const inspected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -138,7 +134,7 @@ cliTest(
     corrupt.writeUInt32LE(0x1234_5678, corrupt.length - 4);
     await writeFile(source, corrupt);
     const rejected = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(rejected.exitCode).toBe(1);
     expect(rejected.json).toMatchObject({
@@ -154,7 +150,6 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-artifact",
-        ...COMPLETE_DETAIL,
         source,
         "--integrity-policy",
         "record-and-continue",
@@ -204,7 +199,7 @@ cliTest(
       ]),
     );
     const result = await cli.run({
-      arguments: completeArguments("inspect-artifact", source),
+      arguments: ["inspect-artifact", source, "--json"],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

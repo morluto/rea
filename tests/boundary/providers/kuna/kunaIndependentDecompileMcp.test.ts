@@ -49,11 +49,7 @@ it("runs a cold independent request without starting a project export", async ()
     await call("open_binary", { path: target, provider_id: "kuna" });
     const refused = await harness.client.callTool({
       name: "procedure_pseudo_code",
-      arguments: {
-        detail: "complete",
-        procedure: "0x1000",
-        analysis: "call_destination",
-      },
+      arguments: { procedure: "0x1000", analysis: "call_destination" },
     });
     expect(refused.isError).toBe(true);
     expect(
@@ -76,7 +72,6 @@ it("runs a cold independent request without starting a project export", async ()
     });
     const evidence = parseEvidence(
       await call("procedure_pseudo_code", {
-        detail: "complete",
         procedure: "main",
         analysis: "independent_fresh",
       }),
@@ -102,11 +97,7 @@ it("runs a cold independent request without starting a project export", async ()
     });
     const timeout = await harness.client.callTool({
       name: "procedure_pseudo_code",
-      arguments: {
-        detail: "complete",
-        procedure: "main",
-        analysis: "independent_fresh",
-      },
+      arguments: { procedure: "main", analysis: "independent_fresh" },
     });
     expect(timeout.isError).toBe(true);
     const failure = JSON.parse(
@@ -182,10 +173,7 @@ it.each(["compact"] as const)(
       await call("open_binary", { path: target, provider_id: "kuna" });
       await call("procedure_assembly", { procedure: "broken" });
       const original = parseEvidence(
-        await call("procedure_pseudo_code", {
-          detail: "complete",
-          procedure: "broken",
-        }),
+        await call("procedure_pseudo_code", { procedure: "broken" }),
       );
       expect(original.normalized_result).toBeNull();
       expect(original.limitations).toEqual(
@@ -208,14 +196,12 @@ it.each(["compact"] as const)(
       ).toMatchObject({ independent_decompile: true });
       const first = parseEvidence(
         await call("procedure_pseudo_code", {
-          detail: "complete",
           procedure: "broken",
           analysis: "independent_fresh",
         }),
       );
       const second = parseEvidence(
         await call("procedure_pseudo_code", {
-          detail: "complete",
           procedure: "broken",
           analysis: "independent_fresh",
         }),
@@ -232,10 +218,7 @@ it.each(["compact"] as const)(
         ),
       ).toHaveLength(2);
       const after = parseEvidence(
-        await call("procedure_pseudo_code", {
-          detail: "complete",
-          procedure: "broken",
-        }),
+        await call("procedure_pseudo_code", { procedure: "broken" }),
       );
       expect(after.normalized_result).toBeNull();
       const bundle = (await call("get_evidence_bundle", {})) as {
@@ -310,7 +293,6 @@ it("retains the independent run slot until an unproven stop is resolved", async 
       ).isError,
     ).not.toBe(true);
     const first = await call("procedure_pseudo_code", {
-      detail: "complete",
       procedure: "broken",
       analysis: "independent_fresh",
     });
@@ -335,7 +317,7 @@ it("retains the independent run slot until an unproven stop is resolved", async 
     restoreAcquire = () => spy.mockRestore();
     queued = call(
       "procedure_pseudo_code",
-      { detail: "complete", procedure: "main", analysis: "independent_fresh" },
+      { procedure: "main", analysis: "independent_fresh" },
       caller.signal,
     ).catch(() => undefined);
     await slotAdmission.reached(queued, "independent run slot admission");
@@ -364,7 +346,6 @@ it("retains the independent run slot until an unproven stop is resolved", async 
         .isError,
     ).not.toBe(true);
     const recovered = await call("procedure_pseudo_code", {
-      detail: "complete",
       procedure: "main",
       analysis: "independent_fresh",
     });

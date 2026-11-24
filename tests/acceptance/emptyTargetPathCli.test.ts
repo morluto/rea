@@ -2,7 +2,6 @@ import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 cliTest.for(["analyze", "inspect-artifact"])(
   "%s rejects an explicitly empty target before resolving it against cwd",
@@ -24,7 +23,7 @@ cliTest(
   async ({ cli }) => {
     const cwd = await createTestTempDirectory("rea-explicit-target-");
     const result = await cli.run({
-      arguments: ["inspect-artifact", ...COMPLETE_DETAIL, ".", "--json"],
+      arguments: ["inspect-artifact", ".", "--json"],
       cwd,
     });
     expect(result.exitCode).toBe(1);

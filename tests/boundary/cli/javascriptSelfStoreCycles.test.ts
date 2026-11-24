@@ -6,7 +6,6 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 // CodeMirror 5 modes keep a parser context stack on a state parameter. Popping
 // it stores a value read from the same slot, so each call can select one more
@@ -43,7 +42,6 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         root,
         "--max-heap-mb",
         "256",
