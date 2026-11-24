@@ -3,10 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import { access as accessPath, stat as statPath } from "node:fs/promises";
 import { isAbsolute, sep } from "node:path";
 
-import {
-  absoluteCallerPath,
-  appendCallerPath,
-} from "../filesystem/callerPath.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { posixPathCandidates } from "./executableSearch.js";
 import { fileDeadline } from "./FileDeadline.js";

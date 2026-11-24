@@ -1135,12 +1135,13 @@ it.each(["objdump", "rizin"] as const)(
       expect(result).toMatchObject({
         ok: true,
         value: {
-          raw_result: {
+          normalized_result: {
             stdout: "observed",
             completion_status: "complete",
             artifact_sha256_after: null,
             artifact_changed: null,
           },
+          raw_result: null,
         },
       });
       if (!result.ok) return;

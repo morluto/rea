@@ -166,7 +166,7 @@ posix(
     ] as const) {
       const result = await service.executeRizinCommand({ path, command });
       if (!result.ok) throw result.error;
-      expect(result.value.raw_result).toMatchObject({ stdout });
+      expect(result.value.normalized_result).toMatchObject({ stdout });
       expect(result.value.parameters).not.toHaveProperty(
         "provider_executable_path",
       );
@@ -256,7 +256,7 @@ posix.each([
     expect(result.value.limitations).toEqual(
       expect.arrayContaining([expect.stringContaining(limitation)]),
     );
-    expect(result.value.raw_result).toMatchObject({
+    expect(result.value.normalized_result).toMatchObject({
       stdout: "command output",
     });
   },
@@ -310,7 +310,7 @@ posix(
         "provider_version_banner",
       );
       expect(result.value.limitations).toContain(EXECUTABLE_OBSERVATION_TIMING);
-      expect(result.value.raw_result).toMatchObject({
+      expect(result.value.normalized_result).toMatchObject({
         stdout: "command output",
       });
     }
@@ -656,7 +656,7 @@ posix.each([
         command: "iI",
       });
       if (!result.ok) throw result.error;
-      expect(result.value.raw_result).toMatchObject({
+      expect(result.value.normalized_result).toMatchObject({
         stdout: "working rizin\n",
       });
       // REA did not identify the file the host chose.
@@ -1570,7 +1570,9 @@ posix(
         expect.stringContaining(VERSION_PROBE_FAILURE_REASONS.undecodable),
       ]),
     );
-    expect(result.value.raw_result).toMatchObject({ stdout: "command output" });
+    expect(result.value.normalized_result).toMatchObject({
+      stdout: "command output",
+    });
   },
 );
 

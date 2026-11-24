@@ -1759,11 +1759,11 @@ type VersionProbeOutcome =
   /** The host did not start the file, with an error its PATH search moves past. */
   | { readonly status: "not-started"; readonly code: string };
 
-/** Why a probe that read no usable banner leaves the version unknown. */
 /** Observations read before the command cannot bind the tool that ran. */
 export const EXECUTABLE_OBSERVATION_TIMING =
   "The executable's SHA-256, and any -v banner, were read before the command launched, so they do not prove the bytes or the version that ran.";
 
+/** Why a probe that read no usable banner leaves the version unknown. */
 export const VERSION_PROBE_FAILURE_REASONS = {
   failed: "did not complete successfully",
   "timed-out": "reached the command deadline",
