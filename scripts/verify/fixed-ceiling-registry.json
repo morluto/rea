@@ -573,6 +573,12 @@
       "reason": "Artifact path depth and tree-node allowances are resource policies."
     }
   },
+  "src/resources/artifactReadBudget.ts": {
+    "ceiling.name": {
+      "class": "forwarding",
+      "reason": "Relays the whole-file identity ceiling its caller names: 4 GiB minus one byte for PE-only readers, whose file offsets are 32-bit (format), and the 512 MiB artifact-size bound of the hardening and exports result schemas. max_file_bytes, a per-call parameter with details.limit, bounds what the readers read."
+    }
+  },
   "src/rust/RustBinaryProvider.ts": {
     "\"The WebAssembly section-walk allowance\"": {
       "class": "pending",
