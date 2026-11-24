@@ -59,5 +59,8 @@ it("recovers complete EVMole worker evidence for the same carrier after raising 
   });
   // A larger resource budget does not change the explicitly selected encoding contract.
   await writeFile(snapshot, "0xzz");
-  expect(await inspect(4096, 2)).toMatchObject({ ok: false, reason: "format" });
+  expect(await inspect(4096, 2)).toMatchObject({
+    ok: false,
+    reason: "malformed",
+  });
 });

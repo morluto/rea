@@ -721,7 +721,7 @@ it.each([
         const bytes = Buffer.from("60006000f3", "hex");
         const reply =
           scenario === "refusal"
-            ? { ok: false, reason: "format", message: "invalid carrier" }
+            ? { ok: false, reason: "malformed", message: "invalid carrier" }
             : {
                 ok: true,
                 version: scenario === "wrong-version" ? "0.0.0" : "0.9.3",

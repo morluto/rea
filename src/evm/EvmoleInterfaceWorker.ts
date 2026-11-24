@@ -93,7 +93,7 @@ const main = async (): Promise<void> => {
       ok: false,
       reason:
         cause instanceof EvmCarrierFailure
-          ? "format"
+          ? "malformed"
           : cause instanceof UnsupportedContainer
             ? "unsupported"
             : "decoder",

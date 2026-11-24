@@ -462,7 +462,7 @@ it.runIf(!unsupportedHost)(
           request.reply_path,
           JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "Malformed original ELF table.",
           }),
         );
@@ -567,16 +567,17 @@ it
         } = binaryLayoutFixture(path);
         const encodedReplies: Partial<Record<string, string | Buffer>> = {
           "invalid-utf8": Buffer.concat([
-            Buffer.from('{"ok":false,"reason":"format","message":"'),
+            Buffer.from('{"ok":false,"reason":"malformed","message":"'),
             Buffer.from([0xff]),
             Buffer.from('"}'),
           ]),
           "literal-replacement": JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "valid �",
           }),
-          "bom-reply": '\uFEFF{"ok":false,"reason":"format","message":"valid"}',
+          "bom-reply":
+            '\uFEFF{"ok":false,"reason":"malformed","message":"valid"}',
         };
         const encodedReply = encodedReplies[scenario];
         if (encodedReply !== undefined)
