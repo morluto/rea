@@ -11,6 +11,7 @@ import {
 import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
   MACHO_COMMON_HEADER_BYTES,
+  MAX_LOAD_COMMAND_BYTES,
   MachoLoadCommandCursor,
   machoCommandTableIssue,
   machoWordReader,
@@ -53,8 +54,7 @@ import { decodeStrictUtf8 } from "../strictUtf8.js";
 /** Read `length` bytes at `offset`; shorter results mean end of file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
 
-/** Load commands larger than this are refused instead of buffered. */
-export const MAX_LOAD_COMMAND_BYTES = 16 * 1024 * 1024;
+export { MAX_LOAD_COMMAND_BYTES };
 /**
  * Identical `LC_LAZY_LOAD_DYLIB_INFO` commands are 16 bytes, so the load-command
  * byte cap alone would retain about a million dependency results. Stop before

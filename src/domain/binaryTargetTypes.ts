@@ -300,6 +300,8 @@ export type BinaryTarget =
       readonly universalSlice: UniversalMachOSlice;
       /** Exact validated FAT declarations, when supplied by target admission. */
       readonly universalSlices?: readonly UniversalMachOSliceIdentity[];
+      /** Physical FAT table width observed at target admission. */
+      readonly universalContainerKind?: "fat32" | "fat64";
       readonly executableRole?: never;
       readonly managed?: never;
     })
