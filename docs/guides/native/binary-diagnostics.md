@@ -238,6 +238,40 @@ with `open_binary`. Without a cgroup v2 memory group, or when the count did not
 rise, the failure stays `execution_failure` and names the signal as a possible
 out-of-memory kill.
 
+## PE header admission
+
+`inspect-pe-imports`, `inspect-native-exports` (PE), `inspect-pe-load-config`,
+`inspect-pe-resources`, `inspect-pe-certificates` and
+`inspect-binary-hardening` (PE) share one header reader. It reads the image as
+the Windows loader does instead of refusing the declarations the loader
+ignores or caps. Every reader except hardening reports them in
+`header_anomalies`:
+
+| `code`                                  | Declaration                                                                                          | Read as                                                                                                             |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `optional_header_size_below_fields`     | `SizeOfOptionalHeader` ends before the fixed fields or data directories                              | Fields at their fixed offsets; the value only locates the section table                                             |
+| `directory_count_above_maximum`         | `NumberOfRvaAndSizes` above 16                                                                       | The first 16 directories                                                                                            |
+| `size_of_headers_inconsistent`          | `SizeOfHeaders` before the section table end or past the file                                        | Headers at their declared offsets; only file-backed header bytes are mapped                                         |
+| `directory_size_below_structure`        | A directory `Size` below the structure read at its RVA (export, import, delay import, TLS, resource) | The structure at its RVA; import descriptors to the null terminator; the resource tree within its file-backed bytes |
+| `directory_size_past_file_backed_bytes` | A resource directory `Size` past its file-backed bytes                                               | The tree within those bytes                                                                                         |
+
+DOS page and load-module fields do not affect PE admission, and a `PE\0\0`
+signature at `e_lfanew` declares the image. One exception: a valid DOS
+relocation table (starting at or after byte 28, with valid page fields) that
+covers `e_lfanew` owns those bytes as DOS data, even when they point at a PE
+signature. A table that describes no DOS load module does not. A pointer whose
+bytes name no Windows header is `unsupported_target` while the DOS module is
+valid and a malformed target otherwise. A data directory with a
+zero RVA is absent. Section raw bytes that overlap the headers or other
+sections are layout facts, and every reader maps RVAs through the same
+file-backed section content. A read is refused only when the operation needs
+the bytes and they are unmapped, ambiguously mapped or past the file end, as a
+malformed target. Windows headers that overlap the 64-byte DOS header
+(`e_lfanew` below 64), section tables or required section bytes past the file
+end, and section ranges that overflow the address width remain refused by
+every reader. Static inspection does not establish that Windows would load the
+image.
+
 ## Portable PE resources
 
 `inspect_pe_resources` / `inspect-pe-resources` inspects an explicit PE32 or
@@ -279,8 +313,8 @@ remain explicit. Encoded dimensions are preserved (zero denotes 256 pixels).
 This is static reference inspection; no image decoding, language fallback,
 resource loading or selected-file execution occurs.
 
-An absent resource data directory is a complete empty inventory. Malformed
-headers, truncated tables, cycles, duplicate sibling identities, unbacked or
+An absent resource data directory is a complete empty inventory. Headers follow
+[PE header admission](#pe-header-admission). Truncated tables, cycles, duplicate sibling identities, unbacked or
 ambiguous RVA mappings, nonidentical overlapping ranges and unsupported tree
 shapes fail explicitly, rather than returning partial inventories. Exact shared
 payload ranges are supported. The supported tree has three levels: type, name,
@@ -488,7 +522,9 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
-A declared PE export directory shorter than its 40-byte table is malformed.
+A PE export directory `Size` below its 40-byte table is read at its RVA and
+reported in `header_anomalies`; `Size` still bounds forwarder strings. See
+[PE header admission](#pe-header-admission).
 PE export tables and strings use file-backed headers and declared section
 content. A name's terminating NUL must also fit within those mapped bytes.
 PE export names are bounded null-terminated byte strings and may continue

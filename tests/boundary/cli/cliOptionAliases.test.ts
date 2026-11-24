@@ -3,30 +3,13 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
+import { serveInProcessCli as serve } from "../../support/cli/serveInProcessCli.js";
 import {
   cliCommandOptionNames,
   createCliInventory,
 } from "../../../scripts/lib/catalog-cli.mjs";
 
 type CliInstance = ReturnType<typeof createCli>;
-
-const serve = async (
-  cli: CliInstance,
-  argv: readonly string[],
-): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { stdout, exitCode };
-};
 
 const registeredAliases = (
   cli: CliInstance,

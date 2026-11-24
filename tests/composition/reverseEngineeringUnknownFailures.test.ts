@@ -10,6 +10,7 @@ import { ok } from "../../src/domain/result.js";
 import { OwnedCommandFailure } from "../../src/process/OwnedCommand.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { fixtureCommandRepair } from "../support/reverseEngineeringCompositionFixtures.js";
+import { findsNoExecutable } from "../support/reverseEngineeringService.js";
 
 it.each([false, true])(
   "keeps owned output collection failure primary after late cancellation=%s",
@@ -39,9 +40,12 @@ it.each([false, true])(
     };
     const service = new ReverseEngineeringService({
       commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
-      runOwned: async () => {
-        if (cancel) controller.abort(abortReason);
-        throw owned;
+      processes: {
+        lookup: findsNoExecutable,
+        runOwned: async () => {
+          if (cancel) controller.abort(abortReason);
+          throw owned;
+        },
       },
     });
     const result = await service.inspectWithObjdump(
@@ -75,9 +79,12 @@ it("keeps the owned producer cancellation reason authoritative", async () => {
   };
   const service = new ReverseEngineeringService({
     commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
-    runOwned: async () => {
-      controller.abort(abortReason);
-      throw new OwnedCommandFailure("cancelled", "owned process cancelled");
+    processes: {
+      lookup: findsNoExecutable,
+      runOwned: async () => {
+        controller.abort(abortReason);
+        throw new OwnedCommandFailure("cancelled", "owned process cancelled");
+      },
     },
   });
   const result = await service.inspectWithObjdump(
@@ -112,7 +119,7 @@ it.each([
               throw cause;
             }
           : stat,
-      runOwned: run,
+      processes: { lookup: findsNoExecutable, runOwned: run },
       commands: {
         objdump: () =>
           ok({

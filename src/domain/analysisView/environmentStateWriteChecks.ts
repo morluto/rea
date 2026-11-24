@@ -6,6 +6,7 @@ import {
   environmentEntityKey,
 } from "./environmentStateIdentity.js";
 import {
+  succeeded,
   ownMember,
   at,
   decodedSegment,
@@ -332,10 +333,6 @@ export class SimulatedState {
 /** An item read status that says the entity does not exist: 400, 404 or 410, as applications answer a missing id. */
 export const isAbsence = (status: number | null): boolean =>
   status === 400 || status === 404 || status === 410;
-
-/** A 2xx record: the only status whose response shows what a request did. */
-export const succeeded = (record: StateRecordFacts): boolean =>
-  record.status !== null && record.status >= 200 && record.status < 300;
 
 /** Hand a base recording's body and a read's body to `use` together, parsing a recording once when both are the same. */
 export const withBodies = <T>(

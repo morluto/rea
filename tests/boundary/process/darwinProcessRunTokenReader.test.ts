@@ -1811,6 +1811,7 @@ it.skipIf(process.platform === "win32").each([
     stderrHex: "ff",
     stderrBytes: 1,
     truncated: false,
+    stderrInvalidUtf8: true,
   },
   {
     name: "bounded stdout",
@@ -1818,10 +1819,11 @@ it.skipIf(process.platform === "win32").each([
     stderrHex: "61",
     stderrBytes: 1,
     truncated: true,
+    stderrInvalidUtf8: false,
   },
 ])(
   "retains original output facts for $name compiler failures",
-  async ({ stdout, stderrHex, stderrBytes, truncated }) => {
+  async ({ stdout, stderrHex, stderrBytes, truncated, stderrInvalidUtf8 }) => {
     const directory = await createTestTempDirectory(
       "rea-compiler-output-facts-",
     );
@@ -1845,6 +1847,8 @@ it.skipIf(process.platform === "win32").each([
         truncated,
         exit_code: 7,
         signal: null,
+        // The replaced byte is marked where it was decoded.
+        ...(stderrInvalidUtf8 ? { stderr_invalid_utf8: true } : {}),
       });
       const normalized = normalizeCaptureFailure(failure);
       if (!(normalized instanceof ProcessCaptureError))

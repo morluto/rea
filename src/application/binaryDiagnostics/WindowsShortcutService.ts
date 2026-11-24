@@ -2,7 +2,7 @@ import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { WindowsShortcutPort } from "../../ports/binaryDiagnostics/WindowsShortcutPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectWindowsShortcutInputSchema,
   windowsShortcutSchema,
@@ -10,6 +10,7 @@ import {
   type WindowsShortcut,
 } from "../../domain/native/windowsShortcut.js";
 import type { Result } from "../../domain/result.js";
+import { observedFileEvidence } from "../observedFileEvidence.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_windows_shortcut";
@@ -39,21 +40,12 @@ export class WindowsShortcutService {
           report.artifact.path === parameters.path &&
           validReport(report, parameters),
         buildEvidence: (value, identity, parameters) =>
-          createEvidence(
-            {
-              path: value.artifact.path,
-              format: "file",
-              sha256: value.artifact.sha256,
-            },
+          observedFileEvidence(
+            value,
             identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: locationsOf(value),
-            },
+            OPERATION,
+            parameters,
+            fileRanges(value),
           ),
       },
       rawInput,
@@ -62,12 +54,7 @@ export class WindowsShortcutService {
   }
 }
 
-const locationsOf = (
-  report: WindowsShortcut,
-): readonly (
-  | { kind: "artifact-path"; path: string }
-  | { kind: "file-offset-range"; start: number; end: number }
-)[] => {
+const fileRanges = (report: WindowsShortcut) => {
   const ranges: {
     kind: "file-offset-range";
     start: number;
@@ -91,7 +78,7 @@ const locationsOf = (
       start: report.link_info.location.offset,
       end: report.link_info.location.offset + report.link_info.location.bytes,
     });
-  return [{ kind: "artifact-path", path: report.artifact.path }, ...ranges];
+  return ranges;
 };
 
 const validReport = (

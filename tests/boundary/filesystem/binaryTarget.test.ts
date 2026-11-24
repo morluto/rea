@@ -31,7 +31,7 @@ import {
   thinMach,
 } from "../../../src/domain/binaryTarget.fixture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { hasXmlPlistSignature } from "../../../src/domain/apple/appleArchiveFormat.js";
+import { createXmlPlistSignatureProbe } from "../../../src/domain/apple/appleArchiveFormat.js";
 import { parseExecutableHeader } from "../../../src/domain/binaryTarget.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -67,6 +67,12 @@ import {
   FIT_EXTERNAL,
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
 import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
+import {
+  ddsBc7Fixture,
+  glbFixture,
+  ktx2Fixture,
+  ktxFixture,
+} from "../../../src/artifacts/gpuAsset/gpuAsset.fixture.js";
 
 it.each([
   [4000, false],
@@ -354,34 +360,41 @@ it("retains all 128 FAT64 slice declarations beyond the initial prefix", async (
   });
 });
 
-it.each([0, 1])(
-  "rejects a file-backed FAT CPU mismatch in slice %i before host selection",
-  async (wrongIndex) => {
-    const directory = await createTestTempDirectory("rea-fat-cpu-mismatch-");
-    const path = join(directory, "image");
-    const bytes = fatImage([
-      { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
-      { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
-    ]);
-    const entry = 8 + wrongIndex * 20;
-    new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(
-      entry,
-      wrongIndex === 0 ? CPU.arm64.type : CPU.x86_64.type,
-      false,
-    );
-    await writeFile(path, Buffer.from(bytes));
-    expect(
-      await parseBinaryTarget(path, { hostArchitecture: "arm64" }),
-    ).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "BinaryTargetError",
-        reason: `FAT architecture ${wrongIndex} CPU type/subtype disagrees with its Mach-O header`,
-        constraint: "file_format_rejected",
-      },
-    });
-  },
-);
+it("rejects a file-backed FAT CPU mismatch in the selected slice and isolates unselected slices", async () => {
+  const directory = await createTestTempDirectory("rea-fat-cpu-mismatch-");
+  const path = join(directory, "image");
+  const base = fatImage([
+    { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+    { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+  ]);
+
+  // Unselected x86_64 slice subtype mismatch is isolated when arm64 is selected.
+  const unselectedMismatch = Buffer.from(base);
+  unselectedMismatch.writeUInt32BE(99, 8 + 4);
+  await writeFile(path, unselectedMismatch);
+  expect(
+    await parseBinaryTarget(path, { hostArchitecture: "arm64" }),
+  ).toMatchObject({
+    ok: true,
+    value: { format: "mach-o-universal", architecture: "arm64" },
+  });
+
+  // Selected arm64 slice subtype mismatch fails closed.
+  const selectedMismatch = Buffer.from(base);
+  selectedMismatch.writeUInt32BE(99, 8 + 20 + 4);
+  await writeFile(path, selectedMismatch);
+  expect(
+    await parseBinaryTarget(path, { hostArchitecture: "arm64" }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BinaryTargetError",
+      reason:
+        "FAT architecture 1 CPU type/subtype disagrees with its Mach-O header",
+      constraint: "file_format_rejected",
+    },
+  });
+});
 
 it.each([
   {
@@ -667,9 +680,11 @@ describe("binary target I/O: package classification", () => {
       kind: "artifact",
       format: "plist",
     });
-    expect(hasXmlPlistSignature(Buffer.from(`<root><plist/></root>`))).toBe(
-      false,
-    );
+    expect(
+      createXmlPlistSignatureProbe().write(
+        Buffer.from(`<root><plist/></root>`),
+      ),
+    ).toBe("rejected");
   });
 
   it("classifies Intel HEX and S-records by a valid first record", async () => {
@@ -925,6 +940,24 @@ it("classifies a FIT by its /images node and a plain DTB as a devicetree artifac
     ok: true,
     value: { kind: "artifact", format: "devicetree" },
   });
+});
+
+it("classifies DDS, GLB, KTX and KTX2 files as archive targets by their headers", async () => {
+  const directory = await createTestTempDirectory("rea-gpu-asset-target-");
+  for (const [format, bytes] of [
+    ["dds", ddsBc7Fixture()],
+    ["glb", glbFixture()],
+    ["ktx", ktxFixture()],
+    ["ktx2", ktx2Fixture()],
+  ] as const) {
+    // An unrelated extension: detection reads the header, not the name.
+    const path = join(directory, `${format}.bin`);
+    await writeFile(path, bytes);
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format },
+    });
+  }
 });
 
 const executablePlist = (encodedName: string) =>
@@ -1707,20 +1740,22 @@ describe("binary Info.plist app bundle targets", () => {
 });
 
 describe("DOS binary target I/O", () => {
-  it("retains the declared PE signature when its overlapping layout is unsupported", async () => {
+  it("admits a PE with overlapping DOS/PE headers and oversized SizeOfOptionalHeader at target opening", async () => {
     const directory = await createTestTempDirectory("rea-overlapping-pe-");
-    const path = join(directory, "overlap.exe");
-    await writeFile(path, pe(0x014c, 4));
-    const result = await parseBinaryTarget(path);
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        reason: expect.stringContaining("Unsupported overlapping PE header"),
-        diagnostics: {
-          unsupported_layout: true,
-          mz_windows_header: { state: "declared", offset: 4, signature: "PE" },
-        },
-      },
+    const overlapPath = join(directory, "overlap.exe");
+    await writeFile(overlapPath, pe(0x014c, 4));
+    expect(await parseBinaryTarget(overlapPath)).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86", kind: "executable" },
+    });
+
+    const largeOptionalPath = join(directory, "large-opt.exe");
+    const largeOptional = pe(0x8664);
+    largeOptional.writeUInt16LE(5000, 64 + 20);
+    await writeFile(largeOptionalPath, largeOptional);
+    expect(await parseBinaryTarget(largeOptionalPath)).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86_64", kind: "executable" },
     });
   });
 
@@ -1830,7 +1865,7 @@ describe("DOS binary target I/O", () => {
     });
   });
 
-  it("validates a complete DOS file beyond the initial metadata probe", async () => {
+  it("admits a DOS MZ target from fixed 28-byte declarations while rejecting truncated fixed headers", async () => {
     const directory = await createTestTempDirectory("rea-dos-target-");
     const path = join(directory, "legacy.exe");
     const bytes = dosMz(8192);
@@ -1841,8 +1876,13 @@ describe("DOS binary target I/O", () => {
     });
     await writeFile(path, bytes.subarray(0, bytes.length - 1));
     expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86", kind: "executable" },
+    });
+    await writeFile(path, bytes.subarray(0, 27));
+    expect(await parseBinaryTarget(path)).toMatchObject({
       ok: false,
-      error: { message: "Cannot open artifact: truncated DOS MZ load module" },
+      error: { reason: "invalid or truncated DOS MZ header" },
     });
   });
 });
@@ -2051,7 +2091,7 @@ it("recognizes Windows metadata independently of invalid DOS load declarations",
   });
 });
 
-it("refuses a declared DOS relocation header that is not present in the file", async () => {
+it("admits a DOS MZ target with truncated relocation table from its fixed 28-byte header", async () => {
   const directory = await createTestTempDirectory(
     "rea-truncated-dos-relocations-",
   );
@@ -2063,8 +2103,8 @@ it("refuses a declared DOS relocation header that is not present in the file", a
   bytes.writeUInt32LE(0, 60);
   await writeFile(path, bytes.subarray(0, 4096));
   expect(await parseBinaryTarget(path)).toMatchObject({
-    ok: false,
-    error: { reason: "truncated DOS MZ load module" },
+    ok: true,
+    value: { format: "dos-mz", architecture: "x86", kind: "executable" },
   });
 });
 

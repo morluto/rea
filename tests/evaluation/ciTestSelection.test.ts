@@ -460,7 +460,22 @@ it("parses only well-formed plans and derives the selected shard count", () => {
   expect(plan(Object.keys(overCapFiles), overCapFiles)).toMatchObject({
     mode: "full",
     reason: "401 affected test files exceed the 400-file selection cap",
+    shadowFiles: Object.keys(overCapFiles).sort(),
   });
+  for (const count of [600, 601]) {
+    const paths = Array.from(
+      { length: count },
+      (_, i) => `src/feature-${String(i)}.test.ts`,
+    );
+    const result = plan(
+      paths,
+      Object.fromEntries(paths.map((path) => [path, ""])),
+    );
+    expect(result.mode).toBe("full");
+    expect("shadowFiles" in result).toBe(count === 600);
+  }
+  const unknown = { ...overCapFiles, "tests/no-owner/extra.test.ts": "" };
+  expect(plan(Object.keys(unknown), unknown)).not.toHaveProperty("shadowFiles");
   const full = { version: 3, mode: "full", reason: "Shared" };
   expect(testShards("fast", parseTestSelection(full))).toHaveLength(12);
   expect(testShards("full", parseTestSelection(full))).toHaveLength(12);
