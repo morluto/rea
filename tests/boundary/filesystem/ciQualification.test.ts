@@ -472,4 +472,65 @@ it("records a fast-sweep receipt on scheduled fast runs without letting it satis
   const fastArtifact = artifact({ name: "ci-fast-sweep-v1" });
   const fullLookup = await decide(fastArtifact, run());
   expect(fullLookup.decision).toMatchObject({ run_full: true });
+
+  // A scheduled fast sweep without the portable suite (code=false) fails closed.
+  const withoutCode = await requiredRun(
+    { ...fastChanges, code: "false", docs: "true" },
+    { event: "schedule" },
+  );
+  await expect(withoutCode.result).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("complete portable test suite"),
+  });
+  expect(await readFile(withoutCode.output, "utf8")).not.toContain("receipt_");
+});
+
+it("plans scheduled fast sweeps with code always enabled and all lanes on missing baseline", async () => {
+  const { planChanges } = await import(
+    new URL("../../../scripts/ci/change-plan.mjs", import.meta.url).href
+  );
+  const { CI_FLAGS } = await import(
+    new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
+  );
+  const head = "b".repeat(40);
+  const base = "a".repeat(40);
+  const repo = {
+    mergeBase: () => base,
+    isAncestor: () => true,
+    changedFiles: () => ["docs/testing-lanes.md"],
+    readFile: () => "",
+    listFiles: () => [],
+    readFiles: () => new Map(),
+  };
+  // Prose-only diff since ancestor still selects code for the portable suite.
+  const proseOnly = planChanges(
+    {
+      event: "schedule",
+      full: false,
+      skipFull: false,
+      scheduleFast: true,
+      base,
+      head,
+    },
+    repo,
+  );
+  expect(proseOnly.tier).toBe("fast");
+  expect(proseOnly.code).toBe(true);
+  expect(proseOnly.docs).toBe(true);
+  expect(proseOnly.sqlite).toBe(false);
+
+  // Missing baseline selects every canonical lane so providers cannot be skipped.
+  const missingBaseline = planChanges(
+    {
+      event: "schedule",
+      full: false,
+      skipFull: false,
+      scheduleFast: true,
+      base: "",
+      head,
+    },
+    repo,
+  );
+  expect(missingBaseline.tier).toBe("fast");
+  for (const flag of CI_FLAGS) expect(missingBaseline[flag]).toBe(true);
 });

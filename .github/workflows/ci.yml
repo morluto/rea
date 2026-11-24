@@ -120,7 +120,8 @@ jobs:
           # PR test selection reads tracked test sources. Fast scheduled sweeps
           # and full-on-push plans compare Git trees and need ancestry. Full
           # qualification and warm main pushes use only HEAD.
-          fetch-depth: ${{ (inputs.source_sha == '' && (github.event_name == 'pull_request' || (github.event_name == 'push' && vars.REA_CI_FULL_ON_PUSH == 'true') || (github.event_name == 'schedule' && github.event.schedule == '23 1,5,7,11,13,17,19,23 * * *'))) && 0 || 1 }}
+          # Keep the nonzero branch first: numeric 0 is falsy in Actions expressions.
+          fetch-depth: ${{ (inputs.source_sha != '' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && vars.REA_CI_FULL_ON_PUSH != 'true') || (github.event_name == 'schedule' && github.event.schedule != '23 1,5,7,11,13,17,19,23 * * *')) && 1 || 0 }}
           sparse-checkout: ${{ env.CHECKOUT_TEST_SOURCES != 'true' && 'scripts' || '' }}
           filter: ${{ env.CHECKOUT_TEST_SOURCES == 'true' && 'blob:none' || '' }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -142,7 +143,10 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           CI_REPOSITORY: ${{ github.repository }}
           CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          CI_BASELINE_EVENT: ${{ github.event_name }}
+          # Warm pushes do not verify provider lanes; only scheduled main runs
+          # prove lane coverage for baseline diffs, including after re-enabling
+          # REA_CI_FULL_ON_PUSH.
+          CI_BASELINE_EVENT: schedule
         run: node scripts/ci/baseline.mjs
       - name: Admit scheduled qualification
         id: qualification

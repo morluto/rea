@@ -36,6 +36,14 @@ if (
   throw new Error(
     "Reused qualification requires a scheduled admission receipt and no selected lanes",
   );
+if (
+  process.env.GITHUB_EVENT_NAME === "schedule" &&
+  outputs.tier === "fast" &&
+  outputs.code !== "true"
+)
+  throw new Error(
+    "Scheduled fast sweep requires the complete portable test suite before issuing a receipt",
+  );
 if (outputs.tier === "full" && selectedScopes.length !== CI_FLAGS.length)
   throw new Error("Full qualification requires every canonical CI scope");
 // Only a fast pull-request plan may run a selected test subset.
