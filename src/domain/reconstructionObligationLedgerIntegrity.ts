@@ -61,6 +61,21 @@ export const summarizeReconstructionObligations = (
   ),
 });
 
+/**
+ * Prefix of the advisory over-generation limitation. It reports a candidate
+ * count, not missing coverage: every candidate stays listed and required, so
+ * it never changes coverage or closure status.
+ */
+export const OBLIGATION_OVERGENERATION_LIMITATION_PREFIX =
+  "obligation-overgeneration:";
+
+/** Limitations that bound coverage and closure; advisory ones are excluded. */
+const closureLimitations = (limitations: readonly string[]): string[] =>
+  limitations.filter(
+    (limitation) =>
+      !limitation.startsWith(OBLIGATION_OVERGENERATION_LIMITATION_PREFIX),
+  );
+
 /** Derive closure status from required obligations and their diagnostic facts. */
 export const reconstructionObligationLedgerStatus = (
   obligations: readonly ReconstructionObligation[],
@@ -82,7 +97,7 @@ export const reconstructionObligationLedgerStatus = (
     )
   )
     return "failed";
-  if (limitations.length > 0) return "unknown";
+  if (closureLimitations(limitations).length > 0) return "unknown";
   if (requiredOpen.some(({ status }) => status === "unknown")) return "unknown";
   return requiredOpen.length === 0 ? "ready" : "open";
 };
@@ -90,7 +105,7 @@ export const reconstructionObligationLedgerStatus = (
 export const reconstructionObligationCoverage = (
   limitations: readonly string[],
 ): ReconstructionObligationLedger["coverage"] => ({
-  status: limitations.length === 0 ? "complete" : "partial",
+  status: closureLimitations(limitations).length === 0 ? "complete" : "partial",
 });
 
 export const reconstructionObligationReports = (

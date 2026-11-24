@@ -8,6 +8,7 @@ import {
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import {
+  OBLIGATION_OVERGENERATION_LIMITATION_PREFIX,
   reconstructionObligationCoverage,
   reconstructionObligationDependencyGraph,
   reconstructionObligationLedgerClosureDigest,
@@ -220,7 +221,9 @@ const ledgerLimitations = (
 /**
  * One artifact-level limitation per over-generated artifact. Every candidate
  * stays in the ledger; the limitation tells agents to stop fixture work on
- * static-only, unbound claims until authority or review narrows them.
+ * static-only, unbound claims until authority or review narrows them. It is
+ * advisory: a count is not truncation, so it changes neither coverage nor
+ * closure status.
  * Families whose original authority is static (native boundaries) are
  * characterized without runtime authority, so they are not counted.
  */
@@ -250,7 +253,7 @@ const overgenerationLimitations = (
         ({ status }) => status === "out-of-scope",
       ).length;
       const unreviewed = group.length - retired;
-      return `obligation-overgeneration: artifact ${sha256} has ${String(group.length)} generated obligations with no runtime authority and no manifest binding (families: ${uniqueSorted(group.map(({ family }) => family)).join(", ")}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(unreviewed)} still unreviewed, ${String(retired)} retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`;
+      return `${OBLIGATION_OVERGENERATION_LIMITATION_PREFIX} artifact ${sha256} has ${String(group.length)} generated obligations with no runtime authority and no manifest binding (families: ${uniqueSorted(group.map(({ family }) => family)).join(", ")}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(unreviewed)} still unreviewed, ${String(retired)} retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`;
     });
 };
 

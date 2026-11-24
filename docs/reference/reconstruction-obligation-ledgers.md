@@ -414,16 +414,19 @@ those obligations are still unreviewed versus retired by a reviewed
 disposition. Families whose `required_original_authority` is `static`, such
 as native exports and addons, are characterized without runtime authority and
 are not counted. Retired obligations stay in the count with their generated
-`source_state`, so retiring decoys does not erase the signal; only runtime
-authority or manifest bindings narrow it. A
-fully retired artifact never reaches `ready`: it stays flagged by this
-limitation until runtime authority or manifest bindings exist for the
-artifact, so retiring every decoy does not close the ledger. Every
-candidate is still listed; the limitation keeps closure `unknown` and tells
-agents to stop fixture work on those candidates until runtime authority or
-reviewed dispositions cover the still-unreviewed ones. A large real
-application can cross the threshold too, moving its ledger from `open` to
-`unknown`; that is a limitation on closure, not truncation of the ledger.
+`source_state`: Evidence cited by a review, even observed Evidence for another
+artifact, never makes a generated claim observed. Retiring decoys therefore
+does not erase the signal; only runtime authority or manifest bindings narrow
+it. Every candidate is still listed, and the limitation tells agents to stop
+fixture work on those candidates until runtime authority or reviewed
+dispositions cover the still-unreviewed ones. The limitation is advisory: it
+reports a count, not truncation, so it changes neither `coverage.status` nor
+the ledger `status`. A large real application with a complete graph can cross
+the threshold and keep `complete` coverage. A fully retired artifact still
+never reaches `ready`: retired obligations stay required and open, so
+retiring every decoy does not close the ledger, and the artifact stays
+flagged by this limitation until runtime authority or manifest bindings exist
+for it.
 
 ### Proof applicability
 

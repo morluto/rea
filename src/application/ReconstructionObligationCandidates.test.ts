@@ -361,8 +361,13 @@ describe("reconstruction obligation over-generation", () => {
     expect(overgeneration(ledger)).toEqual([
       `obligation-overgeneration: artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} generated obligations with no runtime authority and no manifest binding (families: ${countedFamilies(ledger)}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} still unreviewed, 0 retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`,
     ]);
-    expect(ledger.status).toBe("unknown");
-    expect(ledger.coverage.status).toBe("partial");
+    // The graph is complete and nothing was truncated, so the count alone is
+    // advisory: coverage and closure match the ledger just below the threshold.
+    expect(ledger.limitations).toEqual(overgeneration(ledger));
+    expect(atThreshold.limitations).toEqual([]);
+    expect(ledger.coverage.status).toBe("complete");
+    expect(ledger.status).toBe(atThreshold.status);
+    expect(ledger.status).toBe("open");
   });
 
   it("keeps the limitation when reviewed dispositions retire the surplus and reports the unreviewed count", () => {
@@ -397,7 +402,7 @@ describe("reconstruction obligation over-generation", () => {
     expect(overgeneration(ledger)[0]).toContain(
       `; ${String(OBLIGATION_OVERGENERATION_THRESHOLD)} still unreviewed, ${String(surplus)} retired by reviewed disposition.`,
     );
-    expect(ledger.status).toBe("unknown");
+    expect(ledger.status).toBe("open");
     expect(ledger.obligations).toHaveLength(open.obligations.length);
     for (const decoy of decoys)
       expect(
@@ -464,8 +469,11 @@ describe("reconstruction obligation over-generation", () => {
       required: open.obligations.length,
       required_open: open.obligations.length,
     });
+    // Retired claims stay required and open, so the ledger cannot reach
+    // ready even though the over-generation limitation is only advisory.
     expect(ledger.status).not.toBe("ready");
-    expect(ledger.status).toBe("unknown");
+    expect(ledger.status).toBe("open");
+    expect(ledger.limitations).toEqual(overgeneration(ledger));
     expect(overgeneration(ledger)).toHaveLength(1);
     expect(overgeneration(ledger)[0]).toContain(
       `; 0 still unreviewed, ${String(unbound)} retired by reviewed disposition.`,
@@ -518,7 +526,8 @@ describe("reconstruction obligation over-generation group", () => {
     expect(overgeneration(ledger)[0]).toContain(
       `; ${String(total - decoys.length)} still unreviewed, ${String(decoys.length)} retired by reviewed disposition.`,
     );
-    expect(ledger.status).toBe("unknown");
+    expect(ledger.status).toBe(open.status);
+    expect(ledger.status).not.toBe("ready");
   });
 
   it.each([
@@ -580,8 +589,9 @@ describe("reconstruction obligation over-generation group", () => {
       expect(overgeneration(ledger)[0]).toContain(
         `; ${String(total - decoys.length)} still unreviewed, ${String(decoys.length)} retired by reviewed disposition.`,
       );
-      expect(ledger.status).toBe("unknown");
-      expect(ledger.coverage.status).toBe("partial");
+      expect(ledger.status).toBe(open.status);
+      expect(ledger.status).not.toBe("ready");
+      expect(ledger.coverage.status).toBe(open.coverage.status);
     },
   );
 
