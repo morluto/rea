@@ -323,8 +323,10 @@ export const createCliResultOutput = (
       : undefined;
     // A completed report with a failed verdict, such as an unhealthy doctor
     // report, is still the command's result: --filter-output selects from it.
-    // The selection then stands in for the report in the full-output envelope,
-    // which keeps ok: false. JSONL frames every classified failure whole.
+    // The selection then stands in for the report in the full-output envelope.
+    // Whether the outcome failed is decided before selection, so a selection
+    // that omits the health signal, or selects nothing, never turns it into a
+    // success. JSONL frames every classified failure whole.
     const reportSelection =
       reportedFailure !== undefined &&
       filterPaths !== undefined &&
@@ -334,17 +336,14 @@ export const createCliResultOutput = (
       isCliCompletedFailureReport(value)
         ? applyCliOutputFilter(value, filterPaths)
         : undefined;
+    // An invalid selection is reported as a filter error below instead.
+    const failureReported =
+      reportedFailure !== undefined && reportSelection?.ok !== false;
     const operationFailure =
-      reportSelection === undefined
-        ? reportedFailure
-        : reportSelection.ok
-          ? reportSelection.value
-          : undefined;
-    const failure = options.fullOutput ? operationFailure : undefined;
+      reportSelection?.ok === true ? reportSelection.value : reportedFailure;
+    const envelopeFailed = options.fullOutput && failureReported;
     const ownsFilteredOutput =
-      operationFailure === undefined &&
-      filterPaths !== undefined &&
-      filterPaths.length > 0;
+      !failureReported && filterPaths !== undefined && filterPaths.length > 0;
     if (
       (format === "toon" || format === "yaml") &&
       value == null &&
@@ -357,7 +356,7 @@ export const createCliResultOutput = (
     // Suppressed human presentation must never erase
     // the typed failure that this boundary already owns.
     if (
-      operationFailure === undefined &&
+      !failureReported &&
       metadata.renderOutput === false &&
       format !== "jsonl" &&
       !options.fullOutput &&
@@ -366,7 +365,7 @@ export const createCliResultOutput = (
       return false;
     if (format === "csv" || format === "tsv") {
       const meta = resultMeta(metadata);
-      if (operationFailure !== undefined) {
+      if (failureReported) {
         const parsedFailure =
           analysisErrorProjectionSchema.safeParse(operationFailure);
         error = parsedFailure.success
@@ -431,9 +430,10 @@ export const createCliResultOutput = (
       }
       return true;
     }
-    const selection =
-      operationFailure !== undefined || filterPaths === undefined
-        ? ok(operationFailure ?? value)
+    const selection = failureReported
+      ? ok(operationFailure)
+      : filterPaths === undefined
+        ? ok(value)
         : applyCliOutputFilter(value, filterPaths);
     if (!selection.ok) {
       error = projectAnalysisError(
@@ -522,9 +522,7 @@ export const createCliResultOutput = (
     if (
       (format === "toon" || format === "md") &&
       !options.tokenCount &&
-      (!options.tokenWindow ||
-        format === "md" ||
-        operationFailure !== undefined) &&
+      (!options.tokenWindow || format === "md" || failureReported) &&
       (format === "md"
         ? containsUnrepresentableMarkdown(selected)
         : containsUnpairedSurrogate(selected))
@@ -537,7 +535,7 @@ export const createCliResultOutput = (
         ? normalizeJsonArrayValues(selected)
         : selected;
     const ownsSuccessfulTokenWindow =
-      operationFailure === undefined &&
+      !failureReported &&
       options.tokenWindow &&
       !options.tokenCount &&
       format !== "json" &&
@@ -551,7 +549,7 @@ export const createCliResultOutput = (
             source: value,
             selected: filtered,
             filterPaths,
-            operationFailure,
+            operationFailure: failureReported ? operationFailure : undefined,
             command: metadata.command,
             duration: metadata.duration,
             ...(metadata.cliControls === undefined
@@ -567,18 +565,17 @@ export const createCliResultOutput = (
       return true;
     }
     const meta = resultMeta(metadata);
-    const errorDocument =
-      options.fullOutput && failure !== undefined
-        ? fullFailureEnvelope(
-            failure,
-            meta,
-            format,
-            options.tokenLimit,
-            options.tokenOffset,
-          )
-        : undefined;
+    const errorDocument = envelopeFailed
+      ? fullFailureEnvelope(
+          operationFailure,
+          meta,
+          format,
+          options.tokenLimit,
+          options.tokenOffset,
+        )
+      : undefined;
     const document = options.fullOutput
-      ? failure !== undefined
+      ? envelopeFailed
         ? errorDocument
         : filtered === undefined
           ? { ok: true, meta }

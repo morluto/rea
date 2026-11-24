@@ -399,9 +399,20 @@ it.each([
     // The envelope around the selection; the whole report is over 100.
     expected: "<60",
   },
+  // A selection that omits the health signal, or selects nothing (an
+  // audit-wide report has no scope_checks), must not read as success.
+  {
+    flags: ["--json", "--full-output", "--filter-output", "scope_checks"],
+    expected: { ok: false },
+  },
+  {
+    flags: ["--json", "--full-output", "--filter-output", "checks"],
+    expected: { ok: false, error: { checks: [{ name: "provider" }] } },
+    selectsDetail: true,
+  },
 ])(
   "applies $flags to an unhealthy doctor report and keeps exit 1",
-  async ({ flags, expected }) => {
+  async ({ flags, expected, selectsDetail }) => {
     const chunks: Buffer[] = [];
     const destination = new Writable({
       write(chunk: Buffer, _encoding, callback) {
@@ -431,8 +442,9 @@ it.each([
       process.exitCode = previousExitCode;
     }
     const text = Buffer.concat(chunks).toString("utf8").trim();
-    // The selection replaces the report; its detail never reaches output.
-    expect(text).not.toContain("x".repeat(400));
+    // The selection replaces the report; its detail reaches output only when
+    // the selection includes it.
+    if (selectsDetail !== true) expect(text).not.toContain("x".repeat(400));
     if (expected.toString().startsWith("<"))
       expect(Number(text)).toBeLessThan(Number(String(expected).slice(1)));
     else if (typeof expected === "string") expect(text).toBe(expected);
