@@ -2036,7 +2036,10 @@ it("keeps malformed index.json as the primary when its handle close fails", asyn
     if (result.ok) return;
     // The reader's close retries the handle, so only the primary is checked.
     const primary = primaryAnalysisError(result.error);
-    expect(primary).toMatchObject({ _tag: "AnalysisInputError" });
+    expect(primary).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      failure: { kind: "malformed" },
+    });
     // The completed oci-layout hash survives the index.json close failure.
     expect(primary.partialObservation).toMatchObject({
       kind: "file-snapshot-hash",

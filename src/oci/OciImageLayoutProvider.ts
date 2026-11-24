@@ -35,7 +35,6 @@ import {
   parseOciImageLayout,
 } from "./OciImageLayoutParser.js";
 import type { FileSnapshotPartialObservation } from "../domain/fileSnapshotObservation.js";
-import { ParseFailureError } from "../domain/parseFailure.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -150,20 +149,13 @@ const layoutFailureDialect = (
         },
       );
     }
-    if (cause instanceof ParseFailureError && cause.failure.kind !== "limit") {
-      const formatFailure = parseFailureAnalysisError(
-        OPERATION,
-        input.path,
-        cause,
-      );
-      if (formatFailure instanceof AnalysisInputError)
-        return new AnalysisInputError(
-          OPERATION,
-          { cause, ...options },
-          formatFailure.issues,
-        );
-      if (formatFailure !== undefined) return formatFailure;
-    }
+    const formatFailure = parseFailureAnalysisError(
+      OPERATION,
+      input.path,
+      cause,
+      options,
+    );
+    if (formatFailure !== undefined) return formatFailure;
     // A cancelled read goes to the shared cancellation path.
     if (cause instanceof ArtifactReaderFailure && cause.reason !== "cancelled")
       return translateArtifactFailure(OPERATION, cause);

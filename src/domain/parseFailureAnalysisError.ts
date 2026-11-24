@@ -67,6 +67,7 @@ export const parseFailureAnalysisError = (
   operation: string,
   path: string,
   cause: unknown,
+  options?: Omit<AnalysisErrorOptions, "cause">,
 ):
   | AnalysisMalformedTargetError
   | AnalysisUnsupportedTargetError
@@ -81,11 +82,12 @@ export const parseFailureAnalysisError = (
         operation,
         path,
         failure.detail,
-        { cause, undecodedContent: failure.undecodedContent },
+        { ...options, cause, undecodedContent: failure.undecodedContent },
       );
     case "malformed":
     case "truncated":
       return new AnalysisMalformedTargetError(operation, path, failure, {
+        ...options,
         cause,
       });
   }
