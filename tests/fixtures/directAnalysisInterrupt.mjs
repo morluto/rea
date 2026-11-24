@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../dist/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../dist/config/parseConfig.js";
 import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import {
 import { BinarySession } from "../../dist/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../dist/application/binary/SessionProviderRouter.js";
 import { AnalysisProviderRegistry } from "../../dist/application/binary/AnalysisProviderRegistry.js";
-import { createAnalysisExecution } from "../../dist/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../dist/ports/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../dist/domain/analysisErrorCore.js";
 import { err, ok } from "../../dist/domain/result.js";
 
@@ -97,13 +98,13 @@ const result =
     ? await runDirectAnalysis(dependencies, target, "read_bytes", {
         address: "0x0",
         length: 1,
-      })
+      }).then(projectCliAnalysisResult)
     : await runProviderAnalysis(
         dependencies,
         target,
         mode === "managed" ? "inspect_managed_artifact" : "procedure_address",
         mode === "managed" ? {} : { procedure: "fixture" },
-      );
+      ).then(projectCliAnalysisResult);
 clearInterval(keepAlive);
 if (
   process.listenerCount("SIGINT") !== interruptListeners ||

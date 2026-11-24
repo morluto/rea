@@ -26,7 +26,7 @@ it.skipIf(process.platform === "win32")(
     );
     const readerModule = fileURLToPath(
       new URL(
-        "../../../dist/artifacts/DirectoryArtifactReader.js",
+        "../../../dist/resources/DirectoryArtifactReader.js",
         import.meta.url,
       ),
     );
@@ -70,31 +70,20 @@ it.skipIf(process.platform === "win32")(
     );
     const readerModule = fileURLToPath(
       new URL(
-        "../../../dist/artifacts/DirectoryArtifactReader.js",
+        "../../../dist/resources/DirectoryArtifactReader.js",
         import.meta.url,
       ),
     );
-    const launch = await spawnOwnedProviderProcess({
-      command: process.execPath,
-      arguments: [probe, readerModule, root],
-      runId: `rea-directory-entry-fifo-${randomUUID()}`,
-      cwd: tmpdir(),
-      hostEnvironment: process.env,
-    });
-    const supervisor = new ProviderProcessSupervisor({
-      ...launch,
-      ownsProcessLifetime: true,
-    });
-
-    try {
-      expect(await supervisor.waitForOutputClose(2_000)).toBe(true);
-      expect(supervisor.snapshot().stdout.text.trim()).toBe('["module.js"]');
-    } finally {
-      const stopped = await supervisor.stop({
-        terminationGraceMs: 100,
-        killGraceMs: 500,
-      });
-      expect(stopped.status).not.toBe("incomplete");
-    }
+    // This probe only enumerates directory entries and has no descendants.
+    // Wait for its actual exit and keep a timeout in case enumeration blocks.
+    const { stdout } = await run(
+      process.execPath,
+      [probe, readerModule, root],
+      {
+        cwd: tmpdir(),
+        timeout: 5_000,
+      },
+    );
+    expect(stdout.trim()).toBe('["module.js"]');
   },
 );

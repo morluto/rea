@@ -1,9 +1,8 @@
+import { getEventListeners } from "node:events";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  HopperCancelledError,
-  HopperProtocolError,
-} from "../domain/hopperErrors.js";
+import { HopperProtocolError } from "./HopperErrors.js";
 import { ok } from "../domain/result.js";
 import { HopperRequestQueue } from "./HopperRequestQueue.js";
 
@@ -13,25 +12,41 @@ afterEach(() => {
 });
 
 describe("HopperRequestQueue deadlines", () => {
-  it("times out active callers while retaining the wire until the late reply", async () => {
+  it("expires queued work but keeps an expired active request on the wire until its reply", async () => {
     vi.useFakeTimers();
     const sent: number[] = [];
     const queue = new HopperRequestQueue(({ id }) => sent.push(id));
-    const result = vi.fn();
-    const pending = queue
-      .run(1, "analyze_function", {}, { timeoutMs: 25 })
-      .then(result);
-    const next = queue.run(2, "echo", {}, {});
-    await vi.advanceTimersByTimeAsync(25);
-    expect(result).toHaveBeenCalledWith({
+    const controller = new AbortController();
+    const active = queue.run(
+      1,
+      "analyze_function",
+      {},
+      { timeoutMs: 25, signal: controller.signal },
+    );
+    const expired = queue.run(2, "set_comment", {}, { timeoutMs: 10 });
+    const next = queue.run(3, "echo", {}, {});
+
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(expired).resolves.toMatchObject({
       ok: false,
-      error: expect.objectContaining({
+      error: {
+        _tag: "HopperTimeoutError",
+        requestId: 2,
+        providerState: "not_started",
+      },
+    });
+    expect(queue.hasQueued(2)).toBe(false);
+    await vi.advanceTimersByTimeAsync(15);
+    controller.abort("too late to change the timeout");
+    await expect(active).resolves.toMatchObject({
+      ok: false,
+      error: {
         _tag: "HopperTimeoutError",
         timeoutMs: 25,
         operation: "analyze_function",
         requestId: 1,
         providerState: "busy",
-      }),
+      },
     });
     expect(sent).toEqual([1]);
     expect(queue.activity()).toMatchObject({
@@ -40,59 +55,14 @@ describe("HopperRequestQueue deadlines", () => {
     });
     expect(vi.getTimerCount()).toBe(0);
     expect(queue.accept(1, ok("late"))).toBe(true);
-    expect(sent).toEqual([1, 2]);
-    queue.accept(2, ok("next"));
-    await pending;
+    expect(sent).toEqual([1, 3]);
+    queue.accept(3, ok("next"));
     await expect(next).resolves.toEqual(ok("next"));
-    expect(result).toHaveBeenCalledTimes(1);
     expect(queue.activity()).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("expires a queued request without transmitting it", async () => {
-    vi.useFakeTimers();
-    const sent: number[] = [];
-    const queue = new HopperRequestQueue(({ id }) => sent.push(id));
-    const active = queue.run(1, "active", {}, {});
-    const settled = vi.fn();
-    const queued = queue.run(2, "queued", {}, { timeoutMs: 10 }).then(settled);
-    await vi.advanceTimersByTimeAsync(10);
-    expect(settled).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          _tag: "HopperTimeoutError",
-          requestId: 2,
-          providerState: "not_started",
-        }),
-      }),
-    );
-    expect(queue.hasQueued(2)).toBe(false);
-    queue.accept(1, ok(null));
-    await Promise.all([active, queued]);
-    expect(sent).toEqual([1]);
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
   it("cleans deadline and abort observers on success before the deadline", async () => {
-    vi.useFakeTimers();
-    const queue = new HopperRequestQueue(() => {});
-    const controller = new AbortController();
-    const remove = vi.spyOn(controller.signal, "removeEventListener");
-    const settled = vi.fn();
-    const pending = queue
-      .run(1, "echo", {}, { timeoutMs: 25, signal: controller.signal })
-      .then(settled);
-    queue.accept(1, ok(42));
-    controller.abort();
-    await vi.advanceTimersByTimeAsync(100);
-    await pending;
-    expect(settled).toHaveBeenCalledExactlyOnceWith(ok(42));
-    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("keeps explicit cancellation distinct from a later timeout", async () => {
     vi.useFakeTimers();
     const queue = new HopperRequestQueue(() => {});
     const controller = new AbortController();
@@ -102,14 +72,32 @@ describe("HopperRequestQueue deadlines", () => {
       {},
       { timeoutMs: 25, signal: controller.signal },
     );
+    queue.accept(1, ok(42));
+    expect(getEventListeners(controller.signal, "abort")).toEqual([]);
     controller.abort();
-    await expect(pending).resolves.toEqual({
-      ok: false,
-      error: new HopperCancelledError(),
-    });
+    await expect(pending).resolves.toEqual(ok(42));
     expect(vi.getTimerCount()).toBe(0);
-    queue.accept(1, ok(null));
-    await vi.advanceTimersByTimeAsync(100);
+  });
+
+  it("keeps the exact active cancellation distinct from a later timeout", async () => {
+    vi.useFakeTimers();
+    const queue = new HopperRequestQueue(() => {});
+    const controller = new AbortController();
+    const pending = queue.run(
+      1,
+      "echo",
+      {},
+      { timeoutMs: 25, signal: controller.signal },
+    );
+    const reason = { source: "active caller" };
+    controller.abort(reason);
+    const result = await pending;
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error._tag).toBe("HopperCancelledError");
+    expect(result.error.cause).toBe(reason);
+    expect(queue.activity()?.callerState).toBe("cancelled");
+    expect(vi.getTimerCount()).toBe(0);
+    expect(queue.accept(1, ok("late"))).toBe(true);
     expect(queue.activity()).toBeNull();
   });
 
@@ -118,6 +106,7 @@ describe("HopperRequestQueue deadlines", () => {
     const send = vi.fn();
     const queue = new HopperRequestQueue(send);
     const controller = new AbortController();
+    const reason = { source: "progress" };
     const pending = queue.run(
       1,
       "echo",
@@ -127,7 +116,7 @@ describe("HopperRequestQueue deadlines", () => {
         signal: controller.signal,
         progress: {
           report: () => {
-            controller.abort();
+            controller.abort(reason);
             return Promise.resolve();
           },
         },
@@ -135,7 +124,7 @@ describe("HopperRequestQueue deadlines", () => {
     );
     await expect(pending).resolves.toMatchObject({
       ok: false,
-      error: { _tag: "HopperCancelledError" },
+      error: { cause: reason },
     });
     expect(vi.getTimerCount()).toBe(0);
     expect(send).not.toHaveBeenCalled();
@@ -162,7 +151,7 @@ describe("HopperRequestQueue deadlines", () => {
     await expect(queued).resolves.toEqual({ ok: false, error: failure });
     expect(result).toHaveBeenCalledTimes(1);
     expect(queue.activity()).toBeNull();
-    expect(queue.queuedCount()).toBe(0);
+    expect(queue.hasQueued(2)).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
 });
@@ -180,23 +169,22 @@ describe("HopperRequestQueue deadline admission and races", () => {
       {},
       { timeoutMs: 100, signal: controller.signal },
     );
-    controller.abort();
-    await expect(queued).resolves.toMatchObject({
-      ok: false,
-      error: { _tag: "HopperCancelledError" },
-    });
-    await expect(
-      queue.run(
-        3,
-        "pre-aborted",
-        {},
-        { timeoutMs: 100, signal: controller.signal },
-      ),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { _tag: "HopperCancelledError" },
-    });
-    expect(queue.queuedCount()).toBe(0);
+    const reason = { source: "waiting caller" };
+    controller.abort(reason);
+    const preAborted = queue.run(
+      3,
+      "pre-aborted",
+      {},
+      { timeoutMs: 100, signal: controller.signal },
+    );
+    for (const result of await Promise.all([queued, preAborted])) {
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error._tag).toBe("HopperCancelledError");
+      expect(result.error.cause).toBe(reason);
+    }
+    expect(queue.hasQueued(2)).toBe(false);
+    expect(queue.hasQueued(3)).toBe(false);
+    expect(queue.activity()?.queuedRequests).toBe(0);
     queue.accept(1, ok(null));
     await active;
     expect(sent).toEqual([1]);
@@ -220,7 +208,7 @@ describe("HopperRequestQueue deadline admission and races", () => {
     },
   );
 
-  it("expires zero deadlines without sending and settles only once if aborted afterward", async () => {
+  it("expires zero deadlines without sending", async () => {
     vi.useFakeTimers();
     const send = vi.fn();
     const queue = new HopperRequestQueue(send);
@@ -235,66 +223,37 @@ describe("HopperRequestQueue deadline admission and races", () => {
       },
     });
     expect(send).not.toHaveBeenCalled();
-    const controller = new AbortController();
-    const settled = vi.fn();
-    const pending = queue
-      .run(2, "echo", {}, { timeoutMs: 10, signal: controller.signal })
-      .then(settled);
-    await vi.advanceTimersByTimeAsync(10);
-    controller.abort();
-    queue.accept(2, ok("late"));
-    await pending;
-    expect(settled).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({ _tag: "HopperTimeoutError" }),
-      }),
-    );
     expect(vi.getTimerCount()).toBe(0);
   });
 });
 
-describe("Hopper deadlines before timer dispatch", () => {
-  it("does not transmit overdue queued work when the event loop delays its timer", async () => {
-    vi.useFakeTimers();
-    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
-    const sent: number[] = [];
-    const queue = new HopperRequestQueue(({ id }) => sent.push(id));
-    const active = queue.run(1, "active", {}, {});
-    const expired = queue.run(2, "set_comment", {}, { timeoutMs: 10 });
-    clock.mockReturnValue(20);
-    queue.accept(1, ok(null));
-    await expect(expired).resolves.toMatchObject({
-      ok: false,
-      error: {
-        _tag: "HopperTimeoutError",
-        operation: "set_comment",
-        providerState: "not_started",
-      },
-    });
-    await active;
-    expect(sent).toEqual([1]);
-    expect(queue.activity()).toBeNull();
-    expect(vi.getTimerCount()).toBe(0);
-  });
+it("honors elapsed deadlines on reply and dequeue before their timers run", async () => {
+  vi.useFakeTimers();
+  const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+  const sent: number[] = [];
+  const queue = new HopperRequestQueue(({ id }) => sent.push(id));
+  const active = queue.run(1, "echo", {}, { timeoutMs: 10 });
+  const queued = queue.run(2, "set_comment", {}, { timeoutMs: 10 });
+  const next = queue.run(3, "echo", {}, {});
+  clock.mockReturnValue(20);
 
-  it("accepts an overdue active reply without turning elapsed timeout into success", async () => {
-    vi.useFakeTimers();
-    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
-    const sent: number[] = [];
-    const queue = new HopperRequestQueue(({ id }) => sent.push(id));
-    const expired = queue.run(1, "active", {}, { timeoutMs: 10 });
-    const next = queue.run(2, "next", {}, {});
-    clock.mockReturnValue(20);
-    expect(queue.accept(1, ok("late"))).toBe(true);
-    await expect(expired).resolves.toMatchObject({
-      ok: false,
-      error: { _tag: "HopperTimeoutError" },
-    });
-    expect(sent).toEqual([1, 2]);
-    queue.accept(2, ok(null));
-    await next;
-    expect(queue.activity()).toBeNull();
-    expect(vi.getTimerCount()).toBe(0);
+  expect(queue.accept(1, ok("late"))).toBe(true);
+  await expect(active).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "HopperTimeoutError", requestId: 1, providerState: "busy" },
   });
+  expect(sent).toEqual([1, 3]);
+  await expect(queued).resolves.toMatchObject({
+    ok: false,
+    error: {
+      _tag: "HopperTimeoutError",
+      operation: "set_comment",
+      requestId: 2,
+      providerState: "not_started",
+    },
+  });
+  queue.accept(3, ok("next"));
+  await expect(next).resolves.toEqual(ok("next"));
+  expect(queue.activity()).toBeNull();
+  expect(vi.getTimerCount()).toBe(0);
 });

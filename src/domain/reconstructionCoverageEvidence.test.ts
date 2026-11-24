@@ -1,24 +1,23 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 
 import { createEvidence, type Evidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import {
   completeReconstructionCoverageFixture,
+  assertReconstructionCoverageEvaluation,
   RECONSTRUCTION_COVERAGE_NOW,
+  reconstructionCoverageDataFixture,
+  reconstructionVerifierContractFixture,
 } from "./reconstructionCoverage.fixture.js";
-import {
-  createReconstructionCoverageData,
-  createReconstructionVerifierContract,
-  evaluateReconstructionClosure,
-  type ReconstructionCoverageData,
-} from "./reconstructionCoverage.js";
+import type { ReconstructionCoverageData } from "./reconstructionCoverage.js";
 
 const proof = (
   authority: Evidence["authority"],
   confidence: Evidence["confidence"],
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "proof-test", name: "Proof fixture", version: "1" },
     {
       operation: "verify",
@@ -35,7 +34,7 @@ const proof = (
 
 const withProofs = (records: readonly Evidence[]) => {
   const { workspace, result } = completeReconstructionCoverageFixture();
-  return createReconstructionCoverageData({
+  return reconstructionCoverageDataFixture({
     ...workspace,
     evidence_bundle: createEvidenceBundle([
       ...workspace.evidence_bundle.records,
@@ -56,7 +55,7 @@ const withPackageProof = (
   status: ReconstructionCoverageData["package_proofs"][number]["status"] = "pass",
 ) => {
   const { workspace } = completeReconstructionCoverageFixture();
-  return createReconstructionCoverageData({
+  return reconstructionCoverageDataFixture({
     ...workspace,
     evidence_bundle: createEvidenceBundle([
       ...workspace.evidence_bundle.records,
@@ -79,7 +78,7 @@ const withPackageProof = (
 };
 
 const evaluate = (coverage: ReconstructionCoverageData) =>
-  evaluateReconstructionClosure(
+  assertReconstructionCoverageEvaluation(
     coverage,
     "replacement.cli",
     RECONSTRUCTION_COVERAGE_NOW,
@@ -144,7 +143,7 @@ it("does not fall back to older observed proof when the latest result only cites
   const latest = coverage.verifier_results[0];
   if (latest === undefined) throw new Error("Expected verifier result");
   const result = evaluate(
-    createReconstructionCoverageData({
+    reconstructionCoverageDataFixture({
       ...coverage,
       verifier_results: [
         previous,
@@ -173,11 +172,11 @@ it.each([
     if (original === undefined || result === undefined)
       throw new Error("Expected verifier contract");
     const { contract_sha256: _digest, ...input } = original;
-    const contract = createReconstructionVerifierContract({
+    const contract = reconstructionVerifierContractFixture({
       ...input,
       authority: required,
     });
-    const changed = createReconstructionCoverageData({
+    const changed = reconstructionCoverageDataFixture({
       ...coverage,
       claims: coverage.claims.map((claim) => ({
         ...claim,

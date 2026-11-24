@@ -1,42 +1,58 @@
 #!/usr/bin/env node
 
-import { execFile } from "node:child_process";
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { supportedClients } from "../dist/application/SupportedClients.js";
-import { promisify } from "node:util";
 import { GHIDRA_BRIDGE_SOURCES } from "../src/ghidra/GhidraBridgeSources.ts";
 
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-
-import {
-  execNpm,
-  verifyCompleteToolCatalog,
-} from "./lib/verify-package-core.mjs";
+import { verifyCanaryMcp } from "./lib/release-package-canary.mjs";
+import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { verifyPackageUpdate } from "./verify-package-update.mjs";
-import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  completeVerifierRun,
+  createVerifierPhaseTimings,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
-const exec = promisify(execFile);
 const verifierRun = createVerifierRun();
+const timings = createVerifierPhaseTimings();
 const root = process.cwd();
-const workspace = await mkdtemp(join(tmpdir(), "rea-windows-package-"));
+// Windows children write beneath the root; a private root's DELETE handle would block them.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-windows-package-",
+  private: false,
+});
+const workspace = fixture.path;
+// The package command owner releases the fixture after its commands close.
+const workspaceOwner = { path: workspace, close: () => fixture.release() };
 const prefix = join(workspace, "prefix");
+let commands;
+const closeWorkspace = async () => {
+  timings.begin("cleanup");
+  try {
+    await (commands === undefined ? workspaceOwner.close() : commands.close());
+  } catch (cause) {
+    timings.finish("failed");
+    throw cause;
+  }
+  timings.finish();
+};
+const reportFailureTimings = () =>
+  process.stderr.write(
+    `${JSON.stringify({ phase_timings: timings.snapshot() })}\n`,
+  );
 let report;
 
 try {
+  timings.begin("command_setup");
+  commands = await createPackageVerifierCommands({ workspace: workspaceOwner });
+  timings.begin("pack");
   const packed = JSON.parse(
     (
-      await execNpm(
+      await commands.execNpm(
         ["pack", "--json", "--silent", "--pack-destination", workspace],
         { cwd: root, windowsHide: true },
       )
@@ -69,8 +85,18 @@ try {
 
   const tarball = join(workspace, packageResult.filename);
   await access(tarball);
-  await execNpm(
-    ["install", "--no-package-lock", "--no-save", "--prefix", prefix, tarball],
+  timings.begin("install");
+  await commands.execNpm(
+    [
+      "install",
+      "--no-package-lock",
+      "--no-save",
+      "--no-audit",
+      "--no-fund",
+      "--prefix",
+      prefix,
+      tarball,
+    ],
     { cwd: workspace, windowsHide: true },
   );
   const entry = join(
@@ -84,7 +110,8 @@ try {
     ...process.env,
     REA_ANALYSIS_PROVIDER: "auto",
   };
-  const help = await exec(process.execPath, [entry, "--help"], {
+  timings.begin("cli_help");
+  const help = await commands.exec(process.execPath, [entry, "--help"], {
     env: environment,
     windowsHide: true,
   });
@@ -95,21 +122,33 @@ try {
   )
     throw new Error("Packaged Windows CLI help omitted analysis commands");
 
-  const server = new StdioClientTransport({
-    command: process.execPath,
-    args: [entry, "mcp"],
-    env: environment,
-    stderr: "pipe",
+  timings.begin("mcp_catalog");
+  const { mcpTools: toolCount } = await verifyCanaryMcp(entry, workspace, {
+    commands,
+    environment: {
+      ...environment,
+      hopper_target_kind: "invalid-fixture-kind",
+      HOPPER_LOADER_ARGS_JSON: "{",
+    },
   });
-  const client = new Client({ name: "rea-windows-package", version: "1.0.0" });
-  let toolCount = 0;
-  try {
-    await client.connect(server);
-    toolCount = (await verifyCompleteToolCatalog(client)).length;
-  } finally {
-    await client.close();
-  }
 
+  timings.begin("mcp_doctor_target_free");
+  const mcpDoctor = JSON.parse(
+    (
+      await commands.exec(
+        process.execPath,
+        [entry, "mcp", "doctor", "--json"],
+        {
+          env: { ...environment, hopper_target_kind: "invalid-fixture-kind" },
+          windowsHide: true,
+        },
+      )
+    ).stdout,
+  );
+  if (mcpDoctor.healthy !== true || mcpDoctor.request_flow?.ok !== true)
+    throw new Error("Packaged Windows MCP doctor did not start target-free");
+
+  timings.begin("setup");
   const home = join(workspace, "home");
   const setupEnvironment = {
     ...environment,
@@ -148,7 +187,7 @@ try {
   ];
   const setup = JSON.parse(
     (
-      await exec(process.execPath, [entry, ...setupArgs], {
+      await commands.exec(process.execPath, [entry, ...setupArgs], {
         env: setupEnvironment,
         windowsHide: true,
       })
@@ -188,7 +227,7 @@ try {
   }
   const repeated = JSON.parse(
     (
-      await exec(process.execPath, [entry, ...setupArgs], {
+      await commands.exec(process.execPath, [entry, ...setupArgs], {
         env: setupEnvironment,
         windowsHide: true,
       })
@@ -200,9 +239,10 @@ try {
     repeated.appliedActions.length !== 0
   )
     throw new Error("Packaged agent setup is not idempotent");
+  timings.begin("uninstall");
   const uninstalled = JSON.parse(
     (
-      await exec(process.execPath, [entry, "uninstall", "--json"], {
+      await commands.exec(process.execPath, [entry, "uninstall", "--json"], {
         env: setupEnvironment,
         windowsHide: true,
       })
@@ -214,12 +254,14 @@ try {
     )
       throw new Error(`Packaged uninstall did not remove ${id}`);
 
+  timings.begin("update");
   if (process.platform !== "win32")
-    await execNpm(
+    await commands.execNpm(
       ["install", "--global", "--ignore-scripts", "--prefix", prefix, tarball],
       { cwd: workspace, windowsHide: true },
     );
   const update = await verifyPackageUpdate({
+    commands,
     prefix,
     packageRoot:
       process.platform === "win32"
@@ -235,15 +277,27 @@ try {
     platform: process.platform,
     package: packageResult.filename,
     tools: toolCount,
+    mcp_doctor_target_free: true,
     ghidra_bridge: "present",
     agent_setup: ["opencode", "vscode", "copilot_cli"],
     setup_idempotent: true,
     uninstall: true,
     update,
   };
-} finally {
-  await rm(workspace, { recursive: true, force: true });
+} catch (cause) {
+  timings.finish("failed");
+  try {
+    await withVerifierCleanup(() => Promise.reject(cause), [closeWorkspace]);
+  } finally {
+    reportFailureTimings();
+  }
+}
+try {
+  await closeWorkspace();
+} catch (cause) {
+  reportFailureTimings();
+  throw cause;
 }
 process.stdout.write(
-  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report, phase_timings: timings.snapshot() })}\n`,
 );

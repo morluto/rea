@@ -1,40 +1,73 @@
 import { types } from "node:util";
 import { z } from "zod";
+import { invariantViolation } from "../internalInvariant.js";
 
-import type { JsonValue } from "../jsonValue.js";
-import { UnknownPlistReal } from "./plistNumbers.js";
+import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
+import { ParseFailureError } from "../parseFailure.js";
+import { copyPlistUidIdentity } from "./plistUid.js";
+import { UnknownPlistScalar } from "./unknownPlistScalar.js";
+
+const jsonScalarSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+]);
 
 /**
- * Maximum plist value nesting the JSON projection supports. The XML decode
- * preflight shares this limit so oversized documents are rejected before any
- * recursive pass rather than during one.
+ * Default source-value nesting for archive consumers. Ordinary plist inspection
+ * supplies its result-capacity allowance to both decode and projection.
  */
 export const MAX_PLIST_DEPTH = 128;
+
+/** Reserve typed scalar fields, the report value, and Evidence.normalized_result. */
+export const MAX_NATIVE_PLIST_NESTING_DEPTH = MAX_JSON_DEPTH - 3;
+
+/** Agent-visible refusal for nesting past the JSON projection allowance. */
+const plistNestingLimitMessage = (maximumDepth = MAX_PLIST_DEPTH): string =>
+  `Plist exceeds ${String(maximumDepth)} nesting levels. This release has no runtime override for this ${String(maximumDepth)}-level nesting allowance.`;
+
+/** A source-value depth refusal, distinct from malformed decoder output. */
+export class PlistNestingLimitError extends ParseFailureError<"limit"> {
+  constructor(readonly maximumDepth: number) {
+    super({
+      kind: "limit",
+      format: "plist",
+      detail: plistNestingLimitMessage(maximumDepth),
+      limit: { name: "plist-nesting-depth", maximum: maximumDepth },
+    });
+    this.name = "PlistNestingLimitError";
+  }
+}
 
 /** A decoded plist projected into JSON, with values JSON cannot express. */
 export interface ProjectedPlistValue {
   readonly value: JsonValue;
   /** Known non-finite values, rendered with canonical numeric labels. */
   readonly nonFiniteRealCount: number;
-  /** XML numeric values whose identity could not be established. */
-  readonly unknownRealCount: number;
   /** Negative-zero reals, which a JSON number would report as positive zero. */
   readonly negativeZeroRealCount: number;
   /** Dates the decoder could not represent, reported without a timestamp. */
   readonly unknownDateCount: number;
+  /** XML scalar literals retained explicitly because their values are unknown. */
+  readonly unknownScalarCount: number;
 }
 
 /** Limitation for results whose plist held dates the decoder could not represent. */
 export const unknownDateLimitation = (count: number): string =>
-  `${String(count)} date value(s) are reported as { "$plist_type": "date", "iso8601": null } because the decoder could not represent them, such as XML dates with years beyond 9999 or negative years, or dates outside the JavaScript date range.`;
+  `${String(count)} date value(s) are reported as { "$plist_type": "date", "iso8601": null } because the decoder could not represent their timestamps.`;
+
+/** Limitation when shared binary bytes prevent safely normalizing date precision. */
+export const binaryDatePrecisionOverlapLimitation = (count: number): string =>
+  `${String(count)} date value(s) are reported with unknown timestamps because their sub-millisecond source records overlap another reachable binary object and the public date projection cannot express their exact instants.`;
+
+/** Limitation for XML scalar literals whose values were not established. */
+export const unknownScalarLimitation = (count: number): string =>
+  `${String(count)} XML scalar value(s) could not be established; their exact literals and reasons are retained in { "$plist_type": "unknown", "element": ..., "literal": ..., "reason": ... } wrappers.`;
 
 /** Limitation for known non-finite values; the labels do not imply XML provenance. */
 export const nonFiniteRealLimitation = (count: number): string =>
   `${String(count)} non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.`;
-
-/** Limitation for XML numeric values the decoder could not establish. */
-export const unknownRealLimitation = (count: number): string =>
-  `${String(count)} numeric value(s) are reported as { "$plist_type": "real", "value": null } because XML numeric decoding could not establish their value identity.`;
 
 /** The typed scalar that keeps a negative-zero real distinct from positive zero. */
 export const negativeZeroReal = (): Record<string, JsonValue> => ({
@@ -56,30 +89,33 @@ export const projectPlistValue = (
   value: unknown,
   /** Observe generated wrappers before consumers classify the JSON value tree. */
   onWrappedScalar?: (value: Record<string, JsonValue>) => void,
+  maximumDepth = MAX_PLIST_DEPTH,
 ): ProjectedPlistValue => {
   let nonFiniteRealCount = 0;
-  let unknownRealCount = 0;
   let negativeZeroRealCount = 0;
   let unknownDateCount = 0;
+  let unknownScalarCount = 0;
   const scalar = (value: Record<string, JsonValue>): JsonValue => {
     onWrappedScalar?.(value);
     return value;
   };
   const project = (item: unknown, depth: number): JsonValue => {
-    if (depth > MAX_PLIST_DEPTH)
-      throw new RangeError(
-        `Plist exceeds ${String(MAX_PLIST_DEPTH)} nesting levels`,
-      );
+    if (depth > maximumDepth) throw new PlistNestingLimitError(maximumDepth);
     if (item !== null && typeof item === "object" && types.isProxy(item))
-      throw new TypeError("Plist values cannot contain proxies");
+      throw invariantViolation("Plist values cannot contain proxies");
     if (item instanceof Uint8Array)
       return scalar({
         $plist_type: "data",
         base64: Buffer.from(item).toString("base64"),
       });
-    if (item instanceof UnknownPlistReal) {
-      unknownRealCount += 1;
-      return scalar({ $plist_type: "real", value: null });
+    if (item instanceof UnknownPlistScalar) {
+      unknownScalarCount += 1;
+      return scalar({
+        $plist_type: "unknown",
+        element: item.element,
+        literal: item.rawLiteral,
+        reason: item.reason,
+      });
     }
     if (item instanceof Date) {
       if (!Number.isNaN(Date.prototype.getTime.call(item)))
@@ -111,7 +147,7 @@ export const projectPlistValue = (
       for (let index = 0; index < item.length; index++) {
         const descriptor = Object.getOwnPropertyDescriptor(item, index);
         if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
-          throw new TypeError(
+          throw invariantViolation(
             "Plist arrays require dense data properties without accessors",
           );
         result.push(project(descriptor.value, depth + 1));
@@ -124,21 +160,23 @@ export const projectPlistValue = (
         const descriptor = Object.getOwnPropertyDescriptor(item, key);
         if (descriptor?.enumerable !== true) continue;
         if (typeof key !== "string" || !Object.hasOwn(descriptor, "value"))
-          throw new TypeError(
+          throw invariantViolation(
             "Plist dictionary entries require string keys and data properties",
           );
         entries.push([key, project(descriptor.value, depth + 1)]);
       }
-      return Object.fromEntries(entries);
+      const result = Object.fromEntries(entries);
+      copyPlistUidIdentity(item, result);
+      return result;
     }
-    return z.union([z.string(), z.number(), z.boolean(), z.null()]).parse(item);
+    return jsonScalarSchema.parse(item);
   };
   const projected = project(value, 0);
   return {
     value: projected,
     nonFiniteRealCount,
-    unknownRealCount,
     negativeZeroRealCount,
     unknownDateCount,
+    unknownScalarCount,
   };
 };

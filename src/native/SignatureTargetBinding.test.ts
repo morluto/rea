@@ -1,7 +1,10 @@
+import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import {
+  chmod,
   mkdtemp,
   rm,
+  readFile,
   stat,
   writeFile,
   open,
@@ -9,19 +12,35 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import { afterEach, describe, expect, it, vi, onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ok, err } from "../domain/result.js";
-import type { NativeCommandRunner } from "./CommandRunner.js";
+import {
+  NativeCommandFailure,
+  XcrunCommandRunner,
+  type NativeCommandRunner,
+} from "../providers/NativeCommandRunner.js";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
-import { withSignatureTarget } from "./SignatureTargetBinding.js";
+import {
+  verifySignatureTarget,
+  withSignatureTarget,
+} from "./SignatureTargetBinding.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  primaryAnalysisError,
+  resolvedAnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { signatureInspectionFixture } from "../../tests/fixtures/nativeCommands.js";
 
@@ -29,7 +48,6 @@ const unusedInspection = async (): Promise<never> => {
   throw new Error("Inspection must not run after failed target binding");
 };
 const roots: string[] = [];
-const targets: string[] = [];
 const unusedRunner: NativeCommandRunner = {
   async run() {
     throw new Error("Changed target must be rejected before a command runs");
@@ -46,20 +64,16 @@ const unusedTracer: NativeCallTracer = {
 
 afterEach(async () => {
   await Promise.all(
-    [...roots, ...targets].map((path) =>
-      rm(path, { recursive: true, force: true }),
-    ),
+    roots.map((path) => rm(path, { recursive: true, force: true })),
   );
   roots.length = 0;
-  targets.length = 0;
 });
 
 const createTarget = async (
   bytes: string,
   digest = bytes,
 ): Promise<BinaryTarget> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-signature-target-"));
-  targets.push(directory);
+  const directory = await createTestTempDirectory("rea-signature-target-");
   const path = join(directory, "target.bin");
   await writeFile(path, bytes);
   return {
@@ -112,6 +126,42 @@ it("retains a snapshot root after cleanup fails alongside a digest mismatch", as
   expect(resolvedAnalysisError(result.error)._tag).toBe(
     "AnalysisArtifactChangedError",
   );
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("retains and retries snapshot cleanup after snapshot identity drift", async () => {
+  const target = await createTarget("registered bytes");
+  const resources = new ArtifactResourceScope();
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    async (binding) => {
+      await chmod(binding.snapshotPath, 0o600);
+      await writeFile(binding.snapshotPath, "replacement snapshot bytes");
+      const verified = await verifySignatureTarget(target, binding);
+      return verified.ok ? ok(signatureInspectionFixture()) : verified;
+    },
+    undefined,
+    () => createRoot(1),
+  );
+
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      diagnostics: {
+        primary_error: { code: "artifact_changed" },
+      },
+    },
+  });
+
+  await resources.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(resolvedAnalysisError(result.error)._tag).toBe(
+    "AnalysisArtifactChangedError",
+  );
+  expect(await readFile(target.path, "utf8")).toBe("registered bytes");
   await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
@@ -186,44 +236,53 @@ it("retries a retained signature root when the provider client closes", async ()
 
 it("waits for an in-flight signature binding before provider close", async () => {
   const target = await createTarget("observed", "expected");
-  let rootFactoryEntered!: () => void;
-  let releaseRootFactory!: () => void;
-  const entered = new Promise<void>(
-    (resolve) => (rootFactoryEntered = resolve),
-  );
-  const gate = new Promise<void>((resolve) => (releaseRootFactory = resolve));
+  const rootFactory = phaseGate();
   const provider = new NativeMacOSProvider(
     {},
     unusedRunner,
     "darwin",
     () => unusedTracer,
     async () => {
-      rootFactoryEntered();
-      await gate;
+      await rootFactory.hold();
       return createRoot();
     },
   );
   const client = provider.createClient(target);
   const operation = client.execute("inspect_signature", {});
-  await entered;
-
   let closeSettled = false;
-  const closing = client.close().finally(() => {
-    closeSettled = true;
-  });
-  await Promise.resolve();
-  expect(closeSettled).toBe(false);
-  releaseRootFactory();
-  await expect(operation).resolves.toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisArtifactChangedError" },
-  });
-  await expect(closing).resolves.toMatchObject({ ok: true, value: null });
-  expect(closeSettled).toBe(true);
-  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  let closing: ReturnType<typeof client.close> | undefined;
+  await withVerifierCleanup(async () => {
+    await rootFactory.reached(operation, "signature root acquisition");
+    closing = client.close().finally(() => {
+      closeSettled = true;
+    });
+    await Promise.resolve();
+    expect(closeSettled).toBe(false);
+    rootFactory.release();
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisArtifactChangedError" },
+    });
+    await expect(closing).resolves.toMatchObject({ ok: true, value: null });
+    expect(closeSettled).toBe(true);
+    await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  }, [
+    rootFactory.release,
+    async () => {
+      await operation;
+    },
+    async () => {
+      const result = await closing;
+      if (result !== undefined && !result.ok) throw result.error;
+    },
+    async () => {
+      const result = await client.close();
+      if (!result.ok) throw result.error;
+    },
+  ]);
 });
 
-it("tracks mixed snapshot descriptor and root cleanup through partial release and retry", async () => {
+it("releases retained descriptors before retrying their containing root", async () => {
   const target = await createTarget("observed", "expected");
   const resources = new ArtifactResourceScope();
   const original = OwnedFileHandle.prototype.close;
@@ -251,7 +310,6 @@ it("tracks mixed snapshot descriptor and root cleanup through partial release an
     undefined,
     () => createRoot(1),
   );
-  expect(first.ok).toBe(false);
   if (first.ok) throw new Error("Expected both retained owners");
   const snapshot = join(roots[0]!, "target.bin");
   expect(new Set(first.error.cleanupResources)).toEqual(
@@ -264,16 +322,16 @@ it("tracks mixed snapshot descriptor and root cleanup through partial release an
     undefined,
     createRoot,
   );
-  expect(retried.ok).toBe(false);
-  if (retried.ok) throw new Error("Expected retained descriptor retry failure");
+  if (retried.ok) throw new Error("Expected retained root retry failure");
   expect(first.error.cleanupIncomplete).toBe(true);
-  expect(first.error.cleanupResources).toEqual([snapshot]);
-  expect(retried.error.cleanupResources).toEqual([snapshot]);
+  expect(first.error.cleanupResources).toEqual([roots[0]!]);
+  expect(retried.error.cleanupResources).toEqual([roots[0]!]);
   expect(roots).toHaveLength(1);
   expect(inspect).not.toHaveBeenCalled();
-  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await stat(roots[0]!)).isDirectory()).toBe(true);
   await resources.close();
   expect(attempts).toBe(3);
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
   for (const failure of [first.error, retried.error]) {
     expect(failure.cleanupIncomplete).toBe(false);
     expect(failure.cleanupResources).toEqual([]);
@@ -282,6 +340,265 @@ it("tracks mixed snapshot descriptor and root cleanup through partial release an
     "AnalysisArtifactChangedError",
   );
 });
+
+it("retains the snapshot root until its failed descriptor owner confirms release", async () => {
+  const target = await createTarget("observed", "expected");
+  const resources = new ArtifactResourceScope();
+  const original = OwnedFileHandle.prototype.close;
+  let blocked: OwnedFileHandle | undefined;
+  let allowClose = false;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(function (this: OwnedFileHandle) {
+      blocked ??= this;
+      if (this === blocked && !allowClose)
+        return Promise.reject(new Error("snapshot descriptor remains open"));
+      return original.call(this);
+    });
+  const root = await createRoot();
+  const removeRoot = vi.fn(root.close);
+  onTestFinished(async () => {
+    allowClose = true;
+    await resources.close();
+    close.mockRestore();
+  });
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    undefined,
+    async () => ({ path: root.path, close: removeRoot }),
+  );
+  if (result.ok) throw new Error("Expected retained snapshot descriptor");
+  expect(removeRoot).not.toHaveBeenCalled();
+  expect((await stat(root.path)).isDirectory()).toBe(true);
+  const retry = await resources.close().then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(retry).toBeDefined();
+  expect(removeRoot).not.toHaveBeenCalled();
+  expect((await stat(root.path)).isDirectory()).toBe(true);
+  expect(result.error.cleanupIncomplete).toBe(true);
+  allowClose = true;
+  await resources.close();
+  expect(removeRoot).toHaveBeenCalledTimes(1);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupResources).toEqual([]);
+  expect(resolvedAnalysisError(result.error)._tag).toBe(
+    "AnalysisArtifactChangedError",
+  );
+  await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it.each([false, true])(
+  "retains completed signature facts when private-root cleanup fails: %s",
+  async (cleanupFails) => {
+    const target = await createTarget("same");
+    const resources = new ArtifactResourceScope();
+    const unrelated = new ArtifactResourceScope();
+    const facts = signatureInspectionFixture();
+    const root = await createRoot(cleanupFails ? 1 : 0);
+    try {
+      const result = await withSignatureTarget(
+        target,
+        resources,
+        async () => ok(facts),
+        undefined,
+        async () => root,
+      );
+      if (!cleanupFails) {
+        expect(result).toEqual(ok(facts));
+        await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+        return;
+      }
+      if (result.ok) throw new Error("Expected root cleanup failure");
+      expect(result.error).toBeInstanceOf(ProviderCleanupError);
+      if (!(result.error instanceof ProviderCleanupError))
+        throw new Error("Expected retained cleanup owner");
+      expect(result.error.partialObservation).toBe(facts);
+      expect(result.error.completedObservation).toBe(facts);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual([root.path]);
+      expect((await stat(root.path)).isDirectory()).toBe(true);
+      const peer = await withSignatureTarget(
+        target,
+        unrelated,
+        async () => ok(facts),
+        undefined,
+        createRoot,
+      );
+      expect(peer).toEqual(ok(facts));
+      await unrelated.close();
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual([root.path]);
+      await resources.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupResources).toEqual([]);
+      expect(result.error.partialObservation).toBe(facts);
+      expect(result.error.completedObservation).toBe(facts);
+      await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await unrelated.close();
+      await resources.close();
+    }
+  },
+);
+
+it("retains cancellation during failed cleanup retry without losing ownership", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "cancelled during cleanup retry" };
+  const root = await createRoot();
+  let attempts = 0;
+  const create = async () => ({
+    path: root.path,
+    async close() {
+      attempts += 1;
+      if (attempts === 2) controller.abort(reason);
+      if (attempts <= 2) throw new Error("controlled root close failure");
+      await root.close();
+    },
+  });
+  try {
+    const first = await withSignatureTarget(
+      target,
+      resources,
+      async () => ok(signatureInspectionFixture()),
+      undefined,
+      create,
+    );
+    if (first.ok) throw new Error("Expected retained root");
+    const second = await withSignatureTarget(
+      target,
+      resources,
+      unusedInspection,
+      controller.signal,
+      create,
+    );
+    if (second.ok) throw new Error("Expected failed cleanup retry");
+    expect(second.error.cleanupIncomplete).toBe(true);
+    expect(second.error.cleanupResources).toContain(root.path);
+    expect(second.error.cleanupPrimary?.secondaryFailures).toContainEqual(
+      expect.objectContaining({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      }),
+    );
+    await resources.close();
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(second.error.cleanupIncomplete).toBe(false);
+    await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await resources.close();
+  }
+});
+
+it("retains late cancellation when creating the signature root fails", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { caller: "cancelled during root creation" };
+  const physical = Object.assign(new Error("denied root creation"), {
+    code: "EACCES",
+  });
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    controller.signal,
+    async () => {
+      controller.abort(reason);
+      throw physical;
+    },
+  );
+  if (result.ok) throw new Error("Expected root creation failure");
+  expect(result.error).toBeInstanceOf(ProviderAdapterError);
+  expect(result.error.cause).toBe(physical);
+  expect(result.error.secondaryFailures).toHaveLength(1);
+  expect(result.error.secondaryFailures[0]).toMatchObject({
+    _tag: "AnalysisCancelledError",
+  });
+  expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  await resources.close();
+});
+
+it("does not adopt a typed caller abort reason as a root-creation failure", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = new ProviderCleanupError("foreign", ["unowned"], {});
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    unusedInspection,
+    controller.signal,
+    async () => {
+      controller.abort(reason);
+      throw reason;
+    },
+  );
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+  });
+  expect(result.error.cleanupResources).not.toContain("unowned");
+  await resources.close();
+});
+
+it.each([
+  { cleanupFails: false, reason: null },
+  {
+    cleanupFails: true,
+    reason: { caller: "cancelled during root cleanup" },
+  },
+])(
+  "retains the signature failure and late cancellation (root cleanup fails: $cleanupFails)",
+  async ({ cleanupFails, reason }) => {
+    const target = await createTarget("same");
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const physical = new AnalysisOutputError(
+      "inspect_signature",
+      "inspection failed",
+    );
+    const root = await createRoot(cleanupFails ? 1 : 0);
+    try {
+      const result = await withSignatureTarget(
+        target,
+        resources,
+        async () => err(physical),
+        controller.signal,
+        async () => ({
+          path: root.path,
+          async close() {
+            try {
+              await root.close();
+            } finally {
+              controller.abort(reason);
+            }
+          },
+        }),
+      );
+      if (result.ok) throw new Error("Expected inspection failure");
+      expect(physical.secondaryFailures).toHaveLength(1);
+      expect(physical.secondaryFailures[0]).toMatchObject({
+        _tag: "AnalysisCancelledError",
+      });
+      expect(physical.secondaryFailures[0]?.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+      await resources.close();
+      expect(resolvedAnalysisError(result.error)).toBe(physical);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      await expect(stat(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
 const opaqueReasons = [
   null,
@@ -314,7 +631,6 @@ for (const cleanupFails of [false, true])
           },
         }),
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected finalization cancellation");
       expect(result.error.partialObservation).toEqual(facts);
       expect(result.error.cleanupIncomplete).toBe(cleanupFails);
@@ -339,12 +655,15 @@ for (const ownerIndex of [0, 1])
       const reason = { stage: "descriptor-close" };
       const original = OwnedFileHandle.prototype.close;
       let calls = 0;
+      let blocked: OwnedFileHandle | undefined;
+      let allowClose = false;
       const close = vi
         .spyOn(OwnedFileHandle.prototype, "close")
         .mockImplementation(async function (this: OwnedFileHandle) {
           const cancels = calls++ === ownerIndex;
+          if (cancels && cleanupFails) blocked = this;
           try {
-            if (cancels && cleanupFails)
+            if (this === blocked && !allowClose)
               throw new Error("controlled close failure");
             await original.call(this);
           } finally {
@@ -368,10 +687,18 @@ for (const ownerIndex of [0, 1])
         throw new Error("Expected descriptor finalization cancellation");
       expect(inspect).not.toHaveBeenCalled();
       expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+      allowClose = true;
       await resources.close();
       expect(resolvedAnalysisError(result.error)).toMatchObject({
         _tag: "AnalysisCancelledError",
         cause: reason,
+        // The completed binding is not an observation; it stays as diagnostics.
+        diagnostics: {
+          snapshot_binding: {
+            identity: expect.any(String),
+            snapshot_path: expect.stringContaining("target.bin"),
+          },
+        },
       });
     });
 
@@ -399,42 +726,11 @@ it("keeps a physical source read failure primary when the caller also aborts", a
     controller.signal,
     createRoot,
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected physical failure");
   expect(result.error._tag).toBe("ProviderAdapterError");
   expect(result.error.cause).toBe(failure);
   expect(inspect).not.toHaveBeenCalled();
 });
-
-for (const cleanupFails of [false, true])
-  it(`keeps a failed inspection primary when the caller aborts during root close (fails: ${cleanupFails})`, async () => {
-    const target = await createTarget("same");
-    const resources = new ArtifactResourceScope();
-    const controller = new AbortController();
-    const primary = new AnalysisOutputError(
-      "inspect_signature",
-      "controlled inspection failure",
-    );
-    const root = await createRoot(cleanupFails ? 1 : 0);
-    const result = await withSignatureTarget(
-      target,
-      resources,
-      async () => err(primary),
-      controller.signal,
-      async () => ({
-        path: root.path,
-        async close() {
-          controller.abort(null);
-          await root.close();
-        },
-      }),
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected failed inspection");
-    expect(result.error.cleanupIncomplete).toBe(cleanupFails);
-    await resources.close();
-    expect(resolvedAnalysisError(result.error)).toBe(primary);
-  });
 
 it.each(opaqueReasons)(
   "preserves pre-entry reason %s without allocating a root or adopting foreign ownership",
@@ -449,7 +745,6 @@ it.each(opaqueReasons)(
       AbortSignal.abort(reason),
       makeRoot,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected pre-entry cancellation");
     expect(result.error).toMatchObject({
       _tag: "AnalysisCancelledError",
@@ -461,31 +756,6 @@ it.each(opaqueReasons)(
     await resources.close();
   },
 );
-
-it("does not replace a failed root creation with a simultaneous abort", async () => {
-  const target = await createTarget("same");
-  const resources = new ArtifactResourceScope();
-  const controller = new AbortController();
-  const failure = new Error("controlled root creation failure");
-  const result = await withSignatureTarget(
-    target,
-    resources,
-    unusedInspection,
-    controller.signal,
-    async () => {
-      controller.abort(null);
-      throw failure;
-    },
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected root creation failure");
-  expect(result.error).toMatchObject({
-    _tag: "ProviderAdapterError",
-    cause: failure,
-    cleanupIncomplete: false,
-  });
-  await resources.close();
-});
 
 it("releases a late root when cancellation arrives during creation", async () => {
   const target = await createTarget("same");
@@ -503,7 +773,6 @@ it("releases a late root when cancellation arrives during creation", async () =>
       return root;
     },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected root handoff cancellation");
   expect(result.error).toMatchObject({
     _tag: "AnalysisCancelledError",
@@ -527,7 +796,6 @@ it("does not adopt an inspection's arbitrary thrown cleanup marker", async () =>
     undefined,
     createRoot,
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected opaque producer failure");
   expect(result.error).toMatchObject({
     _tag: "AnalysisOutputError",
@@ -536,4 +804,336 @@ it("does not adopt an inspection's arbitrary thrown cleanup marker", async () =>
   });
   expect(result.error.cleanupResources).toEqual([]);
   await resources.close();
+});
+
+it("releases the private copy before reporting an inspection defect", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const defect = invariantViolation("Signature plan is missing");
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    async () => {
+      throw defect;
+    },
+    undefined,
+    createRoot,
+  );
+  if (result.ok) throw new Error("Expected an adapter failure");
+  expect(result.error).toBeInstanceOf(ProviderAdapterError);
+  expect(result.error).toMatchObject({
+    operation: "inspect_signature",
+    cause: defect,
+    cleanupIncomplete: false,
+  });
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  await resources.close();
+});
+
+it("keeps an inspection defect primary when releasing the private copy fails", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const defect = invariantViolation("Signature plan is missing");
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    async () => {
+      throw defect;
+    },
+    undefined,
+    () => createRoot(1),
+  );
+  if (result.ok) throw new Error("Expected an adapter failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(roots);
+  const primary = result.error.cleanupPrimary;
+  expect(primary).toBeInstanceOf(ProviderAdapterError);
+  expect(primary?.cause).toBe(defect);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      diagnostics: {
+        primary_error: { code: "execution_failure" },
+        cleanup_error: { code: "cleanup_incomplete" },
+      },
+    },
+  });
+
+  await resources.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(resolvedAnalysisError(result.error)).toBe(primary);
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it.each(["io", "cancelled"] as const)(
+  "preserves a codesign %s failure when later target verification observes cancellation",
+  async (kind) => {
+    const target = await createTarget("registered source bytes");
+    const controller = new AbortController();
+    const reason = { caller: "cancel after codesign result", kind };
+    const output = {
+      stdout: "physical output",
+      stderr: "physical diagnostic",
+      stdoutBytes: 15,
+      stderrBytes: 19,
+      exitCode: null,
+      signal: null,
+      truncated: false,
+    };
+    const failure = new NativeCommandFailure(
+      "codesign",
+      kind,
+      null,
+      { cancellation: { reason } },
+      output,
+      "command cleanup remains unknown",
+      ["command-owner"],
+    );
+    const runner: NativeCommandRunner = {
+      run: async () => {
+        controller.abort(reason);
+        return err(failure);
+      },
+    };
+    const client = new NativeMacOSProvider(
+      {},
+      runner,
+      "darwin",
+      () => unusedTracer,
+      createRoot,
+    ).createClient(target);
+    try {
+      const result = await client.execute(
+        "inspect_signature",
+        {},
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected codesign failure");
+      expect(result.error._tag).toBe(
+        kind === "cancelled"
+          ? "AnalysisCancelledError"
+          : "ProviderAdapterError",
+      );
+      expect(result.error.capturedOutput).toMatchObject({
+        stdout: output.stdout,
+        stderr: output.stderr,
+      });
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual(["command-owner"]);
+      if (kind === "cancelled") expect(result.error.cause).toBe(reason);
+      else {
+        expect(result.error.cause).toBe(failure);
+        expect(result.error.secondaryFailures).toContainEqual(
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        );
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+it.each(["unchanged", "cancelled", "changed"] as const)(
+  "keeps a codesign cleanup marker live after %s target verification",
+  async (outcome) => {
+    const target = await createTarget("registered source bytes");
+    const controller = new AbortController();
+    const reason = { request: "cancel after native command failure" };
+    const process = Object.assign(new EventEmitter(), {
+      exitCode: 1,
+      signalCode: null,
+      stdout: null,
+      stderr: null,
+      kill: () => {
+        throw new Error("Exited fixture must not be signalled");
+      },
+    });
+    let mayClean = false;
+    let cleanupAttempts = 0;
+    const owner = new ProviderProcessSupervisor({
+      process,
+      ownsProcessLifetime: true,
+      cleanup: async () => {
+        cleanupAttempts++;
+        return mayClean
+          ? { cleaned: true, signaled: false }
+          : { cleaned: false, reason: "codesign worker remains owned" };
+      },
+    });
+    process.emit("close", 1, null);
+    const failure = new NativeCommandFailure(
+      "codesign",
+      "io",
+      1,
+      { cleanupOwner: owner },
+      {
+        stdout: "physical output",
+        stderr: "physical diagnostic",
+        stdoutBytes: 15,
+        stderrBytes: 19,
+        exitCode: 1,
+        signal: null,
+        truncated: false,
+      },
+      "codesign worker remains owned",
+      ["native-command-process"],
+    );
+    const runner = new XcrunCommandRunner({}, async () => {
+      if (outcome === "cancelled") controller.abort(reason);
+      if (outcome === "changed")
+        await writeFile(target.path, "changed source bytes");
+      return err(failure);
+    });
+    const client = new NativeMacOSProvider(
+      {},
+      runner,
+      "darwin",
+      () => unusedTracer,
+      createRoot,
+    ).createClient(target);
+    onTestFinished(async () => {
+      mayClean = true;
+      expect((await client.close()).ok).toBe(true);
+    });
+    const result = await client.execute(
+      "inspect_signature",
+      {},
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected codesign failure");
+    const primary = primaryAnalysisError(result.error);
+    expect(primary._tag).toBe(
+      outcome === "changed"
+        ? "AnalysisArtifactChangedError"
+        : "ProviderAdapterError",
+    );
+    if (outcome !== "changed") {
+      if (!(primary.cause instanceof NativeCommandFailure))
+        throw new Error("Expected physical codesign failure");
+      expect(primary.cause.cause).toBe(failure);
+      expect(primary.capturedOutput).toMatchObject({
+        stdout: "physical output",
+        stderr: "physical diagnostic",
+      });
+    }
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(["native-command-process"]);
+    expect(primary.secondaryFailures).toEqual(
+      outcome === "cancelled"
+        ? [
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          ]
+        : [],
+    );
+    expect((await client.close()).ok).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(cleanupAttempts).toBe(1);
+    mayClean = true;
+    expect((await client.close()).ok).toBe(true);
+    expect(cleanupAttempts).toBe(2);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+  },
+);
+
+describe("chunked signature copy", () => {
+  it("copies and verifies a multi-chunk target larger than 1 MiB and retries short writes", async () => {
+    const directory = await createTestTempDirectory("rea-signature-chunk-");
+    const path = join(directory, "large.bin");
+    const payload = Buffer.alloc(1024 * 1024 + 137, 0x3c);
+    for (let i = 0; i < payload.length; i += 4093) payload[i] = i & 0xff;
+    await writeFile(path, payload);
+    const target: BinaryTarget = {
+      path,
+      sha256: createHash("sha256").update(payload).digest("hex"),
+      kind: "executable",
+      format: "mach-o",
+      architecture: "arm64",
+      availableArchitectures: ["arm64"],
+    };
+    const probe = await open(path, "r");
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    type WriteBuffer = (
+      buffer: Uint8Array,
+      offset?: number | null,
+      length?: number | null,
+      position?: number | null,
+    ) => Promise<{ bytesWritten: number; buffer: Uint8Array }>;
+    const originalWrite = prototype.write as unknown as WriteBuffer;
+    let shortWrites = 0;
+    const writeSpy = vi
+      .spyOn(prototype, "write")
+      .mockImplementation(async function (
+        this: FileHandle,
+        buffer: Uint8Array,
+        offset?: number | null,
+        length?: number | null,
+        position?: number | null,
+      ) {
+        if (
+          Buffer.isBuffer(buffer) &&
+          typeof length === "number" &&
+          length > 64 * 1024
+        ) {
+          shortWrites += 1;
+          return originalWrite.call(
+            this,
+            buffer,
+            offset ?? 0,
+            64 * 1024,
+            position ?? null,
+          );
+        }
+        return originalWrite.call(this, buffer, offset, length, position);
+      } as unknown as FileHandle["write"]);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      writeSpy.mockRestore();
+      await resources.close();
+    });
+    const result = await withSignatureTarget(
+      target,
+      resources,
+      async (binding) => {
+        const copied = await readFile(binding.snapshotPath);
+        expect(Buffer.compare(copied, payload)).toBe(0);
+        return ok(signatureInspectionFixture());
+      },
+      undefined,
+      createRoot,
+    );
+    expect(result.ok).toBe(true);
+    expect(shortWrites).toBeGreaterThan(1);
+  });
+
+  it("refuses a zero-byte snapshot write instead of looping forever", async () => {
+    const target = await createTarget("non-empty bytes");
+    const probe = await open(target.path, "r");
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const writeSpy = vi.spyOn(prototype, "write").mockResolvedValue({
+      bytesWritten: 0,
+      buffer: Buffer.alloc(0),
+    } as never);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      writeSpy.mockRestore();
+      await resources.close();
+    });
+    const result = await withSignatureTarget(
+      target,
+      resources,
+      unusedInspection,
+      undefined,
+      createRoot,
+    );
+    if (result.ok) throw new Error("Expected snapshot write failure");
+    expect(result.error._tag).toBe("ProviderAdapterError");
+  });
 });

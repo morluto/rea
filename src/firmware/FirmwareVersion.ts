@@ -1,13 +1,11 @@
-import { FIRMWARE_RELEASES } from "./FirmwareRelease.js";
-
-/** Caller-supplied firmware engine selected by the operation. */
-export type FirmwareEngineName = keyof typeof FIRMWARE_RELEASES;
+import {
+  FIRMWARE_TOOL_REQUIREMENTS,
+  type FirmwareEngineName,
+} from "../contracts/firmware/firmwareToolRequirements.js";
 
 interface ReleaseNumber {
   readonly major: number;
   readonly minor: number;
-  readonly patch: number;
-  readonly suffix: string;
   readonly token: string;
 }
 
@@ -21,37 +19,7 @@ const parseToken = (token: string): ReleaseNumber | undefined => {
   const patch = Number(match[3]);
   if (![major, minor, patch].every((part) => Number.isSafeInteger(part)))
     return undefined;
-  const suffix = match[4] ?? "";
-  return { major, minor, patch, suffix, token };
-};
-
-const verifiedRelease = (engine: FirmwareEngineName): ReleaseNumber => {
-  const parsed = parseToken(FIRMWARE_RELEASES[engine].version);
-  if (parsed === undefined || parsed.suffix !== "")
-    throw new Error(
-      `FIRMWARE_RELEASES.${engine}.version is not a release number`,
-    );
-  return parsed;
-};
-
-/** Caller-facing engine name. */
-export const firmwareEngineLabel = (engine: FirmwareEngineName): string => {
-  switch (engine) {
-    case "binwalk":
-      return "Binwalk";
-    case "unblob":
-      return "Unblob";
-    default: {
-      const unreachable: never = engine;
-      return unreachable;
-    }
-  }
-};
-
-/** Release line accepted for one engine, such as `Binwalk 3.1.x`. */
-export const firmwareReleaseLine = (engine: FirmwareEngineName): string => {
-  const verified = verifiedRelease(engine);
-  return `${firmwareEngineLabel(engine)} ${String(verified.major)}.${String(verified.minor)}.x`;
+  return { major, minor, token };
 };
 
 /** Admission of one observed `--version` banner. */
@@ -75,8 +43,8 @@ export const admitFirmwareVersion = (
 ): FirmwareVersionAdmission => {
   const token = versionToken(engine, banner);
   const parsed = token === undefined ? undefined : parseToken(token);
-  const verified = verifiedRelease(engine);
-  const accepted = `accepted releases are ${firmwareReleaseLine(engine)} (verified with ${verified.token})`;
+  const verified = FIRMWARE_TOOL_REQUIREMENTS[engine];
+  const accepted = `accepted releases are ${verified.requirement}`;
   if (parsed === undefined)
     return {
       status: "unresolved",
@@ -87,13 +55,12 @@ export const admitFirmwareVersion = (
       status: "unsupported",
       message: `Unsupported tool version ${banner}; ${accepted}.`,
     };
-  if (parsed.token === verified.token)
+  if (parsed.token === verified.version)
     return { status: "verified", version: parsed.token };
-  const line = `${String(verified.major)}.${String(verified.minor)}.x`;
   return {
     status: "compatible",
     version: parsed.token,
-    limitation: `This session uses ${firmwareEngineLabel(engine)} ${parsed.token}. The report parser is verified against ${verified.token}; other ${line} builds are accepted and the observed version is reported.`,
+    limitation: `This session uses ${verified.name} ${parsed.token}. The report parser is verified against ${verified.version}; other ${verified.line} builds are accepted and the observed version is reported.`,
   };
 };
 

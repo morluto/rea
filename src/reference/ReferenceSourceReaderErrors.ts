@@ -13,15 +13,19 @@ export const failure = (
   message,
 });
 
-export const cancelled = (): ReferenceSourceReaderError =>
-  failure("cancelled", "Reference source traversal cancelled");
+export const cancelled = (
+  signal?: AbortSignal,
+): ReferenceSourceReaderError => ({
+  ...failure("cancelled", "Reference source traversal cancelled"),
+  ...(signal?.aborted === true ? { cause: signal.reason } : {}),
+});
 
 export const safeSize = (size: bigint): number | undefined => {
   const value = Number(size);
   return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 };
 
-const FILESYSTEM_ERROR_CODES = new Set([
+export const FILESYSTEM_ERROR_CODES = new Set([
   "EACCES",
   "EBADF",
   "EEXIST",
@@ -40,47 +44,41 @@ const FILESYSTEM_ERROR_CODES = new Set([
   "EROFS",
 ]);
 
-/** Preserve actionable operating-system detail while leaving invariants visible. */
+export interface FilesystemFailureDetail {
+  /** Relocation-independent operation and parsed errno; location lives in entry.path. */
+  readonly message: string;
+  /** Exact host diagnostic, retained separately from semantic graph commitments. */
+  readonly localDiagnostic?: string;
+}
+
+/** Parse known filesystem failures once, separating semantics from host presentation. */
 export const filesystemFailureDetail = (
   cause: unknown,
   operation: string,
-): string | undefined => {
-  if (!(cause instanceof Error)) return undefined;
-  const code: unknown = Reflect.get(cause, "code");
-  if (code === "ENAMETOOLONG")
-    return `${operation}: ENAMETOOLONG (entry path exceeds the operating system path limit)`;
-  return typeof code === "string" && FILESYSTEM_ERROR_CODES.has(code)
-    ? `${operation}: ${cause.message}`
-    : undefined;
-};
-
-/** Preserve root I/O detail while separating bad selections from access failures. */
-export const rootFilesystemFailure = (
-  cause: unknown,
-  operation: string,
-):
-  | {
-      readonly code: "invalid-root" | "io";
-      readonly message: string;
-    }
-  | undefined => {
+): FilesystemFailureDetail | undefined => {
   if (!(cause instanceof Error)) return undefined;
   const code: unknown = Reflect.get(cause, "code");
   if (typeof code !== "string" || !FILESYSTEM_ERROR_CODES.has(code))
     return undefined;
+  const message =
+    code === "ENAMETOOLONG"
+      ? `${operation}: ENAMETOOLONG (entry path exceeds the operating system path limit)`
+      : `${operation}: ${code}`;
+  const localDiagnostic = `${operation}: ${cause.message}`;
   return {
-    code: code === "ENOENT" || code === "ENOTDIR" ? "invalid-root" : "io",
-    message: `${operation}: ${cause.message}`,
+    message,
+    ...(localDiagnostic === message ? {} : { localDiagnostic }),
   };
 };
 
 export const entryFailure = (
-  ...[path, kind, code, message, size]: readonly [
+  ...[path, kind, code, message, size, localDiagnostic]: readonly [
     string,
     Extract<ReferenceSourceEntry, { status: "failed" }>["kind"],
     ReferenceSourceFailureCode,
     string,
     size?: number,
+    localDiagnostic?: string,
   ]
 ): ReferenceSourceEntry => ({
   status: "failed",
@@ -89,4 +87,5 @@ export const entryFailure = (
   code,
   message,
   ...(size === undefined ? {} : { size }),
+  ...(localDiagnostic === undefined ? {} : { localDiagnostic }),
 });

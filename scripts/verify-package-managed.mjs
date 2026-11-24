@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { createEvidence } from "../dist/domain/evidence.js";
 import { buildManagedPeFixture } from "./fixtures/managed/pe.mjs";
 import { functionDossier } from "./fixtures/managed/function-dossier.mjs";
-import { json, run } from "./lib/verify-package-core.mjs";
 
 const buildManagedFixtures = async (workspace) => {
   const managedPath = join(workspace, "managed-fixture.exe");
@@ -38,9 +37,14 @@ const buildManagedFixtures = async (workspace) => {
   return { managedPath, managedRightPath };
 };
 
-const verifyManagedArtifact = async ({ cli, managedPath, environment }) => {
-  const managedArtifact = json(
-    await run(
+const verifyManagedArtifact = async ({
+  commands,
+  cli,
+  managedPath,
+  environment,
+}) => {
+  const managedArtifact = JSON.parse(
+    await commands.run(
       cli,
       ["inspect-managed-artifact", managedPath, "--json"],
       environment,
@@ -55,9 +59,14 @@ const verifyManagedArtifact = async ({ cli, managedPath, environment }) => {
   return managedArtifact;
 };
 
-const verifyManagedMembers = async ({ cli, managedPath, environment }) => {
-  const managedMembers = json(
-    await run(
+const verifyManagedMembers = async ({
+  commands,
+  cli,
+  managedPath,
+  environment,
+}) => {
+  const managedMembers = JSON.parse(
+    await commands.run(
       cli,
       ["inspect-managed-members", managedPath, "--json"],
       environment,
@@ -72,6 +81,7 @@ const verifyManagedMembers = async ({ cli, managedPath, environment }) => {
 };
 
 const verifyManagedReconstruction = async ({
+  commands,
   cli,
   managedMembers,
   managedMethod,
@@ -100,8 +110,8 @@ const verifyManagedReconstruction = async ({
     ],
     notes: ["packaged synthetic reconstruction import"],
   };
-  const managedReconstruction = json(
-    await run(
+  const managedReconstruction = JSON.parse(
+    await commands.run(
       cli,
       [
         "import-managed-reconstruction",
@@ -121,9 +131,14 @@ const verifyManagedReconstruction = async ({
     throw new Error("packaged managed reconstruction import CLI failed");
 };
 
-const verifyManagedBoundaries = async ({ cli, managedPath, environment }) => {
-  const managedBoundaries = json(
-    await run(
+const verifyManagedBoundaries = async ({
+  commands,
+  cli,
+  managedPath,
+  environment,
+}) => {
+  const managedBoundaries = JSON.parse(
+    await commands.run(
       cli,
       ["inspect-managed-native-boundaries", managedPath, "--json"],
       environment,
@@ -140,6 +155,7 @@ const verifyManagedBoundaries = async ({ cli, managedPath, environment }) => {
 };
 
 const verifyManagedApplicationGraph = async ({
+  commands,
   cli,
   managedArtifact,
   managedMembers,
@@ -157,8 +173,8 @@ const verifyManagedApplicationGraph = async ({
       "inspect_managed_native_boundaries",
     ),
   };
-  const managedApplicationGraph = json(
-    await run(
+  const managedApplicationGraph = JSON.parse(
+    await commands.run(
       cli,
       [
         "project-managed-application-graph",
@@ -209,6 +225,7 @@ const managedEvidence = (output, operation) => {
 };
 
 const verifyManagedNativeVerification = async ({
+  commands,
   cli,
   managedBoundaries,
   environment,
@@ -242,8 +259,8 @@ const verifyManagedNativeVerification = async ({
       ),
     ],
   };
-  const managedNativeVerification = json(
-    await run(
+  const managedNativeVerification = JSON.parse(
+    await commands.run(
       cli,
       [
         "verify-managed-native-boundaries",
@@ -265,13 +282,14 @@ const verifyManagedNativeVerification = async ({
 };
 
 const verifyManagedComparison = async ({
+  commands,
   cli,
   managedPath,
   managedRightPath,
   environment,
 }) => {
-  const managedComparison = json(
-    await run(
+  const managedComparison = JSON.parse(
+    await commands.run(
       cli,
       ["compare-managed-members", managedPath, managedRightPath, "--json"],
       environment,
@@ -287,32 +305,37 @@ const verifyManagedComparison = async ({
 };
 
 /** Exercise all packaged managed static and workflow CLIs. */
-export async function verifyManaged({ cli, workspace, environment }) {
+export async function verifyManaged({ commands, cli, workspace, environment }) {
   const { managedPath, managedRightPath } =
     await buildManagedFixtures(workspace);
   const managedArtifact = await verifyManagedArtifact({
+    commands,
     cli,
     managedPath,
     environment,
   });
   const managedMembers = await verifyManagedMembers({
+    commands,
     cli,
     managedPath,
     environment,
   });
   const managedMethod = managedMembers.normalized_result.methods[0];
   await verifyManagedReconstruction({
+    commands,
     cli,
     managedMembers,
     managedMethod,
     environment,
   });
   const managedBoundaries = await verifyManagedBoundaries({
+    commands,
     cli,
     managedPath,
     environment,
   });
   await verifyManagedApplicationGraph({
+    commands,
     cli,
     managedArtifact,
     managedMembers,
@@ -320,11 +343,13 @@ export async function verifyManaged({ cli, workspace, environment }) {
     environment,
   });
   await verifyManagedNativeVerification({
+    commands,
     cli,
     managedBoundaries,
     environment,
   });
   await verifyManagedComparison({
+    commands,
     cli,
     managedPath,
     managedRightPath,
