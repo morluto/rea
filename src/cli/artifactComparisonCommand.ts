@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 
 import {
+  artifactComparisonSourceEvidence,
   compareArtifactEvidence,
   resolveArtifactComparisonSources,
 } from "../application/artifacts/ArtifactComparisonEvidence.js";
@@ -70,7 +71,7 @@ export const registerArtifactComparisonCommand = (
             },
           );
           if (!sources.ok) return sources;
-          sourceEvidence = [sources.value.left, sources.value.right];
+          sourceEvidence = artifactComparisonSourceEvidence(sources.value);
           const compared = compareArtifactEvidence(sources.value);
           return compared.ok
             ? { ok: true as const, value: compared.value.evidence }

@@ -179,6 +179,80 @@ cliTest(
 );
 
 cliTest(
+  "saves a canonical bundle when comparing inspect_artifact Evidence from bundles and standalone records",
+  async ({ cli }) => {
+    const { root, left, right } = await builds(
+      "rea-directory-compare-inspection-bundle-",
+    );
+    const leftBundlePath = join(root, "left-inspection-bundle.json");
+    const leftInspected = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        left,
+        "--evidence_output",
+        leftBundlePath,
+        "--json",
+      ],
+    });
+    expect(leftInspected.exitCode, leftInspected.stderr).toBe(0);
+    const leftInspection = parseEvidence(leftInspected.json);
+    expect(leftInspection.operation).toBe("inspect_artifact");
+    expect(leftInspection.evidence_links.length).toBeGreaterThan(0);
+
+    const rightRecordPath = join(root, "right-inspection.json");
+    const rightInspected = await cli.run({
+      arguments: ["inspect-artifact", right, "--json"],
+    });
+    expect(rightInspected.exitCode, rightInspected.stderr).toBe(0);
+    const rightInspection = parseEvidence(rightInspected.json);
+    expect(rightInspection.operation).toBe("inspect_artifact");
+    expect(rightInspection.evidence_links.length).toBeGreaterThan(0);
+    await writeFile(rightRecordPath, JSON.stringify(rightInspection));
+
+    const outputBundlePath = join(root, "inspection-comparison-bundle.json");
+    const compared = await cli.run({
+      arguments: [
+        "compare-artifacts",
+        JSON.stringify({
+          left: {
+            kind: "evidence-file",
+            path: "left-inspection-bundle.json",
+            evidence_id: leftInspection.evidence_id,
+          },
+          right: {
+            kind: "evidence-file",
+            path: "right-inspection.json",
+          },
+        }),
+        "--evidence_output",
+        outputBundlePath,
+        "--json",
+      ],
+      cwd: root,
+    });
+    expect(compared.exitCode, compared.stderr).toBe(0);
+    const comparedEvidence = parseEvidence(compared.json);
+    const comparison = artifactComparisonResultSchema.parse(
+      comparedEvidence.normalized_result,
+    );
+    expect(classifications(comparison)).toEqual(EXPECTED_CHANGES);
+
+    const publishedBundle = parseEvidenceBundle(
+      JSON.parse(await readFile(outputBundlePath, "utf8")),
+    );
+    const bundledIds = new Set(
+      publishedBundle.records.map(({ evidence_id }) => evidence_id),
+    );
+    expect(bundledIds.has(comparedEvidence.evidence_id)).toBe(true);
+    for (const source of [leftInspection, rightInspection]) {
+      expect(bundledIds.has(source.evidence_id)).toBe(true);
+      for (const linkedId of source.evidence_links)
+        expect(bundledIds.has(linkedId)).toBe(true);
+    }
+  },
+);
+
+cliTest(
   "inspects a directory and compares directory paths through MCP without opening a target",
   async ({ cli }) => {
     const { left, right } = await builds("rea-directory-compare-mcp-");

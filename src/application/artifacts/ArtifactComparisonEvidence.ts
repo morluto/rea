@@ -18,6 +18,7 @@ import {
   compareArtifacts,
   type ArtifactComparisonResult,
 } from "../../domain/artifactComparison.js";
+import { readArtifactInspectionSources } from "../../domain/artifactInspection.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
 import {
   EvidenceIntegrityError,
@@ -46,6 +47,12 @@ const OPERATION = "compare_artifacts";
 export interface ArtifactComparisonSources {
   readonly left: Evidence;
   readonly right: Evidence;
+  /**
+   * Authenticated source records reachable from `left` and `right`, including
+   * nested `inspect_artifact` inventories and linked records from input bundles
+   * or the session ledger.
+   */
+  readonly sourceEvidence?: readonly Evidence[];
 }
 
 /** A completed comparison and the derived Evidence citing both complete inputs. */
@@ -86,44 +93,128 @@ export const resolveArtifactComparisonSources = async (
     options.signal,
   );
   if (!request.ok) return request;
-  const resolveSide = (side: "left" | "right") => {
+  const resolveSide = async (
+    side: "left" | "right",
+  ): Promise<
+    Result<
+      { readonly evidence: Evidence; readonly sources: readonly Evidence[] },
+      AnalysisError
+    >
+  > => {
     const source = request.value[side];
-    if ("kind" in source && source.kind === "path")
-      return options.inventoryPath === undefined
-        ? Promise.resolve(
-            err(
-              new AnalysisInputError(OPERATION, undefined, [
-                {
-                  path: [side, "kind"],
-                  reason: "invalid_value",
-                  message:
-                    "This adapter cannot inventory a path source; supply inventory Evidence instead.",
-                },
-              ]),
-            ),
-          )
-        : options.inventoryPath(source, options.signal);
-    return resolveEvidenceSource(source, side, evidenceById, {
+    if ("kind" in source && source.kind === "path") {
+      if (options.inventoryPath === undefined)
+        return err(
+          new AnalysisInputError(OPERATION, undefined, [
+            {
+              path: [side, "kind"],
+              reason: "invalid_value",
+              message:
+                "This adapter cannot inventory a path source; supply inventory Evidence instead.",
+            },
+          ]),
+        );
+      const inventoried = await options.inventoryPath(source, options.signal);
+      return inventoried.ok
+        ? ok({
+            evidence: inventoried.value,
+            sources: collectLinkedSources(inventoried.value, evidenceById),
+          })
+        : inventoried;
+    }
+    let linkedSources: readonly Evidence[] = [];
+    const resolved = await resolveEvidenceSource(source, side, evidenceById, {
       ...options,
       operation: OPERATION,
       resolveEvidence: (candidate, related) => {
         const authenticated = readEvidence(candidate);
-        return authenticated.ok
-          ? resolveArtifactComparisonEvidence(authenticated.value, related, [
-              side,
-            ])
-          : authenticated;
+        if (!authenticated.ok) return authenticated;
+        const owner = resolveArtifactComparisonEvidence(
+          authenticated.value,
+          related,
+          [side],
+        );
+        if (!owner.ok) return owner;
+        linkedSources = collectLinkedSources(owner.value, related);
+        return owner;
       },
     });
+    return resolved.ok
+      ? ok({ evidence: resolved.value, sources: linkedSources })
+      : resolved;
   };
   const left = await resolveSide("left");
   if (!left.ok) return left;
   const right = await resolveSide("right");
   // The completed left inventory survives the right side's failure.
   if (!right.ok)
-    return err(right.error.retainArgumentObservation("left", left.value));
-  return ok({ left: left.value, right: right.value });
+    return err(
+      right.error.retainArgumentObservation("left", left.value.evidence),
+    );
+  return ok({
+    left: left.value.evidence,
+    right: right.value.evidence,
+    sourceEvidence: deduplicateEvidence([
+      ...left.value.sources,
+      ...right.value.sources,
+    ]),
+  });
 };
+
+/**
+ * The complete source closure for a comparison: every linked record collected
+ * for `left` and `right` (including nested `inspect_artifact` inventories),
+ * dependencies before dependents and deduplicated by `evidence_id`.
+ */
+export const artifactComparisonSourceEvidence = (
+  sources: ArtifactComparisonSources,
+): readonly Evidence[] =>
+  deduplicateEvidence(
+    sources.sourceEvidence !== undefined
+      ? [...sources.sourceEvidence, sources.left, sources.right]
+      : [
+          ...collectLinkedSources(sources.left, undefined),
+          ...collectLinkedSources(sources.right, undefined),
+        ],
+  );
+
+/**
+ * Collect every authenticated record reachable from `root` via `evidence_links`,
+ * preferring exact records from `lookup` (input bundle or ledger) and falling
+ * back to nested `inspect_artifact` substep inventories. Dependencies precede
+ * the records that cite them.
+ */
+const collectLinkedSources = (
+  root: Evidence,
+  lookup: EvidenceLookup | undefined,
+): Evidence[] => {
+  const visited = new Set<string>();
+  const collected: Evidence[] = [];
+  const visit = (record: Evidence): void => {
+    if (visited.has(record.evidence_id)) return;
+    visited.add(record.evidence_id);
+    const embedded =
+      record.operation === "inspect_artifact"
+        ? readArtifactInspectionSources(record.normalized_result)
+        : undefined;
+    const embeddedById =
+      embedded !== undefined && embedded.ok
+        ? new Map(embedded.value.map((source) => [source.evidence_id, source]))
+        : undefined;
+    for (const linkId of record.evidence_links) {
+      if (visited.has(linkId)) continue;
+      const linked = lookup?.(linkId) ?? embeddedById?.get(linkId);
+      if (linked !== undefined && linked.evidence_id === linkId) visit(linked);
+    }
+    collected.push(record);
+  };
+  visit(root);
+  return collected;
+};
+
+const deduplicateEvidence = (records: readonly Evidence[]): Evidence[] => [
+  ...new Map(records.map((record) => [record.evidence_id, record])).values(),
+];
 
 /** Compare resolved inventories and derive Evidence citing both complete owners. */
 export const compareArtifactEvidence = ({
@@ -277,7 +368,7 @@ export const artifactComparisonExecution = (
   const { comparison, evidence } = compared.value;
   return ok({
     evidence,
-    sources: [left, right],
+    sources: artifactComparisonSourceEvidence(sources),
     unknown: artifactUnknownInput(
       left,
       right,
