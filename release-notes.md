@@ -414,6 +414,7 @@
 * **browser:** single-pass CaptureJson parser and zero-allocation Playwright trace skipping ([#13427](https://github.com/morluto/rea/issues/13427)) ([275b574](https://github.com/morluto/rea/commit/275b5740f6c7b52db6556bd555d6e5acc2302982))
 * **browser:** wake the bundle worker on observed events ([#13225](https://github.com/morluto/rea/issues/13225)) ([60e0998](https://github.com/morluto/rea/commit/60e099848d3a78860cf8982b28ce88e3a469d52f))
 * **captures/io:** stream artifact hashes and preserve bounded export reads ([#13755](https://github.com/morluto/rea/issues/13755)) ([16c827a](https://github.com/morluto/rea/commit/16c827a25f0e29098d9625292580a6ee19656faa))
+* **ci:** limit push and qualification classifier checkouts to scripts ([#14341](https://github.com/morluto/rea/issues/14341)) ([62b5d27](https://github.com/morluto/rea/commit/62b5d27638ab12dbc756b4d4252e38a311573f34))
 * **ci:** omit development tools from failure reporting ([#14332](https://github.com/morluto/rea/issues/14332)) ([30fe9d9](https://github.com/morluto/rea/commit/30fe9d9f424447926ca0b8fb3006ddd6f95f279b))
 * **ci:** resolve test snapshot blobs in one tree walk ([#14334](https://github.com/morluto/rea/issues/14334)) ([73c1689](https://github.com/morluto/rea/commit/73c1689aefeabd29d235f8d4341d71f1d3316544))
 * **ci:** reuse installed website rendering packages ([#14337](https://github.com/morluto/rea/issues/14337)) ([1e1db9e](https://github.com/morluto/rea/commit/1e1db9e342ad13d26c27f34af8a2d7a5648387c9))
