@@ -32,6 +32,7 @@ export class PeUnwindRangesService {
         inputSchema: inspectPeUnwindRangesInputSchema,
         outputSchema: peUnwindRangesSchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "PE exception-directory provider returned malformed output or changed artifact identity.",
         toParameters: (input) => input,

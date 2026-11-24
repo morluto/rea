@@ -507,21 +507,11 @@ export const parsePeUnwindRangesFromHandle = async (
       "PE exception directory declares a zero RVA or size while the other field is nonzero",
       { format: "pe" },
     );
-  const count = Math.floor(directory.size / ENTRY_BYTES);
-  if (count > MAX_PE_UNWIND_ENTRIES)
-    throw new BinaryResourceFailure(
-      "structure",
-      MAX_PE_UNWIND_ENTRIES,
-      `PE exception directory declares ${String(count)} entries; at most ${String(MAX_PE_UNWIND_ENTRIES)} are decoded`,
-      "structure",
-      "entries",
-    );
   const base = image.image_base;
   const lookup = createFileMappingIndex(
     peDeclaredFileMappings(image),
     image.zero_fills,
   );
-  const tableBytes = count * ENTRY_BYTES;
   // The whole declared directory, trailing bytes included, must be file-backed.
   const directoryOffset = lookup.tryOffset(
     base + BigInt(directory.address),
@@ -533,6 +523,18 @@ export const parsePeUnwindRangesFromHandle = async (
       `PE exception directory at RVA ${hex(directory.address)} (${String(directory.size)} bytes) is not backed by file bytes`,
       { format: "pe" },
     );
+  // Only a file-backed directory reaches the decoding allowance, so a
+  // directory that leaves the file stays a malformed target.
+  const count = Math.floor(directory.size / ENTRY_BYTES);
+  if (count > MAX_PE_UNWIND_ENTRIES)
+    throw new BinaryResourceFailure(
+      "structure",
+      MAX_PE_UNWIND_ENTRIES,
+      `PE exception directory declares ${String(count)} entries; at most ${String(MAX_PE_UNWIND_ENTRIES)} are decoded`,
+      "structure",
+      "entries",
+    );
+  const tableBytes = count * ENTRY_BYTES;
   const bytes =
     tableBytes === 0
       ? Buffer.alloc(0)

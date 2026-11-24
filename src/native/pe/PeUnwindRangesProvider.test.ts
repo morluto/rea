@@ -334,6 +334,10 @@ describe("x64 PE exception directory refusals and absence", () => {
       { entries: [primary], directoryRva: 0 },
     ],
     [
+      "an oversized entry count whose directory leaves the file",
+      { entries: [], directorySize: (2_097_152 + 1) * 12 },
+    ],
+    [
       "a directory whose trailing bytes leave the last section",
       { entries: [], directoryRva: 0x3ff4, directorySize: 13 },
     ],

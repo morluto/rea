@@ -4,7 +4,10 @@ import {
   projectStableArtifactFailure,
   artifactFilePrimaryFacts,
 } from "../../resources/index.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type {
+  AnalysisError,
+  AnalysisPartialObservation,
+} from "../../domain/analysisErrorBase.js";
 import {
   AnalysisResourceConstraintError,
   type ResourceConstraintRecovery,
@@ -34,6 +37,8 @@ interface PeBinaryFailureOptions<Limit extends string> {
     limit: Limit | null,
     ceiling: FixedCeilingFacts,
   ) => ResourceConstraintRecovery;
+  /** A verified report the failure keeps, such as one completed before final cleanup failed. */
+  readonly completed?: AnalysisPartialObservation;
 }
 
 /** Keep one PE error interpretation while preserving the provider's cleanup and partial facts. */
@@ -84,6 +89,8 @@ export const projectPeBinaryFailure = <Limit extends string>(
         }),
     }),
   );
+  if (options.completed !== undefined)
+    primary.retainPartialObservation(options.completed);
   return projectStableArtifactFailure(
     cause,
     primary,

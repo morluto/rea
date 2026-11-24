@@ -12,6 +12,7 @@ import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js
 import {
   MAX_INSPECT_PE_UNWIND_FILE_BYTES,
   type InspectPeUnwindRangesInput,
+  type PeUnwindRanges,
 } from "../../domain/native/peUnwindRanges.js";
 import { err, ok } from "../../domain/result.js";
 import { PE_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
@@ -41,9 +42,11 @@ export class PeUnwindRangesProvider implements PeUnwindRangesPort {
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
+    // A verified report stays with a failure raised by final cleanup.
+    let completed: PeUnwindRanges | undefined;
     try {
-      return await this.#resources.run(async () =>
-        withStableArtifactHandle(
+      return await this.#resources.run(async () => {
+        const report = await withStableArtifactHandle<PeUnwindRanges>(
           input.path,
           input.max_file_bytes,
           {
@@ -52,6 +55,9 @@ export class PeUnwindRangesProvider implements PeUnwindRangesPort {
             resourceScope: this.#resources,
             onIdentity: (identity) => {
               observed = identity;
+            },
+            onVerifiedResult: (value) => {
+              completed = value;
             },
           },
           async (handle) => {
@@ -63,34 +69,35 @@ export class PeUnwindRangesProvider implements PeUnwindRangesPort {
               options?.signal,
             );
             assertArtifactReadActive(options?.signal);
-            return ok(report);
+            return report;
           },
-        ),
-      );
+        );
+        return ok(report);
+      });
     } catch (cause) {
-      return err(
-        projectPeBinaryFailure<never>(
-          cause,
-          input,
-          {
-            operation: OPERATION,
-            providerId: PE_UNWIND_RANGES_PROVIDER.id,
-            fileSizeRemediation: () =>
-              imageFileSizeRemediation(
-                input.max_file_bytes,
-                MAX_INSPECT_PE_UNWIND_FILE_BYTES,
-              ),
-            limits: [],
-            limitRecovery: (_limit, ceiling) =>
-              fixedAllowanceOptions(
-                "The PE exception-directory entry allowance",
-                "parser",
-                ceiling,
-              ),
-          },
-          observed,
-        ),
+      const failure = projectPeBinaryFailure<never>(
+        cause,
+        input,
+        {
+          operation: OPERATION,
+          providerId: PE_UNWIND_RANGES_PROVIDER.id,
+          fileSizeRemediation: () =>
+            imageFileSizeRemediation(
+              input.max_file_bytes,
+              MAX_INSPECT_PE_UNWIND_FILE_BYTES,
+            ),
+          limits: [],
+          limitRecovery: (_limit, ceiling) =>
+            fixedAllowanceOptions(
+              "The PE exception-directory entry allowance",
+              "parser",
+              ceiling,
+            ),
+          ...(completed === undefined ? {} : { completed }),
+        },
+        observed,
       );
+      return err(failure);
     }
   }
 }
