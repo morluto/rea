@@ -40,6 +40,7 @@ import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -436,6 +437,21 @@ const NON_ZIP_FORMATS = {
       "Android sparse inventory records header fields, virtual unsparsed sizing, and bounded chunk metadata while exposing only stored RAW chunk slices. FILL and DONT_CARE blocks are not materialized and checksums are not recomputed across virtual output blocks.",
     createReader: (path, options) =>
       new AndroidSparseImageArtifactReader(path, sourceOf(options)),
+  }),
+  iso9660: container("iso9660", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "ISO 9660 inventory establishes volume descriptor facts, the directory tree (Joliet names when present) and stored file bytes. Rock Ridge and UDF structures and El Torito boot images are not decoded, and nothing is mounted or executed.",
+    createReader: (path, options) =>
+      new Iso9660ArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+        options.readerLimits?.iso9660,
+      ),
   }),
   "javascript-bundle": described("javascript-bundle", plain),
   "source-map": described("source-map", plain),
