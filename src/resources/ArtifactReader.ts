@@ -317,8 +317,20 @@ export class ArtifactReaderFailure extends Error {
     },
     details?: ArtifactIntegrityDetails,
   );
+  /** A format owner's refusal carries the owner's facts. */
   constructor(
-    reason: Exclude<ArtifactReaderFailureReason, "integrity">,
+    reason: FormatTargetFailure["kind"],
+    message: string,
+    options: ArtifactReaderFailureOptions & {
+      readonly parseFailure: FormatTargetFailure;
+    },
+    details?: ArtifactIntegrityDetails,
+  );
+  constructor(
+    reason: Exclude<
+      ArtifactReaderFailureReason,
+      "integrity" | FormatTargetFailure["kind"]
+    >,
     message: string,
     options?: ArtifactReaderFailureOptions,
     details?: ArtifactIntegrityDetails,

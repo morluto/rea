@@ -319,7 +319,7 @@ try {
     const path = join(root.path, name);
     await writeFile(path, data);
     for (const mode of ["cli", "mcp"]) {
-      await inspect(mode, path, "hex", "invalid_input");
+      await inspect(mode, path, "hex", "unsupported_target");
       cases++;
     }
   }
