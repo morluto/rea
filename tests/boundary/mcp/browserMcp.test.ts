@@ -1,8 +1,12 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { crc32, deflateSync } from "node:zlib";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -26,6 +30,7 @@ import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
+  type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const schemaValidation = createMcpSchemaValidation();
@@ -44,7 +49,10 @@ afterAll(async () => {
   }
 });
 
-it("preserves Link parameter order and context through the advertised MCP contract", async () => {
+const linkMetadataEvents: NonNullable<FakeOptions["commandEvents"]> = (
+  command,
+  origin,
+) => {
   const links = [
     '</duplicate-first>; rel="mcp"; rel="preload"; type="application/mcp"; type="application/preload"',
     '</duplicate-last>; rel="preload"; rel="mcp"',
@@ -53,51 +61,55 @@ it("preserves Link parameter order and context through the advertised MCP contra
     '</default-context>; rel="mcp"',
     '</same-context>; rel="mcp"; anchor="/page"',
   ];
+  if (command.method !== "Network.enable") return undefined;
+  const session =
+    command.sessionId === undefined ? {} : { sessionId: command.sessionId };
+  return [
+    {
+      ...session,
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId: "link-metadata",
+        type: "Document",
+        request: { url: `${origin}/page`, method: "GET" },
+        initiator: { type: "parser" },
+      },
+    },
+    {
+      ...session,
+      method: "Network.responseReceived",
+      params: {
+        requestId: "link-metadata",
+        type: "Document",
+        response: {
+          url: `${origin}/page`,
+          status: 200,
+          mimeType: "text/html",
+          headers: {
+            Link: [
+              links.join(", "),
+              `</credential-context>; rel="mcp"; anchor="${new URL(origin).protocol}//other-user:other-pass@${new URL(origin).host}/page"`,
+            ].join("\n"),
+            "Cross-Origin-Opener-Policy": 'same-origin; report-to="coop"',
+            "Cross-Origin-Embedder-Policy": 'require-corp; report-to="coep"',
+          },
+        },
+      },
+    },
+  ];
+};
+
+it("preserves response header facts and Link context through the advertised MCP contract", async () => {
   const browser = await startFakeCdpBrowser({
     eventsBeforeReply: ["Network.enable"],
-    commandEvents(command, origin) {
-      if (command.method !== "Network.enable") return undefined;
-      const session =
-        command.sessionId === undefined ? {} : { sessionId: command.sessionId };
-      return [
-        {
-          ...session,
-          method: "Network.requestWillBeSent",
-          params: {
-            requestId: "link-metadata",
-            type: "Document",
-            request: { url: `${origin}/page`, method: "GET" },
-            initiator: { type: "parser" },
-          },
-        },
-        {
-          ...session,
-          method: "Network.responseReceived",
-          params: {
-            requestId: "link-metadata",
-            type: "Document",
-            response: {
-              url: `${origin}/page`,
-              status: 200,
-              mimeType: "text/html",
-              headers: {
-                Link: [
-                  ...links,
-                  `</credential-context>; rel="mcp"; anchor="${new URL(origin).protocol}//other-user:other-pass@${new URL(origin).host}/page"`,
-                ].join(", "),
-              },
-            },
-          },
-        },
-      ];
-    },
+    commandEvents: linkMetadataEvents,
   });
   retainBrowser(browser);
   const connected = await connectBrowser();
   const advertised = (await connected.client.listTools()).tools.find(
     ({ name }) => name === "inspect_web_page",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("inspect_web_page must advertise its output schema");
 
   const inspected = await connected.client.callTool(
@@ -109,11 +121,13 @@ it("preserves Link parameter order and context through the advertised MCP contra
         observation_ms: 0,
       },
     },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(inspected.isError).not.toBe(true);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
 
   const normalized = webPageInspectionSchema.parse(
     normalizedResultOf(inspected.structuredContent),
@@ -121,6 +135,10 @@ it("preserves Link parameter order and context through the advertised MCP contra
   expect(normalized.metadata.responses).toContainEqual(
     expect.objectContaining({
       request_id: "link-metadata",
+      policies: expect.objectContaining({
+        coop: "same-origin",
+        coep: "require-corp",
+      }),
       links: [
         expect.objectContaining({
           href: `${browser.allowedOrigin}/duplicate-first`,
@@ -166,28 +184,32 @@ it("preserves Link parameter order and context through the advertised MCP contra
   const linkHints = normalized.metadata.agent_hints.filter(
     ({ mechanism }) => mechanism === "link_rel",
   );
-  expect(linkHints.map(({ url }) => url)).toEqual([
-    `${browser.allowedOrigin}/duplicate-first`,
-    `${browser.allowedOrigin}/escaped-rel`,
-    `${browser.allowedOrigin}/default-context`,
-    `${browser.allowedOrigin}/same-context`,
-  ]);
+  expect(linkHints).toEqual(
+    ["duplicate-first", "escaped-rel", "default-context", "same-context"].map(
+      (path) => ({
+        mechanism: "link_rel",
+        declaration: "mcp",
+        trust: "page-declared-untrusted",
+        url: `${browser.allowedOrigin}/${path}`,
+      }),
+    ),
+  );
 
-  const legacy = structuredClone(normalized);
-  for (const response of legacy.metadata.responses)
+  const contextless = structuredClone(normalized) as unknown as {
+    metadata: { responses: { links: Record<string, unknown>[] }[] };
+  };
+  for (const response of contextless.metadata.responses)
     for (const projectedLink of response.links) {
       delete projectedLink.context_url;
       delete projectedLink.context_scope;
     }
-  expect(webPageInspectionSchema.safeParse(legacy).success).toBe(true);
-  const legacyStructuredContent = {
-    ...(inspected.structuredContent as Record<string, unknown>),
-    normalized_result: legacy,
-  };
+  expect(webPageInspectionSchema.safeParse(contextless).success).toBe(false);
   expect(
-    ajv.validate(outputSchema, legacyStructuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
+    ajv.validate(outputSchema, {
+      ...(inspected.structuredContent as Record<string, unknown>),
+      normalized_result: contextless,
+    }),
+  ).toBe(false);
 });
 
 cliTest(
@@ -436,8 +458,31 @@ it("exposes CLI-equivalent Evidence results and session tools", async () => {
       observations: { source_maps: { status: "not_requested" } },
     },
   });
+  // A page observation names the page URL the inspection reported; a target
+  // list names no single document.
+  const page = {
+    kind: "url",
+    url: webPageInspectionSchema.parse(
+      normalizedResultOf(inspected.structuredContent),
+    ).target.url,
+    origin: browser.allowedOrigin,
+  };
+  expect(page.url).toBe(`${browser.allowedOrigin}/app?token=frame-secret`);
+  expect(subjectOf(listed.structuredContent)).toEqual({
+    identity: { kind: "unknown", reason: "not-observed" },
+    name: null,
+    local_path: null,
+  });
+  for (const result of [inspected, analyzed])
+    expect(subjectOf(result.structuredContent)).toEqual({
+      identity: page,
+      name: null,
+      local_path: null,
+    });
   await verifySessionAndComparisonTools(connected, browser, inspected);
 });
+
+const subjectOf = (content: unknown): unknown => parseEvidence(content).subject;
 
 const verifySessionAndComparisonTools = async (
   connected: Awaited<ReturnType<typeof connectBrowser>>,
@@ -544,6 +589,13 @@ const verifySessionAndComparisonTools = async (
     },
   });
   expect(JSON.stringify(malformedComparison.content)).toContain("types");
+  for (const result of [observedSession, webMcp])
+    expect(subjectOf(result.structuredContent)).toMatchObject({
+      identity: { kind: "url", origin: browser.allowedOrigin },
+    });
+  expect(subjectOf(compared.structuredContent)).toMatchObject({
+    identity: { kind: "unknown", reason: "not-observed" },
+  });
   const incompleteComparison = await connected.client.callTool({
     name: "compare_web_captures",
     arguments: { before: { inspection: capture } },
@@ -571,6 +623,9 @@ const verifyScreenshotTools = async (
     },
   });
   expect(screenshot.isError).not.toBe(true);
+  expect(subjectOf(screenshot.structuredContent)).toMatchObject({
+    identity: { kind: "url", origin: browser.allowedOrigin },
+  });
   const screenshotArtifact = artifactOf(screenshot.structuredContent);
   const visual = await client.callTool({
     name: "compare_web_screenshots",
@@ -792,19 +847,12 @@ cliTest(
   },
 );
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "records a browser-socket endpoint redacted and reconciles its Evidence (%s)",
   async (profile) => {
     const browser = await startFakeCdpBrowser();
     retainBrowser(browser);
     const connected = await connectBrowser(profile);
-    const tool = (await connected.client.listTools()).tools.find(
-      ({ name }) => name === "inspect_web_page",
-    );
-    if (profile === "full")
-      expect(tool?.inputSchema.properties?.cdp_endpoint).toMatchObject({
-        description: expect.stringContaining("/devtools/browser/ID"),
-      });
     const listed = await connected.client.callTool({
       name: "list_browser_targets",
       arguments: {
@@ -954,7 +1002,7 @@ it("projects legal oversized PNG dimensions as a memory constraint", async () =>
   });
 });
 
-const connectBrowser = async (profile?: "full" | "compact") => {
+const connectBrowser = async (profile?: "compact") => {
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
@@ -1009,7 +1057,7 @@ const artifactOf = (value: unknown): unknown => {
   return normalized.artifact;
 };
 
-it.each([24, 32, "crc"])(
+it.each([24, 32, "crc", "invalid interlace"])(
   "rejects corrupt captured PNG through MCP: %s",
   async (kind) => {
     const bytes = Buffer.from(
@@ -1017,6 +1065,10 @@ it.each([24, 32, "crc"])(
       "base64",
     );
     if (kind === "crc") bytes[29] = (bytes[29] ?? 0) ^ 1;
+    if (kind === "invalid interlace") {
+      bytes[28] = 2;
+      bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+    }
     const data = (
       typeof kind === "number" ? bytes.subarray(0, kind) : bytes
     ).toString("base64");

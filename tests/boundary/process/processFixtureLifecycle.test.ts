@@ -6,10 +6,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { expect, it, vi } from "vitest";
 
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
-import {
-  createTestProcessRegistry,
-  remainingProcessDeadline,
-} from "../../support/process/processFixture.js";
+import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 
 const within = async <T>(
   operation: Promise<T>,
@@ -281,15 +278,6 @@ it("terminates a stalled real child at its deadline while retaining captured out
   }
 });
 
-it("derives a child deadline from the test deadline, keeping a reporting reserve", () => {
-  expect(remainingProcessDeadline(120_000, 0)).toBe(108_000);
-  expect(remainingProcessDeadline(30_000, 20_000)).toBe(5_000);
-  // The reserve never drops below five seconds, nor the deadline below one.
-  expect(remainingProcessDeadline(8_000, 0)).toBe(3_000);
-  expect(remainingProcessDeadline(8_000, 7_500)).toBe(1_000);
-  expect(remainingProcessDeadline(0, 0)).toBeUndefined();
-});
-
 it(
   "stops a hung child before its running test's deadline and reports its output",
   // The test deadline is the behavior under test: the child gets what remains.
@@ -314,6 +302,73 @@ it(
       expect(performance.now() - started).toBeLessThan(6_000);
     } finally {
       await processes.shutdown();
+    }
+  },
+);
+
+it("preserves the exit result when a child closes stdin before consuming its input", async () => {
+  const processes = createTestProcessRegistry();
+  try {
+    await expect(
+      processes.run(
+        process.execPath,
+        [
+          "-e",
+          'process.stderr.write("input refused\\n", () => process.exit(7));',
+        ],
+        { input: Buffer.alloc(4 * 1024 * 1024) },
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 7,
+      stderr: "input refused\n",
+    });
+  } finally {
+    await processes.shutdown();
+  }
+});
+
+it.each(["input", "spawn", "deadline"] as const)(
+  "preserves the %s failure when stdin emits a non-EPIPE error",
+  async (failure) => {
+    vi.useFakeTimers();
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      pid: 901,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      kill: vi.fn(() => true),
+    });
+    const processes = createTestProcessRegistry(
+      () => child as unknown as ChildProcessWithoutNullStreams,
+    );
+    const outcome = processes
+      .run("fixture", [], { timeoutMs: 100 })
+      .catch((error: unknown) => error);
+    const inputError = Object.assign(new Error("stdin write failed"), {
+      code: "EIO",
+    });
+    const spawnError = new Error("spawn failed");
+    try {
+      child.stdin.emit("error", inputError);
+      if (failure === "spawn") child.emit("error", spawnError);
+      if (failure === "deadline") await vi.advanceTimersByTimeAsync(100);
+      child.emit("close", 0, null);
+      if (failure === "deadline") {
+        expect(await outcome).toMatchObject({
+          message: "Test process exceeded its 100ms deadline",
+        });
+      } else {
+        expect(await outcome).toBe(
+          failure === "spawn" ? spawnError : inputError,
+        );
+      }
+    } finally {
+      child.emit("close", 0, null);
+      await outcome;
+      await processes.shutdown();
+      vi.useRealTimers();
     }
   },
 );

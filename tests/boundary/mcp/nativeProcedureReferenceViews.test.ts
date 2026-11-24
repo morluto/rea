@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -33,7 +34,7 @@ const fixture = {
   unresolved_calls: [{ address: "0x1003", reason: "indirect destination" }],
 };
 
-const setup = async (profile: "full" | "compact") => {
+const setup = async (profile: "compact") => {
   const session = createTestBinarySession(() => {
     throw new Error("View opened provider");
   });
@@ -53,11 +54,11 @@ const setup = async (profile: "full" | "compact") => {
   };
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "pages procedure reference Evidence across a %s offline handoff",
   async (profile) => {
     const parent = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "procedure_references",
@@ -203,12 +204,12 @@ it("bounds a requested page by bytes and keeps oversized-row recovery available"
     kind: { available: false as const, reason: largeReason },
   }));
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const parent = createEvidence(undefined, provider, {
+  const parent = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "procedure_references",
     parameters: {},
     result: { ...fixture, references: rows },
   });
-  const oversize = createEvidence(undefined, provider, {
+  const oversize = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "procedure_references",
     parameters: {},
     result: {

@@ -4,6 +4,7 @@ import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { readRuntimeSetting } from "./runtimeAnalysisSettings.js";
 
 import {
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
@@ -88,6 +89,19 @@ export const parseBridgeMaxRequestBytes = (
       );
 };
 
+/**
+ * Copy the effective request ceiling when a request is admitted, in the
+ * caller's async context, so a queued request is written under the ceiling it
+ * was admitted with. A malformed launch seed no override covers is refused.
+ */
+export const admitBridgeRequestLimit = (
+  limit: BridgeMaxRequestBytes,
+): Result<BridgeMaxRequestBytes, ConfigurationError> =>
+  readRuntimeSetting(() => ({
+    maximumBytes: limit.maximumBytes,
+    source: limit.source,
+  }));
+
 /** How to read and change the effective bridge request ceiling. */
 export const bridgeRequestLimit = (limit: BridgeMaxRequestBytes) =>
   analysisSettingLimit(
@@ -117,7 +131,7 @@ const limitFacts = (
 export const bridgeRequestOversizeError = (
   operation: string,
   limit: BridgeMaxRequestBytes,
-  payloadBytes: number,
+  payload: number | { readonly bytesAtLeast: number },
   peer: BridgePeer,
 ): AnalysisResourceConstraintError => {
   const recovery = bridgeMaxRequestBytesRecovery(limit, peer);
@@ -129,11 +143,17 @@ export const bridgeRequestOversizeError = (
     operation,
     "transport",
     `${refusal} ${recovery}`,
-    { ...limitFacts(limit), payload_bytes: payloadBytes },
+    {
+      ...limitFacts(limit),
+      ...(typeof payload === "number"
+        ? { payload_bytes: payload }
+        : { payload_bytes_at_least: payload.bytesAtLeast }),
+    },
     {
       remediationAction: recovery,
       retryable: false,
       limit: bridgeRequestLimit(limit),
+      requestSent: false,
     },
   );
 };
@@ -159,6 +179,7 @@ export const bridgeRequestLimitMismatchError = (
       remediationAction: recovery,
       retryable: false,
       limit: bridgeRequestLimit(limit),
+      requestSent: false,
     },
   );
 };
@@ -177,6 +198,7 @@ export const bridgeResponseOversizeError = (
       remediationAction: recovery,
       retryable: false,
       limit: bridgeRequestLimit(limit),
+      requestSent: true,
     },
   );
 };

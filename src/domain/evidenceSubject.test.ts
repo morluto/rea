@@ -13,6 +13,9 @@ const digest = "a".repeat(64);
 
 describe("persisted observation subject declarations", () => {
   it("keeps Evidence and cache admission aligned for every format and architecture", () => {
+    // A snapshot entry commits to its Evidence record's subject, so cache
+    // admission parses the Evidence subject declaration itself.
+    expect(snapshotSubject).toBe(evidenceSubject);
     for (const format of evidenceSubjectFormatSchema.options) {
       for (const architecture of [
         ...BINARY_ARCHITECTURES,
@@ -21,15 +24,14 @@ describe("persisted observation subject declarations", () => {
       ]) {
         const declaration = { format, architecture };
         const evidence = evidenceSubject.safeParse({
-          ...declaration,
+          identity: {
+            kind: "file",
+            sha256: digest,
+            ...declaration,
+            selection: null,
+          },
           name: "fixture",
           local_path: "/tmp/fixture",
-          digest: { sha256: digest },
-        });
-        const snapshot = snapshotSubject.safeParse({
-          ...declaration,
-          path: "/tmp/fixture",
-          sha256: digest,
         });
         const allowed =
           architecture !== "unsupported" &&
@@ -38,7 +40,6 @@ describe("persisted observation subject declarations", () => {
             : format === "raw-binary" ||
               (architecture !== "6502" && architecture !== "m68k"));
         expect(evidence.success, JSON.stringify(declaration)).toBe(allowed);
-        expect(snapshot.success, JSON.stringify(declaration)).toBe(allowed);
         const manifest = evidenceBundleSchema.shape.artifacts.element.safeParse(
           {
             ...declaration,
@@ -53,22 +54,17 @@ describe("persisted observation subject declarations", () => {
   it("preserves each persistence envelope's handling of additional fields", () => {
     expect(
       evidenceSubject.safeParse({
-        format: "pe",
-        architecture: null,
+        identity: {
+          kind: "file",
+          sha256: digest,
+          format: "pe",
+          architecture: null,
+          selection: null,
+        },
         name: "fixture",
         local_path: "/tmp/fixture",
-        digest: { sha256: digest },
         extra: true,
       }).success,
     ).toBe(false);
-    expect(
-      snapshotSubject.parse({
-        format: "pe",
-        architecture: null,
-        path: "/tmp/fixture",
-        sha256: digest,
-        extra: true,
-      }),
-    ).not.toHaveProperty("extra");
   });
 });

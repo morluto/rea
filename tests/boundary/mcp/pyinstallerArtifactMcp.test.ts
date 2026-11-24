@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -21,6 +22,7 @@ import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectCarrierProbes } from "../../fixtures/nativeCarrierProbes.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -33,7 +35,7 @@ const assertMetadataQueries = async (
   const definition = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (definition?.outputSchema === undefined)
+  if (definition === undefined)
     throw new Error("Analysis view output schema is missing");
   const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = definition.inputSchema;
@@ -56,7 +58,7 @@ const assertMetadataQueries = async (
     );
     const reply = await client.callTool(
       { name: "inspect_analysis_view", arguments: args },
-      { toolDefinition: definition },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
     );
     expect(reply.isError).not.toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
@@ -223,7 +225,8 @@ mcpTest.for([false, true])(
       parseEvidence(inspected.structuredContent).normalized_result,
     );
     expect(inspection.subject.root_format).toBe("pyinstaller");
-    if (!opaque) expect(inspection.next_probes).toEqual([]);
+    // The archive has no package reader; its ELF carrier keeps its readers.
+    if (!opaque) expectCarrierProbes(inspection.next_probes, "elf");
     expect(
       inspection.substeps[0]?.evidence.normalized_result.coverage.status,
     ).toBe(opaque ? "unknown" : "complete");

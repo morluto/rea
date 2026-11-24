@@ -14,6 +14,7 @@ import {
   COVERAGE_DEADLINE_SCALE,
   HOSTED_RUNNER_DEADLINE_SCALE,
   LONG_RUNNING_DEADLINE_MS,
+  remainingTestDeadline,
   TEST_DEADLINE_MS as BASE_TEST_DEADLINE_MS,
 } from "./tests/support/testDeadlines.js";
 
@@ -60,23 +61,36 @@ const TEST_DEADLINE_MS = {
   built: BASE_TEST_DEADLINE_MS.built * DEADLINE_SCALE,
 } as const;
 
+// Vitest's one-second `expect.poll` default is a host-speed guess. A poll the
+// project owns waits as long as its test may run, less a reporting reserve, so
+// a condition that never holds still fails with the poll's own diagnostics.
+const pollPolicy = (deadlineMs: number) => {
+  const timeout = remainingTestDeadline(deadlineMs, 0);
+  return timeout === undefined ? {} : { timeout };
+};
+
 const TEST_PROJECTS = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS];
+// Source projects that share a module graph still run in forked workers.
+// Thread workers share one process, so the source lane's workers once grew
+// one 3.8 GiB process; Linux CI then refused to fork test subprocesses from it
+// (`spawnSync ... ENOMEM`). A forked worker keeps its own heap and main-thread
+// stack, so the largest process stays near one worker's size.
 const PROJECT_POLICIES = {
   domain: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Domain and contract modules are pure and own no process-global state, so
     // per-file module isolation adds startup cost without protecting a seam.
   },
   services: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Service tests use recording ports and own no process-global state. Share
     // their module graph so file startup does not dominate the lane.
   },
   adapters: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   composition: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Composition tests use provider-neutral sessions and test-scoped cleanup;
     // sharing their immutable module graph avoids per-file startup work.
@@ -94,7 +108,7 @@ const PROJECT_POLICIES = {
   },
   "process-boundary": {
     pool: "forks" as const,
-    maxWorkers: MAX_TEST_WORKERS,
+    maxWorkers: 1,
     // Process-tree observations share host sampling resources; keep this small
     // lane serial while the independent projects run together.
     fileParallelism: false,
@@ -109,12 +123,12 @@ const PROJECT_POLICIES = {
   acceptance: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   "process-global": { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   conformance: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Contract cases use recording providers and own no process-global state.
   },
   evaluation: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Evaluator tests inspect deterministic inputs without mutating shared state.
   },
@@ -153,6 +167,7 @@ const projects = TEST_PROJECTS.map((project) => {
       isolate: project.isolate !== false,
       testTimeout: TEST_DEADLINE_MS[project.group],
       hookTimeout: TEST_DEADLINE_MS[project.group],
+      expect: { poll: pollPolicy(TEST_DEADLINE_MS[project.group]) },
       ...policy,
     },
   };
@@ -160,7 +175,9 @@ const projects = TEST_PROJECTS.map((project) => {
 
 export default defineConfig({
   test: {
-    env: { TMPDIR: CANONICAL_TEMPORARY_DIRECTORY },
+    env: {
+      TMPDIR: CANONICAL_TEMPORARY_DIRECTORY,
+    },
     maxWorkers: MAX_TEST_WORKERS,
     projects,
     ...(process.env.REA_CI_TEST_HISTORY
@@ -171,6 +188,7 @@ export default defineConfig({
     runner: "./tests/processOwnershipRunner.ts",
     testTimeout: TEST_DEADLINE_MS.source,
     hookTimeout: TEST_DEADLINE_MS.source,
+    expect: { poll: pollPolicy(TEST_DEADLINE_MS.source) },
     // Deadline probes compare what Vitest applies with the configured policy.
     provide: { testDeadlineScale: DEADLINE_SCALE },
     tags: [

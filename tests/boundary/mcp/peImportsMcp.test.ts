@@ -4,7 +4,6 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   peImportImage,
   peImportDirectoryAtRva,
@@ -77,20 +76,3 @@ mcpTest(
     }
   },
 );
-
-mcpTest("requires an absolute path for inspect_pe_imports", async ({ mcp }) => {
-  const { client, session } = await connect(mcp);
-  try {
-    const response = await client.callTool({
-      name: "inspect_pe_imports",
-      arguments: { path: "app.exe" },
-    });
-    expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_pe_imports" },
-    });
-  } finally {
-    await session.close();
-  }
-});

@@ -12,9 +12,12 @@ const workflowSchema = z.object({
   jobs: z.record(
     z.string(),
     z.object({
+      strategy: z.unknown().optional(),
       steps: z
         .array(
           z.object({
+            id: z.string().optional(),
+            if: z.unknown().optional(),
             run: z.string().optional(),
             with: z.object({ name: z.string().optional() }).optional(),
           }),
@@ -117,6 +120,18 @@ describe("curated Windows test lane", () => {
     );
   });
 
+  it("keeps advertised schema checks in the lane", async () => {
+    // Windows hosts advertise their own absolute-path pattern (#7151); only
+    // this lane compiles it and validates host paths against it.
+    expect(await explicitPaths("windows")).toEqual(
+      expect.arrayContaining([
+        "tests/boundary/mcp/advertisedDialect.test.ts",
+        "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+        "tests/boundary/mcp/toolSchemaValidity.test.ts",
+      ]),
+    );
+  });
+
   it("keeps Windows runner cancellation coverage in the lane", async () => {
     expect(await explicitPaths("windows")).toEqual(
       expect.arrayContaining([
@@ -195,10 +210,55 @@ it("checks the complete source with the fallback compiler before Windows build r
     parse(await readFile(WORKFLOW, "utf8")),
   );
   const steps = workflow.jobs["windows-curated"]?.steps ?? [];
+  const restored = steps.findIndex((step) => step.id === "windows-build-cache");
   const checked = steps.findIndex(
-    (step) => step.run === "npm run typecheck -- --checkers 2",
+    (step) => step.run === "node scripts/run-turbo.mjs run typecheck",
   );
   const built = steps.findIndex((step) => step.run === "npm run build:cached");
-  expect(checked).toBeGreaterThan(-1);
+  expect(restored).toBeGreaterThan(-1);
+  expect(checked).toBeGreaterThan(restored);
   expect(built).toBeGreaterThan(checked);
+  const vitestRuns = steps
+    .map((step) => step.run)
+    .filter((value) => value?.includes("npx vitest run"));
+  // One Node 24 curated run and one Node 22 path-boundary run; both cover the
+  // three native directory-identity suites without booting a second Node 24 Vitest process.
+  expect(vitestRuns).toHaveLength(2);
+  for (const run of vitestRuns) {
+    expect(run).toContain(
+      "tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts",
+    );
+    expect(run).toContain(
+      "tests/boundary/filesystem/javascriptPackagePrecedence.test.ts",
+    );
+    expect(run).toContain(
+      "tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts",
+    );
+  }
+});
+
+it("schedules the curated Windows tests and fresh package verification independently", async () => {
+  const workflow = workflowSchema.parse(
+    parse(await readFile(WORKFLOW, "utf8")),
+  );
+  const job = workflow.jobs["windows-curated"];
+  expect(job?.strategy).toMatchObject({
+    "fail-fast": false,
+    matrix: { suite: ["capabilities", "package"] },
+  });
+  const steps = job?.steps ?? [];
+  const conditionOf = (command: string) =>
+    steps.find((step) => step.run?.includes(command))?.if;
+  expect(conditionOf("tests/process-global/runnerCancellation.test.ts")).toBe(
+    "matrix.suite == 'capabilities'",
+  );
+  expect(conditionOf("node scripts/verify-windows-package.mjs")).toBe(
+    "matrix.suite == 'package'",
+  );
+  expect(conditionOf("tests/boundary/process/sourceMapUncHosts.test.ts")).toBe(
+    "matrix.suite == 'package'",
+  );
+  expect(
+    steps.find((step) => step.with?.name === "windows-capabilities")?.if,
+  ).toContain("matrix.suite == 'capabilities'");
 });

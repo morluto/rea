@@ -1,17 +1,17 @@
 [
   {
-    "file": "licenses/ghidra-12.1.4-LICENSE.txt",
-    "source": "https://raw.githubusercontent.com/NationalSecurityAgency/ghidra/Ghidra_12.1.4_build/LICENSE",
+    "file": "licenses/ghidra-12.2-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/NationalSecurityAgency/ghidra/Ghidra_12.2_build/LICENSE",
     "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
   },
   {
-    "file": "licenses/ghidra-12.1.4-NOTICE.txt",
-    "source": "https://raw.githubusercontent.com/NationalSecurityAgency/ghidra/Ghidra_12.1.4_build/NOTICE",
+    "file": "licenses/ghidra-12.2-NOTICE.txt",
+    "source": "https://raw.githubusercontent.com/NationalSecurityAgency/ghidra/Ghidra_12.2_build/NOTICE",
     "sha256": "ad4b2bb6e75e908251226180081b5afa01c7161d7710e08b603d0c340a08a23f"
   },
   {
-    "file": "licenses/ghidra-12.1.4-DISCLAIMER.txt",
-    "source": "https://raw.githubusercontent.com/NationalSecurityAgency/ghidra/Ghidra_12.1.4_build/DISCLAIMER.md",
+    "file": "licenses/ghidra-12.2-DISCLAIMER.txt",
+    "source": "https://raw.githubusercontent.com/NationalSecurityAgency/ghidra/Ghidra_12.2_build/DISCLAIMER.md",
     "sha256": "324f4544abe620362f7bc66fbd8ec3c90e62e1aeac249fb850aef67e71c8b24d"
   },
   {
@@ -70,8 +70,8 @@
     "sha256": "cc535c21133c895b56b374c8a1dc1eb948d99003ed2b47372069456b62f42b24"
   },
   {
-    "file": "licenses/protobuf-es-v2.16.0-LICENSE.txt",
-    "source": "https://raw.githubusercontent.com/bufbuild/protobuf-es/b3b232f7f466eda27c66e8f63c82f930578b6cc6/LICENSE",
+    "file": "licenses/protobuf-es-v2.17.0-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/bufbuild/protobuf-es/01a8c3b7c95d17758c641b2b9e8ee2f14a3ee9d7/LICENSE",
     "sha256": "c04b4216f1cd4c5a4f7fb2f2a1b0ae70d847e9e0cac7c9dee9bf8cc03177c449"
   },
   {

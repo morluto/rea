@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -79,8 +80,8 @@ cliTest.skipIf(process.platform === "win32").for(outcomes)(
         output_truncated: false,
         artifact_changed: false,
       });
-      expect(evidence.raw_result).toEqual(evidence.normalized_result);
-      expect(evidence.subject?.digest.sha256).toBe(
+      expect(evidence.raw_result).toBeNull();
+      expect(fileIdentity(evidence.subject).sha256).toBe(
         createHash("sha256").update(content).digest("hex"),
       );
       expect(evidence.parameters.command).toBe(outcome.command);

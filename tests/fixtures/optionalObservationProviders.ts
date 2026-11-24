@@ -1,5 +1,5 @@
-import type { BrowserObservationPort } from "../../src/application/BrowserObservationPort.js";
-import type { JavaScriptRuntimeObservationPort } from "../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
+import type { BrowserObservationPort } from "../../src/ports/BrowserObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../../src/ports/javascript/JavaScriptRuntimeObservationPort.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../../src/browser/providerIdentities.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../src/inspector/providerIdentity.js";
 import { createBrowserScenarioProvider } from "../../src/composition/browserScenario.js";

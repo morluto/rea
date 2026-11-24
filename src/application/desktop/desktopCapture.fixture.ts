@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,11 +6,13 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import { createEvidence } from "../../domain/evidence.js";
-import type { DesktopStateReaders } from "./DesktopApplicationState.js";
+import { runDesktopTaskReader } from "../../desktop/DesktopCaptureProvider.js";
+import type { DesktopExportReaders } from "./DesktopApplicationExport.js";
 import {
   DESKTOP_OPERATION,
   DESKTOP_PROVIDER,
 } from "./DesktopCaptureRefusals.js";
+import { SQLITE_HEADER } from "../../domain/sqliteFormat.js";
 
 export { change, checkpoint, retained };
 
@@ -134,7 +137,7 @@ export const capture = (): DesktopApplicationCapture => ({
         [],
         [
           retained(SETTINGS, "[ui]\nwrap=false\n"),
-          retained(DATABASE, "SQLite format 3\0v1"),
+          retained(DATABASE, `${SQLITE_HEADER}v1`),
         ],
       ),
       checkpoint(
@@ -149,14 +152,14 @@ export const capture = (): DesktopApplicationCapture => ({
           change(NOTE, { after: "milk\n" }),
           change(
             DATABASE,
-            { before: "SQLite format 3\0v1", after: "SQLite format 3\0v2" },
+            { before: `${SQLITE_HEADER}v1`, after: `${SQLITE_HEADER}v2` },
             { state: true },
           ),
         ],
         [
           retained(SETTINGS, "[ui]\nwrap=true\n"),
           retained(NOTE, "milk\n"),
-          retained(DATABASE, "SQLite format 3\0v2"),
+          retained(DATABASE, `${SQLITE_HEADER}v2`),
         ],
       ),
     ],
@@ -262,25 +265,29 @@ export const writeCaptureFolder = async (
     "[ui]\nwrap=false\n",
     "[ui]\nwrap=true\n",
     "milk\n",
-    "SQLite format 3\0v1",
-    "SQLite format 3\0v2",
+    `${SQLITE_HEADER}v1`,
+    `${SQLITE_HEADER}v2`,
     ...extraContent,
   ])
     await writeFile(join(folder, "content", sha256(text)), text);
-  const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-    predicateType: "rea.desktop-application-capture",
-    operation,
-    parameters: {},
-    result,
-    confidence: "observed",
-    authority: "controlled-replay",
-  });
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    DESKTOP_PROVIDER,
+    {
+      predicateType: "rea.desktop-application-capture",
+      operation,
+      parameters: {},
+      result,
+      confidence: "observed",
+      authority: "controlled-replay",
+    },
+  );
   await writeFile(join(folder, "capture.json"), JSON.stringify(evidence));
   return folder;
 };
 
 /** A SQLite reader that reports one row per retained version's last byte. */
-export const readers: DesktopStateReaders = {
+export const readers: DesktopExportReaders = {
   sqlite: async (database) => {
     // A staged write-ahead log, when present, decides the version instead.
     const log = await readFile(`${database}-wal`, "latin1").catch(
@@ -307,5 +314,14 @@ export const readers: DesktopStateReaders = {
       },
     };
   },
-  dconf: async () => ({ ok: false, error: "unused" }),
+  dconf: async () => ({
+    ok: false,
+    error: "unused",
+    kind: "read-failed",
+    code: null,
+    exitCode: null,
+    command: null,
+    stderr: null,
+  }),
+  taskReader: runDesktopTaskReader,
 };

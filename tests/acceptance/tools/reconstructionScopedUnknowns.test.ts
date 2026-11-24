@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { expect, it } from "vitest";
 
@@ -16,9 +20,9 @@ const unchangedLeft = () => {
   const fixture = FUNCTION_COMPARISON_EXAMPLE.left;
   return createEvidence(
     {
-      path: fixture.subject!.local_path,
-      sha256: fixture.subject!.digest.sha256,
-      format: fixture.subject!.format,
+      path: fileSubjectDisplay(fixture.subject).local_path,
+      sha256: fileIdentity(fixture.subject).sha256,
+      format: fileIdentity(fixture.subject).format,
     },
     fixture.provider,
     {

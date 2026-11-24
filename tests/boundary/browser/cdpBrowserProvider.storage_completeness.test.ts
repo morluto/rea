@@ -27,7 +27,7 @@ const inspect = async (options: FakeOptions, includeFingerprints = true) => {
     if (!result.ok) throw result.error;
     return result.value;
   };
-  return { capture };
+  return { browser, capture };
 };
 
 const compareStorage = (before: WebPageInspection, after: WebPageInspection) =>
@@ -39,19 +39,24 @@ const compareStorage = (before: WebPageInspection, after: WebPageInspection) =>
   ).dimensions.storage;
 
 it.each([
-  ["CacheStorage.requestCacheNames", {}],
-  ["CacheStorage.requestCacheNames", { caches: null }],
-  ["CacheStorage.requestCacheNames", { caches: [null] }],
+  ["CacheStorage.requestCacheNames", {}, []],
+  ["CacheStorage.requestCacheNames", { caches: null }, []],
+  ["CacheStorage.requestCacheNames", { caches: [null] }, []],
   [
     "CacheStorage.requestCacheNames",
     { caches: [{ cacheName: "assets-v1", cacheId: "secret-id" }, null] },
+    ["assets-v1"],
   ],
-  ["CacheStorage.requestCacheNames", { caches: [{ cacheName: "assets-v1" }] }],
-  ["IndexedDB.requestDatabaseNames", { databaseNames: [null] }],
-  ["DOMStorage.getDOMStorageItems", { entries: [null] }],
+  [
+    "CacheStorage.requestCacheNames",
+    { caches: [{ cacheName: "assets-v1" }] },
+    ["assets-v1"],
+  ],
+  ["IndexedDB.requestDatabaseNames", { databaseNames: [null] }, ["assets-v1"]],
+  ["DOMStorage.getDOMStorageItems", { entries: [null] }, ["assets-v1"]],
 ] as const)(
   "preserves unknown inventory coverage from %s: %j",
-  async (method, reply) => {
+  async (method, reply, cacheNames) => {
     let malformed = false;
     const { capture } = await inspect({
       commandResult: (command) =>
@@ -61,6 +66,7 @@ it.each([
     malformed = true;
     const after = await capture();
     expect(after.storage.fingerprints_complete).toBe(false);
+    expect(after.storage.cache_names).toEqual(cacheNames);
     expect(after.completeness.unavailable_sections).toContain("storage_keys");
     expect(after.completeness.excluded).toContainEqual({
       section: "storage_keys",
@@ -399,7 +405,10 @@ it.each([
       ({ scope }) => scope === "indexed_db_record",
     );
     expect(records).toHaveLength(1);
-    expect(records[0]?.complete).toBe(complete);
+    expect(records[0]).toMatchObject({
+      complete,
+      value_sha256: complete ? expect.stringMatching(/^[a-f0-9]{64}$/u) : null,
+    });
     expect(before.storage.fingerprints_complete).toBe(complete);
     expect(compareStorage(before, after)).toMatchObject({
       status: complete ? "unchanged" : "unknown",
@@ -457,37 +466,179 @@ it("compares decoded IndexedDB content independently of debugger metadata", asyn
   });
 });
 
-it.each([undefined, false, true])(
-  "keeps opaque cookie partition identity incomplete: %s",
-  async (partitionKeyOpaque) => {
-    const { capture } = await inspect({
-      commandResult: (command) =>
-        command.method === "Network.getCookies"
-          ? {
-              cookies: [
-                {
-                  name: "cookie",
-                  value: "value",
-                  domain: "app.example.test",
-                  path: "/",
-                  partitionKeyOpaque,
-                },
-              ],
-            }
-          : undefined,
+const cookie = {
+  name: "cookie",
+  value: "value",
+  domain: "app.example.test",
+  path: "/",
+};
+const cookieFingerprint = (capture: WebPageInspection) => {
+  const fingerprint = capture.storage.content_fingerprints.find(
+    ({ scope }) => scope === "cookie",
+  );
+  if (fingerprint === undefined) throw new Error("Missing cookie fingerprint");
+  return fingerprint;
+};
+
+it("preserves cookie value evidence across distinct and unknown partitions", async () => {
+  let cookies: readonly Record<string, unknown>[] = [cookie];
+  const { capture } = await inspect({
+    commandResult: ({ method }) =>
+      method === "Network.getCookies" ? { cookies } : undefined,
+  });
+  const before = await capture();
+  const plain = cookieFingerprint(before);
+  expect(plain).toMatchObject({
+    complete: true,
+    value_sha256: expect.any(String),
+  });
+  expect(compareStorage(before, await capture()).status).toBe("unchanged");
+
+  cookies = [{ ...cookie, partitionKeyOpaque: false }];
+  expect(cookieFingerprint(await capture())).toEqual(plain);
+
+  const topLevelSite = "https://top.example.test";
+  for (const partitionKey of [
+    topLevelSite,
+    { topLevelSite, hasCrossSiteAncestor: false },
+  ]) {
+    cookies = [{ ...cookie, partitionKey }];
+    const known = await capture();
+    expect(cookieFingerprint(known)).toMatchObject({
+      complete: true,
+      value_sha256: plain.value_sha256,
     });
-    const before = await capture();
-    const after = await capture();
+    expect(compareStorage(before, known).status).toBe("changed");
+  }
+
+  for (const partition of [
+    { partitionKeyOpaque: true },
+    { partitionKeyOpaque: "true" },
+    { partitionKey: null },
+    { partitionKey: { topLevelSite: "https://top.example.test" } },
+  ]) {
+    cookies = [{ ...cookie, ...partition }];
+    const unknown = await capture();
+    for (const first of [before, unknown])
+      expect(compareStorage(first, unknown)).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+        changes: [],
+      });
+    const fingerprint = cookieFingerprint(unknown);
+    expect(fingerprint).toMatchObject({
+      complete: false,
+      value_sha256: plain.value_sha256,
+    });
+    expect(fingerprint.identity_sha256).not.toBe(plain.identity_sha256);
+    expect(unknown.storage.fingerprints_complete).toBe(false);
+  }
+
+  cookies = [
+    { ...cookie, value: 42 },
+    { ...cookie, name: 42 },
+  ];
+  const malformedValue = await capture();
+  expect(
+    malformedValue.storage.content_fingerprints.filter(
+      ({ scope }) => scope === "cookie",
+    ),
+  ).toEqual([{ ...plain, complete: false, value_sha256: null }]);
+  expect(compareStorage(before, malformedValue)).toMatchObject({
+    status: "unknown",
+    total_changes: 0,
+    changes: [],
+  });
+});
+
+it.each([
+  ["IndexedDB.requestData", "indexed_db_record"],
+  ["CacheStorage.requestEntries", "cache_entry"],
+] as const)(
+  "advances %s past malformed rows without repeating evidence",
+  async (command, scope) => {
+    const { browser, capture } = await inspect({
+      commandResult: ({ method, params }, origin) => {
+        if (method !== command) return undefined;
+        const row = (index: number) =>
+          method === "IndexedDB.requestData"
+            ? {
+                key: { type: "number", value: index },
+                primaryKey: { type: "number", value: index },
+                value: { type: "string", value: `row-${index}` },
+              }
+            : {
+                requestURL: `${origin}/cache-${index}`,
+                requestMethod: "GET",
+                requestHeaders: [],
+              };
+        const rows =
+          params.skipCount === 0
+            ? [null, row(1)]
+            : [row(params.skipCount === 1 ? 1 : 2)];
+        return method === "IndexedDB.requestData"
+          ? { objectStoreDataEntries: rows, hasMore: params.skipCount === 0 }
+          : { cacheDataEntries: rows, returnCount: 3 };
+      },
+    });
+    const { storage } = await capture();
     expect(
-      before.storage.content_fingerprints.find(
-        ({ scope }) => scope === "cookie",
-      )?.complete,
-    ).toBe(partitionKeyOpaque !== true);
-    expect(compareStorage(before, after).status).toBe(
-      partitionKeyOpaque === true ? "unknown" : "unchanged",
+      browser.commands
+        .filter(({ method }) => method === command)
+        .map(({ params }) => params.skipCount),
+    ).toEqual([0, 2]);
+    const fingerprints = storage.content_fingerprints.filter(
+      (item) => item.scope === scope,
     );
+    expect(fingerprints).toHaveLength(2);
+    expect(fingerprints).toMatchObject([
+      { complete: true },
+      { complete: true },
+    ]);
+    expect(
+      new Set(fingerprints.map(({ identity_sha256 }) => identity_sha256)).size,
+    ).toBe(2);
+    expect(storage.fingerprints_complete).toBe(false);
   },
 );
+
+it("keeps storage keys and cache names when their values or locators are malformed", async () => {
+  const { capture } = await inspect({
+    commandResult: ({ method }) => {
+      if (method === "CacheStorage.requestCacheNames")
+        return { caches: [{ cacheName: "known-cache" }] };
+      if (method === "DOMStorage.getDOMStorageItems")
+        return {
+          entries: [
+            ["known-key", 42],
+            ["valid-peer", "recorded"],
+            [42, "unknown identity"],
+          ],
+        };
+      return undefined;
+    },
+  });
+  const { storage } = await capture();
+  expect(storage).toMatchObject({
+    local_storage_keys: ["known-key", "valid-peer"],
+    session_storage_keys: ["known-key", "valid-peer"],
+    cache_names: ["known-cache"],
+    fingerprints_complete: false,
+  });
+  const local = storage.content_fingerprints.filter(
+    ({ scope }) => scope === "local_storage",
+  );
+  expect(local).toHaveLength(2);
+  expect(local).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ complete: false, value_sha256: null }),
+      expect.objectContaining({
+        complete: true,
+        value_sha256: expect.any(String),
+      }),
+    ]),
+  );
+});
 
 it.each([
   [undefined, false],
@@ -557,4 +708,49 @@ it("accepts genuinely empty inventories as complete", async () => {
   const after = await capture();
   expect(before.storage.fingerprints_complete).toBe(true);
   expect(compareStorage(before, after).status).toBe("unchanged");
+});
+
+it.each([
+  ["Network.getCookies", { cookies: null }],
+  ["IndexedDB.requestDatabase", { databaseWithObjectStores: null }],
+  ["IndexedDB.requestData", { objectStoreDataEntries: [], hasMore: "no" }],
+  ["CacheStorage.requestEntries", { cacheDataEntries: [], returnCount: -1 }],
+  ["CacheStorage.requestCachedResponse", { response: { body: 7 } }],
+] as const)(
+  "records a malformed %s reply as a fingerprint gap and keeps other storage evidence",
+  async (method, reply) => {
+    const { capture } = await inspect({
+      commandResult: (command) =>
+        command.method === method ? reply : undefined,
+    });
+    const captured = await capture();
+    expect(captured.storage.fingerprints_complete).toBe(false);
+    expect(captured.storage.local_storage_keys).toEqual(["public-key"]);
+    expect(captured.storage.indexed_db_names).toEqual(["app-db"]);
+    expect(captured.storage.cache_names).toEqual(["assets-v1"]);
+    expect(captured.storage.content_fingerprints).toContainEqual(
+      expect.objectContaining({ scope: "local_storage", complete: true }),
+    );
+    expect(captured.limitations).toContain(
+      `${method} returned a malformed result; the section that reads it is incomplete.`,
+    );
+  },
+);
+
+it("keeps an unreadable storage quota unknown beside the storage inventory", async () => {
+  const { capture } = await inspect({
+    commandResult: (command) =>
+      command.method === "Storage.getUsageAndQuota"
+        ? { usage: "42", quota: 1_024 }
+        : undefined,
+  });
+  const captured = await capture();
+  expect(captured.storage).toMatchObject({
+    usage_bytes: null,
+    quota_bytes: null,
+    local_storage_keys: ["public-key"],
+  });
+  expect(captured.limitations).toContain(
+    "Storage.getUsageAndQuota returned a malformed result; the section that reads it is incomplete.",
+  );
 });

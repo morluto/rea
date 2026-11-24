@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence, type Evidence } from "./evidence.js";
@@ -8,10 +9,7 @@ import { artifactInventoryResultSchema } from "./artifactGraph.js";
 import { artifactGraphDigest, artifactManifestId } from "./artifactIdentity.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
-import {
-  reconstructionVerificationResultSchema,
-  reconstructionSpecificationSchema,
-} from "./reconstructionVerificationSchemas.js";
+import { reconstructionVerificationResultSchema } from "./reconstructionVerificationSchemas.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
@@ -111,7 +109,7 @@ const processComparison = (
   extraLinks: readonly string[] = [],
 ): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-process",
       name: "REA deterministic process harness",
@@ -136,7 +134,7 @@ const multiSourceProcessComparison = (
   right: readonly Evidence[],
 ): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-process",
       name: "REA deterministic process harness",
@@ -207,7 +205,7 @@ const artifactComparison = (
   result?: JsonValue,
 ): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-artifact-comparison",
       name: "REA artifact comparison",
@@ -258,7 +256,7 @@ const verifyArtifactComparison = (
 };
 
 describe("reconstruction verification", () => {
-  it("accepts real process dimensions and rejects removed protocol dimensions", () => {
+  it("verifies interaction and process dimensions independently", () => {
     const left = source("1", "controlled-replay");
     const right = source("2", "controlled-replay");
     const result = {
@@ -307,22 +305,6 @@ describe("reconstruction verification", () => {
     ).toMatchObject({
       summary: { total: 2, passed: 1, failed: 1, unknown: 0 },
     });
-    for (const dimension of ["protocol", "shim"] as const) {
-      expect(
-        reconstructionSpecificationSchema.safeParse({
-          name: "Removed process dimension",
-          claims: [
-            {
-              kind: "behavioral",
-              claim_id: dimension,
-              title: "Unsupported dimension",
-              comparison_evidence_id: comparison.evidence_id,
-              dimension,
-            },
-          ],
-        }).success,
-      ).toBe(false);
-    }
   });
 
   it("passes a complete authoritative claim with two-sided citations", () => {
@@ -536,7 +518,7 @@ describe("reconstruction verification outcomes", () => {
 });
 
 describe("reconstruction verification integrity", () => {
-  it("accepts evidence closures larger than the former count ceilings", () => {
+  it("accepts evidence closures with more than 20,000 ids", () => {
     const evidenceIds = Array.from(
       { length: 20_101 },
       (_, index) => `ev_${index.toString(16).padStart(64, "0")}`,
@@ -565,6 +547,7 @@ describe("reconstruction verification integrity", () => {
         unknown: 0,
         behavioral: 0,
         structural: 1,
+        visual: 0,
       },
       claims: { items: [claim] },
       recommended_probes: [],
@@ -631,7 +614,7 @@ describe("reconstruction verification integrity", () => {
     const comparison = processComparison(left, right, processResult());
     const mutations = Array.from({ length: 101 }, (_, index) =>
       createEvidence(
-        undefined,
+        unknownTarget("derived-from-linked-evidence"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           predicateType: "rea.residual-unknown-mutation",

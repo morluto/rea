@@ -1,10 +1,10 @@
 import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
 import {
-  semanticBindingMayHaveOpaqueEffect,
-  semanticBindingCanBeRebound,
-  semanticOpaqueBindingReadMayHaveChanged,
-} from "./javascriptSemanticOpaqueEffects.js";
+  applySemanticBindingReferenceEffects,
+  opaqueCodeMayRebindBinding,
+} from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
+import { clearSemanticModuleSourceQueries } from "./javascriptSemanticModuleSourceCache.js";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import { logicalRightOperand } from "./javascriptSymbolicControlFlow.js";
 
@@ -15,8 +15,6 @@ import {
 
 import {
   semanticCapturePosition,
-  semanticEscapeFollowsCapture,
-  semanticBindingEffectFollowsCapture,
   semanticBindingPrecedesCapture,
   semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -25,11 +23,6 @@ import {
   semanticSlotAtPath,
   semanticContainer,
 } from "./javascriptSemanticSlots.js";
-
-import {
-  invalidateSemanticEscapedPath,
-  invalidateSemanticMutationPaths,
-} from "./javascriptSemanticMutationValues.js";
 
 import type { JavaScriptBindingProvenance } from "./javascriptSemanticIr.js";
 import type {
@@ -45,6 +38,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { semanticArrayLiteralLayout } from "./javascriptSemanticArrayLayout.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -67,6 +61,7 @@ import {
   semanticResourceLimitUnknown,
   semanticResourceLimitReason,
 } from "./javascriptSemanticResourceLimits.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 // Function identity is outside the public constant lattice. Retain its
 // non-undefined proof with the immutable value rather than interpreting an
@@ -103,8 +98,15 @@ type ReadSnapshotValues = WeakMap<
   Map<string, Map<number, ReadSnapshotValue>>
 >;
 
+type CapturedBindingValues = WeakMap<
+  t.Node,
+  Map<string, JavaScriptSemanticValue>
+>;
+
 /** Read/provenance memos live for one query; whole values follow state effects. */
 interface EvaluationMemo {
+  /** Capture snapshots scoped to this evaluation instead of the source state. */
+  readonly capturedBindings?: CapturedBindingValues;
   snapshotValues?: ReadSnapshotValues;
   capturedSnapshotValues?: WeakMap<t.Node, ReadSnapshotValues>;
   readonly provenance: Map<
@@ -117,13 +119,12 @@ interface EvaluationMemo {
 
 // Indexing owns stable binding identities; effects invalidate values, not this
 // identity-only layout. No query result or dependency closure is retained here.
-const dependencyProofsByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  SemanticDependencyProofs
->();
+const dependencyProofsByState =
+  semanticConsumerMemo<SemanticDependencyProofs>();
 
 const createEvaluationMemo = (
   state: JavaScriptSemanticAnalysisState,
+  capturedBindings?: CapturedBindingValues,
 ): EvaluationMemo => {
   let dependencies = dependencyProofsByState.get(state);
   if (dependencies === undefined) {
@@ -133,6 +134,7 @@ const createEvaluationMemo = (
     dependencyProofsByState.set(state, dependencies);
   }
   return {
+    ...(capturedBindings === undefined ? {} : { capturedBindings }),
     provenance: new Map(),
     dependencyFrames: [],
     dependencies: dependencies.forQuery(),
@@ -169,25 +171,17 @@ interface CallerIndependentBindingValue extends MemoizedEvaluation<JavaScriptSem
   readonly expressionDepth: number;
 }
 
-const callerIndependentBindingValuesByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  Map<string, CallerIndependentBindingValue>
->();
+const callerIndependentBindingValuesByState =
+  semanticConsumerMemo<Map<string, CallerIndependentBindingValue>>();
 
-const primitiveBindingValuesByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  Map<string, JavaScriptSemanticValue>
->();
+const primitiveBindingValuesByState =
+  semanticConsumerMemo<Map<string, JavaScriptSemanticValue>>();
 
-const primitiveExpressionValuesByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, JavaScriptSemanticValue>
->();
+const primitiveExpressionValuesByState =
+  semanticConsumerMemo<WeakMap<t.Node, JavaScriptSemanticValue>>();
 
-const capturedBindingValuesByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, Map<string, JavaScriptSemanticValue>>
->();
+const capturedBindingValuesByState =
+  semanticConsumerMemo<CapturedBindingValues>();
 
 /** Discard every state-owned value derived before the effects boundary changed. */
 export const clearSemanticValueCaches = (
@@ -197,6 +191,7 @@ export const clearSemanticValueCaches = (
   capturedBindingValuesByState.delete(state);
   primitiveExpressionValuesByState.delete(state);
   callerIndependentBindingValuesByState.delete(state);
+  clearSemanticModuleSourceQueries(state);
 };
 
 const callerIndependentBindingValuesFor = (
@@ -233,8 +228,7 @@ export const evaluateSemanticBinding = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticValue =>
-  semanticBindingCanBeRebound(binding) &&
-  semanticBindingMayHaveOpaqueEffect(binding, state)
+  opaqueCodeMayRebindBinding(binding, state)
     ? {
         status: "unknown",
         reason: "Direct eval may have changed this lexical binding.",
@@ -248,20 +242,42 @@ export const evaluateSemanticBinding = (
         memo: createEvaluationMemo(state),
       });
 
+const expressionEvaluationContext = (
+  state: JavaScriptSemanticAnalysisState,
+  captureScope: "state" | "query" = "state",
+): EvaluationContext => ({
+  state,
+  bindings: new Map(),
+  expressionDepth: 0,
+  primitiveBindingValues: primitiveBindingValuesFor(state),
+  dependence: { lowest: CALLER_INDEPENDENT },
+  memo: createEvaluationMemo(
+    state,
+    captureScope === "query" ? new WeakMap() : undefined,
+  ),
+});
+
+/** Select control-flow branches without merging their distinct source values. */
+export const semanticSelectedBranchNodesAt = (
+  node: t.ConditionalExpression | t.LogicalExpression,
+  state: JavaScriptSemanticAnalysisState,
+  capture: t.Node,
+): readonly t.Node[] => {
+  const context = expressionEvaluationContext(state);
+  return semanticSelectedBranches(
+    node,
+    captureContextAt(capture, context) ?? context,
+  ).map(({ node }) => node);
+};
+
 /** Evaluate an inert expression, optionally at an earlier reference capture. */
 export const evaluateSemanticExpression = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   capturePoint?: t.Node,
+  captureScope: "state" | "query" = "state",
 ): JavaScriptSemanticValue => {
-  const context: EvaluationContext = {
-    state,
-    bindings: new Map(),
-    expressionDepth: 0,
-    primitiveBindingValues: primitiveBindingValuesFor(state),
-    dependence: { lowest: CALLER_INDEPENDENT },
-    memo: createEvaluationMemo(state),
-  };
+  const context = expressionEvaluationContext(state, captureScope);
   return capturePoint === undefined
     ? evaluateCapturedExpression(node, context)
     : evaluateExpression(
@@ -297,8 +313,7 @@ export const evaluateSemanticProvenance = (
     dependence: { lowest: CALLER_INDEPENDENT },
     memo: createEvaluationMemo(state),
   });
-  return semanticBindingCanBeRebound(binding) &&
-    semanticBindingMayHaveOpaqueEffect(binding, state)
+  return opaqueCodeMayRebindBinding(binding, state)
     ? semanticAmbiguousProvenance(
         provenance.origins,
         "Direct eval may have changed this runtime value.",
@@ -551,50 +566,12 @@ const evaluateBinding = (
       ? callerDependence
       : Math.min(callerDependence, context.dependence.lowest);
   }
-  let projected = invalidateSemanticMutationPaths(
+  const projected = applySemanticBindingReferenceEffects(
     value,
-    binding.memberWrites
-      .filter(
-        ({ node }) =>
-          context.capturePoint === undefined ||
-          node === undefined ||
-          !semanticBindingEffectFollowsCapture(
-            binding,
-            context.capturePoint,
-            node,
-            context.state.parentsByNode,
-          ),
-      )
-      .map(({ path }) => path),
+    binding,
+    context.state,
+    context.capturePoint,
   );
-  for (const escape of binding.escapedPaths) {
-    // Escapes only invalidate object references; other lattice values survive.
-    if (projected.status !== "object" && projected.status !== "array") break;
-    if (
-      context.capturePoint !== undefined &&
-      semanticEscapeFollowsCapture(
-        binding,
-        context.capturePoint,
-        escape.node,
-        context.state.parentsByNode,
-      )
-    )
-      continue;
-    projected = invalidateSemanticEscapedPath(projected, escape.path);
-  }
-  if (
-    (projected.status === "object" || projected.status === "array") &&
-    semanticBindingMayHaveOpaqueEffect(
-      binding,
-      context.state,
-      context.capturePoint,
-      "reference",
-    )
-  )
-    projected = {
-      status: "unknown",
-      reason: "Direct eval may have mutated this object reference.",
-    };
   if (
     callerIndependent &&
     independent !== undefined &&
@@ -708,10 +685,10 @@ const evaluateExpressionValue = (
     }
     const atRead = read.binding;
     if (
-      semanticOpaqueBindingReadMayHaveChanged(
+      opaqueCodeMayRebindBinding(
         binding,
-        context.capturePoint ?? node,
         context.state,
+        context.capturePoint ?? node,
       )
     )
       return {
@@ -980,13 +957,14 @@ const evaluateArray = (
   const items: JavaScriptSemanticProperty[] = [];
   let unknownItems = false;
   let omittedItems: number | null = 0;
-  for (const element of node.elements) {
-    if (t.isSpreadElement(element)) {
+  for (const part of semanticArrayLiteralLayout(node, context.state)) {
+    if (part.kind === "opaque-spread") {
       unknownItems = true;
       omittedItems = null;
       // Subsequent elements have no fixed index after an unknown-length spread.
       break;
     }
+    const { element, depth } = part;
     if (element === null) {
       items.push({
         name: String(items.length),
@@ -998,7 +976,7 @@ const evaluateArray = (
     items.push({
       name: String(items.length),
       presence: "present",
-      value: evaluateCapturedExpression(element, nestedContext(context)),
+      value: evaluateCapturedExpression(element, nestedContext(context, depth)),
     });
   }
   return unknownItems
@@ -1291,7 +1269,7 @@ const provenanceForExpression = (
 ): JavaScriptBindingProvenance => {
   if (context.expressionDepth > context.state.precision.expression_depth) {
     context.dependence.lowest = EVERY_CALLER;
-    context.state.valueResourceLimits.add("expression-depth");
+    context.state.observations.valueResourceLimits.add("expression-depth");
     return semanticUnresolvedProvenance(
       "unknown",
       semanticResourceLimitReason("expression-depth", context.state.precision),
@@ -1304,7 +1282,7 @@ const provenanceForExpression = (
       context.state.precision.expression_depth
     ) {
       context.dependence.lowest = EVERY_CALLER;
-      context.state.valueResourceLimits.add("expression-depth");
+      context.state.observations.valueResourceLimits.add("expression-depth");
       return semanticUnresolvedProvenance(
         "unknown",
         semanticResourceLimitReason(
@@ -1410,7 +1388,7 @@ const provenanceForBindingAtRead = (
   read: t.Identifier,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
-  if (semanticOpaqueBindingReadMayHaveChanged(binding, read, context.state))
+  if (opaqueCodeMayRebindBinding(binding, context.state, read))
     return semanticAmbiguousProvenance(
       provenanceForBinding(binding, context).origins,
       "Direct eval may have changed this runtime value.",
@@ -1467,17 +1445,29 @@ const mergeValues = (
   return merged;
 };
 
-const nestedContext = (context: EvaluationContext): EvaluationContext => ({
-  state: context.state,
-  primitiveBindingValues: context.primitiveBindingValues,
-  ...(context.capturePoint === undefined
-    ? {}
-    : { capturePoint: context.capturePoint }),
-  expressionDepth: context.expressionDepth + 1,
-  bindings: context.bindings,
-  dependence: context.dependence,
-  memo: context.memo,
-});
+// Fixed object shapes avoid copying fields for each nested expression.
+const nestedContext = (
+  context: EvaluationContext,
+  depth = 1,
+): EvaluationContext =>
+  context.capturePoint === undefined
+    ? {
+        state: context.state,
+        primitiveBindingValues: context.primitiveBindingValues,
+        expressionDepth: context.expressionDepth + depth,
+        bindings: context.bindings,
+        dependence: context.dependence,
+        memo: context.memo,
+      }
+    : {
+        state: context.state,
+        primitiveBindingValues: context.primitiveBindingValues,
+        capturePoint: context.capturePoint,
+        expressionDepth: context.expressionDepth + depth,
+        bindings: context.bindings,
+        dependence: context.dependence,
+        memo: context.memo,
+      };
 
 const isPrimitive = (value: JavaScriptSemanticValue): boolean =>
   value.status === "literal" || value.status === "union";
@@ -1506,7 +1496,9 @@ const captureContextAt = (
     semanticCapturePosition(node, context.state.parentsByNode) === null
   )
     return undefined;
-  let captures = capturedBindingValuesByState.get(context.state);
+  let captures =
+    context.memo.capturedBindings ??
+    capturedBindingValuesByState.get(context.state);
   if (captures === undefined) {
     captures = new WeakMap();
     capturedBindingValuesByState.set(context.state, captures);

@@ -39,9 +39,9 @@ const checkCliPublication = async (
   const args = [
     "inspect-api-contract",
     "./SDL 雪.graphql",
-    "--contractFormat",
+    "--contract-format",
     "graphql-sdl",
-    "--operationsPath",
+    "--operations-path",
     "./queries file.graphql",
   ];
   const cliComplete = await run({
@@ -127,7 +127,7 @@ const checkAdvertisedSchema = async (
     client,
     "inspect_api_contract",
   );
-  expect(schemas.ajv.validate(schemas.inputSchema, input)).toBe(true);
+  expect(schemas.ajv.validate(schemas.canonicalInputSchema, input)).toBe(true);
   for (const invalid of [
     { ...input, format: "openapi-json" },
     { ...input, view: { kind: "api-contract", collection: "operations" } },
@@ -140,7 +140,9 @@ const checkAdvertisedSchema = async (
       },
     },
   ])
-    expect(schemas.ajv.validate(schemas.inputSchema, invalid)).toBe(false);
+    expect(schemas.ajv.validate(schemas.canonicalInputSchema, invalid)).toBe(
+      false,
+    );
 };
 
 cliTest(
@@ -156,7 +158,6 @@ cliTest(
     await writeFile(path, bytes);
     await writeFile(operationsPath, operations);
     const { client, call } = await connectLocalToolsMcp({
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: "application,session",
     });
     const input = {
@@ -344,9 +345,9 @@ cliTest(
       arguments: [
         "inspect-api-contract",
         path,
-        "--contractFormat",
+        "--contract-format",
         "graphql-sdl",
-        "--operationsPath",
+        "--operations-path",
         operations_path,
         "--json",
       ],
@@ -397,7 +398,7 @@ cliTest(
       arguments: [
         "inspect-api-contract",
         path,
-        "--contractFormat",
+        "--contract-format",
         "graphql-sdl",
         "--json",
       ],

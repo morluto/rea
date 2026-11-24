@@ -1,11 +1,5 @@
 import { spawn } from "node:child_process";
-import {
-  copyFile,
-  mkdir,
-  readFile,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -16,30 +10,33 @@ import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const groups = ["source", "built"] as const;
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-test-group-cancellation-");
-  await mkdir(join(root, "scripts/ci"), { recursive: true });
-  await mkdir(join(root, "scripts/lib"));
-  for (const path of [
-    "scripts/ci/test-group.mjs",
-    "scripts/lib/test-projects.mjs",
-    "scripts/run-exclusive.mjs",
-    "scripts/run-exclusive-command.mjs",
-    "scripts/lib/windows-owned-command.mjs",
-  ])
-    await copyFile(join(process.cwd(), path), join(root, path));
+  // The group spawns the exclusive-lock scripts.
+  await copyScriptsWithImports(
+    [
+      "scripts/ci/test-group.mjs",
+      "scripts/run-exclusive.mjs",
+      "scripts/run-exclusive-command.mjs",
+    ],
+    root,
+  );
   await symlink(
     join(process.cwd(), "node_modules"),
     join(root, "node_modules"),
     process.platform === "win32" ? "junction" : undefined,
   );
   await writeFile(join(root, "package.json"), '{"type":"module"}');
+  // Disable Vitest's disk module cache in nested fixture configs; root/node_modules
+  // symlinks the parent workspace's node_modules, so a lockfile mismatch would
+  // otherwise clear the parent runner's node_modules/.vitest-cache mid-run.
   await writeFile(
     join(root, "vitest.config.mjs"),
-    'export default { test: { projects: ["domain", "boundary"].map(name => ({ test: { name, include: ["value.test.ts"], pool: "forks" } })) } };',
+    'export default { test: { fsModuleCache: false, projects: ["domain", "boundary"].map(name => ({ test: { name, fsModuleCache: false, include: ["value.test.ts"], pool: "forks" } })) } };',
   );
   return root;
 };
@@ -143,7 +140,6 @@ function release() { clearInterval(timer); clearTimeout(deadline); socket.end();
         ready.promise,
         closed,
         "test-owned descendant readiness",
-        5_000,
       );
       runner.kill(signal);
       expect(await closed).toEqual({

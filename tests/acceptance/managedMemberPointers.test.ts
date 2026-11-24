@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -33,14 +34,18 @@ cliTest(
       expect(mcpEvidence.normalized_result).toEqual(
         cliEvidence.normalized_result,
       );
-      expect(mcpEvidence.subject?.digest.sha256).toBe(sha256);
-      expect(cliEvidence.subject?.digest.sha256).toBe(sha256);
+      expect(fileIdentity(mcpEvidence.subject).sha256).toBe(sha256);
+      expect(fileIdentity(cliEvidence.subject).sha256).toBe(sha256);
       expect(mcpEvidence.normalized_result).toMatchObject({
         coverage: { state: "complete", issues: [] },
       });
       if (name === "inspect_managed_artifact") {
         expect(mcpEvidence.normalized_result).toMatchObject({
-          metadata: { stream_names: expect.arrayContaining(["#-"]) },
+          metadata: {
+            status: "complete",
+            stream_names: expect.arrayContaining(["#-"]),
+            table_row_counts: { Module: 1, MethodDef: 2 },
+          },
           attributes: [
             expect.objectContaining({
               parent_token: "0x20000001",

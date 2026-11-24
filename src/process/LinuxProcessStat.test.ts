@@ -72,24 +72,17 @@ it("retains identity when Linux teardown reports unavailable group and session I
     sessionId: -1,
     kernelThread: false,
   });
-  expect(
-    parseLinuxProcessStat(statRecord({ processGroupId: "-2" })),
-  ).toBeUndefined();
-  expect(
-    parseLinuxProcessStat(statRecord({ sessionId: "-2" })),
-  ).toBeUndefined();
 });
 
-it("distinguishes zombie lifecycle and rejects malformed or missing identity fields", () => {
-  expect(parseLinuxProcessStat(statRecord({ state: "Z" }))?.lifecycle).toBe(
-    "zombie",
-  );
-  expect(parseLinuxProcessStat("(worker) S 1 2 3")).toBeUndefined();
-  expect(parseLinuxProcessStat(statRecord({ pid: "0" }))).toBeUndefined();
-  expect(parseLinuxProcessStat(statRecord({ state: "??" }))).toBeUndefined();
-  expect(parseLinuxProcessStat(statRecord({ startTime: "not-a-number" }))).toBe(
-    undefined,
-  );
+it.each([
+  ["missing PID", "(worker) S 1 2 3"],
+  ["PID zero", statRecord({ pid: "0" })],
+  ["malformed state", statRecord({ state: "??" })],
+  ["malformed start time", statRecord({ startTime: "not-a-number" })],
+  ["invalid group sentinel", statRecord({ processGroupId: "-2" })],
+  ["invalid session sentinel", statRecord({ sessionId: "-2" })],
+])("rejects a native stat record with %s", (_reason, record) => {
+  expect(parseLinuxProcessStat(record)).toBeUndefined();
 });
 
 it.each(["R", "S", "D"])(

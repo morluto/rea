@@ -1,4 +1,6 @@
+import { completeOrUnknownCoverageSchema } from "./coverage.js";
 import {
+  artifactCrc32PairSchema,
   artifactDfuCrc32PairSchema,
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
@@ -9,6 +11,7 @@ import { z } from "zod";
 import { artifactReaderLimitsSchema } from "./artifactReaderLimits.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { inesInventorySchema } from "./inesContainer.js";
+import { ZIP_APPLICATION_PACKAGE_FORMATS } from "./zipPackageFormat.js";
 
 /** Entry kinds or subtrees deliberately excluded by an artifact traversal. */
 export const artifactTraversalOmissionKindSchema = z.enum([
@@ -70,7 +73,15 @@ export const ARTIFACT_FORMAT_IDS = [
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "tar",
+  "dds",
+  "glb",
+  "ktx",
+  "ktx2",
   "uimage",
+  "android-boot-image",
+  "android-ota-payload",
+  "uefi",
   "javascript-bundle",
   "source-map",
   "mach-o-universal",
@@ -83,13 +94,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "gamecube-dol",
   "hopper",
   "analysis-database",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
+  ...ZIP_APPLICATION_PACKAGE_FORMATS,
   "plist",
   "entitlements",
   "directory",
@@ -104,6 +109,10 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-flash-image",
   "fit",
   "ntfs-mft",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "unknown",
 ] as const;
 
@@ -118,7 +127,15 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "tar",
+  "dds",
+  "glb",
+  "ktx",
+  "ktx2",
   "uimage",
+  "android-boot-image",
+  "android-ota-payload",
+  "uefi",
   "intel-hex",
   "srec",
   "esp-image",
@@ -132,6 +149,10 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "pe",
   "dos-mz",
   "plist",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "directory",
   "file",
   "unknown",
@@ -174,7 +195,7 @@ export const artifactOccurrenceSchema = z.object({
   artifact_id: artifactIdSchema.nullable(),
   parent_occurrence_id: occurrenceIdSchema.nullable(),
   /** Producer coverage of this occurrence's modeled relationships. Historical omission is unknown. */
-  relationship_coverage: z.enum(["complete", "unknown"]).exactOptional(),
+  relationship_coverage: completeOrUnknownCoverageSchema.exactOptional(),
   logical_path: boundedRelativePathSchema,
   entry_kind: z.enum(["file", "directory", "symlink", "slice", "metadata"]),
   artifact_kind: artifactKindSchema,
@@ -212,6 +233,7 @@ export const integrityContradictionSchema = z.union([
   integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
+  integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
 ]);
 
 /**
@@ -250,7 +272,7 @@ export const artifactGraphManifestSchema = z.object({
 /** Producer-owned traversal coverage; content certainty remains on each occurrence. */
 export const artifactInventoryCoverageSchema = z.strictObject({
   scope: z.enum(["root", "container-entries"]),
-  status: z.enum(["complete", "unknown"]),
+  status: completeOrUnknownCoverageSchema,
 });
 export type ArtifactInventoryCoverage = z.infer<
   typeof artifactInventoryCoverageSchema

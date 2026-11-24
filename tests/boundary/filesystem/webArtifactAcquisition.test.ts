@@ -72,52 +72,56 @@ it.each([
             })
           : await reader.load(input);
     if (result.ok) throw new Error("Expected acquisition failure");
-    const observation = webArtifactAcquisitionSchema.parse(
-      projectAnalysisError(result.error).details?.partial_observation,
-    );
-    expect(observation.files).toHaveLength(
-      variant === "invalid-import-map"
-        ? 3
-        : ["source-mismatch", "missing-map"].includes(variant)
-          ? 2
-          : 1,
-    );
-    expect(observation).toMatchObject({
-      kind: "web-artifact-acquisition",
-      analysis: "not-performed",
-      files: expect.arrayContaining([
-        {
-          role: "manifest",
-          file: identity(manifestPath, manifest),
-          admission:
-            variant.startsWith("invalid-") && variant !== "invalid-import-map"
-              ? "read"
-              : "manifest-validated",
+    const projected = projectAnalysisError(result.error);
+    if (variant === "missing-map")
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["source_map", "path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(`(ENOENT): ${mapPath}`),
+            },
+          ],
         },
-      ]),
-    });
+      });
+    if (variant === "source-mismatch")
+      expect(projected).toMatchObject({
+        category: "integrity_mismatch",
+        details: { integrity_check: "member-identity" },
+      });
+    const observation = webArtifactAcquisitionSchema.parse(
+      projected.details?.partial_observation,
+    );
+    const files = [
+      {
+        role: "manifest",
+        file: identity(manifestPath, manifest),
+        admission:
+          variant.startsWith("invalid-") && variant !== "invalid-import-map"
+            ? "read"
+            : "manifest-validated",
+      },
+    ];
     if (
       ["source-mismatch", "missing-map", "invalid-import-map"].includes(variant)
     )
-      expect(observation).toMatchObject({
-        files: expect.arrayContaining([
-          {
-            role: "source",
-            file: identity(sourcePath, source),
-            admission:
-              variant === "source-mismatch" ? "read" : "source-verified",
-          },
-        ]),
+      files.push({
+        role: "source",
+        file: identity(sourcePath, source),
+        admission: variant === "source-mismatch" ? "read" : "source-verified",
       });
     if (variant === "invalid-import-map")
-      expect(observation).toMatchObject({
-        files: expect.arrayContaining([
-          {
-            role: "import-map",
-            file: identity(mapPath, Buffer.from("[]")),
-            admission: "read",
-          },
-        ]),
+      files.push({
+        role: "import-map",
+        file: identity(mapPath, Buffer.from("[]")),
+        admission: "read",
       });
+    expect(observation).toEqual({
+      kind: "web-artifact-acquisition",
+      analysis: "not-performed",
+      files,
+    });
   },
 );

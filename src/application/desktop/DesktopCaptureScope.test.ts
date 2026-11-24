@@ -6,11 +6,13 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { DesktopApplicationInventory } from "../../domain/desktop/desktopCapture.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
+import { walkHomeState } from "../../desktop/HomeStateWalker.js";
 import {
   applicationWindowMatching,
   captureScope,
 } from "./DesktopCaptureScope.js";
 import { CheckpointRecorder } from "./DesktopCheckpointRecorder.js";
+import { SQLITE_HEADER } from "../../domain/sqliteFormat.js";
 
 const inventory = (
   overrides: Partial<DesktopApplicationInventory> = {},
@@ -76,7 +78,7 @@ describe("captureScope", () => {
     await mkdir(home, { recursive: true });
     await mkdir(library, { recursive: true });
     await mkdir(join(root, "out"));
-    await writeFile(database, "SQLite format 3\0");
+    await writeFile(database, `${SQLITE_HEADER}`);
     await writeFile(`${database}-wal`, "wal v1");
 
     const { scope } = await captureScope(
@@ -87,7 +89,7 @@ describe("captureScope", () => {
     );
     const store = new DesktopContentStore(join(root, "out"), 1024, 4096);
     await store.prepare();
-    const recorder = new CheckpointRecorder(scope, store);
+    const recorder = new CheckpointRecorder(scope, store, walkHomeState);
     await recorder.record("baseline", "baseline", 0);
     await writeFile(`${database}-journal`, "journal");
     await recorder.record("saved", "request", 1);

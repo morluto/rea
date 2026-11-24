@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -138,7 +139,9 @@ describe("Hermes inherited registration removal", () => {
     const configured = await readFile(path, "utf8");
     expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
       status: "failed",
-      detail: expect.stringContaining("inherited from a YAML merge"),
+      detail: expect.stringContaining(
+        "Remove it at the shared source before rerunning uninstall",
+      ),
     });
     expect(await readFile(path, "utf8")).toBe(configured);
   });
@@ -312,7 +315,12 @@ describe("Hermes configuration paths", () => {
       expect(client.markerPath).toBe(selected);
       expect(client.configPath).toBe(`${selected}/config.yaml`);
       expect(
-        clientSkillDirectories(home, ["hermes"], environment).directories,
+        clientSkillDirectories(
+          home,
+          ["hermes"],
+          environment,
+          HOST_PLATFORM.platform,
+        ).directories,
       ).toEqual([{ client: "hermes", directory: `${selected}/skills` }]);
       expect(
         await configureClientConfiguration(client, {}, command),
@@ -446,7 +454,12 @@ describe("Hermes unresolved home identity", () => {
       if (client === undefined) throw new Error("missing Hermes client");
       expect(client.markerPath).toBe(selected);
       expect(
-        clientSkillDirectories(home, ["hermes"], environment).directories,
+        clientSkillDirectories(
+          home,
+          ["hermes"],
+          environment,
+          HOST_PLATFORM.platform,
+        ).directories,
       ).toEqual([{ client: "hermes", directory: join(selected, "skills") }]);
       expect(
         await configureClientConfiguration(client, {}, command),
@@ -483,7 +496,12 @@ describe("Hermes unresolved home identity", () => {
       });
       expect(client).not.toHaveProperty("markerPath");
       expect(
-        clientSkillDirectories(home, ["hermes"], environment),
+        clientSkillDirectories(
+          home,
+          ["hermes"],
+          environment,
+          HOST_PLATFORM.platform,
+        ),
       ).toMatchObject({
         directories: [],
         unresolved: [{ client: "hermes", path: selected }],
@@ -723,6 +741,7 @@ mcp_servers:
       expect(
         (
           await readClientRegistrationStatuses(home, "rea", {
+            platform: HOST_PLATFORM.platform,
             environment: {},
           })
         ).find(({ client: name }) => name === "hermes"),

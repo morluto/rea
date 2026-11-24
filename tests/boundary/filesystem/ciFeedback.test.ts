@@ -12,6 +12,7 @@ import {
   parseStaticTaskContext,
   recordStaticTaskContext,
 } from "../../../scripts/ci/static-task-context.mjs";
+import { testShards } from "../../../scripts/ci/test-selection.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -121,6 +122,7 @@ it.each(["fast", "full"] as const)(
           flags.map((flag) => [flag, tier === "full" ? "true" : "false"]),
         ),
         tier,
+        test_mode: "full",
         code: "true",
         reverse_tools: "true",
       },
@@ -265,6 +267,7 @@ it("starts source feedback before build and requires both groups without waiving
           flags.map((flag) => [flag, tier === "full" ? "true" : "false"]),
         ),
         tier,
+        test_mode: "full",
         code: "true",
       };
       const context: Record<
@@ -372,7 +375,7 @@ it("collects basic CI telemetry before optional dependency installation can fail
     expect(installation).toBeGreaterThan(collection);
   }
   expect(steps[installation]).toMatchObject({
-    run: "npm ci",
+    run: "npm ci --omit=dev --ignore-scripts",
     "continue-on-error": true,
   });
   expect(
@@ -398,7 +401,19 @@ it("merges source and built reports exactly once using the workflow's shard matr
         matrix.slice(3, -2),
         {
           fromJSON: JSON.parse,
-          needs: { changes: { outputs: { tier: "fast" } } },
+          needs: {
+            changes: {
+              outputs: {
+                test_shards: JSON.stringify(
+                  testShards("fast", {
+                    version: 3,
+                    mode: "full",
+                    reason: "Complete fast suite",
+                  }),
+                ),
+              },
+            },
+          },
         },
         { timeout: 1_000 },
       ),
@@ -420,7 +435,7 @@ it("merges source and built reports exactly once using the workflow's shard matr
   const config = join(root, "vitest.config.mjs");
   await writeFile(
     config,
-    `export default { test: { maxWorkers: 1, projects: [${["source", "built"].map((name) => `{ test: { name: "${name}", globals: true, include: ["${name}*.test.js"] } }`).join(",")}] } };`,
+    `export default { test: { fsModuleCache: false, maxWorkers: 1, projects: [${["source", "built"].map((name) => `{ test: { name: "${name}", fsModuleCache: false, globals: true, include: ["${name}*.test.js"] } }`).join(",")}] } };`,
   );
   const files = [
     "source.test.js",

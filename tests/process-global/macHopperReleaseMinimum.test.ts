@@ -40,7 +40,6 @@ const setupHopperOnMacos = async (version: string) => {
         platform: "darwin",
         macosVersion: () => Promise.resolve(version),
         executable: () => Promise.resolve(false),
-        validTarget: () => Promise.resolve(false),
       }),
       { HOME: "/fixture/home", USERPROFILE: "/fixture/home" },
     ),

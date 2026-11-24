@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
@@ -30,7 +32,9 @@ export const inspectPeResourcesInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_PE_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
   // Windows resource images carry thousands of entries: Windows 11 25H2
   // SystemResources measures imageres.dll.mun at 6476 examined entries,
   // shell32.dll.mun at 5903 and wmploc.DLL.mun at 5440. The default admits
@@ -56,6 +60,7 @@ export const peResourcesSchema = z.strictObject({
   }),
   format: z.enum(["pe32", "pe32-plus"]),
   machine: uint,
+  image_base: peImageBaseSchema,
   directory: z
     .strictObject({
       rva: uint,
@@ -127,6 +132,8 @@ export const peResourcesSchema = z.strictObject({
     examined_entries: uint,
     resources: uint,
   }),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string()),
 });
 

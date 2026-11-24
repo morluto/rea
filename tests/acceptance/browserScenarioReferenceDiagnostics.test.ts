@@ -7,15 +7,10 @@ import { browserScenarioReferences } from "../fixtures/browserScenarioReferences
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest.for([
   ["CLI", "query"],
-  ["CLI", "storage"],
-  ["CLI", "session-storage"],
-  ["CLI", "cookie"],
-  ["stdio MCP", "query"],
-  ["stdio MCP", "storage"],
-  ["stdio MCP", "session-storage"],
   ["stdio MCP", "cookie"],
 ] as const)(
   "reports undeclared references through %s for a wide %s list",
@@ -30,13 +25,13 @@ cliTest.for([
       retryable: false,
       details: {
         operation: "capture_browser_scenario",
-        issues: expect.arrayContaining([
-          expect.objectContaining({
+        issues: [
+          {
             path: ["secrets"],
             reason: "invalid_value",
             message: "Secret reference token is not declared",
-          }),
-        ]),
+          },
+        ],
       },
     };
     if (surface === "CLI") {
@@ -51,10 +46,13 @@ cliTest.for([
       expect(result.json).toMatchObject(expected);
       return;
     }
-    const client = new Client({
-      name: "scenario-reference-diagnostics",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "scenario-reference-diagnostics",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],

@@ -1,3 +1,5 @@
+import { UnclassifiedProviderFailure } from "../../../src/domain/unclassifiedProviderFailure.js";
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { z } from "zod";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -9,7 +11,6 @@ import {
 } from "../../../src/pcap/PcapCommand.js";
 import {
   AnalysisCancelledError,
-  AnalysisProtocolError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -20,6 +21,10 @@ import {
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { offlineHttpCapture } from "../../fixtures/pcap/offlineHttpCapture.js";
+import {
+  stopTestChild,
+  stopTestOwner,
+} from "../../support/process/stopTestChild.js";
 
 const credential = "SYNTHETIC_PCAP_AUTH_83A4";
 const uri = `http://user:${credential}@example.test/a/../b?value=keep%2Fthis`;
@@ -39,6 +44,7 @@ const ownedCommand = (
 ) =>
   runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", code],
     redactHttpTransportCredentials: true,
@@ -49,7 +55,7 @@ const ownedCommand = (
     ...(options.launcher === undefined ? {} : { launcher: options.launcher }),
     retain: (owner) =>
       onTestFinished(async () => {
-        expect((await owner.stop()).status).not.toBe("incomplete");
+        expect((await stopTestOwner(owner)).status).not.toBe("incomplete");
       }),
   });
 const print = `process.stdout.write(${JSON.stringify(authoredJson)});`;
@@ -72,8 +78,13 @@ it("preserves producer failure facts while excluding HTTP credentials", async ()
   const failure: unknown = await ownedCommand(
     `${print}process.exitCode = 7;`,
   ).catch((cause: unknown) => cause);
-  expect(failure).toBeInstanceOf(AnalysisProtocolError);
-  if (!(failure instanceof AnalysisProtocolError)) throw failure;
+  expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
+  if (!(failure instanceof UnclassifiedProviderFailure)) throw failure;
+  expect(failure.examined).toMatchObject({
+    failure_kind: "exited",
+    exit_code: 7,
+  });
+  expect(projectAnalysisError(failure).code).toBe("execution_failure");
   expect(failure.capturedOutput).toMatchObject({
     exit_code: 7,
     truncated: false,
@@ -94,6 +105,7 @@ it("excludes HTTP credentials after output-observed cancellation and preserves i
       signal: controller.signal,
       launcher: async (spawn) => {
         const launched = await spawnOwnedProviderProcess(spawn);
+        onTestFinished(() => stopTestChild(launched.process));
         launched.process.stdout?.once("data", () => {
           observedOutput = true;
           queueMicrotask(() => controller.abort(reason));
@@ -117,6 +129,7 @@ it("retains safe cleanup observations and retries their original owner", async (
   let retained = false;
   const output = await runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", print],
     redactHttpTransportCredentials: true,
@@ -142,7 +155,7 @@ it("retains safe cleanup observations and retries their original owner", async (
       retained = true;
       onTestFinished(async () => {
         mayClean = true;
-        expect((await owner.stop()).status).not.toBe("incomplete");
+        expect((await stopTestOwner(owner)).status).not.toBe("incomplete");
       });
       expect(resources.length).toBeGreaterThan(0);
       expect(capturedOutput.stdout).not.toContain(credential);
@@ -160,6 +173,7 @@ const nativeOptions = (
   path: string,
 ): Omit<Parameters<typeof runPcapCommand>[0], "limits"> => ({
   operation: "inspect_pcap_capture",
+  platform: HOST_PLATFORM.platform,
   command: "/usr/bin/tshark",
   arguments: [
     "-n",
@@ -187,7 +201,7 @@ const nativeOptions = (
   signal: undefined,
   retain: (owner: ProviderProcessSupervisor) =>
     onTestFinished(async () => {
-      expect((await owner.stop()).status).not.toBe("incomplete");
+      expect((await stopTestOwner(owner)).status).not.toBe("incomplete");
     }),
 });
 

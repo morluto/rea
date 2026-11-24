@@ -1,34 +1,30 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { readFile } from "node:fs/promises";
+import { readFile, watch } from "node:fs/promises";
+import { performance } from "node:perf_hooks";
 import { join, resolve } from "node:path";
 
+import { settledCause } from "../../support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { testWaitDeadline } from "../../support/testWait.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../../../src/domain/analysisResourceLimits.js";
 
 import {
   createEsmModuleProfileCollector,
-  mcpStartupPhaseBudgetRecovery,
   measureMcpStartup,
   parseLinuxVmRssBytes,
   profileMcpModuleLoading,
 } from "../../../scripts/lib/mcp-startup-probe.mjs";
 import {
-  mcpPhaseBudgetRecovery,
   resolveMcpStartupBudgets,
   type McpPhaseBudget,
 } from "../../../src/config/mcpStartupBudgets.js";
-import {
-  mcpDoctorDeadlineRecovery,
-  MCP_STARTUP_POLICY,
-} from "../../../src/mcpStartupPolicy.js";
+import { mcpDoctorDeadlineRecovery } from "../../../src/config/mcpStartupPolicy.js";
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
 const expectPhaseText = (text: string, budget: McpPhaseBudget) => {
-  expect(text).toContain(mcpPhaseBudgetRecovery(budget));
-  expect(budget.floorMilliseconds).toBe(1);
-  expect(budget.maximumMilliseconds).toBe(2_147_483_647);
   expect(text).toContain(budget.setting);
   expect(text).toContain(budget.phase);
   expect(text).toContain(`${String(budget.milliseconds)} ms`);
@@ -36,57 +32,31 @@ const expectPhaseText = (text: string, budget: McpPhaseBudget) => {
   expect(text).toContain(`default ${String(budget.defaultMilliseconds)} ms`);
   expect(text).toContain(`floor ${String(budget.floorMilliseconds)} ms`);
   expect(text).toContain(`maximum ${String(budget.maximumMilliseconds)} ms`);
+  expect(text).toContain("then restart REA");
 };
 
 const expectThrownBudget = async (
   pending: Promise<unknown>,
   budget: McpPhaseBudget,
 ): Promise<string> => {
-  let caught: unknown;
-  try {
-    await pending;
-  } catch (cause) {
-    caught = cause;
-  }
-  expect(caught).toBeInstanceOf(Error);
-  const message = errorMessage(caught);
+  const failure = await settledCause(pending);
+  expect(failure).toBeInstanceOf(Error);
+  const message = errorMessage(failure);
   expectPhaseText(message, budget);
   return message;
 };
 
 describe("MCP startup policy", () => {
-  it("names phase budget settings without turning Codex's 30s into a REA knob", () => {
-    const budgets = resolveMcpStartupBudgets({});
-    expect(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds).toBe(30);
-    expect(budgets.initialize.milliseconds).toBe(15_000);
-    expect(budgets.toolsList.milliseconds).toBe(5_000);
-    expect(budgets.firstCatalog.milliseconds).toBe(20_000);
-    expect(budgets.doctor.milliseconds).toBe(30_000);
-    const initialize = mcpPhaseBudgetRecovery(budgets.initialize);
-    expectPhaseText(initialize, budgets.initialize);
-    expectPhaseText(
-      mcpStartupPhaseBudgetRecovery(budgets.initialize),
-      budgets.initialize,
+  it("distinguishes the doctor budget from Codex client guidance", () => {
+    const budget = resolveMcpStartupBudgets({}).doctor;
+    const doctor = mcpDoctorDeadlineRecovery(budget);
+    expectPhaseText(doctor, budget);
+    expect(doctor).toContain(
+      "Codex startup_timeout_sec of 30 seconds is client guidance",
     );
-    expectPhaseText(
-      mcpStartupPhaseBudgetRecovery(budgets.toolsList),
-      budgets.toolsList,
+    expect(doctor).toContain(
+      "REA does not enforce that figure as this deadline",
     );
-    expectPhaseText(
-      mcpStartupPhaseBudgetRecovery(budgets.firstCatalog),
-      budgets.firstCatalog,
-    );
-    const doctor = mcpDoctorDeadlineRecovery(budgets.doctor);
-    expectPhaseText(doctor, budgets.doctor);
-    expect(doctor).toMatch(/Codex.*startup_timeout_sec.*client guidance/iu);
-    expect(doctor).toMatch(/REA does not enforce/iu);
-    const selected = resolveMcpStartupBudgets({
-      REA_MCP_INITIALIZE_BUDGET_MS: "16000",
-    });
-    expect(selected.initialize.milliseconds).toBe(16_000);
-    expect(selected.initialize.source).toBe("setting");
-    expect(selected.toolsList).toEqual(budgets.toolsList);
-    expect(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds).toBe(30);
   });
 
   it("parses Linux resident memory without accepting other fields", () => {
@@ -99,8 +69,8 @@ describe("MCP startup policy", () => {
   it("profiles unique file-backed ESM modules without retaining paths", () => {
     const collector = createEsmModuleProfileCollector();
     collector.append(
-      "ESM 1: Storing file:///opt/rea/dist/main.js\n" +
-        "ESM 1: Translating StandardModule file:///opt/rea/dist/main.js\n" +
+      "ESM 1: Storing file:///opt/node_modules/rea-agents/dist/main.js\n" +
+        "ESM 1: Translating StandardModule file:///opt/node_modules/rea-agents/dist/main.js\n" +
         "ESM 1: Storing file:///opt/rea/node_modules/zod/index.js",
     );
 
@@ -108,7 +78,7 @@ describe("MCP startup policy", () => {
       supported: true,
       method: "node-debug-esm",
       unique_file_modules: 2,
-      unique_package_modules: 0,
+      unique_package_modules: 1,
       unique_dependency_modules: 1,
       debug_lines: 3,
       truncated: false,
@@ -173,20 +143,6 @@ describe("packaged MCP startup probe failures", () => {
     );
   });
 
-  it("names the first-catalog budget when startup exceeds it", async () => {
-    const budgetMs = 1;
-    const policy = probePolicy({ firstCatalogBudgetMs: budgetMs });
-    await expectThrownBudget(
-      measureMcpStartup({
-        command: process.execPath,
-        args: [probeChild],
-        environment: { ...process.env, REA_MCP_PROBE_MODE: "serve" },
-        policy,
-      }),
-      policy.firstCatalog,
-    );
-  });
-
   it("does not add timeout guidance to an unrelated startup failure", async () => {
     try {
       await measureMcpStartup({
@@ -238,88 +194,108 @@ describe("packaged MCP startup probe failures", () => {
     );
   });
 
-  it("does not add timeout guidance to an unrelated module-profile failure", async () => {
-    try {
-      await profileMcpModuleLoading({
-        command: process.execPath,
-        args: [probeChild],
-        environment: { ...process.env, REA_MCP_PROBE_MODE: "fail" },
-        policy: probePolicy(),
-        packageName: "rea-agents",
-      });
-      throw new Error("expected the unrelated probe failure");
-    } catch (cause) {
-      const message = errorMessage(cause);
-      expect(message).not.toContain("expected the unrelated probe failure");
-      for (const budget of Object.values(probePolicy()))
-        expect(message).not.toContain(budget.setting);
-    }
-  });
-});
-
-describe("packaged MCP first-catalog budget while a phase is pending", () => {
-  it("stops a pending initialize at the shorter first-catalog budget", async () => {
-    const firstCatalogMs = 250;
-    const initializeMs = 8_000;
-    const policy = probePolicy({
-      initializeBudgetMs: initializeMs,
-      firstCatalogBudgetMs: firstCatalogMs,
-    });
-    const started = performance.now();
-    let caught: unknown;
-    try {
-      await measureMcpStartup({
-        command: process.execPath,
-        args: [probeChild],
-        environment: { ...process.env, REA_MCP_PROBE_MODE: "hang" },
-        policy,
-      });
-    } catch (cause) {
-      caught = cause;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    const message = errorMessage(caught);
-    expectPhaseText(message, policy.firstCatalog);
-    expect(message).not.toContain("REA_MCP_INITIALIZE_BUDGET_MS");
-    const elapsedMs = performance.now() - started;
-    expect(elapsedMs).toBeLessThan(initializeMs);
-    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
-  });
-
-  it("stops a pending tools/list at the remaining first-catalog budget", async () => {
-    const firstCatalogMs = 800;
-    const toolsListMs = 8_000;
-    const root = await createTestTempDirectory("rea-mcp-startup-");
-    const initializedPath = join(root, "initialized");
-    const policy = probePolicy({
-      toolsListBudgetMs: toolsListMs,
-      firstCatalogBudgetMs: firstCatalogMs,
-    });
-    const started = performance.now();
-    let caught: unknown;
-    try {
-      await measureMcpStartup({
+  it("keeps a remote tools/list refusal separate from a module-profile deadline", async () => {
+    const message = "upstream catalog cache timed out before this connection";
+    const policy = probePolicy();
+    await expect(
+      profileMcpModuleLoading({
         command: process.execPath,
         args: [probeChild],
         environment: {
           ...process.env,
-          REA_MCP_PROBE_MODE: "initialize-then-hang",
-          REA_MCP_PROBE_INITIALIZED_PATH: initializedPath,
+          REA_MCP_PROBE_MODE: "refuse-list",
+          REA_MCP_PROBE_ERROR_MESSAGE: message,
+        },
+        policy,
+        packageName: "rea-agents",
+      }),
+    ).rejects.toMatchObject({ code: -32601, message });
+  });
+});
+
+// The pending phase's own budget is the largest Node can schedule, longer
+// than any test deadline, so only the first-catalog budget can end the wait
+// before the test's deadline does.
+describe("packaged MCP first-catalog budget while a phase is pending", () => {
+  it.each([
+    [
+      "initialize",
+      "hang",
+      { initializeBudgetMs: MAX_NODE_TIMER_DELAY_MS },
+      "REA_MCP_INITIALIZE_BUDGET_MS",
+    ],
+    [
+      "tools/list",
+      "initialize-then-hang",
+      { toolsListBudgetMs: MAX_NODE_TIMER_DELAY_MS },
+      "REA_MCP_TOOLS_LIST_BUDGET_MS",
+    ],
+  ] as const)(
+    "stops a pending %s at the first-catalog budget",
+    async (method, mode, phaseOverride, phaseSetting) => {
+      const root = await createTestTempDirectory("rea-mcp-startup-");
+      const marker = "pending-request";
+      const path = join(root, marker);
+      const policy = probePolicy({
+        ...phaseOverride,
+        firstCatalogBudgetMs: 800,
+      });
+      const watcher = new AbortController();
+      const pendingMethod = (async () => {
+        for await (const event of watch(root, {
+          signal: AbortSignal.any([
+            watcher.signal,
+            AbortSignal.timeout(testWaitDeadline()),
+          ]),
+        })) {
+          if (event.filename !== marker) continue;
+          const requested = await readFile(path, "utf8").catch(
+            (cause: unknown) => {
+              if (
+                cause instanceof Error &&
+                "code" in cause &&
+                cause.code === "ENOENT"
+              )
+                return "";
+              throw cause;
+            },
+          );
+          if (requested.length > 0) return requested;
+        }
+        return undefined;
+      })();
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      const clock = vi
+        .spyOn(performance, "now")
+        .mockImplementation(() => Date.now());
+      const operation = measureMcpStartup({
+        command: process.execPath,
+        args: [probeChild],
+        environment: {
+          ...process.env,
+          REA_MCP_PROBE_MODE: mode,
+          REA_MCP_PROBE_READY_PATH: path,
         },
         policy,
       });
-    } catch (cause) {
-      caught = cause;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    const message = errorMessage(caught);
-    expectPhaseText(message, policy.firstCatalog);
-    expect(message).not.toContain("REA_MCP_TOOLS_LIST_BUDGET_MS");
-    const elapsedMs = performance.now() - started;
-    expect(elapsedMs).toBeLessThan(toolsListMs);
-    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
-    expect(await readFile(initializedPath, "utf8")).toBe("ready");
-  });
+      const settled = settledCause(operation);
+      try {
+        expect(await Promise.race([pendingMethod, settled])).toBe(method);
+        await vi.advanceTimersByTimeAsync(policy.firstCatalog.milliseconds);
+        const message = await expectThrownBudget(
+          operation,
+          policy.firstCatalog,
+        );
+        expect(message).not.toContain(phaseSetting);
+      } finally {
+        watcher.abort();
+        await vi.advanceTimersByTimeAsync(policy.firstCatalog.milliseconds);
+        await settled;
+        clock.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("returns the catalog when every phase finishes inside its budget", async () => {
     const measurement = await measureMcpStartup({

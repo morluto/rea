@@ -32,7 +32,9 @@ it("delivers deadline recovery guidance at initialization before any tool call",
     const analysis = catalog.tools.find(
       (tool) => tool.name === "analyze_javascript_application",
     );
-    expect(analysis?.description).toBe(
+    // The compact input profile may append guidance its schema omits;
+    // serverWorkflowMcp.test.ts owns the exact advertised description.
+    expect(analysis?.description).toContain(
       toolContract("analyze_javascript_application").description,
     );
   } finally {

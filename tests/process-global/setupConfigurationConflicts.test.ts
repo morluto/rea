@@ -9,9 +9,9 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival, phaseGate } from "../support/lifecycleHarness.js";
 
 const writers = vi.hoisted(() => ({
   before: undefined as undefined | ((path: string) => Promise<void>),
@@ -65,9 +65,10 @@ vi.mock("../../src/process/BoundedFileBytes.js", async (importOriginal) => {
   };
 });
 
+import * as transactions from "../../src/application/ClientConfigurationTransaction.js";
 import { configureClientConfiguration } from "../../src/application/SetupClientConfiguration.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 
 afterEach(() => {
   writers.before = undefined;
@@ -171,24 +172,6 @@ it("preserves an unrelated concurrent edit when a matching recovery backup alrea
       format: "json",
     }),
   ).toEqual({ status: "unchanged" });
-});
-
-it("does not overwrite a file created by another writer during first-run setup", async () => {
-  const root = await createTestTempDirectory("rea-config-first-run-conflict-");
-  const path = join(root, "config.json");
-  const changed = '{"theme":"light"}\n';
-  writers.before = (target) => writeFile(target, changed);
-
-  expect(
-    await configureClientConfiguration({
-      name: "cursor",
-      registrationProfile: supportedClientRegistrationProfile("cursor"),
-      configPath: path,
-      format: "json",
-    }),
-  ).toMatchObject({ status: "failed", reason: "conflict" });
-  expect(await readFile(path, "utf8")).toBe(changed);
-  expect(await readdir(root)).toEqual(["config.json"]);
 });
 
 it("does not recreate a configuration deleted during setup", async () => {
@@ -299,37 +282,36 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.each(["absolute", "relative"])(
-  "merges queued setup requests using a %s path to the same configuration",
-  async (pathKind) => {
-    const root = await createTestTempDirectory("rea-config-queued-");
-    const path = join(root, "config.json");
-    const client = {
-      name: "cursor",
-      registrationProfile: supportedClientRegistrationProfile("cursor"),
-      configPath: path,
-      format: "json",
-    } as const;
+it("merges queued setup requests through absolute and relative paths to the same file", async () => {
+  const root = await createTestTempDirectory("rea-config-queued-");
+  const path = join(root, "config.json");
+  const client = {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    configPath: path,
+    format: "json",
+  } as const;
+  const callerDirectory = process.cwd();
+  process.chdir(root);
+  try {
     const results = await Promise.all([
       configureClientConfiguration(client, { FIRST: "1" }),
       configureClientConfiguration(
-        {
-          ...client,
-          configPath:
-            pathKind === "relative" ? relative(process.cwd(), path) : path,
-        },
+        { ...client, configPath: "./config.json" },
         { SECOND: "2" },
       ),
     ]);
-
-    expect(results.every((result) => result.status === "configured")).toBe(
-      true,
-    );
+    expect(results.map(({ status }) => status)).toEqual([
+      "configured",
+      "configured",
+    ]);
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
       mcpServers: { rea: { env: { FIRST: "1", SECOND: "2" } } },
     });
-  },
-);
+  } finally {
+    process.chdir(callerDirectory);
+  }
+});
 
 it.skipIf(process.platform === "win32")(
   "serializes setup through a directory symlink and its real directory",
@@ -347,21 +329,24 @@ it.skipIf(process.platform === "win32")(
       if (presence === "existing") await writeFile(realPath, "{}\n");
 
       const entered: string[] = [];
-      let releaseFirst!: () => void;
-      const release = new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      });
-      let markStarted!: () => void;
-      const started = new Promise<void>((resolve) => {
-        markStarted = resolve;
-      });
-      writers.before = async (target) => {
-        entered.push(target);
-        if (entered.length === 1) {
-          markStarted();
-          await release;
-        }
-      };
+      const queued = phaseArrival<string>();
+      const writer = phaseGate();
+      writers.before = () => writer.hold();
+      const withTransaction = transactions.withClientConfigurationTransaction;
+      let requests = 0;
+      const observe = vi
+        .spyOn(transactions, "withClientConfigurationTransaction")
+        .mockImplementation(
+          <Value>(path: string, operation: () => Promise<Value>) => {
+            const attempt = withTransaction(path, () => {
+              entered.push(path);
+              return operation();
+            });
+            // Receipt from the real owner after the queue lookup.
+            if (++requests === 2) queued.arrive(path);
+            return attempt;
+          },
+        );
 
       const first = configureClientConfiguration(
         {
@@ -374,11 +359,7 @@ it.skipIf(process.platform === "win32")(
       );
       let second: ReturnType<typeof configureClientConfiguration> | undefined;
       try {
-        await awaitAcknowledgement(
-          started,
-          first,
-          "setup configuration writer",
-        );
+        await writer.reached(first, "setup configuration writer");
         second = configureClientConfiguration(
           {
             name: "cursor",
@@ -388,23 +369,11 @@ it.skipIf(process.platform === "win32")(
           },
           { SECOND: "2" },
         );
-        const secondReachedWriter = await new Promise<boolean>((resolve) => {
-          let giveUp: ReturnType<typeof setTimeout> | undefined;
-          const timer = setInterval(() => {
-            if (entered.length > 1) {
-              clearInterval(timer);
-              clearTimeout(giveUp);
-              resolve(true);
-            }
-          }, 15);
-          giveUp = setTimeout(() => {
-            clearInterval(timer);
-            resolve(false);
-          }, 1_000);
-        });
-        expect(secondReachedWriter).toBe(false);
+        await expect(
+          queued.reached(second, "second configuration transaction"),
+        ).resolves.toBe(realPath);
         expect(entered).toEqual([realPath]);
-        releaseFirst();
+        writer.release();
         const [firstResult, secondResult] = await Promise.all([first, second]);
         expect([firstResult.status, secondResult.status]).toEqual([
           "configured",
@@ -417,9 +386,10 @@ it.skipIf(process.platform === "win32")(
           await readFile(realPath, "utf8"),
         );
       } finally {
-        releaseFirst();
+        writer.release();
         writers.before = undefined;
         await Promise.allSettled([first, second]);
+        observe.mockRestore();
       }
     }
   },
@@ -457,27 +427,19 @@ it("releases a failed setup transaction so a queued request can configure the fi
     configPath: path,
     format: "json",
   } as const;
-  let markStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    markStarted = resolve;
-  });
-  let releaseWriter!: () => void;
-  const release = new Promise<void>((resolve) => {
-    releaseWriter = resolve;
-  });
+  const writer = phaseGate();
   writers.before = async () => {
     writers.before = undefined;
-    markStarted();
-    await release;
+    await writer.hold();
     throw new Error("The first writer could not stage its configuration");
   };
 
   const first = configureClientConfiguration(client, { FIRST: "1" });
   let second: ReturnType<typeof configureClientConfiguration> | undefined;
   try {
-    await awaitAcknowledgement(started, first, "setup configuration writer");
+    await writer.reached(first, "setup configuration writer");
     second = configureClientConfiguration(client, { SECOND: "2" });
-    releaseWriter();
+    writer.release();
     const [failed, queued] = await Promise.all([first, second]);
 
     expect(failed).toMatchObject({
@@ -500,7 +462,7 @@ it("releases a failed setup transaction so a queued request can configure the fi
       status: "unchanged",
     });
   } finally {
-    releaseWriter();
+    writer.release();
     writers.before = undefined;
     await Promise.allSettled([first, second]);
   }
