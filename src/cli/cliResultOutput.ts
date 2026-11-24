@@ -4,6 +4,7 @@ import type { Writable } from "node:stream";
 import { estimateTokenCount } from "tokenx";
 
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
+import { isRecord } from "../kernel/isRecord.js";
 import type { ParsedCliOutputArguments } from "./cliOutput.js";
 import {
   cliOperationFailureIdentity,
@@ -130,6 +131,44 @@ const renderHumanAnalysisError = (
   return `${lines.join("\n")}\n`;
 };
 
+/**
+ * Concise human-TTY rendering prints only code, message, and remediation.
+ * Bypass it whenever the failure carries preserved local evidence, inline
+ * observations, published bundle receipts/errors, or incomplete-cleanup
+ * resource records that would otherwise be dropped before exit.
+ */
+const hasPreservedFailureEvidence = (
+  projection: AnalysisErrorProjection,
+): boolean => {
+  if (projection.code === "cleanup_incomplete") return true;
+  const details = projection.details;
+  if (details === undefined) return false;
+  if (
+    details.partial_observation !== undefined ||
+    details.completed_observation !== undefined ||
+    details.argument_observations !== undefined ||
+    details.captured_output !== undefined ||
+    details.cleanup === "incomplete"
+  )
+    return true;
+  const diagnostics = details.diagnostics;
+  if (
+    isRecord(diagnostics) &&
+    (diagnostics.evidence_bundle !== undefined ||
+      diagnostics.evidence_bundle_error !== undefined)
+  )
+    return true;
+  const secondary = details.secondary_failures;
+  if (Array.isArray(secondary)) {
+    for (const item of secondary) {
+      const parsed = analysisErrorProjectionSchema.safeParse(item);
+      if (parsed.success && hasPreservedFailureEvidence(parsed.data))
+        return true;
+    }
+  }
+  return false;
+};
+
 const resolveHumanFailureProjection = (
   value: unknown,
   metadata: CliResultOutputMetadata,
@@ -144,7 +183,9 @@ const resolveHumanFailureProjection = (
   if (candidate === undefined || isCliCompletedFailureReport(value))
     return undefined;
   const parsed = analysisErrorProjectionSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : undefined;
+  if (!parsed.success || hasPreservedFailureEvidence(parsed.data))
+    return undefined;
+  return parsed.data;
 };
 
 /** Optional executable-owned result surface for one CLI invocation. */
