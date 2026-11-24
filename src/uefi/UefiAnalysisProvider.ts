@@ -3294,10 +3294,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         payloadSha256?: string | undefined;
       };
       const isWindows = HOST_PLATFORM.platform === "win32";
+      const isRootedPath = (p: string): boolean => {
+        return (
+          p.startsWith("/") ||
+          p.startsWith("\\") ||
+          /^[a-zA-Z]:[/\\]/.test(p) ||
+          /^[a-zA-Z]:$/.test(p)
+        );
+      };
       const normalizeRelativePath = (
         rawPath: string,
         treatBackslashAsSep: boolean,
       ): string => {
+        if (isRootedPath(rawPath)) return "";
         const parts = treatBackslashAsSep
           ? rawPath.split(/[/\\]+/)
           : rawPath.split(/\/+/);
@@ -3536,7 +3545,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 if (
                   typeof m.payload_file !== "string" ||
                   m.payload_file.length === 0 ||
-                  m.payload_file.length > 4096
+                  m.payload_file.length > 4096 ||
+                  isRootedPath(m.payload_file)
                 ) {
                   isCoveragePartial = true;
                   const label =
@@ -3545,12 +3555,29 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     m.name.length <= 256
                       ? m.name
                       : `module_${mIdx}`;
+                  const isRooted =
+                    typeof m.payload_file === "string" &&
+                    isRootedPath(m.payload_file);
                   omittedCandidates.push({
-                    identityRelPath: `firmware_manifest.json#${label}`,
-                    reason: "malformed_payload",
+                    identityRelPath: isRooted
+                      ? m.payload_file
+                      : `firmware_manifest.json#${label}`,
+                    reason: isRooted
+                      ? "rooted_manifest_payload"
+                      : "malformed_payload",
                   });
                   if (limitations.length < 50) {
-                    if (
+                    if (isRooted) {
+                      const safePayload = formatMarkdownCodeSpan(
+                        ellipsisExcerpt(
+                          m.payload_file.replace(/[\r\n]+/g, " "),
+                          128,
+                        ),
+                      );
+                      limitations.push(
+                        `Manifest module at index ${mIdx} has rooted or absolute payload_file (${safePayload}); ignored.`,
+                      );
+                    } else if (
                       typeof m.payload_file === "string" &&
                       m.payload_file.length > 4096
                     ) {
@@ -3573,10 +3600,25 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   m.payload_file,
                   isWindows,
                 );
-                if (exactNorm.length === 0) {
+                if (
+                  exactNorm.length === 0 ||
+                  exactNorm.startsWith("..") ||
+                  exactNorm.split("/").includes("..")
+                ) {
+                  isCoveragePartial = true;
+                  const label =
+                    typeof m.name === "string" &&
+                    m.name.length > 0 &&
+                    m.name.length <= 256
+                      ? m.name
+                      : `module_${mIdx}`;
+                  omittedCandidates.push({
+                    identityRelPath: `firmware_manifest.json#${label}`,
+                    reason: "malformed_payload",
+                  });
                   if (limitations.length < 50) {
                     limitations.push(
-                      `Manifest module at index ${mIdx} has empty payload_file; ignored.`,
+                      `Manifest module at index ${mIdx} has empty or escaping payload_file; ignored.`,
                     );
                   }
                   continue;

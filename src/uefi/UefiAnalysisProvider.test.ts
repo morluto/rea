@@ -9492,3 +9492,64 @@ it("labels budget limit warning as reconstructed entry scaffolding when Ghidra p
     await provider.close();
   }
 });
+
+it("rejects rooted or escaping manifest payload paths and marks coverage partial", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-rooted-manifest-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "DXE"), { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "DXE", "Driver.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      manifest_version: "1.0",
+      modules: [
+        {
+          payload_file: "/DXE/Driver.efi",
+          name: "RootedAttackerName",
+          guid: "11111111-2222-3333-4444-555555555555",
+          phase: "DXE",
+        },
+        {
+          payload_file: "../../outside.efi",
+          name: "EscapingName",
+          guid: "66666666-7777-8888-9999-000000000000",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes(
+          "has rooted or absolute payload_file (`/DXE/Driver.efi`); ignored.",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("has empty or escaping payload_file; ignored."),
+      ),
+    ).toBe(true);
+    expect(result.modules[0]?.name).not.toBe("RootedAttackerName");
+    expect(result.modules[0]?.guid).not.toBe(
+      "11111111-2222-3333-4444-555555555555",
+    );
+  } finally {
+    await provider.close();
+  }
+});
