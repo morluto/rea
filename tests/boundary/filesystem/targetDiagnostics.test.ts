@@ -9,6 +9,7 @@ import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
+import { buildIso9660Image } from "../../../src/domain/iso9660/iso9660.fixture.js";
 import { WABT_RELEASE_LINE } from "../../../src/domain/wasm/wasmArtifact.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rawLoadAtEntry } from "../../../src/domain/rawBinary.fixture.js";
@@ -445,6 +446,25 @@ describe("caller-selected and inferred target interpretation", () => {
       const path = join(directory, name);
       await writeFile(path, "existing database content");
       expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "database", format: "analysis-database" },
+      });
+    },
+  );
+
+  it.each(["installer.hop", "installer.HOP"])(
+    "routes ISO 9660 content named %s as an archive unless a database is selected",
+    async (name) => {
+      const directory = await createTestTempDirectory("rea-iso9660-database-");
+      const path = join(directory, name);
+      await writeFile(path, buildIso9660Image().bytes);
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format: "iso9660" },
+      });
+      expect(
+        await parseBinaryTarget(path, { targetKind: "database" }),
+      ).toMatchObject({
         ok: true,
         value: { kind: "database", format: "analysis-database" },
       });
