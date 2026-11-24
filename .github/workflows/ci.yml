@@ -52,6 +52,8 @@ jobs:
     name: Classify changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      QUALIFICATION_ONLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.source_sha != '' }}
     permissions:
       contents: read
       actions: read
@@ -114,9 +116,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.source_sha || github.sha }}
-          # Diff-based PR and push plans need ancestry. Qualification uses HEAD.
-          fetch-depth: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.source_sha != '') && 1 || 0 }}
-          filter: blob:none
+          # Diff-based plans read test blobs and ancestry. Qualification needs
+          # the planner scripts and root files (including .nvmrc) from HEAD.
+          fetch-depth: ${{ env.QUALIFICATION_ONLY == 'true' && 1 || 0 }}
+          sparse-checkout: ${{ env.QUALIFICATION_ONLY == 'true' && 'scripts' || '' }}
+          filter: ${{ env.QUALIFICATION_ONLY != 'true' && 'blob:none' || '' }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
