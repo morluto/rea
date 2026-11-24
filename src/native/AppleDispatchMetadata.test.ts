@@ -2149,21 +2149,31 @@ describe("universal Apple dispatch metadata", () => {
 });
 
 describe("FAT64 dispatch slice validation", () => {
-  it("does not select from a table that extends past the file", () => {
+  it("refuses a table that extends past the file as truncated", () => {
     const { bytes, admitted } = wrapDispatchSlice(true);
-    // Generic admission reads such a table as not universal, so the bytes
-    // are read whole and refused as an unsupported header.
+    // A FAT64 header cannot be a JVM class, so a table past the file's end
+    // is a cut-off universal file, measured against the file's size.
     expect(() =>
       decodeAppleDispatchMetadata(bytes.subarray(0, 32), 100, provenance),
     ).toThrow(
       expect.objectContaining({
-        kind: "unsupported",
-        message: "Only little-endian 64-bit Mach-O metadata is supported",
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "macho",
+          extent: { availableBytes: 32, requiredBytes: 40 },
+        }),
       }),
     );
-    expect(
-      refusalOf(() => decodeAdmitted(bytes.subarray(0, 32), admitted)),
-    ).toMatchObject({ refusal: "admitted_slice_mismatch" });
+    // Admitted selection reads the same container, so the cut-off file's
+    // own truncation wins over an admission mismatch.
+    expect(() => decodeAdmitted(bytes.subarray(0, 32), admitted)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          extent: { availableBytes: 32, requiredBytes: 40 },
+        }),
+      }),
+    );
   });
 
   it.each([16, 24])(
@@ -2218,7 +2228,15 @@ describe("byte-swapped universal Apple dispatch metadata", () => {
     const { bytes } = wrapDispatchSlice(false, true);
     expect(() =>
       decodeAppleDispatchMetadata(bytes.subarray(0, 6), 100, provenance),
-    ).toThrow("FAT header is truncated");
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "macho",
+          extent: { availableBytes: 6, requiredBytes: 8 },
+        }),
+      }),
+    );
   });
 
   it("reads the selected thin slice's CPU identity in its own byte order", () => {
