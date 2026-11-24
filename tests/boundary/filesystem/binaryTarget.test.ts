@@ -31,7 +31,7 @@ import {
   thinMach,
 } from "../../../src/domain/binaryTarget.fixture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { hasXmlPlistSignature } from "../../../src/domain/apple/appleArchiveFormat.js";
+import { createXmlPlistSignatureProbe } from "../../../src/domain/apple/appleArchiveFormat.js";
 import { parseExecutableHeader } from "../../../src/domain/binaryTarget.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -673,9 +673,11 @@ describe("binary target I/O: package classification", () => {
       kind: "artifact",
       format: "plist",
     });
-    expect(hasXmlPlistSignature(Buffer.from(`<root><plist/></root>`))).toBe(
-      false,
-    );
+    expect(
+      createXmlPlistSignatureProbe().write(
+        Buffer.from(`<root><plist/></root>`),
+      ),
+    ).toBe("rejected");
   });
 
   it("classifies Intel HEX and S-records by a valid first record", async () => {
