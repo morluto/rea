@@ -124,10 +124,10 @@ export const javaScriptRoutesSummaryDeliveryShape = {
 };
 export const webRoutesSummaryDeliveryShape = {
   detail: z.literal("summary"),
-  view: z.union([
-    javaScriptRoutesViewRequestSchema,
-    webBundleViewRequestSchema,
-  ]),
+  // Omitted, the summary view of the retained analysis is returned.
+  view: z
+    .union([javaScriptRoutesViewRequestSchema, webBundleViewRequestSchema])
+    .exactOptional(),
 };
 export const javaScriptRouteProvenanceSchema = z.strictObject({
   source_id: javaScriptRouteInventorySourceSchema.shape.id,

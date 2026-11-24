@@ -189,38 +189,8 @@ export const resolveEvidenceInput = (
   return ok(record);
 };
 
-/** Resolve explicit paired sources; Evidence files use the shared file reader. */
-export const resolvePairedEvidenceSources = async <
-  T extends {
-    readonly left: EvidenceSourceInput;
-    readonly right: EvidenceSourceInput;
-  },
->(
-  input: T,
-  lookup: EvidenceLookup | undefined,
-  options: EvidenceSourceResolutionOptions,
-): Promise<
-  Result<
-    Omit<T, "left" | "right"> & {
-      readonly left: Evidence;
-      readonly right: Evidence;
-    },
-    AnalysisError
-  >
-> => {
-  const left = await resolveEvidenceSource(input.left, "left", lookup, options);
-  if (!left.ok) return left;
-  const right = await resolveEvidenceSource(
-    input.right,
-    "right",
-    lookup,
-    options,
-  );
-  if (!right.ok) return right;
-  return ok({ ...input, left: left.value, right: right.value });
-};
-
-const resolveEvidenceSource = async (
+/** Resolve one side of a paired source with the same file and ledger owners. */
+export const resolveEvidenceSource = async (
   input: EvidenceSourceInput,
   side: "left" | "right",
   lookup: EvidenceLookup | undefined,

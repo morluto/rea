@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -116,3 +117,74 @@ for (const mode of ["preinstall source", "packed source-free"]) {
     },
   );
 }
+
+processTest.skipIf(process.platform !== "linux")(
+  "repairs an invalid Node header cache with a verified download",
+  async ({ processes }) => {
+    const root = await createTestTempDirectory("rea-native-build-cache-");
+    const entry = "scripts/build-windows-native.mjs";
+    await copyModuleGraph(root, entry);
+    await copyModuleGraph(root, "src/domain/windowsNativeArtifact.ts");
+    await writeFile(join(root, "package.json"), '{"type":"module"}');
+
+    const cache = join(root, ".cache", "rea-windows-native");
+    const bin = join(root, "bin");
+    await mkdir(cache, { recursive: true });
+    await mkdir(bin);
+    const name = "node-v22.19.0-headers.tar.gz";
+    const archive = join(cache, name);
+    const validBytes = "verified header archive fixture";
+    const digest = createHash("sha256").update(validBytes).digest("hex");
+    await writeFile(archive, "interrupted download");
+    await writeFile(
+      join(bin, "x86_64-w64-mingw32-g++"),
+      "#!/bin/sh\nexit 0\n",
+      {
+        mode: 0o755,
+      },
+    );
+    // Stop at extraction so this test needs neither a real tarball nor MinGW.
+    await writeFile(
+      join(bin, "tar"),
+      '#!/bin/sh\nprintf "extraction received: " >&2\ncat "$2" >&2\nexit 1\n',
+      { mode: 0o755 },
+    );
+
+    const preload = join(root, "registry-fixture.mjs");
+    await writeFile(
+      preload,
+      `globalThis.fetch = async (url) => {
+        if (url.endsWith("/SHASUMS256.txt")) return new Response(${JSON.stringify(`${digest}  ${name}\n`)});
+        if (url.endsWith(${JSON.stringify(`/${name}`)})) return new Response(process.env.HEADER_DOWNLOAD);
+        throw new Error("Unexpected fetch: " + url);
+      };\n`,
+    );
+    const run = (download: string) =>
+      processes.run(
+        process.execPath,
+        ["--import", preload, join(root, entry)],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            HOME: root,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            HEADER_DOWNLOAD: download,
+          },
+        },
+      );
+
+    const invalid = await run("bad upstream content");
+    expect(invalid.exitCode).not.toBe(0);
+    expect(invalid.stderr).toContain("SHA-256 mismatch");
+    expect(invalid.stderr).not.toContain("extraction received");
+    expect(await readFile(archive, "utf8")).toBe("interrupted download");
+
+    const repaired = await run(validBytes);
+    expect(repaired.stderr).toContain(`extraction received: ${validBytes}`);
+    expect(await readFile(archive, "utf8")).toBe(validBytes);
+
+    const cached = await run("bad upstream content");
+    expect(cached.stderr).toContain(`extraction received: ${validBytes}`);
+  },
+);

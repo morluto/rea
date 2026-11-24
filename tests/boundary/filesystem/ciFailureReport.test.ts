@@ -289,7 +289,7 @@ it("writes informational JSON and Markdown from the supplied manifest using only
     api,
     outputDirectory: directory,
   });
-  expect(calls).toEqual(["run:10", "jobs:10", "artifact"]);
+  expect(calls).toEqual(["run:10", "jobs:10"]);
   expect(report).toMatchObject({
     informationalOnly: true,
     gateEffect: "none; this report never changes CI conclusions",
@@ -507,6 +507,11 @@ it("uses static artifacts only when listing is complete, unique, and tied to thi
       2,
     ),
   ).toBeNull();
+  const retry = { ...artifact, id: 14, name: "static-check-reports-attempt-2" };
+  const history = { total_count: 2, artifacts: [artifact, retry] };
+  expect(selectStaticCheckArtifact(history, runRecord, 1)).toBe(artifact);
+  expect(selectStaticCheckArtifact(history, runRecord, 2)).toBe(retry);
+  expect(selectStaticCheckArtifact(history, runRecord, 3)).toBeNull();
   const deep = { ...artifact, id: 13, name: "static-deep-check-reports" };
   expect(
     selectStaticCheckArtifact(
@@ -533,51 +538,66 @@ it("uses static artifacts only when listing is complete, unique, and tied to thi
   ).toBeNull();
 });
 
-it("loads each static gate from its own artifact", async () => {
-  const downloads: string[] = [];
-  const api = createGitHubApi({
-    token: "fixture-token",
-    fetchImpl: async (url) => {
-      downloads.push(String(url));
-      throw new Error("stop-before-download");
-    },
-    apiRequest: async () => ({
-      total_count: 2,
-      artifacts: [
+it.each([
+  [1, ""],
+  [2, "-attempt-2"],
+])(
+  "loads each static gate from its own artifact on attempt %i",
+  async (attempt, suffix) => {
+    const downloads: string[] = [];
+    const api = createGitHubApi({
+      token: "fixture-token",
+      fetchImpl: async (url) => {
+        downloads.push(String(url));
+        throw new Error("stop-before-download");
+      },
+      apiRequest: async () => ({
+        total_count: 2,
+        artifacts: [
+          {
+            id: 1,
+            name: `static-check-reports${suffix}`,
+            expired: false,
+            workflow_run: { id: 10, head_sha: sha("a") },
+          },
+          {
+            id: 2,
+            name: `static-deep-check-reports${suffix}`,
+            expired: false,
+            workflow_run: { id: 10, head_sha: sha("a") },
+          },
+        ],
+      }),
+    });
+    const runRecord = { id: 10, run_attempt: attempt, head_sha: sha("a") };
+    await expect(
+      api.getStaticEvidence("owner/rea", runRecord, {
+        name: "Deep static checks",
+      }),
+    ).rejects.toThrow("stop-before-download");
+    await expect(
+      api.getStaticEvidence("owner/rea", runRecord, { name: "Static checks" }),
+    ).rejects.toThrow("stop-before-download");
+    expect(
+      await api.getStaticEvidence("owner/rea", runRecord, {
+        name: "Test shard (1)",
+      }),
+    ).toBeNull();
+    await expect(
+      api.getStaticEvidence(
+        "owner/rea",
+        { ...runRecord, run_attempt: 3 },
         {
-          id: 1,
-          name: "static-check-reports",
-          expired: false,
-          workflow_run: { id: 10, head_sha: sha("a") },
+          name: "Static checks",
         },
-        {
-          id: 2,
-          name: "static-deep-check-reports",
-          expired: false,
-          workflow_run: { id: 10, head_sha: sha("a") },
-        },
-      ],
-    }),
-  });
-  const runRecord = { id: 10, run_attempt: 1, head_sha: sha("a") };
-  await expect(
-    api.getStaticEvidence("owner/rea", runRecord, {
-      name: "Deep static checks",
-    }),
-  ).rejects.toThrow("stop-before-download");
-  await expect(
-    api.getStaticEvidence("owner/rea", runRecord, { name: "Static checks" }),
-  ).rejects.toThrow("stop-before-download");
-  expect(
-    await api.getStaticEvidence("owner/rea", runRecord, {
-      name: "Test shard (1)",
-    }),
-  ).toBeNull();
-  expect(downloads).toEqual([
-    "https://api.github.com/repos/owner/rea/actions/artifacts/2/zip",
-    "https://api.github.com/repos/owner/rea/actions/artifacts/1/zip",
-  ]);
-});
+      ),
+    ).resolves.toBeNull();
+    expect(downloads).toEqual([
+      "https://api.github.com/repos/owner/rea/actions/artifacts/2/zip",
+      "https://api.github.com/repos/owner/rea/actions/artifacts/1/zip",
+    ]);
+  },
+);
 
 it("rejects artifact redirects that could send the bearer token to a non-HTTPS host", async () => {
   const calls: string[] = [];
