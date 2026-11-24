@@ -728,12 +728,18 @@ export const readAndroidAppFunctionAssets = async (input: {
             ]);
             break;
           }
-          const isReferenced = referenced.has(entry.path);
+          const sourcePath = entry.sourcePath ?? entry.path;
+          const isReferenced = referenced.has(sourcePath);
           const matchesPattern = isAppFunctionAssetPath(entry.path);
+          // Retain name warnings for logical aliases, but only exact source
+          // names can satisfy an explicit manifest reference.
+          if (isReferenced || matchesPattern || referenced.has(entry.path))
+            for (const limitation of entry.limitations)
+              diagnostics.pushParts([limitation]);
           if (!isReferenced && !matchesPattern) continue;
           if (entry.kind === "directory" && !isReferenced) continue;
-          if (seenPaths.has(entry.path)) duplicatePaths.add(entry.path);
-          else seenPaths.add(entry.path);
+          if (seenPaths.has(sourcePath)) duplicatePaths.add(sourcePath);
+          else seenPaths.add(sourcePath);
           if (schemas.length >= ANDROID_APP_FUNCTIONS_LIMITS.schemaAssets) {
             status = "partial";
             stoppedEarly = true;
@@ -744,7 +750,6 @@ export const readAndroidAppFunctionAssets = async (input: {
             ]);
             break;
           }
-          const sourcePath = entry.sourcePath ?? entry.path;
           inProgress = {
             path: entry.path,
             source_path: sourcePath,
@@ -811,7 +816,7 @@ export const readAndroidAppFunctionAssets = async (input: {
             };
             let xmlText: string | undefined;
             try {
-              xmlText = decodeStrictUtf8(bytes, "preserve");
+              xmlText = decodeStrictUtf8(bytes, "strip-signature");
             } catch {
               xmlText = undefined;
             }
@@ -1022,9 +1027,9 @@ export const projectAndroidAppFunctions = (
     for (const message of assetScan.limitations)
       diagnostics.pushParts([message]);
   }
-  const unavailableAssets = schemas.filter(
-    (schema) => schema.status !== "complete",
-  ).length;
+  let unavailableAssets = 0;
+  for (const schema of schemas)
+    if (schema.status !== "complete") unavailableAssets += 1;
   if (unavailableAssets > 0)
     diagnostics.pushParts([
       String(unavailableAssets),

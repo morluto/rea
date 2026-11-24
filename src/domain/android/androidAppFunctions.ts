@@ -104,14 +104,17 @@ export type AndroidAppFunctionsSummary = Readonly<
 
 export const summarizeAndroidAppFunctions = (
   inventory: AndroidAppFunctionsInventory,
-): AndroidAppFunctionsSummary => ({
-  service_count: inventory.services.length,
-  system_bound_service_count: inventory.services.filter(
-    (service) => service.binds_system_permission,
-  ).length,
-  schema_count: inventory.schemas.length,
-  function_count: inventory.schemas.reduce(
-    (sum, schema) => sum + schema.functions.length,
-    0,
-  ),
-});
+): AndroidAppFunctionsSummary => {
+  let systemBoundServiceCount = 0;
+  for (const service of inventory.services)
+    if (service.binds_system_permission) systemBoundServiceCount += 1;
+  return {
+    service_count: inventory.services.length,
+    system_bound_service_count: systemBoundServiceCount,
+    schema_count: inventory.schemas.length,
+    function_count: inventory.schemas.reduce(
+      (sum, schema) => sum + schema.functions.length,
+      0,
+    ),
+  };
+};

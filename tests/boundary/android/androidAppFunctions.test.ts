@@ -309,6 +309,78 @@ it("resolves relative asset filenames, companion XSD pointers, and wildcard asse
   ).toEqual(["pkg#one", "pkg#two"]);
 });
 
+it.each([{ canonical: false }, { canonical: true }])(
+  "matches manifest assets by exact ZIP source names (canonical: $canonical)",
+  async ({ canonical }) => {
+    const root = await createTestTempDirectory(
+      "rea-appfunctions-source-names-",
+    );
+    const apk = join(root, "source-names.apk");
+    const sourceName = "./assets/custom.xml";
+    const wildcardName = "./assets/extra_app_functions.xml";
+    await writeFile(
+      apk,
+      zipArchive([
+        {
+          name: sourceName,
+          data: '<appfunctions><appfunction id="pkg#alias"/></appfunctions>',
+        },
+        {
+          name: wildcardName,
+          data: '<appfunctions><appfunction id="pkg#wildcard"/></appfunctions>',
+        },
+        ...(canonical
+          ? [
+              {
+                name: "assets/custom.xml",
+                data: '<appfunctions><appfunction id="pkg#canonical"/></appfunctions>',
+              },
+            ]
+          : []),
+      ]),
+    );
+    const observations: AndroidAppFunctionAssetCheckpoint[] = [];
+    const scan = await scanApkAssets(
+      apk,
+      ["assets/custom.xml"],
+      (checkpoint) => {
+        observations.push(checkpoint);
+      },
+    );
+
+    expect(scan.status).toBe(canonical ? "complete" : "partial");
+    expect(scan.schemas.map((schema) => schema.source_path)).toEqual([
+      wildcardName,
+      ...(canonical ? ["assets/custom.xml"] : []),
+    ]);
+    expect(
+      scan.schemas.flatMap((schema) => schema.functions.map((fn) => fn.id)),
+    ).toEqual(["pkg#wildcard", ...(canonical ? ["pkg#canonical"] : [])]);
+    expect(scan.schemas[0]?.path).toBe("assets/extra_app_functions.xml");
+    const warnings = [sourceName, wildcardName].map(
+      (name) =>
+        `ZIP member name ${JSON.stringify(name)} has a leading current-directory prefix omitted from its logical path.`,
+    );
+    expect(scan.limitations).toEqual([
+      ...warnings,
+      ...(canonical
+        ? []
+        : [
+            "Manifest-referenced AppFunctions schema asset assets/custom.xml was not found in the APK archive.",
+          ]),
+    ]);
+    expect(observations).toEqual([
+      {
+        scan_state: "completed",
+        status: scan.status,
+        examined_entries: canonical ? 3 : 2,
+        schemas: scan.schemas,
+        limitations: scan.limitations,
+      },
+    ]);
+  },
+);
+
 it.each([
   { omitted: false, referenced: false },
   { omitted: true, referenced: false },
@@ -454,6 +526,8 @@ it("handles malformed XML, DOCTYPE rejection, non-UTF-8 assets, missing referenc
 
   const root = await createTestTempDirectory("rea-appfunctions-hostile-");
   const apk = join(root, "hostile.apk");
+  const bomXml =
+    '\uFEFF<appfunctions><appfunction id="bom#fn"/></appfunctions>';
   const oversizedXml = `<appfunctions>${" ".repeat(ANDROID_APP_FUNCTIONS_LIMITS.schemaAssetBytes + 64)}</appfunctions>`;
   await writeSyntheticApk(apk, [
     {
@@ -480,7 +554,7 @@ it("handles malformed XML, DOCTYPE rejection, non-UTF-8 assets, missing referenc
     },
     {
       path: "assets/bom_app_functions.xml",
-      bytes: '\uFEFF<appfunctions><appfunction id="bom#fn"/></appfunctions>',
+      bytes: bomXml,
     },
     {
       path: "assets/literal_replacement_app_functions.xml",
@@ -520,8 +594,11 @@ it("handles malformed XML, DOCTYPE rejection, non-UTF-8 assets, missing referenc
     expect(byPath.get(path)?.size).toBeGreaterThan(0);
   }
   expect(byPath.get("assets/bom_app_functions.xml")).toMatchObject({
-    status: "unavailable",
-    functions: [],
+    status: "complete",
+    functions: [{ id: "bom#fn" }],
+    sha256: createHash("sha256").update(bomXml).digest("hex"),
+    size: Buffer.byteLength(bomXml),
+    limitations: [],
   });
   expect(
     byPath.get("assets/literal_replacement_app_functions.xml"),
@@ -555,6 +632,9 @@ it("handles malformed XML, DOCTYPE rejection, non-UTF-8 assets, missing referenc
   });
   expect(inventory.limitations.join(" ")).toContain(
     "assets/missing_schema.xml was not found",
+  );
+  expect(inventory.limitations).toContain(
+    "5 bundled AppFunctions schema asset(s) had partial or unavailable XML coverage.",
   );
 });
 
