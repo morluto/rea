@@ -27,6 +27,12 @@ export const AUDITD_INLINE_EVENT_TYPE_LIMIT = 16;
  * for a bounded window; records past it are counted but not joined.
  */
 export const AUDITD_RETAINED_EVENT_LIMIT = 4096;
+/**
+ * Records whose digest is retained per event for duplicate detection. A
+ * retained event can still hold an unbounded run of records, so the digest set
+ * is bounded too; records past it are counted but no longer checked.
+ */
+export const AUDITD_RETAINED_RECORD_LIMIT = 1024;
 
 /** `type=... msg=audit(<sec>.<millis>:<serial>): <body>` — the auditd record header. */
 // The body is opaque bytes: a literal CR, U+2028 or U+2029 can reach it through
@@ -82,19 +88,18 @@ export interface AuditdLogInventory {
     readonly interleaved_event_count: number;
     readonly events: readonly AuditEventSummary[];
     /**
-     * Events the retained window did not hold. Past the retention limit a
-     * record's siblings are not joined, so an interleaved event there can be
-     * counted more than once; `event_count_lower_bound` says whether that could
-     * have happened.
+     * Events the sample does not list. Past the retained window events are
+     * counted without joining their records; `event_count_upper_bound` says
+     * whether that count, and therefore this difference, can over-count.
      */
     readonly omitted_events: number;
     /**
-     * True once an event fell past the retained window and its records were no
-     * longer joined: `event_count` and `omitted_events` are then lower bounds,
-     * because an interleaved event there can be counted once per run of its
-     * records rather than once.
+     * True when an event past the retained window was counted once per run of
+     * its records rather than once. `event_count` is then an upper bound; false
+     * means either that no event left the window or that the tail did not
+     * repeat an identity, so the count is exact.
      */
-    readonly event_count_lower_bound: boolean;
+    readonly event_count_upper_bound: boolean;
     readonly trailing_bytes: number;
   };
   readonly limitations: readonly string[];
@@ -110,7 +115,7 @@ interface PendingEvent {
   readonly serial: number;
   recordCount: number;
   readonly typeCounts: Map<string, number>;
-  /** Record digests already seen in this event; the retention window bounds it. */
+  /** Record digests already seen in this event, bounded by the record limit. */
   readonly seenRecords: Set<string>;
   firstLine: number;
   lastLine: number;
@@ -157,10 +162,10 @@ class AuditdLogScanner {
   // not-an-allowance: a tally of the events currently retained in the window, compared with the retention ceiling but never charged against a resource budget.
   #windowEventCount = 0;
   /**
-   * Events past the retained window. Their identity is not joined, so only a
-   * record that does not share the previous record's identity can be shown to
-   * start one. This is an exact count for a log whose records are contiguous
-   * and a lower bound for an interleaved one, so it is reported as such.
+   * Events past the retained window, counted as the number of runs of records
+   * that do not continue the previous record's identity. That is exact for a
+   * contiguous tail and an over-count for an interleaved one, so the reported
+   * event total is an upper bound.
    */
   #beyondWindowEventCount = 0;
   #malformedCount = 0;
@@ -170,6 +175,14 @@ class AuditdLogScanner {
   #duplicateCount = 0;
   /** Every retained event seen out of sequence, not just the sampled ones. */
   #interleavedEventCount = 0;
+  /** Records whose event already held its full digest quota, so not checked. */
+  #identityLimitedEventCount = 0;
+  /**
+   * Identities already counted as a tail event start, bounded like the retained
+   * window. A repeat means an interleaved tail event was counted once per run.
+   */
+  readonly #tailEventKeys = new Set<string>();
+  #tailOverCount = false;
   /** Records past the retained window, whose identity is not joined. */
   #skippedRecordCount = 0;
   /** Lexicographically ordered event identity; a smaller one is out of order. */
@@ -229,7 +242,11 @@ class AuditdLogScanner {
       );
     if (this.#beyondWindowEventCount > 0 || this.#skippedRecordCount > 0)
       limitations.push(
-        `per-record identity is retained for the most recent ${String(AUDITD_RETAINED_EVENT_LIMIT)} events; at least ${String(this.#beyondWindowEventCount)} further events and ${String(this.#skippedRecordCount)} record(s) past that window are counted in the totals, but their duplicate, interleaving and event-start status is not established, so event_count and omitted_events are lower bounds`,
+        `per-record identity is retained for the most recent ${String(AUDITD_RETAINED_EVENT_LIMIT)} events; ${String(this.#beyondWindowEventCount)} further event start(s) and ${String(this.#skippedRecordCount)} record(s) past that window are counted in the totals, but their duplicate, interleaving and event-start status is not established, so event_count is an upper bound when the tail interleaves events`,
+      );
+    if (this.#identityLimitedEventCount > 0)
+      limitations.push(
+        `duplicate detection retains at most ${String(AUDITD_RETAINED_RECORD_LIMIT)} record digests per event; ${String(this.#identityLimitedEventCount)} record(s) past that limit are counted but no longer checked for repetition, so duplicate_record_count is a lower bound and a sampled event's record_types may omit a type first seen after the limit`,
       );
     limitations.push(
       "records are inventoried by header and record type: key-value fields, hex/escaped values, argument ordering and decoded syscall or permission meanings are not interpreted",
@@ -244,8 +261,9 @@ class AuditdLogScanner {
         line_count: this.#lineNumber,
         record_count: this.#recordCount,
         event_count: this.#windowEventCount + this.#beyondWindowEventCount,
-        event_count_lower_bound:
-          this.#beyondWindowEventCount > 0 || this.#skippedRecordCount > 0,
+        // A tail run whose identity was counted before is the same event
+        // counted twice, so only then does the total exceed the evidence.
+        event_count_upper_bound: this.#tailOverCount,
         event_type_counts: sortedCounts(this.#typeCounts),
         malformed_line_count: this.#malformedCount,
         malformed_lines: this.#malformed,
@@ -353,10 +371,15 @@ class AuditdLogScanner {
       this.#windowEventCount >= AUDITD_RETAINED_EVENT_LIMIT
     ) {
       // The event's identity was not retained, so only a record that does not
-      // share the previous record's identity can be shown to start one. The
-      // same run of records is not recounted, which keeps a contiguous tail
-      // exact and makes an interleaved one a lower bound.
-      if (this.#lastEventKey !== key) this.#beyondWindowEventCount += 1;
+      // share the previous record's identity can be shown to start one. A
+      // contiguous tail is therefore exact, while an interleaved one is counted
+      // once per run it appears in, which makes the total an upper bound.
+      if (this.#lastEventKey !== key) {
+        this.#beyondWindowEventCount += 1;
+        if (this.#tailEventKeys.has(key)) this.#tailOverCount = true;
+        else if (this.#tailEventKeys.size < AUDITD_RETAINED_EVENT_LIMIT)
+          this.#tailEventKeys.add(key);
+      }
       this.#skippedRecordCount += 1;
       this.#lastEventKey = key;
       return;
@@ -402,8 +425,13 @@ class AuditdLogScanner {
       event.duplicateCount += 1;
       this.#duplicateCount += 1;
     } else {
-      event.seenRecords.add(recordKey);
-      event.typeCounts.set(type, (event.typeCounts.get(type) ?? 0) + 1);
+      // At the limit the digest is not retained, so a repeat after this point
+      // is counted as another record rather than a duplicate. The limitation
+      // says so instead of letting the set grow with the file.
+      if (event.seenRecords.size < AUDITD_RETAINED_RECORD_LIMIT) {
+        event.seenRecords.add(recordKey);
+        event.typeCounts.set(type, (event.typeCounts.get(type) ?? 0) + 1);
+      } else this.#identityLimitedEventCount += 1;
     }
     event.recordCount += 1;
     event.lastLine = this.#lineNumber;

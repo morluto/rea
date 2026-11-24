@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
+import { AUDITD_RETAINED_RECORD_LIMIT } from "../domain/linux/auditdLog.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
@@ -25,14 +26,19 @@ const writeLog = async (name: string, text: string): Promise<string> => {
 
 const metadataOf = async (text: string) => {
   const reader = new AuditdLogArtifactReader(await writeLog("audit.log", text));
+  // The log declares no members, so the traversal only builds the inventory
+  // and reports what it could not establish through the coverage callback.
+  const limitations: string[] = [];
   try {
-    for await (const _entry of reader.entries()) {
-      // The log declares no members; the root occurrence is the inventory.
+    for await (const _entry of reader.entries(undefined, {
+      onCoverage: (coverage) => limitations.push(...coverage.limitations),
+    })) {
+      // No members.
     }
     const metadata = reader.formatMetadata();
     if (metadata?.kind !== "auditd-log")
       throw new Error("Expected auditd-log metadata");
-    return metadata;
+    return { ...metadata, limitations };
   } finally {
     await reader.close();
   }
@@ -280,7 +286,7 @@ it("keeps records with distinct non-UTF-8 bodies apart", async () => {
   }
 });
 
-it("does not recount a multi-record event once it is past the retained window", async () => {
+it("counts a contiguous tail event once past the retained window", async () => {
   const lines = Array.from({ length: 4096 }, (_unused, index) =>
     record("SYSCALL", 1700000000, 100, 1000 + index, "success=yes"),
   );
@@ -292,7 +298,45 @@ it("does not recount a multi-record event once it is past the retained window", 
   const metadata = await metadataOf(`${lines.join("\n")}\n`);
   expect(metadata.event_count).toBe(4097);
   expect(metadata.omitted_events).toBe(4097 - 32);
-  expect(metadata.event_count_lower_bound).toBe(true);
+  expect(metadata.event_count_upper_bound).toBe(false);
+});
+
+it("reports the tail event total as an upper bound when a run repeats", async () => {
+  const lines = Array.from({ length: 4096 }, (_unused, index) =>
+    record("SYSCALL", 1700000000, 100, 1000 + index, "success=yes"),
+  );
+  // A, B, A: the second run of A is the same event counted again, so the total
+  // over-counts and must not be presented as an exact or lower bound.
+  lines.push(
+    record("SYSCALL", 1700000000, 200, 5000, "success=yes"),
+    record("SYSCALL", 1700000000, 300, 6000, "success=yes"),
+    record("SYSCALL", 1700000000, 200, 5000, "success=yes"),
+  );
+  const metadata = await metadataOf(`${lines.join("\n")}\n`);
+  expect(metadata.event_count).toBe(4099);
+  expect(metadata.event_count_upper_bound).toBe(true);
+  expect(metadata.limitations.join(" ")).toContain(
+    "event_count is an upper bound",
+  );
+});
+
+it("stops retaining record digests within one event and says so", async () => {
+  const eventLines = Array.from(
+    { length: AUDITD_RETAINED_RECORD_LIMIT + 3 },
+    (_unused, index) =>
+      record(
+        "SYSCALL",
+        1700000000,
+        100,
+        1000,
+        `success=yes seq=${String(index)}`,
+      ),
+  );
+  const metadata = await metadataOf(`${eventLines.join("\n")}\n`);
+  expect(metadata.duplicate_record_count).toBe(0);
+  expect(metadata.limitations.join(" ")).toContain(
+    "duplicate_record_count is a lower bound",
+  );
 });
 
 it("keeps a record whose opaque body holds a line-separator character", async () => {
