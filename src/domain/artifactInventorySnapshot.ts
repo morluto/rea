@@ -8,6 +8,7 @@ import type {
 /** Immutable inventory produced by one complete artifact scan. */
 export interface ArtifactInventorySnapshot {
   readonly manifest: ArtifactInventoryResult["manifest"];
+  readonly root_digest?: ArtifactInventoryResult["root_digest"];
   readonly nodes: readonly ArtifactNode[];
   readonly occurrences: ArtifactInventoryResult["occurrences"];
   readonly edges: ArtifactInventoryResult["edges"];
@@ -15,6 +16,7 @@ export interface ArtifactInventorySnapshot {
     ArtifactInventoryResult["provenance"][number]
   >;
   readonly integrity_contradictions: readonly IntegrityContradiction[];
+  readonly ines?: ArtifactInventoryResult["ines"];
   readonly coverage: ArtifactInventoryCoverage;
   readonly limitations: readonly string[];
 }

@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -12,6 +13,48 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 describe.skipIf(process.platform !== "darwin")(
   "native plist CLI selection",
   () => {
+    cliTest(
+      "inspects an outside plist only as its own target",
+      async ({ cli }) => {
+        const directory = await createTestTempDirectory("rea-plist-cli-scope-");
+        const app = join(directory, "Example.app");
+        const info = join(app, "Contents/Info.plist");
+        const outside = join(directory, "Outside.plist");
+        await mkdir(join(app, "Contents"), { recursive: true });
+        await writeFile(info, "<plist><dict/></plist>");
+        const bytes =
+          "<plist><dict><key>Marker</key><string>standalone</string></dict></plist>";
+        await writeFile(outside, bytes);
+        const scoped = await cli.run({
+          arguments: [
+            "inspect-plist",
+            app,
+            "--relative-path",
+            outside,
+            "--json",
+          ],
+        });
+        expect(scoped.exitCode).toBe(1);
+        expect(scoped.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [{ path: ["relativePath"], reason: "invalid_value" }],
+          },
+        });
+        const standalone = await cli.run({
+          arguments: ["inspect-plist", outside, "--json"],
+        });
+        expect(standalone.exitCode, standalone.stderr).toBe(0);
+        expect(standalone.json).toMatchObject({
+          normalized_result: {
+            source_path: outside,
+            source_sha256: createHash("sha256").update(bytes).digest("hex"),
+            value: { Marker: "standalone" },
+          },
+        });
+      },
+    );
+
     // Targets are app-relative: the bundle, its program file, or a plist file.
     cliTest.for([
       ["default", "", undefined, "default"],
@@ -75,7 +118,143 @@ describe.skipIf(process.platform !== "darwin")(
         }
       },
     );
+  },
+);
 
+describe.skipIf(process.platform !== "darwin")(
+  "native plist CLI source formats",
+  () => {
+    cliTest(
+      "retains non-finite values from original XML bytes",
+      async ({ cli }) => {
+        const directory = await createTestTempDirectory("rea-plist-reals-");
+        const path = join(directory, "selected.plist");
+        const source = Buffer.from(`<plist version="1.0"><dict>
+<key>positive</key><real>+infinity</real>
+<key>negative</key><real>-INFINITY</real>
+<key>nan</key><real>nan</real><key>control</key><real>1.25</real>
+</dict></plist>`);
+        await writeFile(path, source);
+        const result = await cli.run({
+          arguments: ["inspect-plist", path, "--json"],
+          environment: {
+            REA_LOG_LEVEL: "silent",
+            REA_ANALYSIS_PROVIDER: "auto",
+          },
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(result.json).toMatchObject({
+          normalized_result: {
+            value: {
+              positive: { $plist_type: "real", value: "+infinity" },
+              negative: { $plist_type: "real", value: "-infinity" },
+              nan: { $plist_type: "real", value: "nan" },
+              control: 1.25,
+            },
+            limitations: expect.arrayContaining([
+              expect.stringContaining("3 non-finite real value(s)"),
+            ]),
+          },
+        });
+        expect(Buffer.compare(await readFile(path), source)).toBe(0);
+      },
+    );
+
+    cliTest.for([
+      ["openstep", "unknown"],
+      ["openstep-data", "unknown"],
+      ["openstep-data-root", "unknown"],
+      ["openstep-empty-data", "unknown"],
+      ["xml", "xml"],
+      ["xml16", "xml"],
+      ["binary", "binary"],
+    ] as const)(
+      "reports the original $0 plist format through the compiled CLI",
+      async ([encoding, format], { cli }) => {
+        const directory = await createTestTempDirectory("rea-plist-format-");
+        const target = join(directory, "target");
+        const plist = join(directory, "selected.plist");
+        const withData = encoding === "openstep-data";
+        const dataRoot = encoding === "openstep-data-root";
+        const emptyData = encoding === "openstep-empty-data";
+        await writeFile(target, thinMach(0xfeedfacf, 0x0100000c));
+        await writeFile(
+          plist,
+          dataRoot
+            ? "<deadbeef>\n"
+            : emptyData
+              ? "<>\n"
+              : `{ Name = Example; Items = (a, b); ${withData ? "Blob = <deadbeef>;" : ""} }\n`,
+        );
+        if (encoding === "binary" || encoding.startsWith("xml")) {
+          await promisify(execFile)("/usr/bin/plutil", [
+            "-convert",
+            encoding === "binary" ? "binary1" : "xml1",
+            "--",
+            plist,
+          ]);
+          if (encoding === "xml16") {
+            const { stdout } = await promisify(execFile)("/usr/bin/plutil", [
+              "-convert",
+              "xml1",
+              "-o",
+              "-",
+              "--",
+              plist,
+            ]);
+            await writeFile(
+              plist,
+              Buffer.concat([
+                Buffer.from([0xfe, 0xff]),
+                Buffer.from(
+                  stdout.replace("UTF-8", "UTF-16"),
+                  "utf16le",
+                ).swap16(),
+              ]),
+            );
+          }
+        }
+        const result = await cli.run({
+          arguments: [
+            "inspect-plist",
+            target,
+            "--relative-path",
+            plist,
+            "--json",
+          ],
+          environment: {
+            REA_LOG_LEVEL: "silent",
+            REA_ANALYSIS_PROVIDER: "auto",
+          },
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(result.json).toMatchObject({
+          normalized_result: {
+            format,
+            source_path: plist,
+            source_sha256: createHash("sha256")
+              .update(await readFile(plist))
+              .digest("hex"),
+            value:
+              dataRoot || emptyData
+                ? { $plist_type: "data", base64: emptyData ? "" : "3q2+7w==" }
+                : {
+                    Name: "Example",
+                    Items: ["a", "b"],
+                    ...(withData
+                      ? { Blob: { $plist_type: "data", base64: "3q2+7w==" } }
+                      : {}),
+                  },
+          },
+        });
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform !== "darwin")(
+  "native plist CLI typed values",
+  () => {
     cliTest.for(["xml", "binary"] as const)(
       "decodes $0 plists that plutil cannot express as JSON",
       async (format, { cli }) => {
@@ -95,8 +274,11 @@ describe.skipIf(process.platform !== "darwin")(
             "<key>CFBundleExecutable</key><string>App</string>",
             "<key>CFBundleIdentifier</key><string>com.example.types</string>",
             "<key>Blob</key><data>AAEC</data>",
+            "<key>Separators</key><string>a\u0085b\u2028c\u2029d</string>",
+            // CoreFoundation keeps a literal CR, so plutil's binary conversion holds it too.
+            "<key>Returns</key><string>a\rb\r\nc\nd</string>",
             "<key>Built</key><date>2020-01-01T00:00:00Z</date>",
-            // plutil writes years past 9999 unsigned, which the decoder rejects.
+            // Parse the unsigned extended year as a UTC field, without JS string-date inference.
             "<key>Far</key><date>11507-08-17T05:20:00Z</date>",
             "<key>Ratio</key><real>nan</real>",
             "<key>Nested</key><array><dict>",
@@ -128,31 +310,39 @@ describe.skipIf(process.platform !== "darwin")(
             value: {
               CFBundleIdentifier: "com.example.types",
               Blob: { $plist_type: "data", base64: "AAEC" },
+              Separators: "a\u0085b\u2028c\u2029d",
+              Returns: "a\rb\r\nc\nd",
               Built: {
                 $plist_type: "date",
                 iso8601: "2020-01-01T00:00:00.000Z",
               },
-              Far: { $plist_type: "date", iso8601: null },
-              Ratio: { $plist_type: "real", value: null },
+              Far: {
+                $plist_type: "date",
+                iso8601: "+011507-08-17T05:20:00.000Z",
+              },
+              Ratio: { $plist_type: "real", value: "nan" },
               Nested: [
                 {
                   Ratio: 0.5,
-                  Unbounded: { $plist_type: "real", value: null },
+                  Unbounded: { $plist_type: "real", value: "-infinity" },
                   "": "empty key",
                 },
               ],
             },
             bundle: { identifier: "com.example.types", executable: "App" },
-            provenance: [
-              { tool: "file" },
-              { command: expect.arrayContaining(["json"]), exit: { code: 1 } },
-              { command: expect.arrayContaining(["xml1"]), exit: { code: 0 } },
-            ],
-            limitations: [
-              expect.stringContaining("XML conversion"),
-              expect.stringContaining("2 non-finite real"),
-              expect.stringContaining("1 date value(s)"),
-            ],
+            // An XML source also records its successful native format validation.
+            provenance:
+              format === "xml"
+                ? [
+                    { tool: "file" },
+                    {
+                      tool: "plutil",
+                      command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+                      exit: { code: 0, signal: null },
+                    },
+                  ]
+                : [{ tool: "file" }],
+            limitations: [expect.stringContaining("2 non-finite real")],
           },
         });
       },
@@ -205,10 +395,7 @@ describe.skipIf(process.platform !== "darwin")(
               Real: 9007199254740992,
               Large: 1e20,
             },
-            limitations: [
-              ...(withData ? [expect.stringContaining("XML conversion")] : []),
-              expect.stringContaining("2 integer value(s)"),
-            ],
+            limitations: [expect.stringContaining("2 integer value(s)")],
           },
         });
       },

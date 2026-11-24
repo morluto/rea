@@ -66,17 +66,19 @@ const inventory = (options: FixtureOptions) => {
       limitations: [],
     },
   ];
+  const rootEntryKind =
+    options.manifestRootFormat === "directory" ? "directory" : "file";
   const occurrences: ArtifactOccurrence[] = [
     {
       occurrence_id: occurrenceIdForLocation({
         rootArtifactId,
         logicalPath: ".",
-        entryKind: "file",
+        entryKind: rootEntryKind,
       }),
       artifact_id: rootArtifactId,
       parent_occurrence_id: null,
       logical_path: ".",
-      entry_kind: "file",
+      entry_kind: rootEntryKind,
       artifact_kind: "resource",
       artifact_format: options.manifestRootFormat ?? "file",
       declared_size: 1,
@@ -112,7 +114,7 @@ const inventory = (options: FixtureOptions) => {
       parent_occurrence_id: occurrenceIdForLocation({
         rootArtifactId,
         logicalPath: ".",
-        entryKind: "file",
+        entryKind: rootEntryKind,
       }),
       logical_path: child.path,
       entry_kind: "file",

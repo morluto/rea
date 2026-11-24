@@ -16,8 +16,11 @@ import { webEventListenersSchema } from "../../dist/domain/webEventListeners.js"
 import { startBrowserRuntimeSite } from "../fixtures/browser-runtime-site.mjs";
 import { requireOrdinaryWindowsVerifierCaller } from "./windows-ordinary-user-verifier.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
-import { startRuntimeFixtureBrowser } from "./browser-runtime-fixture-lifecycle.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import {
+  startRuntimeFixtureBrowser,
+  waitForRuntimeFixtureSources,
+} from "./browser-runtime-fixture-lifecycle.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { verifyRuntimeTargetTermination } from "./browser-runtime-termination-e2e.mjs";
 import { verifyRuntimeInvalidSelectors } from "./browser-runtime-selector-e2e.mjs";
 import {
@@ -40,10 +43,9 @@ export async function verifyBrowserRuntime(
   await access(executable);
   const site = await startBrowserRuntimeSite();
   let fixture;
-  let primaryError;
   let action;
   let client;
-  try {
+  return withVerifierCleanup(async () => {
     fixture = await startRuntimeFixtureBrowser(executable, site.origin);
     const endpoint = `http://127.0.0.1:${fixture.port}`;
     const targets = await new CdpBrowserProvider().listTargets(
@@ -61,7 +63,7 @@ export async function verifyBrowserRuntime(
       page.webSocketDebuggerUrl,
       "inspect_web_page",
     );
-    await ready(action);
+    await waitForRuntimeFixtureSources(action);
     let isolatedContext = await createRuntimeIsolatedWorld(action);
     const env = {
       ...process.env,
@@ -176,20 +178,12 @@ export async function verifyBrowserRuntime(
       fresh_mcp: freshMcpProof,
       page_remained_open: true,
     };
-  } catch (cause) {
-    primaryError = cause;
-    throw cause;
-  } finally {
-    await closeVerifierResources(
-      [
-        () => client?.close(),
-        () => action?.close(),
-        () => fixture?.close(),
-        () => site.close(),
-      ],
-      primaryError,
-    );
-  }
+  }, [
+    () => client?.close(),
+    () => action?.close(),
+    () => fixture?.close(),
+    () => site.close(),
+  ]);
 }
 
 async function executionMcp(
@@ -231,19 +225,6 @@ async function executionMcp(
   );
 }
 
-async function ready(connection) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const result = await connection.send("Runtime.evaluate", {
-      expression:
-        "typeof chosen === 'function' && typeof untouched === 'function'",
-      returnByValue: true,
-    });
-    if (result.result.value === true) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("Runtime fixture sources did not load");
-}
-
 async function executionCli(entrypoint, input, env, action, isolatedContext) {
   const child = spawn(
     process.execPath,
@@ -274,7 +255,11 @@ async function executionCli(entrypoint, input, env, action, isolatedContext) {
   });
   try {
     const [code] = await once(child, "close");
-    assert.equal(code, 0, stderr);
+    assert.equal(
+      code,
+      0,
+      `observe-web-execution exited ${String(code)} (signal ${String(child.signalCode)})\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+    );
     assert.ok(actionPromise, "CLI did not report an actual armed point");
     await actionPromise;
     return stdout;
@@ -423,13 +408,12 @@ async function reloadFixture(connection) {
       () => reject(new Error("Fixture reload did not commit")),
       5000,
     );
-    const remove = connection.onEvent((event) => {
-      if (
-        event.method === "Page.frameNavigated" &&
-        !event.params.frame?.parentId
-      )
-        resolve();
-    });
+    const remove = connection.onRegisteredEvent(
+      "Page.frameNavigated",
+      (registered) => {
+        if (registered.payload.facts.parentRelation === "root") resolve();
+      },
+    );
     dispose = () => {
       clearTimeout(timer);
       remove();
@@ -439,7 +423,7 @@ async function reloadFixture(connection) {
   try {
     await connection.send("Page.reload", { ignoreCache: true });
     await committed;
-    await ready(connection);
+    await waitForRuntimeFixtureSources(connection);
   } finally {
     dispose();
   }

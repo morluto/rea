@@ -34,6 +34,9 @@ class ControlledSession {
       process.stderr.write("REA_CONTROLLED_PROFILE_CALLBACK\n");
     },
   });
+  get cleanupLease() {
+    return this.cleanup.cleanupLease;
+  }
   currentUrl() {
     return this.initialUrl;
   }
@@ -66,7 +69,11 @@ class ControlledSession {
       await new Promise((resolveWait, reject) => {
         timer = setTimeout(resolveWait, 60000);
         abort = () =>
-          reject(new AnalysisCancelledError("capture_browser_scenario"));
+          reject(
+            new AnalysisCancelledError("capture_browser_scenario", {
+              cause: signal?.reason,
+            }),
+          );
         signal?.addEventListener("abort", abort, { once: true });
         process.stderr.write(
           "REA_CONTROLLED_BROWSER_READY signal_present=" +

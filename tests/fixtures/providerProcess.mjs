@@ -23,6 +23,23 @@ const write = (stream, data) =>
   });
 
 switch (mode) {
+  case "late-stderr": {
+    // Keep stderr open after leader exit. FD3 is the test's explicit release barrier.
+    const writer = spawn(
+      process.execPath,
+      [
+        "-e",
+        "const deadline=setTimeout(()=>process.exit(64),5000); require('node:fs').readFile(3,error=>{clearTimeout(deadline);if(error)process.exitCode=65;else process.stderr.write('final-tail');});",
+      ],
+      { stdio: ["ignore", "ignore", process.stderr, 3] },
+    );
+    await new Promise((resolve, reject) => {
+      writer.once("spawn", resolve);
+      writer.once("error", reject);
+    });
+    writer.unref();
+    break;
+  }
   case "burst": {
     const bytes = Number(value);
     await Promise.all([

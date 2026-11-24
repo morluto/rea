@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { signalRecordingSchema } from "./signalRecording.js";
+import { boundedProducerLimitsSchema } from "../producerResourceLimits.js";
 
 export const inspectSignalDecodersInputSchema = z.strictObject({
+  producer_limits: boundedProducerLimitsSchema
+    .unwrap()
+    .omit({ input_bytes: true })
+    .optional(),
   decoder: z
     .string()
     .regex(/^[a-zA-Z0-9_+\x2d]+$/u)
@@ -24,9 +29,7 @@ export const inspectSignalDecodersInputSchema = z.strictObject({
     .nonnegative()
     .max(Number.MAX_SAFE_INTEGER)
     .default(0)
-    .describe(
-      "Number of matching decoders or help lines to skip; defaults to 0",
-    ),
+    .describe("Number of matching decoders or help lines to skip"),
   limit: z
     .number()
     .int()

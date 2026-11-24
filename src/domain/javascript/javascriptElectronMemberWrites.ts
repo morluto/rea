@@ -6,11 +6,60 @@ import {
   semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
+
+/**
+ * The reference kinds that load a module by package specifier. A `worker` or
+ * `service-worker` reference records a URL relative to the importing source, so
+ * `new Worker(new URL("electron", import.meta.url))` names a local file and is
+ * not an Electron module.
+ */
+export const ELECTRON_REFERENCE_KINDS: ReadonlySet<string> = new Set([
+  "static-import",
+  "dynamic-import",
+  "require",
+]);
 
 /** Match Electron's supported module entry points. */
 export const ELECTRON_MODULE =
   /^electron(?:\/(?:common|main|renderer|utility))?$/u;
+
+type ModuleReference = {
+  readonly value: {
+    readonly kind: string;
+    readonly loader?: string;
+    readonly loader_authority?: "candidate";
+    readonly operation: "load" | "resolve";
+    readonly specifier: string | null;
+  };
+};
+
+/** Whether any loaded package reference imports or requires Electron. */
+export const referencesElectronModule = (
+  references: readonly ModuleReference[],
+): boolean =>
+  references.some(
+    ({ value }) =>
+      value.operation === "load" &&
+      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
+      value.loader !== "factory-loader" &&
+      // A candidate loader only observes the literal; the CommonJS loader
+      // behind it is not established, so it does not prove Electron.
+      value.loader_authority !== "candidate" &&
+      value.specifier !== null &&
+      ELECTRON_MODULE.test(value.specifier),
+  );
+
+/** Whether any static import or require leaves its module name unresolved. */
+export const referencesUnresolvedModule = (
+  references: readonly ModuleReference[],
+): boolean =>
+  references.some(
+    ({ value }) =>
+      value.operation === "load" &&
+      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
+      value.specifier === null,
+  );
 
 /**
  * Electron's CommonJS exports define no `default` member, so a leading
@@ -60,6 +109,7 @@ export interface JavaScriptIntrinsicInvocation {
  */
 export function* collectJavaScriptIdentityWritesSteps(
   program: t.Program,
+  erasedSyntaxNodes: WeakSet<t.Node>,
   origin: (
     root: t.Node,
     kind: "binding" | "member" | "opaque-call",
@@ -71,6 +121,14 @@ export function* collectJavaScriptIdentityWritesSteps(
   staticString: (node: t.Node | undefined) => string | undefined,
   freshObject: (node: t.Node) => boolean,
   retain: (node: t.Node, path: readonly (string | null)[]) => void,
+  observeInvocation?: (
+    node:
+      | t.CallExpression
+      | t.OptionalCallExpression
+      | t.NewExpression
+      | t.TaggedTemplateExpression,
+    invocation: JavaScriptIntrinsicInvocation | undefined,
+  ) => void,
 ): Generator<void> {
   const objectMutators = new Set([
     "defineProperty",
@@ -85,10 +143,21 @@ export function* collectJavaScriptIdentityWritesSteps(
     "setPrototypeOf",
   ]);
   const keyedMutators = new Set(["set", "deleteProperty", "defineProperty"]);
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, erasedSyntaxNodes, {
     enter: (node) => {
-      if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-        const invocation = intrinsicInvocation(node);
+      if (
+        t.isCallExpression(node) ||
+        t.isOptionalCallExpression(node) ||
+        t.isNewExpression(node) ||
+        t.isTaggedTemplateExpression(node)
+      ) {
+        const invocation =
+          t.isNewExpression(node) || t.isTaggedTemplateExpression(node)
+            ? undefined
+            : intrinsicInvocation(node);
+        observeInvocation?.(node, invocation);
+        if (t.isNewExpression(node) || t.isTaggedTemplateExpression(node))
+          return;
         if (invocation?.kind === "opaque") {
           for (const scope of origin(node, "opaque-call", node))
             retain(node, scope);

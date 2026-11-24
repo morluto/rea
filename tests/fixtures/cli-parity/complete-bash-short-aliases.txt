@@ -1,0 +1,6 @@
+$ COMPLETE=bash rea -- rea setup -
+exit: 0
+--- stdout
+--yes<0x0b>--install-hopper<0x0b>--desktop-build<0x0b>--install-agentenv<0x0b>--client<0x0b>--skill-client<0x0b>--tool-families<0x0b>--tool-catalog-profile<0x0b>--all-detected<0x0b>--skill<0x0b>--dry-run<0x0b>--accessible<0x0b>-y<0x0b>--format<0x0b>--filter-output<0x0b>--columns<0x0b>--token-limit<0x0b>--token-offset<0x0b>--full-output<0x0b>--llms<0x0b>--llms-full<0x0b>--help<0x0b>--schema<0x0b>--json<0x0b>--token-count<0x0b>--timings<0x0b>-h<end>
+--- stderr
+<end>

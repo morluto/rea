@@ -27,11 +27,11 @@ import type {
   ArtifactOccurrence,
 } from "../../../src/domain/artifactGraph.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** One archive whose entries are fixed, so only the bytes we choose differ. */
@@ -202,7 +202,7 @@ const budgetMemberEvidence = (label: string): Evidence => {
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse({
+      result: {
         manifest: {
           manifest_id: artifactManifestId(rootArtifactId, graphSha256),
           root_artifact_id: rootArtifactId,
@@ -220,7 +220,7 @@ const budgetMemberEvidence = (label: string): Evidence => {
         integrity_contradictions: [],
         coverage: { scope: "root", status: "complete" },
         limitations: [],
-      }),
+      },
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -244,8 +244,19 @@ it("clusters three inspected archives through MCP by family and shared members",
   await copyFile(alpha, gamma);
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "cluster-artifacts-test", version: "1" });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: "1000000",
+      },
+    },
+  );
+  const client = new Client(
+    { name: "cluster-artifacts-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -375,11 +386,22 @@ it("clusters inspected archives using retained Evidence IDs and summary views", 
   await copyFile(alpha, gamma);
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "cluster-artifacts-retained-test",
-    version: "1",
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: "1000000",
+      },
+    },
+  );
+  const client = new Client(
+    {
+      name: "cluster-artifacts-retained-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -487,11 +509,22 @@ it("keeps a member with unknown child coverage unplaced", async (context) => {
   await writeArchive(archive, [["one.txt", "shared-entry"]]);
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "cluster-artifacts-incomplete",
-    version: "1",
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: "1000000",
+      },
+    },
+  );
+  const client = new Client(
+    {
+      name: "cluster-artifacts-incomplete",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -571,11 +604,22 @@ it("refuses a member that is not artifact inventory Evidence", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Clustering must not launch a provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "cluster-artifacts-refusal",
-    version: "1",
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: "1000000",
+      },
+    },
+  );
+  const client = new Client(
+    {
+      name: "cluster-artifacts-refusal",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -594,7 +638,7 @@ it("refuses a member that is not artifact inventory Evidence", async () => {
     // schema, so no artifact processor ever sees it.
     expect(refused.isError).toBe(true);
     const text = refused.content.find((item) => item.type === "text");
-    expect(text?.type === "text" ? text.text : "").toMatch(/Input validation/u);
+    expect(text?.type === "text" ? text.text : "").toMatch(/invalid_request/u);
   } finally {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
   }
@@ -614,11 +658,22 @@ it("withholds the member index instead of failing a large clustering response", 
   await writeArchive(archive, [["one.txt", "entry"]]);
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "cluster-artifacts-budget",
-    version: "1",
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: "1000000",
+      },
+    },
+  );
+  const client = new Client(
+    {
+      name: "cluster-artifacts-budget",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

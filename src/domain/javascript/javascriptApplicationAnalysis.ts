@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { javaScriptRouteInventorySchema } from "./javascriptRouteInventory.js";
+import { canBorrowParsedJsonSnapshot } from "../immutableJson.js";
 
 import {
   javascriptApplicationGraphSchema,
@@ -10,8 +12,7 @@ import {
   isValidatedImmutableJavaScriptSemanticGraph,
   type JavaScriptSemanticGraph,
 } from "./javascriptSemanticGraph.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { integrityContradictionSchema } from "../artifactGraph.js";
 import { artifactIntegrityPolicySchema } from "../artifactIntegrityPolicy.js";
 import { localPathStringSchema } from "../localPath.js";
@@ -21,7 +22,7 @@ import {
   javaScriptSourceSelectionSchema,
 } from "./javascriptSourceSelection.js";
 
-const countSchema = z.number().int().min(0);
+const countSchema = z.int().min(0);
 
 /** Public target-free request for static JavaScript application analysis. */
 export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
@@ -55,6 +56,22 @@ const electronBoundarySummarySchema = z.strictObject({
   resolved_utility_entrypoints: countSchema,
   native_addon_bindings: countSchema,
   resolved_native_addon_bindings: countSchema,
+  protocol_registrations: countSchema,
+  /** `node:vm` compilations whose logic may live in an opaque bytecode cache. */
+  v8_cached_data_compilations: countSchema.exactOptional(),
+  /**
+   * Whether the Electron boundary surface was actually recovered. `empty` means
+   * an analyzed source names Electron but no boundary fact was recovered, so the
+   * zeroes above are missing coverage and not evidence of absence. `partial`
+   * means some boundary facts were recovered while other Electron-loading
+   * sources were not fully examined or reported, for example after the result
+   * budget ran out; counts from those sources are unknown, not zero.
+   *
+   * Absent when no retained fact names an Electron module. Absence is unknown
+   * rather than proof that the application has no Electron surface: unread
+   * sources, failed analysis, and dynamic module names can hide one.
+   */
+  electron_semantics: z.enum(["recovered", "partial", "empty"]).exactOptional(),
 });
 
 const reconstructionStatisticsSchema = z.strictObject({
@@ -63,6 +80,7 @@ const reconstructionStatisticsSchema = z.strictObject({
   text_bytes_read: countSchema,
   invalid_utf8_files: countSchema,
   parsed_javascript_files: countSchema,
+  skipped_javascript_files: countSchema,
   visited_ast_nodes: countSchema,
   findings: countSchema,
   modules: countSchema,
@@ -82,6 +100,7 @@ const applicationAnalysisResultShape = z.strictObject({
   statistics: reconstructionStatisticsSchema,
   limitations: z.array(z.string().min(1)),
   semantic_graph: javaScriptSemanticGraphSchema,
+  route_inventory: javaScriptRouteInventorySchema.exactOptional(),
 });
 
 type BindingIssue = {
@@ -113,6 +132,27 @@ function* checkApplicationBindingsSteps(
   try {
     for (const node of result.graph.nodes) {
       applicationNodeIds.add(node.node_id);
+      if (
+        node.kind === "artifact" &&
+        (node.identity.strategy !== "content-digest" ||
+          node.identity.sha256 !== result.root_artifact_sha256)
+      ) {
+        for (const observation of node.observations) {
+          if (observation.evidence.extractor.operation === "inventory-root") {
+            context.addIssue({
+              code: "custom",
+              path: ["root_artifact_sha256"],
+              message:
+                "Application artifact root must match the declared root SHA-256",
+            });
+            break;
+          }
+          if (++examined === 4096) {
+            examined = 0;
+            yield;
+          }
+        }
+      }
       if (++examined === 4096) {
         examined = 0;
         yield;
@@ -168,21 +208,43 @@ const ownedAnalysisResultShape = applicationAnalysisResultShape.extend({
   ),
 });
 
+// One successful interpretation per exact immutable source. Weak keys retain
+// neither a second graph nor a source beyond its Evidence lifetime.
+const validatedImmutableResults = new WeakSet<object>();
+const isValidatedImmutableResult = (
+  input: unknown,
+): input is JavaScriptApplicationAnalysisResult =>
+  typeof input === "object" &&
+  input !== null &&
+  validatedImmutableResults.has(input);
+
 /** Reuse exact owned graphs while validating metadata and cross-graph bindings. */
 export function* parseOwnedJavaScriptApplicationAnalysisSteps(
   input: unknown,
 ): Generator<void, JavaScriptApplicationAnalysisResult> {
+  if (isValidatedImmutableResult(input)) return input;
   const prepared = ownedAnalysisResultShape.safeParse(input);
-  if (!prepared.success)
-    return javascriptApplicationAnalysisResultSchema.parse(input);
-  const issues: BindingIssue[] = [];
-  yield* checkApplicationBindingsSteps(prepared.data, {
-    addIssue: (issue) => {
-      issues.push(issue);
-    },
-  });
-  if (issues.length > 0) throw new z.ZodError(issues);
-  return prepared.data;
+  if (prepared.success) {
+    const issues: BindingIssue[] = [];
+    yield* checkApplicationBindingsSteps(prepared.data, {
+      addIssue: (issue) => {
+        issues.push(issue);
+      },
+    });
+    if (issues.length > 0) throw new z.ZodError(issues);
+    // Keep this existing fast path and its metadata normalization. Rewalking
+    // already owned graphs just to borrow the wrapper would add full-graph work.
+    return prepared.data;
+  }
+  const result = javascriptApplicationAnalysisResultSchema.parse(input);
+  // Borrow only if parsing preserved the exact representation. A future schema
+  // default/normalization must still return its parsed value, without caching.
+  // Admission follows full validation, including completion of yielding checks.
+  if (canBorrowParsedJsonSnapshot(input, result)) {
+    validatedImmutableResults.add(input);
+    return input;
+  }
+  return result;
 }
 
 /** Parsed public JavaScript application analysis request. */

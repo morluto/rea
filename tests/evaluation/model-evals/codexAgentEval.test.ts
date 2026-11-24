@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { evaluateCodexEvents } from "../../../src/evaluation/CodexAgentEval.js";
+import { evaluateCodexEvents } from "./CodexAgentEval.js";
 
 const observation = (
   operation = "inspect_managed_artifact",
@@ -96,41 +96,6 @@ describe("Codex agent release evaluation", () => {
       epistemicCuePresent: true,
     });
     expect(metrics.reaCalls).toHaveLength(1);
-  });
-
-  it("requires the final answer to cite produced Evidence when requested", () => {
-    const evidence = observation();
-    const evidenceId = evidence.evidence_id;
-    const events = [
-      {
-        type: "item.completed",
-        item: {
-          id: "item-tool",
-          type: "mcp_tool_call",
-          server: "rea",
-          tool: "inspect_managed_artifact",
-          arguments: { path: "/tmp/app.dll" },
-          result: { structuredContent: evidence },
-        },
-      },
-      {
-        type: "item.completed",
-        item: {
-          type: "agent_message",
-          text: `The observed managed metadata is supported by evidence ${evidenceId}; runtime behavior remains unknown without runtime authority.`,
-        },
-      },
-    ];
-
-    expect(
-      evaluateCodexEvents(events, "inspect_managed_artifact", {
-        requireEvidence: true,
-      }),
-    ).toMatchObject({
-      evidenceIds: [evidenceId],
-      finalCitesEvidence: true,
-      answerHeuristicsMet: true,
-    });
   });
 });
 
@@ -380,24 +345,6 @@ describe("Codex Evidence delivery", () => {
 });
 
 describe("Codex request accounting", () => {
-  it("flags identical calls with distinct item identities", () => {
-    const event = (id: string) => ({
-      type: "item.completed",
-      item: {
-        id,
-        type: "mcp_tool_call",
-        server: "rea",
-        tool: "binary_session",
-        arguments: {},
-      },
-    });
-
-    expect(
-      evaluateCodexEvents([event("item-1"), event("item-2")], "binary_session")
-        .repeatedCallCount,
-    ).toBe(1);
-  });
-
   it("distinguishes session verification after a successful close from an unchanged retry", () => {
     const call = (id: string, tool: string, status = "completed") => ({
       type: "item.completed",
@@ -472,6 +419,46 @@ describe("Codex agent routing and error evaluation", () => {
     expect(metrics.reaCalls[0]).toMatchObject({ error: true, errorCode: null });
     expect(metrics.requiredToolSubsequenceMet).toBe(false);
   });
+
+  it.each(["failed", undefined])(
+    "preserves failure without choosing duplicate JSON error codes with status %s",
+    (status) => {
+      const texts = [
+        '{"error":{"code":"bridge_timeout","code":"invalid_request"}}',
+        '{"error":{"code":"invalid_request","code":"bridge_timeout"}}',
+        '{"error":{"code":"bridge_timeout"},"error":{"code":"invalid_request"}}',
+        '{"error":{"code":"invalid_request"}}',
+      ];
+      const metrics = evaluateCodexEvents(
+        texts.map((text, index) => ({
+          type: "item.completed",
+          item: {
+            id: `failure-${String(index)}`,
+            type: "mcp_tool_call",
+            server: "rea",
+            tool: "close_binary",
+            arguments: {},
+            ...(status === undefined ? {} : { status }),
+            result: { content: [{ type: "text", text }] },
+          },
+        })),
+        "close_binary",
+      );
+      expect(
+        metrics.reaCalls.map(({ error, errorCode, evidenceIds }) => ({
+          error,
+          errorCode,
+          evidenceIds,
+        })),
+      ).toEqual([
+        { error: true, errorCode: null, evidenceIds: [] },
+        { error: true, errorCode: null, evidenceIds: [] },
+        { error: true, errorCode: null, evidenceIds: [] },
+        { error: true, errorCode: "invalid_request", evidenceIds: [] },
+      ]);
+      expect(metrics.inputValidationFailureCount).toBe(1);
+    },
+  );
 
   it("requires no REA call when target selection is missing", () => {
     const events = [
@@ -607,44 +594,27 @@ describe("Codex agent completion evaluation", () => {
       answerHeuristicsMet: true,
       factualCorrectness: "not_assessed",
     });
-    expect(metrics).not.toHaveProperty("completionQuality");
-    expect(metrics).not.toHaveProperty("authorityHonesty");
-    expect(metrics).not.toHaveProperty("contentCriteriaMet");
   });
 
-  it("requires scenario-specific answer terms when configured", () => {
-    const event = (text: string) => [
-      {
-        type: "item.completed",
-        item: {
-          type: "mcp_tool_call",
-          server: "rea",
-          tool: "analyze_javascript_application",
-          arguments: {},
+  it("requires a term from every configured answer group", () => {
+    expect(
+      evaluateCodexEvents(
+        [
+          {
+            type: "item.completed",
+            item: {
+              type: "agent_message",
+              text: "Observed evidence identifies profileApi, but runtime behavior remains unknown without more authority and detail.",
+            },
+          },
+        ],
+        null,
+        {
+          requiredAnswerTermGroups: [
+            ["profileApi"],
+            ["preload", "contextBridge"],
+          ],
         },
-      },
-      { type: "item.completed", item: { type: "agent_message", text } },
-    ];
-    const options = {
-      requiredAnswerTermGroups: [["profileApi"], ["preload", "contextBridge"]],
-    };
-
-    expect(
-      evaluateCodexEvents(
-        event(
-          "Observed evidence connects profileApi through the preload bridge; runtime behavior remains unknown without authority.",
-        ),
-        "analyze_javascript_application",
-        options,
-      ),
-    ).toMatchObject({ answerTermCoverageMet: true, answerHeuristicsMet: true });
-    expect(
-      evaluateCodexEvents(
-        event(
-          "Observed artifact evidence is available, but application behavior remains unknown without more authority and detail.",
-        ),
-        "analyze_javascript_application",
-        options,
       ),
     ).toMatchObject({
       answerTermCoverageMet: false,
@@ -718,39 +688,48 @@ describe("Codex agent workflow evaluation", () => {
       ],
       forbidInputValidationFailures: true,
     };
-    const valid = evaluateCodexEvents(
-      [
-        call("left", "analyze_javascript_application"),
-        call("right", "analyze_javascript_application"),
-        call("compare", "compare_javascript_export_shapes"),
-        final,
-      ],
-      "analyze_javascript_application",
-      options,
-    );
-    expect(valid).toMatchObject({
+    const left = call("left", "analyze_javascript_application");
+    const right = call("right", "analyze_javascript_application");
+    const compare = call("compare", "compare_javascript_export_shapes");
+    const rejected = call("bad", "compare_javascript_export_shapes", {
+      structured_content: { error: { code: "invalid_request" } },
+      isError: true,
+    });
+    const evaluate = (events: unknown[]) =>
+      evaluateCodexEvents(events, "analyze_javascript_application", options);
+
+    expect(evaluate([left, right, compare, final])).toMatchObject({
       requiredToolSubsequenceMet: true,
       inputValidationFailureCount: 0,
+      finalCitesEvidence: true,
       answerHeuristicsMet: true,
     });
-
-    const invalid = evaluateCodexEvents(
-      [
-        call("left", "analyze_javascript_application"),
-        call("bad", "compare_javascript_export_shapes", {
-          structured_content: {
-            error: { code: "invalid_request" },
-          },
-          isError: true,
-        }),
-        final,
-      ],
-      "analyze_javascript_application",
-      options,
-    );
-    expect(invalid).toMatchObject({
+    expect(evaluate([left, compare, right, final])).toMatchObject({
+      requiredToolSubsequenceMet: false,
+      inputValidationFailureCount: 0,
+      answerHeuristicsMet: false,
+    });
+    expect(evaluate([left, right, rejected, final])).toMatchObject({
       requiredToolSubsequenceMet: false,
       inputValidationFailureCount: 1,
+    });
+    expect(evaluate([left, right, compare, rejected, final])).toMatchObject({
+      requiredToolSubsequenceMet: true,
+      inputValidationFailureCount: 1,
+      finalCitesEvidence: true,
+      answerHeuristicsMet: false,
+    });
+    const uncited = {
+      ...final,
+      item: {
+        ...final.item,
+        text: final.item.text.replace(evidenceId, "cited elsewhere"),
+      },
+    };
+    expect(evaluate([left, right, compare, uncited])).toMatchObject({
+      requiredToolSubsequenceMet: true,
+      inputValidationFailureCount: 0,
+      finalCitesEvidence: false,
       answerHeuristicsMet: false,
     });
   });

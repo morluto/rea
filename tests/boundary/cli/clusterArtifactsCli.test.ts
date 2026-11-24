@@ -1,13 +1,16 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { createArtifactInspection } from "../../../src/domain/artifactInspection.js";
-import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import {
+  createEvidence,
+  evidenceSubjectTarget,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
@@ -19,18 +22,12 @@ const memberDocument = (
   const subject = inventoryEvidence.subject;
   if (subject === null) throw new Error("Artifact fixture has no target");
   return createEvidence(
-    {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-    },
+    evidenceSubjectTarget(subject)!,
     inventoryEvidence.provider,
     {
       operation: "inspect_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(
-        createArtifactInspection(inventoryEvidence),
-      ),
+      result: createArtifactInspection(inventoryEvidence),
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -38,9 +35,9 @@ const memberDocument = (
 };
 
 describe("cluster-artifacts Evidence file inputs", () => {
-  it(
+  cliTest(
     "returns the caller's path-to-Evidence roster beside the clustering",
-    async () => {
+    async ({ cli }) => {
       const root = await createTestTempDirectory("rea-cluster-artifacts-cli-");
       const leftPath = join(root, "left.json");
       const rightPath = join(root, "right.json");
@@ -49,14 +46,20 @@ describe("cluster-artifacts Evidence file inputs", () => {
       await writeFile(leftPath, JSON.stringify(left));
       await writeFile(rightPath, JSON.stringify(right));
 
-      const clustered = (await runCliJson([
-        "cluster-artifacts",
-        "--member",
-        leftPath,
-        "--member",
-        rightPath,
-        "--json",
-      ])) as {
+      const run = await cli.run({
+        arguments: [
+          "cluster-artifacts",
+          "--member",
+          leftPath,
+          "--member",
+          rightPath,
+          "--json",
+        ],
+        environment: process.env,
+      });
+
+      expect(run.exitCode, run.stderr).toBe(0);
+      const clustered = run.json as {
         readonly summary: { readonly members_examined: number };
         readonly coverage: { readonly members_examined: number };
         readonly members: readonly {

@@ -15,10 +15,15 @@ export function* parseElementSteps<Element extends z.ZodType>(
   values: readonly unknown[],
   path: readonly PropertyKey[],
   issues: z.core.$ZodIssue[],
+  isPrevalidated?: (value: unknown) => value is z.output<Element>,
 ): Generator<void, z.output<Element>[]> {
   const parsed: z.output<Element>[] = [];
   for (const [index, value] of values.entries()) {
     if (index % 64 === 0) yield;
+    if (isPrevalidated?.(value) === true) {
+      parsed.push(value);
+      continue;
+    }
     const result = element.safeParse(value);
     if (result.success) parsed.push(result.data);
     else

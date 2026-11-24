@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · **Polski** · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -9,18 +9,19 @@
 
 **Widzisz funkcję, która Ci się podoba? Dowiedz się, jak działa, aż do poziomu kodu binarnego.**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
-[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
-[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
+[![GitHub stars](https://img.shields.io/github/stars/morluto/rea?style=flat-square&logo=github)](https://github.com/morluto/rea/stargazers)
+[![Monthly npm downloads](https://img.shields.io/npm/dm/rea-agents?style=flat-square&label=npm%20downloads)](https://www.npmjs.com/package/rea-agents)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
-[![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
-
-<a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
+[![Join the REA Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+[![Follow REA on X](https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/reatools)
+[![Supported platforms: macOS, Windows, and Linux](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-4493F8?style=flat-square)](../getting-started/installation.md)
+[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 
 **[Strona internetowa](https://rea.tools/pl/) · [Przewodniki](https://rea.tools/pl/guides/) · [Przykłady zastosowań](https://rea.tools/pl/showcase/)**
 
-[Szybki start](#szybki-start) · [Jak działa REA](#jak-działa-rea) · [Co możesz analizować](#co-możesz-analizować) · [Przykłady zastosowań](#przykłady-zastosowań) · [FAQ](#faq) · [Narzędzia GNU objdump i Rizin](../reverse-engineering-tools.md) · [Dokumentacja](#dokumentacja)
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Dołącz do społeczności REA na Discordzie" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
+[Szybki start](#szybki-start) · [Przykłady zastosowań](#przykłady-zastosowań) · [Jak działa REA](#jak-działa-rea) · [Co możesz analizować](#co-możesz-analizować) · [Tworzenie środowisk RL](#build-rl-environments) · [FAQ](#faq) · [Dokumentacja](#dokumentacja)
 
 <code>npx rea-agents setup</code>
 
@@ -60,15 +61,15 @@ Widzisz w aplikacji funkcję, którą chcesz mieć we własnym produkcie? Popro�
 
 REA łączy Twojego agenta z narzędziami do analizy natywnych plików binarnych, aplikacji JavaScript i Electron, zestawów .NET oraz stron internetowych. Z tych samych narzędzi możesz korzystać w terminalu. Analiza odbywa się lokalnie, a wyniki zawierają dowody i ograniczenia stojące za każdym wnioskiem.
 
-Konfigurator rejestruje REA w Twoim agencie i instaluje pasujące instrukcje pracy. Analiza kodu natywnego może korzystać z istniejącej instalacji Hoppera lub Ghidry; konfigurator może też zainstalować Hoppera po uzyskaniu zgody. Statyczna analiza JavaScript nie wymaga żadnego z tych silników.
-
-> **[Odwiedź stronę REA](https://rea.tools/pl/)**, aby znaleźć instrukcje konfiguracji, ilustrowane przewodniki i rzeczywiste studia przypadków.
+Konfigurator rejestruje REA w Twoim agencie i instaluje pasujące instrukcje pracy. Analiza kodu natywnego może korzystać z istniejącej instalacji Hoppera, Ghidry, IDA lub Kuna; konfigurator może też zainstalować Hoppera po uzyskaniu zgody. Statyczna analiza JavaScript nie wymaga żadnego z tych silników.
 
 ## Szybki start
 
-### Skonfiguruj agenta
+**[Szybki start · rea.tools](https://rea.tools/pl/get-started/)**
 
-Po zainstalowaniu Node.js i npm uruchom:
+### Skonfiguruj agenta (MCP)
+
+Po zainstalowaniu [Node.js i npm](../reference/supported-targets.md) uruchom polecenie w zaufanym katalogu poza analizowanym projektem.
 
 ```bash
 npx rea-agents setup
@@ -76,9 +77,9 @@ npx rea-agents setup
 
 Wybierz swoich agentów, sprawdź proponowane zmiany i zatwierdź je. Konfigurator dodaje serwer MCP REA i pasujące instrukcje pracy, tworząc kopie zapasowe istniejącej konfiguracji. Następnie uruchom agenta ponownie.
 
-Konfigurator obsługuje Claude Code, Codex, Cursor, Gemini CLI, Grok Build i [innych agentów](../installation.md#supported-agents). Konfigurację dostawców analizy i ręczną rejestrację MCP opisuje przewodnik [instalacji i konfiguracji](../installation.md).
+[instalacji i konfiguracji](../getting-started/installation.md)
 
-### Zapytaj agenta
+Zapytaj agenta:
 
 ```text
 Sprawdź, jak działa wyszukiwanie w aplikacji Notes, pokaż mi dowody i stwórz podobną funkcję dla mojego projektu.
@@ -86,7 +87,7 @@ Sprawdź, jak działa wyszukiwanie w aplikacji Notes, pokaż mi dowody i stwórz
 
 Zastąp Notes wybraną aplikacją i wskaż funkcję, którą chcesz zrozumieć.
 
-### Korzystaj z terminala
+### Korzystaj z terminala (CLI)
 
 Przeanalizuj rozpakowany katalog aplikacji JavaScript/Electron lub archiwum ASAR:
 
@@ -103,19 +104,17 @@ npm install --global rea-agents
 rea --help
 ```
 
-Przed analizą kodu natywnego skonfiguruj dostawcę analizy. Polecenia analizy natywnej, wybór dostawcy, migawki i użycie w skryptach opisuje [przewodnik CLI i Evidence](../cli.md).
+Przed analizą kodu natywnego skonfiguruj dostawcę analizy. Polecenia analizy natywnej, wybór dostawcy, migawki i użycie w skryptach opisuje [przewodnik CLI i Evidence](../getting-started/cli.md).
+
+[Wymagania dla systemu Linux](../getting-started/installation.md#linux-owned-process-prerequisite)
 
 ### Zaktualizuj REA
 
-REA szybko się rozwija, a nowe wydania często zawierają poprawki błędów. Dbaj o aktualność swojej instalacji.
-
-Dla CLI zainstalowanego przez npm:
+Dla CLI zainstalowanego przez `npm install --global` / `bun add --global`:
 
 ```bash
 rea update
 ```
-
-Aby odświeżyć rejestracje agentów i umiejętność, uruchom polecenie konfiguracji wyświetlone po aktualizacji.
 
 Jeśli używasz `npx`, zaktualizuj konfigurację agenta poleceniem:
 
@@ -123,7 +122,38 @@ Jeśli używasz `npx`, zaktualizuj konfigurację agenta poleceniem:
 npx rea-agents@latest setup
 ```
 
-Sprawdź zmiany konfiguracji i uruchom agenta ponownie. Do jednorazowych poleceń CLI używaj `npx rea-agents@latest`, a następnie nazwy polecenia.
+[Aktualizacja i odinstalowanie](../getting-started/installation.md#diagnose-update-and-remove)
+
+## Przykłady zastosowań
+
+<a href="https://rea.tools/pl/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="Ilustracje studiów przypadku panoramowania dźwięku w DX-Ball, mostka schowka w Notion i pierścienia pocisków w TH04" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
+
+<table>
+<tbody>
+<tr><td>
+<h3>DX-Ball: odtworzenie obliczania panoramy dźwięku</h3>
+<p>Prześledź wywołanie dźwięku do funkcji pomocniczej przeliczającej pozycję na panoramę, sprawdź instrukcje i przekształć niepełny pseudokod w C. Odtworzona implementacja przechodzi 3 205 przypadków dla oryginalnego x86 i odtwarza wszystkie 63 bajty skompilowanej funkcji.</p>
+<p><a href="https://rea.tools/pl/showcase/dx-ball/">Przeczytaj studium przypadku</a> · <a href="https://github.com/N0zoM1z0/dx-ball">Repozytorium odtworzonej implementacji</a></p>
+</td></tr>
+<tr><td>
+<h3>Notion: śledzenie mostu schowka w Electron</h3>
+<p>Znajdź API schowka w procesie renderującym, prześledź je przez preload i IPC do procesu głównego, a następnie sprawdź format schowka wraz z danymi formatowania.</p>
+<p><a href="https://rea.tools/pl/showcase/notion/">Przeczytaj studium przypadku</a></p>
+</td></tr>
+<tr><td>
+<h3>TH04: odtworzenie obliczania pierścienia pocisków w DOS-ie</h3>
+<p>Sprawdź 16-bitowe instrukcje oryginalnej gry na PC-98, odtwórz obliczenia kątów stałych i skierowanych na cel oraz porównaj odtworzony C++ z wynikiem historycznego kompilatora.</p>
+<p><a href="https://rea.tools/pl/showcase/th04/">Przeczytaj studium przypadku</a> · <a href="https://github.com/N0zoM1z0/th04">Repozytorium odtworzonej implementacji</a></p>
+</td></tr>
+</tbody>
+</table>
+
+Jeśli użyłeś REA do czegoś ciekawego, chętnie to zobaczymy. Opisz swój przypadek w [zgłoszeniu](https://github.com/morluto/rea/issues) lub [pull requeście](https://github.com/morluto/rea/pulls), podając cel analizy, pytanie, sposób, w jaki REA pomogło, i swoje ustalenia.
 
 ## Jak działa REA
 
@@ -137,88 +167,49 @@ Twój agent wywołuje REA przez MCP, aby analizować cel i śledzić istotny kod
 
 ## Co możesz analizować
 
-REA wymaga Node.js 22.x (>=22.19), 24.x (>=24.11) lub 26+ oraz npm. Dodatkowe narzędzia i obsługiwane platformy zależą od celu analizy:
+Natywne pliki binarne · JavaScript / Electron · Strony internetowe · Zestawy .NET · Pakiety APK dla Androida · Oprogramowanie układowe · Zachowanie procesów
 
-| Cel                                     | Co zwraca REA                                                                                                         | Wymagania i przewodnik                                                                                                               |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Natywne pliki binarne                   | Pseudokod, kod asemblera, ciągi znaków, symbole, wywołania i odwołania                                                | Hopper, Ghidra lub IDA; [analiza kodu natywnego](../native-investigation.md)                                                         |
-| Układ pliku ELF w trybie offline        | Sekcje, segmenty, oryginalne symbole/relokacje i potencjalne mechanizmy zabezpieczeń wskazane przez analizę statyczną | pwntools dostarczone przez użytkownika w systemie Linux x64; [diagnostyka plików binarnych](../binary-diagnostics.md)                |
-| Kod bajtowy EVM                         | Selektory wywołań, przesunięcia bajtowe, wywnioskowane argumenty i mutowalność                                        | Lokalny plik z surowymi bajtami lub zapisem szesnastkowym w systemie Linux x64; [przewodnik EVM offline](../evm-bytecode.md)         |
-| Rust binaries                           | Embedded cargo-auditable dependency list                                                                              | [Rust binaries](../rust-binaries.md)                                                                                                 |
-| Zarejestrowane awarie systemu Linux     | Surowe rekordy note, rejestry/sygnały każdego zarejestrowanego wątku i opcjonalni kandydaci na mapowania              | pwntools dostarczone przez użytkownika w systemie Linux x64; opcjonalnie GDB/pwndbg; [zarejestrowane awarie](../recorded-crashes.md) |
-| JavaScript / Electron                   | Moduły, importy, mapy źródeł, trasy, IPC i powiązania z natywnymi dodatkami                                           | Node.js i npm; [analiza aplikacji](../javascript-application-workflows.md)                                                           |
-| Strony internetowe                      | Struktura strony, skrypty, obserwacje sieciowe i zamówione zrzuty ekranu                                              | Przeglądarka z rodziny Chrome; [analiza w przeglądarce](../browser-observation.md)                                                   |
-| Zapisane przechwycenia ruchu sieciowego | Żądania, odpowiedzi, dostępne dane przesyłane i lokalizacje źródłowe                                                  | HAR; mitmdump w systemie Linux dla natywnych przechwyceń mitmproxy; [przewodnik przechwytywania](../web-network-captures.md)         |
-| Przechwytywanie pakietów                | Punkty końcowe, DNS, TLS SNI, dystrybucja protokołów i żądania HTTP                                                   | Dostarczone przez wywołującego tshark i capinfos; [przewodnik pcap](../pcap-analysis.md)                                             |
-| Zestawy .NET                            | Metadane, instrukcje CIL, zadeklarowane zależności natywne i porównania kompilacji                                    | Analiza statyczna; [przewodnik kodu zarządzanego](../managed-code-analysis.md)                                                       |
-| Pakiety APK dla Androida                | Deklaracje manifestu, klasy, zdekompilowane metody i odwołania                                                        | JADX bez interfejsu graficznego i pełny JDK w systemach Linux/macOS/Windows x64; [przewodnik Androida](../android-analysis.md)       |
-| Urządzenia z Androidem                  | Urządzenia, pakiety, procesy, logi, zrzuty, zrzuty ekranu oraz transfery APK/plików                                   | adb dostarczony przez wywołującego (emulator lub urządzenie); [przewodnik ADB](../adb-device-analysis.md)                            |
-| Projekty JEB                            | Jednostki projektu obsługiwane przez silnik, skróty artefaktów i pseudokod typów/metod                                | Uruchomiony przez wywołującego klient JEB udostępniający MCP, wybrany przez REA_JEB_MCP_URL; [przewodnik JEB](../jeb-analysis.md)    |
-| Zasoby Androida                         | Zdekodowany manifest, tablice ciągów, języki i informacje o wersji                                                    | Należący do wywołującego launcher Apktool; [przewodnik zasobów](../apktool-resource-analysis.md)                                     |
-| Aplikacje Flutter                       | Hash migawki Dart, sumy bibliotek per ABI i pochodzenie kompilacji silnika                                            | Brak (statyczna analiza APK); [przewodnik Flutter](../flutter-analysis.md)                                                           |
-| Oprogramowanie układowe                 | Regiony, wyniki wyodrębniania i przekazanie do analizy kodu natywnego                                                 | Binwalk / Unblob w systemie Linux; [przewodnik oprogramowania układowego](../firmware-analysis.md)                                   |
-| Zapisane pakiety                        | Wybrane pola, powtarzane wartości, filtry i reguły dekodowania                                                        | Linux: TShark 4.x + prlimit; [przewodnik po przechwyconych pakietach](../packet-captures.md)                                         |
-| Zapisane sygnały logiczne               | Adnotacje dekodera, zakresy próbek i diagnostyka                                                                      | Linux: sigrok-cli 0.7.2 + prlimit; [przewodnik po sygnałach](../signal-recordings.md)                                                |
-| Pakiety i zasoby                        | Spisy plików, skróty, pliki plist, struktura pakietów Apple i wyodrębnione zasoby                                     | [Przewodnik artefaktów i JavaScript](../javascript-artifact-reconstruction.md), [aplikacje Apple](../apple-application-analysis.md)  |
-| Zachowanie procesów                     | Wyjście terminala, interakcje, obserwacje zakończenia i systemu plików oraz porównania uruchomień                     | Linux/macOS z natywnym PTY; [przechwytywanie procesów](../process-capture.md)                                                        |
-
-Statyczna analiza JavaScript i .NET odczytuje dostarczone pliki bez uruchamiania aplikacji. Przechwytywanie w czasie wykonywania uruchamia wybrany cel lub wchodzi z nim w interakcje z uprawnieniami Twojego użytkownika; skutki opisano w odpowiednich przewodnikach.
+[Obsługiwane formaty i wymagania](../reference/supported-targets.md)
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Obsługiwane formaty natywne i platformy zależą od dostawcy analizy. Zobacz [konfigurację Hoppera i Ghidry](../installation.md#hopper), [przewodnik IDA](../ida-provider.md), [Kuna](../kuna-provider.md) oraz [eksperymentalną obsługę Ghidry w systemie Windows](../windows-ghidra-p0.md). Ghidra obsługuje też [analizę 16-bitowego DOS-a](../ghidra-dos.md). Wybór dostawcy opisuje [przewodnik CLI](../cli.md#choose-a-provider). Sprawdź [dostępność w wydaniach](../installation.md#released-package-and-main) dla funkcji dodanych po najnowszym wydaniu npm.
+[Wybór dostawcy analizy](../reference/supported-targets.md#choosing-a-deep-analysis-provider)
 
-## Przykłady zastosowań
+<a id="build-rl-environments"></a>
 
-[![Ilustracje studiów przypadku panoramowania dźwięku w DX-Ball, mostka schowka w Notion i pierścienia pocisków w TH04](../assets/rea-showcases.png)](https://rea.tools/pl/showcase/)
+## Tworzenie środowisk RL
 
-### DX-Ball: odtworzenie obliczania panoramy dźwięku
+Utwórz lokalne środowisko z nagranej sesji internetowej lub aplikacji na pulpit systemu Linux, aby agent mógł ćwiczyć zadanie i sprawdzać wynik.
 
-Prześledź wywołanie dźwięku do funkcji pomocniczej przeliczającej pozycję na panoramę, sprawdź instrukcje i przekształć niepełny pseudokod w C. Odtworzona implementacja przechodzi 3 205 przypadków dla oryginalnego x86 i odtwarza wszystkie 63 bajty skompilowanej funkcji.
-
-[Przeczytaj studium przypadku](https://rea.tools/pl/showcase/dx-ball/) · [Repozytorium odtworzonej implementacji](https://github.com/N0zoM1z0/dx-ball)
-
-### Notion: śledzenie mostu schowka w Electron
-
-Znajdź API schowka w procesie renderującym, prześledź je przez preload i IPC do procesu głównego, a następnie sprawdź format schowka wraz z danymi formatowania.
-
-[Przeczytaj studium przypadku](https://rea.tools/pl/showcase/notion/)
-
-### TH04: odtworzenie obliczania pierścienia pocisków w DOS-ie
-
-Sprawdź 16-bitowe instrukcje oryginalnej gry na PC-98, odtwórz obliczenia kątów stałych i skierowanych na cel oraz porównaj odtworzony C++ z wynikiem historycznego kompilatora.
-
-[Przeczytaj studium przypadku](https://rea.tools/pl/showcase/th04/) · [Repozytorium odtworzonej implementacji](https://github.com/N0zoM1z0/th04)
-
-Jeśli użyłeś REA do czegoś ciekawego, chętnie to zobaczymy. Opisz swój przypadek w [zgłoszeniu](https://github.com/morluto/rea/issues) lub [pull requeście](https://github.com/morluto/rea/pulls), podając cel analizy, pytanie, sposób, w jaki REA pomogło, i swoje ustalenia.
+[Tworzenie środowisk RL](https://rea.tools/guides/rl-environments/)
 
 ## FAQ
 
 <details>
 <summary><strong>Którzy agenci mogą korzystać z REA?</strong></summary>
 
-Każdy agent obsługujący lokalne serwery MCP. Konfigurator konfiguruje [obsługiwanych agentów](../installation.md#supported-agents); inne klienty mogą użyć [ręcznej rejestracji MCP](../installation.md#mcp-registry).
+Każdy agent obsługujący lokalne serwery MCP. Konfigurator konfiguruje [obsługiwanych agentów](../getting-started/installation.md#supported-agents); inne klienty mogą użyć [ręcznej rejestracji MCP](../getting-started/installation.md#mcp-registry).
 
 </details>
 
 <details>
-<summary><strong>Czy potrzebuję Hoppera, Ghidry lub IDA?</strong></summary>
+<summary><strong>Czy potrzebuję Hoppera, Ghidry, IDA lub Kuna?</strong></summary>
 
-Dogłębna analiza kodu natywnego używa jednego z nich. Statyczna analiza JavaScript i .NET działa bez silnika analizy natywnej. Konfigurator może zainstalować Hoppera po uzyskaniu zgody; Ghidra i IDA korzystają z istniejących instalacji. Zobacz [konfigurację dostawców analizy](../installation.md#hopper).
+Dogłębna analiza kodu natywnego używa jednego z nich. Statyczna analiza JavaScript i .NET działa bez silnika analizy natywnej. Konfigurator może zainstalować Hoppera po uzyskaniu zgody; Ghidra, IDA i Kuna korzystają z istniejących instalacji. Zobacz [konfigurację dostawców analizy](../getting-started/installation.md#hopper).
 
 </details>
 
 <details>
 <summary><strong>Czy muszę najpierw uruchomić Hoppera?</strong></summary>
 
-REA uruchamia Hoppera, gdy wymaga tego operacja. W systemie macOS przy pierwszym uruchomieniu okno dialogowe może poprosić o wybór trybu demonstracyjnego lub aktywację licencji. Zobacz [uruchamianie Hoppera i rozwiązywanie problemów](../installation.md#launcher-paths-and-troubleshooting).
+REA uruchamia Hoppera, gdy wymaga tego operacja. W systemie macOS przy pierwszym uruchomieniu okno dialogowe może poprosić o wybór trybu demonstracyjnego lub aktywację licencji. Zobacz [uruchamianie Hoppera i rozwiązywanie problemów](../getting-started/installation.md#launcher-paths-and-troubleshooting).
 
 </details>
 
 <details>
 <summary><strong>Co daje zainstalowanie umiejętności z skills.sh?</strong></summary>
 
-Umiejętność dostarcza agentowi instrukcje prowadzenia analizy. Użyj `npx rea-agents setup`, aby zarejestrować serwer MCP REA i zainstalować pasujące instrukcje, a następnie uruchom agenta ponownie. Zobacz [instalację samej umiejętności](../installation.md#skill-only-installation).
+Umiejętność dostarcza agentowi instrukcje prowadzenia analizy. Użyj `npx rea-agents setup`, aby zarejestrować serwer MCP REA i zainstalować pasujące instrukcje, a następnie uruchom agenta ponownie. Zobacz [instalację samej umiejętności](../getting-started/installation.md#skill-only-installation).
 
 </details>
 
@@ -261,20 +252,29 @@ Jeśli używasz agenta, wykonaj [odświeżenie konfiguracji](#zaktualizuj-rea) i
 
 Zacznij od [przewodników z przykładami](https://rea.tools/pl/guides/) na stronie internetowej. Dokładne opcje, wymagania wstępne i kontrakty wyników opisano tutaj:
 
-- [Instalacja i konfiguracja](../installation.md): rejestracja agentów, konfiguracja dostawców analizy, aktualizacje i odinstalowanie.
-- [Gotowość i rozwiązywanie problemów](../installation.md#check-readiness-for-your-task): diagnostyka jednego agenta lub silnika analizy.
-- [CLI i Evidence](../cli.md): polecenia, wybór dostawcy, migawki, import/eksport i kody zakończenia.
-- [Kontrakty MCP](../mcp-contracts.md) i [prompty dla agentów](../mcp-prompts.md): wyniki narzędzi, sesje i prowadzone analizy.
-- [Katalog narzędzi](../mcp-contracts.md#generated-catalog): generowany podczas kompilacji wykaz narzędzi, dostawców i poleceń CLI.
-- [Plan rozwoju](../roadmap.md): planowane prace i śledzenie funkcjonalności.
+- [Instalacja i konfiguracja](../getting-started/installation.md): rejestracja agentów, konfiguracja dostawców analizy, aktualizacje i odinstalowanie.
+- [Gotowość i rozwiązywanie problemów](../getting-started/installation.md#check-readiness-for-your-task): diagnostyka jednego agenta lub silnika analizy.
+- [CLI i Evidence](../getting-started/cli.md): polecenia, wybór dostawcy, migawki, import/eksport i kody zakończenia.
+- [Kontrakty MCP](../reference/mcp-contracts.md) i [prompty dla agentów](../getting-started/mcp-prompts.md): wyniki narzędzi, sesje i prowadzone analizy.
+- [Katalog narzędzi](../reference/mcp-contracts.md#generated-catalog): generowany podczas kompilacji wykaz narzędzi, dostawców i poleceń CLI.
 
 Zgłaszaj podatności zgodnie z [SECURITY.md](../../SECURITY.md).
 
+## Społeczność i pomoc
+
+- **Discord** — Zadawaj pytania i dziel się wynikami badań z ponad 50 000 osób, które z pasją zajmują się inżynierią wsteczną i tworzą własne projekty! [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — Obserwuj [@reatools](https://x.com/reatools), aby śledzić aktualności.
+- **Opinie i pomysły** — Brakuje Ci funkcji lub obsługi formatu pliku? Napisz do nas przez [GitHub](https://github.com/morluto/rea/issues) lub [Discord](https://discord.gg/GkcryMnJDM).
+
 ## Historia gwiazdek
 
-🎉 **250 000 gwiazdek na GitHubie — dziękujemy!**
+🎉 **400 000 gwiazdek na GitHubie — dziękujemy!**
 
 Dziękujemy wszystkim, którzy używają REA, zgłaszają błędy, proponują nowe funkcje, testują kompilacje i przesyłają poprawki.
+
+<a href="https://rea.tools/pl/contributors/">
+  <img src="../../website/public/contributors/avatars.png" alt="Współtwórcy REA" />
+</a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
@@ -283,6 +283,12 @@ Dziękujemy wszystkim, którzy używają REA, zgłaszają błędy, proponują no
     <img alt="Historia gwiazdek REA na GitHubie" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
   </picture>
 </a>
+
+## Współtworzenie
+
+Chętnie przyjmiemy Twoją pomoc w rozwoju REA! [Otwórz zgłoszenie](https://github.com/morluto/rea/issues), aby poinformować o błędzie lub zaproponować funkcję, albo [wyślij pull request](https://github.com/morluto/rea/pulls) z ulepszeniami kodu lub dokumentacji.
+
+Zobacz [CONTRIBUTING.md](../../CONTRIBUTING.md), aby poznać konfigurację środowiska programistycznego i kontrole, [testowanie](../development/testing.md), aby poznać ścieżki weryfikacji.
 
 ## Zastrzeżenie
 
@@ -293,12 +299,6 @@ REA służy zgodnym z prawem badaniom, edukacji, zapewnianiu interoperacyjności
 The project's position on illegal or unauthorized use covers all REA
 versions, distribution channels, and platforms; each copy retains its
 applicable licenses.
-
-## Współtworzenie
-
-Chętnie przyjmiemy Twoją pomoc w rozwoju REA! [Otwórz zgłoszenie](https://github.com/morluto/rea/issues), aby poinformować o błędzie lub zaproponować funkcję, albo [wyślij pull request](https://github.com/morluto/rea/pulls) z ulepszeniami kodu lub dokumentacji.
-
-Zobacz [CONTRIBUTING.md](../../CONTRIBUTING.md), aby poznać konfigurację środowiska programistycznego i kontrole, [testowanie](../testing.md), aby poznać ścieżki weryfikacji, oraz [mapę architektury](../architecture.mermaid), aby poznać strukturę projektu.
 
 ## Licencja
 

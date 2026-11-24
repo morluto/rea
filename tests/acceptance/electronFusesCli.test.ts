@@ -1,11 +1,14 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
-import { dirname, join, parse, sep } from "node:path";
+import { dirname, join, parse } from "node:path";
 import { createHash } from "node:crypto";
 import { expect } from "vitest";
 
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
+  elfHeaderFuseImage,
   OBSIDIAN_FUSE_BYTES,
+  peHeaderFuseImage,
   sentinelFreeMacho,
   thinFuseImage,
   universalFuseImage,
@@ -76,7 +79,7 @@ cliTest.skipIf(process.platform === "win32").for([
     expect(evidence.subject?.local_path).toBe(
       evidence.normalized_result.artifact.resolved_path,
     );
-    expect(evidence.subject?.digest.sha256).toBe(digest);
+    expect(fileIdentity(evidence.subject).sha256).toBe(digest);
     expect(evidence.normalized_result.runtime_implications).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -167,10 +170,10 @@ cliTest(
       "inspect_electron_fuses",
     ).outputSchema.parse(thinResult.json);
     expect(thinEvidence.subject?.local_path).toBe(join(root, "thin"));
-    expect(thinEvidence.subject?.digest.sha256).toBe(
+    expect(fileIdentity(thinEvidence.subject).sha256).toBe(
       createHash("sha256").update(thin.bytes).digest("hex"),
     );
-    expect(thinEvidence.subject?.architecture).toBe("arm64");
+    expect(fileIdentity(thinEvidence.subject).architecture).toBe("arm64");
     expect(
       thinEvidence.normalized_result.slices[0]?.sentinels[0],
     ).toMatchObject({
@@ -194,7 +197,7 @@ cliTest(
     expect(universalEvidence.normalized_result.artifact.format).toBe(
       "mach-o-universal",
     );
-    expect(universalEvidence.subject?.architecture).toBeNull();
+    expect(fileIdentity(universalEvidence.subject).architecture).toBeNull();
     expect(
       universalEvidence.normalized_result.slices.map((slice) => ({
         file_offset: slice.file_offset,
@@ -210,6 +213,58 @@ cliTest(
         sentinel_offset: universal.right.sentinelOffset,
       },
     ]);
+  },
+);
+
+cliTest.for([
+  { label: "ELF x86", format: "elf", machine: 3, architecture: "x86" },
+  { label: "ELF x86-64", format: "elf", machine: 62, architecture: "x86_64" },
+  { label: "ELF AArch64", format: "elf", machine: 183, architecture: "arm64" },
+  { label: "ELF unknown", format: "elf", machine: 0xfffe, architecture: null },
+  { label: "PE x86", format: "pe", machine: 0x14c, architecture: "x86" },
+  { label: "PE AMD64", format: "pe", machine: 0x8664, architecture: "x86_64" },
+  { label: "PE ARM64", format: "pe", machine: 0xaa64, architecture: "arm64" },
+  { label: "PE unknown", format: "pe", machine: 0x01f0, architecture: null },
+] as const)(
+  "reports the $label header architecture beside unchanged fuse wires",
+  async ({ format, machine, architecture }, { cli }) => {
+    const root = await createTestTempDirectory("rea-electron-fuses-cli-arch-");
+    const image =
+      format === "elf"
+        ? elfHeaderFuseImage(machine, OBSIDIAN_FUSE_BYTES, {
+            bits: architecture === "x86" ? 32 : 64,
+            byteOrder: "little",
+          })
+        : peHeaderFuseImage(machine, OBSIDIAN_FUSE_BYTES);
+    const path = join(root, "electron");
+    await writeFile(path, image.bytes);
+    const result = await cli.run({
+      arguments: ["inspect-electron-fuses", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_electron_fuses").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.artifact.format).toBe(format);
+    expect(fileIdentity(evidence.subject).architecture).toBe(architecture);
+    expect(evidence.normalized_result.slices).toMatchObject([
+      {
+        architecture,
+        sentinel_count: 1,
+        sentinels: [
+          {
+            sentinel_offset: image.sentinelOffset,
+            wire_version: 1,
+            complete: true,
+          },
+        ],
+      },
+    ]);
+    expect(
+      evidence.normalized_result.slices[0]?.sentinels[0]?.fuses.map(
+        (fuse) => fuse.raw_byte,
+      ),
+    ).toEqual(OBSIDIAN_FUSE_BYTES);
   },
 );
 
@@ -230,6 +285,9 @@ cliTest(
     expect(evidence.normalized_result.runtime_implications).toEqual([]);
     expect(evidence.limitations.join(" ")).toContain(
       "unknown, not that every fuse is disabled",
+    );
+    expect(evidence.limitations.join(" ")).toContain(
+      "fuse state for that slice is unknown, not disabled",
     );
   },
 );
@@ -253,19 +311,20 @@ cliTest(
     await writeFile(binary, image.bytes);
     await symlink("A", join(binary, "..", "..", "Current"));
     for (const { input, cwd, selected } of [
+      // The CLI drops `.` segments and keeps every `..` for the filesystem.
       { input: app, cwd: root, selected: app },
-      { input: `${app}/./`, cwd: root, selected: `${app}/./` },
-      { input: "Fixture.app/.", cwd: root, selected: `${app}/.` },
-      { input: ".", cwd: app, selected: `${app}${sep}.` },
+      { input: `${app}/./`, cwd: root, selected: `${app}/` },
+      { input: "Fixture.app/.", cwd: root, selected: `${app}/` },
+      { input: ".", cwd: app, selected: `${app}/` },
       {
         input: "..",
         cwd: join(app, "Contents"),
-        selected: `${app}${sep}Contents${sep}..`,
+        selected: `${app}/Contents/..`,
       },
       {
         input: ".././..",
         cwd: join(app, "Contents", "Frameworks"),
-        selected: `${app}${sep}Contents${sep}Frameworks${sep}.././..`,
+        selected: `${app}/Contents/Frameworks/../..`,
       },
     ]) {
       const result = await cli.run({
@@ -282,6 +341,7 @@ cliTest(
         format: "mach-o",
       });
       expect(evidence.subject?.local_path).toBe(binary);
+      expect(evidence.caller_input_path).toBe(input);
     }
 
     const empty = await cli.run({
@@ -289,9 +349,10 @@ cliTest(
       cwd: app,
     });
     expect(empty.exitCode, empty.stderr).toBe(1);
+    // Argv parsing refuses an empty path before the reader runs.
     expect(empty.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_electron_fuses" },
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: "path" })],
     });
   },
 );

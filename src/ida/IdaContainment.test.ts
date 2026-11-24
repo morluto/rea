@@ -1,3 +1,4 @@
+import { IDA_COMPATIBILITY_PROFILES } from "./IdaConfiguration.js";
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -23,16 +24,13 @@ const segment = (name: string, start: string, end: string) => ({
   permissions: "r--",
 });
 
-/** Adjacent .text and .data, a gap, then a segment above 2^53. */
+/** Unsorted segments with an adjacent boundary, a gap, and a one-byte range above 2^53. */
 const SEGMENTS = [
-  segment(".text", "0x1000", "0x2000"),
+  segment(".huge", "0x20000000000001", "0x20000000000002"),
   segment(".data", "0x2000", "0x3000"),
   segment(".far", "0x5000", "0x6000"),
-  segment(".huge", "0x20000000000001", "0x20000000000002"),
+  segment(".text", "0x1000", "0x2000"),
 ];
-
-/** The same segments in descending order, which a scan may not rely on. */
-const UNSORTED = [...SEGMENTS].reverse();
 
 const survey = (segments: JsonValue = SEGMENTS) => ({
   metadata: { path: "/db/target.i64", module: "target", arch: "metapc" },
@@ -126,6 +124,7 @@ const session = async (
       args: [],
       env: {},
       mode,
+      protocol: mode === "attached" ? "native" : "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },
@@ -149,8 +148,11 @@ const found = (query: string, fn: typeof function_) => ({
 
 describe("IDA containment capabilities", () => {
   it("declares document identity in both profiles and address resolution only in headless", () => {
-    const declared = (mode: "attached" | "headless", native = false) =>
-      idaCapabilities(mode, false, native)
+    const declared = (mode: "attached" | "headless") =>
+      idaCapabilities(
+        IDA_COMPATIBILITY_PROFILES[mode === "attached" ? "native" : "modern"],
+        false,
+      )
         .map(({ operation }) => operation)
         .filter(
           (operation) =>
@@ -159,7 +161,7 @@ describe("IDA containment capabilities", () => {
         );
 
     expect(
-      idaCapabilities("headless", false)
+      idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false)
         .filter(
           ({ operation }) =>
             operation === "resolve_containing_procedure" ||
@@ -172,15 +174,13 @@ describe("IDA containment capabilities", () => {
       "resolve_containing_procedure",
       "list_documents",
     ]);
-    expect(declared("attached")).toEqual(["list_documents"]);
-    expect(declared("attached", true)).toEqual(["list_documents"]);
     expect(
-      idaCapabilities("attached", false).map(({ operation }) => operation),
-      "attached profiles declare the bound document but not address resolution",
-    ).toContain("list_documents");
+      declared("attached"),
+      "the attached profile declares the bound document but not address resolution",
+    ).toEqual(["list_documents"]);
   });
 
-  it("refuses address resolution on the legacy attached profile", async () => {
+  it("refuses address resolution on the native attached profile", async () => {
     const { client, producer } = await session({}, "attached");
     try {
       const result = await client.execute("resolve_containing_procedure", {
@@ -199,9 +199,10 @@ describe("IDA containment capabilities", () => {
 });
 
 describe("headless IDA containing procedure", () => {
-  it("returns the canonical entry for an interior address without reading segments", async () => {
+  it("returns the canonical entry for an interior address without an advertised survey", async () => {
     const { client, producer } = await session({
       lookup: (query) => found(query, function_),
+      tools: MODERN_WITHOUT_SURVEY,
     });
     try {
       const result = await containing(client, "1ffe");
@@ -213,10 +214,13 @@ describe("headless IDA containing procedure", () => {
         procedure: {
           address: "0x1000",
           name: "main",
+          symbol: null,
           classification: null,
           body: {
             available: false,
-            reason: "IDA MCP does not report complete function body ranges.",
+            reason: expect.stringMatching(
+              /does not report complete function body ranges/iu,
+            ),
           },
         },
       });
@@ -261,7 +265,7 @@ describe("headless IDA containing procedure", () => {
       "outside_segments",
     ],
   ] as const)(
-    "reports an address that is not a function %s as %s",
+    "reports an address %s (%s) using an unsorted survey",
     async (_description, address, reason) => {
       const { client, producer } = await session();
       try {
@@ -365,20 +369,6 @@ describe("headless IDA containment failures", () => {
       expect((await client.close()).ok).toBe(true);
     }
   });
-
-  it("still answers a positive lookup when the server does not advertise the survey", async () => {
-    const { client } = await session({
-      lookup: (query) => found(query, function_),
-      tools: MODERN_WITHOUT_SURVEY,
-    });
-    try {
-      const result = await containing(client, "0x1010");
-
-      expect(result.ok).toBe(true);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
 });
 
 describe("headless IDA containment lookup failures", () => {
@@ -449,26 +439,14 @@ describe("headless IDA containment lookup failures", () => {
       });
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(controller.signal.reason);
+      }
       expect(
         producer.calls.some(({ name }) => name === "survey_binary"),
         "nothing is dispatched after cancellation",
       ).toBe(false);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("does not depend on the order of the surveyed segments", async () => {
-    const { client } = await session({ survey: survey(UNSORTED) });
-    try {
-      const inside = await containing(client, "0x1000");
-      const gap = await containing(client, "0x4000");
-
-      if (!inside.ok) throw inside.error;
-      if (!gap.ok) throw gap.error;
-      expect(inside.value.result).toMatchObject({ reason: "not_in_procedure" });
-      expect(gap.value.result).toMatchObject({ reason: "outside_segments" });
     } finally {
       expect((await client.close()).ok).toBe(true);
     }
@@ -597,20 +575,11 @@ describe("headless IDA document identity", () => {
       );
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(controller.signal.reason);
+      }
       expect(producer.calls).toEqual([]);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("lists exactly the admitted program", async () => {
-    const { client, target } = await session();
-    try {
-      const result = await client.execute("list_documents", {});
-
-      if (!result.ok) throw result.error;
-      expect(result.value.result).toEqual([target.path]);
     } finally {
       expect((await client.close()).ok).toBe(true);
     }

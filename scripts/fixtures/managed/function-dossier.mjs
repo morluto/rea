@@ -1,6 +1,9 @@
-import { functionDossierSchema } from "../../../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "#dist/domain/native/functionDossier.js";
 
-/** Validated synthetic native observations shared by managed verification lanes. */
+/**
+ * Validated synthetic native observations shared by managed verification lanes.
+ * @param {string} name
+ */
 export const functionDossier = (name) =>
   functionDossierSchema.parse({
     procedure: {

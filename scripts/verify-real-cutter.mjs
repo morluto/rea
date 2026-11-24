@@ -1,30 +1,24 @@
 #!/usr/bin/env node
 
-import assert from "node:assert/strict";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
 import {
-  access,
-  constants,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
+import assert from "node:assert/strict";
+import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { createHash, randomUUID } from "node:crypto";
+import { access, constants, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
-import { createServer } from "../dist/server/createServer.js";
 
-const execFileAsync = promisify(execFile);
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+
 const cli = resolve("scripts/rea.mjs");
 const runCli = async (...arguments_) => {
-  const { stdout } = await execFileAsync(
+  const { stdout } = await commands.exec(
     process.execPath,
     [cli, ...arguments_, "--format", "json"],
     {
-      encoding: "utf8",
+      timeout: 150_000,
       maxBuffer: 4 * 1024 * 1024,
       env: process.env,
     },
@@ -32,8 +26,6 @@ const runCli = async (...arguments_) => {
   return JSON.parse(stdout);
 };
 
-const projectRoot = await mkdtemp(join(tmpdir(), "rea-cutter-smoke-"));
-const projectPath = join(projectRoot, "smoke.rzdb");
 const rizinQuote = (value) =>
   `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 const unavailableAnalysis = {
@@ -44,17 +36,30 @@ const unavailableAnalysis = {
   },
 };
 const expectedPlatform = {
+  linux: "linux",
   Linux: "linux",
   macOS: "darwin",
   Windows: "win32",
 }[process.env.EXPECTED_PLATFORM];
-if (expectedPlatform !== undefined)
+if (process.env.EXPECTED_PLATFORM !== undefined) {
+  assert.ok(expectedPlatform, "Unrecognized Cutter runner platform.");
   assert.equal(
     process.platform,
     expectedPlatform,
     "Cutter runner did not match its declared platform.",
   );
-try {
+}
+const projectFixture = await VerifierFixture.open({
+  prefix: "rea-cutter-smoke-",
+  private: false,
+});
+const projectRoot = projectFixture.path;
+// The package command owner releases the fixture after its commands close.
+const commands = await createPackageVerifierCommands({
+  workspace: { path: projectRoot, close: () => projectFixture.release() },
+});
+const projectPath = join(projectRoot, "smoke.rzdb");
+await withVerifierCleanup(async () => {
   const discovery = await runCli("list-cutter-sessions");
   assert.equal(
     discovery.discovery_status,
@@ -87,7 +92,7 @@ try {
     session.session_id,
     String(session.document_generation),
     "ij",
-    "--json",
+    "--json-output",
   );
   assert.equal(inspection.predicate_type, "rea.cutter.command-observation");
   assert.ok(
@@ -96,6 +101,10 @@ try {
   );
   assert.equal(typeof inspection.raw_result.bin?.arch, "string");
 
+  const [{ Client, InMemoryTransport }, { createServer }] = await Promise.all([
+    import("@modelcontextprotocol/client"),
+    import("../dist/server/createServer.js"),
+  ]);
   const mcpServer = createServer(
     { kind: "fixed", analysis: unavailableAnalysis },
     {
@@ -108,7 +117,15 @@ try {
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  try {
+  const mcpOwner = {
+    close: () =>
+      closeVerifierResources([
+        () => mcpClient.close(),
+        () => mcpServer.close(),
+      ]),
+  };
+  commands.adopt(mcpOwner, "Cutter verifier MCP server");
+  await withVerifierCleanup(async () => {
     await mcpServer.connect(serverTransport);
     await mcpClient.connect(clientTransport);
     const mcpDiscovery = await mcpClient.callTool({
@@ -135,10 +152,7 @@ try {
       inspection.normalized_result,
       "Cutter CLI and MCP returned different analysis results.",
     );
-  } finally {
-    await mcpClient.close();
-    await mcpServer.close();
-  }
+  }, [() => mcpOwner.close()]);
 
   const annotation = `rea-smoke-${randomUUID()}`;
   await runCli(
@@ -209,6 +223,4 @@ try {
     mode: 0o600,
   });
   console.log(JSON.stringify(report));
-} finally {
-  await rm(projectRoot, { recursive: true, force: true });
-}
+}, [() => commands.close()]);

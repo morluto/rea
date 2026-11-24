@@ -5,7 +5,6 @@ from pathlib import Path
 import resource
 import gdb
 
-OUTPUT_BYTES = 64 * 1024 * 1024
 
 
 class ContextFailure(Exception):
@@ -20,8 +19,9 @@ def inspect(request):
     root = Path(os.environ["REA_CORE_CONTEXT_REQUEST"]).parent
     empty = root / "no-libraries"
     empty.mkdir(mode=0o700)
-    for command in ["set auto-load off", "set debuginfod enabled off", "set auto-solib-add off", "set history save off", "set pagination off",
-                    "set sysroot ./no-libraries", "set solib-search-path ./no-libraries"]:
+    for command in ["set auto-load off", "set debuginfod enabled off", "set auto-solib-add off", "set history save off", "set pagination off", "set target-file-system-kind unix",
+                    "set sysroot ./no-libraries", "set solib-search-path ./no-libraries",
+                    "set debug-file-directory ./no-libraries"]:
         gdb.execute(command, to_string=True)
     entry = request["gdbinit"]
     try:
@@ -38,7 +38,19 @@ def inspect(request):
     # relative filename in the owned cwd so no selected path becomes GDB syntax.
     if Path(request["snapshot_path"]) != root.parent / "object.snapshot":
         raise ContextFailure("decoder", "Core context request did not select the shared owned snapshot.")
+    # GDB 16 searches AT_EXECFN/NT_FILE outside sysroot when no executable BFD
+    # is selected. Occupy that slot with the already running, owned debugger;
+    # exec-file loads no symbols and never runs it. Clear it before any query.
+    # /proc/self/exe identifies this process, not the core's historical PID.
+    architecture = {"x86_64-little-endian": "i386:x86-64", "aarch64-little-endian": "aarch64"}.get(request["architecture"])
+    if architecture is None:
+        raise ContextFailure("unsupported", "Unsupported recorded core architecture.")
+    gdb.execute("exec-file /proc/self/exe", to_string=True)
+    # The placeholder must not select the core's architecture. Reuse the
+    # decoder's validated profile, including for cross-architecture GDB builds.
+    gdb.execute("set architecture " + architecture, to_string=True)
     gdb.execute("core-file ../object.snapshot", to_string=True)
+    gdb.execute("file", to_string=True)
     inferior = gdb.selected_inferior()
     if inferior.connection is None or inferior.connection.type != "core" or gdb.current_progspace().filename is not None:
         raise ContextFailure("decoder", "Requested core-only boundary was not established; no mapping query performed.")
@@ -66,6 +78,7 @@ def failure_exit(request_path, status, marker):
 def main():
     request_path = os.environ["REA_CORE_CONTEXT_REQUEST"]
     request = json.loads(Path(request_path).read_text(encoding="utf-8"))
+    output_bytes = request["producer_limits"]["output_bytes"]
     reserve = bytearray(1024 * 1024)
     try:
         reply = {"ok": True, "value": inspect(request)}
@@ -81,8 +94,8 @@ def main():
         reply = {"ok": False, "reason": "decoder", "message": type(error).__name__ + ": " + str(error)}
     try:
         encoded = json.dumps(reply, ensure_ascii=True, allow_nan=False).encode("utf-8")
-        if len(encoded) > OUTPUT_BYTES:
-            encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete debugger context exceeds64 MiB reply budget."}).encode("utf-8")
+        if len(encoded) > output_bytes:
+            encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete debugger context exceeds producer_limits.output_bytes=" + str(output_bytes) + "."}).encode("utf-8")
         descriptor = os.open(request["reply_path"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(encoded)

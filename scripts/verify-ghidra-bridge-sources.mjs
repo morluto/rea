@@ -6,8 +6,7 @@
 // reports the same javac diagnostics without launching Ghidra or selecting,
 // importing or executing a target.
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // The pinned Node toolchain strips types from these dependency-free owners;
@@ -20,6 +19,10 @@ import {
   ghidraReleaseAccepted,
   ghidraReleaseLine,
 } from "../src/ghidra/GhidraReleasePolicy.ts";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const args = process.argv.slice(2);
 if (
@@ -120,8 +123,12 @@ const jars = (
   .sort();
 if (jars.length === 0) fail(`No jars found under ${join(install, "Ghidra")}.`);
 
-const scratch = await mkdtemp(join(tmpdir(), "rea-ghidra-bridge-"));
-try {
+const scratchFixture = await VerifierFixture.open({
+  prefix: "rea-ghidra-bridge-",
+  private: false,
+});
+const scratch = scratchFixture.path;
+await withVerifierFixture(scratchFixture, async () => {
   // An argument file keeps the jar class path below Windows' command length.
   const argumentFile = join(scratch, "javac.args");
   await writeFile(
@@ -132,6 +139,8 @@ try {
       "UTF-8",
       "--release",
       String(SUPPORTED_GHIDRA_JAVA_MAJOR),
+      "-Xlint:deprecation,removal",
+      "-Werror",
       "-cp",
       jars.join(process.platform === "win32" ? ";" : ":"),
       "-d",
@@ -159,9 +168,7 @@ try {
       }),
     );
   }
-} finally {
-  await rm(scratch, { recursive: true, force: true });
-}
+});
 
 function run(command, args) {
   return spawnSync(command, args, {

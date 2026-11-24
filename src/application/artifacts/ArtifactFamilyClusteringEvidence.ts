@@ -2,8 +2,7 @@ import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
-import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/artifactInventorySummarySchema.js";
 import {
   EvidenceIntegrityError,
   EvidenceReferenceError,
@@ -16,11 +15,11 @@ const isArtifactInventoryEvidence = (evidence: Evidence): boolean =>
   evidence.operation === "inventory_artifact";
 
 /** Resolve one clustering member, including an artifact summary's exact retained owner or retained Evidence reference. */
-export const resolveArtifactFamilyClusteringEvidence = (
+export const resolveArtifactFamilyClusteringEvidence = async (
   memberInput: Evidence | string,
   evidenceById: EvidenceLookup | undefined,
   label?: string,
-): Result<Evidence, AnalysisError> => {
+): Promise<Result<Evidence, AnalysisError>> => {
   let evidence: Evidence;
   if (typeof memberInput === "string") {
     const resolvedInput = resolveEvidenceInput(
@@ -52,12 +51,10 @@ export const resolveArtifactFamilyClusteringEvidence = (
     const parent = evidenceById?.(parentId);
     if (parent === undefined)
       return err(
-        new EvidenceReferenceError(
-          parentId,
-          "missing",
-          "retained complete artifact inventory Evidence",
-          null,
-        ),
+        new EvidenceReferenceError(parentId, "missing", {
+          expected: "retained complete artifact inventory Evidence",
+          actual: null,
+        }),
       );
     if (!isArtifactInventoryEvidence(parent))
       return err(
@@ -69,6 +66,8 @@ export const resolveArtifactFamilyClusteringEvidence = (
           },
         ]),
       );
+    const { inspectAnalysisViewValidated } =
+      await import("../analysisView/AnalysisViewService.js");
     const reprojected = inspectAnalysisViewValidated(
       {
         source: { kind: "retained-evidence", evidence_id: parentId },

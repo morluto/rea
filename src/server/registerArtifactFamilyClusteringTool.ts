@@ -12,13 +12,14 @@ import {
   immutableEvidence,
   type Evidence,
 } from "../domain/evidence.js";
+import { unknownTarget } from "../domain/targetIdentity.js";
 import type { MemberObservation } from "../domain/artifactFamilyClusteringIndex.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { err, ok } from "../domain/result.js";
 import { resolveArtifactFamilyClusteringEvidence } from "../application/artifacts/ArtifactFamilyClusteringEvidence.js";
-import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { encodeToolResult } from "./toolResultEncoding.js";
-import { ARTIFACT_COMPARISON_PROVIDER } from "../application/InvestigationProviders.js";
+import { ARTIFACT_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
@@ -42,26 +43,30 @@ const buildClusteringEvidence = (
   memberRoster: MemberObservation[],
   extraLimitations: readonly string[] = [],
 ): Evidence =>
-  createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
-    predicateType: "rea.artifact-family-clustering",
-    operation: contract.name,
-    parameters: {
-      // The roster travels in caller order independent of family paging or a
-      // withheld index, so reopening this record always recovers which label
-      // named which member Evidence.
-      members: memberRoster,
-      shared_member_minimum: result.coverage.shared_member_minimum,
-      // The retained record states its own page, so reopening this Evidence
-      // never implies a wider family list than it holds.
-      offset: result.coverage.families_offset,
-      limit: result.coverage.families_limit,
+  createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    ARTIFACT_COMPARISON_PROVIDER,
+    {
+      predicateType: "rea.artifact-family-clustering",
+      operation: contract.name,
+      parameters: {
+        // The roster travels in caller order independent of family paging or a
+        // withheld index, so reopening this record always recovers which label
+        // named which member Evidence.
+        members: memberRoster,
+        shared_member_minimum: result.coverage.shared_member_minimum,
+        // The retained record states its own page, so reopening this Evidence
+        // never implies a wider family list than it holds.
+        offset: result.coverage.families_offset,
+        limit: result.coverage.families_limit,
+      },
+      result,
+      confidence: "derived",
+      authority: "analyst-inference",
+      limitations: [...result.limitations, ...extraLimitations],
+      evidenceLinks: memberRoster.map((member) => member.evidence_id),
     },
-    result: jsonValueSchema.parse(result),
-    confidence: "derived",
-    authority: "analyst-inference",
-    limitations: [...result.limitations, ...extraLimitations],
-    evidenceLinks: memberRoster.map((member) => member.evidence_id),
-  });
+  );
 
 /** Register Evidence-backed deterministic artifact family clustering. */
 export const registerArtifactFamilyClusteringTool = (
@@ -101,25 +106,34 @@ export const registerArtifactFamilyClusteringTool = (
             offset: input.offset,
             limit: input.limit,
           };
-          const computed = await runDerivedOperation(
-            context,
-            contract.name,
-            () => {
-              const members = input.members.map((member) => {
+          let members: { label: string; evidence: Evidence }[];
+          try {
+            members = await Promise.all(
+              input.members.map(async (member) => {
                 const supplied =
                   "evidence_id" in member
                     ? member.evidence_id
                     : typeof member.evidence === "string"
                       ? member.evidence
                       : immutableEvidence(member.evidence);
-                const resolved = resolveArtifactFamilyClusteringEvidence(
+                const resolved = await resolveArtifactFamilyClusteringEvidence(
                   supplied,
                   evidenceById,
                   member.label,
                 );
                 if (!resolved.ok) throw resolved.error;
                 return { label: member.label, evidence: resolved.value };
-              });
+              }),
+            );
+          } catch (cause: unknown) {
+            if (cause instanceof AnalysisError)
+              return server.delivery.toCallToolResult(err(cause), contract);
+            throw cause;
+          }
+          const computed = await runDerivedOperation(
+            context,
+            contract.name,
+            () => {
               const clustering = clusterArtifactFamilies(
                 members,
                 clusteringOptions,
@@ -164,18 +178,19 @@ export const registerArtifactFamilyClusteringTool = (
           );
           if (!computed.ok)
             return server.delivery.toCallToolResult(computed, contract);
-          const { members, evidence } = computed.value;
+          const { evidence } = computed.value;
           for (const member of members) {
             const recorded = session.recordEvidence(member.evidence);
             if (!recorded.ok)
               return server.delivery.toCallToolResult(recorded, contract);
           }
+          const recorded = session.recordEvidence(evidence);
           return server.delivery.toEvidenceToolResult(
             evidence,
             contract,
             // Unplaced members stay visible in the result itself; no residual
             // unknown is opened until a workflow needs one to be tracked.
-            recordDerivedEvidence(session, evidence, undefined),
+            recorded.ok ? ok(evidence) : recorded,
           );
         },
       ),

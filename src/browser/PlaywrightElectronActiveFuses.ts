@@ -1,3 +1,10 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { basename, dirname } from "node:path";
 
 import { AnalysisUnsupportedTargetError } from "../domain/analysisErrorCore.js";
@@ -9,8 +16,8 @@ const NODE_CLI_INSPECT_ARGUMENTS_FUSE_INDEX = 3;
 
 export interface InspectArgumentsPreflightOptions {
   readonly signal?: AbortSignal;
+  readonly resources?: ArtifactResourceScope;
   readonly readFuseImage?: typeof readElectronFuseImage;
-  readonly resolveFuseTarget?: typeof resolveElectronFuseTarget;
 }
 
 const appBundleDirectoryOf = (executablePath: string): string | null => {
@@ -40,15 +47,17 @@ export const assertNodeCliInspectArgumentsSupported = async (
   executablePath: string,
   options?: InspectArgumentsPreflightOptions,
 ): Promise<void> => {
-  options?.signal?.throwIfAborted();
+  assertArtifactReadActive(options?.signal);
   const reader = options?.readFuseImage ?? readElectronFuseImage;
-  const resolver = options?.resolveFuseTarget ?? resolveElectronFuseTarget;
   try {
     let targetPath = executablePath;
     const bundleDir = appBundleDirectoryOf(executablePath);
     if (bundleDir !== null) {
       try {
-        const resolved = await resolver(bundleDir, options?.signal);
+        const resolved = await resolveElectronFuseTarget(
+          bundleDir,
+          options?.signal,
+        );
         targetPath = resolved.file.path;
       } catch (cause: unknown) {
         if (options?.signal?.aborted) throw cause;
@@ -56,13 +65,17 @@ export const assertNodeCliInspectArgumentsSupported = async (
       }
     }
 
-    const image = await reader(
-      targetPath,
-      options?.signal !== undefined ? { signal: options.signal } : undefined,
-    );
+    const image = await reader(targetPath, {
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
+      ...(options?.resources === undefined
+        ? {}
+        : { resources: options.resources }),
+    });
     if (image.slices.length === 0) return;
 
-    const hostArchitecture = process.arch === "x64" ? "x86_64" : process.arch;
+    // The fuses that matter are the ones in the slice this host launches.
+    const { architecture } = HOST_PLATFORM;
+    const hostArchitecture = architecture === "x64" ? "x86_64" : architecture;
     const targetSlice =
       image.slices.find((slice) => slice.architecture === hostArchitecture) ??
       image.slices[0];
@@ -90,7 +103,12 @@ export const assertNodeCliInspectArgumentsSupported = async (
     }
   } catch (cause: unknown) {
     if (cause instanceof AnalysisUnsupportedTargetError) throw cause;
-    options?.signal?.throwIfAborted();
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      (cause.cleanup !== undefined || cause.reason === "cancelled")
+    )
+      throw electronFuseFailure(cause, executablePath, OPERATION);
+    assertArtifactReadActive(options?.signal);
     // Missing sentinels, format failures, or unreadable fuses leave inspection capability unknown; proceed with launch.
   }
 };

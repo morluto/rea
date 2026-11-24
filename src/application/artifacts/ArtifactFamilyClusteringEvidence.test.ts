@@ -2,9 +2,10 @@ import { expect, it } from "vitest";
 
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../contracts/artifactComparisonExample.js";
-import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/artifactInventorySummarySchema.js";
 import {
   createEvidence,
+  evidenceSubjectTarget,
   parseEvidence,
   type Evidence,
 } from "../../domain/evidence.js";
@@ -15,9 +16,9 @@ import {
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { resolveArtifactFamilyClusteringEvidence } from "./ArtifactFamilyClusteringEvidence.js";
 
-const artifactSummary = () => {
+const artifactSummary = async () => {
   const parent = ARTIFACT_COMPARISON_EXAMPLE.left;
-  const summary = inspectAnalysisView(
+  const summary = await inspectAnalysisView(
     {
       source: { kind: "inline", evidence: parent },
       view: { kind: "summary" },
@@ -36,14 +37,7 @@ const recreateSummary = (
   if (summary.subject === null)
     throw new Error("artifact summary fixture must identify its subject");
   return createEvidence(
-    {
-      path: summary.subject.local_path,
-      sha256: summary.subject.digest.sha256,
-      format: summary.subject.format,
-      ...(summary.subject.architecture === null
-        ? {}
-        : { architecture: summary.subject.architecture }),
-    },
+    evidenceSubjectTarget(summary.subject)!,
     summary.provider,
     {
       predicateType: summary.predicate_type,
@@ -67,9 +61,9 @@ const recreateSummary = (
   );
 };
 
-it("resolves a retained Evidence ID to the retained inventory", () => {
+it("resolves a retained Evidence ID to the retained inventory", async () => {
   const parent = ARTIFACT_COMPARISON_EXAMPLE.left;
-  const resolved = resolveArtifactFamilyClusteringEvidence(
+  const resolved = await resolveArtifactFamilyClusteringEvidence(
     parent.evidence_id,
     (id) => (id === parent.evidence_id ? parent : undefined),
     "member-a",
@@ -77,9 +71,9 @@ it("resolves a retained Evidence ID to the retained inventory", () => {
   expect(resolved).toEqual({ ok: true, value: parent });
 });
 
-it("reports a missing retained Evidence ID", () => {
+it("reports a missing retained Evidence ID", async () => {
   const parent = ARTIFACT_COMPARISON_EXAMPLE.left;
-  const resolved = resolveArtifactFamilyClusteringEvidence(
+  const resolved = await resolveArtifactFamilyClusteringEvidence(
     parent.evidence_id,
     undefined,
     "member-a",
@@ -91,10 +85,10 @@ it("reports a missing retained Evidence ID", () => {
   }
 });
 
-it("reports an identity mismatch for a retained Evidence ID", () => {
+it("reports an identity mismatch for a retained Evidence ID", async () => {
   const parent = ARTIFACT_COMPARISON_EXAMPLE.left;
   const otherParent = ARTIFACT_COMPARISON_EXAMPLE.right;
-  const resolved = resolveArtifactFamilyClusteringEvidence(
+  const resolved = await resolveArtifactFamilyClusteringEvidence(
     parent.evidence_id,
     () => otherParent,
     "member-a",
@@ -106,14 +100,10 @@ it("reports an identity mismatch for a retained Evidence ID", () => {
   }
 });
 
-it("refuses a retained Evidence ID whose operation is not an artifact inventory", () => {
+it("refuses a retained Evidence ID whose operation is not an artifact inventory", async () => {
   const parent = ARTIFACT_COMPARISON_EXAMPLE.left;
   const nonArtifact = createEvidence(
-    {
-      path: parent.subject!.local_path,
-      sha256: parent.subject!.digest.sha256,
-      format: parent.subject!.format,
-    },
+    evidenceSubjectTarget(parent.subject)!,
     parent.provider,
     {
       operation: "disassemble_function",
@@ -122,7 +112,7 @@ it("refuses a retained Evidence ID whose operation is not an artifact inventory"
       limitations: [],
     },
   );
-  const resolved = resolveArtifactFamilyClusteringEvidence(
+  const resolved = await resolveArtifactFamilyClusteringEvidence(
     nonArtifact.evidence_id,
     (id) => (id === nonArtifact.evidence_id ? nonArtifact : undefined),
     "member-non-artifact",
@@ -133,9 +123,9 @@ it("refuses a retained Evidence ID whose operation is not an artifact inventory"
   }
 });
 
-it("resolves an artifact summary to its exact retained parent inventory", () => {
-  const { parent, summary } = artifactSummary();
-  const resolved = resolveArtifactFamilyClusteringEvidence(
+it("resolves an artifact summary to its exact retained parent inventory", async () => {
+  const { parent, summary } = await artifactSummary();
+  const resolved = await resolveArtifactFamilyClusteringEvidence(
     summary,
     (evidenceId) => (evidenceId === parent.evidence_id ? parent : undefined),
     "member-summary",
@@ -143,9 +133,12 @@ it("resolves an artifact summary to its exact retained parent inventory", () => 
   expect(resolved).toEqual({ ok: true, value: parent });
 });
 
-it("reports a missing retained parent instead of treating summary facts as inventory", () => {
-  const { summary } = artifactSummary();
-  const resolved = resolveArtifactFamilyClusteringEvidence(summary, undefined);
+it("reports a missing retained parent instead of treating summary facts as inventory", async () => {
+  const { summary } = await artifactSummary();
+  const resolved = await resolveArtifactFamilyClusteringEvidence(
+    summary,
+    undefined,
+  );
   expect(resolved.ok).toBe(false);
   if (!resolved.ok) {
     expect(resolved.error).toBeInstanceOf(EvidenceReferenceError);
@@ -153,10 +146,10 @@ it("reports a missing retained parent instead of treating summary facts as inven
   }
 });
 
-it("uses retained Evidence resolution to reject a mismatched parent identity", () => {
-  const { summary } = artifactSummary();
+it("uses retained Evidence resolution to reject a mismatched parent identity", async () => {
+  const { summary } = await artifactSummary();
   const otherParent = ARTIFACT_COMPARISON_EXAMPLE.right;
-  const resolved = resolveArtifactFamilyClusteringEvidence(
+  const resolved = await resolveArtifactFamilyClusteringEvidence(
     summary,
     () => otherParent,
   );
@@ -167,8 +160,8 @@ it("uses retained Evidence resolution to reject a mismatched parent identity", (
   }
 });
 
-it("rejects summary facts that do not reproject from the complete parent", () => {
-  const { parent, summary } = artifactSummary();
+it("rejects summary facts that do not reproject from the complete parent", async () => {
+  const { parent, summary } = await artifactSummary();
   const summaryResult = artifactInventorySummaryViewResultSchema.parse(
     summary.normalized_result,
   );
@@ -183,7 +176,7 @@ it("rejects summary facts that do not reproject from the complete parent", () =>
     },
   };
   const forged = recreateSummary(summary, normalizedResult);
-  const resolved = resolveArtifactFamilyClusteringEvidence(
+  const resolved = await resolveArtifactFamilyClusteringEvidence(
     forged,
     (evidenceId) => (evidenceId === parent.evidence_id ? parent : undefined),
   );
@@ -192,8 +185,8 @@ it("rejects summary facts that do not reproject from the complete parent", () =>
     expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
 });
 
-it("accepts display-only subject changes excluded from Evidence identity", () => {
-  const { parent, summary } = artifactSummary();
+it("accepts display-only subject changes excluded from Evidence identity", async () => {
+  const { parent, summary } = await artifactSummary();
   if (summary.subject === null)
     throw new Error("artifact summary fixture must identify its subject");
   const displayOnly = parseEvidence({
@@ -204,7 +197,7 @@ it("accepts display-only subject changes excluded from Evidence identity", () =>
       local_path: "/display-only/renamed.app",
     },
   });
-  const resolved = resolveArtifactFamilyClusteringEvidence(
+  const resolved = await resolveArtifactFamilyClusteringEvidence(
     displayOnly,
     (evidenceId) => (evidenceId === parent.evidence_id ? parent : undefined),
   );

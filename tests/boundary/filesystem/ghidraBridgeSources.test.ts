@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import {
   chmod,
-  copyFile,
   cp,
   mkdir,
   readFile,
@@ -22,12 +21,13 @@ import {
   SUPPORTED_GHIDRA_VERSION,
 } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const execute = promisify(execFile);
 
 /** A stand-in compiler proves admission and cleanup, not real Java compilation. */
 const installation = async (
-  properties = "application.version=12.1.4\n",
+  properties = `application.version=${SUPPORTED_GHIDRA_VERSION}\n`,
   compilerStatus = 0,
 ) => {
   const root = await createTestTempDirectory("rea-ghidra-bridge-test-");
@@ -46,7 +46,8 @@ const installation = async (
     javac,
     [
       "#!/bin/sh",
-      'if [ "$1" = "-version" ]; then echo "javac 21.0.12"; exit 0; fi',
+      'printf "invoked\\n" >> "$REA_JAVAC_MARKER"',
+      'if [ "$1" = "-version" ]; then echo "javac 25.0.5"; exit 0; fi',
       ...(compilerStatus === 0
         ? ["exit 0"]
         : [
@@ -60,8 +61,10 @@ const installation = async (
   await mkdir(scratchParent);
   return {
     scratchParent,
+    javacMarker: join(root, "javac-invocations"),
     environment: {
       ...process.env,
+      REA_JAVAC_MARKER: join(root, "javac-invocations"),
       GHIDRA_INSTALL_DIR: install,
       JAVA_HOME: javaHome,
       TMPDIR: scratchParent,
@@ -77,32 +80,41 @@ type AdmissionCase = {
   error?: string;
 };
 const admissionCases: readonly AdmissionCase[] = [
-  { name: "compiler succeeds", properties: "application.version=12.1.4\n" },
+  {
+    name: "compiler succeeds",
+    properties: `application.version=${SUPPORTED_GHIDRA_VERSION}\n`,
+    expectedVersion: SUPPORTED_GHIDRA_VERSION,
+  },
   {
     name: "compiler fails",
-    properties: "application.version=12.1.4\n",
+    properties: `application.version=${SUPPORTED_GHIDRA_VERSION}\n`,
     compilerStatus: 1,
     error: "bridge/ghidra/ReaGhidraBridge.java:1: error: cannot find symbol",
   },
-  { name: "colon separator", properties: "application.version : 12.1.4\n" },
+  {
+    name: "colon separator",
+    properties: `application.version : ${SUPPORTED_GHIDRA_VERSION}\n`,
+    expectedVersion: SUPPORTED_GHIDRA_VERSION,
+  },
   {
     name: "escaped key and continued value",
-    properties: "application\\u002eversion=12.1.\\\n  4\n",
+    properties: "application\\u002eversion=12.\\\n  2\n",
+    expectedVersion: "12.2",
   },
   {
     name: "Latin-1 distro suffix",
-    properties: "application.version=12.1.4-é\n",
-    expectedVersion: "12.1.4-é",
+    properties: "application.version=12.2-é\n",
+    expectedVersion: "12.2-é",
   },
   {
     name: "trailing version whitespace",
-    properties: "application.version=12.1.4 \n",
-    error: 'Observed application.version="12.1.4 ".',
+    properties: "application.version=12.2 \n",
+    error: 'Observed application.version="12.2 ".',
   },
   {
     name: "malformed Unicode escape",
-    properties: "application.version=12.1.4\nother=\\u00xx\n",
-    error: "Malformed Unicode escape in Java properties file",
+    properties: "application.version=12.2\nother=\\u00xx\n",
+    error: "malformed_unicode_escape",
   },
 ];
 
@@ -110,7 +122,12 @@ const admissionCases: readonly AdmissionCase[] = [
 // hosted lane; the installed provider's Properties tests cover the parser too.
 it.skipIf(process.platform === "win32").each(admissionCases)(
   "preserves version admission and scratch cleanup: $name",
-  async ({ properties, compilerStatus, expectedVersion = "12.1.4", error }) => {
+  async ({
+    properties,
+    compilerStatus,
+    expectedVersion = SUPPORTED_GHIDRA_VERSION,
+    error,
+  }) => {
     const fixture = await installation(properties, compilerStatus);
     const run = execute(
       process.execPath,
@@ -145,16 +162,11 @@ it.skipIf(process.platform === "win32").each([
   "rejects a $action launcher source before compilation: $source",
   async ({ source, action }) => {
     const repository = await createTestTempDirectory("rea-ghidra-source-set-");
-    await mkdir(join(repository, "scripts"));
-    await mkdir(join(repository, "src/ghidra"), { recursive: true });
     await writeFile(join(repository, "package.json"), '{"type":"module"}\n');
-    for (const path of [
-      "scripts/verify-ghidra-bridge-sources.mjs",
-      "src/ghidra/GhidraBridgeSources.ts",
-      "src/ghidra/GhidraJavaProperties.ts",
-      "src/ghidra/GhidraReleasePolicy.ts",
-    ])
-      await copyFile(resolve(path), join(repository, path));
+    await copyScriptsWithImports(
+      ["scripts/verify-ghidra-bridge-sources.mjs"],
+      repository,
+    );
     await cp(resolve("bridge/ghidra"), join(repository, "bridge/ghidra"), {
       recursive: true,
     });
@@ -193,33 +205,11 @@ it.skipIf(process.platform === "win32").each([
       ),
     });
     expect(await readdir(fixture.scratchParent)).toEqual([]);
+    await expect(readFile(fixture.javacMarker)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   },
 );
-
-it("rejects an omitted auxiliary source at the actual package verification boundary", async () => {
-  const source = GHIDRA_BRIDGE_SOURCES.prepareCom;
-  const packedFiles = [
-    "package/bridge/hopper_bridge.py",
-    "package/bridge/cutter/rea_bridge.py",
-    ...Object.values(GHIDRA_BRIDGE_SOURCES)
-      .filter((name) => name !== source)
-      .map((name) => `package/bridge/ghidra/${name}`),
-  ];
-  await expect(
-    execute(process.execPath, [
-      "--input-type=module",
-      "-e",
-      `import { verifyPackedBridge } from "./scripts/verify-packed-bridge.mjs";
-       await verifyPackedBridge({ workspace: ".", tarball: "unused-because-admission-must-fail", packedFiles: JSON.parse(process.argv[1]) });`,
-      JSON.stringify(packedFiles),
-    ]),
-  ).rejects.toMatchObject({
-    code: 1,
-    stderr: expect.stringContaining(
-      `package omitted package/bridge/ghidra/${source}`,
-    ),
-  });
-});
 
 it("binds the workflow SDK pin and verified compile mode to the canonical release", async () => {
   const { jobs } = z

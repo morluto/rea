@@ -1,14 +1,36 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
+import {
+  JADX_RELEASE,
+  jadxBridgeIdentity,
+} from "../../../src/android/JadxRelease.ts";
+
+const packagedBridgeVersion = () => {
+  const identity = jadxBridgeIdentity();
+  if (!identity.ok) throw new Error(identity.error);
+  return identity.value.version;
+};
 
 // An actual child MCP server exercising the production stdio/process seam.
 // It is a protocol fixture, not evidence of JADX decompiler support.
 const mode = process.env.REA_FAKE_JADX_MODE ?? "normal";
+// A worker heap too small for the bridge stops the JVM before the handshake,
+// so the retained stderr is the only heap evidence.
+if (mode === "start-heap-exhausted") {
+  process.stderr.write(
+    'Exception in thread "main" java.lang.OutOfMemoryError: Java heap space\n',
+  );
+  process.exit(1);
+}
 const server = new McpServer({
   name: mode === "empty-server-identity" ? "" : "rea-jadx-bridge",
   version:
-    mode === "empty-server-identity" ? "" : mode === "version" ? "99.0.0" : "1",
+    mode === "empty-server-identity"
+      ? ""
+      : mode === "version"
+        ? "99.0.0"
+        : packagedBridgeVersion(),
 });
 const requestedCount = Number.parseInt(
   process.env.REA_FAKE_JADX_CLASS_COUNT ?? "",
@@ -31,6 +53,7 @@ const classes = [
 const methods = [
   {
     name: "onCreate",
+    raw_name: "onCreate",
     signature: "onCreate(Bundle): void",
     dex_descriptor: "(Landroid/os/Bundle;)V",
     is_constructor: false,
@@ -38,6 +61,7 @@ const methods = [
   },
   {
     name: "choose",
+    raw_name: "choose",
     signature: "choose(String): void",
     dex_descriptor: "(Ljava/lang/String;)V",
     is_constructor: false,
@@ -45,6 +69,7 @@ const methods = [
   },
   {
     name: "choose",
+    raw_name: "choose",
     signature: "choose(int): void",
     dex_descriptor: "(I)V",
     is_constructor: false,
@@ -57,8 +82,12 @@ const register = (name, handler) =>
   server.registerTool(name, { inputSchema: z.looseObject({}) }, handler);
 register("rea_jvm_status", () =>
   json({
-    engine_reported_version: mode === "engine-version" ? "0.7.0" : "0.7.1",
-    max_heap_bytes: 8 * 1024 * 1024 * 1024,
+    engine_reported_version:
+      mode === "engine-version" ? "0.7.0" : JADX_RELEASE.version,
+    max_heap_bytes:
+      mode === "heap-failure" || mode === "other-memory-failure"
+        ? 67108864
+        : 8 * 1024 * 1024 * 1024,
     available_processors: 4,
     java_version: "21-fixture",
     metadata_scope: "parsed_members",
@@ -66,6 +95,22 @@ register("rea_jvm_status", () =>
 );
 register("load_apk", async ({ path }) => {
   if (mode === "stall") await new Promise(() => {});
+  if (mode === "heap-failure" || mode === "other-memory-failure")
+    return {
+      ...json({
+        kind: "jvm-memory-failure",
+        memory_area: mode === "heap-failure" ? "heap" : "unknown",
+        exception_type: "java.lang.OutOfMemoryError",
+        message: mode === "heap-failure" ? "Java heap space" : "Metaspace",
+        max_heap_bytes: 67108864,
+      }),
+      isError: true,
+    };
+  if (mode === "heap-decoy")
+    return {
+      ...text("load failed: cannot read /inputs/Java heap space.apk"),
+      isError: true,
+    };
   return json({
     state: "LOADED",
     apk_path: mode === "wrong-apk" ? "/different.apk" : path,
@@ -73,6 +118,49 @@ register("load_apk", async ({ path }) => {
     resource_count: 1,
     threads: 1,
     resources: "full",
+  });
+});
+register("rea_native_declarations", ({ path }) => {
+  if (typeof path !== "string")
+    return { ...text("path must be a string"), isError: true };
+  const methods = [
+    {
+      source_index: 0,
+      class_name: "fixture.Target",
+      method_name: "readNative",
+      descriptor: "(I)I",
+      dex_entry: "classes.dex",
+      dex_entry_index: 0,
+      class_index: 0,
+      method_index: 1,
+    },
+  ];
+  if (mode === "duplicate-native-declaration")
+    methods.push({
+      ...methods[0],
+      source_index: 1,
+      dex_entry: "classes2.dex",
+      dex_entry_index: 1,
+    });
+  return json({
+    scope: "apk-root-dex-declarations",
+    methods,
+    coverage: {
+      status: mode === "partial-native-inventory" ? "partial" : "complete",
+      dex_entries: mode === "partial-native-inventory" ? 2 : methods.length,
+      examined_dex_entries: methods.length,
+      examined_classes: methods.length,
+      examined_methods: methods.length,
+    },
+    unknowns:
+      mode === "partial-native-inventory"
+        ? ["Controlled unreadable second DEX member"]
+        : [],
+    manifest_splits: {
+      status: "observed",
+      required_split_types: [],
+      split_required: false,
+    },
   });
 });
 register("get_app_info", () => {
@@ -96,17 +184,45 @@ register("get_android_manifest", () => {
   if (mode === "large-manifest") return text("x".repeat(1024 * 1024));
   return text('<manifest package="fixture"/>');
 });
-register("list_classes", ({ offset, limit }) =>
-  json({
-    total: classes.length,
+register("list_classes", ({ offset, limit, query = "" }) => {
+  const matching = [];
+  let nextOffset = offset;
+  while (nextOffset < classes.length && matching.length < limit) {
+    const name = classes[nextOffset++];
+    if (name.includes(query)) matching.push(name);
+  }
+  const page = {
+    scope: "top_level",
+    total_classes: classes.length,
+    next_offset: nextOffset,
     offset,
     limit,
-    items: mode === "empty-page" ? [] : classes.slice(offset, offset + limit),
-  }),
-);
+    items: mode === "empty-page" ? [] : matching,
+    ...(mode === "search-audit-metadata"
+      ? {
+          fixture_metadata: {
+            page_offset: offset,
+            retained: "unknown page field",
+          },
+        }
+      : {}),
+  };
+  const response = json(page);
+  if (mode !== "search-audit-metadata") return response;
+  return {
+    ...response,
+    _meta: { fixture_envelope_offset: offset },
+    content: response.content.map((entry) => ({
+      ...entry,
+      annotations: { audience: ["user"], priority: 0.5 },
+      _meta: { fixture_content_offset: offset },
+    })),
+  };
+});
 register("get_class_summary", () =>
   json({
     full_name: mode === "wrong-class" ? "fixture.Other" : "fixture.Target",
+    raw_name: mode === "wrong-class" ? "fixture.Other" : "fixture.Target",
     name: "Target",
     method_count: mode === "summary-error" ? -1 : methods.length,
     field_count: 0,
@@ -114,33 +230,58 @@ register("get_class_summary", () =>
     methods: mode === "summary-error" ? [] : methods,
     fields: [],
     inner_classes: [],
+    inner_class_raw_names: [],
     ...(mode === "summary-error" ? { error: "summary timed out" } : {}),
   }),
 );
-register("get_method_body", ({ method_name, overload_index }) =>
-  json({
+register("get_method_body", ({ method_name, overload_index }) => {
+  if (mode === "body-error")
+    return {
+      ...text("// ERROR: decompile timed out or failed"),
+      isError: true,
+    };
+  const selected = methods.filter((method) => method.name === method_name)[
+    overload_index
+  ];
+  const identity = {
     class_name: "fixture.Target",
     method_name,
     full_name: `fixture.Target.${method_name}`,
     overload_index:
       mode === "wrong-method" ? overload_index + 1 : overload_index,
     overload_count: method_name === "choose" ? 2 : 1,
-    mode: mode === "smali" || mode === "overloaded-smali" ? "smali" : "java",
-    fell_back: mode === "smali" || mode === "overloaded-smali",
+    dex_descriptor:
+      mode === "wrong-descriptor" || mode === "unavailable-wrong-descriptor"
+        ? "()V"
+        : selected.dex_descriptor,
+  };
+  if (mode === "unavailable-body" || mode === "unavailable-wrong-descriptor")
+    return json({
+      ...identity,
+      mode: "unavailable",
+      body_unavailable_reason: `Disassembly could not establish one selected method: ${selected.raw_name}${selected.dex_descriptor}`,
+    });
+  return json({
+    ...identity,
+    mode:
+      mode === "smali" || mode === "selected-overload-smali" ? "smali" : "java",
+    fell_back: mode === "smali" || mode === "selected-overload-smali",
     markers:
-      mode === "smali" || mode === "overloaded-smali"
+      mode === "smali" || mode === "selected-overload-smali"
         ? ["Method not decompiled"]
-        : [],
+        : mode === "native-method"
+          ? ["native_method"]
+          : [],
     body:
-      mode === "no-body"
-        ? "// method exists but has no decompiled body (native/abstract)"
-        : mode === "body-error"
-          ? "// ERROR: decompile timed out or failed"
+      mode === "smali" || mode === "selected-overload-smali"
+        ? `.method public ${method_name}${selected.dex_descriptor}\n    .registers 2\n    return-void\n.end method`
+        : mode === "native-method"
+          ? ""
           : mode === "truncated"
             ? "void onCreate(){}\n\n... [truncated: exceeds 18 bytes, total 100 bytes]"
             : `void ${method_name}() { /* overload ${overload_index} */ }`,
-  }),
-);
+  });
+});
 for (const name of ["get_xrefs_to_class", "get_xrefs_to_method"])
   register(name, ({ class_name, method_name, overload_index }) =>
     json({

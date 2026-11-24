@@ -1,6 +1,4 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
@@ -30,13 +28,30 @@ export type WebResourceReconciliation =
   | { readonly status: "ambiguous"; readonly candidate_resource_keys: string[] }
   | { readonly status: "unmatched"; readonly reason: "no_exact_sanitized_url" };
 
+/**
+ * Comparison identity excludes optional size evidence while preserving the
+ * source inventory key.
+ */
+export const webResourceComparisonIdentity = (
+  resource: WebInventoryResourceInput,
+): string =>
+  `resg_${digestCanonicalValue(
+    {
+      url: resource.url,
+      origin: resource.origin,
+      type: resource.type,
+      mime_type: resource.mime_type,
+    },
+    "Web resource comparison identity",
+  )}`;
+
 /** Assign deterministic identities to a bounded resource inventory. */
 export const stableWebResources = (
   resources: readonly WebInventoryResourceInput[],
 ): StableWebResource[] => {
   const keyed = resources.map((resource) => ({
     ...resource,
-    resource_key: `res_${digest(resource)}`,
+    resource_key: `res_${digestCanonicalValue(resource, "Web inventory")}`,
   }));
   return [
     ...new Map(
@@ -49,74 +64,61 @@ export const stableWebResources = (
   );
 };
 
-/** Reconcile one script with resource-tree observations without fuzzy matching. */
-export const reconcileWebScript = (
-  script: WebInventoryScriptInput,
-  resources: readonly StableWebResource[],
-): WebResourceReconciliation => {
-  const candidates = resources.filter(
-    (resource) => resource.url === script.url,
-  );
-  if (candidates.length === 1)
-    return { status: "exact", resource_key: candidates[0]?.resource_key ?? "" };
-  if (candidates.length > 1)
-    return {
-      status: "ambiguous",
-      candidate_resource_keys: uniqueResourceKeys(candidates),
-    };
-  return { status: "unmatched", reason: "no_exact_sanitized_url" };
-};
-
-/** Prefer exact transient raw-URL matching, then report sanitized ambiguity. */
-export const reconcileCapturedWebScript = (
-  script: WebInventoryScriptInput & { readonly rawUrl: string },
+/** Index one capture's observations without merging duplicate raw URLs. */
+export const createCapturedWebScriptReconciler = (
   rawResources: readonly (WebInventoryResourceInput & {
     readonly rawUrl: string;
   })[],
   resources: readonly StableWebResource[],
-): WebResourceReconciliation => {
-  const exact = rawResources.filter(
-    (resource) => resource.rawUrl === script.rawUrl,
-  );
-  if (exact.length === 1) {
-    const resource = exact[0];
-    if (resource !== undefined) {
+): ((
+  script: WebInventoryScriptInput & {
+    readonly rawUrl: string;
+  },
+) => WebResourceReconciliation) => {
+  // null means multiple observations, even when their public facts deduplicate.
+  const rawByUrl = new Map<string, (typeof rawResources)[number] | null>();
+  for (const resource of rawResources)
+    rawByUrl.set(
+      resource.rawUrl,
+      rawByUrl.has(resource.rawUrl) ? null : resource,
+    );
+  const keysByUrl = new Map<string, string[]>();
+  for (const resource of resources) {
+    const keys = keysByUrl.get(resource.url);
+    if (keys === undefined)
+      keysByUrl.set(resource.url, [resource.resource_key]);
+    else keys.push(resource.resource_key);
+  }
+  for (const [url, keys] of keysByUrl)
+    if (keys.length > 1) keysByUrl.set(url, [...new Set(keys)].sort());
+  return (script) => {
+    const resource = rawByUrl.get(script.rawUrl);
+    if (resource !== undefined && resource !== null) {
       const { rawUrl: _rawUrl, ...publicResource } = resource;
       const stable = stableWebResources([publicResource])[0];
       if (stable !== undefined)
         return { status: "exact", resource_key: stable.resource_key };
     }
-  }
-  const candidates = resources.filter(
-    (resource) => resource.url === script.url,
-  );
-  if (candidates.length > 0)
-    return {
-      status: "ambiguous",
-      candidate_resource_keys: uniqueResourceKeys(candidates),
-    };
-  return { status: "unmatched", reason: "no_exact_sanitized_url" };
+    const candidates = keysByUrl.get(script.url);
+    if (candidates !== undefined)
+      return {
+        status: "ambiguous",
+        candidate_resource_keys: [...candidates],
+      };
+    return { status: "unmatched", reason: "no_exact_sanitized_url" };
+  };
 };
 
 /** Stable script identity excludes target IDs, CDP script IDs, and timestamps. */
 export const stableWebScriptKey = (script: WebInventoryScriptInput): string =>
-  `scr_${digest({
-    url: script.url,
-    cdp_hash: script.cdp_hash,
-    length: script.length,
-    is_module: script.is_module,
-    language: script.language,
-    source_map_url: script.source_map_url,
-  })}`;
-
-const uniqueResourceKeys = (
-  resources: readonly StableWebResource[],
-): string[] =>
-  [...new Set(resources.map(({ resource_key }) => resource_key))].sort();
-
-const digest = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Web inventory value is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
-};
+  `scr_${digestCanonicalValue(
+    {
+      url: script.url,
+      cdp_hash: script.cdp_hash,
+      length: script.length,
+      is_module: script.is_module,
+      language: script.language,
+      source_map_url: script.source_map_url,
+    },
+    "Web inventory",
+  )}`;

@@ -1,12 +1,10 @@
-import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
-
-/** An owner closing a provider is distinct from a caller cancelling its wait. */
-export const STARTUP_OWNER_CLOSED = Symbol("provider startup owner closed");
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { AbortedWait, waitForAbortable } from "./AbortablePromise.js";
 
 /** The final departing caller retains the producer's complete cleanup result. */
 export type SharedStartupWait<Value> =
   | { readonly status: "completed"; readonly value: Value }
-  | { readonly status: "cancelled" }
+  | { readonly status: "cancelled"; readonly reason: unknown }
   | { readonly status: "stopped"; readonly value: Value };
 
 type StartupSettlement<Value> =
@@ -18,11 +16,20 @@ type StartupSettlement<Value> =
 export class SharedStartupAttempt<Value> {
   readonly #controller = new AbortController();
   readonly promise: Promise<Value>;
+  readonly #signal: AbortSignal;
   #waiters = 0;
   #settlement: StartupSettlement<Value> = { status: "pending" };
 
-  constructor(start: (signal: AbortSignal) => Promise<Value>) {
-    this.promise = start(this.#controller.signal);
+  constructor(
+    start: (signal: AbortSignal) => Promise<Value>,
+    /** An owning operation's cancellation is independent of individual waiters. */
+    ownerSignal?: AbortSignal,
+  ) {
+    this.#signal =
+      ownerSignal === undefined
+        ? this.#controller.signal
+        : AbortSignal.any([ownerSignal, this.#controller.signal]);
+    this.promise = start(this.#signal);
     void this.promise.then(
       (value) => {
         this.#settlement = { status: "completed", value };
@@ -35,7 +42,7 @@ export class SharedStartupAttempt<Value> {
 
   /** Signal consumed by the startup producer, never by an individual waiter. */
   get signal(): AbortSignal {
-    return this.#controller.signal;
+    return this.#signal;
   }
 
   /** Completion includes the producer's final cleanup, not just its abort. */
@@ -48,9 +55,13 @@ export class SharedStartupAttempt<Value> {
     return this.#settlement;
   }
 
-  /** Stop startup when its owning provider closes, regardless of active waits. */
+  /**
+   * Stop startup when its owning provider closes, regardless of active waits.
+   * The reason is distinct from a caller's cancelling its wait.
+   */
   close(): void {
-    if (!this.settled) this.#controller.abort(STARTUP_OWNER_CLOSED);
+    if (!this.settled)
+      this.#controller.abort(OwnerCancellation.startupOwnerClosed);
   }
 
   /** A peer's departure leaves the producer running; final departure joins cleanup. */
@@ -58,9 +69,11 @@ export class SharedStartupAttempt<Value> {
     this.#waiters += 1;
     try {
       const waited = await waitForAbortable(this.promise, signal);
-      if (waited !== ABORTED) return { status: "completed", value: waited };
-      if (this.#waiters > 1) return { status: "cancelled" };
-      if (!this.settled) this.#controller.abort(signal?.reason);
+      if (!(waited instanceof AbortedWait))
+        return { status: "completed", value: waited };
+      if (this.#waiters > 1)
+        return { status: "cancelled", reason: waited.carried };
+      if (!this.settled) this.#controller.abort(waited.carried);
       return { status: "stopped", value: await this.promise };
     } finally {
       this.#waiters -= 1;

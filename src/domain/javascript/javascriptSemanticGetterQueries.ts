@@ -1,8 +1,7 @@
 import type * as t from "@babel/types";
-import type { JavaScriptSemanticObjectReference as Reference } from "./javascriptSemanticObjectReferences.js";
+import type { JavaScriptSemanticObjectReference as Reference } from "./javascriptSemanticObjectReference.js";
 import type { JavaScriptSemanticPropertyPath as PropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
-import { SEMANTIC_GETTER_EXPANSION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 export interface GetterInvocation {
   readonly getter: t.ObjectMethod | t.ClassMethod;
@@ -64,6 +63,24 @@ export class SemanticGetterQuery {
 
   constructor(readonly state: JavaScriptSemanticAnalysisState) {}
 
+  get widening(): boolean {
+    return this.#fallback;
+  }
+
+  /** Charge retained local work and getter jobs to the same precise query. */
+  reserveResult(): boolean {
+    if (this.#limited) return false;
+    if (
+      !this.#fallback &&
+      this.#visits >= this.state.precision.getter_expansions
+    ) {
+      this.#limited = true;
+      return false;
+    }
+    this.#visits++;
+    return true;
+  }
+
   retain(reference: Reference, escapes = false): void {
     // Direct fields keep their write suffix; only getter jobs widen omitted paths.
     this.#references.add({
@@ -85,11 +102,7 @@ export class SemanticGetterQuery {
     const paths = receivers?.get(receiver);
     const key = JSON.stringify([path, escapes]);
     if (paths?.has(key)) return true;
-    if (!this.#fallback && this.#visits >= SEMANTIC_GETTER_EXPANSION_LIMIT) {
-      this.#limited = true;
-      return true;
-    }
-    this.#visits++;
+    if (!this.reserveResult()) return true;
     const selections = paths ?? new Set<string>();
     const owners = receivers ?? new WeakMap<t.Node, Set<string>>();
     selections.add(key);
@@ -170,7 +183,7 @@ export class SemanticGetterQuery {
   ): readonly Reference[] {
     this.#collect(root, expand);
     if (this.#limited) {
-      this.state.getterResourceLimits.add("getter-expansion");
+      this.state.observations.getterResourceLimits.add("getter-expansion");
       // Escaping each selected getter's result covers every omitted suffix.
       // Canonical empty suffixes make the retry finite in receiver/getter pairs.
       this.#fallback = true;

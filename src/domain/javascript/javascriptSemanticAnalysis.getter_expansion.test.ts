@@ -92,3 +92,33 @@ it("escapes constructed fields when a getter query widens its suffix", () => {
   expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
   expectRetainedFacts(ir);
 });
+
+it.each(["class", "object"] as const)(
+  "bounds branching local aliases inside one %s getter",
+  (receiver) => {
+    const aliases = Array.from(
+      { length: 10 },
+      (_, index) =>
+        `const a${index + 1} = flag ? a${index}.left : a${index}.right;`,
+    ).join("\n");
+    const getter = `get state() { const a0 = this; ${aliases} return a10; }`;
+    const definition =
+      receiver === "class"
+        ? `class Request { slot = shared; ${getter} } const request = new Request();`
+        : `const request = { slot: shared, ${getter} };`;
+    const ir = analyzeJavaScriptSemantics(`
+    import imported from "dep";
+    const shared = { value: 1 };
+    ${definition}
+    consume(request.state);
+    const result = shared.value;
+    const unrelated = 42;
+  `);
+    expect(ir.coverage).toMatchObject({
+      status: "partial",
+      resourceLimits: ["getter-expansion"],
+    });
+    expect(onlyBinding(ir, "result").value.status).toBe("unknown");
+    expectRetainedFacts(ir);
+  },
+);

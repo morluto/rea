@@ -1,7 +1,406 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { describe, expect, it } from "vitest";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
+import {
+  fixtureDosLoadImage,
+  fixtureDosOverlapLoadImage,
+  compareDosClientFixture,
+} from "../../../src/ghidra/GhidraLoadImage.fixture.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+import { nativeLoadImageSchema } from "../../../src/domain/native/nativeLoadImage.js";
+import { nativeApiInspectionResultSchema } from "../../../src/domain/native/nativeApiBoundary.js";
+import type { NativePrototypeConflict } from "../../../src/domain/native/nativeApiBoundary.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
+import { ok } from "../../../src/domain/result.js";
+import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
+
+it("retains complete load-image facts and pages selected relocations through the advertised SDK contracts", async () => {
+  const fixture = fixtureDosOverlapLoadImage();
+  const directory = await createTestTempDirectory("rea-mcp-load-summary-");
+  const targetPath = join(directory, "inert.exe");
+  await writeFile(targetPath, fixture.bytes);
+  const harness = await connectGhidraMcp(
+    "ghidra-load-summary",
+    async () => ok(jsonValueSchema.parse(fixture.observation)),
+    {
+      targetPath,
+      sessionTarget: {
+        name: "inert.exe",
+        language_id: fixture.observation.language_id,
+        compiler_spec_id: fixture.observation.compiler_spec_id,
+        image_base: fixture.observation.image_base,
+        default_address_space: fixture.observation.default_address_space,
+        sha256: fixture.sha256,
+      },
+      attestDosTargetSnapshot: async (observations) =>
+        compareDosClientFixture(fixture.bytes, fixture.sha256, observations),
+    },
+  );
+  try {
+    const catalog = await harness.mcp.listTools();
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const call = async (
+      name: "inspect_native_load_image" | "inspect_analysis_view",
+      input: Record<string, unknown>,
+    ) => {
+      const definition = catalog.tools.find((tool) => tool.name === name);
+      if (definition === undefined) throw new Error("Missing named schema");
+      const inputSchema: Record<string, unknown> = definition.inputSchema;
+      const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+        definition.name,
+      );
+      expect(ajv.validateSchema(inputSchema)).toBe(true);
+      expect(ajv.validateSchema(outputSchema)).toBe(true);
+      const reply = await harness.mcp.callTool(
+        { name, arguments: input },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
+      );
+      expect(reply.isError).not.toBe(true);
+      return sessionEvidence(harness.session, reply.structuredContent);
+    };
+    const complete = await call("inspect_native_load_image", {});
+    const summary = await call("inspect_native_load_image", {
+      detail: "summary",
+    });
+    expect(summary.normalized_result).toMatchObject({
+      parent_evidence_id: complete.evidence_id,
+      source_provider: complete.provider,
+      source_analysis_profile_digest: complete.analysis_profile?.digest,
+      source_parameters: complete.parameters,
+      summary: {
+        verification: {
+          status: "unsupported",
+          reason: expect.stringContaining("no established application order"),
+        },
+        counts: { relocations: 2 },
+      },
+    });
+    const calls = harness.calls.length;
+    const page = await call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: complete.evidence_id },
+      view: {
+        kind: "native-load-image",
+        collection: "relocations",
+        offset: 1,
+        limit: 1,
+        fields: ["address", "memory_bytes_hex"],
+      },
+    });
+    const parsed = analysisViewResultSchema.parse(page.normalized_result);
+    if (parsed.kind !== "native-load-image")
+      throw new Error("Expected load-image page");
+    expect(parsed.verification_status).toBe("unsupported");
+    expect(parsed.items.rows).toEqual([
+      {
+        source_index: 1,
+        record: {
+          address: fixture.observation.relocations[1]!.address,
+          memory_bytes_hex:
+            fixture.observation.relocations[1]!.memory_bytes_hex,
+        },
+      },
+    ]);
+    expect(harness.calls).toHaveLength(calls);
+    expect(harness.session.evidenceById(complete.evidence_id)).toEqual(
+      complete,
+    );
+    expect(complete.parameters).toEqual({});
+  } finally {
+    await harness.close();
+  }
+});
+
+it.each([
+  { state: "final", failed: [] },
+  { state: "wrong-window", failed: ["relocation_records"] },
+  { state: "missing-record", failed: ["relocation_records"] },
+  { state: "duplicate-record", failed: ["relocation_records"] },
+  { state: "bad-source", failed: ["modified_file_sha256"] },
+  { state: "bad-mapping", failed: ["mapping[1].memory_sha256"] },
+])(
+  "retains MZ relocation verification through MCP ($state)",
+  async ({ state, failed }) => {
+    const fixture = fixtureDosLoadImage();
+    const first = fixture.observation.relocations[0];
+    const source = fixture.observation.source_files[0];
+    const mapping = fixture.observation.mappings[1];
+    if (first === undefined || source === undefined || mapping === undefined)
+      throw new Error("Missing authored overlap facts");
+    if (state === "wrong-window") first.memory_bytes_hex = "0400";
+    if (state === "missing-record") fixture.observation.relocations.pop();
+    if (state === "duplicate-record")
+      fixture.observation.relocations.push(structuredClone(first));
+    if (state === "bad-source") source.modified_sha256 = "f".repeat(64);
+    if (state === "bad-mapping") mapping.sha256 = "f".repeat(64);
+    const directory = await createTestTempDirectory("rea-mcp-mz-overlap-");
+    const targetPath = join(directory, "inert.exe");
+    await writeFile(targetPath, fixture.bytes);
+    const harness = await connectGhidraMcp(
+      "ghidra-mz-relocation-windows",
+      async () => ok(jsonValueSchema.parse(fixture.observation)),
+      {
+        targetPath,
+        sessionTarget: {
+          name: "inert.exe",
+          language_id: fixture.observation.language_id,
+          compiler_spec_id: fixture.observation.compiler_spec_id,
+          image_base: fixture.observation.image_base,
+          default_address_space: fixture.observation.default_address_space,
+          sha256: fixture.sha256,
+        },
+        attestDosTargetSnapshot: async (observations) =>
+          compareDosClientFixture(fixture.bytes, fixture.sha256, observations),
+      },
+    );
+    try {
+      const reply = await harness.mcp.callTool({
+        name: "inspect_native_load_image",
+        arguments: {},
+      });
+      expect(reply.isError).not.toBe(true);
+      const evidence = sessionEvidence(
+        harness.session,
+        reply.structuredContent,
+      );
+      const result = nativeLoadImageSchema.parse(evidence.normalized_result);
+      if (result.status === "unsupported")
+        throw new Error("Expected MZ comparison");
+      expect(result.status).toBe(failed.length > 0 ? "mismatch" : "verified");
+      expect(
+        result.checks
+          .filter((check) => !check.matched)
+          .map((check) => check.name),
+      ).toEqual(failed);
+      expect(result.observations.relocations).toEqual(
+        fixture.observation.relocations,
+      );
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+const prototypeConflicts = (): NativePrototypeConflict[] => [
+  {
+    kind: "stack-argument-read",
+    inferred_signature: "undefined f(void)",
+    signature_source: "analysis",
+    inferred_parameter_count: 0,
+    instruction_address: "0x406400",
+    instruction: "FLD qword ptr [EBP + 0x8]",
+    frame_offset_bytes: 8,
+    unresolved_assumptions: [
+      "The frame-relative read is not proof of a source-level parameter.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined f(int, int, int, int)",
+    signature_source: "analysis",
+    inferred_parameter_count: 4,
+    instruction_address: "0x401b10",
+    instruction: "RET 0x14",
+    cleanup_bytes: 20,
+    inferred_stack_bytes: 16,
+    unresolved_assumptions: [
+      "The cleanup difference does not prove a fifth source parameter.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined g(int, int, int, int)",
+    signature_source: "analysis",
+    inferred_parameter_count: 4,
+    instruction_address: "0x401c00",
+    instruction: "RET 0x0",
+    cleanup_bytes: 0,
+    inferred_stack_bytes: 16,
+    unresolved_assumptions: [
+      "A zero-byte cleanup does not establish the compiler's calling convention.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined h(void)",
+    signature_source: "analysis",
+    inferred_parameter_count: 0,
+    instruction_address: "0x401d00",
+    instruction: "RET 0x8",
+    cleanup_bytes: 8,
+    inferred_stack_bytes: 0,
+    unresolved_assumptions: [
+      "A nonzero cleanup does not establish a source-level parameter.",
+    ],
+  },
+];
+
+const connectPrototypeConflictHarness = async (name: string) => {
+  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  if (!dossier.native_api?.available) throw new Error("Expected native API");
+  const conflicts = prototypeConflicts();
+  dossier.native_api.prototype_conflicts = conflicts;
+  const harness = await connectGhidraMcp(name, async (operation) => {
+    if (operation !== "analyze_function")
+      throw new Error(`Unexpected operation: ${operation}`);
+    return ok(jsonValueSchema.parse({ value: dossier, limitations: [] }));
+  });
+  return { harness, conflicts };
+};
+
+describe("Ghidra prototype conflict diagnostics", () => {
+  it("reports prototype conflicts in the summary and complete dossier", async () => {
+    const { harness, conflicts } = await connectPrototypeConflictHarness(
+      "ghidra-prototype-conflicts-analysis",
+    );
+    try {
+      const summary = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "fixture_main" },
+      });
+      expect(summary.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, summary.structuredContent)
+          .normalized_result,
+      ).toMatchObject({
+        summary: { counts: { prototype_conflicts: conflicts.length } },
+      });
+      const analyze = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "fixture_main", detail: "complete" },
+      });
+      expect(analyze.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, analyze.structuredContent)
+          .normalized_result,
+      ).toMatchObject({
+        native_api: { prototype_conflicts: conflicts },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("retains prototype conflicts through inspection and selected views", async () => {
+    const { harness, conflicts } = await connectPrototypeConflictHarness(
+      "ghidra-prototype-conflicts-views",
+    );
+    try {
+      const analyze = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "fixture_main", detail: "complete" },
+      });
+      expect(analyze.isError).not.toBe(true);
+      const evidence = sessionEvidence(
+        harness.session,
+        analyze.structuredContent,
+      );
+      const inspection = await harness.mcp.callTool({
+        name: "inspect_native_api",
+        arguments: { procedure: "fixture_main" },
+      });
+      expect(inspection.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, inspection.structuredContent)
+          .normalized_result,
+      ).toMatchObject({ boundary: { prototype_conflicts: conflicts } });
+      const view = await harness.mcp.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: evidence.evidence_id,
+          },
+          view: { kind: "native", facet: "native_api", offset: 0, limit: 64 },
+        },
+      });
+      expect(view.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, view.structuredContent),
+      ).toMatchObject({
+        normalized_result: { item: { prototype_conflicts: conflicts } },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+});
 
 describe("Ghidra MCP native API evidence", () => {
+  it("retains transient failure Evidence without freezing the composed API inspection", async () => {
+    let failed = true;
+    const harness = await connectGhidraMcp(
+      "ghidra-native-api-recovery",
+      async (operation) => {
+        if (operation !== "analyze_function")
+          throw new Error(`Unexpected operation: ${operation}`);
+        const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+        if (failed)
+          dossier.native_api = {
+            available: false,
+            reason: "Injected backend failure",
+            residual_unknowns: ["Retry after recovery."],
+          };
+        return ok(
+          jsonValueSchema.parse({
+            value: dossier,
+            limitations: [],
+            ...(failed ? { cache_policy: "live" } : {}),
+          }),
+        );
+      },
+    );
+    try {
+      const inspect = async () => {
+        const reply = await harness.mcp.callTool({
+          name: "inspect_native_api",
+          arguments: { procedure: "fixture_main" },
+        });
+        expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+        return sessionEvidence(harness.session, reply.structuredContent);
+      };
+      const degraded = await inspect();
+      expect(degraded.normalized_result).toMatchObject({
+        boundary: { available: false },
+      });
+      const snapshot = harness.session.exportAnalysisSnapshot();
+      if (!snapshot.ok) throw snapshot.error;
+      expect(snapshot.value.entries).toEqual([]);
+      expect(snapshot.value.workflow_entries).toEqual([]);
+      expect(harness.session.evidenceById(degraded.evidence_id)).toEqual(
+        degraded,
+      );
+      failed = false;
+      const recovered = await inspect();
+      expect(recovered.normalized_result).toMatchObject({
+        boundary: { available: true },
+      });
+      expect(recovered.evidence_id).not.toBe(degraded.evidence_id);
+      // A successful observation remains live too. A later refusal must not
+      // be hidden by replaying the recovered dossier or its composed answer.
+      failed = true;
+      expect(await inspect()).toEqual(degraded);
+      expect(harness.session.evidenceById(recovered.evidence_id)).toEqual(
+        recovered,
+      );
+      expect(harness.calls).toEqual([
+        "analyze_function",
+        "analyze_function",
+        "analyze_function",
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("returns complete native API boundaries without output-cap unknowns", async () => {
     const harness = await connectGhidraMcp("ghidra-native-api");
     const { mcp, session } = harness;
@@ -45,5 +444,123 @@ describe("Ghidra MCP native API evidence", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
+});
+
+it("retains unavailable Ghidra native API observations across live reobservation and provenance", async () => {
+  const residual = "The controlled provider omitted native API boundary facts.";
+  // This wire fixture is controlled and never launches Ghidra.
+  const harness = await connectGhidraMcp(
+    "ghidra-native-api-unavailable-identity",
+    async (operation, input) => {
+      if (operation !== "analyze_function")
+        throw new Error(`Unexpected controlled Ghidra operation: ${operation}`);
+      const procedure = String(input.procedure);
+      const base = functionDossierSchema.parse(ghidraFunctionDossier());
+      const address = procedure === "0x401000" ? procedure : "0x401100";
+      return ok(
+        jsonValueSchema.parse({
+          value: functionDossierSchema.parse({
+            ...base,
+            procedure: {
+              ...base.procedure,
+              address,
+              name: address === "0x401000" ? "fixture_main" : "fixture_other",
+              body: {
+                ...base.procedure.body,
+                ranges: [
+                  {
+                    start: address,
+                    end: address === "0x401000" ? "0x401005" : "0x401105",
+                  },
+                ],
+              },
+            },
+            native_api: {
+              available: false,
+              reason: residual,
+              residual_unknowns: [residual],
+            },
+          }),
+          limitations: [],
+        }),
+      );
+    },
+  );
+  const { mcp, session } = harness;
+  try {
+    const inspect = async (procedure: string) => {
+      const reply = await mcp.callTool({
+        name: "inspect_native_api",
+        arguments: { procedure },
+      });
+      expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+      const evidence = sessionEvidence(session, reply.structuredContent);
+      const result = nativeApiInspectionResultSchema.parse(
+        evidence.normalized_result,
+      );
+      expect(result).toMatchObject({
+        procedure: {
+          address: procedure,
+        },
+        boundary: {
+          available: false,
+          reason: residual,
+          residual_unknowns: [residual],
+        },
+        residual_unknowns: [residual],
+      });
+      return evidence;
+    };
+
+    const first = await inspect("0x401000");
+    const repeated = await inspect("0x401000");
+    expect(repeated).toEqual(first);
+    expect(repeated.limitations).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+      ]),
+    );
+    const warmBundle = session.exportEvidenceBundle();
+    const warmObservation = await inspect("0x401000");
+    expect(warmObservation.evidence_id).toBe(first.evidence_id);
+    expect(session.exportEvidenceBundle()).toEqual(warmBundle);
+    expect(harness.calls).toEqual([
+      "analyze_function",
+      "analyze_function",
+      "analyze_function",
+    ]);
+
+    const second = await inspect("0x401100");
+    expect(second.evidence_id).not.toBe(first.evidence_id);
+    expect(session.evidenceById(first.evidence_id)).toEqual(first);
+    expect(session.evidenceById(repeated.evidence_id)).toEqual(repeated);
+
+    const listed = await mcp.callTool({
+      name: "list_unknowns",
+      arguments: { domain: "native-api" },
+    });
+    expect(listed.isError, JSON.stringify(listed.content)).not.toBe(true);
+    const unknownPage = toolContract("list_unknowns").outputSchema.parse(
+      listed.structuredContent,
+    ).result;
+    expect(unknownPage.total).toBe(2);
+    expect(unknownPage.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          question: expect.stringContaining(first.evidence_id),
+          supporting_evidence_ids: [first.evidence_id],
+        }),
+        expect.objectContaining({
+          question: expect.stringContaining(second.evidence_id),
+          supporting_evidence_ids: [second.evidence_id],
+        }),
+      ]),
+    );
+    expect(
+      unknownPage.items.every(({ question }) => question.includes(residual)),
+    ).toBe(true);
+  } finally {
+    await harness.close();
+  }
 });
