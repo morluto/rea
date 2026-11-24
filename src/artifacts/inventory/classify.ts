@@ -447,23 +447,39 @@ const classifyRootFormat = async (
       signal,
     );
     if (embedded?.format === "node-sea") {
-      const decoded = await decodeNodeSeaBlob(
-        await readNodeSeaBlob(
-          source,
-          embedded.location,
+      try {
+        const decoded = await decodeNodeSeaBlob(
+          await readNodeSeaBlob(
+            source,
+            embedded.location,
+            signal,
+            readerLimits.node_sea,
+          ),
           signal,
           readerLimits.node_sea,
-        ),
-        signal,
-        readerLimits.node_sea,
-      );
-      return {
-        kind: "node-sea",
-        source,
-        location: embedded.location,
-        decoded,
-        limits: readerLimits.node_sea,
-      };
+        );
+        return {
+          kind: "node-sea",
+          source,
+          location: embedded.location,
+          decoded,
+          limits: readerLimits.node_sea,
+        };
+      } catch (cause: unknown) {
+        if (
+          cause instanceof ArtifactReaderFailure &&
+          (cause.reason === "format" ||
+            (cause.reason === "limit" &&
+              (cause.readerLimit?.parameter ===
+                "artifact_limits.node_sea.blob_bytes" ||
+                cause.readerLimit === undefined)))
+        ) {
+          abortIfNeeded(signal);
+          embeddedProbes.recordNodeSeaRecognitionFailure(cause);
+          return format;
+        }
+        throw cause;
+      }
     }
     if (embedded?.format === "bun-standalone")
       return { kind: "bun-standalone", source, probe: embedded.probe };

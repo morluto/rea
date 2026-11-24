@@ -13,6 +13,7 @@ import * as denoLocation from "./deno/DenoStandaloneLocation.js";
 import * as pckLocation from "./GodotPckLocation.js";
 import { resolveArtifactReaderLimits } from "../domain/artifactReaderLimits.js";
 import { nodeSeaElf } from "./nodeSea/NodeSea.fixture.js";
+import * as nodeSeaLocation from "./nodeSea/NodeSeaLocation.js";
 
 it("readmits cached SEA recognition when the accepted policy changes", async () => {
   const path = join(
@@ -31,14 +32,15 @@ it("readmits cached SEA recognition when the accepted policy changes", async () 
       original.completedFacts(),
       resolveArtifactReaderLimits({ node_sea: { blob_bytes: 1 } }),
     );
-    await expect(lower.nodeSea()).rejects.toMatchObject({
+    await expect(lower.nodeSea()).resolves.toBeUndefined();
+    expect(Object.hasOwn(lower.completedFacts(), "nodeSea")).toBe(false);
+    expect(lower.completedFacts().nodeSeaRecognitionFailure).toMatchObject({
       reason: "limit",
       readerLimit: {
         parameter: "artifact_limits.node_sea.blob_bytes",
         effective_value: 1,
       },
     });
-    expect(Object.hasOwn(lower.completedFacts(), "nodeSea")).toBe(false);
     const restored = new ArtifactEmbeddedFormatProbes(
       path,
       source,
@@ -47,6 +49,7 @@ it("readmits cached SEA recognition when the accepted policy changes", async () 
       resolveArtifactReaderLimits(),
     );
     expect(await restored.nodeSea()).toEqual(location);
+    expect(restored.completedFacts().nodeSeaRecognitionFailure).toBeUndefined();
     const recognitionLimited = new ArtifactEmbeddedFormatProbes(
       path,
       source,
@@ -253,6 +256,43 @@ it("caches a present Deno section and records examined absence", async () => {
       });
       expect(probes.completedFacts().denoStandalone).toEqual({
         status: "absent",
+      });
+    });
+  } finally {
+    locate.mockRestore();
+  }
+});
+
+it("propagates I/O and cancellation errors from nodeSea without caching absence or recognition failure", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-sea-probe-errors-"),
+    "carrier",
+  );
+  await writeFile(path, nodeSeaElf({ fuse: "set", ownership: "section" }));
+  const ioError = Object.assign(new Error("injected SEA read failure"), {
+    code: "EIO",
+  });
+  const locate = vi
+    .spyOn(nodeSeaLocation, "locateNodeSea")
+    .mockRejectedValueOnce(ioError);
+  try {
+    await withOwnedRegularFile(path, {}, async (source) => {
+      const probes = new ArtifactEmbeddedFormatProbes(path, source);
+      await expect(probes.nodeSea()).rejects.toBe(ioError);
+      expect(Object.hasOwn(probes.completedFacts(), "nodeSea")).toBe(false);
+      expect(probes.completedFacts().nodeSeaRecognitionFailure).toBeUndefined();
+
+      const controller = new AbortController();
+      const cancelled = new ArtifactEmbeddedFormatProbes(
+        path,
+        source,
+        controller.signal,
+      );
+      const reason = new Error("cancel SEA probe");
+      controller.abort(reason);
+      await expect(cancelled.nodeSea()).rejects.toMatchObject({
+        reason: "cancelled",
+        cause: reason,
       });
     });
   } finally {
