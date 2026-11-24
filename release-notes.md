@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **gpu:** amd_target_metadata gains required os_abi and abi fields, GPU objects gain a nullable amd_pal_metadata field, and PAL-ABI objects report complete, partial or unsupported instead of malformed.
 * **errors:** when a managed reader stops on `unsupported-signature`, `metadata.status` is `partial` (was `malformed`) in managed artifact, member and native-boundary inspection, and the artifact `classification.status` is `managed` (was `malformed`). The field names and enum members are unchanged.
 * **errors:** inspect_managed_artifact, inspect_managed_members, inspect_managed_native_boundaries, compare_managed_members, inspect_il2cpp_metadata, inspect_go_binary, inspect_rust_binary, inspect_dwarf_units and inspect_native_initializers report corrupt or truncated target bytes as code unsupported_target with details.path, format, format_failure and reason instead of invalid_request with an invalid_format issue. IL2CPP link conflicts list both path and binary_path with reason invalid_value instead of one invalid_format binary_path issue.
 * **errors:** callers that parse `code` see unsupported_target instead of invalid_request for malformed or truncated bytes from inspect_erlang_beam and from the inspect_pe_certificates certificate table body. Truncated reads of a file that changed during inspect_kernel_module, inspect_kernel_build_config and inspect_elf_unwind_ranges now report artifact_changed. inspect_artifact malformed and truncated refusals gain details.format_failure and details.format. Existing fields are unchanged.
@@ -215,6 +216,7 @@
 * **go:** report only admitted string candidate limits ([#13451](https://github.com/morluto/rea/issues/13451)) ([22042af](https://github.com/morluto/rea/commit/22042af848c2cfe4fbb1d6764771da570c421d4d))
 * **go:** retain verified reports through descriptor finalization ([#14026](https://github.com/morluto/rea/issues/14026)) ([6d7bf58](https://github.com/morluto/rea/commit/6d7bf586377f9c58419d884d5962bf192031aa02))
 * **gpu:** decode UTF-8 CUBIN kernel symbol names ([#13101](https://github.com/morluto/rea/issues/13101)) ([23cf85e](https://github.com/morluto/rea/commit/23cf85ef24fbc598125d0d3a2cddb42eeb2337b5))
+* **gpu:** dispatch AMDGPU note metadata on the declared ELF ABI ([#14244](https://github.com/morluto/rea/issues/14244)) ([0a145c8](https://github.com/morluto/rea/commit/0a145c84231372980c5543b5550f2368657c576c))
 * **gpu:** keep kernel resources in their owning coordinate space ([#13564](https://github.com/morluto/rea/issues/13564)) ([2be4cc4](https://github.com/morluto/rea/commit/2be4cc468e2bcfc62b0818049297fa1ee59c6f5b))
 * **gpu:** mark conflicting CUDA shared sections partial and clear register provenance ([#13963](https://github.com/morluto/rea/issues/13963)) ([4c27f48](https://github.com/morluto/rea/commit/4c27f4866715bdf08e2deaf205e4654176a2ccd4))
 * **gpu:** name an unreadable shared section instead of a bare null count ([#14133](https://github.com/morluto/rea/issues/14133)) ([4d7594f](https://github.com/morluto/rea/commit/4d7594f6728d73dcf891f322cbf03920d499af7a))
