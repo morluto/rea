@@ -1,13 +1,14 @@
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 import {
   freezeOwnedJsonTreeSnapshot,
   isImmutableJsonSnapshot,
 } from "../immutableJson.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"a".repeat(64)}`,
   operation: "inspect_python_pyc",
   normalizedResult,
@@ -51,23 +52,31 @@ it("keeps schema-specific normalized facts separate without mutating sealed sour
   }
 });
 
-it("borrows omitted optional fields from a sealed JSON source and reuses their parsed facts", () => {
+it("borrows a sealed JSON source with an omitted optional field", () => {
   const source = freezeOwnedJsonTreeSnapshot({});
   const schema = z.strictObject({ optional: z.string().optional() });
-  const parse = vi.spyOn(schema, "safeParse");
   const read = createAnalysisViewResultReader(schema);
-  try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const result = read(parent(source));
-      if (!result.ok) throw result.error;
-      expect(result.value).toBe(source);
-      expect(result.value.optional).toBeUndefined();
-      expect(Object.hasOwn(result.value, "optional")).toBe(false);
-    }
-    expect(parse).toHaveBeenCalledTimes(1);
-  } finally {
-    parse.mockRestore();
-  }
+  const result = read(parent(source));
+  if (!result.ok) throw result.error;
+  expect(result.value).toBe(source);
+  expect(Object.hasOwn(result.value, "optional")).toBe(false);
+});
+
+it("reuses normalized facts only when the parent carries the owning seal", () => {
+  const source = freezeOwnedJsonTreeSnapshot({});
+  const sealed = parent(source);
+  const unsealed = { ...sealed, sealedResult: false };
+  let revision = "initial";
+  const read = createAnalysisViewResultReader(
+    z.strictObject({}).transform(() => ({ revision })),
+  );
+
+  expect(read(unsealed)).toEqual({ ok: true, value: { revision: "initial" } });
+  revision = "sealed";
+  expect(read(sealed)).toEqual({ ok: true, value: { revision: "sealed" } });
+  revision = "latest";
+  expect(read(sealed)).toEqual({ ok: true, value: { revision: "sealed" } });
+  expect(read(unsealed)).toEqual({ ok: true, value: { revision: "latest" } });
 });
 
 it("preserves explicit undefined normalization without freezing or caching non-JSON facts", () => {
@@ -92,4 +101,37 @@ it("preserves explicit undefined normalization without freezing or caching non-J
   expect(produced[0]).not.toBe(produced[1]);
   expect(source).toEqual({});
   expect(Object.hasOwn(source, "optional")).toBe(false);
+});
+
+it("caches and returns the frozen normalized snapshot when borrowing is rejected", () => {
+  const shared = { tag: "x" };
+  const source = freezeOwnedJsonTreeSnapshot({
+    first: shared,
+    second: shared,
+  });
+  let parseCount = 0;
+  const schema = z.strictObject({
+    first: z.strictObject({ tag: z.string() }),
+    second: z.strictObject({ tag: z.string() }),
+    added: z.string().default("normalized"),
+  });
+  const read = createAnalysisViewResultReader({
+    safeParse: (input) => {
+      parseCount += 1;
+      return schema.safeParse(input);
+    },
+  });
+  const first = read(parent(source));
+  const second = read({ ...parent(source) });
+  expect(parseCount).toBe(1);
+  if (!first.ok || !second.ok) throw new Error("Expected ok results");
+  expect(first.value).not.toBe(source);
+  expect(second.value).toBe(first.value);
+  expect(Object.isFrozen(first.value)).toBe(true);
+  expect(isImmutableJsonSnapshot(first.value)).toBe(true);
+  expect(first.value).toEqual({
+    first: { tag: "x" },
+    second: { tag: "x" },
+    added: "normalized",
+  });
 });

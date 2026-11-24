@@ -1,8 +1,8 @@
 import { observeMzWindowsHeader } from "./dosMz.js";
-import { createHash } from "node:crypto";
 import { readPeCoffHeader } from "./peCoffHeader.js";
 import { readPeOptionalHeaderIdentity } from "./peOptionalHeader.js";
 import { err, ok, type Result } from "./result.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Fixed compatibility contract shared by the artifact producer and readers. */
 export const WINDOWS_NATIVE_ARTIFACT = {
@@ -34,7 +34,7 @@ export type WindowsNativeManifest = ReturnType<
   readonly artifactSha256: string;
 };
 
-export class WindowsNativeArtifactError extends Error {
+class WindowsNativeArtifactError extends Error {
   readonly _tag = "WindowsNativeArtifactError" as const;
 }
 
@@ -140,9 +140,7 @@ export const validateWindowsNativeArtifact = (
   manifest: WindowsNativeManifest,
   bytes: Buffer,
 ): Result<void, WindowsNativeArtifactError> => {
-  if (
-    createHash("sha256").update(bytes).digest("hex") !== manifest.artifactSha256
-  )
+  if (sha256Hex(bytes) !== manifest.artifactSha256)
     return err(
       new WindowsNativeArtifactError(
         "Windows native artifact SHA-256 does not match package metadata",
@@ -165,7 +163,7 @@ export const createWindowsNativeManifest = (
     {
       ...WINDOWS_NATIVE_ARTIFACT,
       packageVersion,
-      artifactSha256: createHash("sha256").update(bytes).digest("hex"),
+      artifactSha256: sha256Hex(bytes),
     },
     packageVersion,
   );

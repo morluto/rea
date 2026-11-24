@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   XcrunCommandRunner,
   type NativeCommandLauncher,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { ok } from "../../../../src/domain/result.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 
@@ -185,6 +185,14 @@ it.skipIf(process.platform === "win32")(
       ]),
     );
     expect(launches).toBe(2);
+
+    // Stopping one retained supervisor directly completes only its own marker,
+    // before the runner retries anything.
+    const firstOwner = first.error.cleanupOwner;
+    expect(first.error.cleanupMarker?.cleanupIncomplete).toBe(true);
+    expect((await firstOwner?.stop())?.status).not.toBe("incomplete");
+    expect(first.error.cleanupMarker?.cleanupIncomplete).toBe(false);
+    expect(second.error.cleanupMarker?.cleanupIncomplete).toBe(true);
 
     const cleared = await runner.retryCleanup?.();
     expect(cleared).toEqual([]);

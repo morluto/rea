@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { nativeGraphViewItemsSchema } from "../../domain/analysisView/nativeObservationSchemas.js";
@@ -13,11 +14,11 @@ import {
   nativeCallGraphSchema,
   type NativeCallGraph,
 } from "../../domain/native/nativeCallGraph.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import {
   analysisViewResultSchema,
-  type AnalysisViewRequest,
   type AnalysisViewResult,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   inspectAnalysisView,
   projectRetainedAnalysis,
@@ -121,53 +122,56 @@ const graph = (): NativeCallGraph =>
     limitations: ["Graph caveat", "Graph caveat"],
   });
 
-it("returns useful caller/callee facts with exact source context identity and partial coverage", async () => {
-  const source = parent("procedure_callees", [
-    "ram:0x0010",
-    "ram:0x0010",
-    "ram:0x0020",
-  ]);
-  const before = JSON.stringify(source);
-  const summary = await project(source, { kind: "summary" });
-  expect(summary.value).toMatchObject({
-    kind: "summary",
-    parent_evidence_id: source.evidence_id,
-    source_provider: source.provider,
-    source_parameters: source.parameters,
-    source_analysis_profile_digest: source.analysis_profile?.digest,
-    source_context: {
-      evidence_limitation_count: 1,
-      result_limitation_count: null,
-    },
-    summary: { observations: 3 },
-    items: {
-      type: "addresses",
-      rows: [
-        { source_index: 0, address: "ram:0x0010" },
-        { source_index: 1, address: "ram:0x0010" },
-        { source_index: 2, address: "ram:0x0020" },
-      ],
-    },
-  });
-  expect(summary.evidence.relationship_coverage).toEqual(
-    source.relationship_coverage,
-  );
-  const page = await project(source, {
-    kind: "native-observation",
-    offset: 1,
-    limit: 1,
-  });
-  expect(page.value).toMatchObject({
-    items: { rows: [{ source_index: 1, address: "ram:0x0010" }] },
-    coverage: { total: 3, next_offset: 2, exhausted: false },
-  });
-  expect(page.value).toHaveProperty(
-    "source_context.digest",
-    contextDigest(summary.value),
-  );
-  expect(JSON.stringify(summary.value)).not.toContain('"analysis_profile":');
-  expect(JSON.stringify(source)).toBe(before);
-});
+it.each(["procedure_callees", "xrefs"])(
+  "pages %s addresses with exact source context and duplicate identity",
+  async (operation) => {
+    const source = parent(operation, [
+      "ram:0x0010",
+      "ram:0x0010",
+      "ram:0x0020",
+    ]);
+    const before = JSON.stringify(source);
+    const summary = await project(source, { kind: "summary" });
+    expect(summary.value).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: source.evidence_id,
+      source_provider: source.provider,
+      source_parameters: source.parameters,
+      source_analysis_profile_digest: source.analysis_profile?.digest,
+      source_context: {
+        evidence_limitation_count: 1,
+        result_limitation_count: null,
+      },
+      summary: { observations: 3 },
+      items: {
+        type: "addresses",
+        rows: [
+          { source_index: 0, address: "ram:0x0010" },
+          { source_index: 1, address: "ram:0x0010" },
+          { source_index: 2, address: "ram:0x0020" },
+        ],
+      },
+    });
+    expect(summary.evidence.relationship_coverage).toEqual(
+      source.relationship_coverage,
+    );
+    const page = await project(source, {
+      kind: "native-observation",
+      offset: 1,
+      limit: 1,
+    });
+    expect(page.value).toMatchObject({
+      items: { rows: [{ source_index: 1, address: "ram:0x0010" }] },
+      coverage: { total: 3, next_offset: 2, exhausted: false },
+    });
+    expect(page.value).toHaveProperty(
+      "source_context.digest",
+      contextDigest(summary.value),
+    );
+    expect(JSON.stringify(summary.value)).not.toContain('"analysis_profile":');
+    expect(JSON.stringify(source)).toBe(before);
+  },
+);
 
 it("pages complete context fields and changes its digest when source profile or caveats change", async () => {
   const source = parent("procedure_callers", []);
@@ -222,7 +226,7 @@ it("pages complete context fields and changes its digest when source profile or 
 });
 
 it("keeps absent profile and inapplicable result caveats distinct from observed empty data", async () => {
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "procedure_address",
     parameters: {},
     result: "0x0000",
@@ -249,6 +253,13 @@ it("keeps absent profile and inapplicable result caveats distinct from observed 
   ).toMatchObject({
     source_context: { result_limitation_count: null },
     items: { rows: null },
+    coverage: {
+      status: "unavailable",
+      examined: 0,
+      total: null,
+      next_offset: null,
+      exhausted: false,
+    },
     unknowns: expect.arrayContaining([
       expect.stringContaining("not applicable"),
     ]),
@@ -313,7 +324,7 @@ it("reconstructs every graph field from dictionary pages without changing nulls,
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect(row.source_index).toBe(0);
-    expect(row.level).toBe(["01", "10", "2"][offset]);
+    expect(row.level).toBe(["2", "10", "01"][offset]);
     expect(value.coverage).toMatchObject({ total: 3, exhausted: offset === 2 });
     if (row.status !== "ok") throw new Error("Expected recorded node");
     const coverage = row.relationship_coverage;
@@ -321,11 +332,6 @@ it("reconstructs every graph field from dictionary pages without changing nulls,
       coverage.diagnostic_ids === undefined
         ? {}
         : { diagnostics: coverage.diagnostic_ids.map((i) => messages[i]!) };
-    const directions =
-      "limited_directions" in coverage &&
-      coverage.limited_directions !== undefined
-        ? { limited_directions: coverage.limited_directions }
-        : {};
     const originalCoverage =
       coverage.status === "complete"
         ? { status: "complete" as const, ...diagnostics }
@@ -333,13 +339,13 @@ it("reconstructs every graph field from dictionary pages without changing nulls,
           ? {
               status: "partial" as const,
               limitations: coverage.limitation_ids.map((i) => messages[i]!),
-              ...directions,
+              limited_directions: coverage.limited_directions,
               ...diagnostics,
             }
           : {
               status: "unknown" as const,
               reason: messages[coverage.reason_id]!,
-              ...directions,
+              limited_directions: coverage.limited_directions,
               ...diagnostics,
             };
     decoded[row.level] = [
@@ -473,6 +479,45 @@ it("keeps graph row identity stable when source object key insertion order chang
   );
 });
 
+it("orders canonical numeric graph depths before nonnumeric keys across pages", async () => {
+  const node = graph().graph["2"]![0]!;
+  const source = parent("get_call_graph", {
+    graph: {
+      beta: [node],
+      "01": [node],
+      "9007199254740993": [node],
+      "9007199254740992": [node],
+      "10": [node],
+      "2": [node],
+      "1": [node],
+      "0": [node],
+    },
+    limitations: [],
+  });
+  const pages = [];
+  for (const offset of [0, 4]) {
+    const { value } = await project(source, {
+      kind: "native-observation",
+      offset,
+      limit: 4,
+    });
+    if (
+      value.kind !== "native-observation" ||
+      value.parent_operation !== "get_call_graph"
+    )
+      throw new Error("Expected graph page");
+    expect(value.items.rows.every((row) => row.source_index === 0)).toBe(true);
+    expect(value.coverage).toMatchObject({
+      total: 8,
+      exhausted: offset === 4,
+    });
+    pages.push(value.items.rows.map((row) => row.level));
+  }
+  expect(pages).toEqual([
+    ["0", "1", "2", "10"],
+    ["9007199254740992", "9007199254740993", "01", "beta"],
+  ]);
+});
 it("keeps context identity across authenticated target path aliases while preserving selected paths", async () => {
   const original = parent("procedure_callers", []);
   const rebound = rebindEvidenceToTargetPath(original, {
@@ -558,12 +603,20 @@ it("pages recorded empty graph levels without inventing nodes or dropping their 
 });
 
 it.each([
-  { status: "partial" as const, limitations: ["Unresolved indirect edges"] },
-  { status: "unknown" as const, reason: "Provider did not establish coverage" },
+  {
+    status: "partial" as const,
+    limitations: ["Unresolved indirect edges"],
+    limited_directions: ["callees"] as ["callees"],
+  },
+  {
+    status: "unknown" as const,
+    reason: "Provider did not establish coverage",
+    limited_directions: ["callees"] as ["callees"],
+  },
 ])(
   "keeps $status relationship coverage on every context facet",
   async (coverage) => {
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "procedure_callees",
       parameters: {},
       result: [],

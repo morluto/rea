@@ -1,8 +1,13 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import {
+  copyGhidraRegularFile,
+  ghidraFileDialect,
+} from "./GhidraFileArtifacts.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, readdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import {
   basename,
   dirname,
@@ -13,19 +18,25 @@ import {
   sep,
 } from "node:path";
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  type ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { GhidraProjectSelection } from "../config/ghidraExistingProject.js";
 import { ghidraProgramNameSchema } from "../config/ghidraExistingProject.js";
+
+/** Reason for a selected project whose content no longer matches its committed profile. */
+const GHIDRA_PROJECT_PROFILE_MISMATCH =
+  "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
 
 /** Classify file cancellation/cleanup before the generic provider boundary. */
 const projectFileOperation = async <Value>(
@@ -37,7 +48,10 @@ const projectFileOperation = async <Value>(
     return await work();
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) throw cause;
-    throw ghidraFileFailure(cause, operation, { path });
+    throw classifyProviderFailure(
+      cause,
+      ghidraFileDialect(operation, { path }),
+    );
   }
 };
 
@@ -59,9 +73,11 @@ export type GhidraProjectCommitment = z.infer<
 const selectionFailure = (
   message: string,
   setting = "REA_GHIDRA_PROJECT_PATH",
+  diagnostics?: Readonly<Record<string, JsonValue>>,
 ): ConfigurationError =>
   new ConfigurationError(message, {
     settings: [{ setting, constraint: message }],
+    ...(diagnostics === undefined ? {} : { diagnostics }),
   });
 const entriesFor = (name: string) => [`${name}.gpr`, `${name}.rep`] as const;
 
@@ -176,7 +192,14 @@ export const resolveGhidraProject = async (
       // Admit the caller's exact marker before canonicalizing its parent.
       // Darwin realpath(file/..) can succeed despite native lookup rejecting
       // that traversal; hashing the canonical sibling would select a new input.
-      if (!(await lstat(selection.path)).isFile())
+      const marker = await lstat(selection.path).catch(absentProjectEntry);
+      if (marker === undefined)
+        throw selectionFailure(
+          `Existing Ghidra project marker does not exist: ${selection.path}`,
+          "REA_GHIDRA_PROJECT_PATH",
+          { system_code: "ENOENT", syscall: "lstat" },
+        );
+      if (!marker.isFile())
         throw selectionFailure(
           `Existing Ghidra project marker must be a regular file: ${selection.path}`,
         );
@@ -214,30 +237,31 @@ const pathsOverlap = (first: string, second: string): boolean => {
       rel === "" ||
       (!isAbsolute(rel) &&
         rel !== ".." &&
-        !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+        !rel.startsWith(`..${HOST_PLATFORM.platform === "win32" ? "\\" : "/"}`))
     );
   };
   return contains(first, second) || contains(second, first);
 };
 
-/** Never open the caller project itself. Copy only the selected pair, then revalidate its committed content. */
+const COPY_BUFFER_BYTES = 256 * 1024;
+
+/** Copy the selected pair through owned descriptors and match its committed content. */
 export const copyExistingGhidraProject = async (
   sourcePath: string,
   destinationRoot: string,
-  options: {
+  {
+    signal,
+    projectName,
+    expectedSha256,
+    resources,
+  }: {
     readonly signal?: AbortSignal | undefined;
-    readonly projectName?: string | undefined;
-    readonly expectedSha256?: string | undefined;
-    readonly resources?: ArtifactResourceScope | undefined;
-  } = {},
+    readonly projectName: string;
+    readonly expectedSha256: string;
+    readonly resources: ArtifactResourceScope;
+  },
 ): Promise<void> => {
   return projectFileOperation(sourcePath, "open_binary", async () => {
-    const {
-      signal,
-      projectName = "rea-project",
-      expectedSha256,
-      resources,
-    } = options;
     assertArtifactReadActive(signal);
     const source = await realpath(sourcePath).catch(absentProjectEntry);
     const runtime =
@@ -257,36 +281,45 @@ export const copyExistingGhidraProject = async (
         `Existing Ghidra project directory does not exist: ${sourcePath}`,
       );
     await validateProject(source, projectName);
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
     await visitProject(
       source,
       projectName,
       async (path, directory) => {
+        hash.update(
+          JSON.stringify([
+            path.split(sep).join("/"),
+            directory ? "directory" : "file",
+          ]) + "\n",
+        );
         const destination = join(destinationRoot, path);
         if (directory) await mkdir(destination, { mode: 0o700 });
         else
-          await cp(join(source, path), destination, {
-            dereference: true,
-            errorOnExist: true,
-            force: false,
-          });
+          await copyGhidraRegularFile(
+            join(source, path),
+            destination,
+            resources,
+            {
+              signal,
+              buffer,
+              hash,
+              onOpenedSource: (initialSize) => {
+                hash.update(`${String(initialSize)}\n`);
+              },
+            },
+          );
         assertArtifactReadActive(signal);
       },
       signal,
     );
-    if (expectedSha256 !== undefined) {
-      if (resources === undefined)
-        throw selectionFailure(
-          "Existing project verification requires an owned resource scope.",
-        );
-      if (
-        (await fingerprintGhidraProject(
-          destinationRoot,
-          projectName,
-          resources,
-          signal,
-        )) !== expectedSha256
-      )
-        throw new RegularFileChangedError(sourcePath);
-    }
+    if (hash.digest("hex") !== expectedSha256)
+      // A digest mismatch shows only that the project differs from its
+      // committed profile, not when it changed relative to this copy.
+      throw new AnalysisArtifactChangedError(
+        "open_binary",
+        sourcePath,
+        GHIDRA_PROJECT_PROFILE_MISMATCH,
+      );
   });
 };

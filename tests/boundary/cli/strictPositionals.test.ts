@@ -1,40 +1,18 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli, z } from "incur";
+import { z } from "zod";
 import { expect, it } from "vitest";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 import { createCli } from "../../../src/cli.js";
-import { rejectSurplusCliArguments } from "../../../src/cli/strictPositionals.js";
-import {
-  excludeDeclaredSensitiveArguments,
-  explicitSensitiveValueOptions,
-} from "../../../src/cli/explicitSensitiveArguments.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-type CliInstance = ReturnType<typeof Cli.create>;
-const serve = async (cli: CliInstance, argv: string[]) => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv, "--json"], {
-    env: {},
-    stdout: (text) => {
-      stdout += text;
-    },
-    exit: (code) => {
-      exitCode = code;
-    },
-  });
-  return { stdout, exitCode };
-};
-const installAdmission = (cli: CliInstance) => {
-  const strict = rejectSurplusCliArguments(cli);
-  const declared = excludeDeclaredSensitiveArguments(cli);
-  const original = cli.serve.bind(cli);
-  cli.serve = (argv = [], options = {}) =>
-    strict(argv, options, (tokens, selected) =>
-      declared(tokens, selected, original),
-    );
-};
+type CliInstance = ReturnType<typeof createCommandCli>;
+const serve = (cli: CliInstance, argv: string[]) =>
+  serveInProcessCli(cli, [...argv, "--json"]);
 
 it("rejects surplus public CLI inputs before importing and retains the one-path control", async () => {
   const directory = await createTestTempDirectory(
@@ -44,6 +22,7 @@ it("rejects surplus public CLI inputs before importing and retains the one-path 
   await writeFile(
     path,
     JSON.stringify({
+      evidence_format: EVIDENCE_FORMAT_REVISION,
       artifacts: [],
       captures: [],
       environments: [],
@@ -54,12 +33,11 @@ it("rejects surplus public CLI inputs before importing and retains the one-path 
     }),
   );
   const cli = createCli({});
-  for (const extra of [["ignored"], ["ignored", "second"]]) {
-    const result = await serve(cli, ["evidence-import", path, ...extra]);
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain("Unexpected positional arguments");
-    for (const value of extra) expect(result.stdout).toContain(value);
-  }
+  const extra = ["ignored", "second"];
+  const surplus = await serve(cli, ["evidence-import", path, ...extra]);
+  expect(surplus.exitCode).toBe(1);
+  expect(surplus.stdout).toContain("Unexpected positional arguments");
+  for (const value of extra) expect(surplus.stdout).toContain(value);
   const missingFile = await serve(cli, [
     "evidence-import",
     join(directory, "absent"),
@@ -80,8 +58,8 @@ it("keeps parser-owned aliases, option values and optional arguments without rer
   let runs = 0;
   let transforms = 0;
   let defaults = 0;
-  const cli = Cli.create("strict-fixture", { sync: false });
-  cli.command("scalar", {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "scalar", {
     args: z.object({
       first: z.string().transform((value) => {
         transforms++;
@@ -97,7 +75,7 @@ it("keeps parser-owned aliases, option values and optional arguments without rer
         defaults++;
         return "default";
       }),
-      ...explicitSensitiveValueOptions,
+      sensitiveValue: z.array(z.string().min(1)).default([]),
     }),
     alias: { selectedValue: "s", enabled: "e" },
     run: ({ args, options }) => {
@@ -105,7 +83,6 @@ it("keeps parser-owned aliases, option values and optional arguments without rer
       return { args, options };
     },
   });
-  installAdmission(cli);
   const valid = await serve(cli, [
     "scalar",
     "one",
@@ -148,28 +125,19 @@ it("keeps parser-owned aliases, option values and optional arguments without rer
   ).toBe(0);
 });
 
-it("uses resolved group and alias paths and preserves declared variadic inputs", async () => {
-  const group = Cli.create("group", { sync: false });
-  group.command("scalar", {
-    aliases: ["alias"],
+it("enforces a scalar's arity and preserves declared variadic inputs", async () => {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "scalar", {
     args: z.object({ value: z.string() }),
     run: ({ args }) => args,
   });
-  group.command("many", {
+  registerCliCommand(cli, "many", {
     args: z.object({ values: z.array(z.string()) }),
     run: ({ args }) => args,
   });
-  const cli = Cli.create("strict-groups", { sync: false }).command(group);
-  installAdmission(cli);
-  expect((await serve(cli, ["group", "scalar", "one"])).exitCode).toBe(0);
-  expect((await serve(cli, ["group", "scalar", "one", "extra"])).exitCode).toBe(
-    1,
-  );
-  expect((await serve(cli, ["group", "alias", "one"])).exitCode).toBe(0);
-  expect((await serve(cli, ["group", "alias", "one", "extra"])).exitCode).toBe(
-    1,
-  );
-  const many = await serve(cli, ["group", "many", "one", "two", "three"]);
+  expect((await serve(cli, ["scalar", "one"])).exitCode).toBe(0);
+  expect((await serve(cli, ["scalar", "one", "extra"])).exitCode).toBe(1);
+  const many = await serve(cli, ["many", "one", "two", "three"]);
   expect(many.exitCode).toBe(0);
   expect(JSON.parse(many.stdout)).toMatchObject({
     values: ["one", "two", "three"],
@@ -178,8 +146,8 @@ it("uses resolved group and alias paths and preserves declared variadic inputs",
 
 it("preserves counted aliases and negated booleans while checking the positional tail", async () => {
   let runs = 0;
-  const cli = Cli.create("strict-counted-flags", { sync: false });
-  cli.command("capture", {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "capture", {
     args: z.object({ path: z.string() }),
     options: z.object({
       enabled: z.boolean().default(true),
@@ -191,7 +159,6 @@ it("preserves counted aliases and negated booleans while checking the positional
       return { args, options };
     },
   });
-  installAdmission(cli);
   const valid = await serve(cli, ["capture", "one", "--no-enabled", "-vvv"]);
   expect(valid.exitCode).toBe(0);
   expect(JSON.parse(valid.stdout)).toMatchObject({
@@ -207,5 +174,101 @@ it("preserves counted aliases and negated booleans while checking the positional
   ]);
   expect(surplus.exitCode).toBe(1);
   expect(surplus.stdout).toContain("Unexpected positional arguments");
+  expect(runs).toBe(1);
+});
+
+it("validates every dry-run literal before lossy coercion while retaining bare and negated controls", async () => {
+  let runs = 0;
+  let defaults = 0;
+  const cli = createCommandCli();
+  registerCliCommand(cli, "setup", {
+    options: z.object({
+      dryRun: z.boolean().default(false),
+      selected: z.string().default(() => {
+        defaults++;
+        return "default";
+      }),
+    }),
+    run: ({ options }) => {
+      runs++;
+      return options;
+    },
+  });
+  for (const literal of ["", "abc", "1", "True", "ab\ncd"]) {
+    const result = await serve(cli, [
+      "setup",
+      `--dry-run=${literal}`,
+      "--dry-run=false",
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "PARSE_ERROR",
+      message: "Invalid --dry-run value; use true or false.",
+      retryable: false,
+    });
+  }
+  expect({ runs, defaults }).toEqual({ runs: 0, defaults: 0 });
+  for (const [tokens, expected] of [
+    [["--dry-run"], true],
+    [["--dry-run=false"], false],
+    [["--no-dry-run"], false],
+    [["--no-dry-run", "--dry-run"], true],
+  ] as const) {
+    const result = await serve(cli, ["setup", ...tokens]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ dryRun: expected });
+  }
+  expect({ runs, defaults }).toEqual({ runs: 4, defaults: 4 });
+});
+
+it("keeps flag-shaped option data untouched while validating only bound dry-run values", async () => {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "setup", {
+    options: z.object({
+      dryRun: z.boolean().default(false),
+      selected: z.string(),
+    }),
+    alias: { selected: "s" },
+    run: ({ options }) => options,
+  });
+  registerCliCommand(cli, "text", {
+    options: z.object({ dryRun: z.string() }),
+    run: ({ options }) => options,
+  });
+  for (const value of ["--dry-run=abc", "--dry-run", "--no-dryRun"]) {
+    const result = await serve(cli, ["setup", "-s", value, "--dry-run=true"]);
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      dryRun: true,
+      selected: value,
+    });
+  }
+  const text = await serve(cli, ["text", "--dry-run=abc"]);
+  expect(text.exitCode).toBe(0);
+  expect(JSON.parse(text.stdout)).toEqual({ dryRun: "abc" });
+});
+
+it("validates dry-run on variadic commands without losing their declared tail", async () => {
+  let runs = 0;
+  const cli = createCommandCli();
+  registerCliCommand(cli, "many", {
+    args: z.object({
+      values: z.array(z.string()),
+    }),
+    options: z.object({ dryRun: z.boolean().default(false) }),
+    run: ({ args, options }) => {
+      runs++;
+      return { args, options };
+    },
+  });
+  const rejected = await serve(cli, ["many", "one", "two", "--dry-run=abc"]);
+  expect(rejected.exitCode).toBe(1);
+  expect(runs).toBe(0);
+  const accepted = await serve(cli, ["many", "one", "two", "--no-dry-run"]);
+  expect(accepted.exitCode, accepted.stdout).toBe(0);
+  expect(JSON.parse(accepted.stdout)).toMatchObject({
+    args: { values: ["one", "two"] },
+    options: { dryRun: false },
+  });
   expect(runs).toBe(1);
 });

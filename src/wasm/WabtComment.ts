@@ -1,3 +1,5 @@
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
+
 /** Skip a WAT comment without interpreting its punctuation as forms or strings. */
 export const watCommentEnd = (
   text: string,
@@ -24,5 +26,5 @@ export const watCommentEnd = (
       index++;
     }
   }
-  throw new Error("Incomplete WABT WAT comment.");
+  throw new WabtAdmissionError("incomplete_comment");
 };

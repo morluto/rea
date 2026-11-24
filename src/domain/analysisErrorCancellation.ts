@@ -16,7 +16,7 @@ export const analysisErrorWithCancellation = (
     !primary.secondaryFailures.some(
       (secondary) =>
         secondary instanceof AnalysisCancelledError &&
-        secondary.cause === cancellation.cause,
+        Object.is(secondary.cause, cancellation.cause),
     )
   )
     primary.retainSecondaryFailure(cancellation);

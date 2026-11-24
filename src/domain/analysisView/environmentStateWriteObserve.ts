@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { StateRecordChronology } from "./StateRecordChronology.js";
 import {
+  succeeded,
   ownMember,
   at,
   collectionPathOf,
@@ -9,6 +10,7 @@ import {
   listItems,
   pointerTo,
   projectsFields,
+  same,
   scalarText,
   type JsonObject,
   type StateEntity,
@@ -23,6 +25,8 @@ export interface ObservedRead {
   readonly ordinal: number;
   readonly pointer: string;
   readonly shape: "item" | "list";
+  /** Pointers into the entity to values the response had not loaded and the item read shows loaded, or members the read adds inside an object the response showed. */
+  readonly unloaded?: string[];
 }
 
 /** Whether two clocks agree at the coarser recorded fraction precision, retaining all digits through nanoseconds. */
@@ -43,6 +47,55 @@ export const respelledInstant = (
     Math.floor(fraction(fine) / unit) * unit === fraction(coarse)
   );
 };
+
+/** Go's zero `time.Time`, which a response shows for a time it has not loaded. */
+const ZERO_TIME = /^0001-01-01T00:00:00(?:\.0+)?(?:Z|[+-]00:?00)$/u;
+
+/** A value a create's response holds where it has not loaded the stored one: empty, zero, false or Go's zero time. */
+const unloaded = (value: JsonValue | undefined): boolean =>
+  value === null ||
+  value === "" ||
+  value === 0 ||
+  value === false ||
+  (typeof value === "string" && ZERO_TIME.test(value)) ||
+  (Array.isArray(value)
+    ? value.length === 0
+    : isObject(value) && Object.keys(value).length === 0);
+
+/** Whether a later item read shows what a create's response showed, respelled or loaded: the same value, the same instant, a value for an unloaded one, or an object whose members each are. */
+export const loadedLater = (
+  response: JsonValue | undefined,
+  read: JsonValue | undefined,
+): boolean =>
+  same(response, read) ||
+  respelledInstant(response, read) ||
+  (read !== undefined && unloaded(response)) ||
+  (isObject(response) &&
+    isObject(read) &&
+    Object.keys(response).every((key) =>
+      loadedLater(response[key], ownMember(read, key)),
+    ));
+
+/** Pointers to the values a create's response had not loaded where a later read shows others, and to members a read adds inside an object the response showed, within nested objects too. */
+export const unloadedPointers = (
+  response: JsonObject,
+  read: JsonObject,
+  prefix = "",
+): string[] => [
+  ...Object.entries(response).flatMap(([key, value]) => {
+    const loaded = ownMember(read, key);
+    const pointer = `${prefix}${pointerTo(key)}`;
+    if (loaded === undefined || same(value, loaded)) return [];
+    if (isObject(value) && isObject(loaded) && Object.keys(value).length > 0)
+      return unloadedPointers(value, loaded, pointer);
+    return unloaded(value) ? [pointer] : [];
+  }),
+  ...(prefix === ""
+    ? []
+    : Object.keys(read)
+        .filter((key) => !Object.hasOwn(response, key))
+        .map((key) => `${prefix}${pointerTo(key)}`)),
+];
 
 /** A create's response object with a read's fields: an item read's values win, a list read only adds fields the response lacks. */
 export const withRead = (
@@ -128,6 +181,11 @@ export interface ObservationSearch {
   readonly from: number;
   /** Completion must be established before a read may supply a write observation. */
   readonly chronology: StateRecordChronology;
+  /** A read overlapping a related captured write cannot establish its result. */
+  readonly overlapsWrite: (
+    record: StateRecordFacts,
+    exclude?: number,
+  ) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly withBody: <T>(
     ordinal: number,
@@ -164,9 +222,6 @@ export const projectedRead = (
   });
 };
 
-const succeeded = (record: StateRecordFacts): boolean =>
-  record.status !== null && record.status >= 200 && record.status < 300;
-
 /**
  * The first later read, before the next write, that shows a written entity: an item read of
  * `id` when given, else an item read of an unheld id or a collection read listing exactly one.
@@ -189,11 +244,16 @@ export const laterObservation = (
     ) => boolean;
   },
 ): Observed | undefined => {
-  for (const record of search.records.slice(search.from + 1)) {
+  const { records } = search;
+  const source = records[search.from]!;
+  if (search.overlapsWrite(source, source.ordinal)) return undefined;
+  for (let index = search.from + 1; index < records.length; index++) {
+    const record = records[index]!;
     if (target.isWrite(record)) return undefined;
     // The same overlap the check path ignores: the write was still running when this read began.
     if (
-      !search.chronology.completedBefore(search.records[search.from]!, record)
+      !search.chronology.completedBefore(source, record) ||
+      search.overlapsWrite(record)
     )
       continue;
     const view = search.viewOf(record.ordinal);

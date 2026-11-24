@@ -1,5 +1,8 @@
 import type { FileHandle } from "node:fs/promises";
-import { copyArtifactEntry, type ArtifactEntry } from "../ArtifactReader.js";
+import {
+  copyArtifactEntry,
+  type ArtifactEntry,
+} from "../../resources/index.js";
 import {
   isCArchiveDeclaration,
   isCArchivePythonModule,
@@ -16,7 +19,7 @@ import {
   pyzEntryMetadata,
   pyzEntryEncrypted,
 } from "./PyInstallerMetadata.js";
-import type { PyInstallerEntryMetadata } from "../../domain/artifactFormatMetadata.js";
+import type { PyInstallerEntryMetadata } from "../../domain/formatMetadata/packageAndGameMetadata.js";
 
 const CRYPTO_KEY_NAME = "pyimod00_crypto_key";
 
@@ -102,7 +105,8 @@ export const projectStoredMember = (
       kind: symlink ? "symlink" : "file",
       declaredSize,
       compressedSize: entry.compressedSize,
-      executable: entry.role === "binary",
+      // Only the POSIX bootloader sets S_IXUSR on extracted `b` members.
+      executable: pathDialect === "posix" && entry.role === "binary",
       byteOffset: sourceByteOffset(entry, archiveStart),
       limitations,
       adapterKey: `carchive:${String(entry.index)}:${entry.name}`,

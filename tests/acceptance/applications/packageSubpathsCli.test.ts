@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,7 +8,10 @@ import { z } from "zod";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
+import {
+  analyzeJavaScriptDirectory,
+  sourceEvidence,
+} from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
 
 const createPackageSubpathFixture = async () => {
@@ -25,6 +27,7 @@ const createPackageSubpathFixture = async () => {
     'const file = require("fixture");',
     'const packageDirectory = require("fixture/");',
     'const selected = require("@scope/selected");',
+    'const scopedParser = require("@scope/selected/parser");',
     'const blocked = require("blocked");',
     'const literal = require("fi%xture");',
     'const scalar = require("scalar");',
@@ -36,6 +39,7 @@ const createPackageSubpathFixture = async () => {
   const importSource = [
     'import literal from "fi%xture";',
     'import uri from "FILE:///src/uri-dep.cjs?token=%2F#entry";',
+    'import parser from "@scope/selected/parser";',
   ].join("\n");
   const files = {
     "src/main.cjs": source,
@@ -58,7 +62,7 @@ const createPackageSubpathFixture = async () => {
       exports: {
         "./parser": "./parser.cjs",
         "./parser/": "./parser.cjs",
-        "./missing": "./missing.cjs",
+        "./missing": "./missing",
       },
     }),
     "node_modules/exported/parser.cjs": "module.exports = 6;",
@@ -66,9 +70,14 @@ const createPackageSubpathFixture = async () => {
     "node_modules/exported/missing/index.js": "module.exports = 8;",
     "node_modules/@scope/selected.js": "module.exports = 'sibling';",
     "node_modules/@scope/selected/package.json": JSON.stringify({
-      exports: { require: "./actual.cjs" },
+      exports: {
+        ".": { require: "./actual.cjs" },
+        "./parser": [{ import: "./parser.mjs" }, "./parser.cjs"],
+      },
     }),
     "node_modules/@scope/selected/actual.cjs": "module.exports = 'export';",
+    "node_modules/@scope/selected/parser.cjs": "module.exports = 'cjs parser';",
+    "node_modules/@scope/selected/parser.mjs": "export default 'esm parser';",
     "node_modules/blocked.js": "module.exports = 'sibling';",
     "node_modules/blocked/package.json": JSON.stringify({
       exports: { ".": null },
@@ -102,6 +111,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "nested/parser": "node_modules/nested/parser/entry.js",
       "exported/parser": "node_modules/exported/parser.cjs",
       "@scope/selected": "node_modules/@scope/selected/actual.cjs",
+      "@scope/selected/parser": "node_modules/@scope/selected/parser.cjs",
       "fi%xture": "node_modules/fi%xture.js",
       scalar: "node_modules/scalar.js",
       "../node_modules/fi%xture/run.cjs": "node_modules/fi%xture/run.cjs",
@@ -111,7 +121,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       expect(
         relative(root, nativeRequire.resolve(specifier)).replaceAll("\\", "/"),
       ).toBe(target);
-    expect(nativeRequire("./uri-dep.cjs")).toBe(42);
     for (const specifier of [
       "file:///src/uri-dep.cjs",
       pathToFileURL(join(root, "src/uri-dep.cjs")).href,
@@ -136,12 +145,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
     expect(graph.coverage.status).toBe("complete");
-    const requireFileUrl = graph.edges.find(
-      ({ properties }) =>
-        properties.module_link_kind === "require" &&
-        properties.specifier === "file:///src/uri-dep.cjs",
-    );
-    expect(requireFileUrl?.evidence.limitations.length).toBeGreaterThan(0);
     const imports = graph.edges.filter(
       ({ properties }) => properties.module_link_kind === "require",
     );
@@ -154,41 +157,19 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       },
     ])
       expectResolvedImports(imports, observation);
-    expect(graph.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "imports",
-        properties: expect.objectContaining({
-          module_link_kind: "require",
-          specifier: "file:///src/uri-dep.cjs",
-          resolved_path: null,
-          resolution_status: "external",
-        }),
-        evidence: sourceEvidence("src/main.cjs", source),
-      }),
+    expectResolvedImports(
+      graph.edges.filter(
+        ({ properties }) => properties.module_link_kind === "import",
+      ),
+      {
+        sourcePath: "src/imports.mjs",
+        source: importSource,
+        targets: {
+          "@scope/selected/parser": "node_modules/@scope/selected/parser.mjs",
+        },
+      },
     );
-    expect(graph.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "imports",
-        properties: expect.objectContaining({
-          kind: "require",
-          specifier: "file:///src/uri-dep.cjs",
-          resolved_path: null,
-        }),
-        evidence: sourceEvidence("src/main.cjs", source),
-      }),
-    );
-    expect(graph.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "imports",
-        properties: expect.objectContaining({
-          module_link_kind: "import",
-          specifier: "FILE:///src/uri-dep.cjs?token=%2F#entry",
-          resolved_path: null,
-          resolution_status: "unavailable",
-        }),
-        evidence: sourceEvidence("src/imports.mjs", importSource),
-      }),
-    );
+    expectFileUrlImports(graph.edges, source, importSource);
     expect(graph.edges).toContainEqual(
       expect.objectContaining({
         properties: expect.objectContaining({
@@ -200,10 +181,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         evidence: sourceEvidence("src/imports.mjs", importSource),
       }),
     );
-    for (const [specifier, status] of [
+    for (const [specifier, status, limitation] of [
       ["exported/parser/", "external"],
       ["exported/hidden", "external"],
-      ["exported/missing", "not-found"],
+      ["exported/missing", "not-found", "exports targets are exact files"],
       ["blocked", "external"],
     ])
       expect(imports).toContainEqual(
@@ -213,6 +194,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             resolved_path: null,
             resolution_status: status,
           }),
+          evidence: sourceEvidence("src/main.cjs", source, limitation),
         }),
       );
     const preloads = graph.nodes.filter(
@@ -222,6 +204,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expect(preloads[0]?.identity).toMatchObject({
       key: "electron-preload:module-specifier:node_modules/exported/parser.cjs",
     });
+    expect(preloads[0]?.observations.length).toBeGreaterThan(0);
     for (const observation of preloads[0]?.observations ?? [])
       expect(observation).toMatchObject({
         properties: {
@@ -238,6 +221,54 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       });
   },
 );
+
+const expectFileUrlImports = (
+  edges: z.infer<
+    typeof javascriptApplicationAnalysisResultSchema
+  >["graph"]["edges"],
+  source: string,
+  importSource: string,
+): void => {
+  expect(edges).toContainEqual(
+    expect.objectContaining({
+      relation: "imports",
+      properties: expect.objectContaining({
+        module_link_kind: "require",
+        specifier: "file:///src/uri-dep.cjs",
+        resolved_path: null,
+        resolution_status: "external",
+      }),
+      evidence: sourceEvidence(
+        "src/main.cjs",
+        source,
+        "CommonJS require specifiers do not resolve file URLs",
+      ),
+    }),
+  );
+  expect(edges).toContainEqual(
+    expect.objectContaining({
+      relation: "imports",
+      properties: expect.objectContaining({
+        kind: "require",
+        specifier: "file:///src/uri-dep.cjs",
+        resolved_path: null,
+      }),
+      evidence: sourceEvidence("src/main.cjs", source),
+    }),
+  );
+  expect(edges).toContainEqual(
+    expect.objectContaining({
+      relation: "imports",
+      properties: expect.objectContaining({
+        module_link_kind: "import",
+        specifier: "FILE:///src/uri-dep.cjs?token=%2F#entry",
+        resolved_path: null,
+        resolution_status: "unavailable",
+      }),
+      evidence: sourceEvidence("src/imports.mjs", importSource),
+    }),
+  );
+};
 
 const expectResolvedImports = (
   imports: z.infer<
@@ -261,18 +292,3 @@ const expectResolvedImports = (
       }),
     );
 };
-
-const sourceEvidence = (sourcePath: string, source: string): unknown =>
-  expect.objectContaining({
-    artifact: expect.objectContaining({
-      available: true,
-      sha256: createHash("sha256").update(source).digest("hex"),
-    }),
-    location: expect.objectContaining({
-      available: true,
-      value: expect.objectContaining({
-        kind: "source-range",
-        source: sourcePath,
-      }),
-    }),
-  });

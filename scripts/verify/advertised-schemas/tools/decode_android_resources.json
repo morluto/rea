@@ -1,0 +1,12 @@
+{
+  "schemas": {
+    "input compact": "4547fa615d144de1",
+    "output compact": "4bda7c3651bfc579"
+  },
+  "patterns": {
+    "input": [
+      "^(?:[a-z]{2,3}(?:-(?:r?[A-Z]{2}|[0-9]{3}))?|b\\+[a-z]{2,3}(?:\\+[0-9A-Za-z]{2,8})*)$",
+      "^[^\\x00]*$"
+    ]
+  }
+}

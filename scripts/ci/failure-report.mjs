@@ -367,7 +367,6 @@ export function createGitHubApi({
     async getStaticEvidence(repository, run, job) {
       const artifactName = STATIC_EVIDENCE_ARTIFACTS[job.name];
       if (!artifactName) return null;
-      if (run.run_attempt !== 1) return null;
       const page = await request(
         `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=100&page=1`,
       );
@@ -467,7 +466,7 @@ function errorCode(error) {
   return error instanceof Error ? error.message.slice(0, 160) : "unknown_error";
 }
 
-export async function writeFailureReport(
+async function writeFailureReport(
   report,
   outputDirectory = OUTPUT_DIRECTORY,
   summaryPath,

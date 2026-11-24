@@ -1,36 +1,54 @@
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
-import {
-  access,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { constants } from "node:fs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import {
-  mcpTextValue,
   requireMcpOperationResult,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { parseConfig } from "../dist/config/parseConfig.js";
+import { selectedHopperLauncherPath } from "../dist/hopperPaths/HopperLauncherDiscovery.js";
 import {
   verifyHopperSourceBinding,
   relocateSingleFatSlice,
 } from "./lib/real-hopper-source-binding.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
-const run = promisify(execFile);
+const verifierRun = createVerifierRun();
+// xcrun resolves clang and lipo before a workspace exists. A failed probe must
+// not allocate a root, so it uses the same short-lived owner as requireLaneToolchain.
+const probeOwnedCommand = async (command, arguments_) => {
+  const snapshot = await runOwnedCommand(
+    {
+      command,
+      arguments: arguments_,
+      cwd: process.cwd(),
+      env: process.env,
+      runId: `rea-hopper-fat-probe-${randomUUID()}`,
+      expectedCommand: null,
+      sweepTokenOwnedProcesses: true,
+    },
+    { timeoutMs: null, diagnosticBytes: 1024 * 1024 },
+  );
+  return snapshot.stdout.text;
+};
 const verifyFat64 = process.argv[2] === "--fat64";
 assert.deepEqual(process.argv.slice(2), verifyFat64 ? ["--fat64"] : []);
 if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch))
@@ -39,29 +57,54 @@ if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch))
   );
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-await access(config.value.hopperLauncherPath, constants.X_OK).catch((cause) => {
+const hopperLauncherPath = selectedHopperLauncherPath(
+  config.value.hopperLauncherPath,
+  process.platform,
+  process.env,
+);
+await access(hopperLauncherPath, constants.X_OK).catch((cause) => {
   throw new Error(
-    `Hopper FAT verification requires the configured executable: ${config.value.hopperLauncherPath}`,
+    `Hopper FAT verification requires the configured executable: ${hopperLauncherPath}`,
     { cause },
   );
 });
 const toolPaths = {};
 for (const command of ["clang", "lipo"])
   toolPaths[command] = (
-    await run("xcrun", ["--find", command]).catch((cause) => {
+    await probeOwnedCommand("xcrun", ["--find", command]).catch((cause) => {
       throw new Error(`Hopper FAT verification requires ${command}`, { cause });
     })
-  ).stdout.trim();
+  ).trim();
 const sdk = (
-  await run("xcrun", ["--sdk", "macosx", "--show-sdk-path"]).catch((cause) => {
+  await probeOwnedCommand("xcrun", [
+    "--sdk",
+    "macosx",
+    "--show-sdk-path",
+  ]).catch((cause) => {
     throw new Error(
       "Hopper FAT verification requires the installed macOS SDK",
       { cause },
     );
   })
-).stdout.trim();
+).trim();
 
-const directory = await realpath(await mkdtemp(join(tmpdir(), "hopper-fat-")));
+// The command owner is created before the workspace. If allocation fails,
+// the owner is still closed and no root is left behind.
+const commands = await createVerifierCommands();
+const workspace = await VerifierFixture.open({
+  prefix: "hopper-fat-",
+  private: false,
+}).catch(async (cause) => {
+  await commands.close().catch((closeCause) => {
+    throw new AggregateError(
+      [cause, closeCause],
+      "Hopper FAT workspace allocation and command cleanup both failed",
+    );
+  });
+  throw cause;
+});
+const directory = workspace.path;
+const hostFatArchitecture = process.arch === "arm64" ? "arm64" : "x86_64";
 const source = fileURLToPath(
   new URL("../tests/conformance/c/fixture.c", import.meta.url),
 );
@@ -70,14 +113,12 @@ const intel = join(directory, "c-x86_64");
 const fat = join(directory, "c-fat");
 const fat64 = join(directory, "c-fat64");
 const singleFat = join(directory, "c-single-fat");
-const owned = new Set();
 const extraFat64 = [];
 const invalidFat64 = [];
 let preparedImagePath;
-const before = await snapshotHopperRuntime(
-  "/tmp",
-  HOPPER_TARGET_LEASE_DIRECTORY,
-);
+const before = (
+  await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
+).paths;
 const client = new Client({ name: "hopper-fat-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -94,8 +135,9 @@ const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 const observations = [];
 const sourceBinding = [];
+let primaryFailure;
 try {
-  await run(toolPaths.clang, [
+  await commands.exec(toolPaths.clang, [
     "-isysroot",
     sdk,
     "-arch",
@@ -106,7 +148,7 @@ try {
     "-o",
     arm,
   ]);
-  await run(toolPaths.clang, [
+  await commands.exec(toolPaths.clang, [
     "-isysroot",
     sdk,
     "-arch",
@@ -117,9 +159,9 @@ try {
     "-o",
     intel,
   ]);
-  await run(toolPaths.lipo, ["-create", arm, intel, "-output", fat]);
+  await commands.exec(toolPaths.lipo, ["-create", arm, intel, "-output", fat]);
   if (verifyFat64)
-    await run(toolPaths.lipo, [
+    await commands.exec(toolPaths.lipo, [
       "-create",
       arm,
       intel,
@@ -127,7 +169,7 @@ try {
       "-output",
       fat64,
     ]);
-  await run(toolPaths.lipo, [
+  await commands.exec(toolPaths.lipo, [
     "-create",
     process.arch === "arm64" ? arm : intel,
     "-output",
@@ -155,7 +197,7 @@ try {
     await writeFile(little, swapped);
     extraFat64.push(little);
     const single = join(directory, "c-single-fat64");
-    await run(toolPaths.lipo, [
+    await commands.exec(toolPaths.lipo, [
       "-create",
       process.arch === "arm64" ? arm : intel,
       "-fat64",
@@ -163,29 +205,46 @@ try {
       single,
     ]);
     extraFat64.push(single);
-    for (const [name, reason, mutate] of [
+    for (const [name, refusal, mutate] of [
       [
         "reserved",
-        /nonzero reserved field/u,
+        {
+          reason: "FAT64 architecture 0 has a nonzero reserved field",
+        },
         (bytes) => bytes.writeUInt32BE(1, 36),
       ],
       [
         "range",
-        /extends beyond the file/u,
+        {
+          reason: "FAT architecture 0 slice range extends beyond the file",
+          constraint: "file_format_rejected",
+        },
         (bytes) => bytes.writeBigUInt64BE(BigInt(bytes.length), 24),
       ],
       [
         "identity",
-        /disagrees with its Mach-O header/u,
+        {
+          reason:
+            "FAT architecture 0 CPU type/subtype disagrees with its Mach-O header",
+          constraint: "file_format_rejected",
+        },
         (bytes) => bytes.writeUInt32BE(bytes.readUInt32BE(12) + 1, 12),
       ],
       [
         "overlap",
-        /slices overlap/u,
+        { reason: "FAT slices overlap" },
         (bytes) => {
-          const cpu = process.arch === "arm64" ? 0x100000c : 0x1000007;
-          const base = bytes.readUInt32BE(8) === cpu ? 8 : 40;
-          bytes.copy(bytes, base === 8 ? 40 : 8, base, base + 32);
+          const firstOffset = bytes.readBigUInt64BE(16);
+          const secondOffset = bytes.readBigUInt64BE(48);
+          const earlier = firstOffset < secondOffset ? 8 : 40;
+          const laterOffset =
+            firstOffset < secondOffset ? secondOffset : firstOffset;
+          const earlierOffset =
+            firstOffset < secondOffset ? firstOffset : secondOffset;
+          bytes.writeBigUInt64BE(
+            laterOffset - earlierOffset + 16n,
+            earlier + 16,
+          );
         },
       ],
     ]) {
@@ -193,7 +252,7 @@ try {
       mutate(bytes);
       const path = join(directory, `c-fat64-invalid-${name}`);
       await writeFile(path, bytes);
-      invalidFat64.push({ path, reason });
+      invalidFat64.push({ path, refusal });
     }
     const hostBytes = await readFile(process.arch === "arm64" ? arm : intel);
     const secondOffset = Math.ceil((16384 + hostBytes.length) / 16384) * 16384;
@@ -211,11 +270,16 @@ try {
     }
     const path = join(directory, "c-fat64-ambiguous");
     await writeFile(path, ambiguous);
-    invalidFat64.push({ path, reason: /selection.*ambiguous/u });
+    invalidFat64.push({
+      path,
+      refusal: {
+        reason: `FAT binary declares several ${hostFatArchitecture} slices; no slice was selected`,
+        constraint: "file_format_rejected",
+      },
+    });
   }
   await client.connect(transport);
   assert.ok(transport.pid !== null);
-  owned.add(transport.pid);
   const catalog = await client.listTools();
   const call = async (name, args = {}) => {
     const reply = await client.callTool(
@@ -223,10 +287,11 @@ try {
       { timeout: 180_000 },
     );
     const result = requireMcpOperationResult(reply, name);
-    const schema = catalog.tools.find(
-      (tool) => tool.name === name,
-    )?.outputSchema;
-    assert.ok(schema, `${name} omitted its output schema`);
+    assert.ok(
+      catalog.tools.some((tool) => tool.name === name),
+      `${name} is not advertised`,
+    );
+    const schema = canonicalOutputSchema(name);
     assert.equal(
       ajv.validate(schema, reply.structuredContent),
       true,
@@ -348,25 +413,53 @@ try {
     });
     await call("close_binary");
   }
-  for (const { path, reason } of invalidFat64) {
+  for (const { path, refusal } of invalidFat64) {
     const reply = await client.callTool({
       name: "open_binary",
       arguments: { path },
     });
-    assert.equal(reply.isError, true, "malformed FAT64 unexpectedly launched");
-    assert.match(mcpTextValue(reply), reason);
+    // Admission failures are BinaryTargetError file_format_rejected.
+    // Reserved and overlap survive admission and fail in resolveHopperMachOImage,
+    // which returns BinaryTargetError with no constraint. Both classify as
+    // target_unavailable and keep the producer reason on details.reason.
+    const refused = requireMcpToolError(reply);
+    assert.partialDeepStrictEqual(refused, {
+      code: "target_unavailable",
+      details: {
+        path,
+        reason: refusal.reason,
+        ...(refusal.constraint === undefined
+          ? {}
+          : { constraint: refusal.constraint }),
+      },
+    });
+    if (refusal.constraint === undefined)
+      assert.equal(refused.details?.constraint, undefined);
   }
   if (verifyFat64) {
     await call("open_binary", { path: fat64 });
     await call("list_procedures");
-    const resources = [
-      ...(await snapshotHopperRuntime(
-        "/tmp",
-        HOPPER_TARGET_LEASE_DIRECTORY,
-        owned,
-      )),
-    ].filter((path) => !before.has(path));
-    for (const root of resources) {
+    const session = await call("binary_session");
+    const runId = session.analysis_run?.run_id;
+    assert.ok(
+      typeof runId === "string" && runId.length > 0,
+      "Missing analysis run identity",
+    );
+    const resources = await snapshotHopperRuntime(
+      "/tmp",
+      HOPPER_TARGET_LEASE_DIRECTORY,
+      runId,
+    );
+    const unresolvedNew = [...resources.unresolvedSessions].filter(
+      (path) => !before.has(path),
+    );
+    assert.deepEqual(
+      unresolvedNew,
+      [],
+      "Cannot identify a prepared image while new Hopper resource ownership is unresolved",
+    );
+    for (const root of resources.confirmedSessions) {
+      if (before.has(root)) continue;
       const image = join(root, "image.macho");
       if (
         await access(image).then(
@@ -385,7 +478,7 @@ try {
     await assert.rejects(access(preparedImagePath), { code: "ENOENT" });
   }
   for (const [path, expected] of cliMappings) {
-    const pending = run(
+    const cliResult = await commands.exec(
       process.execPath,
       [
         "scripts/rea.mjs",
@@ -402,28 +495,99 @@ try {
         env: { ...process.env, HOPPER_LOADER_ARGS_JSON: "[]" },
       },
     );
-    assert.ok(pending.child.pid !== undefined);
-    owned.add(pending.child.pid);
-    const cli = JSON.parse((await pending).stdout);
+    const cli = JSON.parse(cliResult.stdout);
     assert.deepEqual(cli.normalized_result, expected.mapping);
   }
-} finally {
-  await client.close();
-  await transport.close();
-  await rm(directory, { recursive: true, force: true });
+} catch (cause) {
+  primaryFailure = cause;
 }
-const retained = [
-  ...(await snapshotHopperRuntime(
-    "/tmp",
-    HOPPER_TARGET_LEASE_DIRECTORY,
-    owned,
-  )),
-].filter((path) => !before.has(path));
-assert.deepEqual(
-  retained,
-  [],
-  "FAT verification retained owned Hopper sessions or leases",
-);
+let hopperCleanupFailure;
+try {
+  await workspace.closeEarly([
+    async () => {
+      try {
+        await closeVerifierResources([
+          () => client.close(),
+          () => transport.close(),
+        ]);
+      } catch (cause) {
+        throw new Error(
+          `Hopper cleanup failed; fixture retained at ${directory}`,
+          { cause },
+        );
+      }
+      try {
+        const retained = [
+          ...(
+            await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
+          ).paths,
+        ].filter((path) => !before.has(path));
+        assert.deepEqual(
+          retained,
+          [],
+          "Hopper resources remain or are unresolved",
+        );
+      } catch (cause) {
+        throw new Error(
+          `Hopper resource verification failed; fixture retained at ${directory}`,
+          { cause },
+        );
+      }
+    },
+  ]);
+} catch (cause) {
+  hopperCleanupFailure = cause;
+}
+if (hopperCleanupFailure !== undefined)
+  primaryFailure =
+    primaryFailure === undefined
+      ? hopperCleanupFailure
+      : new AggregateError(
+          [primaryFailure, hopperCleanupFailure],
+          "Hopper FAT verification and Hopper cleanup both failed",
+        );
+let commandCleanupFailure;
+try {
+  await workspace.closeEarly([() => commands.close()]);
+} catch (cause) {
+  commandCleanupFailure = cause;
+}
+if (commandCleanupFailure !== undefined)
+  throw workspace.retainedError(
+    `Hopper FAT command cleanup failed; retained diagnostic workspace: ${directory}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? commandCleanupFailure
+          : new AggregateError(
+              [primaryFailure, commandCleanupFailure],
+              "Hopper FAT verification and command cleanup both failed",
+            ),
+    },
+  );
+const completedVerifierRun = await completeVerifierRun(verifierRun);
+try {
+  assertVerifierCleanupComplete(completedVerifierRun.process_lineage);
+} catch (cause) {
+  throw workspace.retainedError(
+    `Cleanup unverified; retained diagnostic workspace: ${directory}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cause
+          : new AggregateError(
+              [primaryFailure, cause],
+              "Hopper FAT verification failed and cleanup was unverified",
+            ),
+    },
+  );
+}
+if (primaryFailure !== undefined)
+  throw workspace.retainedError(
+    `Hopper FAT verification failed; retained workspace: ${directory}`,
+    { cause: primaryFailure },
+  );
+await workspace.release();
 console.log(
   JSON.stringify(
     {

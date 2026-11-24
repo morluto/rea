@@ -7,7 +7,6 @@ import {
   parseProguardMapping,
   PROGUARD_MAPPING_LIMITS,
   type ProguardMapping,
-  residualDexType,
   resolveProguardClass,
   resolveProguardField,
   resolveProguardMethod,
@@ -63,6 +62,22 @@ const method = (
   parameter_types: string[] = [],
   return_type = "void",
 ) => ({ class: `${app}.LoginActivity`, name, return_type, parameter_types });
+
+it.each([
+  ["CR", ["\r"]],
+  ["CRLF", ["\r\n"]],
+  ["mixed", ["\r\n", "\r", "\n"]],
+] as const)(
+  "preserves mappings and diagnostics with %s line endings",
+  (_label, endings) => {
+    let line = 0;
+    const text = fixture.replaceAll(
+      "\n",
+      () => endings[line++ % endings.length]!,
+    );
+    expect(parse(text)).toEqual(mapping);
+  },
+);
 
 it("reports header facts, valid record counts and malformed line samples", () => {
   expect(mapping.reported).toEqual({
@@ -306,7 +321,7 @@ it("disambiguates overloads collapsed to one name and caps reported candidates",
   });
 });
 
-it("translates original types to residual DEX types", () => {
+it("matches original field types against observed residual DEX types", () => {
   const renamed = parse(
     [
       "com.example.Outer$Inner -> a.b$c:",
@@ -314,15 +329,38 @@ it("translates original types to residual DEX types", () => {
       "com.example.Twice -> a.u:",
       "com.example.Duplicate -> a.d:",
       "com.example.Duplicate -> a.d:",
+      "Owner -> owner:",
+      "    int[][] primitiveArray -> a",
+      "    com.example.Outer$Inner[] nestedArray -> b",
+      "    java.util.List external -> c",
+      "    com.example.Twice conflicting -> d",
+      "    com.example.Duplicate duplicate -> e",
     ].join("\n"),
   );
-  expect(residualDexType(renamed, "int[][]")).toBe("[[I");
-  expect(residualDexType(renamed, "com.example.Outer$Inner[]")).toBe(
-    "[La/b$c;",
-  );
-  expect(residualDexType(renamed, "java.util.List")).toBe("Ljava/util/List;");
-  expect(residualDexType(renamed, "com.example.Twice")).toBeUndefined();
-  expect(residualDexType(renamed, "com.example.Duplicate")).toBe("La/d;");
+  for (const [name, type, originalName] of [
+    ["a", "[[I", "primitiveArray"],
+    ["b", "[La/b$c;", "nestedArray"],
+    ["c", "Ljava/util/List;", "external"],
+    ["e", "La/d;", "duplicate"],
+  ] as const) {
+    expect(
+      resolveProguardField(renamed, { className: "owner", name, type }),
+    ).toMatchObject({
+      status: "mapped",
+      mapped: { class: "Owner", name: originalName },
+      verified_by: "type",
+    });
+  }
+  for (const type of ["La/t;", "La/u;"]) {
+    expect(
+      resolveProguardField(renamed, { className: "owner", name: "d", type }),
+    ).toMatchObject({
+      status: "ambiguous",
+      reason: "type-mismatch",
+      candidate_count: 1,
+      candidates: [{ class: "Owner", name: "conflicting" }],
+    });
+  }
 });
 
 it.each([
@@ -440,9 +478,19 @@ it("keeps a conflicting alias unknown even after many later agreeing records", (
       "T -> x:",
       "T -> y:",
       ...Array.from({ length: 100 }, () => "T -> x:"),
+      "Owner -> owner:",
+      "    T field -> a",
     ].join("\n"),
   );
-  expect(residualDexType(conflict, "T")).toBeUndefined();
+  for (const type of ["Lx;", "Ly;"]) {
+    expect(
+      resolveProguardField(conflict, { className: "owner", name: "a", type }),
+    ).toMatchObject({
+      status: "ambiguous",
+      reason: "type-mismatch",
+      candidate_count: 1,
+    });
+  }
 });
 
 it("indexes many distinct residual signatures without merging away late candidates", () => {
@@ -603,10 +651,56 @@ it("uses residual signature metadata and reports an invalid payload", () => {
   expect(metadata.malformed).toEqual([{ line: 5, reason: "metadata" }]);
 });
 
-it("treats CRLF and tab indentation like LF and spaces", () => {
+it.each([
+  ["tabs", "\t->\t"],
+  ["no spaces", "->"],
+] as const)("reads the same mapping when arrows use %s", (_name, arrow) => {
+  expect(parse(fixture.replaceAll(" -> ", arrow))).toEqual(mapping);
+});
+
+it("maps fields and methods with tab indentation and type separators", () => {
+  const observed = parse(
+    [
+      "example.Original -> a:",
+      "\tint\t\tcounter -> c",
+      "\t4:4:void\trun():5:5 -> r",
+    ].join("\n"),
+  );
   expect(
-    parse(fixture.replaceAll("\n", "\r\n").replaceAll("    ", "\t")),
-  ).toEqual(mapping);
+    resolveProguardField(observed, { className: "a", name: "c", type: "I" }),
+  ).toMatchObject({ status: "mapped", mapped: { name: "counter" } });
+  expect(
+    resolveProguardMethod(observed, {
+      className: "a",
+      name: "r",
+      descriptor: "()V",
+    }),
+  ).toMatchObject({ status: "mapped", mapped: { name: "run" } });
+});
+
+it("reports extra mapping arrows on their original source lines", () => {
+  const observed = parse(
+    [
+      "example.Original -> a:",
+      "    int count -> c -> other",
+      "    void run() -> r -> other",
+      "example.Broken -> b -> other:",
+      "    int orphan -> x",
+      "example.Next -> n:",
+    ].join("\n"),
+  );
+  expect(observed.records).toEqual({
+    classes: 2,
+    fields: 0,
+    methods: 0,
+    malformed: 4,
+  });
+  expect(observed.malformed).toEqual([
+    { line: 2, reason: "member-line" },
+    { line: 3, reason: "member-line" },
+    { line: 4, reason: "class-line" },
+    { line: 5, reason: "member-without-class" },
+  ]);
 });
 
 it.each([
@@ -621,6 +715,21 @@ it.each([
   });
 });
 
+const capacityRefusal = (name: string, maximum: number, line: number) => ({
+  ok: false,
+  error: {
+    kind: "capacity",
+    line,
+    cause: {
+      failure: {
+        kind: "limit",
+        format: "proguard-mapping",
+        limit: { name, maximum },
+      },
+    },
+  },
+});
+
 it("refuses class-index growth at its source line with an explicit retained budget", () => {
   const parsed = parseProguardMapping(
     Array.from({ length: 8 }, (_, index) => `Owner${index} -> a${index}:`).join(
@@ -628,10 +737,7 @@ it("refuses class-index growth at its source line with an explicit retained budg
     ),
     { indexBytes: 4096 },
   );
-  expect(parsed).toEqual({
-    ok: false,
-    error: { kind: "capacity", resource: "index", limit_bytes: 4096, line: 4 },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("index", 4096, 4));
 });
 
 it("admits a method's parameter representation before allocating its split array", () => {
@@ -647,10 +753,7 @@ it("admits a method's parameter representation before allocating its split array
   } finally {
     split.mockRestore();
   }
-  expect(parsed).toMatchObject({
-    ok: false,
-    error: { kind: "capacity", resource: "index", line: 2 },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("index", 4096, 2));
   expect(splits).toBe(0);
 });
 
@@ -665,15 +768,7 @@ it("refuses oversized JSON metadata before JSON.parse materializes its tree", ()
   } finally {
     json.mockRestore();
   }
-  expect(parsed).toEqual({
-    ok: false,
-    error: {
-      kind: "capacity",
-      resource: "projection",
-      limit_bytes: 1024,
-      line: 2,
-    },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("projection", 1024, 2));
   expect(calls).toBe(0);
 });
 
@@ -799,15 +894,7 @@ it("bounds repeated shared class names in expanded per-class mapping claims", ()
       projectionBytes: 1024,
     },
   );
-  expect(parsed).toEqual({
-    ok: false,
-    error: {
-      kind: "capacity",
-      resource: "projection",
-      limit_bytes: 1024,
-      line: 3,
-    },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("projection", 1024, 3));
 });
 
 it("does not cumulatively charge deduplicated line-range splits", () => {
@@ -890,27 +977,30 @@ it("streams total candidate counts with bounded stable samples for classes and m
   ).join("\n");
   const many = parse(text);
   const resolutions = [
-    resolveProguardClass(many, "a", { candidates: 2 }),
-    resolveProguardField(
-      many,
-      { className: "a", name: "b", type: "I" },
-      { candidates: 2 },
-    ),
-    resolveProguardMethod(
-      many,
-      { className: "a", name: "c", descriptor: "()V" },
-      { candidates: 2 },
-    ),
-  ];
-  for (const resolution of resolutions) {
+    [resolveProguardClass(many, "a", { candidates: 2 }), ["Owner0", "Owner1"]],
+    [
+      resolveProguardField(
+        many,
+        { className: "a", name: "b", type: "I" },
+        { candidates: 2 },
+      ),
+      ["field0", "field1"],
+    ],
+    [
+      resolveProguardMethod(
+        many,
+        { className: "a", name: "c", descriptor: "()V" },
+        { candidates: 2 },
+      ),
+      ["method0", "method1"],
+    ],
+  ] as const;
+  for (const [resolution, names] of resolutions)
     expect(resolution).toMatchObject({
       status: "ambiguous",
       candidate_count: 12,
+      candidates: names.map((name) => ({ name })),
     });
-    if (resolution.status !== "ambiguous")
-      throw new Error("Expected ambiguity");
-    expect(resolution.candidates).toHaveLength(2);
-  }
   expect(resolveProguardClass(many, "a")).toMatchObject({
     candidate_count: 12,
     candidates: Array.from(
@@ -920,32 +1010,7 @@ it("streams total candidate counts with bounded stable samples for classes and m
   });
 });
 
-it("caps verified and mismatched member samples while counting every relevant candidate", () => {
-  const many = parse(
-    [
-      "Owner -> a:",
-      ...Array.from(
-        { length: 12 },
-        (_, index) => `    void method${index}(int) -> b`,
-      ),
-    ].join("\n"),
-  );
-  for (const descriptor of ["(I)V", "(J)V"]) {
-    expect(
-      resolveProguardMethod(
-        many,
-        { className: "a", name: "b", descriptor },
-        { candidates: 2 },
-      ),
-    ).toMatchObject({
-      status: "ambiguous",
-      candidate_count: 12,
-      candidates: [{ name: "method0" }, { name: "method1" }],
-    });
-  }
-});
-
-it("samples verified candidates after earlier prototype mismatches", () => {
+it("keeps bounded verified and mismatch samples from the same member candidates", () => {
   const many = parse(
     [
       "Owner -> a:",
@@ -972,6 +1037,18 @@ it("samples verified candidates after earlier prototype mismatches", () => {
     reason: "multiple-records",
     candidate_count: 2,
     candidates: [{ name: "first" }],
+  });
+  expect(
+    resolveProguardMethod(
+      many,
+      { className: "a", name: "b", descriptor: "(B)V" },
+      { candidates: 2 },
+    ),
+  ).toMatchObject({
+    status: "ambiguous",
+    reason: "descriptor-mismatch",
+    candidate_count: 12,
+    candidates: [{ name: "miss0" }, { name: "miss1" }],
   });
 });
 
@@ -1067,4 +1144,15 @@ it("does not charge repeated identical residual metadata as new retained strings
       type: "J",
     }),
   ).toMatchObject({ status: "mapped" });
+});
+
+it("reports duplicate metadata members even when a repeated id overwrites its string value", () => {
+  const metadata = parse(
+    [
+      '# {"id":"com.android.tools.r8.mapping","id":null}',
+      "com.example.Meta -> a.m:",
+      "    int count -> a",
+    ].join("\n"),
+  );
+  expect(metadata.malformed).toEqual([{ line: 1, reason: "metadata" }]);
 });

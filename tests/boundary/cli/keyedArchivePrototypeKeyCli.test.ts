@@ -73,7 +73,7 @@ cliTest(
       const path = join(directory, `${name}.plist`);
       await writeFile(path, bytes);
       for (const rootArguments of [[], ["--root", "main"]]) {
-        const output = await cli.run({
+        const invocation = {
           arguments: [
             "inspect-keyed-archive",
             path,
@@ -85,6 +85,10 @@ cliTest(
             HOME: directory,
             USERPROFILE: directory,
           },
+        };
+        const output = await cli.run({
+          ...invocation,
+          freshProcess: name !== "plain" && rootArguments.length === 0,
         });
         expect(output.exitCode, output.stdout).toBe(0);
         const result = keyedArchiveResultSchema.parse(

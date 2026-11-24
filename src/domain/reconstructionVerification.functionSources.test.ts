@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { AnalysisInputError } from "./analysisErrorCore.js";
@@ -82,7 +83,7 @@ const source = (
           sha256: digit.repeat(64),
           format: "file",
         }
-      : undefined,
+      : unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture function analysis", version: "1" },
     {
       operation: "analyze_function",
@@ -91,7 +92,15 @@ const source = (
       confidence: "derived",
       authority: "shipped-artifact",
       ...(hasCoverage
-        ? { relationshipCoverage: { status: "complete" as const } }
+        ? {
+            relationshipCoverage: {
+              status: "complete" as const,
+              discovery: {
+                callers: { status: "complete" as const },
+                callees: { status: "complete" as const },
+              },
+            },
+          }
         : {}),
       ...observation,
     },
@@ -133,20 +142,24 @@ const comparison = (
     ...dimension,
     evidence_links: links,
   }));
-  return createEvidence(identity.target, identity.provider ?? provider, {
-    predicateType: "rea.function-comparison",
-    operation: "compare_functions",
-    parameters,
-    result: jsonValueSchema.parse({
-      ...resultInput,
-      dimensions,
-      changes: dimensions.filter(({ status }) => status !== "unchanged"),
-    }),
-    confidence: "derived",
-    authority: "analyst-inference",
-    evidenceLinks: links,
-    ...observation,
-  });
+  return createEvidence(
+    identity.target ?? unknownTarget("derived-from-linked-evidence"),
+    identity.provider ?? provider,
+    {
+      predicateType: "rea.function-comparison",
+      operation: "compare_functions",
+      parameters,
+      result: jsonValueSchema.parse({
+        ...resultInput,
+        dimensions,
+        changes: dimensions.filter(({ status }) => status !== "unchanged"),
+      }),
+      confidence: "derived",
+      authority: "analyst-inference",
+      evidenceLinks: links,
+      ...observation,
+    },
+  );
 };
 
 const specification = (evidence: Evidence, dimension = "pseudocode") => ({
@@ -273,11 +286,16 @@ describe("historical calls-only reconstruction changes", () => {
             : {
                 relationshipCoverage:
                   coverage === "unknown"
-                    ? { status: "unknown", reason: "Call graph unavailable." }
+                    ? {
+                        status: "unknown",
+                        reason: "Call graph unavailable.",
+                        limited_directions: ["callers", "callees"],
+                      }
                     : coverage === "partial"
                       ? {
                           status: "partial",
                           limitations: ["Additional edges omitted."],
+                          limited_directions: ["callers", "callees"],
                         }
                       : { status: "complete" },
               }),
@@ -354,10 +372,24 @@ describe("function reconstruction call coverage", () => {
   it("preserves complete call diagnostics while passing equal call claims", () => {
     const diagnostic = "Indirect calls remain unresolved.";
     const leftWithDiagnostic = source("a", {
-      relationshipCoverage: { status: "complete", diagnostics: [diagnostic] },
+      relationshipCoverage: {
+        status: "complete",
+        diagnostics: [diagnostic],
+        discovery: {
+          callers: { status: "complete" },
+          callees: { status: "complete" },
+        },
+      },
     });
     const rightWithDiagnostic = source("b", {
-      relationshipCoverage: { status: "complete", diagnostics: [diagnostic] },
+      relationshipCoverage: {
+        status: "complete",
+        diagnostics: [diagnostic],
+        discovery: {
+          callers: { status: "complete" },
+          callees: { status: "complete" },
+        },
+      },
     });
     const observed = compareFunctions(
       functionSnapshotFixture(leftWithDiagnostic),
@@ -407,6 +439,7 @@ describe("function reconstruction call coverage", () => {
       relationshipCoverage: {
         status: "unknown",
         reason: "Call graph unavailable.",
+        limited_directions: ["callers", "callees"],
         diagnostics: ["Indirect calls remain unresolved."],
       },
     });
@@ -454,7 +487,9 @@ describe("function reconstruction call coverage", () => {
       },
     });
   });
+});
 
+describe("function reconstruction with independent changes", () => {
   it("keeps a confirmed historical overall change as a failure despite unknown calls", () => {
     const changedDossier = jsonValueSchema.parse({
       ...functionDossierSchema.parse(dossier),
@@ -466,6 +501,7 @@ describe("function reconstruction call coverage", () => {
       relationshipCoverage: {
         status: "unknown",
         reason: "Call graph unavailable.",
+        limited_directions: ["callers", "callees"],
       },
     });
     const changedResult = compareFunctions(
@@ -823,7 +859,7 @@ describe("function reconstruction evidence integrity", () => {
 
   it("retains active source unknowns as a gating result", () => {
     const evidence = comparison(singular);
-    const mutation = createEvidence(undefined, provider, {
+    const mutation = createEvidence(unknownTarget("not-observed"), provider, {
       predicateType: "rea.residual-unknown-mutation",
       operation: "record_unknown",
       parameters: {},

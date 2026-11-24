@@ -7,10 +7,15 @@ import {
   FirmwareFileAccess,
 } from "../../../src/firmware/FirmwareFiles.js";
 import { readFirmwareCommandReport } from "../../../src/firmware/FirmwareCommand.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
+import { firmwareFailureDialect } from "../../../src/firmware/FirmwareFailures.js";
+import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 import {
   normalizeBinwalkReport,
   normalizeUnblobReport,
@@ -18,9 +23,16 @@ import {
 import {
   firmwareResultSchemas,
   firmwareRequestSchema,
+  MAX_FIRMWARE_STAGING_ENTRIES,
 } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+/** Classify a raw firmware failure the way the firmware producers do. */
+const firmwareFailure = (
+  cause: unknown,
+  context: Parameters<typeof firmwareFailureDialect>[0],
+) => classifyProviderFailure(cause, firmwareFailureDialect(context));
 
 it.each([
   ["invalid leading byte", [0xff]],
@@ -119,8 +131,8 @@ it.each([
     expect(projected.remediation.action).toContain("cannot be replayed as-is");
     if (state === "oversized") {
       expect(projected.remediation.action).toContain("no runtime override");
-      expect(projected.remediation.action).toContain(
-        "Repeating the unchanged request fails the same way",
+      expect(projected.remediation.action).toMatch(
+        /unchanged request.*fails/iu,
       );
       expect(projected.remediation.action).not.toContain(
         "Rerun the same REA request",
@@ -134,8 +146,8 @@ it.each([
       expect(projected.remediation.action).toContain(
         "Rerun the same REA request",
       );
-      expect(projected.remediation.action).not.toContain(
-        "Repeating the unchanged request fails the same way",
+      expect(projected.remediation.action).not.toMatch(
+        /unchanged request.*fails/iu,
       );
     }
   },
@@ -160,6 +172,7 @@ it("orders extracted firmware paths by code point independently of host locale",
     root,
     1024,
     16,
+    Number.MAX_SAFE_INTEGER,
     "inspect_firmware_regions",
   );
   // Locale collation would interleave case and place "ä" by language rules.
@@ -186,7 +199,13 @@ it.skipIf(process.platform !== "linux")(
     );
     await writeFile(join(root, "good.bin"), "1234");
     await expect(
-      inventoryFirmwareOutput(root, 4, 10, "extract_firmware"),
+      inventoryFirmwareOutput(
+        root,
+        4,
+        10,
+        Number.MAX_SAFE_INTEGER,
+        "extract_firmware",
+      ),
     ).rejects.toMatchObject({
       _tag: "AnalysisOutputError",
       diagnostics: { raw_name_hex: "626164ff2e62696e" },
@@ -194,26 +213,67 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
-it.each([
-  { bytes: 1, files: 10, expected: "max_output_bytes" },
-  { bytes: 10, files: 1, expected: "max_output_files" },
-])(
-  "reports the selected $expected staging budget as a deterministic resource refusal",
-  async ({ bytes, files, expected }) => {
-    const root = await createTestTempDirectory("rea-firmware-staging-");
-    await writeFile(join(root, "a"), "1");
-    await writeFile(join(root, "b"), "2");
-    await expect(
-      inventoryFirmwareOutput(root, bytes, files, "extract_firmware"),
-    ).rejects.toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "capacity",
-      reportedLimits: { [expected]: 1 },
-      retryable: false,
-      remediationAction: expect.stringContaining(expected),
-    });
-  },
-);
+it("counts directories against the editable staging-entry limit", async () => {
+  const root = await createTestTempDirectory("rea-firmware-staging-");
+  await mkdir(join(root, "dir"));
+  await writeFile(join(root, "file"), "1");
+  const failure: unknown = await inventoryFirmwareOutput(
+    root,
+    10,
+    1,
+    Number.MAX_SAFE_INTEGER,
+    "extract_firmware",
+  ).catch((cause: unknown) => cause);
+  if (!(failure instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected an entry capacity failure", { cause: failure });
+
+  const projected = projectAnalysisError(failure);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: { resource: "capacity", reported_limits: { max_output_files: 1 } },
+  });
+  expect(projected.remediation.action).toContain("max_output_files=1");
+  expect(projected.remediation.action).toContain(
+    `Increase max_output_files up to ${MAX_FIRMWARE_STAGING_ENTRIES}`,
+  );
+});
+
+it("refuses a staged file that reaches the producer's per-file limit", async () => {
+  const root = await createTestTempDirectory("rea-firmware-file-limit-");
+  await writeFile(join(root, "below"), "123");
+  await expect(
+    inventoryFirmwareOutput(root, 1024, 10, 4, "extract_firmware"),
+  ).resolves.toEqual([expect.objectContaining({ size: 3 })]);
+  await writeFile(join(root, "reached"), "1234");
+  const failure: unknown = await inventoryFirmwareOutput(
+    root,
+    1024,
+    10,
+    4,
+    "extract_firmware",
+  ).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "file-size",
+    reportedLimits: { file_size_bytes: 4 },
+    retryable: false,
+  });
+  if (!(failure instanceof AnalysisResourceConstraintError)) throw failure;
+  expect(failure.remediationAction).toMatch(
+    /inherited.*4-byte file-size limit.*RLIMIT_FSIZE/iu,
+  );
+  expect(failure.remediationAction).toMatch(
+    /raise the file-size limit.*ulimit -f/iu,
+  );
+  expect(failure.remediationAction).toMatch(
+    /analysis_timeout_ms does not raise it/iu,
+  );
+  expect(failure.remediationAction).toMatch(/unchanged request fails/iu);
+});
 
 it("attributes missing sources to the selected path without relabeling snapshot destination failure", async () => {
   const root = await createTestTempDirectory("rea-firmware-source-");
@@ -406,4 +466,127 @@ it("rejects Binwalk extraction activity under every own JSON member", async () =
   } finally {
     await files.close();
   }
+});
+
+it.each([false, true])(
+  "retains completed command output after report read failure (cleanup pending: %s)",
+  async (pending) => {
+    const lease = new AnalysisCleanupLease(async () => {});
+    const reader = pending
+      ? ArtifactReaderFailure.withCleanup(
+          new Error("report read failed"),
+          { reason: "close failed", resources: ["/work/report"] },
+          undefined,
+          [lease],
+        )
+      : new ArtifactReaderFailure("io", "report read failed");
+    const files = new FirmwareFileAccess();
+    vi.spyOn(files, "report").mockRejectedValue(reader);
+    const cause: unknown = await readFirmwareCommandReport({
+      path: "/work/report",
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+      files,
+      execution: {
+        stdout: { text: "found output", bytes: 12, observedBytes: 12 },
+        stderr: { text: "warning", bytes: 7, observedBytes: 7 },
+        exit_code: 0,
+        signal: null,
+        command: "/opt/binwalk",
+        args: [],
+        resource_limiter: "/usr/bin/prlimit",
+      },
+    }).catch((failure: unknown) => failure);
+    const failure = firmwareFailure(cause, {
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+    });
+    expect(
+      projectAnalysisError(failure).details?.captured_output,
+    ).toMatchObject({
+      stdout: "found output",
+      stderr: "warning",
+      stdout_bytes: 12,
+      stderr_bytes: 7,
+      exit_code: 0,
+    });
+    if (pending) {
+      expect(failure.cleanupIncomplete).toBe(true);
+      await lease.release();
+      expect(failure.cleanupIncomplete).toBe(false);
+    }
+    await files.close();
+  },
+);
+
+it("retains the analysis timeout and command output while report cleanup is pending and after retry", async () => {
+  const deadlineSignal = new AbortController();
+  const reason = new Error("analysis deadline");
+  deadlineSignal.abort(reason);
+  const lease = new AnalysisCleanupLease(async () => {});
+  const reader = ArtifactReaderFailure.withCleanup(
+    new ArtifactReaderFailure("cancelled", "deadline interrupted report read", {
+      cause: reason,
+    }),
+    { reason: "close failed", resources: ["/work/report"] },
+    {
+      kind: "file-snapshot-hash",
+      path: "/work/report",
+      sha256: "a".repeat(64),
+      bytes: 12,
+    },
+    [lease],
+  );
+  const files = new FirmwareFileAccess();
+  vi.spyOn(files, "report").mockRejectedValue(reader);
+  const failure: unknown = await readFirmwareCommandReport({
+    path: "/work/report",
+    engine: "binwalk",
+    operation: "inspect_firmware_regions",
+    files,
+    deadline: {
+      phase: "analysis",
+      timeoutMs: 42,
+      signal: deadlineSignal.signal,
+      expiresAtMs: 0,
+    },
+    execution: {
+      stdout: { text: "found output", bytes: 12, observedBytes: 12 },
+      stderr: { text: "warning", bytes: 7, observedBytes: 7 },
+      exit_code: 0,
+      signal: null,
+      command: "/opt/binwalk",
+      args: [],
+      resource_limiter: "/usr/bin/prlimit",
+    },
+  }).catch((cause: unknown) => cause);
+  if (!(failure instanceof AnalysisError))
+    throw new Error("Expected typed report failure");
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path: "/work/report",
+  });
+  expect(projectAnalysisError(failure).details?.captured_output).toMatchObject({
+    stdout: "found output",
+    stderr: "warning",
+    exit_code: 0,
+  });
+  await lease.release();
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(
+    projectAnalysisError(failure).details?.partial_observation,
+  ).toMatchObject({ kind: "file-snapshot-hash", path: "/work/report" });
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "provider_timeout",
+    details: {
+      timeout_ms: 42,
+      captured_output: {
+        stdout: "found output",
+        stderr: "warning",
+        exit_code: 0,
+      },
+    },
+  });
+  await files.close();
 });

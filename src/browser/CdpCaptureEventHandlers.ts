@@ -1,20 +1,18 @@
 import {
-  readCdpResponseReceived,
-  readCdpLoadingFinished,
+  scopeCdpResponse,
   type CdpRequestWillBeSentFacts,
 } from "./CdpNetworkEventFacts.js";
 import {
-  readCdpExecutionContextCreated,
-  readCdpExecutionContextDestroyed,
-  readCdpScriptParsed,
   selectCdpScriptFrame,
+  type CdpExecutionContextCreatedFacts,
+  type CdpExecutionContextIdentity,
+  type CdpScriptParsedFacts,
 } from "./CdpScriptContextFacts.js";
-import {
-  selectCdpFrameIdentity,
-  cdpFrameEventFacts,
-} from "./CdpFrameIdentity.js";
+import type { CdpRootNavigation } from "./CdpTargetDocument.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import type { CdpEventPayload } from "./protocol/CdpEvents.js";
+import { reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
   inferJsonShape,
   type JsonShapeCapacityFailure,
@@ -27,9 +25,6 @@ import { safeResponseMetadata } from "./CdpSafeMetadata.js";
 import {
   allowedSanitizedUrl,
   isHttpUrl,
-  numberValue,
-  admitRecords,
-  recordValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -40,11 +35,10 @@ import {
 } from "./CdpCaptureEventBodyShapes.js";
 import {
   consolePrimitive,
+  cdpSourceCoordinates,
   exclusionReasonForUrl,
   initiatorLocation,
-  integerOrNull,
   isJsonMediaType,
-  topCallFrame,
 } from "./CdpCaptureEventHelpers.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import {
@@ -55,9 +49,8 @@ import {
 
 export const handleExecutionContextCreated = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  facts: CdpExecutionContextCreatedFacts,
 ): void => {
-  const facts = readCdpExecutionContextCreated(params);
   if (facts.contextKey === null) return;
   // Every reuse replaces future authority, including missing or malformed claims.
   state.executionContextFrames.set(facts.contextKey, facts.frameClaim);
@@ -65,17 +58,16 @@ export const handleExecutionContextCreated = (
 
 export const handleExecutionContextDestroyed = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  identity: CdpExecutionContextIdentity,
 ): void => {
-  const key = readCdpExecutionContextDestroyed(params).contextKey;
+  const key = identity.contextKey;
   if (key !== null) state.executionContextFrames.delete(key);
 };
 
 export const handleScriptParsed = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  facts: CdpScriptParsedFacts,
 ): void => {
-  const facts = readCdpScriptParsed(params);
   const scriptId = facts.scriptId;
   const rawUrl = facts.url ?? "";
   const sanitized = allowedSanitizedUrl(rawUrl, state.allowedOrigins);
@@ -186,6 +178,8 @@ const sourceMapForScript = (
   readonly budgetExhausted: boolean;
 } => {
   const declaredUrl = cdpStringValue(value);
+  if (value !== undefined && declaredUrl === undefined)
+    state.completeness.exclude("source_maps", "invalid_protocol_value");
   if (declaredUrl === undefined || declaredUrl === "")
     return {
       sourceMapUrl: null,
@@ -282,24 +276,24 @@ export const handleRequestWillBeSent = (
     return;
   const redirects = [...(previous?.redirects ?? [])];
   if (redirectResponse !== undefined) {
-    const rawResponseUrl = redirectResponse.url;
-    const responseUrl =
-      rawResponseUrl === undefined || rawResponseUrl === ""
-        ? undefined
-        : allowedSanitizedUrl(rawResponseUrl, state.allowedOrigins);
-    const responseUrlReason = redirectResponseUrlReason(rawResponseUrl);
+    const responseUrl = scopeCdpResponse(
+      redirectResponse,
+      state.allowedOrigins,
+    );
+    if (responseUrl.scope === "approved" && !redirectResponse.status.ok)
+      state.completeness.exclude("network_requests", "invalid_protocol_value");
     if (previous === undefined) {
-      if (responseUrl === undefined)
-        state.completeness.exclude("network_requests", responseUrlReason);
+      if (responseUrl.scope !== "approved")
+        state.completeness.exclude("network_requests", responseUrl.reason);
       else
         // CDP may deliver the continuation after its predecessor was excluded
         // by origin policy or before capture began. Keep the final request but
         // report missing prior coverage without calling it malformed protocol.
         state.completeness.attachLimited("network_requests");
-    } else if (responseUrl === undefined) {
+    } else if (responseUrl.scope !== "approved") {
       // redirectResponse belongs to the same request ID and can contain an
       // excluded origin. Drop the entire chain before retaining any details.
-      state.completeness.exclude("network_requests", responseUrlReason);
+      state.completeness.exclude("network_requests", responseUrl.reason);
       releaseBodyShapes(state, requestId);
       state.network.delete(requestId);
       state.networkRequestTimestamps.delete(requestId);
@@ -313,10 +307,12 @@ export const handleRequestWillBeSent = (
         );
       redirects.push({
         url: previous.url,
-        response_url: responseUrl.url,
+        response_url: responseUrl.url.url,
         method: previous.method,
         resource_type: previous.resource_type,
-        status: redirectResponse.status ?? null,
+        status: redirectResponse.status.ok
+          ? redirectResponse.status.value
+          : null,
         mime_type: redirectResponse.mimeType ?? null,
         encoded_data_length:
           encodedDataLength === undefined || encodedDataLength < 0
@@ -334,6 +330,9 @@ export const handleRequestWillBeSent = (
   if (!location.ok)
     state.completeness.exclude("network_initiators", "invalid_protocol_value");
   const initiatorFrame = location.ok ? location.value : undefined;
+  const coordinates = cdpSourceCoordinates(initiatorFrame);
+  if (coordinates.invalid)
+    state.completeness.exclude("network_initiators", "invalid_protocol_value");
   const rawInitiatorUrl = cdpStringValue(initiatorFrame?.url);
   const initiatorUrl = allowedSanitizedUrl(
     rawInitiatorUrl,
@@ -357,8 +356,8 @@ export const handleRequestWillBeSent = (
     initiator: {
       type: initiatorType,
       url: initiatorUrl?.url ?? null,
-      line: integerOrNull(initiatorFrame?.lineNumber),
-      column: integerOrNull(initiatorFrame?.columnNumber),
+      line: coordinates.line,
+      column: coordinates.column,
     },
     body_shapes: requestBodyShape(state, requestId, request.source),
   });
@@ -386,27 +385,10 @@ const preserveMalformedRedirectEvidence = (
   return true;
 };
 
-const redirectResponseUrlReason = (
-  value: string | undefined,
-):
-  | "invalid_protocol_value"
-  | "disallowed_origin"
-  | "unsupported_url"
-  | "unattributed_origin" => {
-  if (value === undefined || value === "") return "invalid_protocol_value";
-  try {
-    new URL(value);
-  } catch {
-    return "invalid_protocol_value";
-  }
-  return exclusionReasonForUrl(value);
-};
-
 export const handleResponseReceived = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  facts: CdpEventPayload<"Network.responseReceived">,
 ): void => {
-  const facts = readCdpResponseReceived(params);
   const requestId = facts.requestId;
   if (requestId === null) {
     state.completeness.exclude("network_requests", "invalid_protocol_value");
@@ -414,24 +396,25 @@ export const handleResponseReceived = (
   }
   if (state.malformedRedirectRequestIds.has(requestId)) return;
   const current = state.network.get(requestId);
-  const response = facts.response;
   if (current === undefined) return;
-  const sanitized = allowedSanitizedUrl(response?.url, state.allowedOrigins);
-  if (response === undefined || sanitized === undefined) {
-    state.completeness.exclude(
-      "network_requests",
-      response === undefined
-        ? "invalid_protocol_value"
-        : exclusionReasonForUrl(response.url),
-    );
+  const scoped = scopeCdpResponse(
+    facts.response,
+    state.allowedOrigins,
+    "unattributed_origin",
+  );
+  if (scoped.scope !== "approved") {
+    state.completeness.exclude("network_requests", scoped.reason);
     releaseBodyShapes(state, requestId);
     state.network.delete(requestId);
     state.networkRequestTimestamps.delete(requestId);
     return;
   }
+  const { url: sanitized, response } = scoped;
+  if (!response.status.ok)
+    state.completeness.exclude("network_requests", "invalid_protocol_value");
   state.network.set(requestId, {
     ...current,
-    status: response.status ?? null,
+    status: response.status.ok ? response.status.value : null,
     mime_type: response.mimeType ?? null,
   });
   const metadata = safeResponseMetadata(
@@ -446,9 +429,8 @@ export const handleResponseReceived = (
 
 export const handleLoadingFinished = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  facts: CdpEventPayload<"Network.loadingFinished">,
 ): void => {
-  const facts = readCdpLoadingFinished(params);
   const requestId = facts.requestId;
   if (requestId === null) return;
   if (state.malformedRedirectRequestIds.has(requestId)) return;
@@ -467,9 +449,9 @@ export const handleLoadingFinished = (
 
 export const handleConsoleAPICalled = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  call: CdpEventPayload<"Runtime.consoleAPICalled">,
 ): void => {
-  const topFrame = topCallFrame(params.stackTrace);
+  const topFrame = call.topFrame;
   if (!topFrame.ok) {
     state.completeness.exclude("console_events", "invalid_protocol_value");
     return;
@@ -479,6 +461,9 @@ export const handleConsoleAPICalled = (
     state.completeness.exclude("console_events", "unattributed_origin");
     return;
   }
+  const coordinates = cdpSourceCoordinates(frame);
+  if (coordinates.invalid)
+    state.completeness.exclude("console_events", "invalid_protocol_value");
   const source = allowedSanitizedUrl(frame.url, state.allowedOrigins);
   if (source === undefined) {
     state.completeness.exclude(
@@ -487,22 +472,19 @@ export const handleConsoleAPICalled = (
     );
     return;
   }
-  // Malformed elements keep their position so retained siblings keep their
-  // CDP argument indices; a missing inventory is unknown, not empty.
-  const arguments_ = admitRecords(params.args)?.map((argument) =>
-    recordValue(argument),
-  );
+  // A missing inventory is unknown, not empty.
+  const arguments_ = call.arguments;
   const argumentTypes = arguments_?.map((argument) =>
     cdpStringValue(argument?.type),
   );
-  const timestamp = numberValue(params.timestamp);
+  const timestamp = call.timestamp;
   if (
     timestamp === undefined ||
     argumentTypes === undefined ||
     argumentTypes.includes(undefined)
   )
     state.completeness.exclude("console_events", "invalid_protocol_value");
-  const type = cdpStringValue(params.type) ?? "unknown";
+  const type = call.type ?? "unknown";
   const textCapture = captureConsoleText(state, arguments_);
   // The shared retained-event budget bounds the whole console inventory, so a
   // page cannot grow the capture without limit; a refused entry stays counted
@@ -531,8 +513,8 @@ export const handleConsoleAPICalled = (
     argument_types:
       argumentTypes?.map((argumentType) => argumentType ?? "unknown") ?? null,
     url: source.url,
-    line: integerOrNull(frame.lineNumber),
-    column: integerOrNull(frame.columnNumber),
+    line: coordinates.line,
+    column: coordinates.column,
     text_capture: textCapture,
   });
 };
@@ -577,15 +559,14 @@ const captureConsoleText = (
 
 export const handleWebSocketFrame = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  frame: CdpEventPayload<"Network.webSocketFrameSent">,
   direction: "sent" | "received",
 ): void => {
-  const requestId = cdpStringValue(params.requestId);
+  const requestId = frame.requestId;
   if (requestId === undefined) return;
   const connection = state.webSocketConnectionsById.get(requestId);
   if (connection === undefined) return;
-  const response = recordValue(params.response);
-  const opcodeValue = numberValue(response?.opcode);
+  const opcodeValue = frame.opcode;
   // RFC 6455 encodes opcodes in four bits; keep reserved values as observed data.
   const opcode =
     opcodeValue !== undefined &&
@@ -594,7 +575,7 @@ export const handleWebSocketFrame = (
     opcodeValue <= 15
       ? opcodeValue
       : null;
-  const payload = cdpStringValue(response?.payloadData);
+  const payload = frame.payloadData;
   const payloadBytes =
     opcode === null || payload === undefined
       ? null
@@ -686,10 +667,9 @@ const captureWebSocketShape = (
 
 export const handleWebSocketCreated = (
   state: CdpCaptureEventsState,
-  params: UnknownRecord,
+  created: CdpEventPayload<"Network.webSocketCreated">,
 ): void => {
-  const requestId = cdpStringValue(params.requestId);
-  const rawUrl = cdpStringValue(params.url);
+  const { requestId, url: rawUrl } = created;
   if (requestId === undefined) {
     state.completeness.exclude(
       "websocket_connections",
@@ -738,50 +718,27 @@ export const handleWebSocketCreated = (
   });
 };
 
-export const handleFrameNavigated = (
+/**
+ * Record what a root navigation means for capture: an unreadable root makes
+ * the capture's document unprovable, and a navigation away from the selected
+ * document must stay inside the approved origins. The target session's
+ * document owner has already compared the document.
+ */
+export const handleRootNavigation = (
   state: CdpCaptureEventsState,
-  params: unknown,
+  navigation: CdpRootNavigation,
 ): void => {
-  if (state.mainFrameId === undefined) return;
-  const frameFacts = cdpFrameEventFacts({
-    method: "Page.frameNavigated",
-    params,
-  });
-  const identity = selectCdpFrameIdentity(frameFacts, state.mainFrameId);
-  if (identity.identityIssue !== null || identity.parentIssue !== null) {
+  if (navigation.kind === "unreadable_child") {
     state.completeness.exclude("frames", "invalid_protocol_value");
-    if (
-      identity.selection === "unknown" &&
-      identity.parentRelation === "child" &&
-      identity.identityIssue !== null
-    )
-      return;
-    state.unknownRootIdentity = true;
     return;
   }
-  if (identity.selection === "other" && identity.parentRelation === "child")
-    return;
-  if (identity.selection === "unknown") {
+  if (navigation.kind === "unidentified") {
     state.completeness.exclude("frames", "invalid_protocol_value");
     state.unknownRootIdentity = true;
     return;
   }
-  if (identity.selection === "other" && !identity.isRootReplacement) {
-    state.completeness.exclude("frames", "invalid_protocol_value");
-    state.unknownRootIdentity = true;
-    return;
-  }
-  const rawUrl = cdpStringValue(frameFacts.source?.url);
-  const loaderId = frameFacts.loaderId;
-  // `frameNavigated` re-fires for a document already reported (same URL and
-  // loader). Treating that as a navigation aborted a valid capture with
-  // `target_changed`, which is a false claim that the target moved.
-  const document = `${String(identity.frameId ?? "")}\0${String(loaderId ?? "")}\0${String(rawUrl ?? "")}`;
-  if (state.committedDocument === document) return;
-  state.committedDocument = document;
-  if (identity.isRootReplacement)
-    state.mainFrameId = identity.frameId ?? undefined;
-  state.navigationDuringCapture = true;
+  if (navigation.comparison === "same") return;
+  const rawUrl = reportedFrameUrl(navigation.frame.url);
   if (
     isHttpUrl(rawUrl) &&
     allowedSanitizedUrl(rawUrl, state.allowedOrigins) === undefined

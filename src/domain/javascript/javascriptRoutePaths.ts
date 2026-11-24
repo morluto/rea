@@ -55,6 +55,31 @@ export type NextAppRoutePath =
   | { readonly kind: "known"; readonly path: string }
   | { readonly kind: "unknown"; readonly reason: string };
 
+/**
+ * Test /(?:^|\/)app\/(?:[\s\S]*\/)?page(?:\.[cm]?[jt]sx?|-[^/?#]+\.js|)(?:[?#].*)?$/u
+ * in linear time; every source literal reaches this test. The first `app/`
+ * segment admits every later page segment, and `.` cannot cross a line
+ * terminator, so a query or fragment after the page filename starts on the
+ * last line. Retrying from each `app/` or `?` instead is quadratic.
+ */
+const isPageShapedPath = (value: string): boolean => {
+  const app = /(?:^|\/)app\//u.exec(value);
+  if (app === null) return false;
+  const tail = value.slice(app.index + app[0].length);
+  const lastLineStart =
+    Math.max(
+      tail.lastIndexOf("\n"),
+      tail.lastIndexOf("\r"),
+      tail.lastIndexOf("\u2028"),
+      tail.lastIndexOf("\u2029"),
+    ) + 1;
+  for (const page of tail.matchAll(
+    /(?:^|\/)page(?:\.[cm]?[jt]sx?|-[^/?#]+\.js|)(?=[?#]|$)/gu,
+  ))
+    if (page.index + page[0].length >= lastLineStart) return true;
+  return false;
+};
+
 /** Classify a page filename without treating missing routing context as absence. */
 export const classifyNextAppRoutePath = (
   raw: string,
@@ -104,11 +129,7 @@ export const classifyNextAppRoutePath = (
     }
   }
   if (relative === undefined) {
-    if (
-      /(?:^|\/)app\/(?:[\s\S]*\/)?page(?:\.[cm]?[jt]sx?|-[^/?#]+\.js|)(?:[?#].*)?$/u.test(
-        value,
-      )
-    )
+    if (isPageShapedPath(value))
       return {
         kind: "unknown",
         reason:
@@ -186,6 +207,46 @@ export const classifyNextAppRoutePath = (
   // These are filename-derived patterns, not navigation URLs. Preserve spaces
   // and literal delimiters rather than applying URL syntax validation.
   return { kind: "known", path: `/${segments.filter(Boolean).join("/")}` };
+};
+
+export type ExpoRouterContextKey =
+  | { readonly kind: "route"; readonly path: string }
+  /** A layout or `+` file: an Expo Router convention without a URL pattern. */
+  | { readonly kind: "convention-file" };
+
+/**
+ * Convert one key of a bundled Metro `require.context` map, such as
+ * `./(app)/[id]/edit.tsx`, with Expo Router's file conventions
+ * (expo-router build/matchers.js and getRoutesCore.js). Return undefined for
+ * keys outside the `./<file>.[jt]sx?` route-file shape.
+ */
+export const classifyExpoRouterContextKey = (
+  key: string,
+): ExpoRouterContextKey | undefined => {
+  const file = /^\.\/([\s\S]+?)(?:\+api)?\.[jt]sx?$/u.exec(key)?.[1];
+  if (file === undefined) return;
+  // A platform extension selects a variant of the same route.
+  const parts = file.replace(/\.(?:android|ios|native|web)$/u, "").split("/");
+  const name = parts.at(-1)!;
+  // Layouts wrap their directory; `+not-found`, `+html` and other `+` files
+  // are framework entries rather than URL patterns.
+  if (name === "_layout" || name.startsWith("+"))
+    return { kind: "convention-file" };
+  const segments: string[] = [];
+  for (const part of parts) {
+    // Expo Router's group matcher, including `(a,b)` group arrays.
+    if (/^[^\\()]*?\([^\\/]+\)/u.test(part)) continue;
+    const dynamic = /^\[([^[\]]+?)\]$/u.exec(part)?.[1];
+    segments.push(
+      dynamic === undefined
+        ? part
+        : dynamic.startsWith("...")
+          ? `:${dynamic.slice(3)}+`
+          : `:${dynamic}`,
+    );
+  }
+  if (segments.at(-1) === "index") segments.pop();
+  return { kind: "route", path: `/${segments.join("/")}` };
 };
 
 export const nextScriptBasePath = (source: string): string | undefined => {

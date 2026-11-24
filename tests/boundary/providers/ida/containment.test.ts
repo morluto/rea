@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { inspectAddressContext } from "../../../../src/application/AnalysisContextQueries.js";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
 import { IdaSessionClient } from "../../../../src/ida/IdaSessionClient.js";
@@ -39,6 +39,7 @@ const session = async (cappedReferences = false) => {
       args: [],
       env: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },
@@ -54,91 +55,88 @@ const MAIN = {
 };
 
 describe("trace_feature on headless IDA", () => {
-  it("attributes a reference to its containing procedure", async () => {
-    const { client } = await session();
-    try {
-      const result = await new EnhancedTools(client).execute("trace_feature", {
-        query: "a.b",
-      });
-
-      if (!result.ok) throw result.error;
-      expect(result.value).toMatchObject({
-        matches: [{ type: "string", address: "0x3000" }],
-        references: [
+  it.each([
+    { label: "complete", capped: false, residual: [] },
+    {
+      label: "truncated",
+      capped: true,
+      residual: [
+        "References to 0x3000 were truncated by the provider; additional references may exist.",
+      ],
+    },
+  ])(
+    "attributes a reference and reports $label coverage",
+    async ({ capped, residual }) => {
+      const { client } = await session(capped);
+      try {
+        const result = await new EnhancedTools(client).execute(
+          "trace_feature",
           {
-            target_address: "0x3000",
-            source_address: "0x1004",
-            containing_procedure: MAIN,
+            query: "a.b",
           },
-        ],
-        truncated: false,
-        residual_unknowns: [],
-      });
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
+        );
 
-  it("keeps an upstream reference cap visible once containment makes the trace run", async () => {
-    const { client } = await session(true);
-    try {
-      const result = await new EnhancedTools(client).execute("trace_feature", {
-        query: "a.b",
-      });
-
-      if (!result.ok) throw result.error;
-      expect(result.value).toMatchObject({
-        references: [{ source_address: "0x1004", containing_procedure: MAIN }],
-        truncated: true,
-        residual_unknowns: [
-          "References to 0x3000 were truncated by the provider; additional references may exist.",
-        ],
-      });
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
+        if (!result.ok) throw result.error;
+        expect(result.value).toMatchObject({
+          matches: [{ type: "string", address: "0x3000" }],
+          references: [
+            {
+              target_address: "0x3000",
+              source_address: "0x1004",
+              containing_procedure: MAIN,
+            },
+          ],
+          truncated: capped,
+          residual_unknowns: residual,
+        });
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+    },
+  );
 });
 
 describe("inspect_address_context on headless IDA", () => {
-  it("resolves the admitted program as the document and reports the containing procedure", async () => {
-    const { client, target } = await session();
-    try {
-      const result = await inspectAddressContext(client, {
-        address: "0x1004",
-      });
+  it.each([
+    {
+      label: "discovered",
+      explicit: false,
+      selection: ["current_document", "list_documents"],
+    },
+    { label: "explicit", explicit: true, selection: [] },
+  ])(
+    "reports the containing procedure in the $label document",
+    async ({ explicit, selection }) => {
+      const { client, target } = await session();
+      const execute = vi.spyOn(client, "execute");
+      try {
+        const result = await inspectAddressContext(client, {
+          address: "0x1004",
+          ...(explicit ? { document: target.path } : {}),
+        });
 
-      if (!result.ok) throw result.error;
-      expect(result.value).toMatchObject({
-        address: "0x1004",
-        document: target.path,
-        procedure: { state: "available", value: MAIN },
-        name: { state: "unavailable" },
-        comment: { state: "unavailable" },
-        inline_comment: { state: "unavailable" },
-        bookmarks: { state: "unavailable" },
-      });
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("answers the same way for an explicit admitted document", async () => {
-    const { client, target } = await session();
-    try {
-      const implicit = await inspectAddressContext(client, {
-        address: "0x1004",
-      });
-      const explicit = await inspectAddressContext(client, {
-        address: "0x1004",
-        document: target.path,
-      });
-
-      if (!implicit.ok) throw implicit.error;
-      if (!explicit.ok) throw explicit.error;
-      expect(explicit.value).toEqual(implicit.value);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
+        if (!result.ok) throw result.error;
+        expect(result.value).toMatchObject({
+          address: "0x1004",
+          document: target.path,
+          procedure: { state: "available", value: MAIN },
+          name: { state: "unavailable" },
+          comment: { state: "unavailable" },
+          inline_comment: { state: "unavailable" },
+          bookmarks: { state: "unavailable" },
+        });
+        const documentReads = execute.mock.calls
+          .map(([operation]) => operation)
+          .filter(
+            (operation) =>
+              operation === "current_document" ||
+              operation === "list_documents",
+          );
+        expect(documentReads).toEqual(selection);
+      } finally {
+        execute.mockRestore();
+        expect((await client.close()).ok).toBe(true);
+      }
+    },
+  );
 });

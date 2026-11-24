@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { overallStatus, summarize } from "./functionComparisonResults.js";
 import { canonicalJson } from "./comparisonSemantics.js";
+import { coverageStatusSchema } from "./coverage.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { nativeAddressSchema } from "./native/nativeAddress.js";
 
 const comparisonStatusSchema = z.enum(["unchanged", "changed", "unknown"]);
 export const functionComparisonDimensionNameSchema = z.enum([
@@ -35,9 +37,14 @@ const functionDimensionContextShape = {
   right_count: z.int().min(0).nullable(),
   evidence_links: z.array(evidenceIdSchema).min(2),
   limitations: z.array(z.string()),
+  discovery_status: coverageStatusSchema
+    .describe(
+      "Static call discovery coverage for the compared observations; omission means unreported.",
+    )
+    .exactOptional(),
 };
 
-const functionDimensionSchema = z.union([
+const functionDimensionSchema = z.discriminatedUnion("status", [
   z.object({
     ...functionDimensionContextShape,
     status: z.literal("unchanged"),
@@ -64,10 +71,23 @@ const functionDimensionSchema = z.union([
   }),
 ]);
 
-const functionMatchSchema = z.union([
+const functionMatchSchema = z.discriminatedUnion("method", [
   z.object({
     status: z.literal("matched"),
     method: z.literal("symbol"),
+    left_name: z.string(),
+    right_name: z.string(),
+  }),
+  z.object({
+    status: z.literal("matched"),
+    method: z.literal("same-entry"),
+    entry_address: nativeAddressSchema,
+    left_name: z.string(),
+    right_name: z.string(),
+  }),
+  z.object({
+    status: z.literal("matched"),
+    method: z.literal("same-evidence"),
     left_name: z.string(),
     right_name: z.string(),
   }),
@@ -105,6 +125,7 @@ export const functionComparisonResultSchema = z
           code: "custom",
           path: ["dimensions", index, "dimension"],
           message: "Function comparison dimensions must occur exactly once.",
+          params: { constraint: "dimensions-unique" },
         });
       dimensions.set(dimension.dimension, dimension);
     }
@@ -115,6 +136,7 @@ export const functionComparisonResultSchema = z
           code: "custom",
           path: ["summary", status],
           message: "Function comparison summary must count its dimensions.",
+          params: { constraint: "summary-counts-dimensions" },
         });
     const changes = new Set<DimensionName>();
     for (const [index, change] of result.changes.entries()) {
@@ -130,6 +152,7 @@ export const functionComparisonResultSchema = z
           path: ["changes", index],
           message:
             "Function comparison changes must cite each changed or unknown dimension exactly as recorded.",
+          params: { constraint: "changes-cite-dimensions" },
         });
       changes.add(change.dimension);
     }
@@ -144,6 +167,7 @@ export const functionComparisonResultSchema = z
         path: ["changes"],
         message:
           "Function comparison changes must include every changed or unknown dimension.",
+        params: { constraint: "changes-cover-dimensions" },
       });
     if (
       result.status !==
@@ -154,6 +178,7 @@ export const functionComparisonResultSchema = z
         path: ["status"],
         message:
           "Function comparison status contradicts its dimensions or function match.",
+        params: { constraint: "status-matches-dimensions" },
       });
   });
 

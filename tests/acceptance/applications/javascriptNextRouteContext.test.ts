@@ -58,6 +58,24 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       directory: "app",
       package: { path: "package.json" },
     });
+    expect(
+      inventory?.sources.find(
+        ({ key }) => key === "workspace/src/app/control/page.js",
+      )?.next_app_context,
+    ).toMatchObject({
+      kind: "app-directory",
+      directory: "workspace/src/app",
+      package: { path: "workspace/package.json" },
+    });
+    expect(
+      inventory?.sources.find(
+        ({ key }) =>
+          key === "node_modules/ordinary/app/dependency-only/page.js",
+      )?.next_app_context,
+    ).toMatchObject({
+      kind: "unknown",
+      package: { path: "node_modules/ordinary/package.json" },
+    });
     const unproven = inventory?.sources.find(
       ({ key }) => key === "plain/components/app/module-only/page.js",
     );
