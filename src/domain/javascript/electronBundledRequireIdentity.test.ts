@@ -417,6 +417,34 @@ describe("Webpack loader alias uncertainty through indirect aliases", () => {
   });
 });
 
+describe("Webpack loader alias walk sharing", () => {
+  it("reuses one shared chain across many writes without spending the alias budget", () => {
+    // Greptile P1 / Codex P2 on PR #13802: the backward walk ran once per
+    // member write, so 600 writes through the same 10-hop chain cost 600
+    // walks. The verdict is cached per write root, so the chain is walked
+    // once: the getter proof still holds and the alias budget stays
+    // unspent, exactly as for one write through the chain.
+    const chain = Array.from(
+      { length: 10 },
+      (_, index) => `const a${index + 1}=a${index};`,
+    ).join("");
+    const writes = "a10.n=()=>0;".repeat(600);
+    const analysis = analyzeJavaScriptStaticSource(
+      bootstrap(
+        EXTERNAL,
+        'const s=n.n(n(45840));new(s().BrowserWindow)({});s().ipcMain.handle("ready",()=>{});',
+        `const a0={};${chain}${writes}n(100);`,
+      ),
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toHaveLength(1);
+    expect(analysis.electron.ipc).toHaveLength(1);
+    expect(
+      analysis.analysis_coverage.examination.semantic_resource_limits,
+    ).not.toContain("alias-selections");
+  });
+});
+
 it("reports the alias budget when a destructured external alias chain exceeds it", () => {
   // 520 const hops exceed the default 512 alias selections; the origin is not
   // claimed, and the walk reports its limit instead of a silent absence.
