@@ -368,33 +368,61 @@ const isFormCandidateMime = (essence: string | null, path: string): boolean =>
   essence === null ||
   isBatchExecutePath(path);
 
-/** Extract an optional RPC operation discriminator and GraphQL document status from raw HTTP request text. */
-export const selectRpcOperationFactsFromText = (input: {
+interface RpcRequestText {
   readonly method: string;
   readonly path: string;
   readonly query?: string | null | undefined;
   readonly mimeType?: string | null | undefined;
   readonly bodyText?: string | null | undefined;
-}): RpcOperationFacts | undefined => {
+}
+
+export function selectRpcOperationFactsFromText(
+  input: RpcRequestText,
+): RpcOperationFacts | undefined;
+export function selectRpcOperationFactsFromText(
+  input: RpcRequestText,
+  reserveMediaTypeChars: (chars: number) => boolean,
+): RpcOperationFacts | undefined | null;
+/** Extract RPC facts, reserving media normalization only when it can affect selection. Null means admission was refused. */
+export function selectRpcOperationFactsFromText(
+  input: RpcRequestText,
+  reserveMediaTypeChars: (chars: number) => boolean = () => true,
+): RpcOperationFacts | undefined | null {
   if (input.method !== "POST") return undefined;
-  const essence =
-    input.mimeType === undefined || input.mimeType === null
-      ? null
-      : mediaTypeEssence(input.mimeType);
   const { bodyText } = input;
   if (bodyText !== undefined && bodyText !== null && bodyText.length > 0) {
     if (!withinBodyByteLimit(bodyText)) return undefined;
-    const parsedJson =
-      essence === "application/x-www-form-urlencoded"
-        ? undefined
-        : safeParseJson(bodyText);
-    if (parsedJson?.ok === true)
-      return isJsonCandidateMime(essence) && isRecord(parsedJson.value)
+    const parsedJson = safeParseJson(bodyText);
+    const jsonFacts =
+      parsedJson.ok && isRecord(parsedJson.value)
         ? selectFactsFromJsonObject(parsedJson.value, input.path)
         : undefined;
-    if (isFormCandidateMime(essence, input.path)) {
-      const freqs = new URLSearchParams(bodyText).getAll("f.req");
-      if (freqs.length > 0) return selectBatchExecuteFormValues(freqs);
+    const freqs =
+      jsonFacts === undefined
+        ? new URLSearchParams(bodyText).getAll("f.req")
+        : undefined;
+    // A body with no RPC candidates needs no media normalization. On a batch
+    // route, valid JSON still needs media selection before query fallback.
+    if (
+      jsonFacts !== undefined ||
+      (freqs?.length ?? 0) > 0 ||
+      (parsedJson.ok && isBatchExecutePath(input.path))
+    ) {
+      if (
+        input.mimeType != null &&
+        !reserveMediaTypeChars(input.mimeType.length)
+      )
+        return null;
+      const essence =
+        input.mimeType == null ? null : mediaTypeEssence(input.mimeType);
+      if (parsedJson.ok && essence !== "application/x-www-form-urlencoded")
+        return isJsonCandidateMime(essence) ? jsonFacts : undefined;
+      if (isFormCandidateMime(essence, input.path)) {
+        const formValues =
+          freqs ?? new URLSearchParams(bodyText).getAll("f.req");
+        if (formValues.length > 0)
+          return selectBatchExecuteFormValues(formValues);
+      }
     }
   }
   if (isBatchExecutePath(input.path)) {
@@ -402,16 +430,12 @@ export const selectRpcOperationFactsFromText = (input: {
     if (rpcId !== undefined) return { kind: "batchexecute", name: rpcId };
   }
   return undefined;
-};
+}
 
 /** Extract an optional RPC operation discriminator from a recorded HTTP request with raw body text. */
-export const selectRpcOperationFromText = (input: {
-  readonly method: string;
-  readonly path: string;
-  readonly query?: string | null | undefined;
-  readonly mimeType?: string | null | undefined;
-  readonly bodyText?: string | null | undefined;
-}): RpcOperation | undefined => {
+export const selectRpcOperationFromText = (
+  input: RpcRequestText,
+): RpcOperation | undefined => {
   const facts = selectRpcOperationFactsFromText(input);
   return facts === undefined
     ? undefined

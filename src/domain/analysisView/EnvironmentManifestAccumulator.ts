@@ -384,8 +384,6 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     const body = request.kind === "request" ? request.postData : undefined;
     const mimeType = body?.kind === "object" ? body.mimeType : undefined;
     const text = body?.kind === "object" ? body.text : undefined;
-    if (mimeType !== undefined && !this.scratch(textBytes(mimeType.length)))
-      return this.overBudget();
     const release = this.temporaryCheckpoint();
     try {
       if (
@@ -411,15 +409,17 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         !this.temporary(RECORD_SCRATCH_BYTES + textBytes(query.length) * 2)
       )
         return this.overBudget();
-      return ok(
-        selectRpcOperationFactsFromText({
+      const facts = selectRpcOperationFactsFromText(
+        {
           method: line.method,
           path: line.path,
           query,
           mimeType,
           bodyText: text,
-        }),
+        },
+        (chars) => this.temporary(textBytes(chars)),
       );
+      return facts === null ? this.overBudget() : ok(facts);
     } finally {
       release();
     }

@@ -481,7 +481,10 @@ const callOperationChecks = (
   tool: StateToolFacts,
   call: StateRecordFacts,
   io: QueryCallIo,
-): { readonly declaresWrite: () => boolean; readonly readsOnly: () => boolean } => {
+): {
+  readonly declaresWrite: () => boolean;
+  readonly readsOnly: () => boolean;
+} => {
   let fallbackReadsOnly: boolean | undefined;
   const bodyReadsOnly = (body: JsonValue | undefined): boolean => {
     const operations = operationsOf(call, body);

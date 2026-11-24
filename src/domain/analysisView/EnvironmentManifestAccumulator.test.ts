@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { environmentManifestCaptureFixture } from "../../../tests/fixtures/analysisView.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
@@ -144,6 +144,33 @@ it("reserves request media normalization when the state reads the body", () => {
     error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
   });
 });
+
+it.each([
+  ["manifest", EnvironmentManifestAccumulator],
+  ["state", EnvironmentStateAccumulator],
+] as const)(
+  "reserves RPC request media normalization before retaining a %s tool",
+  (_, Accumulator) => {
+    const accumulator = new Accumulator(128 * 1024);
+    const write = sample(
+      0,
+      "/api/rpc",
+      '{"jsonrpc":"2.0","method":"getItems","id":1}',
+    );
+    (
+      write.reported as { request: { postData: { mimeType: string } } }
+    ).request.postData.mimeType = `Application/vnd.${"X".repeat(100_000)}+JSON`;
+    expect(accumulator.add(write)).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+    });
+    expect(finished(accumulator).tools).toEqual([]);
+    expect(accumulator.add(sample(1, "/api/items")).ok).toBe(true);
+    expect(finished(accumulator).records.map(({ ordinal }) => ordinal)).toEqual(
+      [1],
+    );
+  },
+);
 
 it("charges each record pointer and retains repeated route and query facts once", () => {
   const accumulator = new EnvironmentManifestAccumulator(64 * 1024);
@@ -783,11 +810,23 @@ describe("indexed route overlap scaling for large literal POST batches", () => {
       ).ok,
     ).toBe(true);
 
-    const start = performance.now();
-    const manifest = finished(accumulator);
-    const elapsedMs = performance.now() - start;
-
-    expect(elapsedMs).toBeLessThan(1000);
+    let decodedSegments = 0;
+    const decode = globalThis.decodeURIComponent;
+    const decoding = vi
+      .spyOn(globalThis, "decodeURIComponent")
+      .mockImplementation((value) => {
+        decodedSegments += 1;
+        return decode(value);
+      });
+    let manifest: ReturnType<typeof finished>;
+    try {
+      manifest = finished(accumulator);
+    } finally {
+      decoding.mockRestore();
+    }
+    // Indexed lookup decodes a bounded number of segments per record. Comparing
+    // every distinct org route with its peers would decode millions of them.
+    expect(decodedSegments).toBeLessThanOrEqual((ordinal + 1) * 64);
     expect(manifest.tools).toHaveLength(1505);
     const discriminated = manifest.tools
       .filter((tool) => tool.rpc_operation !== undefined)
@@ -1035,13 +1074,31 @@ describe("lazy child iteration on large wildcard + encoded-sibling buckets", () 
     );
     groups.push(nonOverlapping);
 
-    const start = performance.now();
-    const overlapping = selectGroupsWithOverlappingRpcPeers(groups);
-    const elapsedMs = performance.now() - start;
-
-    expect(elapsedMs).toBeLessThan(100);
-    expect(overlapping.size).toBe(6000);
-    expect(overlapping.has(nonOverlapping)).toBe(false);
+    let visitedChildren = 0;
+    const maximumVisitedChildren = groups.length * 2;
+    const iterate = Set.prototype[Symbol.iterator];
+    const childIteration = vi
+      .spyOn(Set.prototype, Symbol.iterator)
+      .mockImplementation(function* (this: Set<unknown>) {
+        for (const child of iterate.call(this)) {
+          if (++visitedChildren > maximumVisitedChildren)
+            throw new Error(
+              "RPC overlap traversal enumerated sibling branches",
+            );
+          yield child;
+        }
+        return undefined;
+      });
+    try {
+      const overlapping = selectGroupsWithOverlappingRpcPeers(groups);
+      // Eager enumeration visits all 3000 encoded siblings for each numeric
+      // wildcard. Short-circuiting visits only a linear number of children.
+      expect(visitedChildren).toBeLessThanOrEqual(maximumVisitedChildren);
+      expect(overlapping.size).toBe(6000);
+      expect(overlapping.has(nonOverlapping)).toBe(false);
+    } finally {
+      childIteration.mockRestore();
+    }
   });
 });
 

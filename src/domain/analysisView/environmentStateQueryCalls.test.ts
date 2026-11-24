@@ -153,7 +153,6 @@ describe("POSTs that read state", () => {
       label: "query operation with an unavailable body",
       path: "/rpc",
       query: "?op=getViewer",
-      request: undefined,
     },
   ])("reads each $label fallback body once across both checks", (fixture) => {
     const reads: number[] = [];
