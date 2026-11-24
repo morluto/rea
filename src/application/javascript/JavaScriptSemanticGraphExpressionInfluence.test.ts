@@ -201,6 +201,27 @@ it("keeps sequence side effects unknown instead of attributing earlier values di
   ).toBe(true);
 });
 
+it.each([
+  ["initializer", 'const url = (0, base + "/x"); fetch(url);'],
+  ["argument", 'fetch((0, base + "/x"));'],
+])(
+  "unwraps pure sequence wrappers in %s influence without false unknowns",
+  (_label, body) => {
+    const result = trace(body);
+    expect(result.nodes.map((node) => node.label)).toContain("argument 0");
+    expect(
+      result.relations.some((edge) => edge.relation === "influences"),
+    ).toBe(true);
+    expect(
+      result.unknowns.some(
+        (unknown) =>
+          unknown.detail.includes("operator operand") ||
+          unknown.detail.includes("operator result"),
+      ),
+    ).toBe(false);
+  },
+);
+
 it("keeps older call-site literal evidence searchable when argument literals are absent", () => {
   const graph = graphForJavaScript('consume("only-direct");');
   const legacy = {

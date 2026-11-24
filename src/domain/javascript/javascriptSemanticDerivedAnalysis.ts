@@ -21,6 +21,7 @@ import {
   readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { unwrapPureSemanticSequenceExpression } from "./javascriptSemanticCallResolution.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "./javascriptAnalysisResourceControls.js";
 
@@ -163,11 +164,13 @@ function* collectExpressionFlowsSteps(
   const initializers: JavaScriptSemanticIr["initializerFlows"][number][] = [];
   const literalReturns: JavaScriptSemanticIr["literalReturns"][number][] = [];
   const candidates: { node: t.Node; ownerCallableId: string | null }[] = [];
+  const discardedPureExpressions = new WeakSet<t.Node>();
   let truncated = false;
   const stack = createSemanticCallableIdStack(
     new Set(callables.map((item) => item.callableId)),
   );
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
+    skip: (node) => discardedPureExpressions.has(node),
     enter: (node, parent) => {
       stack.enter(node, parent);
       const returnValue = t.isReturnStatement(node)
@@ -176,7 +179,10 @@ function* collectExpressionFlowsSteps(
           ? node.body
           : null;
       if (returnValue != null) {
-        const expression = unwrapJavaScriptExpression(returnValue).node;
+        const expression = unwrapPureSemanticSequenceExpression(
+          returnValue,
+          state,
+        );
         const exact = readExactJavaScriptLiteral(expression);
         if (exact.found) {
           const value = semanticPrimitiveSet([exact.value], state.precision);
@@ -198,12 +204,20 @@ function* collectExpressionFlowsSteps(
         t.isIdentifier(node.id) &&
         node.init != null
       ) {
-        const init = unwrapJavaScriptExpression(node.init).node;
+        const init = unwrapPureSemanticSequenceExpression(node.init, state);
         if (isInfluenceExpression(init)) {
           if (initializers.length < budget)
             initializers.push({ target: range(node.id), source: range(init) });
           else truncated = true;
         }
+      }
+      if (
+        t.isSequenceExpression(node) &&
+        unwrapPureSemanticSequenceExpression(node, state) !== node
+      ) {
+        for (const leading of node.expressions.slice(0, -1))
+          discardedPureExpressions.add(leading);
+        return;
       }
       if (
         isInfluenceExpression(node) &&
@@ -259,7 +273,7 @@ function* collectExpressionFlowsSteps(
         (t.isUnaryExpression(node) &&
           (node.operator === "void" || node.operator === "delete")) ||
         (t.isSequenceExpression(node) && index !== values.length - 1);
-      const operand = unwrapJavaScriptExpression(value).node;
+      const operand = unwrapPureSemanticSequenceExpression(value, state);
       const exact = readExactJavaScriptLiteral(operand);
       const literal = exact.found
         ? semanticPrimitiveSet([exact.value], state.precision)
@@ -313,7 +327,7 @@ function* collectAssignmentFlowsSteps(
       const target = unwrapJavaScriptExpression(node.left).node;
       // Destructuring has its own property-selection owner.
       if (!t.isIdentifier(target) && !t.isMemberExpression(target)) return;
-      const source = unwrapJavaScriptExpression(node.right).node;
+      const source = unwrapPureSemanticSequenceExpression(node.right, state);
       flows.push({
         target: range(target),
         source: range(source),

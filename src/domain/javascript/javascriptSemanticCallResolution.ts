@@ -10,9 +10,10 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
-  unwrapJavaScriptExpression,
   runtimeFunctionParameters,
+  unwrapPureJavaScriptSequenceExpression,
 } from "./javascriptAstValues.js";
+import { isIntrinsicGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -60,13 +61,22 @@ export const resolveLocalCallables = (
     bindingCache: input.bindingCache,
   });
 
+/** Strip transparent syntax wrappers and pure-leading comma sequences. */
+export const unwrapPureSemanticSequenceExpression = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node =>
+  unwrapPureJavaScriptSequenceExpression(node, (identifier) =>
+    isIntrinsicGlobalReference(identifier, state, "undefined"),
+  );
+
 const resolveCallables = (
   node: t.Node,
   context: CallResolutionContext,
 ): LocalCallableResolution => {
-  // `unwrapJavaScriptExpression` strips all transparent layers iteratively,
-  // so a single recursion step suffices (no per-layer stack growth).
-  const unwrapped = unwrapJavaScriptExpression(node).node;
+  // `unwrapPureSemanticSequenceExpression` strips all transparent layers and
+  // pure-leading sequences iteratively, so a single recursion step suffices.
+  const unwrapped = unwrapPureSemanticSequenceExpression(node, context.state);
   if (unwrapped !== node) return resolveCallables(unwrapped, context);
   const direct = semanticCallableIdForNode(node);
   if (direct !== null && context.callableById.has(direct))
