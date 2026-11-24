@@ -47,6 +47,7 @@ import {
 } from "./GpuSource.js";
 import {
   AMD_METADATA_BYTES,
+  AmdMetadataValueBudget,
   amdCount,
   amdRecord,
   amdString,
@@ -468,6 +469,7 @@ export const readAmdElfMetadata = async (
   let unsupportedNotes = false;
   let targetMetadata: AmdElfMetadata["targetMetadata"] = null;
   let pal: AmdPalMetadataReader | null = null;
+  const valueBudget = new AmdMetadataValueBudget();
   const observed = (): AmdElfMetadata => {
     const targets = new Set(
       (targetMetadata?.notes ?? []).flatMap(({ target }) =>
@@ -588,6 +590,7 @@ export const readAmdElfMetadata = async (
               bytes.subarray(desc, desc + size),
               // PAL register maps are keyed by unsigned register offsets.
               pal === null ? "string" : "string-or-unsigned",
+              valueBudget,
             ),
           );
           if (metadata === null) rejectGpu("AMDGPU metadata is not a map");

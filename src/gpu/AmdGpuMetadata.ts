@@ -30,11 +30,23 @@ const utf8 = strictUtf8Decoder("preserve");
  * unsigned 32-bit register offsets, which normalize to their decimal spelling.
  */
 export type AmdMetadataKeys = "string" | "string-or-unsigned";
-const preflight = (bytes: Buffer, keyKinds: AmdMetadataKeys): Set<string> => {
+/**
+ * Decoded values one code object's notes may hold in total. Every retained or
+ * projected fact derives from a decoded value, so sharing this allowance
+ * across notes also bounds what consumers expand from them.
+ */
+export class AmdMetadataValueBudget {
+  used = 0;
+}
+const preflight = (
+  bytes: Buffer,
+  keyKinds: AmdMetadataKeys,
+  budget: AmdMetadataValueBudget,
+): Set<string> => {
   const strings = new Set<string>();
   const reader = new BinaryReader(bytes, false, "amdgpu-metadata");
   let at = 0,
-    values = 0;
+    values = budget.used;
   const take = (size: number): number => {
     const start = at;
     if (size > bytes.length - at)
@@ -157,11 +169,13 @@ const preflight = (bytes: Buffer, keyKinds: AmdMetadataKeys): Set<string> => {
   };
   value(0);
   if (at !== bytes.length) rejectGpu("Trailing AMDGPU MessagePack values");
+  budget.used = values;
   return strings;
 };
 export const readAmdMetadata = (
   bytes: Buffer,
   keys: AmdMetadataKeys = "string",
+  budget = new AmdMetadataValueBudget(),
 ): unknown => {
   if (bytes.length > AMD_METADATA_BYTES)
     throw new BinaryResourceFailure(
@@ -169,7 +183,7 @@ export const readAmdMetadata = (
       AMD_METADATA_BYTES,
       "AMDGPU metadata exceeds 8 MiB",
     );
-  const strings = preflight(bytes, keys);
+  const strings = preflight(bytes, keys, budget);
   const stringValue = (value: unknown): string => {
     if (
       !(value instanceof Uint8Array) ||
@@ -229,8 +243,11 @@ export const readAmdMetadata = (
     return rejectGpu("Malformed AMDGPU MessagePack metadata");
   }
 };
+/** A MessagePack map; binary values decode to `Uint8Array` and are not maps. */
 export const amdRecord = (value: unknown): Record<string, unknown> | null =>
-  isRecord(value) ? (value as Record<string, unknown>) : null;
+  isRecord(value) && !(value instanceof Uint8Array)
+    ? (value as Record<string, unknown>)
+    : null;
 export const amdCount = (value: unknown): number | null => {
   if (typeof value === "bigint")
     return value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)

@@ -264,7 +264,9 @@ selected payloads. `bytes_read` includes hashing and later descriptor reads.
 
 Payload work is reserved before reading or allocating, and a capacity refusal
 does not reread an aliased payload. AMD note discovery also bounds depth and
-container and string allocations; standalone AMD targets are read from those
+container and string allocations, and shares one 262,144-value allowance across
+all of a code object's notes, which also bounds the PAL pipeline facts expanded
+from them; standalone AMD targets are read from those
 notes before target selection, and kernel analysis reuses the parsed
 declarations. CUDA ELF limits are checked before index growth and are not claims
 about JavaScript heap size. Equivalent scoped metadata ranges and repeated equal

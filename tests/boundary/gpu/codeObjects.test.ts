@@ -28,6 +28,7 @@ import {
   elfFixture,
   ptxFixture,
   amdAbiFixture,
+  amdDescriptorNoteFixture,
   amdFixture,
   amdNoteFixture,
   amdPalMetadataFixture,
@@ -705,6 +706,20 @@ it("keeps an unexpected PAL scalar unknown and coverage partial", async () => {
 it.each([
   ["truncated MessagePack", () => amdPalMetadataFixture().subarray(0, 40)],
   [
+    // A MessagePack binary value is not a map, even when empty.
+    "a binary pipeline entry",
+    () =>
+      Buffer.from(
+        encode({
+          "amdpal.version": [3, 0],
+          "amdpal.pipelines": [
+            { ".type": "Cs", ".hardware_stages": {} },
+            new Uint8Array(0),
+          ],
+        }),
+      ),
+  ],
+  [
     "a non-map hardware stage table",
     () =>
       Buffer.from(
@@ -737,6 +752,28 @@ it.each([
   ).toEqual(
     label === "truncated MessagePack" ? [] : [{ index: 0, type: "Cs" }],
   );
+});
+it("shares one decoded-value allowance across a code object's PAL notes", async () => {
+  // Each note fits the per-note allowance; together they exceed it.
+  const note = amdDescriptorNoteFixture(
+    Buffer.from(
+      encode({ "amdpal.pipelines": Array.from({ length: 65536 }, () => ({})) }),
+    ),
+  );
+  const bytes = elfFixture(224, [
+    {
+      name: ".note",
+      type: 7,
+      bytes: Buffer.concat([note, note, note, note, note]),
+    },
+  ]);
+  bytes[7] = 65;
+  // Inventory decodes every note, so the allowance applies before selection.
+  const result = await inspect(bytes, { analysis: "inventory" });
+  if (!result.ok) throw result.error;
+  const row = result.value.objects[0]!;
+  expect(row).toMatchObject({ inspection: "capacity", amd_pal_metadata: null });
+  expect(row.limitations.join(" ")).toContain("262144-value");
 });
 it.each([
   [66, "mesa3d", /Mesa3D-ABI metadata is outside/u],
