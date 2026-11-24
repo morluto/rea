@@ -41,21 +41,14 @@ export interface MipsElfInspection {
 }
 
 /**
- * Read ELF32 MIPS ABI and shared-load declarations from the caller's already-open file.
- * Inspect both typed tables (not section names), including records beyond the
- * initial header probe. A missing record is unknown, not a default FP ABI.
+ * Build the bounded whole-region reader used for every declaration source.
  * The caller supplies its cancellation check so its tagged error is preserved.
  */
-export const readMipsElfMetadata = async (
+const createMipsRegionReader = (
   handle: FileHandle,
-  metadata: MipsElfMetadata,
+  fileSize: number,
   checkCancelled: () => void,
-): Promise<Result<MipsElfInspection, string>> => {
-  checkCancelled();
-  if (metadata.elfClass !== 32)
-    return err("MIPS ABI record inspection currently supports ELF32 only");
-  const fileSize = (await handle.stat()).size;
-  checkCancelled();
+) => {
   const read = async (
     offset: number,
     length: number,
@@ -90,6 +83,26 @@ export const readMipsElfMetadata = async (
     }
     return ok(bytes);
   };
+  return read;
+};
+
+/**
+ * Read ELF32 MIPS ABI and shared-load declarations from the caller's already-open file.
+ * Inspect both typed tables (not section names), including records beyond the
+ * initial header probe. A missing record is unknown, not a default FP ABI.
+ * The caller supplies its cancellation check so its tagged error is preserved.
+ */
+export const readMipsElfMetadata = async (
+  handle: FileHandle,
+  metadata: MipsElfMetadata,
+  checkCancelled: () => void,
+): Promise<Result<MipsElfInspection, string>> => {
+  checkCancelled();
+  if (metadata.elfClass !== 32)
+    return err("MIPS ABI record inspection currently supports ELF32 only");
+  const fileSize = (await handle.stat()).size;
+  checkCancelled();
+  const read = createMipsRegionReader(handle, fileSize, checkCancelled);
   const header = await read(0, 52, "ELF32 header");
   if (!header.ok) return header;
   const bytes = header.value;

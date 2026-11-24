@@ -322,6 +322,27 @@ describe("recordless legacy MIPS admission", () => {
       },
       "complete ABI-record inspection",
     ],
+    [
+      {
+        flags: 0x50000001,
+        limitations: [
+          {
+            kind: "truncated_section_table",
+            offset: 96,
+            examined: 2,
+            declared: 5,
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          },
+          {
+            kind: "unexamined_declarations",
+            message:
+              "MIPS ABI record at file offset 4096 extends beyond the captured file",
+          },
+        ],
+      },
+      "complete ABI-record inspection",
+    ],
   ] satisfies [Partial<MipsElfMetadata>, string][])(
     "keeps refusing unverified recordless variants %j",
     (change, reason) => {

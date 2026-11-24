@@ -113,9 +113,10 @@ const MIPS_ARCH_32R2 = 0x70000000;
 
 /**
  * Whether an ELF header has the recordless legacy ELF32 MIPS ET_EXEC shape:
- * MIPS-I / MIPS32 / MIPS32r2 with no declared ABI field or 64-bit-mode bit.
- * Does not by itself establish lane admission (ABI flags, GNU attributes,
- * ASE/machine flags, and limitations are checked by the provider profile).
+ * MIPS-I / MIPS32 / MIPS32r2 with unspecified ABI and no ASE, machine,
+ * FP64, NAN2008, n32, or 32bitmode flags. Does not by itself establish lane
+ * admission (ABI flags, GNU attributes, and limitations are checked by the
+ * provider profile).
  */
 export const isRecordlessLegacyMipsExecHeader = (
   metadata: ElfFamilyMetadata,
@@ -128,10 +129,13 @@ export const isRecordlessLegacyMipsExecHeader = (
     (arch === MIPS_ARCH_1 ||
       arch === MIPS_ARCH_32 ||
       arch === MIPS_ARCH_32R2) &&
+    (flags & 0x0f000000) === 0 &&
+    (flags & 0x00ff0000) === 0 &&
     (flags & 0x0000f000) === 0 &&
     (flags & 0x20) === 0 &&
     (flags & 0x40) === 0 &&
-    (flags & 0x100) === 0
+    (flags & 0x100) === 0 &&
+    (flags & 0x600) === 0
   );
 };
 

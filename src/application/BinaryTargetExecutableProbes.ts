@@ -264,13 +264,15 @@ const readElfMetadata = async (
       },
     });
   if (!isMips32) return parsed;
+  const { sectionTruncation } = ranges.value;
+  if (sectionTruncation?.kind === "truncated_section_payload")
+    return err(sectionTruncation.reason);
   const declarations = await readMipsElfMetadata(
     handle,
     parsed.value.mips,
     () => throwIfTargetResolutionCancelled(signal),
   );
   if (!declarations.ok) return declarations;
-  const { sectionTruncation } = ranges.value;
   if (sectionTruncation !== undefined) {
     const admitsTruncatedSectionTable =
       sectionTruncation.kind === "truncated_section_table" &&

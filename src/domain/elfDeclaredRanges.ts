@@ -420,7 +420,10 @@ export function* validateElfDeclaredRanges(
     if (!inspected.ok) return inspected;
     hasInterpreter = inspected.value.hasInterpreter;
   }
-  if (sections.count > 0 && sectionTruncation === undefined) {
+  // Inspect every complete captured section header even when the table is
+  // truncated so an out-of-file section payload still overrides table-only
+  // truncation and prevents admission.
+  if (sections.count > 0) {
     const inspected = yield* inspectTableRanges(
       "section",
       sections,
@@ -429,7 +432,8 @@ export function* validateElfDeclaredRanges(
       sectionRanges,
     );
     if (!inspected.ok) return inspected;
-    sectionTruncation = inspected.value.sectionTruncation;
+    if (inspected.value.sectionTruncation !== undefined)
+      sectionTruncation = inspected.value.sectionTruncation;
   }
   return ok({
     hasInterpreter,
