@@ -3600,10 +3600,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   m.payload_file,
                   isWindows,
                 );
+                const crossPlatformNorm = normalizeRelativePath(
+                  m.payload_file,
+                  true,
+                );
                 if (
                   exactNorm.length === 0 ||
-                  exactNorm.startsWith("..") ||
-                  exactNorm.split("/").includes("..")
+                  exactNorm.split("/").includes("..") ||
+                  crossPlatformNorm.split("/").includes("..")
                 ) {
                   isCoveragePartial = true;
                   const label =
@@ -3624,10 +3628,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   continue;
                 }
                 const foldedNorm = exactNorm.toLowerCase();
-                const crossPlatformNorm = normalizeRelativePath(
-                  m.payload_file,
-                  true,
-                );
                 const crossPlatformFolded = crossPlatformNorm.toLowerCase();
 
                 let validGuid: string | null | undefined = undefined;
