@@ -1769,7 +1769,7 @@ export function* collectSemanticMemberMutationsSteps(
     } catch (cause: unknown) {
       if (cause !== QUERY_STATE_BUDGET_EXCEEDED) throw cause;
       for (const bindingId of queryBindings) denseBindings.add(bindingId);
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       queryCollapsed = true;
       try {
         // The collapsed escape names no site, so it may precede any read.
