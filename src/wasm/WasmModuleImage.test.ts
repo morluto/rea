@@ -231,6 +231,12 @@ describe("readWasmModuleImage", () => {
     ],
     ["segment past memory", module(memory(1), data([65535, [1, 2]]))],
     ["data without memory", module(data([0, [1]]))],
+    ["memory maximum below minimum", module(memory(1, 0))],
+    ["memory above 65,536 pages", module(memory(65537))],
+    [
+      "table maximum below minimum",
+      module(section(4, vec([[0x70, 0x01, 4, 1]]))),
+    ],
     ["slot past function count", module(functions(1), table, elements(0, [1]))],
   ] as [string, Buffer][])("refuses %s as malformed", (_, bytes) => {
     expect(failure(bytes)[0]).toBe("malformed");

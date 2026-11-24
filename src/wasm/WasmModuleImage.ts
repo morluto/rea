@@ -82,6 +82,8 @@ export const WASM_MODULE_LIMITS = {
 } as const;
 
 export const WASM_PAGE_BYTES = 65536;
+/** wasm32 addresses 4 GiB, so a memory declares at most 65,536 pages. */
+const WASM32_MEMORY_PAGES = 65536;
 /** Zero bytes kept after the last data segment; wider than any record read across it. */
 const LINEAR_MEMORY_TAIL_BYTES = 64;
 /** Bytes copied into the view between yields. */
@@ -205,7 +207,8 @@ class Cursor {
     this.at += size;
     return start;
   }
-  limits(label: string): { min: number; max: number | null } {
+  /** Limits valid within range `bound`: min <= bound, max <= bound and min <= max. */
+  limits(label: string, bound: number): { min: number; max: number | null } {
     const flags = this.byte();
     // 0x02 shared, 0x04 memory64, 0x08 custom page size.
     if (flags > 1)
@@ -213,7 +216,12 @@ class Cursor {
         `${label} limits flags 0x${flags.toString(16)} are not read`,
       );
     const min = this.u32();
-    return { min, max: flags === 1 ? this.u32() : null };
+    const max = flags === 1 ? this.u32() : null;
+    if (min > bound || (max !== null && max > bound))
+      throw malformed(`${label} limits exceed ${bound}`);
+    if (max !== null && max < min)
+      throw malformed(`${label} limits maximum ${max} is below minimum ${min}`);
+    return { min, max };
   }
   /** Only `i32.const n end`; global.get or extended forms need evaluation. */
   constOffset(label: string): number {
@@ -263,7 +271,7 @@ export function* readWasmModuleImageSteps(
   let codeBodies: number | null = null;
 
   const addMemory = (cursor: Cursor, imported: boolean) => {
-    const { min, max } = cursor.limits("memory");
+    const { min, max } = cursor.limits("memory", WASM32_MEMORY_PAGES);
     if (memory) throw unsupported("module has more than one memory");
     memory = { initialPages: min, maximumPages: max, imported };
   };
@@ -274,7 +282,7 @@ export function* readWasmModuleImageSteps(
       throw unsupported(
         `table element type 0x${type.toString(16)} is not funcref`,
       );
-    const { min } = cursor.limits("table");
+    const { min } = cursor.limits("table", 0xffff_ffff);
     if (++tables > 1) throw unsupported("module has more than one table");
     tableMinimum = min;
     tableImported = imported;
