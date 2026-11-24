@@ -17,6 +17,14 @@ const examples = (content: string, languages: readonly string[]): string[] =>
         : [],
     );
 
+// GitHub's heading anchors: lowercase, drop punctuation, keep letters, marks,
+// numbers, connectors and zero-width joiners, and hyphenate spaces.
+const headingSlug = (text: string): string =>
+  text
+    .toLowerCase()
+    .replace(/(?!\u200c|\u200d)[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
+    .replaceAll(" ", "-");
+
 describe("onboarding documentation product facts", () => {
   it("documents manual MCP registration with an absolute runtime and entry script", async () => {
     const content = await readFile(
@@ -55,42 +63,62 @@ describe("onboarding documentation product facts", () => {
       ).toEqual(english);
   });
 
-  it("preserves Persian joiners in links to GitHub-rendered headings", async () => {
-    const persian = await readFile(resolve("docs/readme/README_fa.md"), "utf8");
-    // Confirmed against GitHub's rendered README, which retains U+200C.
-    for (const heading of [
-      "REA چگونه کار می‌کند",
-      "چه چیزهایی را می‌توان تحلیل کرد",
-      "نمونه‌های عملی",
-      "پرسش‌های متداول",
-      "به‌روزرسانی REA",
-    ]) {
-      expect(persian).toContain(`## ${heading}`);
-      expect(persian).toContain(
-        `](#${heading.toLowerCase().replaceAll(" ", "-")})`,
+  it("resolves every in-page README link to a rendered heading", async () => {
+    const inventory = JSON.parse(
+      await readFile(resolve("website/locales/languages.json"), "utf8"),
+    ) as { readme: string }[];
+    let checked = 0;
+    for (const { readme } of inventory) {
+      const tokens = markdown.parse(
+        await readFile(resolve(readme), "utf8"),
+        {},
       );
+      const anchors = new Set<string>();
+      const repeats = new Map<string, number>();
+      const fragments: string[] = [];
+      for (const [index, token] of tokens.entries()) {
+        if (token.type === "heading_open") {
+          const slug = headingSlug(
+            (tokens[index + 1]?.children ?? [])
+              .filter(({ type }) => type === "text" || type === "code_inline")
+              .map(({ content }) => content)
+              .join(""),
+          );
+          const seen = repeats.get(slug) ?? 0;
+          repeats.set(slug, seen + 1);
+          anchors.add(seen === 0 ? slug : `${slug}-${String(seen)}`);
+        }
+        for (const html of [token, ...(token.children ?? [])].filter(
+          ({ type }) => type === "html_block" || type === "html_inline",
+        ))
+          for (const [, id] of html.content.matchAll(
+            /\s(?:id|name)="([^"]+)"/gu,
+          ))
+            anchors.add(id ?? "");
+        for (const child of token.children ?? []) {
+          const href =
+            child.type === "link_open" ? child.attrGet("href") : null;
+          if (typeof href === "string" && href.startsWith("#"))
+            fragments.push(decodeURIComponent(href.slice(1)));
+        }
+      }
+      expect(
+        fragments.filter((fragment) => !anchors.has(fragment)),
+        readme,
+      ).toEqual([]);
+      checked += fragments.length;
     }
+    expect(checked).toBeGreaterThan(0);
   });
 
-  it("preserves zero-width non-joiners in Malayalam links to GitHub-rendered headings", async () => {
-    const malayalam = await readFile(
-      resolve("docs/readme/README_ml.md"),
-      "utf8",
+  it("keeps the zero-width non-joiners that GitHub retains in heading anchors", () => {
+    // Confirmed against GitHub's rendered Persian and Malayalam READMEs, which
+    // retain U+200C, so dropping it from only the heading or only the link
+    // breaks that link.
+    expect(headingSlug("REA چگونه کار می\u200cکند")).toBe(
+      "rea-چگونه-کار-می\u200cکند",
     );
-    // Confirmed against GitHub's rendered README, which retains U+200C. The
-    // update heading keeps exactly one joiner between അപ and ഡേറ്റ്; an
-    // editor that drops it from the heading or the fragment must fail here.
-    const zeroWidthNonJoiner = "\u200c";
-    for (const heading of [
-      `REA അപ്${zeroWidthNonJoiner}ഡേറ്റ് ചെയ്യുക`,
-      "എന്തൊക്കെ വിശകലനം ചെയ്യാം",
-      "ഉദാഹരണങ്ങൾ",
-    ]) {
-      expect(malayalam).toContain(`## ${heading}`);
-      expect(malayalam).toContain(
-        `](#${heading.toLowerCase().replaceAll(" ", "-")})`,
-      );
-    }
+    expect(headingSlug("Updating REA (CLI)")).toBe("updating-rea-cli");
   });
 });
 

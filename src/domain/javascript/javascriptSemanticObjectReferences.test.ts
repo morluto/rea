@@ -268,5 +268,7 @@ it("widens a large static getter permutation to one escaped reference", () => {
     path: [],
     escapes: true,
   });
-  expect([...state.getterResourceLimits]).toEqual(["getter-expansion"]);
+  expect([...state.observations.getterResourceLimits]).toEqual([
+    "getter-expansion",
+  ]);
 });
