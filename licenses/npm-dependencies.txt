@@ -2835,11 +2835,11 @@ ieee754@1.2.1 | runtime, optional | BSD-3-Clause
   Package: https://www.npmjs.com/package/ieee754/v/1.2.1
   Archive: https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz
   Integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==
-ignore@7.0.14 | runtime | MIT
+ignore@7.0.16 | runtime | MIT
   Lockfile path: node_modules/ignore
-  Package: https://www.npmjs.com/package/ignore/v/7.0.14
-  Archive: https://registry.npmjs.org/ignore/-/ignore-7.0.14.tgz
-  Integrity: sha512-wCBiZ77u1tuWde6G/nfOtLaCTYcFDU5yCzARzK10y+rLhzYoL7a7yEemcopcc2Mzow7gZOIjnV2ym1NYmdiJOQ==
+  Package: https://www.npmjs.com/package/ignore/v/7.0.16
+  Archive: https://registry.npmjs.org/ignore/-/ignore-7.0.16.tgz
+  Integrity: sha512-52N+Y4HRMOJmbLmr+DqO4iSRyyB7N52gm7PWCT6h0p978+oKbqHCB7gIJIwZvBUsjlSdWbrBFqUSmIFNZMpn0A==
 import-meta-resolve@4.2.0 | development | MIT
   Lockfile path: node_modules/import-meta-resolve
   Package: https://www.npmjs.com/package/import-meta-resolve/v/4.2.0

@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): 5ee1c88e656b42eb5bbfaee54a6c2f38015cf92ea3a4b042a40d2216c2b59a24
+Runtime dependency fingerprint (SHA-256): 4fd6af84e38d69ac1486f52bdd33393be310a7a755f104a13f1356fde0f6c628
 
 ===== @babel/helper-string-parser@8.1.2 =====
 Declared license: MIT
@@ -4046,10 +4046,10 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-===== ignore@7.0.14 =====
+===== ignore@7.0.16 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/ignore/-/ignore-7.0.14.tgz
-Integrity: sha512-wCBiZ77u1tuWde6G/nfOtLaCTYcFDU5yCzARzK10y+rLhzYoL7a7yEemcopcc2Mzow7gZOIjnV2ym1NYmdiJOQ==
+Archive: https://registry.npmjs.org/ignore/-/ignore-7.0.16.tgz
+Integrity: sha512-52N+Y4HRMOJmbLmr+DqO4iSRyyB7N52gm7PWCT6h0p978+oKbqHCB7gIJIwZvBUsjlSdWbrBFqUSmIFNZMpn0A==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE-MIT ---

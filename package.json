@@ -396,7 +396,7 @@
     "evmole": "0.9.4",
     "graphql": "17.1.0",
     "har-schema": "2.0.0",
-    "ignore": "7.0.14",
+    "ignore": "7.0.16",
     "isomorphic-git": "1.44.15",
     "jsonc-parser": "3.3.1",
     "lossless-json": "4.3.3",

@@ -1,4 +1,4 @@
-import { isSafeNumber } from "lossless-json";
+import { compareNumber, isInteger, isSafeNumber } from "lossless-json";
 import { ownedJsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { safeParseJson } from "./safeJson.js";
 
@@ -10,11 +10,16 @@ import { safeParseJson } from "./safeJson.js";
 export const isExactJsonNumber = (
   value: number,
   source: string | undefined,
-): boolean =>
-  source !== undefined &&
-  isSafeNumber(source) &&
-  isSafeNumber(String(value)) &&
-  !Object.is(value, -0);
+): boolean => {
+  if (source === undefined || !Number.isFinite(value) || Object.is(value, -0))
+    return false;
+  const serialized = String(value);
+  // A large integer written back in scientific notation can carry an exact
+  // decimal measurement. Integer spellings still require safe-integer identity.
+  if (serialized.includes("e+") && !isInteger(source))
+    return compareNumber(source, serialized) === 0;
+  return isSafeNumber(source) && isSafeNumber(serialized);
+};
 
 /** Parse JSON text whose every number survives native conversion exactly; undefined otherwise. */
 export const parseExactJson = (text: string): JsonValue | undefined => {
