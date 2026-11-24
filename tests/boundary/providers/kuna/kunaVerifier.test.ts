@@ -1,23 +1,235 @@
-import { spawnSync } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { expect, it as test } from "vitest";
+import { afterAll, beforeAll, expect } from "vitest";
+
+import { KUNA_VERIFIED_VERSION } from "../../../../src/kuna/KunaRelease.js";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../../support/workspace/workspaceFixture.js";
+import {
+  processTest as test,
+  type TestProcesses,
+} from "../../../support/process/processFixture.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 
 const it = test.skipIf(process.platform === "win32");
 
-it("accepts empty caller inventories but requires source-owned fixture literals", async () => {
-  const root = await createTestTempDirectory("rea-kuna-verifier-empty-");
-  const result = spawnSync(
-    process.execPath,
+let compileCacheWorkspace = "";
+let compileCache = "";
+let retainCompileCache = false;
+
+beforeAll(async () => {
+  if (process.platform === "win32") return;
+  compileCacheWorkspace = (
+    await createTestWorkspace("rea-kuna-verifier-compile-")
+  ).root;
+  compileCache = join(compileCacheWorkspace, "node-compile");
+});
+
+afterAll(async () => {
+  if (compileCacheWorkspace !== "" && !retainCompileCache) {
+    await removeTestWorkspace(compileCacheWorkspace);
+  }
+});
+
+const compileCacheEnv = (): Record<string, string> =>
+  compileCache === "" || process.env.NODE_V8_COVERAGE !== undefined
+    ? {}
+    : { NODE_COMPILE_CACHE: compileCache };
+
+const runVerifier = async (
+  processes: TestProcesses,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+) => {
+  const result = await processes
+    .run(process.execPath, args, { env })
+    .catch((error: unknown) => {
+      retainCompileCache = true;
+      throw error;
+    });
+  if (result.signal !== null) {
+    retainCompileCache = true;
+    return result;
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as {
+      verifier_run?: {
+        process_lineage?: { status?: string; descendants?: unknown[] };
+      };
+    };
+    const lineage = parsed.verifier_run?.process_lineage;
+    if (
+      lineage !== undefined &&
+      (lineage.status !== "verified" ||
+        !Array.isArray(lineage.descendants) ||
+        lineage.descendants.length > 0)
+    ) {
+      retainCompileCache = true;
+    }
+  } catch {
+    retainCompileCache = true;
+  }
+  return result;
+};
+
+const createCallerMatrix = async (processes: TestProcesses, root: string) => {
+  const targets = join(root, "targets");
+  const binaries: string[] = [];
+  for (const [flavor, name, multiplier] of [
+    ["left", "audit_left", 3],
+    ["right", "audit_right", 7],
+    ["unmatched", "audit_other", 11],
+  ] as const) {
+    const directory = join(targets, flavor);
+    await mkdir(directory, { recursive: true });
+    const source = join(root, `${flavor}.c`);
+    const binary = join(directory, "program");
+    await writeFile(
+      source,
+      `__attribute__((noinline,used)) int ${name}(int x) { return x * ${multiplier} + 1; }\nint main(void) { return ${name}(2); }\n`,
+    );
+    const compiled = await processes.run(process.env.REA_CC ?? "cc", [
+      "-O1",
+      "-o",
+      binary,
+      source,
+    ]);
+    expect(compiled.exitCode, compiled.stderr).toBe(0);
+    const stripped = `${binary}.stripped`;
+    await copyFile(binary, stripped);
+    const strip = await processes.run(process.env.REA_STRIP ?? "strip", [
+      stripped,
+    ]);
+    expect(strip.exitCode, strip.stderr).toBe(0);
+    binaries.push(binary, stripped);
+  }
+  return { targets, binaries };
+};
+
+const expectedCallerSelection = (targets: string) => ({
+  directory: targets,
+  functions_argument: "audit_left,audit_right",
+  requested_functions: ["audit_left", "audit_right"],
+  symbol_scan_complete: true,
+  examined: [
+    {
+      binary: "left/program",
+      status: "selected",
+      matched_functions: ["audit_left"],
+    },
+    {
+      binary: "right/program",
+      status: "selected",
+      matched_functions: ["audit_right"],
+    },
+    {
+      binary: "unmatched/program",
+      status: "no_matching_text_symbols",
+      matched_functions: [],
+    },
+  ],
+});
+
+it("accepts requested functions distributed across caller targets", async ({
+  processes,
+}) => {
+  const root = await createTestTempDirectory(
+    "rea-kuna-verifier-matrix-boundary-",
+  );
+  const { targets } = await createCallerMatrix(processes, root);
+  const kuna = await writeFakeKuna(root);
+  const result = await runVerifier(
+    processes,
     [
-      "--input-type=module",
-      "-e",
-      `
+      "scripts/verify-real-kuna.mjs",
+      "--targets",
+      targets,
+      "--functions",
+      "audit_left,audit_right",
+    ],
+    {
+      ...compileCacheEnv(),
+      PATH: process.env.PATH,
+      HOME: root,
+      REA_KUNA_COMMAND: kuna,
+      REA_CC: join(root, "compiler-must-not-run"),
+    },
+  );
+  expect(result.exitCode, result.stderr).toBe(1);
+  expect(result.stderr).toContain("compiler-must-not-run");
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    status: "failed",
+    cleanup: "complete",
+    caller_target_selection: expectedCallerSelection(targets),
+  });
+});
+
+test.skipIf(
+  process.platform === "win32" || process.env.REA_KUNA_COMMAND === undefined,
+)(
+  "reports the complete selection of a passing real-provider matrix",
+  async ({ processes }) => {
+    const root = await createTestTempDirectory("rea-kuna-verifier-matrix-");
+    const { targets, binaries } = await createCallerMatrix(processes, root);
+    const hashes = async () =>
+      Promise.all(
+        binaries.map(async (path) =>
+          createHash("sha256")
+            .update(await readFile(path))
+            .digest("hex"),
+        ),
+      );
+    const before = await hashes();
+    const reportPath = join(root, "report.json");
+    const result = await processes.run(process.execPath, [
+      "scripts/verify-real-kuna.mjs",
+      "--targets",
+      targets,
+      "--functions",
+      "audit_left,audit_right",
+      "--report",
+      reportPath,
+    ]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    expect(JSON.parse(result.stdout)).toEqual(report);
+    expect(report).toMatchObject({
+      status: "passed",
+      cleanup: "complete",
+      verifier_run: {
+        process_lineage: { status: "verified", descendants: [] },
+      },
+      caller_target_selection: expectedCallerSelection(targets),
+    });
+    expect(
+      report.results.map(({ binary }: { binary: string }) => binary),
+    ).toEqual([
+      "fixture/rea-kuna-fixture",
+      "fixture/rea-kuna-fixture.stripped",
+      "left/program",
+      "left/program.stripped",
+      "right/program",
+      "right/program.stripped",
+    ]);
+    expect(await hashes()).toEqual(before);
+  },
+);
+
+it("accepts empty caller inventories but requires source-owned fixture literals", async ({
+  processes,
+}) => {
+  const root = await createTestTempDirectory("rea-kuna-verifier-empty-");
+  const result = await processes.run(process.execPath, [
+    "--input-type=module",
+    "-e",
+    `
 import assert from "node:assert/strict";
 import { verifyKunaStrings } from ${JSON.stringify(pathToFileURL(resolve("scripts/lib/kuna-string-verifier.mjs")).href)};
 const calls = [];
@@ -39,25 +251,45 @@ assert.ok(calls.some(call => call.name === "search_strings"));
 assert.ok(calls.every(call => call.input?.address === undefined));
 await assert.rejects(() => verifyKunaStrings({ ...options, expectedStrings: ["required fixture literal"] }), /Source-owned string fixture/);
 `,
-    ],
-    { encoding: "utf8", timeout: 10_000 },
-  );
-  expect(result.error).toBeUndefined();
+  ]);
   expect(result.stderr).toBe("");
-  expect(result.status).toBe(0);
+  expect(result.exitCode, result.stderr).toBe(0);
 });
 
-it.each([
-  { populated: false, names: "main", reason: "No caller-built targets" },
-  { populated: true, names: "typo", reason: "No caller-built targets" },
+it.for([
+  {
+    populated: false,
+    names: "main",
+    reason: "No caller-built targets",
+    examined: [],
+  },
+  {
+    populated: true,
+    names: "typo",
+    reason: "No caller-built targets",
+    examined: [
+      {
+        binary: "linux/program",
+        status: "no_matching_text_symbols",
+        matched_functions: [],
+      },
+    ],
+  },
   {
     populated: true,
     names: "main,typo",
     reason: "Requested functions were not found",
+    examined: [
+      {
+        binary: "linux/program",
+        status: "selected",
+        matched_functions: ["main"],
+      },
+    ],
   },
 ])(
   "rejects an unverified caller matrix: $names, populated=$populated",
-  async ({ populated, names, reason }) => {
+  async ({ populated, names, reason, examined }, { processes }) => {
     const root = await createTestTempDirectory("rea-kuna-verifier-selection-");
     const kuna = await writeFakeKuna(root);
     const targets = join(root, "targets");
@@ -77,8 +309,8 @@ it.each([
         mode: 0o755,
       },
     );
-    const result = spawnSync(
-      process.execPath,
+    const result = await runVerifier(
+      processes,
       [
         "scripts/verify-real-kuna.mjs",
         "--targets",
@@ -88,64 +320,147 @@ it.each([
         "--compare-ghidra",
       ],
       {
-        encoding: "utf8",
-        timeout: 10_000,
-        env: {
-          PATH: process.env.PATH,
-          HOME: root,
-          REA_KUNA_COMMAND: kuna,
-          REA_NM: nm,
-          REA_CC: join(root, "compiler-must-not-run"),
-          GHIDRA_INSTALL_DIR: join(root, "ghidra-must-not-run"),
-        },
+        ...compileCacheEnv(),
+        PATH: process.env.PATH,
+        HOME: root,
+        REA_KUNA_COMMAND: kuna,
+        REA_NM: nm,
+        REA_CC: join(root, "compiler-must-not-run"),
+        GHIDRA_INSTALL_DIR: join(root, "ghidra-must-not-run"),
       },
     );
-    expect(result.error).toBeUndefined();
-    expect(result.status).toBe(1);
+    expect(result.exitCode, result.stderr).toBe(1);
     expect(result.stderr).toContain(reason);
     expect(result.stderr).not.toContain("compiler-must-not-run");
+    const report = JSON.parse(result.stdout);
+    expect(report.caller_target_selection).toEqual({
+      directory: targets,
+      functions_argument: names,
+      requested_functions: names.split(","),
+      symbol_scan_complete: true,
+      examined,
+    });
+    expect(report.cleanup).toBe("complete");
     expect((await fakeKunaCalls(kuna)).map(({ argv }) => argv)).toEqual([
       ["--version"],
     ]);
   },
 );
 
-it.each([
+it("retains examined caller targets when a later symbol inspection fails", async ({
+  processes,
+}) => {
+  const root = await createTestTempDirectory("rea-kuna-verifier-inspection-");
+  const kuna = await writeFakeKuna(root);
+  const targets = join(root, "targets");
+  await mkdir(join(targets, "first"), { recursive: true });
+  await mkdir(join(targets, "second"), { recursive: true });
+  await writeFile(join(targets, "first", "program"), "not analyzed");
+  await writeFile(join(targets, "second", "broken"), "not analyzed");
+  const nm = join(root, "nm");
+  await writeFile(
+    nm,
+    `#!${process.execPath}\nif (process.argv.at(-1).endsWith("broken")) { process.stderr.write("inspection failed"); process.exit(9); }\nprocess.stdout.write("00001000 T main\\n");\n`,
+    { mode: 0o755 },
+  );
+  const reportPath = join(root, "report.json");
+  const result = await runVerifier(
+    processes,
+    [
+      "scripts/verify-real-kuna.mjs",
+      "--targets",
+      targets,
+      "--functions",
+      "main",
+      "--report",
+      reportPath,
+    ],
+    {
+      ...compileCacheEnv(),
+      PATH: process.env.PATH,
+      HOME: root,
+      REA_KUNA_COMMAND: kuna,
+      REA_NM: nm,
+      REA_CC: join(root, "compiler-must-not-run"),
+    },
+  );
+  expect(result.exitCode, result.stderr).toBe(1);
+  const report = JSON.parse(await readFile(reportPath, "utf8"));
+  expect(JSON.parse(result.stdout)).toEqual(report);
+  expect(report).toMatchObject({
+    status: "failed",
+    cleanup: "complete",
+    caller_target_selection: {
+      directory: targets,
+      functions_argument: "main",
+      requested_functions: ["main"],
+      symbol_scan_complete: false,
+      examined: [
+        {
+          binary: "first/program",
+          status: "selected",
+          matched_functions: ["main"],
+        },
+        {
+          binary: "second/broken",
+          status: "inspection_failed",
+          error: { message: expect.stringContaining("inspection failed") },
+        },
+      ],
+    },
+  });
+  expect(result.stderr).not.toContain("compiler-must-not-run");
+  expect((await fakeKunaCalls(kuna)).map(({ argv }) => argv)).toEqual([
+    ["--version"],
+  ]);
+});
+
+it.for([
   {
     rejectClose: false,
     rejectRead: true,
     wrongXrefs: false,
     wrongStrings: false,
+    version: KUNA_VERIFIED_VERSION,
   },
   {
     rejectClose: true,
     rejectRead: false,
     wrongXrefs: false,
     wrongStrings: false,
+    version: "1.833",
   },
   {
     rejectClose: true,
     rejectRead: true,
     wrongXrefs: false,
     wrongStrings: false,
+    version: "1.833",
   },
   {
     rejectClose: false,
     rejectRead: false,
     wrongXrefs: true,
     wrongStrings: false,
+    version: "1.833",
   },
   {
     rejectClose: false,
     rejectRead: false,
     wrongXrefs: false,
     wrongStrings: true,
+    version: "1.833",
   },
 ])(
   "reports failure-path lineage (cleanup: $rejectClose, read: $rejectRead, wrong xrefs: $wrongXrefs, wrong strings: $wrongStrings)",
-  async ({ rejectClose, rejectRead, wrongXrefs, wrongStrings }) => {
+  async (
+    { rejectClose, rejectRead, wrongXrefs, wrongStrings, version },
+    { processes },
+  ) => {
     const root = await createTestTempDirectory("rea-kuna-verifier-cleanup-");
     const kuna = await writeFakeKuna(root, {
+      version: { stdout: `kuna ${version}\n` },
+      extraXrefSources: [4104],
       stringRows: [
         { address: 12288, text: "REA fixture prompt" },
         {
@@ -219,8 +534,8 @@ await exited;
 `,
     );
     const reportPath = join(root, "report.json");
-    const result = spawnSync(
-      process.execPath,
+    const result = await runVerifier(
+      processes,
       [
         "scripts/verify-real-kuna.mjs",
         "--entrypoint",
@@ -229,18 +544,14 @@ await exited;
         reportPath,
       ],
       {
-        encoding: "utf8",
-        timeout: 25_000,
-        env: {
-          PATH: process.env.PATH,
-          HOME: root,
-          REA_KUNA_COMMAND: kuna,
-          REA_NM: nm,
-        },
+        ...compileCacheEnv(),
+        PATH: process.env.PATH,
+        HOME: root,
+        REA_KUNA_COMMAND: kuna,
+        REA_NM: nm,
       },
     );
-    expect(result.error).toBeUndefined();
-    expect(result.status).toBe(1);
+    expect(result.exitCode, result.stderr).toBe(1);
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     expect(report).toMatchObject({
       status: "failed",

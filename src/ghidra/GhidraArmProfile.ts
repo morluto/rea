@@ -139,12 +139,12 @@ export const ghidraArmProfileParameters = (
             ? "soft"
             : "unspecified",
     },
-    arm_support_lane: "elf32-exec-le-eabi5-v7-pinned-v1",
+    arm_support_lane: "elf32-exec-le-eabi5-v7-pinned",
     ...(languageOverride === undefined && pinnedLanguage !== undefined
       ? {
           language_id: pinnedLanguage.languageId,
           compiler_spec_id: pinnedLanguage.compilerSpecId ?? "default",
-          language_selection: "provider-pinned-v1",
+          language_selection: "provider-pinned",
         }
       : {}),
   };
@@ -155,8 +155,8 @@ export const ghidraPinnedArmLanguage = (
   parameters: Readonly<Record<string, unknown>>,
 ): GhidraLanguageOverride | undefined => {
   if (
-    parameters.arm_support_lane !== "elf32-exec-le-eabi5-v7-pinned-v1" ||
-    parameters.language_selection !== "provider-pinned-v1"
+    parameters.arm_support_lane !== "elf32-exec-le-eabi5-v7-pinned" ||
+    parameters.language_selection !== "provider-pinned"
   )
     return undefined;
   const languageId = parameters.language_id;

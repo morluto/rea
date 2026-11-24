@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { z } from "zod";
 
 import {
   prepareSnapshotEntry,
@@ -12,14 +13,23 @@ import {
   EvidenceIntegrityError,
 } from "../../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { describeValidationFailure } from "../../domain/validationFailure.js";
+import { validationIssueOptions } from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
-import { RegularFileCleanupFailure } from "../RegularFileRead.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
+import { readJsonObjectMembersFile } from "../JsonFiles.js";
+import {
+  writeTextFile,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
+const READ_OPERATION = "open_binary";
 
 /** Read and validate an analysis snapshot from the caller's path. */
 export const readAnalysisSnapshot = async (
@@ -64,6 +74,7 @@ export const readAnalysisSnapshot = async (
       ],
       signal,
       resources,
+      READ_OPERATION,
     );
     if (!loaded.ok) return loaded;
     signal?.throwIfAborted();
@@ -77,16 +88,34 @@ export const readAnalysisSnapshot = async (
     signal?.throwIfAborted();
     return ok(snapshot);
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (signal?.aborted === true)
-      return err(new AnalysisCancelledError("read_evidence_file", { cause }));
+      return err(cancelledBy(READ_OPERATION, signal));
     return err(
-      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), {
+        cause,
+        ...validationIssueOptions(cause, []),
+      }),
     );
   }
 };
 
+/** Locate an entry's schema issues within its snapshot collection. */
+const locateEntryFailure = (
+  cause: unknown,
+  collection: string,
+  index: number,
+): unknown =>
+  cause instanceof z.ZodError
+    ? new z.ZodError(
+        cause.issues.map((issue) => ({
+          ...issue,
+          path: [collection, index, ...issue.path],
+        })),
+      )
+    : cause;
+
 const snapshotEntryReader = (kind: "provider" | "workflow") => {
+  const collection = kind === "provider" ? "entries" : "workflow_entries";
   let seen = false;
   let entries: PreparedSnapshotEntry[] = [];
   let failure: { readonly cause: unknown } | undefined;
@@ -98,8 +127,12 @@ const snapshotEntryReader = (kind: "provider" | "workflow") => {
       failure = undefined;
     },
     accept: (value) => {
-      if (failure === undefined)
+      if (failure !== undefined) return;
+      try {
         entries.push(prepareSnapshotEntry(value, kind));
+      } catch (cause: unknown) {
+        throw locateEntryFailure(cause, collection, entries.length);
+      }
     },
     reject: (cause) => {
       failure ??= { cause };
@@ -109,9 +142,7 @@ const snapshotEntryReader = (kind: "provider" | "workflow") => {
     reader,
     finish: (): PreparedSnapshotEntry[] => {
       if (!seen)
-        throw new TypeError(
-          `Analysis snapshot ${kind === "provider" ? "entries" : "workflow_entries"} is missing`,
-        );
+        throw new TypeError(`Analysis snapshot ${collection} is missing`);
       if (failure !== undefined) throw failure.cause;
       return entries;
     },
@@ -132,13 +163,20 @@ export const writeAnalysisSnapshot = async (
     encoded = serializeAnalysisSnapshot(snapshot);
   } catch (cause: unknown) {
     return err(
-      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), {
+        cause,
+        ...validationIssueOptions(cause, []),
+      }),
     );
   }
   return writeTextFile(encoded, path, overwrite, resources);
 };
 
-const snapshotValidationMessage = (cause: unknown): string =>
-  cause instanceof TypeError
+const snapshotValidationMessage = (cause: unknown): string => {
+  if (cause instanceof z.ZodError)
+    return `Analysis snapshot validation failed ${describeValidationFailure(cause)}`;
+  // The Evidence format owner's refusal carries the recreate guidance.
+  return cause instanceof TypeError || isUnsupportedEvidenceFormat(cause)
     ? cause.message
     : "Analysis snapshot validation failed";
+};

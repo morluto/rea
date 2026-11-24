@@ -1,0 +1,132 @@
+import {
+  BinaryFormatFailure,
+  hasElfMagic,
+  type BinaryContainer,
+} from "../binaryContainer.js";
+import {
+  classifyFatContainerEvidence,
+  readFatContainerHeader,
+  readFatHeaderPrefix,
+  readMachoHeaderPrefixFacts,
+} from "../apple/machoContainer.js";
+import {
+  MACHO_FORMAT,
+  readUniversalMachoImageFromReader,
+} from "../apple/machoImageSelection.js";
+import {
+  readElfImage,
+  readElfImageCooperative,
+  readElfImageFromReader,
+} from "./elfImage.js";
+import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
+import { readPeImage, readPeImageFromReader } from "./peImage.js";
+import {
+  readMachoImage,
+  readMachoImageFromReader,
+} from "../apple/machoImage.js";
+import type { ByteSource } from "../byteSource.js";
+
+/** Identify an ELF, PE, or thin Mach-O image and its file sections. */
+export const readBinaryContainer = (
+  bytes: Buffer,
+  operation: string,
+): BinaryContainer =>
+  hasElfMagic(bytes)
+    ? readElfImage(bytes, operation)
+    : readNonElfContainer(bytes);
+
+/** Read the same facts, allowing the operation to pause during ELF name decoding. */
+export const readBinaryContainerCooperative = async (
+  bytes: Buffer,
+  operation: string,
+  pause: ZstandardFramePause,
+): Promise<BinaryContainer> =>
+  hasElfMagic(bytes)
+    ? readElfImageCooperative(bytes, operation, pause)
+    : readNonElfContainer(bytes);
+
+/** Stream ELF, PE, or thin Mach-O headers and sections over a range reader. */
+export const readBinaryContainerFromReader = async (
+  source: ByteSource,
+  operation: string,
+  pause: ZstandardFramePause,
+): Promise<BinaryContainer> => {
+  const probeLength = Math.min(source.size, 64);
+  const prefix =
+    source.prefix !== undefined && source.prefix.length >= probeLength
+      ? source.prefix.subarray(0, probeLength)
+      : probeLength === 0
+        ? Buffer.alloc(0)
+        : await source.readRange(0, probeLength);
+  if (hasElfMagic(prefix))
+    return readElfImageFromReader(source, operation, pause);
+  if (prefix.subarray(0, 2).equals(Buffer.from("MZ")))
+    return readPeImageFromReader({
+      size: source.size,
+      prefix: source.prefix ?? prefix,
+      readRange: source.readRange,
+    });
+  if (prefix.length >= 4) {
+    const fatPrefix = readFatHeaderPrefix(prefix);
+    if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
+      const fat = await readUniversalMachoImageFromReader(source);
+      if (!fat.ok) {
+        const { failure } = fat.error;
+        const { kind, detail, offset } = failure;
+        throw new BinaryFormatFailure(kind, detail, {
+          format: failure.format,
+          ...(offset === undefined ? {} : { offset }),
+          ...(failure.kind === "truncated" && failure.extent !== undefined
+            ? { extent: failure.extent }
+            : {}),
+        });
+      }
+      if (fat.value !== null)
+        throw new BinaryFormatFailure(
+          "unsupported",
+          "Universal/fat Mach-O containers require selecting a thin slice",
+        );
+    }
+    if (readMachoHeaderPrefixFacts(prefix).format !== null)
+      return readMachoImageFromReader(source);
+  }
+  throw new BinaryFormatFailure(
+    "unsupported",
+    "Only ELF, PE, and thin Mach-O native images are supported",
+  );
+};
+
+const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
+  if (bytes.subarray(0, 2).equals(Buffer.from("MZ"))) return readPeImage(bytes);
+  if (bytes.length >= 4) {
+    const fatPrefix = readFatHeaderPrefix(bytes);
+    if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
+      const fatHeader = readFatContainerHeader(bytes, bytes.length);
+      if (fatHeader.state === "malformed")
+        throw new BinaryFormatFailure("malformed", fatHeader.reason);
+      if (fatHeader.state === "truncated")
+        throw new BinaryFormatFailure("truncated", fatHeader.reason, {
+          format: MACHO_FORMAT,
+          extent: fatHeader.extent,
+        });
+      const identity =
+        fatHeader.state === "parsed"
+          ? classifyFatContainerEvidence(fatHeader, bytes)
+          : undefined;
+      // An invalid FAT-shaped table is not proof of a Mach-O container: JVM
+      // constant-pool bytes can share both the magic and a known CPU value.
+      const confirmedFatMachO = identity?.state === "mach-o";
+      if (confirmedFatMachO)
+        throw new BinaryFormatFailure(
+          "unsupported",
+          "Universal/fat Mach-O containers require selecting a thin slice",
+        );
+    }
+    if (readMachoHeaderPrefixFacts(bytes).format !== null)
+      return readMachoImage(bytes);
+  }
+  throw new BinaryFormatFailure(
+    "unsupported",
+    "Only ELF, PE, and thin Mach-O native images are supported",
+  );
+};

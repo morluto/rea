@@ -39,7 +39,7 @@ same mechanism the DOS lanes use. A caller-selected
 combining the pinned profile with an environment override is a typed refusal
 that asks for a reopen without the override.
 
-The profile records the lane identity `elf32-exec-le-eabi5-v7-pinned-v1`, the
+The profile records the lane identity `elf32-exec-le-eabi5-v7-pinned`, the
 raw header facts, and the declared float ABI basis (`hard`, `soft`, or
 `unspecified`) without interpreting it into a calling-convention claim.
 Sessions carry the limitation that the ELF float ABI declaration does not

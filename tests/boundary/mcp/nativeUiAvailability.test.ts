@@ -11,8 +11,9 @@ import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+  AnalysisOperation,
+} from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -27,7 +28,6 @@ import { nativeInvestigationTraceSchema } from "../../../src/domain/native/nativ
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -64,11 +64,12 @@ const controllerName = "BuildViewController";
 const selector = "buildTapped:";
 const handlerAddress = "0x1000";
 const calleeAddress = "0x2000";
-const dispatchMetadata = inspectNativeDispatchMetadata([
-  { address: handlerAddress, name: `-[${controllerName} ${selector}]` },
-]);
+const dispatchMetadata = inspectNativeDispatchMetadata(
+  [{ address: handlerAddress, name: `-[${controllerName} ${selector}]` }],
+  1,
+);
 const symbolInventory = [
-  { address: handlerAddress, name: `-[${controllerName} ${selector}]` },
+  { address: handlerAddress, value: `-[${controllerName} ${selector}]` },
 ];
 const interfaceBuilderFor = (targetSha256: string) =>
   buildInterfaceBuilderAnalysis({

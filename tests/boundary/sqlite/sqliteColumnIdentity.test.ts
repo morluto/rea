@@ -13,7 +13,8 @@ const sample = async (encoding: string, malformed = false) => {
   try {
     db.exec(`PRAGMA encoding='${encoding}';
       CREATE TABLE t("col" TEXT, "�ol" TEXT);
-      INSERT INTO t VALUES ('first-column','replacement-column');`);
+      INSERT INTO t VALUES ('first-column','replacement-column');
+      CREATE TABLE json_each(value TEXT);`);
   } finally {
     db.close();
   }

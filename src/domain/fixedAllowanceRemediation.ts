@@ -2,15 +2,17 @@
  * Recovery for a deterministic allowance. Host memory, worker limits, waiting,
  * and a different output channel do not raise it.
  */
-export type FixedAllowanceKind =
-  | "parser"
-  | "count"
-  | "bytes"
-  | "report"
-  | "input"
-  | "capture"
-  | "live"
-  | "work";
+export const FIXED_ALLOWANCE_KINDS = [
+  "parser",
+  "count",
+  "bytes",
+  "report",
+  "input",
+  "capture",
+  "live",
+  "work",
+] as const;
+export type FixedAllowanceKind = (typeof FIXED_ALLOWANCE_KINDS)[number];
 
 const unchangedRequest = "Repeating the unchanged request fails the same way.";
 
@@ -39,11 +41,43 @@ export const fixedAllowanceRemediation = (
   }
 };
 
+/**
+ * A named deterministic allowance (a fixed ceiling) and the recovery family it
+ * belongs to. The optional facts let a caller act without parsing the name.
+ */
+export interface FixedAllowance {
+  /** Display name, such as "The tshark JSON decoding allowance". */
+  readonly name: string;
+  readonly kind: FixedAllowanceKind;
+  /** The ceiling's value, in `unit`. */
+  readonly limit?: number;
+  readonly unit?: string;
+  /** A request change that stays within the ceiling, as one sentence. */
+  readonly narrowing?: string;
+}
+
+/** Facts a fixed ceiling may carry beyond its name and recovery family. */
+export type FixedCeilingFacts = Pick<
+  FixedAllowance,
+  "limit" | "unit" | "narrowing"
+>;
+
 /** Non-retryable options for a fixed allowance. Occupied capacity stays retryable. */
 export const fixedAllowanceOptions = (
   allowance: string,
   kind: FixedAllowanceKind,
-): { readonly retryable: false; readonly remediationAction: string } => ({
+  facts: FixedCeilingFacts = {},
+): { readonly retryable: false; readonly fixedAllowance: FixedAllowance } => ({
   retryable: false,
-  remediationAction: fixedAllowanceRemediation(allowance, kind),
+  fixedAllowance: { name: allowance, kind, ...facts },
 });
+
+/**
+ * Name a fixed producer input allowance in bytes. Host and inherited limits
+ * do not raise it, and this release has no runtime override.
+ */
+export const fixedProducerInputAllowance = (
+  bytes: number,
+  allowance: string,
+): { readonly retryable: false; readonly fixedAllowance: FixedAllowance } =>
+  fixedAllowanceOptions(allowance, "input", { limit: bytes, unit: "bytes" });

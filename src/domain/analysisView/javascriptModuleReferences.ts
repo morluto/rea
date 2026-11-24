@@ -22,16 +22,32 @@ export const javascriptModuleReferencesRequestSchema = z.strictObject({
       kind: moduleKindSchema.optional(),
     })
     .default({}),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 /** Unique support states, without promoting mixed observations to one fact. */
-const basisSchema = z.strictObject({
+export const javascriptFactBasisSchema = z.strictObject({
   authority: applicationGraphEvidenceSchema.shape.authority,
   state: applicationGraphEvidenceSchema.shape.state,
   confidence: applicationGraphEvidenceSchema.shape.confidence,
 });
+
+type JavaScriptFactBasis = z.infer<typeof javascriptFactBasisSchema>;
+
+/** Distinct support states in first-observed order; mixed support stays mixed. */
+export const javascriptFactBasis = (
+  evidence: Iterable<JavaScriptFactBasis>,
+): JavaScriptFactBasis[] => {
+  const support = new Map<string, JavaScriptFactBasis>();
+  for (const { authority, state, confidence } of evidence)
+    support.set(`${authority}:${state}:${confidence}`, {
+      authority,
+      state,
+      confidence,
+    });
+  return [...support.values()];
+};
 
 /** Reusable facts rather than task-specific dependency interpretations. */
 export const javascriptModuleReferenceSchema = z.strictObject({
@@ -39,8 +55,8 @@ export const javascriptModuleReferenceSchema = z.strictObject({
   kind: moduleKindSchema,
   path: z.string().nullable(),
   identity: applicationNodeIdentitySchema,
-  retained_source_range_count: z.number().int().nonnegative(),
-  basis: z.array(basisSchema).min(1),
+  retained_source_range_count: z.int().nonnegative(),
+  basis: z.array(javascriptFactBasisSchema).min(1),
 });
 
 export type JavaScriptModuleReference = z.infer<

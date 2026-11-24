@@ -1,8 +1,7 @@
 import {
-  modelTypeRowSchema,
   modelArtifactViewRequestSchema,
+  modelTypeRowSchema,
 } from "../model/modelArtifactQuery.js";
-export { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
 import { z } from "zod";
 import {
   modelArtifactSchema,
@@ -13,21 +12,31 @@ import {
   type ModelArtifact,
 } from "../model/modelArtifact.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
+import {
+  pickFields,
+  selectIndexedViewRows,
+  selectViewRows,
+} from "./selectViewRows.js";
 import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   boundedViewMessages,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const HEADLINE_TEXT_LIMIT = 512;
 
@@ -104,7 +113,11 @@ const summarizeModel = (
         }) => row,
       ),
     chat_template_present: metadata.some(
-      (row) => row.key === "tokenizer.chat_template",
+      (row) =>
+        row.type === "STRING" &&
+        typeof row.value === "string" &&
+        (row.key === "tokenizer.chat_template" ||
+          row.key.startsWith("tokenizer.chat_template.")),
     ),
   };
 };
@@ -135,23 +148,15 @@ type Checked = {
   types: Map<string, number>;
 };
 const checked = new WeakMap<object, Checked>();
+const readReport = createAnalysisViewResultReader(modelArtifactSchema);
 const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    key !== null &&
-    typeof key === "object" &&
-    isImmutableJsonSnapshot(key);
-  const cached = reusable ? checked.get(key) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(modelArtifactSchema, parent);
+  const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
-  const report = reusable ? (key as ModelArtifact) : parsed.value;
-  if (
-    parent.subject != null &&
-    (parent.subject.local_path !== report.artifact.path ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
-  )
+  const report = parsed.value;
+  const reusable = isImmutableJsonSnapshot(report);
+  const cached = reusable ? checked.get(report) : undefined;
+  const subject = evidenceFileTarget(parent);
+  if (subject != null && subject.sha256 !== report.artifact.sha256)
     return err(
       analysisViewInputError([
         {
@@ -162,6 +167,7 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
         },
       ]),
     );
+  if (cached !== undefined) return ok(cached);
   const summary = summarizeModel(report);
   const {
     artifact: _artifact,
@@ -180,26 +186,22 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     names: new Map(report.tensors.map((row) => [row.name, row.index])),
     keys: new Map(report.metadata.map((row) => [row.key, row.index])),
   };
-  if (reusable) checked.set(key, value);
+  if (reusable) checked.set(report, value);
   return ok(value);
 };
 
 /** Historical pages never reopen weights or report a scoped header digest as full-file identity. */
 export const projectModelArtifactView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "model-artifact")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Model Evidence supports summary and model-artifact metadata/tensor pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof modelArtifactViewRequestSchema>
+  >(view, "summary", "model-artifact");
   const parsed = read(parent);
   if (!parsed.ok) return parsed;
   const {
@@ -217,7 +219,7 @@ export const projectModelArtifactView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
     limitations: boundedViewMessages(
-      parent.limitations,
+      [...parent.limitations, ...report.limitations],
       parent.evidenceId,
       "limitations",
     ),
@@ -232,7 +234,7 @@ export const projectModelArtifactView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -243,7 +245,7 @@ export const projectModelArtifactView = (
           "limitations",
         ),
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const rows =
     view.collection === "tensors"
@@ -273,65 +275,50 @@ export const projectModelArtifactView = (
     view.collection === "tensors" && view.storage_validation !== undefined
       ? new Set(view.storage_validation)
       : undefined;
-  let selected: number[] | undefined;
-  if (selectedNames !== undefined)
-    selected = [
-      ...new Set(
-        selectedNames.flatMap((name) => {
-          const index = lookup.get(name);
-          return index === undefined ? [] : [index];
-        }),
-      ),
-    ].sort((a, b) => a - b);
-  else if (indices !== undefined)
-    selected = [...indices]
-      .filter((index) => index < rows.length)
-      .sort((a, b) => a - b);
-  if (
-    indices !== undefined ||
-    types !== undefined ||
-    storageStates !== undefined
-  )
-    selected = (selected ?? rows.map((row) => row.index)).filter((index) => {
-      const row = rows[index]!;
-      return (
-        (indices === undefined || indices.has(index)) &&
-        (types === undefined || types.has(row.type)) &&
-        (storageStates === undefined ||
-          ("storage_validation" in row &&
-            storageStates.has(row.storage_validation)))
-      );
-    });
-  const total = selected?.length ?? rows.length;
-  const pageIndices =
-    selected === undefined
-      ? Array.from(
-          {
-            length: Math.max(
-              0,
-              Math.min(view.limit, rows.length - view.offset),
-            ),
-          },
-          (_, index) => view.offset + index,
-        )
-      : selected.slice(view.offset, view.offset + view.limit);
   const fields =
     view.fields === undefined ? undefined : new Set<string>(view.fields);
-  const items = pageIndices.map((index) => {
-    const row = rows[index]!;
-    const result: Record<string, JsonValue> = { index };
-    for (const [name, value] of Object.entries(row))
-      if (fields === undefined || fields.has(name)) result[name] = value;
-    return result;
-  });
+  const projectRow = (row: (typeof rows)[number], index: number) =>
+    fields === undefined
+      ? { ...row, index }
+      : { ...pickFields(row as Record<string, unknown>, fields), index };
+  const matchesRow =
+    types === undefined && storageStates === undefined
+      ? undefined
+      : (row: (typeof rows)[number]) =>
+          (types === undefined || types.has(row.type)) &&
+          (storageStates === undefined ||
+            ("storage_validation" in row &&
+              storageStates.has(row.storage_validation)));
+  let candidateIndices: ReadonlySet<number> | undefined;
+  if (selectedNames !== undefined) {
+    const matched = new Set<number>();
+    for (const name of selectedNames) {
+      const index = lookup.get(name);
+      if (index !== undefined && (indices === undefined || indices.has(index)))
+        matched.add(index);
+    }
+    candidateIndices = matched;
+  } else if (indices !== undefined) {
+    candidateIndices = indices;
+  }
+  const paged =
+    candidateIndices !== undefined
+      ? selectIndexedViewRows(
+          rows,
+          candidateIndices,
+          view,
+          matchesRow,
+          projectRow,
+        )
+      : selectViewRows(rows, view, matchesRow, projectRow);
   return ok({
-    kind: "model-artifact",
+    kind: "model-artifact" as const,
     view,
     ...shared,
     source: report.artifact,
     model,
     source_coverage: report.coverage,
-    items: modelArtifactViewItemsSchema.parse(items),
-    coverage: pageViewCoverage(view.offset, items.length, total),
+    items: modelArtifactViewItemsSchema.parse(paged.rows),
+    coverage: pageViewCoverage(view.offset, paged.rows.length, paged.total),
   });
 };

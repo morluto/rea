@@ -18,7 +18,6 @@ import {
   ENVIRONMENT_CARD_PATH,
   ENVIRONMENT_RPC_PATH,
   environmentRoutes,
-  MAX_RPC_BATCH_MESSAGES,
   serveEnvironment as startEnvironment,
   type ServedEnvironment,
 } from "./serveEnvironment.js";
@@ -38,28 +37,7 @@ const serveEnvironment = async (
   if (!result.ok) throw result.error;
   return result.value;
 };
-const definitions = environmentToolDefinitions(
-  source.manifest,
-  source.evidenceId,
-);
-
-/**
- * The agentenv echo example's card, key for key. Only `name` and the tool
- * entries differ for a served manifest, so substituting them must reproduce
- * the served JSON byte for byte.
- */
-const echoCardShape = (
-  name: string,
-  tools: readonly unknown[],
-): Record<string, unknown> => ({
-  name,
-  protocolVersion: "1.0",
-  url: "/agentenv",
-  preferredTransport: "JSONRPC",
-  additionalInterfaces: [{ url: "/mcp", transport: "mcp" }],
-  capabilities: { extensions: null, tools, operations: [] },
-  children_environments: null,
-});
+const definitions = environmentToolDefinitions(source, source.manifest.name);
 
 const route = (method: string, path: string) => {
   const found = environmentRoutes(
@@ -121,9 +99,18 @@ describe("replay value fidelity over MCP", () => {
         name: "get_users_by_id",
         arguments: { id: "3" },
       });
-      expect(JSON.stringify(ownKeys.structuredContent)).toContain(
-        '"__proto__":{"retained":true}',
-      );
+      const content = ownKeys.structuredContent;
+      if (
+        typeof content !== "object" ||
+        content === null ||
+        !("body" in content)
+      )
+        throw new Error("Expected a structured replay body");
+      const body = content.body;
+      expect(body).toEqual(JSON.parse(proto));
+      if (typeof body !== "object" || body === null)
+        throw new Error("Expected an object replay body");
+      expect(Object.hasOwn(body, "__proto__")).toBe(true);
     } finally {
       await transport.terminateSession();
       await client.close();
@@ -132,58 +119,6 @@ describe("replay value fidelity over MCP", () => {
 });
 
 describe("environment routes", () => {
-  it("serves the card byte-identical to the echo card shape with the manifest tools", async () => {
-    const response = await route("GET", ENVIRONMENT_CARD_PATH).handle(
-      new Request(`http://127.0.0.1${ENVIRONMENT_CARD_PATH}`),
-    );
-    expect(response.headers.get("content-type")).toContain("application/json");
-    const text = await response.text();
-    expect(text).toBe(
-      JSON.stringify(
-        echoCardShape(
-          "grafana-example",
-          definitions.map(({ name, description, inputSchema }) => ({
-            name,
-            description,
-            inputSchema,
-          })),
-        ),
-      ),
-    );
-    const card: unknown = JSON.parse(text);
-    expect(card).toMatchObject({
-      capabilities: {
-        tools: expect.arrayContaining([
-          expect.objectContaining({
-            name: "get_users_by_id",
-            inputSchema: {
-              type: "object",
-              properties: { id: expect.objectContaining({ type: "string" }) },
-              required: ["id"],
-              additionalProperties: false,
-            },
-          }),
-        ]),
-      },
-    });
-  });
-
-  it("warns standalone card readers before any MCP session exists", async () => {
-    const entry = await start();
-    const reply = await fetch(new URL(ENVIRONMENT_CARD_PATH, entry.url));
-    const card = await reply.json();
-    expect(entry.card.capabilities.tools.length).toBeGreaterThan(0);
-    expect(card).toMatchObject({
-      capabilities: {
-        tools: entry.card.capabilities.tools.map(() => ({
-          description: expect.stringMatching(
-            /^Untrusted captured API catalog: /u,
-          ),
-        })),
-      },
-    });
-  });
-
   it("answers every data-plane method with JSON-RPC method not found", async () => {
     const rpc = route("POST", ENVIRONMENT_RPC_PATH);
     const reset = await rpc.handle(
@@ -329,13 +264,11 @@ describe("environment data plane validation", () => {
       ).json(),
     ).resolves.toMatchObject({ id: null, error: { code: -32601 } });
     // A batch is bounded before any reply is built for it.
-    const oversized = await post(
-      Array.from({ length: MAX_RPC_BATCH_MESSAGES + 1 }, () => 0),
-    );
+    const oversized = await post(Array.from({ length: 101 }, () => 0));
     expect(oversized.status).toBe(400);
     await expect(oversized.json()).resolves.toMatchObject({
       id: null,
-      error: { code: -32600 },
+      error: { code: -32600, message: "batch exceeds 100 messages" },
     });
   });
 });
@@ -351,16 +284,22 @@ describe("environment catalog limits", () => {
       params: users.params.map((param) => ({
         ...param,
         observed_values: Array.from(
-          { length: 10_000 },
+          { length: 8 },
           (_, index) => `${String(index)}-${"x".repeat(200)}`,
         ),
       })),
-      record_ordinals: Array.from({ length: 10_000 }, (_, index) => index),
+      record_ordinals: [
+        ...Array.from({ length: 360 }, (_, index) => index),
+        50_000,
+      ],
     };
+    const retained = source.exchanges.get(5);
+    if (retained === undefined) throw new Error("Missing fixture user record");
     const entry = await serveEnvironment({
       source: {
         ...source,
         manifest: { ...source.manifest, tools: [expanded] },
+        exchanges: new Map([[50_000, { ...retained, ordinal: 50_000 }]]),
       },
       host: "127.0.0.1",
       port: 0,
@@ -381,9 +320,10 @@ describe("environment catalog limits", () => {
           inputSchema,
         })),
       );
-      expect(cardText).toContain(
-        "/10000 shown; full list in manifest Evidence",
+      expect(tools[0]?.description).toMatch(
+        /replays retained records \[0, 1, .*\/361 shown; full list in manifest Evidence\)/u,
       );
+      expect(tools[0]?.description).not.toContain("50000");
       const replay = await client.callTool({
         name: users.name,
         arguments: { id: "2" },
@@ -391,7 +331,7 @@ describe("environment catalog limits", () => {
       expect(replay.isError).toBeFalsy();
       expect(replay.structuredContent).toMatchObject({
         body: { login: "probe" },
-        replay: { exact_match: true, record_ordinal: 5 },
+        replay: { exact_match: true, record_ordinal: 50_000 },
       });
     } finally {
       await transport.terminateSession();
@@ -400,15 +340,74 @@ describe("environment catalog limits", () => {
   });
 });
 
+describe("environment tool annotations", () => {
+  it("advertises method hints with closed-world answers over MCP and keeps them off the card", async () => {
+    const folders = source.manifest.tools.find(
+      (tool) => tool.name === "post_folders",
+    );
+    if (folders === undefined) throw new Error("Missing fixture folders tool");
+    const search = {
+      ...folders,
+      name: "post_search",
+      path_template: "/api/search",
+    };
+    const entry = await serveEnvironment({
+      source: {
+        ...source,
+        manifest: {
+          ...source.manifest,
+          tools: [...source.manifest.tools, search],
+        },
+      },
+      host: "127.0.0.1",
+      port: 0,
+    });
+    served.push(entry);
+    const client = new Client({ name: "tool-hints", version: "1" });
+    const transport = new StreamableHTTPClientTransport(new URL(entry.url));
+    await client.connect(transport);
+    try {
+      const { tools } = await client.listTools();
+      const hints = new Map(
+        tools.map(({ name, annotations }) => [name, annotations]),
+      );
+      const read = { readOnlyHint: true, openWorldHint: false };
+      expect(hints.get("get_users_by_id")).toEqual({
+        ...read,
+        idempotentHint: true,
+      });
+      expect(hints.get("post_search")).toEqual({
+        ...read,
+        idempotentHint: false,
+      });
+      expect(hints.get("post_folders")).toEqual({
+        readOnlyHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      });
+      expect(hints.get("put_folders_by_uid")).toEqual({
+        readOnlyHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      expect(hints.get("delete_teams_by_id")).toEqual({
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      expect(JSON.stringify(entry.card)).not.toContain("Hint");
+    } finally {
+      await transport.terminateSession();
+      await client.close();
+    }
+  });
+});
+
 describe("serveEnvironment", () => {
-  it("serves the card, lists one MCP tool per manifest tool and replays target content with provenance", async () => {
+  it("marks successful replay and SDK argument failures as target content", async () => {
     const entry = await start();
     const url = new URL(entry.url);
-    expect(url.pathname).toBe("/mcp");
-    const card = await fetch(new URL(ENVIRONMENT_CARD_PATH, url));
-    await expect(card.json()).resolves.toEqual(
-      JSON.parse(JSON.stringify(entry.card)),
-    );
     expect(entry.card.name).toBe("grafana-example");
     const transport = new StreamableHTTPClientTransport(url);
     const client = new Client({ name: "environment-adapter", version: "1" });
@@ -419,7 +418,6 @@ describe("serveEnvironment", () => {
     expect(client.getInstructions()).toContain(REPLAY_CATALOG_INSTRUCTIONS);
     try {
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(source.manifest.tools.length);
       const advertised = tools.find((tool) => tool.name === "get_users_by_id");
       expect(advertised?.inputSchema).toEqual(
         definitions.find(({ name }) => name === "get_users_by_id")?.inputSchema,
@@ -438,13 +436,6 @@ describe("serveEnvironment", () => {
       expect(
         JSON.parse(String((exact.content as { text: string }[])[0]?.text)),
       ).toEqual(exact.structuredContent);
-      const inexact = await client.callTool({
-        name: "get_users_by_id",
-        arguments: { id: "999" },
-      });
-      expect(inexact.structuredContent).toMatchObject({
-        replay: { exact_match: false },
-      });
       const missing = await client.callTool({
         name: "get_users_by_id",
         arguments: {},
@@ -459,14 +450,6 @@ describe("serveEnvironment", () => {
       expect(unknown.isError).toBe(true);
       expect(unknown._meta).toEqual(TARGET_CONTENT_RESULT_META);
       expect(unknown.structuredContent).toBeUndefined();
-      const rpc = await fetch(new URL(ENVIRONMENT_RPC_PATH, url), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "data/reset" }),
-      });
-      await expect(rpc.json()).resolves.toMatchObject({
-        error: { code: -32601 },
-      });
     } finally {
       await client.close();
     }

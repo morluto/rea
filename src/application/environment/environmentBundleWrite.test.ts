@@ -1,3 +1,4 @@
+import { requirePermissionDenial } from "../../../tests/fixtures/permissionDenial.js";
 import {
   appendFile,
   chmod,
@@ -8,8 +9,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
-import { Readable } from "node:stream";
+import { join, relative, sep } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
@@ -18,119 +18,142 @@ import {
   environmentServeSource,
   writeEnvironmentServeFiles,
 } from "../../../tests/fixtures/environmentServe.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import * as fileChunks from "../../filesystem/readFileHandleChunks.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { SafeOutputTree } from "../../resources/SafeOutputTree.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   exportEnvironmentBundle,
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
 
-vi.mock("../../filesystem/readFileHandleChunks.js", { spy: true });
-
-it("attributes a pathless tarball read failure during the copy to the tarball", async () => {
-  const root = await createTestTempDirectory("rea-tarball-read-failure-");
-  const files = await writeEnvironmentServeFiles(root);
-  const inputs = await readEnvironmentExportInputs(
-    files.manifestPath,
-    files.capturePath,
-  );
-  if (!inputs.ok) throw inputs.error;
-  const tarball = join(root, "package.tgz");
-  await writeFile(tarball, "admitted package");
-  const directory = join(root, "bundle");
-  const actual = await vi.importActual<typeof fileChunks>(
-    "../../filesystem/readFileHandleChunks.js",
-  );
-  // Only the tarball descriptor is read twice: once to hash, once to copy.
-  const reads = new Map<unknown, number>();
-  const reader = vi
-    .mocked(fileChunks.readFileHandleChunks)
-    .mockImplementation((handle, options) => {
-      const count = (reads.get(handle) ?? 0) + 1;
-      reads.set(handle, count);
-      if (count < 2) return actual.readFileHandleChunks(handle, options);
-      const failure = Object.assign(new Error("EIO: i/o error, read"), {
-        code: "EIO",
-        syscall: "read",
+it.each(["replaced", "missing"] as const)(
+  "retains the admitted tarball descriptor when its pathname is %s during output",
+  async (transition) => {
+    const root = await createTestTempDirectory("rea-tarball-instance-");
+    const files = await writeEnvironmentServeFiles(root);
+    const inputs = await readEnvironmentExportInputs(
+      files.manifestPath,
+      files.capturePath,
+    );
+    if (!inputs.ok) throw inputs.error;
+    const tarball = join(root, "package.tgz");
+    const originalBytes = Buffer.from("original admitted package");
+    await writeFile(tarball, originalBytes);
+    const directory = join(root, "bundle");
+    const original = SafeOutputTree.prototype.write;
+    let replaced = false;
+    const writer = vi
+      .spyOn(SafeOutputTree.prototype, "write")
+      .mockImplementation(async function (
+        this: SafeOutputTree,
+        ...args: Parameters<SafeOutputTree["write"]>
+      ) {
+        const result = await original.apply(this, args);
+        if (!replaced) {
+          replaced = true;
+          await rename(tarball, join(root, "admitted.tgz"));
+          if (transition === "replaced")
+            await writeFile(tarball, "replacement package");
+        }
+        return result;
       });
-      return Object.assign(
-        new Readable({
-          read() {
-            this.destroy(failure);
+    try {
+      const result = await exportEnvironmentBundle({
+        ...inputs.value,
+        source: environmentServeSource(),
+        directory,
+        packageTarball: tarball,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisArtifactChangedError",
+          path: tarball,
+          partialObservation: {
+            kind: "environment-bundle-publication",
+            directory,
+            files: expect.arrayContaining([
+              expect.objectContaining({ path: "README.md" }),
+            ]),
           },
-        }),
-        { readCoverage: () => ({ status: "unknown" as const }) },
-      ) as unknown as ReturnType<typeof fileChunks.readFileHandleChunks>;
-    });
-  try {
-    const result = await exportEnvironmentBundle({
-      ...inputs.value,
-      source: environmentServeSource(),
-      directory,
-      packageTarball: tarball,
-    });
-    if (result.ok || !(result.error instanceof AnalysisOutputError))
-      throw new Error("expected an output failure");
-    expect(result.error.reason).toContain(`reading ${tarball}`);
-    expect(result.error.remediationAction).toContain(tarball);
-    expect(result.error.remediationAction).not.toContain("disk space");
-    expect(result.error.diagnostics).toEqual({ output_directory: directory });
-  } finally {
-    reader.mockRestore();
-  }
-});
-
-it("retains the admitted tarball descriptor and refuses a pathname replacement during output", async () => {
-  const root = await createTestTempDirectory("rea-tarball-instance-");
-  const files = await writeEnvironmentServeFiles(root);
-  const inputs = await readEnvironmentExportInputs(
-    files.manifestPath,
-    files.capturePath,
-  );
-  if (!inputs.ok) throw inputs.error;
-  const tarball = join(root, "package.tgz");
-  const originalBytes = Buffer.from("original admitted package");
-  await writeFile(tarball, originalBytes);
-  const directory = join(root, "bundle");
-  const original = SafeOutputTree.prototype.write;
-  let replaced = false;
-  const writer = vi
-    .spyOn(SafeOutputTree.prototype, "write")
-    .mockImplementation(async function (
-      this: SafeOutputTree,
-      ...args: Parameters<SafeOutputTree["write"]>
-    ) {
-      const result = await original.apply(this, args);
-      if (!replaced) {
-        replaced = true;
-        await rename(tarball, join(root, "admitted.tgz"));
-        await writeFile(tarball, "replacement package");
+        },
+      });
+      if (transition === "missing") {
+        if (result.ok) throw new Error("Expected changed artifact");
+        expect(result.error.cause).toMatchObject({ cause: { code: "ENOENT" } });
       }
-      return result;
-    });
-  try {
-    const result = await exportEnvironmentBundle({
-      ...inputs.value,
-      source: environmentServeSource(),
-      directory,
-      packageTarball: tarball,
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisArtifactChangedError", path: tarball },
-    });
-    expect(
-      await readFile(join(directory, "envs/grafana-example/rea-agents.tgz")),
-    ).toEqual(originalBytes);
-  } finally {
-    writer.mockRestore();
-  }
-});
+      expect(
+        Buffer.compare(
+          await readFile(
+            join(directory, "envs/grafana-example/rea-agents.tgz"),
+          ),
+          originalBytes,
+        ),
+      ).toBe(0);
+    } finally {
+      writer.mockRestore();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps the published receipt when final tarball identity lookup is denied",
+  async (context) => {
+    await requirePermissionDenial(context, "directory-write");
+    const root = await createTestTempDirectory("rea-tarball-identity-denied-");
+    const files = await writeEnvironmentServeFiles(root);
+    const inputs = await readEnvironmentExportInputs(
+      files.manifestPath,
+      files.capturePath,
+    );
+    if (!inputs.ok) throw inputs.error;
+    const parent = join(root, "packages");
+    const directory = join(root, "bundle");
+    await mkdir(parent);
+    const tarball = join(parent, "package.tgz");
+    await writeFile(tarball, "package bytes");
+    const close = SafeOutputTree.prototype.closeHandles;
+    const spy = vi
+      .spyOn(SafeOutputTree.prototype, "closeHandles")
+      .mockImplementation(async function (this: SafeOutputTree) {
+        await close.call(this);
+        await chmod(parent, 0);
+      });
+    try {
+      const result = await exportEnvironmentBundle({
+        ...inputs.value,
+        source: environmentServeSource(),
+        directory,
+        packageTarball: tarball,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisAccessDeniedError",
+          path: tarball,
+          partialObservation: {
+            kind: "environment-bundle-publication",
+            directory,
+          },
+        },
+      });
+      if (result.ok) throw new Error("Expected access denial");
+      expect(result.error.cause).toMatchObject({
+        cause: { cause: { code: "EACCES" } },
+      });
+      expect(
+        await readFile(
+          join(directory, "envs/grafana-example/rea-agents.tgz"),
+          "utf8",
+        ),
+      ).toBe("package bytes");
+    } finally {
+      spy.mockRestore();
+      await chmod(parent, 0o700);
+    }
+  },
+);
 
 it("keeps tarball ownership when the admitted inode grows during output", async () => {
   const root = await createTestTempDirectory("rea-tarball-growth-");
@@ -178,6 +201,7 @@ it("keeps tarball ownership when the admitted inode grows during output", async 
     if (result.ok)
       throw new Error("Expected the changed tarball to be refused");
     expect(result.error.cleanup).toBeUndefined();
+    expect(result.error.partialObservation).toBeUndefined();
     expect(result.error.message).not.toContain("invalidated");
   } finally {
     writer.mockRestore();
@@ -217,16 +241,147 @@ it("uses confirmed publication after the output owner's descriptor cleanup compl
     });
     expect(result).toMatchObject({ ok: true, value: { status: "exported" } });
     expect(
-      await readFile(join(directory, "envs/grafana-example/evidence.json")),
-    ).toEqual(inputs.value.evidence.bytes);
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/evidence.json")),
+        inputs.value.evidence.bytes,
+      ),
+    ).toBe(0);
   } finally {
     commit.mockRestore();
   }
 });
 
-it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+it("reports a committed bundle when final descriptor cleanup fails", async () => {
+  const root = await createTestTempDirectory("rea-bundle-cleanup-receipt-");
+  const files = await writeEnvironmentServeFiles(root);
+  const inputs = await readEnvironmentExportInputs(
+    files.manifestPath,
+    files.capturePath,
+  );
+  if (!inputs.ok) throw inputs.error;
+  const directory = join(root, "bundle");
+  const close = vi
+    .spyOn(SafeOutputTree.prototype, "closeHandles")
+    .mockRejectedValueOnce(new Error("descriptor close failed"));
+  try {
+    const result = await exportEnvironmentBundle({
+      ...inputs.value,
+      source: environmentServeSource(),
+      directory,
+    });
+    if (result.ok) throw new Error("Expected incomplete cleanup");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "environment-bundle-publication",
+      directory,
+      files: expect.arrayContaining([
+        expect.objectContaining({ path: "README.md" }),
+      ]),
+    });
+    expect(await readdir(directory)).not.toEqual([]);
+    const receipt = result.error.partialObservation;
+    if (
+      receipt === undefined ||
+      !("kind" in receipt) ||
+      receipt.kind !== "environment-bundle-publication"
+    )
+      throw new Error("Expected published bundle receipt");
+    for (const file of receipt.files)
+      expect((await readFile(join(directory, file.path))).length).toBe(
+        file.bytes,
+      );
+    const actualFiles = (
+      await readdir(directory, { recursive: true, withFileTypes: true })
+    )
+      .filter((entry) => entry.isFile())
+      .map((entry) =>
+        relative(directory, join(entry.parentPath, entry.name))
+          .split(sep)
+          .join("/"),
+      )
+      .sort();
+    expect(receipt.files.map(({ path }) => path).sort()).toEqual(actualFiles);
+    const cause = result.error.cause;
+    if (
+      !(cause instanceof ArtifactReaderFailure) ||
+      cause.cleanupLeases === undefined
+    )
+      throw new Error("Expected retained cleanup leases");
+    await Promise.all(cause.cleanupLeases.map((lease) => lease.release()));
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toEqual(receipt);
+  } finally {
+    close.mockRestore();
+  }
+});
+
+it("reports a committed bundle when the admitted tarball cannot close", async () => {
+  const root = await createTestTempDirectory("rea-bundle-tarball-close-");
+  const files = await writeEnvironmentServeFiles(root);
+  const inputs = await readEnvironmentExportInputs(
+    files.manifestPath,
+    files.capturePath,
+  );
+  if (!inputs.ok) throw inputs.error;
+  const directory = join(root, "bundle");
+  const tarball = join(root, "package.tgz");
+  await writeFile(tarball, "selected package");
+  let treeClosed = false;
+  const closeTree = SafeOutputTree.prototype.closeHandles;
+  const treeSpy = vi
+    .spyOn(SafeOutputTree.prototype, "closeHandles")
+    .mockImplementation(async function (this: SafeOutputTree) {
+      await closeTree.call(this);
+      treeClosed = true;
+    });
+  const closeHandle = OwnedFileHandle.prototype.close;
+  let failures = 0;
+  const handleSpy = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(function (this: OwnedFileHandle) {
+      if (treeClosed && failures < 2) {
+        failures += 1;
+        return Promise.reject(new Error("tarball close failed"));
+      }
+      return closeHandle.call(this);
+    });
+  try {
+    const result = await exportEnvironmentBundle({
+      ...inputs.value,
+      source: environmentServeSource(),
+      directory,
+      packageTarball: tarball,
+    });
+    if (result.ok) throw new Error("Expected incomplete cleanup");
+    expect(failures).toBe(2);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    const receipt = result.error.partialObservation;
+    expect(receipt).toMatchObject({
+      kind: "environment-bundle-publication",
+      directory,
+      files: expect.arrayContaining([
+        expect.objectContaining({ path: "README.md" }),
+      ]),
+    });
+    const cause = result.error.cause;
+    if (
+      !(cause instanceof ArtifactReaderFailure) ||
+      cause.cleanupLeases === undefined
+    )
+      throw new Error("Expected retained tarball cleanup lease");
+    await Promise.all(cause.cleanupLeases.map((lease) => lease.release()));
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toEqual(receipt);
+  } finally {
+    handleSpy.mockRestore();
+    treeSpy.mockRestore();
+  }
+});
+
+it.skipIf(process.platform === "win32")(
   "returns a tagged permission refusal for an existing read-only empty directory",
-  async () => {
+  async (context) => {
+    await requirePermissionDenial(context, "directory-write");
     const root = await createTestTempDirectory("rea-bundle-readonly-");
     const files = await writeEnvironmentServeFiles(root);
     const inputs = await readEnvironmentExportInputs(
@@ -245,9 +400,14 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       expect(result).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisAccessDeniedError",
+          _tag: "AnalysisOutputError",
           operation: "environment-export",
-          diagnostics: { output_directory: directory },
+          diagnostics: {
+            output_directory: directory,
+            path: join(directory, "README.md"),
+            system_code: "EACCES",
+            boundary: "filesystem-write",
+          },
         },
       });
       expect(await readdir(directory)).toEqual([]);
@@ -257,9 +417,10 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   },
 );
 
-it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+it.skipIf(process.platform === "win32")(
   "names the nested path when write permission is lost after earlier files",
-  async () => {
+  async (context) => {
+    await requirePermissionDenial(context, "directory-write");
     const root = await createTestTempDirectory("rea-bundle-later-denied-");
     const files = await writeEnvironmentServeFiles(root);
     const inputs = await readEnvironmentExportInputs(
@@ -286,12 +447,15 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       });
       if (result.ok) throw new Error("expected a permission refusal");
       expect(result.error).toMatchObject({
-        _tag: "AnalysisAccessDeniedError",
+        _tag: "AnalysisOutputError",
         diagnostics: { output_directory: directory },
       });
-      if (!(result.error instanceof AnalysisAccessDeniedError))
-        throw result.error;
-      expect(result.error.path.startsWith(`${directory}/`)).toBe(true);
+      if (!(result.error instanceof AnalysisOutputError)) throw result.error;
+      expect(result.error.diagnostics).toMatchObject({
+        path: expect.stringContaining(`${directory}/`),
+        system_code: "EACCES",
+        boundary: "filesystem-write",
+      });
       expect(await readdir(directory)).not.toEqual([]);
     } finally {
       writer.mockRestore();
@@ -316,6 +480,7 @@ it.each([
       new ArtifactReaderFailure(
         "integrity",
         "Extracted content disagrees with inventory",
+        { integrityCheck: "container-identity" },
       ),
   },
 ] as const)(

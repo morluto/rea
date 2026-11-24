@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
@@ -14,35 +13,28 @@ import {
   ghidraArmLanguageOverride,
   ghidraPinnedArmLanguage,
 } from "./GhidraArmProfile.js";
-import { ghidraPinnedMipsLanguage } from "./GhidraMipsProfile.js";
-import type { GhidraInstallationHost } from "./GhidraInstallation.js";
+import { ghidraMipsLanguageOverride } from "./GhidraMipsProfile.js";
+import { ghidraProfilePinnedLanguage } from "./GhidraAnalysisProfile.js";
+import {
+  createSimulatedInstallDirectory,
+  ghidraProfileInstallationHost as host,
+} from "./GhidraInstallation.fixture.js";
 import type { GhidraClientOptions } from "./GhidraClientTypes.js";
 import type { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
-import { ok, ok as javaProbeOk } from "../domain/result.js";
+import { ok } from "../domain/result.js";
 
 // Fake installation inspection tests admission/profile contracts, not Ghidra.
-const host: GhidraInstallationHost = {
-  platform: "linux",
-  architecture: "x64",
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
-  executable: () => true,
-  probeJava: () =>
-    javaProbeOk({
-      osArch: "amd64",
-      osName: "Linux",
-      version: "21.0.11",
-      major: 21,
-      home: "/jdk-21",
-      bits: 64,
-      runtime: "jdk",
-    }),
-};
-// Main now verifies the installation directory exists on the host, so the
-// admission tests point at a real temporary directory.
+// The installation directory must exist on the host, so the admission tests
+// point at a real temporary directory.
 let installDir = "";
+let disposeInstallDir: (() => Promise<void>) | undefined;
 beforeAll(async () => {
-  installDir = await mkdtemp(join(tmpdir(), "rea-ghidra-arm-admission-"));
+  const directory = await createSimulatedInstallDirectory(
+    "rea-ghidra-arm-admission-",
+  );
+  installDir = directory.path;
+  disposeInstallDir = directory.dispose;
   const languages = join(installDir, "Ghidra/Processors/ARM/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(
@@ -51,7 +43,7 @@ beforeAll(async () => {
   );
 });
 afterAll(async () => {
-  await rm(installDir, { recursive: true, force: true });
+  await disposeInstallDir?.();
 });
 const config = () => {
   const parsed = parseConfig({ GHIDRA_INSTALL_DIR: installDir });
@@ -94,10 +86,10 @@ describe("bounded Ghidra ARM admission", () => {
         cpu_arch_profile: "A",
         float_abi: "hard",
       },
-      arm_support_lane: "elf32-exec-le-eabi5-v7-pinned-v1",
+      arm_support_lane: "elf32-exec-le-eabi5-v7-pinned",
       language_id: "ARM:LE:32:v7",
       compiler_spec_id: "default",
-      language_selection: "provider-pinned-v1",
+      language_selection: "provider-pinned",
     });
   });
 
@@ -151,7 +143,7 @@ describe("bounded Ghidra ARM admission", () => {
     expect(parameters.language_selection).toBeUndefined();
     expect(parameters.language_id).toBeUndefined();
     expect(parameters).toMatchObject({
-      arm_support_lane: "elf32-exec-le-eabi5-v7-pinned-v1",
+      arm_support_lane: "elf32-exec-le-eabi5-v7-pinned",
     });
   });
 
@@ -161,7 +153,7 @@ describe("bounded Ghidra ARM admission", () => {
       languageId: "ARM:LE:32:v7",
       compilerSpecId: "default",
     });
-    const other = { language_selection: "configured-v1" };
+    const other = { language_selection: "configured" };
     expect(ghidraPinnedArmLanguage(other)).toBeUndefined();
   });
 });
@@ -232,11 +224,12 @@ describe("Ghidra ARM client import wiring", () => {
         if (!health.ok) throw health.error;
         const language =
           mode === "pinned" ? "ARM:LE:32:v7" : "ARM:LE:32:Cortex";
-        expect(observed[0]?.expectedLanguageId).toBe(language);
-        expect(observed[0]?.expectedCompilerSpecId).toBe("default");
+        const [options] = observed;
+        if (options === undefined) throw new Error("Expected client options");
+        expect(options.expectedLanguageId).toBe(language);
+        expect(options.expectedCompilerSpecId).toBe("default");
         expect(
-          (observed[0]?.launcher as GhidraHeadlessLauncher).options
-            .languageOverride,
+          (options.launcher as GhidraHeadlessLauncher).options.languageOverride,
         ).toEqual({ languageId: language, compilerSpecId: "default" });
         expect(
           health.value.limitations.some((value) => value.includes("lane pins")),
@@ -259,11 +252,15 @@ it("derives ARM pin applicability from target facts and keeps MIPS pin ownership
     compilerSpecId: "default",
   });
   expect(ghidraArmLanguageOverride(target({ cpuArch: 14 }))).toBeUndefined();
-  expect(ghidraPinnedMipsLanguage(armProfile)).toBeUndefined();
+  expect(ghidraMipsLanguageOverride(admitted)).toBeUndefined();
+  expect(ghidraProfilePinnedLanguage(armProfile)).toEqual({
+    languageId: "ARM:LE:32:v7",
+    compilerSpecId: "default",
+  });
   expect(
     ghidraPinnedArmLanguage({
-      language_selection: "provider-pinned-v1",
-      mips_support_lane: "elf32-exec-arch32-legacy-pinned-v1",
+      language_selection: "provider-pinned",
+      mips_support_lane: "elf32-exec-arch32-legacy-pinned",
       language_id: "MIPS:LE:32:default",
       compiler_spec_id: "default",
     }),

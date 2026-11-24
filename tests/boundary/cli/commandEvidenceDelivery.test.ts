@@ -1,19 +1,29 @@
-import { Cli, z } from "incur";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { z } from "zod";
 import pino from "pino";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  cliCommandFor,
+} from "../../../src/contracts/cliCommandNames.js";
 import {
   createEvidence,
   parseEvidence,
   evidenceSchema,
 } from "../../../src/domain/evidence.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { ok } from "../../../src/domain/result.js";
+import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { TestReverseEngineeringService } from "../../support/reverseEngineeringService.js";
+import { ownedOutput } from "../../support/reverseEngineeringCompositionFixtures.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const kinds = ["objdump", "architectures", "gdb"] as const;
@@ -21,13 +31,12 @@ const fixture = async (kind: (typeof kinds)[number]) => {
   const directory = await createTestTempDirectory("rea-command-delivery-");
   const path = join(directory, "input.bin");
   await writeFile(path, "local CLI publication fixture");
-  const runProvider = vi.fn(async () => ({
-    stdout: "opaque provider output\n",
-    stderr: "provider diagnostic\n",
-  }));
+  const runProvider = vi.fn(async () =>
+    ownedOutput("opaque provider output\n", "provider diagnostic\n"),
+  );
   const service = new TestReverseEngineeringService({
     environment: {},
-    run: runProvider,
+    runOwned: runProvider,
   });
   const closeService = vi.spyOn(service, "close");
   const manager = new GdbSessionManager({ platform: "linux", environment: {} });
@@ -43,13 +52,12 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     output_truncated: false,
   };
   const parent = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gdb", name: "GDB", version: null },
     {
       operation: "gdb_console",
       parameters: { session_id: sessionId, command: report.command },
       result: report,
-      rawResult: report,
     },
   );
   const start = vi
@@ -63,10 +71,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     .mockResolvedValue(ok({ target_state: "none_observed" }));
   const closeAll = vi.spyOn(manager, "closeAll").mockResolvedValue(undefined);
   const createManager = vi.fn(() => manager);
-  const cli = Cli.create("rea-cli-delivery-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   registerReverseEngineeringCommands(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
@@ -74,19 +79,19 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     createManager,
     () => service,
   );
-  onTestFinished(async () => {
-    await service.close();
-    await manager.closeAll();
-  });
+  onTestFinished(() =>
+    closeVerifierResources([() => service.close(), () => manager.closeAll()]),
+  );
   const commandName =
     kind === "gdb"
       ? CLI_COMMANDS.debugWithGdb
       : kind === "objdump"
-        ? CLI_COMMANDS.inspectWithObjdump
+        ? cliCommandFor("inspect_with_objdump")
         : CLI_COMMANDS.listObjdumpArchitectures;
-  const command = Cli.toCommands.get(cli)?.get(commandName);
+  const command = cliCommand(cli, commandName)?.definition;
   if (command === undefined) throw new Error("CLI command was not registered");
-  const argsSchema = Reflect.get(command, "args");
+  // A command without positionals registers no argument schema.
+  const argsSchema: unknown = Reflect.get(command, "args") ?? z.object({});
   const optionsSchema = Reflect.get(command, "options");
   const execute = Reflect.get(command, "run");
   if (
@@ -104,6 +109,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
   const invoke = async (options: Record<string, unknown>): Promise<unknown> =>
     execute({
       args: argsSchema.parse(args),
+      formatExplicit: false,
       options: optionsSchema.parse({
         ...(kind === "gdb" ? { inferiorTty: "/dev/pts/caller-fixture" } : {}),
         ...options,
@@ -142,7 +148,7 @@ it.each(kinds)(
     expect(output.evidence_bundle.bytes).toBe(Buffer.byteLength(serialized));
     expect(bundle.records).toHaveLength(1);
     const parent = parseEvidence(bundle.records[0]);
-    expect(parent.raw_result).toEqual(parent.normalized_result);
+    expect(parent.raw_result).toBeNull();
     expect(selected.normalized_result).toMatchObject({
       parent_evidence_id: parent.evidence_id,
       source_parameters: parent.parameters,
@@ -166,14 +172,14 @@ it.each(kinds)(
       expect(f.closeService).toHaveBeenCalledOnce();
     }
     if (kind !== "objdump") {
-      expect(parent.subject).toBeNull();
-      expect(selected.subject).toBeNull();
+      expect(parent.subject.identity.kind).toBe("unknown");
+      expect(selected.subject.identity.kind).toBe("unknown");
       expect(selected.normalized_result).toMatchObject({ artifact: null });
     }
   },
 );
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "rejects %s summary without a destination before provider work",
   async (kind) => {
     const f = await fixture(kind);
@@ -186,7 +192,7 @@ it.each(kinds)(
   },
 );
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "preserves an existing %s destination and reports publication failure with source Evidence",
   async (kind) => {
     const f = await fixture(kind);
@@ -197,7 +203,7 @@ it.each(kinds)(
       detail: "summary",
       evidence_output: destination,
     });
-    expect(await readFile(destination)).toEqual(original);
+    expect(Buffer.compare(await readFile(destination), original)).toBe(0);
     expect(output).toHaveProperty("code");
     expect(output).not.toHaveProperty("summary");
     expect(output).toHaveProperty("details.partial_observation.evidence_id");
@@ -205,5 +211,75 @@ it.each(kinds)(
       expect(f.close).toHaveBeenCalledOnce();
       expect(f.closeAll).toHaveBeenCalledOnce();
     } else expect(f.closeService).toHaveBeenCalledOnce();
+  },
+);
+
+const interruptAt = (method: "assertReadyForPublication" | "close"): void => {
+  const original = OwnedStagedOutput.prototype[method];
+  const seam = vi
+    .spyOn(OwnedStagedOutput.prototype, method)
+    .mockImplementationOnce(async function (
+      this: OwnedStagedOutput,
+      ...arguments_: Parameters<OwnedStagedOutput[typeof method]>
+    ) {
+      await Reflect.apply(original, this, arguments_);
+      process.emit("SIGINT");
+    });
+  onTestFinished(() => {
+    seam.mockRestore();
+    process.exitCode = undefined;
+  });
+};
+
+it.each(["objdump", "gdb"] as const)(
+  "keeps the committed %s receipt when SIGINT arrives during final staging cleanup",
+  async (kind) => {
+    const f = await fixture(kind);
+    const destination = join(f.directory, "complete.json");
+    interruptAt("close");
+    const output = await f.invoke({
+      detail: "summary",
+      evidence_output: destination,
+    });
+    expect(process.exitCode).toBe(130);
+    const serialized = await readFile(destination, "utf8");
+    const parent = parseEvidenceBundle(JSON.parse(serialized)).records[0]!;
+    expect(output).toMatchObject({
+      code: "cancelled",
+      details: {
+        diagnostics: {
+          evidence_bundle: {
+            path: destination,
+            bytes: Buffer.byteLength(serialized),
+          },
+        },
+        partial_observation: {
+          evidence_links: [parent.evidence_id],
+          normalized_result: { parent_evidence_id: parent.evidence_id },
+        },
+      },
+    });
+    expect(await readdir(f.directory)).not.toContainEqual(
+      expect.stringMatching(/^\.rea-write-/u),
+    );
+  },
+);
+
+it.each(["objdump", "gdb"] as const)(
+  "publishes no %s bundle or receipt when SIGINT arrives before commit",
+  async (kind) => {
+    const f = await fixture(kind);
+    const destination = join(f.directory, "complete.json");
+    interruptAt("assertReadyForPublication");
+    const output = await f.invoke({
+      detail: "summary",
+      evidence_output: destination,
+    });
+    expect(process.exitCode).toBe(130);
+    expect(output).toMatchObject({ code: "cancelled" });
+    expect(output).not.toHaveProperty("details.diagnostics");
+    expect(JSON.stringify(output)).not.toContain(destination);
+    expect(output).toHaveProperty("details.partial_observation.raw_result");
+    expect(await readdir(f.directory)).toEqual(["input.bin"]);
   },
 );

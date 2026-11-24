@@ -17,10 +17,10 @@ const inferenceEvidenceSchema = z
   .strict();
 
 const inferredBoundaryTypeFacts = {
-  ordinal: z.number().int().min(0).nullable(),
+  ordinal: z.int().min(0).nullable(),
   name: z.string().min(1).nullable(),
   data_type: z.string().min(1),
-  size_bytes: z.number().int().min(0).nullable(),
+  size_bytes: z.int().min(0).nullable(),
   storage: z.string().min(1).nullable(),
   confidence: inferenceConfidenceSchema,
   evidence: z.array(inferenceEvidenceSchema).min(1),
@@ -43,7 +43,7 @@ const inferredReturnTypeSchema = z.strictObject({
 const inferredParameterTypeSchema = z.strictObject({
   ...inferredBoundaryTypeFacts,
   role: z.literal("parameter"),
-  ordinal: z.number().int().min(0),
+  ordinal: z.int().min(0),
 });
 
 const jumpTableDataSourceSchema = z
@@ -55,8 +55,8 @@ const jumpTableDataSourceSchema = z
       "ghidra-aarch64-byte-table",
       "ghidra-aarch64-halfword-table",
     ]),
-    entry_size_bytes: z.number().int().min(1).nullable(),
-    entry_count: z.number().int().min(0).nullable(),
+    entry_size_bytes: z.int().min(1).nullable(),
+    entry_count: z.int().min(0).nullable(),
     confidence: inferenceConfidenceSchema,
     evidence: z.array(inferenceEvidenceSchema).min(1),
   })
@@ -64,7 +64,7 @@ const jumpTableDataSourceSchema = z
 
 const jumpTableMappingSchema = z
   .object({
-    case_value: z.number().int().nullable(),
+    case_value: z.int().nullable(),
     target_address: z.string().min(1),
     confidence: inferenceConfidenceSchema,
     evidence: z.array(inferenceEvidenceSchema).min(1),
@@ -87,7 +87,32 @@ const inferredJumpTableSchema = z
   })
   .strict();
 
-const availableNativeApiBoundarySchema = z
+const prototypeConflictFacts = {
+  inferred_signature: z.string().min(1),
+  signature_source: z.string().min(1),
+  inferred_parameter_count: z.int().nonnegative(),
+  instruction_address: z.string().min(1),
+  instruction: z.string().min(1),
+  unresolved_assumptions: z.array(z.string().min(1)).min(1),
+} as const;
+const prototypeConflictSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...prototypeConflictFacts,
+    kind: z.literal("stack-argument-read"),
+    frame_offset_bytes: z.int().positive(),
+  }),
+  z.strictObject({
+    ...prototypeConflictFacts,
+    kind: z.literal("return-stack-cleanup"),
+    cleanup_bytes: z.int().nonnegative(),
+    inferred_stack_bytes: z.int().nonnegative(),
+  }),
+]);
+
+/** One instruction-level disagreement between an inferred prototype and observed code. */
+export type NativePrototypeConflict = z.infer<typeof prototypeConflictSchema>;
+
+export const availableNativeApiBoundarySchema = z
   .object({
     available: z.literal(true),
     provenance: z.string().min(1),
@@ -95,6 +120,8 @@ const availableNativeApiBoundarySchema = z
     calling_convention: z.string().min(1),
     return_type: inferredReturnTypeSchema,
     parameters: z.array(inferredParameterTypeSchema),
+    /** Omitted on older dossiers or providers without an instruction consistency check. */
+    prototype_conflicts: z.array(prototypeConflictSchema).exactOptional(),
     jump_tables: z.array(inferredJumpTableSchema),
     pseudocode: z
       .object({
@@ -115,7 +142,7 @@ const availableNativeApiBoundarySchema = z
   })
   .strict();
 
-const unavailableNativeApiBoundarySchema = z
+export const unavailableNativeApiBoundarySchema = z
   .object({
     available: z.literal(false),
     reason: z.string().min(1),

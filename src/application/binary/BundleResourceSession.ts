@@ -2,27 +2,16 @@ import type {
   AnalysisClient,
   AnalysisOperation,
   CapabilityDescriptor,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCloseRejections } from "../../domain/analysisErrorCleanup.js";
 import { err, ok } from "../../domain/result.js";
-import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
-
-export const BUNDLE_NATIVE_RESOURCE_OPERATIONS = new Set<AnalysisOperation>([
-  "inspect_plist",
-]);
-
-export const BUNDLE_ARTIFACT_RESOURCE_OPERATIONS = new Set<AnalysisOperation>([
-  "decode_interface_builder",
-  "inspect_asset_catalog",
-  "inspect_keyed_archive",
-]);
-
-export const BUNDLE_RESOURCE_OPERATIONS = new Set<AnalysisOperation>([
-  ...BUNDLE_NATIVE_RESOURCE_OPERATIONS,
-  ...BUNDLE_ARTIFACT_RESOURCE_OPERATIONS,
-]);
+import {
+  BUNDLE_NATIVE_RESOURCE_OPERATIONS,
+  BUNDLE_RESOURCE_OPERATIONS,
+} from "../../ports/BundleResourceOperations.js";
 
 /** Provider-specific owner of the four read-only app-resource operations. */
 export interface BundleResourceClientFactory {
@@ -70,14 +59,15 @@ export const combineBundleResourceClients = (
       closeAnalysisClient(artifactClient, "bundle-resources", options),
       closeAnalysisClient(nativeClient, "bundle-resources", options),
     ]);
-    if (!artifact.ok && !native.ok)
+    if (!artifact.ok && !native.ok) {
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCloseRejections(
           artifact.error,
           native.error,
           "close_binary",
         ),
       );
+    }
     if (!artifact.ok) return artifact;
     if (!native.ok) return native;
     return ok(null);

@@ -1,20 +1,61 @@
 ---
 name: rea-tool-design
-description: Design or change REA investigation tools, CLI/MCP contracts, provider capabilities, and Evidence semantics.
+description: Audit, investigate, design, or change REA investigation tools, CLI/MCP contracts, provider capabilities, and Evidence semantics.
 ---
 
 # REA tool design
 
-Use the [tool-design guide](../../../docs/tool-design.md) for tool boundaries,
+Use the [tool-design guide](../../../docs/development/tool-design.md) for tool boundaries,
 contract semantics, provider ownership, and discoverability. Inspect the current
 contract and nearest existing tool relevant to the analyst question; source,
 documentation, and live catalogs may describe different versions.
+
+For provider-backed work, exercise the analyst's task through REA and compare
+relevant native provider and independent artifact observations where available.
+Check applicable partial results, recovery and session boundaries; report what
+was not exercised. For failure guidance, follow [design recovery around the
+failure](../../../docs/development/tool-design.md#design-recovery-around-the-failure).
+Use [workflow verification](../../../docs/development/testing.md#provider-backed-workflow-verification)
+to select evidence for the proposed contract instead of seeking provider API
+parity.
+
+For an audit, follow [audit existing tools](../../../docs/development/tool-design.md#audit-existing-tools):
+scope representative tasks, exercise the live workflow, and distinguish
+reproduced bugs, supported limitations, design opportunities and unverified
+claims. Check relevant rendered MCP prompts, guided workflows and packaged skill
+advice against the live contracts and exercise their suggested handoffs. Report
+working alternatives and evidence limits as well as findings.
+
+For wording audits and agent trials, use
+[focused tool-description trials](../../../docs/development/client-verification.md#focused-tool-description-trials).
+Start with representative workflow boundaries and repeat failures or ambiguous
+outcomes; keep actual arguments and supported final claims separate. Reuse the
+repository's evaluation tooling and report actual runtime/model versions and
+synthetic versus production coverage rather than copying a harness into a skill.
 
 For a design request, return the proposed boundary, input/result shape, Evidence
 semantics, nearest alternative, and verification approach. Implement when
 requested, preserving the user's scope and existing authorization.
 
-For implementation or verification, consult [testing](../../../docs/testing.md)
+When adding or revising contracts and services:
+
+- Check high-cardinality discovery and graph tools for optional per-call
+  pagination (`limit`/`offset`) or traversal bounds (`max_depth`/`max_nodes`)
+  that stop producer work early when supplied, preserve unpaged behavior
+  when omitted, and report `partial` coverage with explicit
+  continuation facts when truncated.
+- Keep input schemas flat (avoid redundant root unions whose branches share
+  identical fields) so compact advertised schemas stay `inline`; refresh
+  advertised schemas (`npm run verify:advertised-schemas -- --update-summary`)
+  and run `npm run docs:check` after contract changes.
+- Reuse shared application runners (`executeArtifactInspection`,
+  `executeProviderOperation`, `executeRetainedSummaryOperation`) instead of
+  adding pass-through wrapper services, and migrate callers directly with zero
+  re-export shims (grep `stryker*.config.mjs`, `scripts/ci/scopes.mjs`, and
+  `tests/boundary/cli/cliStartupImports.test.ts` whenever moving or deleting
+  files).
+
+For implementation or verification, consult [testing](../../../docs/development/testing.md)
 for the affected consumer and provider lanes, and
 [contributing](../../../CONTRIBUTING.md) for generated-file ownership. Read
 provider/workflow guides only as the task requires.

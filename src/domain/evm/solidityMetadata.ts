@@ -30,8 +30,8 @@ export const solidityMetadataSchema = z
   .strictObject({
     profile: z.literal("terminal-cbor-scalars-v1"),
     status: z.enum(["unavailable", "decoded", "partial", "not-decoded"]),
-    bytecode_offset: z.number().int().nonnegative().nullable(),
-    cbor_bytes: z.number().int().positive().max(65535).nullable(),
+    bytecode_offset: z.int().nonnegative().nullable(),
+    cbor_bytes: z.int().positive().max(65535).nullable(),
     entries: z
       .array(
         z.strictObject({
@@ -47,6 +47,17 @@ export const solidityMetadataSchema = z
       })
       .nullable(),
     diagnostic: z.string().max(512).nullable(),
+    admission: z
+      .strictObject({
+        code: z.string().min(1).max(64),
+        detail: z
+          .record(
+            z.string().min(1).max(64),
+            z.union([z.string().max(512), z.number()]),
+          )
+          .optional(),
+      })
+      .optional(),
   })
   .superRefine((value, context) => {
     const unavailable = value.status === "unavailable";

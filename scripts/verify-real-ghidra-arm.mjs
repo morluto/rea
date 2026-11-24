@@ -201,11 +201,8 @@ try {
     assert.equal(snapshot.target.architecture, "arm");
     const parameters = snapshot.binding.analysis_profile.parameters;
     assert.equal(parameters.language_id, "ARM:LE:32:v7");
-    assert.equal(parameters.language_selection, "provider-pinned-v1");
-    assert.equal(
-      parameters.arm_support_lane,
-      "elf32-exec-le-eabi5-v7-pinned-v1",
-    );
+    assert.equal(parameters.language_selection, "provider-pinned");
+    assert.equal(parameters.arm_support_lane, "elf32-exec-le-eabi5-v7-pinned");
     assert.deepEqual(parameters.arm_elf, {
       elf_class: 32,
       byte_order: "little",

@@ -1,0 +1,306 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+import { ok, err } from "../../../src/domain/result.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import {
+  createAnalysisExecution,
+  type AnalysisClient,
+  type AnalysisProvider,
+} from "../../../src/ports/AnalysisProvider.js";
+import { CompositeProvider } from "../../../src/application/binary/CompositeProvider.js";
+import { runWithExternalMutationAdmission } from "../../../src/server/externalMutationAdmission.js";
+import {
+  createBinarySessionTargets,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
+
+it("refuses a pre-cancelled debugger command before dispatch and retires the target for a later command", async () => {
+  const [target] = await createBinarySessionTargets();
+  const provider = { id: "fixture", name: "Fixture", version: null };
+  const close = vi.fn(async () => ok(null));
+  const session = createTestBinarySession(() => ({
+    execute: async (operation) =>
+      ok(createAnalysisExecution(operation, provider)),
+    close,
+  }));
+  const evidence = createEvidence(unknownTarget("not-observed"), provider, {
+    operation: "gdb_console",
+    parameters: { command: "info files" },
+    result: { completion_status: "complete" },
+  });
+  const execute = vi.fn(async () => ok(evidence));
+  const reason = { phase: "before-dispatch" };
+  const call = (signal?: AbortSignal) =>
+    runWithExternalMutationAdmission(
+      session,
+      "gdb_console",
+      signal,
+      execute,
+      (value) => value,
+    );
+
+  expect((await session.open(target)).ok).toBe(true);
+  try {
+    expect(await call(AbortSignal.abort(reason))).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+        operation: "gdb_console",
+      },
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect(session.activeTarget()?.path).toBe(target);
+
+    expect(await call()).toEqual(ok(evidence));
+    expect(execute).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    expect(session.activeTarget()).toBeUndefined();
+  } finally {
+    await session.close();
+  }
+});
+
+it.each(["completed", "failed"] as const)(
+  "preserves a %s command and cleanup ownership when cancellation overlaps failed retirement",
+  async (mode) => {
+    const [target] = await createBinarySessionTargets();
+    const failedSessionRetirement = phaseGate();
+    const cleanup = new ProviderCleanupError("fixture", ["document"], {});
+    let closes = 0;
+    const session = createTestBinarySession(
+      () =>
+        ({
+          execute: async () => ok({ operation: "health", value: null }),
+          close: async () => {
+            if (++closes === 1) {
+              await failedSessionRetirement.hold();
+              return err(cleanup);
+            }
+            return ok(null);
+          },
+        }) as never,
+    );
+    expect((await session.open(target)).ok).toBe(true);
+    const commandFailure = new AnalysisInputError("command");
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "gdb", name: "GDB", version: null },
+      {
+        operation: "gdb_console",
+        parameters: {},
+        result: { completed: true },
+      },
+    );
+    const controller = new AbortController();
+    const reason = { stage: "retirement" };
+    try {
+      const pending = runWithExternalMutationAdmission(
+        session,
+        "gdb_console",
+        controller.signal,
+        async () => (mode === "completed" ? ok(evidence) : err(commandFailure)),
+        (value) => value,
+      );
+      await failedSessionRetirement.reached(
+        pending,
+        "failed session retirement",
+      );
+      controller.abort(reason);
+      failedSessionRetirement.release();
+      const result = await pending;
+      if (result.ok) throw new Error("Expected a failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      const primary = primaryAnalysisError(result.error);
+      expect(
+        primary.secondaryFailures.some((failure) => failure.cause === reason),
+      ).toBe(true);
+      if (mode === "completed")
+        expect(result.error.partialObservation).toEqual(evidence);
+      else expect(primary).toBe(commandFailure);
+      expect(await session.status()).toMatchObject({ cleanup_pending: true });
+      expect((await session.close()).ok).toBe(true);
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      failedSessionRetirement.release();
+      await session.close();
+    }
+  },
+);
+
+it.each(["started", "failed"] as const)(
+  "keeps a %s mutation outcome when successful retirement is cancelled",
+  async (mode) => {
+    const [target] = await createBinarySessionTargets();
+    const sessionRetirement = phaseGate();
+    const session = createTestBinarySession(
+      () =>
+        ({
+          execute: async () => ok({ operation: "health", value: null }),
+          close: async () => {
+            await sessionRetirement.hold();
+            return ok(null);
+          },
+        }) as never,
+    );
+    expect((await session.open(target)).ok).toBe(true);
+    const failure = new AnalysisInputError("start_rizin_debug_session");
+    const reason = { stage: "retirement" };
+    const controller = new AbortController();
+    try {
+      const pending = runWithExternalMutationAdmission(
+        session,
+        "start_rizin_debug_session",
+        controller.signal,
+        async () =>
+          mode === "started" ? ok({ session_id: "retained" }) : err(failure),
+        undefined,
+        undefined,
+        (value) => ({ session_id: value.session_id }),
+      );
+      await sessionRetirement.reached(pending, "session retirement");
+      controller.abort(reason);
+      sessionRetirement.release();
+      const result = await pending;
+      if (result.ok) throw new Error("Expected a failure");
+      if (mode === "started") {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(reason);
+        expect(result.error.diagnostics).toEqual({ session_id: "retained" });
+      } else {
+        expect(result.error).toBe(failure);
+        expect(
+          result.error.secondaryFailures.some((item) => item.cause === reason),
+        ).toBe(true);
+      }
+    } finally {
+      sessionRetirement.release();
+      await session.close();
+    }
+  },
+);
+
+it("follows the original owner of a completed mutation's retirement failure", async () => {
+  const [target] = await createBinarySessionTargets();
+  let closed = false;
+  const cleanup = new ProviderCleanupError(
+    "ida",
+    ["workspace"],
+    {},
+  ).bindCleanupResourceOwner({
+    get cleanupResources() {
+      return closed ? [] : ["workspace"];
+    },
+  });
+  const session = createTestBinarySession(
+    () =>
+      ({
+        execute: async () => ok({ operation: "health", value: null }),
+        close: async () => {
+          if (!closed) return err(cleanup);
+          releaseOwnedCleanup(cleanup);
+          return ok(null);
+        },
+      }) as never,
+  );
+  expect((await session.open(target)).ok).toBe(true);
+  try {
+    const result = await runWithExternalMutationAdmission(
+      session,
+      "gdb_console",
+      undefined,
+      async () => ok(null),
+      undefined,
+    );
+    if (result.ok) throw new Error("Expected cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    closed = true;
+    expect((await session.close()).ok).toBe(true);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    closed = true;
+    await session.close();
+  }
+});
+
+it("resolves nested unowned child cleanup errors after the client confirms retry", async () => {
+  const [target] = await createBinarySessionTargets();
+  const first = new ProviderCleanupError("hopper", ["hopper"], {});
+  const second = new ProviderCleanupError("auxiliary", ["file"], {});
+  const child = (
+    id: string,
+    operation: "address_name" | "procedure_info",
+    failure: ProviderCleanupError,
+  ): AnalysisProvider => {
+    const identity = { id, name: id, version: "1" };
+    let attempts = 0;
+    return {
+      identity: () => identity,
+      capabilities: () => [
+        {
+          provider: identity,
+          operation,
+          available: true,
+          reason: null,
+          effects: {
+            mutatesArtifact: false,
+            launchesProcess: false,
+            mayShowUi: false,
+            mayAccessNetwork: false,
+            mayWriteFilesystem: false,
+            changesPermissions: false,
+            requiresRoot: false,
+          },
+          limitations: [],
+        },
+      ],
+      createClient: (): AnalysisClient => ({
+        execute: async (name) => ok(createAnalysisExecution(name, identity)),
+        close: async () => (++attempts === 1 ? err(failure) : ok(null)),
+      }),
+    };
+  };
+  const composite = new CompositeProvider([
+    child("hopper", "address_name", first),
+    child("auxiliary", "procedure_info", second),
+  ]);
+  const session = createTestBinarySession((target) => {
+    const client = composite.createClient(target);
+    let initialized = false;
+    return {
+      ...client,
+      execute: async (operation, parameters, options) => {
+        if (!initialized && operation === "health") {
+          initialized = true;
+          await client.execute("address_name", {});
+          await client.execute("procedure_info", {});
+        }
+        return client.execute(operation, parameters, options);
+      },
+    };
+  });
+  expect((await session.open(target)).ok).toBe(true);
+  try {
+    const result = await runWithExternalMutationAdmission(
+      session,
+      "gdb_console",
+      undefined,
+      async () => ok(null),
+      undefined,
+    );
+    if (result.ok) throw new Error("Expected cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect((await session.close()).ok).toBe(true);
+    expect(first.cleanupIncomplete).toBe(false);
+    expect(second.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    await session.close();
+  }
+});

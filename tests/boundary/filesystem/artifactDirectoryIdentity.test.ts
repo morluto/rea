@@ -10,7 +10,7 @@ import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { compareArtifacts } from "../../../src/domain/artifactComparison.js";
 import type { ArtifactInventoryResult } from "../../../src/domain/artifactGraph.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const observeZip = async (entries: readonly (readonly [string, string])[]) => {
@@ -32,7 +32,7 @@ const observeZip = async (entries: readonly (readonly [string, string])[]) => {
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse(inventory),
+        result: inventory,
         confidence: "observed",
         authority: "shipped-artifact",
       },
@@ -74,6 +74,8 @@ const directoryIdForChildren = (
         },
         "Artifact",
       ),
+      // Virtual listings take their own identity domain (#8551).
+      content_state: "virtual",
     },
     "Artifact",
   )}`;

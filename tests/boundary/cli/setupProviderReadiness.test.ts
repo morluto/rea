@@ -28,7 +28,6 @@ cliTest.skipIf(process.platform === "win32").for(["blocked", "ready"] as const)(
         REA_KUNA_COMMAND: command,
         REA_KUNA_CACHE_DIR: cachePath,
       },
-      timeoutMs: 20_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.json).toMatchObject({
@@ -37,7 +36,8 @@ cliTest.skipIf(process.platform === "win32").for(["blocked", "ready"] as const)(
         providerInspections: expect.arrayContaining([
           expect.objectContaining({
             id: "kuna",
-            available: cache === "ready",
+            // Readiness is admission; the cache is a health check.
+            available: true,
             checks: expect.arrayContaining([
               expect.objectContaining({
                 name: "cache",
@@ -59,5 +59,63 @@ cliTest.skipIf(process.platform === "win32").for(["blocked", "ready"] as const)(
     await expect(access(join(home, ".claude.json"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "setup and doctor do not execute host Java while Ghidra is unconfigured",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-setup-unconfigured-java-");
+    const home = join(root, "home");
+    const bin = join(root, "bin");
+    const marker = join(root, "java-executed");
+    await mkdir(home);
+    await mkdir(bin);
+    // A host JVM is unrelated to an unconfigured Ghidra provider; running it
+    // exposes setup to that process's cleanup outcome.
+    await writeFile(
+      join(bin, "java"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${marker}'\nexit 1\n`,
+      { mode: 0o755 },
+    );
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      // The recording java shadows any host JVM in the system directories.
+      PATH: `${bin}:/usr/bin:/bin`,
+      HOPPER_LAUNCHER_PATH: join(root, "missing-hopper"),
+    };
+    const setup = await cli.run({
+      arguments: ["setup", "--client", "claude_code", "--dry-run", "--json"],
+      environment,
+    });
+    expect(setup.exitCode, setup.stdout).toBe(0);
+    expect(setup.json).toMatchObject({
+      status: "planned",
+      doctor: {
+        providerInspections: expect.arrayContaining([
+          expect.objectContaining({
+            id: "ghidra",
+            configured: false,
+            checks: [
+              expect.objectContaining({
+                name: "configuration",
+                code: "not_configured",
+              }),
+            ],
+          }),
+        ]),
+      },
+    });
+    const doctor = await cli.run({
+      arguments: ["doctor", "--json"],
+      environment,
+    });
+    expect(doctor.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({ id: "ghidra", configured: false }),
+      ]),
+    });
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

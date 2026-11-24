@@ -109,14 +109,17 @@ const createElectronActiveBoundaryPatches = ({
         event,
         event === "will-download" ? "blocked" : "observed",
         {
-          target: identity(args[0], "webContents"),
+          target: identity(
+            event === "will-download" ? args[2] : args[0],
+            "webContents",
+          ),
           argument_shape_values: args,
           error: event === "will-download",
         },
       );
     });
     const originalPermissionRequest = session.setPermissionRequestHandler;
-    if (typeof originalPermissionRequest === "function")
+    if (typeof originalPermissionRequest === "function") {
       session.setPermissionRequestHandler =
         function blockedPermissionRequest() {
           return originalPermissionRequest.call(
@@ -131,8 +134,10 @@ const createElectronActiveBoundaryPatches = ({
             },
           );
         };
+      session.setPermissionRequestHandler(null);
+    }
     const originalPermissionCheck = session.setPermissionCheckHandler;
-    if (typeof originalPermissionCheck === "function")
+    if (typeof originalPermissionCheck === "function") {
       session.setPermissionCheckHandler = function blockedPermissionCheck() {
         return originalPermissionCheck.call(this, (webContents, permission) => {
           recordRuntime("permission", "permission-check", "blocked", {
@@ -143,6 +148,8 @@ const createElectronActiveBoundaryPatches = ({
           return false;
         });
       };
+      session.setPermissionCheckHandler(null);
+    }
     const originalCertificate = session.setCertificateVerifyProc;
     if (typeof originalCertificate === "function")
       session.setCertificateVerifyProc = function blockedCertificate() {
@@ -197,6 +204,7 @@ const createElectronActiveBoundaryPatches = ({
 
   const patchSessionManager = (sessionModule, app) => {
     if (sessionModule === null || sessionModule === undefined) return;
+    app?.on("session-created", patchSession);
     if (app === undefined || app.isReady())
       patchSession(sessionModule.defaultSession);
     else app.once("ready", () => patchSession(sessionModule.defaultSession));
@@ -214,6 +222,7 @@ const createElectronActiveBoundaryPatches = ({
   const patchApplicationEffects = (app) => {
     if (app === null || app === undefined) return;
     for (const method of [
+      "moveToApplicationsFolder",
       "relaunch",
       "setAsDefaultProtocolClient",
       "setLoginItemSettings",
@@ -222,12 +231,19 @@ const createElectronActiveBoundaryPatches = ({
       if (typeof original !== "function") continue;
       app[method] = function blockedApplicationEffect(...args) {
         recordRuntime(
-          method === "relaunch" ? "updater" : "protocol",
+          method === "relaunch"
+            ? "updater"
+            : method === "moveToApplicationsFolder"
+              ? "app-lifecycle"
+              : "protocol",
           method,
           "blocked",
           { argument_shape_values: args, error: true },
         );
-        return method === "setAsDefaultProtocolClient" ? false : undefined;
+        return method === "setAsDefaultProtocolClient" ||
+          method === "moveToApplicationsFolder"
+          ? false
+          : undefined;
       };
     }
   };
@@ -341,6 +357,8 @@ const createElectronActiveBoundaryPatches = ({
     openExternal: () =>
       Promise.reject(new Error("External shell effects are blocked")),
     openPath: () =>
+      Promise.reject(new Error("External shell effects are blocked")),
+    trashItem: () =>
       Promise.reject(new Error("External shell effects are blocked")),
     // Synchronous `void`: reveals a path in the host file manager.
     showItemInFolder: () => undefined,

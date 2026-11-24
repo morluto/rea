@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
@@ -68,7 +68,7 @@ const { createAgentEvaluationCommands } = await import(${JSON.stringify(
 const { OwnedCommandFailure, prepareOwnedCommand } = await import(${JSON.stringify(
         new URL("../../../dist/process/OwnedCommand.js", import.meta.url).href,
       )});
-const { closeVerifierResources } = await import(${JSON.stringify(
+const { withVerifierCleanup } = await import(${JSON.stringify(
         new URL("../../../scripts/lib/verifier-cleanup.mjs", import.meta.url)
           .href,
       )});
@@ -76,8 +76,7 @@ await prepareOwnedCommand();
 const root = ${JSON.stringify(root)}, fixture = ${JSON.stringify(fixture)};
 const commands = createAgentEvaluationCommands({ codex: fixture, evaluationRoot: root,
   evaluationEnvironment: process.env, timeoutMs: 1000, repositoryRoot: root });
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
 for (const name of ["runCodex", "runProcess", "readCommandVersion"]) {
   await assert.rejects(() => name === "runCodex" ? commands.runCodex("fixture", []) :
     name === "runProcess" ? commands.runProcess(fixture, [], root, 1000) : commands.readCommandVersion(fixture), error => {
@@ -109,18 +108,11 @@ await assert.rejects(() => commands.runProcess(fixture, [], root, 2000), error =
   assert.ok(error.snapshot.stderr.bytes <= 32768);
   return true;
 });
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources([() => commands.close()], primaryError);
-}
+}, [() => commands.close()]);
 console.log(JSON.stringify({ passed: true, timeoutHelpers: 3, controls: 7, childrenClosed: children.every(x => x.closed) }));
 `,
     );
-    const result = await processes.run(process.execPath, [driver], {
-      timeoutMs: Math.min(2_147_483_647, preparationBudgetMs + 35_000),
-    });
+    const result = await processes.run(process.execPath, [driver]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       passed: true,
@@ -181,8 +173,11 @@ registerHooks({ load(url, context, nextLoad) {
         ),
       ],
       {
-        env: { ...process.env, REA_AGENT_EVAL_ROOT: parent },
-        timeoutMs: 10_000,
+        env: {
+          ...process.env,
+          REA_AGENT_EVAL_ROOT: parent,
+          REA_AGENT_EVAL_KEEP_FIXTURES: "false",
+        },
       },
     );
     expect(result.exitCode).toBe(1);
@@ -196,14 +191,13 @@ registerHooks({ load(url, context, nextLoad) {
     if (incomplete) {
       expect(result.stderr).toContain("Artifact cleanup remains incomplete");
       expect(result.stderr).toContain("fixture cleanup denied");
-      expect(await readFile(join(run, "codex/auth.json"), "utf8")).toBe(
-        "inert fixture",
-      );
+      expect((await stat(run)).isDirectory()).toBe(true);
     } else {
-      await expect(
-        readFile(join(run, "codex/auth.json")),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(run)).rejects.toMatchObject({ code: "ENOENT" });
     }
+    await expect(readFile(join(run, "codex/auth.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   },
 );
 
@@ -227,14 +221,16 @@ processTest.for([
       import { setTimeout as delay } from "node:timers/promises";
       import { DarwinProcessOwnershipInspectionError } from ${JSON.stringify(new URL("../../../dist/process/DarwinProcessRunTokenReader.js", import.meta.url).href)};
       import { ProviderCleanupError } from ${JSON.stringify(new URL("../../../dist/domain/providerCleanupError.js", import.meta.url).href)};
+      import { AnalysisCleanupRelease } from ${JSON.stringify(new URL("../../../dist/domain/analysisCleanupRelease.js", import.meta.url).href)};
       let prepared = false;
-      const cleanup = new ProviderCleanupError("fixture", ["darwin-fixture-reader"], { reason: "fixture preparation cleanup denied" });
+      const release = new AnalysisCleanupRelease();
+      const cleanup = release.bind(new ProviderCleanupError("fixture", ["darwin-fixture-reader"], { reason: "fixture preparation cleanup denied" }));
       const preparation = new DarwinProcessOwnershipInspectionError("fixture preparation failure", {
         cleanupFailure: cleanup,
         cleanupOwner: { close: async () => {
           await writeFile(${JSON.stringify(retried)}, "exact preparation owner retried");
           if (${String(incomplete)}) throw new Error("fixture preparation cleanup denied");
-          cleanup.resolveCleanup();
+          release.confirm();
         } },
       });
       export class OwnedCommandFailure extends Error {
@@ -280,8 +276,11 @@ registerHooks({ load(url, context, nextLoad) {
         ),
       ],
       {
-        env: { ...process.env, REA_AGENT_EVAL_ROOT: parent },
-        timeoutMs: 10_000,
+        env: {
+          ...process.env,
+          REA_AGENT_EVAL_ROOT: parent,
+          REA_AGENT_EVAL_KEEP_FIXTURES: "false",
+        },
       },
     );
     expect(result.exitCode).toBe(1);
@@ -304,13 +303,14 @@ registerHooks({ load(url, context, nextLoad) {
     if (incomplete) {
       expect(result.stderr).toContain("Artifact cleanup remains incomplete");
       expect(result.stderr).toContain("darwin-fixture-reader");
-      expect(
-        await readFile(join(observed.run, "codex/auth.json"), "utf8"),
-      ).toBe("inert preparation fixture");
+      expect((await stat(observed.run)).isDirectory()).toBe(true);
     } else {
-      await expect(
-        readFile(join(observed.run, "codex/auth.json")),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(observed.run)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     }
+    await expect(
+      readFile(join(observed.run, "codex/auth.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

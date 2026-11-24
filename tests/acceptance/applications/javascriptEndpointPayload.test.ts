@@ -1,8 +1,7 @@
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -10,6 +9,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -46,118 +46,100 @@ cliTest(
         "directory",
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(cliResponse.exitCode).toBe(0);
     const cliEvidence = toolContract(
       "analyze_javascript_application",
     ).outputSchema.parse(cliResponse.json);
 
-    const client = new Client({ name: "endpoint-payload-e2e", version: "1" });
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "" },
-      stderr: "pipe",
+    const { client } = await connectLocalToolsMcp();
+    const response = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: root, format: "directory" },
     });
-    transport.stderr?.on("data", () => undefined);
-    try {
-      await client.connect(transport);
-      const response = await client.callTool({
-        name: "analyze_javascript_application",
-        arguments: { input_path: root, format: "directory" },
-      });
-      expect(response.isError).not.toBe(true);
-      const evidence = toolContract(
-        "analyze_javascript_application",
-      ).outputSchema.parse(response.structuredContent);
-      expect(evidence.evidence_id).toBe(cliEvidence.evidence_id);
-      const text = response.content.find((item) => item.type === "text");
-      if (text?.type !== "text") throw new Error("Missing MCP text result");
-      const textEvidence = toolContract(
-        "analyze_javascript_application",
-      ).outputSchema.parse(JSON.parse(text.text));
-      expect(textEvidence.evidence_id).toBe(evidence.evidence_id);
-      const result = javascriptApplicationAnalysisResultSchema.parse(
-        evidence.normalized_result,
-      );
-      expect(result.graph.coverage.limits).toContainEqual(
-        expect.objectContaining({
-          name: "javascript_semantic_primitive_bytes",
-        }),
-      );
-      expect(
-        result.semantic_graph.nodes.some(
-          ({ kind, properties }) =>
-            kind === "literal" && properties.value === endpoint,
+    expect(response.isError).not.toBe(true);
+    const evidence = toolContract(
+      "analyze_javascript_application",
+    ).outputSchema.parse(response.structuredContent);
+    expect(evidence.evidence_id).toBe(cliEvidence.evidence_id);
+    const text = response.content.find((item) => item.type === "text");
+    if (text?.type !== "text") throw new Error("Missing MCP text result");
+    const textEvidence = toolContract(
+      "analyze_javascript_application",
+    ).outputSchema.parse(JSON.parse(text.text));
+    expect(textEvidence.evidence_id).toBe(evidence.evidence_id);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(result.graph.coverage.limits).toContainEqual(
+      expect.objectContaining({
+        name: "javascript_semantic_primitive_bytes",
+      }),
+    );
+    expect(
+      result.semantic_graph.nodes.some(
+        ({ kind, properties }) =>
+          kind === "literal" && properties.value === endpoint,
+      ),
+    ).toBe(false);
+    const endpoints = result.graph.nodes.filter(
+      (node) => node.kind === "endpoint",
+    );
+    const nodeFor = (value: string) => {
+      const node = endpoints.find((candidate) =>
+        candidate.observations.some(
+          ({ properties }) => properties.value === value,
         ),
-      ).toBe(false);
-      const endpoints = result.graph.nodes.filter(
-        (node) => node.kind === "endpoint",
       );
-      const nodeFor = (value: string) => {
-        const node = endpoints.find((candidate) =>
-          candidate.observations.some(
-            ({ properties }) => properties.value === value,
-          ),
-        );
-        if (node === undefined) throw new Error("Complete endpoint was lost");
-        return node;
-      };
-      const endpointNode = nodeFor(endpoint);
-      expect(
-        new Set(
-          [endpoint, digestLookalike, surrogate, replacement].map(
-            (value) => nodeFor(value).node_id,
-          ),
-        ).size,
-      ).toBe(4);
-      const repeatedNode = nodeFor("/ok");
-      expect(
-        endpoints.filter((node) =>
-          node.observations.some(
-            ({ properties }) => properties.value === "/ok",
-          ),
+      if (node === undefined) throw new Error("Complete endpoint was lost");
+      return node;
+    };
+    const endpointNode = nodeFor(endpoint);
+    expect(
+      new Set(
+        [endpoint, digestLookalike, surrogate, replacement].map(
+          (value) => nodeFor(value).node_id,
         ),
-      ).toHaveLength(1);
-      expect(repeatedNode.observations).toHaveLength(2);
-      expect(repeatedNode.identity).toMatchObject({
-        key: JSON.stringify(["literal", "/ok"]),
-      });
-      expect(
-        repeatedNode.observations.every(({ label }) => label === "/ok"),
-      ).toBe(true);
-      expect(endpointNode.identity).toMatchObject({
-        artifact_sha256: createHash("sha256").update(source).digest("hex"),
-      });
-      expect(endpointNode.observations[0]?.evidence.location).toMatchObject({
-        available: true,
-        value: { kind: "source-range", source: "main.js" },
-      });
-      const requestNodes = result.semantic_graph.nodes.filter(
-        (node) =>
-          node.kind === "request" && node.properties.endpoint === endpoint,
-      );
-      expect(requestNodes).toHaveLength(1);
+      ).size,
+    ).toBe(4);
+    const repeatedNode = nodeFor("/ok");
+    expect(
+      endpoints.filter((node) =>
+        node.observations.some(({ properties }) => properties.value === "/ok"),
+      ),
+    ).toHaveLength(1);
+    expect(repeatedNode.observations).toHaveLength(2);
+    expect(repeatedNode.identity).toMatchObject({
+      key: JSON.stringify(["literal", "/ok"]),
+    });
+    expect(
+      repeatedNode.observations.every(({ label }) => label === "/ok"),
+    ).toBe(true);
+    expect(endpointNode.identity).toMatchObject({
+      artifact_sha256: createHash("sha256").update(source).digest("hex"),
+    });
+    expect(endpointNode.observations[0]?.evidence.location).toMatchObject({
+      available: true,
+      value: { kind: "source-range", source: "main.js" },
+    });
+    const requestNodes = result.semantic_graph.nodes.filter(
+      (node) =>
+        node.kind === "request" && node.properties.endpoint === endpoint,
+    );
+    expect(requestNodes).toHaveLength(1);
 
-      await verifyEndpointWorkflows({
-        client,
-        evidenceId: evidence.evidence_id,
-        endpoint,
-        endpointNodeId: endpointNode.node_id,
-        requestNodeIds: requestNodes.map(({ node_id }) => node_id),
-        root,
-        source,
-        sourcePath,
-      });
-      await client.ping();
-    } finally {
-      await client.close();
-      await transport.close();
-    }
+    await verifyEndpointWorkflows({
+      client,
+      evidenceId: evidence.evidence_id,
+      endpoint,
+      endpointNodeId: endpointNode.node_id,
+      requestNodeIds: requestNodes.map(({ node_id }) => node_id),
+      root,
+      source,
+      sourcePath,
+    });
+    await client.ping();
   },
-  120_000,
 );
 
 interface EndpointWorkflowInput {

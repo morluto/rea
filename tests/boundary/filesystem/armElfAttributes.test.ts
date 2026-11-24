@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
-import { writeFile } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { readArmElfCpuArch } from "../../../src/application/ArmElfAttributes.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -156,11 +157,42 @@ const armFixture = (
   return bytes;
 };
 
-const resolveArm = async (bytes: Buffer) => {
+const writeArm = async (bytes: Buffer): Promise<string> => {
   const directory = await createTestTempDirectory("rea-arm-attrs-");
   const path = join(directory, "fixture.elf");
   await writeFile(path, bytes);
-  const result = await parseBinaryTarget(path);
+  return path;
+};
+
+/** General ELF admission refuses these tables first; read the ARM declarations directly. */
+const inspectArm = async (bytes: Buffer) => {
+  const path = await writeArm(bytes);
+  const handle = await open(path, "r");
+  try {
+    return await readArmElfCpuArch(
+      handle,
+      {
+        elfClass: 32,
+        byteOrder: "little",
+        headerSize: bytes.readUInt16LE(40),
+        type: bytes.readUInt16LE(16),
+        flags: bytes.readUInt32LE(36),
+      },
+      () => undefined,
+    );
+  } finally {
+    await handle.close();
+  }
+};
+
+const refusedAtAdmission = async (bytes: Buffer): Promise<string> => {
+  const result = await parseBinaryTarget(await writeArm(bytes));
+  expect(result.ok).toBe(false);
+  return String((result as { error?: unknown }).error);
+};
+
+const resolveArm = async (bytes: Buffer) => {
+  const result = await parseBinaryTarget(await writeArm(bytes));
   if (!result.ok) throw result.error;
   if (result.value.kind !== "executable" || result.value.architecture !== "arm")
     throw new Error("Expected a resolved ARM executable");
@@ -253,12 +285,14 @@ it("reads a second aeabi subsection disagreeing with the first as no declaration
 });
 
 it("records a limitation when the section table extends beyond the file", async () => {
-  const target = await resolveArm(
-    armFixture(V7_ATTRIBUTES, { truncatedTable: true }),
+  const bytes = armFixture(V7_ATTRIBUTES, { truncatedTable: true });
+  expect(await refusedAtAdmission(bytes)).toContain(
+    "truncated ELF section header table",
   );
-  if (target.format !== "elf") throw new Error("Expected an ELF target");
-  expect(target.arm.cpuArch).toBeNull();
-  expect(target.arm.limitations?.join(" ")).toContain(
+  const inspection = await inspectArm(bytes);
+  if (!inspection.ok) throw new Error(inspection.error);
+  expect(inspection.value.cpuArch).toBeNull();
+  expect(inspection.value.limitations.join(" ")).toContain(
     "extends beyond the captured file",
   );
 });
@@ -315,29 +349,30 @@ it.each([
   },
 );
 
-it("preserves ARM target identity when extended section coverage is unavailable", async () => {
+it("records unknown declarations when extended section coverage is unavailable", async () => {
   const bytes = armFixture(V7_ATTRIBUTES);
   bytes.writeUInt16LE(0, 48);
   bytes.writeUInt32LE(2, SECTION_TABLE_OFFSET + 20);
-  const target = await resolveArm(bytes);
-  expect(target).toMatchObject({
-    architecture: "arm",
-    format: "elf",
-    arm: {
-      cpuArch: null,
-      cpuArchProfile: null,
-      limitations: [expect.stringContaining("Extended ARM section numbering")],
-    },
+  expect(await refusedAtAdmission(bytes)).toContain(
+    "invalid ELF extended section count",
+  );
+  const inspection = await inspectArm(bytes);
+  if (!inspection.ok) throw new Error(inspection.error);
+  expect(inspection.value).toMatchObject({
+    cpuArch: null,
+    cpuArchProfile: null,
+    limitations: [expect.stringContaining("Extended ARM section numbering")],
   });
 });
 
 it("refuses a padded section-table entry size instead of allocating it", async () => {
-  const directory = await createTestTempDirectory("rea-arm-stride-");
-  const path = join(directory, "fixture.elf");
-  await writeFile(path, armFixture(V7_ATTRIBUTES, { stride: 0x2000 }));
-  const result = await parseBinaryTarget(path);
-  expect(result.ok).toBe(false);
-  expect(String((result as { error?: unknown }).error)).toContain(
+  const bytes = armFixture(V7_ATTRIBUTES, { stride: 0x2000 });
+  expect(await refusedAtAdmission(bytes)).toContain(
+    "truncated ELF section header table",
+  );
+  const inspection = await inspectArm(bytes);
+  expect(inspection.ok).toBe(false);
+  expect((inspection as { error?: string }).error).toContain(
     "invalid ARM section table offset or entry size",
   );
 });

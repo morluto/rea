@@ -11,22 +11,23 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
 
-interface IterationSourceValue {
-  readonly node: t.Node;
-  readonly projection: JavaScriptSemanticPropertyPath;
-  readonly iterationSources?: readonly IterationSourceValue[];
-}
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
+import { javaScriptExecutions } from "./javascriptSemanticExecutionPoints.js";
+import { childNodes } from "./javascriptSemanticTraversal.js";
+import type {
+  IterationSourceValue,
+  SemanticIterationSource,
+} from "./javascriptSemanticIterationFacts.js";
 
-/** An iterator receiver or property reference store, with default guards. */
-export interface SemanticIterationSource extends IterationSourceValue {
-  readonly iterationSources?: readonly IterationSourceValue[];
-  readonly kind: "iteration" | "reference-store";
+/** A property value obtained by destructuring or an own-enumerable copy. */
+export interface SemanticPropertyReadSource
+  extends IterationSourceValue, SourceGuards {
   readonly mutation: t.Node;
-  readonly target?: t.MemberExpression;
-  readonly fallbackSources?: readonly IterationSourceValue[];
-  readonly requiredSources?: readonly IterationSourceValue[];
+  readonly lookup: "prototype" | "own";
+  /** The language protocol invokes a callable value read from this slot. */
+  readonly invoke?: true;
 }
 
 interface PatternSource extends IterationSourceValue {
@@ -112,6 +113,7 @@ const project = (
 interface PatternCollection {
   readonly sources: SemanticIterationSource[];
   readonly mutation: t.Node;
+  readonly propertyReads: SemanticPropertyReadSource[];
 }
 
 const visit = (
@@ -191,11 +193,7 @@ const visit = (
   if (t.isObjectPattern(pattern)) {
     for (const property of pattern.properties) {
       if (t.isRestElement(property)) {
-        // A rest copy owns its scalar slots; only selected child references
-        // escape when that fresh copy is stored through a member target.
-        visit(
-          context,
-          property.argument,
+        const rest =
           source === undefined
             ? undefined
             : {
@@ -208,26 +206,47 @@ const visit = (
                     ].sort(compareUnicodeCodePoints),
                   },
                 ],
-              },
-          guards,
-        );
+              };
+        if (rest !== undefined)
+          context.propertyReads.push({
+            ...rest,
+            ...guards,
+            mutation,
+            lookup: "own",
+          });
+        // A rest copy owns its scalar slots; only selected child references
+        // escape when that fresh copy is stored through a member target.
+        visit(context, property.argument, rest, guards);
         continue;
       }
-      visit(
-        context,
-        property.value,
-        project(
-          source,
-          semanticStaticPropertyKey(property.key, property.computed),
-        ),
-        guards,
+      const selected = project(
+        source,
+        semanticStaticPropertyKey(property.key, property.computed),
       );
+      if (selected !== undefined)
+        context.propertyReads.push({
+          ...selected,
+          ...guards,
+          mutation,
+          lookup: "prototype",
+        });
+      visit(context, property.value, selected, guards);
     }
     return;
   }
   if (t.isArrayPattern(pattern)) {
     if (source !== undefined && source.restStartIndex === undefined)
-      add(sources, source, mutation, guards);
+      sources.push({
+        kind: "iteration",
+        node: source.node,
+        projection: source.projection,
+        mutation,
+        ...(t.isVariableDeclarator(mutation) ||
+        t.isAssignmentExpression(mutation)
+          ? { arrayPattern: pattern }
+          : {}),
+        ...guards,
+      });
     const selectedGuards = {
       ...guards,
       iterationSources: [
@@ -258,13 +277,78 @@ const visit = (
     visit(context, pattern.argument, undefined, guards);
 };
 
-/** Describe iterator receivers and property reference stores without evaluation. */
-export const semanticIterationSources = (
+interface SemanticSourceFacts {
+  readonly iterations: readonly SemanticIterationSource[];
+  readonly propertyReads: readonly SemanticPropertyReadSource[];
+}
+const emptySourceFacts: SemanticSourceFacts = {
+  iterations: [],
+  propertyReads: [],
+};
+// Immutable AST subtree summaries are reused by enclosing and nested catches.
+// Property reads can invoke getters; tags and coercions can execute user code.
+const guardedExecutions = new WeakMap<t.Node, boolean>();
+const guardedBodyMayCall = (body: t.BlockStatement): boolean => {
+  const pending: { node: t.Node; parent: t.Node | null; finish: boolean }[] = [
+    { node: body, parent: null, finish: false },
+  ];
+  while (pending.length > 0) {
+    const frame = pending.pop();
+    if (frame === undefined || guardedExecutions.has(frame.node)) continue;
+    const { node, parent } = frame;
+    const children = [...childNodes(node)].filter(
+      (child) =>
+        !t.isFunction(node) || semanticMethodDefinitionExpression(node, child),
+    );
+    if (!frame.finish) {
+      pending.push({ node, parent, finish: true });
+      for (const child of children)
+        pending.push({ node: child, parent: node, finish: false });
+    } else {
+      // Without scope proof an identifier may resolve through a global accessor,
+      // including when its enclosing operator itself performs no coercion.
+      const direct =
+        javaScriptExecutions(node, parent).length > 0 ||
+        (t.isIdentifier(node) &&
+          parent !== null &&
+          t.isReferenced(node, parent));
+      guardedExecutions.set(
+        node,
+        direct ||
+          children.some((child) => guardedExecutions.get(child) === true),
+      );
+    }
+  }
+  return guardedExecutions.get(body) === true;
+};
+const sourceFacts = new WeakMap<
+  t.Node,
+  { readonly parent: t.Node | null; readonly facts: SemanticSourceFacts }
+>();
+
+/** One owner for pattern projections, guards, iteration and copy-read sources. */
+const semanticSourceFacts = (
   node: t.Node,
   parent: t.Node | null,
-): readonly SemanticIterationSource[] => {
+): SemanticSourceFacts => {
+  if (
+    !(
+      t.isVariableDeclarator(node) ||
+      t.isAssignmentExpression(node) ||
+      t.isForOfStatement(node) ||
+      t.isSpreadElement(node) ||
+      t.isAwaitExpression(node) ||
+      t.isYieldExpression(node) ||
+      t.isCatchClause(node) ||
+      t.isFunction(node)
+    )
+  )
+    return emptySourceFacts;
+  const cached = sourceFacts.get(node);
+  if (cached?.parent === parent) return cached.facts;
   const sources: SemanticIterationSource[] = [];
-  const context = { sources, mutation: node };
+  const propertyReads: SemanticPropertyReadSource[] = [];
+  const context = { sources, propertyReads, mutation: node };
   if (t.isVariableDeclarator(node) && node.init != null)
     visit(context, node.id, { node: node.init, projection: [] });
   else if (
@@ -279,13 +363,72 @@ export const semanticIterationSources = (
       for (const declaration of node.left.declarations)
         visit(context, declaration.id, source);
     } else visit(context, node.left, source);
-  } else if (t.isSpreadElement(node) && t.isArrayExpression(parent))
-    add(sources, { node: node.argument, projection: [] }, node, {});
+  } else if (t.isSpreadElement(node)) {
+    if (t.isArrayExpression(parent))
+      add(sources, { node: node.argument, projection: [] }, node, {});
+    else if (t.isObjectExpression(parent))
+      propertyReads.push({
+        node: node.argument,
+        projection: [{ excludedKeys: [] }],
+        mutation: node,
+        lookup: "own",
+      });
+  } else if (t.isAwaitExpression(node))
+    propertyReads.push({
+      node: node.argument,
+      projection: ["then"],
+      mutation: node,
+      lookup: "prototype",
+      invoke: true,
+    });
   else if (t.isYieldExpression(node) && node.delegate && node.argument != null)
     add(sources, { node: node.argument, projection: [] }, node, {});
+  else if (
+    t.isCatchClause(node) &&
+    node.param != null &&
+    t.isTryStatement(parent) &&
+    guardedBodyMayCall(parent.block)
+  )
+    visit(context, node.param, { node: node.param, projection: [null] });
   else if (t.isFunction(node))
     for (const parameter of runtimeFunctionParameters(node))
-      visit(context, parameter, undefined);
+      // A caller-supplied value is unknown, not an absent property-read source.
+      // Retain the owning pattern as an unresolved source, including alongside
+      // default-value projections, instead of dropping its property lookups.
+      visit(context, parameter, { node: parameter, projection: [] });
+  const facts = { iterations: sources, propertyReads };
+  sourceFacts.set(node, { parent, facts });
+  return facts;
+};
 
-  return sources;
+export const semanticIterationSources = (
+  node: t.Node,
+  parent: t.Node | null,
+): readonly SemanticIterationSource[] =>
+  semanticSourceFacts(node, parent).iterations;
+
+/** Pattern reads from an explicitly retained source, including thrown values. */
+export const semanticPatternPropertyReadSources = (
+  pattern: t.Node,
+  source: IterationSourceValue,
+  mutation: t.Node,
+): readonly SemanticPropertyReadSource[] => {
+  const propertyReads: SemanticPropertyReadSource[] = [];
+  visit({ sources: [], propertyReads, mutation }, pattern, source);
+  return propertyReads;
+};
+
+export const semanticPropertyReadSources = (
+  node: t.Node,
+  parent: t.Node | null,
+  supplemental?: {
+    readonly implicitPropertyReads: WeakMap<
+      t.Node,
+      readonly SemanticPropertyReadSource[]
+    >;
+  },
+): readonly SemanticPropertyReadSource[] => {
+  const ordinary = semanticSourceFacts(node, parent).propertyReads;
+  const implicit = supplemental?.implicitPropertyReads.get(node);
+  return implicit === undefined ? ordinary : [...ordinary, ...implicit];
 };

@@ -1,5 +1,6 @@
+import { coverageStatusSchema } from "./coverage.js";
 import { z } from "zod";
-import { localPathStringSchema } from "./localPath.js";
+import { absoluteLocalPathStringSchema } from "./localPath.js";
 
 /** Optional decoding applies only to explicitly selected capture records. */
 export const protobufOptionsSchema = z.strictObject({
@@ -9,7 +10,7 @@ export const protobufOptionsSchema = z.strictObject({
   body_pointers: z.array(z.string()).optional(),
   schema: z
     .strictObject({
-      descriptor_set_path: localPathStringSchema,
+      descriptor_set_path: absoluteLocalPathStringSchema,
       message_type: z.string().min(1),
     })
     .optional(),
@@ -70,7 +71,7 @@ export const protobufFrameSchema = z.strictObject({
   payload_offset: index,
   bytes: index,
   compressed: z.boolean(),
-  status: z.enum(["complete", "partial", "unknown"]),
+  status: coverageStatusSchema,
   examined_bytes: index,
   error: issueSchema.exactOptional(),
   trailers: z
@@ -87,7 +88,7 @@ export const protobufDecodingObjectSchema = z.strictObject({
   framing: z.enum(["raw", "grpc", "grpc-web", "grpc-web-text"]),
   offset_basis: z.enum(["retained-body", "base64-decoded-body"]),
   decoded_bytes: index,
-  status: z.enum(["complete", "partial", "unknown"]),
+  status: coverageStatusSchema,
   examined_bytes: index,
   frames: z.array(protobufFrameSchema),
   fields: z.array(protobufFieldSchema),
@@ -95,7 +96,7 @@ export const protobufDecodingObjectSchema = z.strictObject({
   limitations: z.array(z.string()),
   schema: z
     .strictObject({
-      decoder: z.literal("protobuf-es-2.16.0"),
+      decoder: z.enum(["protobuf-es-2.16.0", "protobuf-es-2.17.0"]),
       descriptor_set_path: z.string(),
       descriptor_set_sha256: z.string().regex(/^[0-9a-f]{64}$/),
       descriptor_set_bytes: index,

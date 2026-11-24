@@ -1,15 +1,15 @@
+import { permitsCapabilityFallback } from "./CapabilityFallback.js";
+import type {
+  AnalysisExecution,
+  AnalysisOperationPort,
+} from "../ports/AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
-  createAnalysisExecutionEvidence,
-  type AnalysisExecution,
-  type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
-import {
-  AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { parseDocuments } from "../domain/hopperValues.js";
+import { parseDocuments } from "../domain/native/nativeDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const executionOptions = (signal: AbortSignal | undefined) =>
@@ -23,26 +23,15 @@ export const resolveAnalysisDocument = async (
 ): Promise<Result<string, AnalysisError>> => {
   if (document !== undefined) return ok(document);
   if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError("current_document", { cause: signal.reason }),
-    );
+    return err(cancelledBy("current_document", signal));
   const current = await analysis.execute(
     "current_document",
     {},
     executionOptions(signal),
   );
   if (!current.ok) {
-    if (
-      !(current.error instanceof AnalysisCapabilityUnavailableError) ||
-      current.error.cleanupIncomplete
-    )
-      return current;
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("current_document", {
-          cause: signal.reason,
-        }),
-      );
+    if (!permitsCapabilityFallback(current.error)) return current;
+    if (signal?.aborted) return err(cancelledBy("current_document", signal));
     const listed = await analysis.execute(
       "list_documents",
       {},
@@ -105,8 +94,7 @@ const completeSelection = (
 ): Result<string, AnalysisError> => {
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
+      cancelledBy(operation, signal, {
         partialObservation: createAnalysisExecutionEvidence(
           operation,
           {},
