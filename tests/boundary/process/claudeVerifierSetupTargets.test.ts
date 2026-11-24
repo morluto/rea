@@ -45,7 +45,8 @@ export async function createVerifierCommands(){return {
     );
     await writeFile(
       fixture,
-      `export async function createAnthropicModelFixture(){return {baseUrl:'http://127.0.0.1:1',async close(){}};} export const createOpenAiModelFixture=createAnthropicModelFixture;`,
+      `export { toolCallMessage } from ${JSON.stringify(new URL("../../../scripts/verify/clients/model-fixture.mjs", import.meta.url).href)};
+export async function createAnthropicModelFixture(){return {baseUrl:'http://127.0.0.1:1',async close(){}};} export const createOpenAiModelFixture=createAnthropicModelFixture;`,
     );
     await writeFile(
       hook,

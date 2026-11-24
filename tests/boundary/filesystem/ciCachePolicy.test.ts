@@ -430,15 +430,12 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
     expect(policy?.env?.LOCKFILES_HASH).toBe(
       "${{ hashFiles('package-lock.json', 'npm-shrinkwrap.json', '.npmrc') }}",
     );
-    expect(restoreAndSave?.uses).toBe(
-      "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830",
-    );
+    const revision = restoreAndSave?.uses?.split("@")[1];
+    expect(revision).toMatch(/^[0-9a-f]{40}$/u);
     expect(restoreAndSave?.if).toBe(
       "steps.context.outputs.can-save == 'true' && inputs.save == 'true'",
     );
-    expect(restoreOnly?.uses).toBe(
-      "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
-    );
+    expect(restoreOnly?.uses).toBe(`actions/cache/restore@${revision}`);
     expect(restoreOnly?.if).toBe(
       "steps.context.outputs.can-save != 'true' || inputs.save != 'true'",
     );
@@ -467,8 +464,10 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
           if (
             typeof step?.uses === "string" &&
             step.uses.startsWith("actions/setup-node@")
-          )
+          ) {
             expect(step.with).not.toHaveProperty("cache", "npm");
+            expect(step.with).toMatchObject({ "package-manager-cache": false });
+          }
           if (step?.uses !== "./.github/actions/npm-cache") continue;
           npmCacheSteps++;
           const setup = steps
@@ -483,9 +482,13 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
             `${file}:${jobName} npm cache action requires preceding setup-node`,
           ).toBeDefined();
           expect(step.if).toBe(setup?.if);
+          const installCommand =
+            file === "ci-timings.yml" && jobName === "report"
+              ? "npm ci --omit=dev --ignore-scripts"
+              : "npm ci";
           const npmCiIndex = steps.findIndex(
             (candidate, candidateIndex) =>
-              candidateIndex > index && candidate.run === "npm ci",
+              candidateIndex > index && candidate.run === installCommand,
           );
           expect(
             npmCiIndex,
@@ -642,8 +645,8 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(checkouts).toHaveLength(2);
   const setupNode = steps.find(
     (step) =>
-      step.uses ===
-      "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+      typeof step.uses === "string" &&
+      step.uses.startsWith("actions/setup-node@"),
   );
   expect(setupNode?.with).toMatchObject({
     "node-version-file": "trusted-retention/.nvmrc",

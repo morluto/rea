@@ -87,11 +87,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -926,7 +921,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -942,13 +937,13 @@ const completed = await completeVerifierRun(run);
 try {
   assertVerifierCleanupComplete(completed.process_lineage);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure ?? cause },
   );
 }
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS verification failed; retained workspace: ${workspace}`,
     {
       cause: primaryFailure,

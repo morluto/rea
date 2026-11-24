@@ -299,23 +299,29 @@ cliTest(
   },
 );
 
-cliTest("rejects a malformed SEA blob through the CLI", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-sea-invalid-cli-");
-  const source = join(root, "application");
-  await writeFile(source, nodeSeaElf({ blob: Buffer.alloc(16) }));
-  const result = await cli.run({
-    arguments: ["inspect-artifact", source, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "artifact_operation_failed",
-    details: {
-      operation: "inspect_artifact",
-      reason: "format",
-      detail: expect.stringMatching(/magic/iu),
-    },
-  });
-});
+cliTest(
+  "falls back to outer ELF inventory with a limitation for a malformed SEA blob through the CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sea-invalid-cli-");
+    const source = join(root, "application");
+    await writeFile(source, nodeSeaElf({ blob: Buffer.alloc(16) }));
+    const result = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(result.json).normalized_result,
+    );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(graph.manifest.root_format).toBe("elf");
+    expect(graph.limitations).toContainEqual(
+      expect.stringMatching(/Node SEA recognition remains unknown/iu),
+    );
+    expect(graph.limitations).toContainEqual(expect.stringMatching(/magic/iu));
+  },
+);
 
 cliTest(
   "refuses an empty-body SEA asset table over its record bound",
