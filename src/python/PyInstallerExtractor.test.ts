@@ -590,6 +590,17 @@ describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
     expect(extracted.some((entry) => entry.name === "app/skipped.pyc")).toBe(
       false,
     );
+
+    // A zero-byte caller allowance must also prevent pre-parsing/inflating the embedded PYZ
+    const zeroBudget = extractPyInstallerEntries(binary, {
+      maxExpandedBytes: 0,
+    });
+    expect(zeroBudget).toHaveLength(1);
+    expect(zeroBudget[0]?.decompressed).toBe(false);
+    expect(zeroBudget[0]?.data.length).toBe(0);
+    expect(zeroBudget[0]?.limitations[0]).toMatch(
+      /expansion budget of 0 bytes/,
+    );
   });
 });
 

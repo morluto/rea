@@ -163,7 +163,10 @@ interface ParsedCArchiveData {
   readonly rawEntries: readonly CArchiveEntry[];
 }
 
-const parseCArchiveBuffer = (buffer: Buffer): ParsedCArchiveData | null => {
+const parseCArchiveBuffer = (
+  buffer: Buffer,
+  maxPyzBytes = MAX_PER_ENTRY_BYTES,
+): ParsedCArchiveData | null => {
   const cookie = findPyInstallerCookie(buffer);
   if (!cookie) return null;
 
@@ -217,7 +220,7 @@ const parseCArchiveBuffer = (buffer: Buffer): ParsedCArchiveData | null => {
   const pyzEntry = tocEntries.find(
     (e) => e.typeFlag === "z" || e.name.toLowerCase().endsWith(".pyz"),
   );
-  if (pyzEntry) {
+  if (pyzEntry && maxPyzBytes > 0) {
     const pyzDataOffset = carchiveOffset + pyzEntry.pkgOffset;
     if (
       pyzEntry.pkgOffset >= 0 &&
@@ -232,7 +235,7 @@ const parseCArchiveBuffer = (buffer: Buffer): ParsedCArchiveData | null => {
       const inflatedPyz = inflatePayload(
         rawPyz,
         pyzEntry.compressionFlag,
-        MAX_PER_ENTRY_BYTES,
+        maxPyzBytes,
         pyzEntry.uncompressedLength,
       );
       if (inflatedPyz.decompressed) {
@@ -530,10 +533,6 @@ export const extractPyInstallerEntries = (
   buffer: Buffer,
   options?: { readonly maxExpandedBytes?: number | undefined },
 ): ExtractedPyInstallerFile[] => {
-  const parsed = parseCArchiveBuffer(buffer);
-  if (!parsed) return [];
-  const { archive, rawEntries } = parsed;
-
   const defaultBudget = artifactExpansionBudgetBytes(buffer.length);
   const totalBudget =
     options?.maxExpandedBytes !== undefined &&
@@ -541,6 +540,14 @@ export const extractPyInstallerEntries = (
     options.maxExpandedBytes >= 0
       ? Math.min(defaultBudget, Math.floor(options.maxExpandedBytes))
       : defaultBudget;
+
+  const parsed = parseCArchiveBuffer(
+    buffer,
+    Math.min(MAX_PER_ENTRY_BYTES, totalBudget),
+  );
+  if (!parsed) return [];
+  const { archive, rawEntries } = parsed;
+
   let remainingBudget = totalBudget;
   const payloadEndOffset = archive.carchiveOffset + archive.cookie.tocOffset;
   const results: ExtractedPyInstallerFile[] = [];

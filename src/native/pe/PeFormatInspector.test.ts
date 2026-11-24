@@ -185,10 +185,11 @@ describe("PeFormatInspector", () => {
     // A damaged Rich header whose record region is not a multiple of 8 bytes must be rejected
     // rather than interpreting the "Rich" marker bytes as a record count.
     const misaligned = createMockPeBinary();
-    // dansOffset = 0x40; +16 = 0x50; shift "Rich" + xorKey backward by 4 bytes to 0x54 (4-byte remainder)
-    const xorKey = misaligned.readUInt32LE(0x5c);
-    misaligned.write("Rich", 0x54, "ascii");
-    misaligned.writeUInt32LE(xorKey, 0x58);
+    // dansOffset = 0x50, prefix ends at 0x60; place "Rich" + xorKey at 0x64 so 4 trailing record bytes remain
+    const xorKey = misaligned.readUInt32LE(0x6c);
+    misaligned.write("Rich", 0x64, "ascii");
+    misaligned.writeUInt32LE(xorKey, 0x68);
+    misaligned.writeUInt32LE(0, 0x6c);
     expect(parsePeRichHeader(misaligned)).toBeNull();
   });
 
