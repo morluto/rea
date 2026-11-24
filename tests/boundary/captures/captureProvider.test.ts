@@ -112,6 +112,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   if (mode === "path") await symlink(script, join(directory, "tshark"));
   const controller = new AbortController();
   let calls = 0;
+  const probeEnvironments: (NodeJS.ProcessEnv | undefined)[] = [];
   let mayClean = !failCleanup;
   let mayStopDecoder = mode !== "process-cleanup";
   const acquired = createDeferred<void>();
@@ -133,6 +134,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
       calls++;
       // Limiter probes run without the prlimit `--` terminator.
       const probe = !input.arguments.includes("--");
+      if (probe) probeEnvironments.push(input.hostEnvironment);
       const producer = !probe && !input.arguments.includes("--version");
       if (mode === "launch-failure" && producer)
         throw spawnFailure("E2BIG", input.command);
@@ -201,6 +203,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
     path,
     controller,
     calls: () => calls,
+    probeEnvironments,
     acquired: acquired.promise,
     release: () => release.resolve(),
     allowCleanup: () => {
@@ -885,6 +888,18 @@ it("retains a limiter probe whose cleanup failed and retries it on close", async
   expect(
     (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
   ).toEqual([]);
+});
+
+it("pins the C locale for limiter probes whatever locale the host selects", async () => {
+  const f = await fixture("ok", false, {
+    LC_ALL: "de_DE.ISO-8859-1",
+    LANG: "de_DE.ISO-8859-1",
+  });
+  const result = await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
+  expect(result.ok).toBe(true);
+  expect(f.probeEnvironments.length).toBeGreaterThan(0);
+  for (const environment of f.probeEnvironments)
+    expect(environment).toMatchObject({ LC_ALL: "C", LANG: "C" });
 });
 
 it("cancels during the limiter probe and releases the workspace", async () => {

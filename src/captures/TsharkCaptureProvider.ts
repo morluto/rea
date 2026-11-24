@@ -222,7 +222,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               cwd: runtime.path,
               expectedCommand: null,
               runId: `rea-tshark-${randomUUID()}`,
-              hostEnvironment: this.environment,
+              hostEnvironment: {
+                ...this.environment,
+                LC_ALL: "C",
+                LANG: "C",
+              },
             },
             {
               timeoutMs: LIMITER_PROBE_LIMITS.command_timeout_ms,
