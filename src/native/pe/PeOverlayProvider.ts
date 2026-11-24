@@ -1,7 +1,6 @@
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
   projectArtifactCloseFailure,
-  imageFileSizeRemediation,
   type StableArtifactSnapshot,
   readStableArtifact,
   assertArtifactReadActive,
@@ -67,11 +66,10 @@ export class PeOverlayProvider implements PeOverlayPort {
           {
             operation: OPERATION,
             providerId: PE_OVERLAY_PROVIDER.id,
-            fileSizeRemediation: () =>
-              imageFileSizeRemediation(
-                input.max_file_bytes,
-                MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
-              ),
+            fileCeiling: {
+              name: "The PE overlay whole-file ceiling",
+              bytes: MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
+            },
             limits: PE_OVERLAY_LIMITS,
             limitRecovery: (_limit, ceiling) =>
               fixedAllowanceOptions(

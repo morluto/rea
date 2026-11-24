@@ -67,21 +67,29 @@ export const projectGhidraDoctorInspection = (
       ),
       ...(readiness !== undefined
         ? [
-            {
-              name: "native_authority",
-              ok: !windowsAuthorityUnavailable,
-              code: !readiness.available ? readiness.code : null,
-              detail: !readiness.available
-                ? readiness.reason
-                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS/ReFS only.",
-              remediation: !readiness.available ? readiness.remediation : null,
-              classification:
-                !readiness.available && readiness.code === "runtime_unavailable"
-                  ? ("runtime_failure" as const)
-                  : !readiness.available && readiness.code === "runtime_missing"
-                    ? ("missing_dependency" as const)
-                    : ("unsupported_host" as const),
-            },
+            readiness.available
+              ? {
+                  name: "native_authority",
+                  ok: true as const,
+                  code: null,
+                  detail:
+                    "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS/ReFS only.",
+                  remediation: null,
+                  classification: "healthy" as const,
+                }
+              : {
+                  name: "native_authority",
+                  ok: false as const,
+                  code: readiness.code,
+                  detail: readiness.reason,
+                  remediation: readiness.remediation,
+                  classification:
+                    readiness.code === "runtime_unavailable"
+                      ? ("runtime_failure" as const)
+                      : readiness.code === "runtime_missing"
+                        ? ("missing_dependency" as const)
+                        : ("unsupported_host" as const),
+                },
           ]
         : []),
       ...(temporaryDirectory === undefined
@@ -91,7 +99,7 @@ export const projectGhidraDoctorInspection = (
         ? [
             {
               name: "existing_project",
-              ok: false,
+              ok: false as const,
               code: "unsupported_host",
               detail: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
               remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
@@ -114,7 +122,7 @@ const temporaryDirectoryCheck = (
         code: null,
         detail: `REA created and deleted a file under the Ghidra session root ${probe.directory}, where session runtimes are created. This does not test writes by Ghidra's child JVM.`,
         remediation: null,
-        classification: "runtime_failure",
+        classification: "healthy",
       }
     : {
         name: "temp_directory",
@@ -200,10 +208,39 @@ const projectCheck = (
   configured: boolean,
   javaFailure: GhidraInstallationInspection["javaProbeFailure"],
   headerFailure: GhidraInstallationInspection["nativeDecompilerHeaderFailure"],
-): DoctorProviderCheck => ({
+): DoctorProviderCheck =>
+  check.status === "failed"
+    ? {
+        ...checkFacts(check, javaFailure, headerFailure),
+        ok: false,
+        code: check.code,
+        remediation: check.remediation,
+        classification:
+          check.name === "platform" || check.name === "architecture"
+            ? "unsupported_host"
+            : check.name === "java" && check.code === "runtime_missing"
+              ? "missing_dependency"
+              : check.name === "java" && check.code === "runtime_unavailable"
+                ? "runtime_failure"
+                : configured
+                  ? "config_drift"
+                  : "missing_analysis_engine",
+      }
+    : {
+        ...checkFacts(check, javaFailure, headerFailure),
+        ok: true,
+        code: null,
+        remediation: null,
+        classification: "healthy",
+      };
+
+/** The observation and diagnostic details a check reports either way. */
+const checkFacts = (
+  check: GhidraInstallationCheck,
+  javaFailure: GhidraInstallationInspection["javaProbeFailure"],
+  headerFailure: GhidraInstallationInspection["nativeDecompilerHeaderFailure"],
+) => ({
   name: check.name,
-  ok: check.status === "passed",
-  code: check.status === "failed" ? check.code : null,
   detail: check.detail,
   ...(check.name === "java" && javaFailure?.output !== undefined
     ? {
@@ -221,19 +258,4 @@ const projectCheck = (
   ...(check.name === "native_decompiler" && headerFailure !== undefined
     ? { details: { header_failure: projectAnalysisError(headerFailure) } }
     : {}),
-  remediation: check.status === "failed" ? check.remediation : null,
-  classification:
-    check.name === "platform" || check.name === "architecture"
-      ? "unsupported_host"
-      : check.name === "java" &&
-          check.status === "failed" &&
-          check.code === "runtime_missing"
-        ? "missing_dependency"
-        : check.name === "java" &&
-            check.status === "failed" &&
-            check.code === "runtime_unavailable"
-          ? "runtime_failure"
-          : configured
-            ? "config_drift"
-            : "missing_analysis_engine",
 });

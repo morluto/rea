@@ -12,6 +12,7 @@ export const failedConfigurationMessage = (
   result: Extract<ClientConfigurationResult, { readonly status: "failed" }>,
 ): string => {
   switch (result.reason) {
+    case "invalid_configuration":
     case "registration_ownership":
     case "read_only_override":
       return result.detail;

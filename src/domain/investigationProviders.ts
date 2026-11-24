@@ -227,6 +227,12 @@ export const RECONSTRUCTION_PROVIDER = {
   version: "1",
 } as const;
 
+export const PE_UNWIND_RANGES_PROVIDER = Object.freeze({
+  id: "rea-pe-unwind-ranges",
+  name: "REA PE x64 exception-directory parser",
+  version: "1",
+} as const);
+
 export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   id: "rea-pe-load-config",
   name: "REA PE TLS/load-config parser",

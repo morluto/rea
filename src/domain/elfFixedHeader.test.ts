@@ -12,43 +12,59 @@ it.each([
   ["ELF64 little endian", 2, 1],
   ["ELF64 big endian", 2, 2],
 ] as const)(
-  "reads common fixed header commitments for %s",
+  "admits common fields and preserves invalid raw declarations for %s",
   (_name, cls, data) => {
-    const bytes = elf(cls, data, cls === 1 ? 3 : 62);
-    const flagsOffset = cls === 1 ? 36 : 48;
-    if (data === 1) {
-      bytes.writeUInt16LE(0xfe01, 16);
-      bytes.writeUInt32LE(0x89abcdef, flagsOffset);
-    } else {
-      bytes.writeUInt16BE(0xfe01, 16);
-      bytes.writeUInt32BE(0x89abcdef, flagsOffset);
-    }
+    const machine = cls === 1 ? 3 : 62;
+    const bytes = Buffer.concat([
+      Buffer.alloc(7, 0xa5),
+      elf(cls, data, machine),
+    ]).subarray(7);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const littleEndian = data === 1;
+    const headerSizeAt = cls === 1 ? 40 : 52;
+    view.setUint16(16, 0xfe01, littleEndian);
+    view.setUint32(cls === 1 ? 36 : 48, 0x89abcdef, littleEndian);
+    bytes[7] = 6;
+    bytes[8] = 7;
+    const common = {
+      elfClass: cls === 1 ? 32 : 64,
+      byteOrder: littleEndian ? "little" : "big",
+      type: 0xfe01,
+      flags: 0x89abcdef,
+      osAbi: 6,
+    };
     expect(readElfFixedHeader(bytes)).toEqual({
       ok: true,
       value: {
-        elfClass: cls === 1 ? 32 : 64,
-        byteOrder: data === 1 ? "little" : "big",
+        ...common,
         headerSize: cls === 1 ? 52 : 64,
-        machine: cls === 1 ? 3 : 62,
-        type: 0xfe01,
-        flags: 0x89abcdef,
-        osAbi: 0,
-        abiVersion: 0,
+        machine,
+        abiVersion: 7,
         architecture: cls === 1 ? "x86" : "x86_64",
       },
     });
+
+    // Reading the raw fields preserves them even when general admission refuses the image.
+    view.setUint16(18, 0xfffe, littleEndian);
+    view.setUint32(20, 0x89abcdef, littleEndian);
+    view.setUint16(headerSizeAt, 0, littleEndian);
+    bytes[8] = 0xff;
+    expect(readElfHeaderFacts(bytes)).toEqual({
+      ok: true,
+      value: {
+        ...common,
+        machine: 0xfffe,
+        version: 0x89abcdef,
+        abiVersion: 0xff,
+        headerSize: 0,
+      },
+    });
+    expect(readElfFixedHeader(bytes)).toEqual({
+      ok: false,
+      error: "unsupported ELF header version",
+    });
   },
 );
-
-it("retains the declared ABI version without admitting a consumer-specific ABI", () => {
-  const bytes = elf(2, 1, 62);
-  bytes[7] = 6;
-  bytes[8] = 7;
-  expect(readElfFixedHeader(bytes)).toMatchObject({
-    ok: true,
-    value: { osAbi: 6, abiVersion: 7 },
-  });
-});
 
 it.each([
   [
@@ -99,7 +115,7 @@ it("classifies EM_PPC64 only for a caller that commits ELF64", () => {
 it("preserves an unknown ELF machine as a fact without rejecting the header", () => {
   expect(readElfFixedHeader(elf(2, 2, 0xfffe))).toMatchObject({
     ok: true,
-    value: { machine: 0xfffe, architecture: null },
+    value: { machine: 0xfffe, architecture: null, osAbi: 0, abiVersion: 0 },
   });
 });
 
@@ -115,42 +131,6 @@ it("accepts NVIDIA's vendor ELF version only for the CUDA machine and OS ABI", (
   bytes.writeUInt16LE(62, 18);
   expect(readElfFixedHeader(bytes).ok).toBe(false);
 });
-
-it.each([
-  { cls: 1, data: 1 },
-  { cls: 1, data: 2 },
-  { cls: 2, data: 1 },
-  { cls: 2, data: 2 },
-] as const)(
-  "preserves raw version, ABI and declared size facts ($cls/$data)",
-  ({ cls, data }) => {
-    const original = elf(cls, data, 0xfffe);
-    const bytes = Buffer.concat([Buffer.alloc(7), original]).subarray(7);
-    bytes[8] = 0xff;
-    if (data === 1) {
-      bytes.writeUInt32LE(0x89abcdef, 20);
-      bytes.writeUInt16LE(0, cls === 1 ? 40 : 52);
-    } else {
-      bytes.writeUInt32BE(0x89abcdef, 20);
-      bytes.writeUInt16BE(0, cls === 1 ? 40 : 52);
-    }
-    expect(readElfHeaderFacts(bytes)).toMatchObject({
-      ok: true,
-      value: {
-        elfClass: cls === 1 ? 32 : 64,
-        byteOrder: data === 1 ? "little" : "big",
-        machine: 0xfffe,
-        version: 0x89abcdef,
-        abiVersion: 0xff,
-        headerSize: 0,
-      },
-    });
-    expect(readElfFixedHeader(bytes)).toEqual({
-      ok: false,
-      error: "unsupported ELF header version",
-    });
-  },
-);
 
 it("keeps framing failures ahead of version and declared-size admission", () => {
   const bytes = elf(2, 1, 62);

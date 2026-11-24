@@ -400,6 +400,30 @@ const compactForwardDestinations = (
   };
 };
 
+type HopperAddressTargetReply =
+  | HopperReply<"rea_caller_base">
+  | HopperReply<"procedure_references">;
+
+/**
+ * The public result for an explicit address outside every procedure: the
+ * callers list for `procedure_callers`, or the reference edges without the
+ * bridge's target marker for `procedure_references`.
+ */
+export const projectHopperAddressReferences = (
+  reply: HopperAddressTargetReply,
+): JsonValue => {
+  if ("callers" in reply) return [...reply.callers];
+  const { target_kind: _targetKind, ...references } = reply;
+  return hopperReplyJson(references);
+};
+
+export const hopperAddressReferencesReason = (
+  reply: HopperAddressTargetReply,
+): string => {
+  const target = "callers" in reply ? reply.target : reply.procedure;
+  return `${target.address} is outside every Hopper procedure, such as an import address-table slot, an imported name or a data label. The result is Hopper's recorded references to that address with their containing procedures; references Hopper did not record remain unknown.${"callers_complete" in reply && !reply.callers_complete ? " The caller list stopped at the bridge's reply allowance." : ""}`;
+};
+
 /** The validated native reply each reconciled operation starts from. */
 export type HopperCallerNativeReply =
   | HopperReply<"rea_caller_base">

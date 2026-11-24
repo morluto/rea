@@ -69,12 +69,17 @@ export const analysisErrorWithCleanupDependencies = (
   primary: AnalysisError,
   cleanup: AnalysisError,
   operation = "close_binary",
-): AnalysisError =>
-  analysisErrorWithCleanupFailure(
-    primary,
-    cleanup,
-    operation,
-  ).bindCleanupDependencies([primary, cleanup]);
+  compose?: (primary: AnalysisError, cleanup: AnalysisError) => AnalysisError,
+): AnalysisError => {
+  const failure =
+    compose?.(primary, cleanup) ??
+    analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  // An existing envelope already owns its dependencies. New projections
+  // must follow both source errors without acquiring either owner again.
+  return failure === cleanup || failure === primary
+    ? failure
+    : failure.bindCleanupDependencies([primary, cleanup]);
+};
 
 /**
  * Compose a failure with a close rejection whose completion may be unknown. A
@@ -119,6 +124,7 @@ export const providerCleanupErrorFromFailures = (
     readonly operation: string;
     readonly causes?: readonly unknown[];
     readonly message?: string;
+    readonly remediationAction?: string;
   },
 ): ProviderCleanupError =>
   new ProviderCleanupError(
@@ -128,6 +134,9 @@ export const providerCleanupErrorFromFailures = (
     {
       operation: options.operation,
       cause: new AggregateError(options.causes ?? failures, options.message),
+      ...(options.remediationAction === undefined
+        ? {}
+        : { remediationAction: options.remediationAction }),
     },
   ).bindCleanupDependencies(failures);
 
@@ -198,3 +207,17 @@ export const withInheritedCleanupOwnership = <Failure extends AnalysisError>(
   owner: AnalysisError,
 ): Failure =>
   owner.cleanupIncomplete ? failure.bindCleanupDependencies([owner]) : failure;
+
+/** Delegate both cleanup completion and live resource reporting to `owner`. */
+export const withDelegatedCleanupOwner = <Failure extends AnalysisError>(
+  failure: Failure,
+  owner: AnalysisError,
+): Failure =>
+  failure.bindCleanupDependencies([owner]).bindCleanupResourceOwner(owner);
+
+/** Retain `cleanup` as a secondary failure and follow its cleanup completion. */
+export const withSecondaryCleanupFailure = <Failure extends AnalysisError>(
+  primary: Failure,
+  cleanup: AnalysisError,
+): Failure =>
+  primary.retainSecondaryFailure(cleanup).bindCleanupDependencies([cleanup]);

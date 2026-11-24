@@ -1,9 +1,6 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
-import {
-  hasBinaryPlistSignature,
-  hasXmlPlistSignature,
-} from "./apple/appleArchiveFormat.js";
+import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
 import { hasFitImagesNode } from "./firmware/fitImage.js";
@@ -15,6 +12,21 @@ import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
+import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
+import { BinaryFormatFailure } from "./binaryContainer.js";
+import {
+  hasDevicetreeMagic,
+  readDevicetreeHeader,
+} from "./firmware/devicetreeHeader.js";
+import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
+import { hasSqliteHeader } from "./sqliteFormat.js";
+import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
+import {
+  hasDdsHeader,
+  hasGlbHeader,
+  hasKtx1Identifier,
+  hasKtx2Identifier,
+} from "./gpuAssetFormats.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
 
@@ -26,6 +38,11 @@ export type RecognizedArtifactFormat = Extract<
   | "godot-pck"
   | "unityfs"
   | "wxapkg"
+  | "tar"
+  | "dds"
+  | "glb"
+  | "ktx"
+  | "ktx2"
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
@@ -38,7 +55,27 @@ export type RecognizedArtifactFormat = Extract<
   | "fit"
   | "ntfs-mft"
   | "plist"
+  | StandaloneArtifactFormat
 >;
+
+/**
+ * Single-file formats that a dedicated execution-free tool reads. Inventory
+ * records only the file itself; the inspection routes it to that tool.
+ */
+export const STANDALONE_ARTIFACT_FORMATS = [
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
+] as const;
+
+export type StandaloneArtifactFormat =
+  (typeof STANDALONE_ARTIFACT_FORMATS)[number];
+
+export const isStandaloneArtifactFormat = (
+  format: string,
+): format is StandaloneArtifactFormat =>
+  (STANDALONE_ARTIFACT_FORMATS as readonly string[]).includes(format);
 
 /** The bytes one route has read when it asks which format a file holds. */
 export interface ArtifactRecognitionInput {
@@ -108,6 +145,19 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       "wxapkg",
       (prefix) => hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix),
     ),
+    // A ustar or GNU header, or a gzip member whose first block is one.
+    ({ prefix }) => {
+      if (recognizeTarPrefix(prefix) !== undefined)
+        return { state: "recognized", format: "tar" };
+      const reason = tarHeaderRefusal(prefix);
+      return reason === undefined
+        ? undefined
+        : { state: "refused", format: "tar", reason };
+    },
+    when("dds", hasDdsHeader),
+    when("glb", hasGlbHeader),
+    when("ktx", hasKtx1Identifier),
+    when("ktx2", hasKtx2Identifier),
     when("uimage", hasUImageMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
     ({ prefix }) => {
@@ -151,6 +201,30 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     when("fit", hasFitImagesNode),
     when("ntfs-mft", hasMftFileRecordHeader),
+    when("sqlite", hasSqliteHeader),
+    when("windows-shortcut", hasWindowsShortcutHeader),
+    // Only a pinned CPython magic claims the format; a CR LF trailer alone
+    // is too weak a signature for arbitrary bytes.
+    when("python-pyc", (prefix) => {
+      const observed = observePythonBytecodePrefix(prefix);
+      return observed.state === "framed" && observed.identity !== null;
+    }),
+    // A FIT image is a devicetree too, so FIT claims it first. The header
+    // owner decides whether the remaining blob is one REA reads.
+    ({ prefix }) => {
+      if (!hasDevicetreeMagic(prefix)) return undefined;
+      try {
+        readDevicetreeHeader(prefix);
+      } catch (cause: unknown) {
+        if (!(cause instanceof BinaryFormatFailure)) throw cause;
+        return {
+          state: "refused",
+          format: "devicetree",
+          reason: cause.message,
+        };
+      }
+      return { state: "recognized", format: "devicetree" };
+    },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
   ];
@@ -170,9 +244,18 @@ export const recognizeArtifactFormat = (
   return undefined;
 };
 
-/** Recognize content from a bounded prefix and optional suffix without extra reads. */
+/**
+ * Recognize content from a bounded prefix and optional suffix without extra
+ * reads. A refused claim falls through: a header-only iNES region, for
+ * example, has the signature but not the declared cartridge extent. A claim
+ * that needs more bytes falls through too: a bounded prefix and trailer
+ * cannot locate an ESP flash partition table. The caller's bounded XML
+ * signature probe decides plist last.
+ */
 export const recognizeBoundedArtifactFormat = (
-  input: Omit<ArtifactRecognitionInput, "espFlashLayout">,
+  input: Omit<ArtifactRecognitionInput, "espFlashLayout"> & {
+    readonly xmlPlistSignature: boolean;
+  },
 ): Exclude<RecognizedArtifactFormat, "esp-flash-image"> | undefined => {
   for (
     let recognition = recognizeArtifactFormat(input);
@@ -185,5 +268,5 @@ export const recognizeBoundedArtifactFormat = (
     )
       return recognition.format;
   }
-  return hasXmlPlistSignature(input.prefix) ? "plist" : undefined;
+  return input.xmlPlistSignature ? "plist" : undefined;
 };

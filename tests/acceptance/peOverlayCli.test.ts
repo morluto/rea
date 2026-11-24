@@ -114,7 +114,7 @@ cliTest("reports PE overlay ranges through the CLI", async ({ cli }) => {
   });
   expect(past.exitCode).toBe(1);
   expect(past.json).toMatchObject({
-    code: "invalid_request",
+    code: "unsupported_target",
     details: { operation: "inspect_pe_overlay" },
   });
   expect(JSON.stringify(past.json)).toContain("section index 1");
@@ -163,15 +163,20 @@ cliTest.for([1, 9])(
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(certificates.exitCode).toBe(1);
+    // The certificate walk names the defect it reaches in the short table.
     expect(certificates.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
-        issues: [
-          expect.objectContaining({
-            reason: "invalid_format",
-            message: expect.stringContaining("be a multiple of eight bytes"),
-          }),
-        ],
+        format: "pe-certificate-table",
+        ...(size < 8
+          ? {
+              format_failure: "truncated",
+              reason: "WIN_CERTIFICATE header is truncated.",
+            }
+          : {
+              format_failure: "malformed",
+              reason: "WIN_CERTIFICATE dwLength exceeds the certificate table.",
+            }),
       },
     });
   },

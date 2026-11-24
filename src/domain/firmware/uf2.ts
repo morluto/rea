@@ -1,5 +1,5 @@
 import { boundedList, describeBoundedList } from "../boundedList.js";
-import type { Uf2Metadata } from "../artifactFormatMetadata.js";
+import type { Uf2Metadata } from "../formatMetadata/firmwareMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
 import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";

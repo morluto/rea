@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../../providers/runOwned.js";
 import {
   capturedProviderOutput,
   providerResultDiagnostics,
@@ -291,6 +292,10 @@ export class PwntoolsDecoder<
       | "runtime"
       | "request"
       | undefined;
+    // The ceiling that applies when the caller omits producer_limits.input_bytes;
+    // a per-call failure reports it as the parameter's default. Undefined when
+    // omitting it would fail configuration instead.
+    let omittedInputBytes: number | undefined;
     const context = {
       operation: OPERATION,
       providerId: this.identity.id,
@@ -300,6 +305,9 @@ export class PwntoolsDecoder<
       },
       get inputBytesSource() {
         return inputBytesSource;
+      },
+      get omittedInputBytes() {
+        return omittedInputBytes;
       },
     };
     const replySchema = z.discriminatedUnion("ok", [
@@ -394,6 +402,12 @@ export class PwntoolsDecoder<
           },
         );
       inputBytesSource = inputLimit.source;
+      if (inputLimit.source === "request") {
+        // An unusable launch value has no ceiling to fall back to; keep it
+        // unknown rather than reporting the built-in default.
+        const omitted = pwntoolsInputBytes(environment);
+        omittedInputBytes = omitted.configured ? omitted.bytes : undefined;
+      } else omittedInputBytes = inputLimit.bytes;
       phase = "artifact-read";
       producerLimits = {
         ...resolvePwntoolsLimits(selectedLimits.data, inputLimit.bytes),
@@ -705,27 +719,22 @@ export class PwntoolsDecoder<
         ? result.value.diagnostics
         : result.error.capturedOutput;
     }
-    const cleanup = await this.#completeCleanup(() => this.#retire());
-    if (result.ok && options?.signal?.aborted)
-      result = err(
-        cancelledBy(OPERATION, options.signal, {
-          partialObservation: result.value,
-          capturedOutput: result.value.diagnostics,
-        }),
-      );
-    if (cleanup !== undefined) {
-      const failure = result.ok
-        ? cleanup
-        : analysisErrorWithCleanupDependencies(
-            result.error,
-            cleanup,
-            OPERATION,
-          );
-      if (this.#pendingCleanup !== undefined)
-        this.#pendingCleanup.failure = failure;
-      return err(failure);
-    }
-    return result;
+    const finalized = await runOwned(async () => result, {
+      providerId: this.identity.id,
+      operation: OPERATION,
+      signal: options?.signal,
+      partial: (report) => report,
+      capturedOutput: (report, replacement) =>
+        replacement === "cancellation" ? report.diagnostics : undefined,
+      close: async () => {
+        const cleanup = await this.#completeCleanup(() => this.#retire());
+        if (cleanup !== undefined) throw cleanup;
+      },
+    });
+    const completed = finalizedResult(finalized);
+    if (!completed.ok && this.#pendingCleanup !== undefined)
+      this.#pendingCleanup.failure = completed.error;
+    return completed;
   }
 
   async #runCommand(

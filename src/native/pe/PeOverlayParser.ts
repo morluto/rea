@@ -1,3 +1,7 @@
+import {
+  createXmlPlistSignatureProbe,
+  MAX_XML_PLIST_PROBE_BYTES,
+} from "../../domain/apple/appleArchiveFormat.js";
 import { recognizeBoundedArtifactFormat } from "../../domain/artifactFormatRecognition.js";
 import { DFUSE_SUFFIX_BYTES } from "../../domain/firmware/dfuse.js";
 import { computeBlockEntropy } from "../../domain/native/byteEntropy.js";
@@ -11,53 +15,40 @@ import {
   type PeOverlayLeadingFormat,
   type PeOverlaySectionInput,
 } from "../../domain/native/peOverlay.js";
-import { malformedInput } from "../../domain/parseFailure.js";
 import {
-  readPeImageHeaders,
-  requirePeRange,
-} from "../../domain/pe/peImageHeaders.js";
-import {
-  PE_SECTION_HEADER_BYTES,
-  readPeSectionHeader,
-} from "../../domain/peSectionHeader.js";
+  readPeImage,
+  type PeImageSection,
+} from "../../domain/native/peImage.js";
+import { requirePeExtent } from "../../domain/pe/peImageHeaders.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+
+/** The same bounded XML signature probe artifact inventory runs. */
+const hasXmlPlistSignature = (bytes: Buffer): boolean => {
+  const probe = createXmlPlistSignatureProbe();
+  probe.write(bytes.subarray(0, MAX_XML_PLIST_PROBE_BYTES));
+  return probe.state === "matched";
+};
 
 const recognizeLeadingFormat = (bytes: Buffer): PeOverlayLeadingFormat =>
   recognizeBoundedArtifactFormat({
     prefix: bytes.subarray(0, PE_OVERLAY_ENTROPY_WINDOW_BYTES),
     fileSize: bytes.length,
     suffix: bytes.subarray(Math.max(0, bytes.length - DFUSE_SUFFIX_BYTES)),
+    xmlPlistSignature: hasXmlPlistSignature(bytes),
   }) ?? "unrecognized";
 
-/**
- * Decode the section table one header at a time. computePeOverlay validates
- * every yielded section but keeps only the reported rows, so a table that
- * declares 65,535 sections never holds 65,535 records at once.
- */
-function* readSections(
-  sectionTable: Buffer,
+/** Project the shared PE owner's declared section facts onto overlay inputs. */
+function* overlaySections(
+  sections: readonly PeImageSection[],
 ): Generator<PeOverlaySectionInput, void, undefined> {
-  for (
-    let index = 0;
-    index < sectionTable.length;
-    index += PE_SECTION_HEADER_BYTES
-  ) {
-    const sectionIndex = index / PE_SECTION_HEADER_BYTES;
-    const header = readPeSectionHeader(
-      sectionTable.subarray(index, index + PE_SECTION_HEADER_BYTES),
-    );
-    if (!header.ok)
-      throw malformedInput("pe", header.error.message, {
-        field: `section[${String(sectionIndex)}]`,
-      });
+  for (const [index, section] of sections.entries())
     yield {
-      index: sectionIndex,
-      name: header.value.name,
-      pointerToRawData: header.value.offset,
-      sizeOfRawData: header.value.raw_size,
-      characteristics: header.value.characteristics,
+      index,
+      name: section.name,
+      pointerToRawData: section.raw_offset,
+      sizeOfRawData: section.raw_size,
+      characteristics: section.characteristics,
     };
-  }
 }
 
 const describeRange = (
@@ -70,7 +61,7 @@ const describeRange = (
       offset: range.offset,
       size: range.size,
     };
-  requirePeRange(bytes, range.offset, range.size);
+  requirePeExtent(bytes.length, range.offset, range.size);
   const slice = bytes.subarray(range.offset, range.offset + range.size);
   const sampled = slice.subarray(
     0,
@@ -105,22 +96,24 @@ export const parsePeOverlay = (
   bytes: Buffer,
   artifact: PeOverlay["artifact"],
 ): PeOverlay => {
-  const headers = readPeImageHeaders(bytes);
+  // Header admission only: section raw ranges are checked by computePeOverlay,
+  // which names the section whose bytes leave the artifact.
+  const image = readPeImage(bytes, "headers");
   const facts: PeOverlayHeaderFacts = {
-    sizeOfHeaders: headers.headerSize,
-    sectionAlignment: headers.sectionAlignment,
-    fileAlignment: headers.fileAlignment,
-    sections: readSections(headers.sectionTable),
+    sizeOfHeaders: image.pe_size_of_headers,
+    sectionAlignment: image.pe_section_alignment,
+    fileAlignment: image.pe_file_alignment,
+    sections: overlaySections(image.sections),
   };
   const layout = computePeOverlay(
     facts,
     bytes.length,
-    headers.dataDirectories[4],
+    image.pe_data_directories[4],
   );
   return {
     artifact,
-    format: headers.format,
-    machine: headers.machine,
+    format: image.bits === 64 ? "pe32-plus" : "pe32",
+    machine: image.pe_machine,
     size_of_headers: layout.size_of_headers,
     image_end: layout.image_end,
     file_size: layout.file_size,

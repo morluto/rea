@@ -95,13 +95,15 @@ export const isUnbackedTextDyldFailure = (
 export const parseDyldFileTypeRefusal = (
   capture: NativeCommandCapture,
 ): {
-  readonly fileType: "3" | "4";
+  readonly fileType: 3 | 4;
   readonly diagnostic: string;
 } | null => {
   const diagnostic = dyldFailureDiagnostic(capture);
   if (diagnostic === null) return null;
-  const fileType = /^unknown (?:mh\.)?filetype ([34])$/u.exec(diagnostic)?.[1];
-  return fileType === "3" || fileType === "4" ? { fileType, diagnostic } : null;
+  const fileType = Number(
+    /^unknown (?:mh\.)?filetype ([34])$/u.exec(diagnostic)?.[1],
+  );
+  return fileType === 3 || fileType === 4 ? { fileType, diagnostic } : null;
 };
 
 /** Complete captures come from the settled native command owner. */

@@ -21,6 +21,7 @@ import {
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 import {
   combineRelationshipDiscovery,
+  withRequiredLimitedDirections,
   type RelationshipCoverage,
   type RelationshipDiscoveryStatus,
 } from "../domain/relationshipCoverage.js";
@@ -36,6 +37,8 @@ export interface CallPathTraceInput {
   readonly start: string;
   readonly goal?: string | undefined;
   readonly direction: CallRelationshipDirection;
+  readonly max_depth?: number | undefined;
+  readonly max_nodes?: number | undefined;
 }
 
 interface TraceNode {
@@ -96,22 +99,50 @@ export const traceCallPath = async (
     if (!resolved.ok) return resolved;
     goal = resolved.value;
   }
-  const resolvedInput = {
+  const resolvedInput: CallPathTraceInput = {
     start: start.value,
     ...(goal === undefined ? {} : { goal }),
     direction: input.direction,
+    ...(input.max_depth === undefined ? {} : { max_depth: input.max_depth }),
+    ...(input.max_nodes === undefined ? {} : { max_nodes: input.max_nodes }),
   };
   if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
   const state = createTraceState(resolvedInput);
+  let expandedNodes = 0;
+  let depthLimited = false;
   while (
     state.queueIndex < state.queue.length &&
     state.traversalPath.length === 0
   ) {
     if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
-    const address = state.queue[state.queueIndex++];
+    const address = state.queue[state.queueIndex];
     if (address === undefined) break;
     const current = state.visited.get(address);
-    if (current === undefined) continue;
+    if (current === undefined) {
+      state.queueIndex += 1;
+      continue;
+    }
+    if (
+      resolvedInput.max_depth !== undefined &&
+      current.depth >= resolvedInput.max_depth
+    ) {
+      depthLimited = true;
+      state.queueIndex += 1;
+      continue;
+    }
+    if (
+      resolvedInput.max_nodes !== undefined &&
+      expandedNodes >= resolvedInput.max_nodes
+    ) {
+      const remaining = state.queue.length - state.queueIndex;
+      state.discovery = "partial";
+      state.residual.add(
+        `Call path traversal stopped at caller-selected max_nodes ${String(resolvedInput.max_nodes)} with ${String(remaining)} queued procedure(s) unexpanded. Raise or omit max_nodes to search further.`,
+      );
+      break;
+    }
+    state.queueIndex += 1;
+    expandedNodes += 1;
     const expanded = await expandAddress(callRelationship, {
       input: resolvedInput,
       state,
@@ -130,6 +161,16 @@ export const traceCallPath = async (
       );
     }
     if (expanded.value) break;
+  }
+  if (
+    depthLimited &&
+    state.traversalPath.length === 0 &&
+    resolvedInput.max_depth !== undefined
+  ) {
+    state.discovery = "partial";
+    state.residual.add(
+      `Call path traversal stopped at caller-selected max_depth ${String(resolvedInput.max_depth)}; deeper call relationships were not expanded. Raise or omit max_depth to search further.`,
+    );
   }
   if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
   return ok(projectTrace(resolvedInput, state));
@@ -189,10 +230,18 @@ const expandAddress = async (
   const { execution, related } = read;
   for (const limitation of execution.limitations)
     state.limitations.add(limitation);
-  const coverage = execution.relationshipCoverage ?? {
-    status: "unknown",
-    reason: "Provider did not report relationship coverage.",
-  };
+  const directionFallback =
+    relation === "callers" ? (["callers"] as const) : (["callees"] as const);
+  const coverage: RelationshipCoverage =
+    execution.relationshipCoverage === undefined
+      ? {
+          status: "unknown",
+          reason: "Provider did not report relationship coverage.",
+          limited_directions: [...directionFallback],
+        }
+      : withRequiredLimitedDirections(execution.relationshipCoverage, [
+          ...directionFallback,
+        ]);
   state.relationshipCoverage.set(address, coverage);
   state.discovery = combineRelationshipDiscovery(
     state.discovery,

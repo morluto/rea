@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../tests/support/expectResultValue.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { describe, expect, it } from "vitest";
 
@@ -33,7 +34,9 @@ describe("TOML configuration source capacity", () => {
           "\n",
           newline,
         );
-      const parsed = parseClientConfiguration(original, "toml");
+      const parsed = expectResultValue(
+        parseClientConfiguration(original, "toml"),
+      );
       const desired = withClientServers(
         parsed,
         {
@@ -46,9 +49,10 @@ describe("TOML configuration source capacity", () => {
       expect(
         configured.startsWith("\uFEFF" + prefix.replaceAll("\n", newline)),
       ).toBe(true);
-      expect(parseClientConfiguration(configured, "toml").document).toEqual(
-        desired,
-      );
+      expect(
+        expectResultValue(parseClientConfiguration(configured, "toml"))
+          .document,
+      ).toEqual(desired);
       const removed = serializedText(
         withClientServers(parsed, {}, HOST_PLATFORM.platform),
         "toml",
@@ -56,16 +60,18 @@ describe("TOML configuration source capacity", () => {
       );
       const expectedForeignDocument = { ...parsed.document };
       delete expectedForeignDocument.mcp_servers;
-      expect(parseClientConfiguration(removed, "toml").document).toEqual(
-        expectedForeignDocument,
-      );
+      expect(
+        expectResultValue(parseClientConfiguration(removed, "toml")).document,
+      ).toEqual(expectedForeignDocument);
     },
   );
 
   it("retains a large multiline foreign value inside an inline server table", () => {
     const note = `first\n${"x\n".repeat(500_000)}last`;
     const original = `mcp_servers = { other = {command="other",env={NOTE="""${note}"""}}}\n`;
-    const parsed = parseClientConfiguration(original, "toml");
+    const parsed = expectResultValue(
+      parseClientConfiguration(original, "toml"),
+    );
     const desired = withClientServers(
       parsed,
       {
@@ -76,14 +82,14 @@ describe("TOML configuration source capacity", () => {
     );
     const configured = serializedText(desired, "toml", original);
     expect(configured).toContain(`NOTE="""${note}"""`);
-    expect(parseClientConfiguration(configured, "toml").document).toEqual(
-      desired,
-    );
+    expect(
+      expectResultValue(parseClientConfiguration(configured, "toml")).document,
+    ).toEqual(desired);
     const removed = serializedText(parsed.document, "toml", configured);
     expect(removed).toContain(`NOTE="""${note}"""`);
-    expect(parseClientConfiguration(removed, "toml").document).toEqual(
-      parsed.document,
-    );
+    expect(
+      expectResultValue(parseClientConfiguration(removed, "toml")).document,
+    ).toEqual(parsed.document);
   });
 
   it("removes only REA from a large multiline Grok disabled-server list", () => {
@@ -91,7 +97,9 @@ describe("TOML configuration source capacity", () => {
     const original =
       `disabled_mcp_servers = [\n"rea",\n${otherNames}]\n` +
       '[mcp_servers.other]\ncommand = "other"\n';
-    const parsed = parseClientConfiguration(original, "grok");
+    const parsed = expectResultValue(
+      parseClientConfiguration(original, "grok"),
+    );
     const desired = withClientServers(
       parsed,
       {
@@ -101,7 +109,9 @@ describe("TOML configuration source capacity", () => {
       HOST_PLATFORM.platform,
     );
     const configured = serializedText(desired, "grok", original);
-    const result = parseClientConfiguration(configured, "grok");
+    const result = expectResultValue(
+      parseClientConfiguration(configured, "grok"),
+    );
     expect(result.document.disabled_mcp_servers).toEqual(
       Array<string>(500_000).fill("other"),
     );

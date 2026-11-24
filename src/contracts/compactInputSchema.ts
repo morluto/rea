@@ -1,9 +1,13 @@
-import { advertisedInputDialectViolations } from "./advertisedDialect.js";
+import {
+  ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  hasAdvertisedInputDialectViolation,
+} from "./advertisedDialect.js";
 import { projectToAdvertisedDialect } from "./advertisedDialectProjection.js";
 import {
   COMPACT_SCHEMA_MAX_DEPTH,
   inlineWithinBudget,
   isSchemaObject,
+  pruneSchemaBeyondDepth,
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
@@ -62,12 +66,6 @@ const retainRootPropertyGuidance = (
   return properties === undefined ? stripped : { ...stripped, properties };
 };
 
-const withinDialect = (schema: Record<string, unknown>): boolean =>
-  advertisedInputDialectViolations({
-    name: "input",
-    inputSchema: schema,
-  }).length === 0;
-
 /**
  * Render an advertised input schema within a per-schema byte budget for
  * providers that validate the literal serialized schema size. The complete
@@ -93,9 +91,29 @@ export const compactAdvertisedInputSchema = (
     inline !== undefined &&
     serializedBytes(inline.schema) <= budgetBytes &&
     schemaDepth(inline.schema) <= COMPACT_SCHEMA_MAX_DEPTH &&
-    withinDialect(inline.schema)
+    !hasAdvertisedInputDialectViolation(inline.schema, {
+      skipRootBounds: budgetBytes <= ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    })
   )
     return { ...inline, presentation: "inline" };
+  if (inline !== undefined && serializedBytes(inline.schema) <= budgetBytes) {
+    // Only the branches past the depth limit are elided; the rest of the
+    // validation structure stays advertised instead of a whole reduction.
+    const pruned = pruneSchemaBeyondDepth(inline.schema);
+    if (
+      pruned !== undefined &&
+      serializedBytes(pruned) <= budgetBytes &&
+      schemaDepth(pruned) <= COMPACT_SCHEMA_MAX_DEPTH &&
+      !hasAdvertisedInputDialectViolation(pruned, {
+        skipRootBounds: budgetBytes <= ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+      })
+    )
+      return {
+        schema: pruned,
+        guidance: inline.guidance,
+        presentation: "inline",
+      };
+  }
   const reduced = projectToAdvertisedDialect(
     reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION, references),
   );

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
@@ -48,7 +50,9 @@ export const inspectPeCertificatesInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_PE_CERTIFICATE_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
   max_entries: z
     .number()
     .int()
@@ -136,6 +140,7 @@ export const peCertificatesSchema = z.strictObject({
   }),
   format: z.enum(["pe32", "pe32-plus"]),
   machine: uint,
+  image_base: peImageBaseSchema,
   table: z
     .strictObject({
       location: range,
@@ -148,6 +153,8 @@ export const peCertificatesSchema = z.strictObject({
     examined_entries: uint,
     certificates: uint,
   }),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string()),
 });
 

@@ -17,7 +17,10 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { parsePeCertificates } from "./PeCertificateParser.js";
+import {
+  parsePeCertificates,
+  parsePeCertificatesFromHandle,
+} from "./PeCertificateParser.js";
 
 // Independent boundary examples: changing an allowance requires reviewing
 // both the admitted and rejected certificate shapes.
@@ -41,6 +44,20 @@ const parse = (bytes: Buffer) =>
     },
     defaults,
   );
+
+/** The certificate table parser's own refusal, with its parsed facts. */
+const tableFailure = (
+  kind: "malformed" | "truncated" | "unsupported",
+  detail: RegExp,
+) =>
+  expect.objectContaining({
+    name: "ParseFailureError",
+    failure: expect.objectContaining({
+      kind,
+      format: "pe-certificate-table",
+      detail: expect.stringMatching(detail),
+    }),
+  });
 
 it("reads PE32 and PE32+ PKCS#7 certificate tables", () => {
   for (const plus of [false, true]) {
@@ -74,6 +91,52 @@ it("reads PE32 and PE32+ PKCS#7 certificate tables", () => {
       certificates: 1,
     });
   }
+});
+
+it("reads distant PE headers and certificates without reading the intervening image", async () => {
+  const fixture = peCertificateFixture(true);
+  const peAt = 0x4000;
+  const headersEnd = peAt + 0x180;
+  const tableAt = 2 * 1024 * 1024;
+  const table = fixture.subarray(0x200);
+  const bytes = Buffer.alloc(tableAt + table.length);
+  fixture.copy(bytes, 0, 0, 0x80);
+  fixture.copy(bytes, peAt, 0x80, 0x200);
+  table.copy(bytes, tableAt);
+  bytes.writeUInt32LE(peAt, 60);
+  bytes.writeUInt32LE(headersEnd, peAt + 24 + 60);
+  bytes.writeUInt32LE(tableAt, peAt + 24 + 112 + 4 * 8);
+
+  const buffered = parse(bytes);
+  expect(buffered.entries).toHaveLength(1);
+  expect(buffered.table?.location).toEqual({
+    offset: tableAt,
+    bytes: table.length,
+  });
+  const reads: { offset: number; length: number }[] = [];
+  const streamed = await parsePeCertificatesFromHandle(
+    {
+      sha256: buffered.artifact.sha256,
+      size: bytes.length,
+      prefix: bytes.subarray(0, 4096),
+      readRange: async (offset, length) => {
+        reads.push({ offset, length });
+        return bytes.subarray(offset, offset + length);
+      },
+    },
+    buffered.artifact,
+    defaults,
+  );
+  expect(streamed).toEqual(buffered);
+  expect(reads.slice(0, -1).length).toBeGreaterThan(0);
+  expect(
+    reads
+      .slice(0, -1)
+      .every(
+        ({ offset, length }) => offset >= peAt && offset + length <= headersEnd,
+      ),
+  ).toBe(true);
+  expect(reads.at(-1)).toEqual({ offset: tableAt, length: table.length });
 });
 
 it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
@@ -150,7 +213,13 @@ it("names the declared range when the certificate table leaves the file", () => 
   const size = bytes.readUInt32LE(directoryAt + 4);
   bytes.writeUInt32LE(size + 8, directoryAt + 4);
   expect(() => parse(bytes)).toThrow(
-    `PE certificate table range leaves the artifact. Declared range: offset 512, size ${String(size + 8)}.`,
+    tableFailure(
+      "truncated",
+      new RegExp(
+        `PE certificate table range leaves the artifact\\. Declared range: offset 512, size ${String(size + 8)}\\.`,
+        "u",
+      ),
+    ),
   );
 });
 
@@ -207,7 +276,7 @@ it.each([false, true])(
           // alignment range extends beyond the declared table.
           expect(length).toBeLessThanOrEqual(tableSize - missing);
           expect(() => parse(truncated)).toThrow(
-            expect.objectContaining({ reason: "format" }),
+            tableFailure("truncated", /alignment padding is truncated/u),
           );
         }
       }
@@ -381,7 +450,9 @@ it("fails truncated WIN_CERTIFICATE payloads without partial success", () => {
   const bytes = peCertificateFixture();
   const tableOffset = bytes.readUInt32LE(0x80 + 24 + 96 + 32);
   bytes.writeUInt32LE(4, tableOffset);
-  expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  expect(() => parse(bytes)).toThrow(
+    tableFailure("malformed", /dwLength is shorter than its header/u),
+  );
 
   const overlong = peCertificateFixture();
   const overlongTableOffset = overlong.readUInt32LE(securityDirectoryAt);
@@ -392,14 +463,14 @@ it("fails truncated WIN_CERTIFICATE payloads without partial success", () => {
   );
 });
 
-it("rejects short and unaligned security directory sizes instead of reporting it complete", () => {
+it("rejects short and unaligned security directory sizes as truncated entries", () => {
   for (const size of [4, 7]) {
     const bytes = peCertificateFixture();
     const tableOffset = bytes.readUInt32LE(securityDirectoryAt);
     bytes.writeUInt32LE(size, securityDirectoryAt + 4);
     bytes.fill(0, tableOffset, tableOffset + size);
     expect(() => parse(bytes)).toThrow(
-      /size must fit a WIN_CERTIFICATE header and be a multiple of eight bytes/u,
+      tableFailure("truncated", /header is truncated/u),
     );
   }
   const bytes = peCertificateFixture();
@@ -409,13 +480,15 @@ it("rejects short and unaligned security directory sizes instead of reporting it
   extended.writeUInt32LE(tableSize + 4, securityDirectoryAt + 4);
   expect(extended.readUInt32LE(tableOffset)).toBeGreaterThan(0);
   expect(() => parse(extended)).toThrow(
-    /size must fit a WIN_CERTIFICATE header and be a multiple of eight bytes/u,
+    tableFailure("truncated", /header is truncated/u),
   );
 });
 
 it("fails PKCS#7 payloads that are not signedData", () => {
   const bytes = peCertificateFixture(false, Buffer.from("not-pkcs7"), 0x0002);
-  expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  expect(() => parse(bytes)).toThrow(
+    tableFailure("malformed", /PKCS#7 signedData is malformed/u),
+  );
 });
 
 it("keeps unknown certificate types as payload hashes without PKCS#7 projection", () => {
@@ -1162,6 +1235,7 @@ it("accepts only RFC 5280 UTC validity instants", () => {
   // UTCTime 00 is 2000, a leap year; GeneralizedTime carries 2050 onward.
   for (const [tag, time] of [
     [0x17, "000229235959Z"],
+    [0x17, "240229000000Z"],
     [0x18, "20500101000000Z"],
   ] as const)
     expect(
@@ -1184,10 +1258,24 @@ it.each([
     expect(() => parseCertificate(certificate)).toThrow(
       new PeCertificateAsn1Failure(
         `Unsupported certificate name encoding (DER tag 0x${tag.toString(16).padStart(2, "0")}).`,
+        null,
+        true,
       ),
     );
   },
 );
+
+// A DER form outside the decoder's coverage is not evidence of corrupt bytes:
+// the table reports it as unsupported, so a valid future file is never
+// blamed as malformed.
+it("refuses an unimplemented certificate name form as unsupported", () => {
+  const payload = pkcs7SignedDataFixture(undefined, undefined, undefined, [], {
+    subject: directoryName(der(0x1b, Buffer.from("name"))),
+  });
+  expect(() => parse(peCertificateFixture(false, payload))).toThrow(
+    tableFailure("unsupported", /Unsupported certificate name encoding/u),
+  );
+});
 
 it("decodes BMPString names once and shares the decoded-byte budget", () => {
   const bmp = (text: string) => {
@@ -1273,11 +1361,15 @@ it("decodes UniversalString names as UTF-32BE", () => {
   );
 });
 
-it.each([0xd800, 0xdfff])(
-  "rejects BMPString surrogate code unit %i in certificate names",
-  (codeUnit) => {
-    const content = Buffer.alloc(2);
-    content.writeUInt16BE(codeUnit);
+it.each([
+  { units: [0xd800] },
+  { units: [0xdfff] },
+  { units: [0xd800, 0xdc00] },
+])(
+  "rejects BMPString surrogate code units $units in certificate names",
+  ({ units }) => {
+    const content = Buffer.alloc(units.length * 2);
+    units.forEach((unit, index) => content.writeUInt16BE(unit, index * 2));
     const certificate = readAsn1(
       namedCertificate(
         directoryName(der(0x1e, content)),

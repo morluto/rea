@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createPeOverlayService } from "../../../src/composition/binaryDiagnostics.js";
+import { createPeOverlayService } from "../../../src/composition/binaryDiagnostics/peOverlay.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { peOverlayImage } from "../../../src/native/pe/PeOverlay.fixture.js";
@@ -18,10 +18,17 @@ describe("PE overlay stable filesystem boundary", () => {
     await writeFile(malformed, Buffer.from("not a pe"));
     await symlink(path, alias);
     const service = createPeOverlayService();
+    const malformedResult = await service.inspect({ path: malformed });
+    if (malformedResult.ok)
+      throw new Error("Expected malformed target refusal");
+    expect(malformedResult.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_pe_overlay",
+      path: malformed,
+    });
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.exe"), "invalid_value"],
       [join(path, "child.exe"), "invalid_value"],
     ] as const) {

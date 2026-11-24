@@ -2,8 +2,12 @@ import { StateRecordChronology } from "./StateRecordChronology.js";
 import { jsonByteLength } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
-import { environmentEntityKey } from "./environmentStateIdentity.js";
 import {
+  environmentCollectionKey,
+  environmentEntityKey,
+} from "./environmentStateIdentity.js";
+import {
+  succeeded,
   ownMember,
   apiBaseLengths,
   at,
@@ -406,9 +410,7 @@ export class EnvironmentStateExtraction {
       .filter(
         (record): record is StateRecordFacts =>
           record !== undefined &&
-          record.status !== null &&
-          record.status >= 200 &&
-          record.status < 300 &&
+          succeeded(record) &&
           this.#beforeInitLimit(record, limit),
       )
       .sort(
@@ -474,13 +476,7 @@ export class EnvironmentStateExtraction {
     if (limit === undefined) return { laterFields: names };
     for (const ordinal of tool.record_ordinals) {
       const record = this.#byOrdinal.get(ordinal);
-      if (
-        record === undefined ||
-        record.status === null ||
-        record.status < 200 ||
-        record.status >= 300
-      )
-        continue;
+      if (record === undefined || !succeeded(record)) continue;
       // Any read may show the soft-delete flag; only plain later reads add fields.
       const later =
         (record.query ?? "") === "" && !this.#beforeInitLimit(record, limit);
@@ -523,9 +519,7 @@ export class EnvironmentStateExtraction {
       const record = this.#byOrdinal.get(ordinal);
       if (
         record === undefined ||
-        record.status === null ||
-        record.status < 200 ||
-        record.status >= 300 ||
+        !succeeded(record) ||
         this.#beforeInitLimit(record, limit)
       )
         continue;
@@ -864,13 +858,15 @@ export class EnvironmentStateExtraction {
       // List serving selects live entities; item observations retain deleted entities separately.
       for (const entity of this.#merged.values()) {
         if (markedDeleted(entity.fields)) continue;
-        const key = JSON.stringify([entity.type, entity.collection]);
+        const key = environmentCollectionKey(entity.type, entity.collection);
         const members = this.#collections.get(key);
         if (members === undefined) this.#collections.set(key, [entity]);
         else members.push(entity);
       }
     }
-    return this.#collections.get(JSON.stringify([type, collection])) ?? [];
+    return (
+      this.#collections.get(environmentCollectionKey(type, collection)) ?? []
+    );
   }
 
   /** A list tool without a plan or recorded reason holds one document value: its latest init recording, under one request line. */

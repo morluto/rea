@@ -11,7 +11,7 @@ import {
   type PeOverlaySectionInput,
 } from "../../domain/native/peOverlay.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
-import { readPeImageHeaders } from "../../domain/pe/peImageHeaders.js";
+import { readPeImage } from "../../domain/native/peImage.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { peCertificateFixture } from "./PeCertificates.fixture.js";
 import {
@@ -508,9 +508,9 @@ describe("parsePeOverlay raw extents", () => {
       fileAlignment: 0x20,
       sections: [{ virtualAddress: 0x220, rawOffset: 0x220, rawSize: 0x20 }],
     });
-    expect(readPeImageHeaders(low)).toMatchObject({
-      sectionAlignment: 0x20,
-      fileAlignment: 0x20,
+    expect(readPeImage(low, "headers")).toMatchObject({
+      pe_section_alignment: 0x20,
+      pe_file_alignment: 0x20,
     });
     expect(parse(low).raw_pointer_rounding.alignment).toBe(1);
     const mismatched = peOverlayImage({
@@ -518,9 +518,9 @@ describe("parsePeOverlay raw extents", () => {
       fileAlignment: 0x40,
       sections: [{ virtualAddress: 0x220, rawOffset: 0x220, rawSize: 0x20 }],
     });
-    expect(readPeImageHeaders(mismatched)).toMatchObject({
-      sectionAlignment: 0x20,
-      fileAlignment: 0x40,
+    expect(readPeImage(mismatched, "headers")).toMatchObject({
+      pe_section_alignment: 0x20,
+      pe_file_alignment: 0x40,
     });
     expect(parse(mismatched)).toMatchObject({
       raw_pointer_rounding: { alignment: 512, direction: "down" },

@@ -65,6 +65,15 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "fit",
   "ntfs-mft",
   "plist",
+  "tar",
+  "dds",
+  "glb",
+  "ktx",
+  "ktx2",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
 ] as const;
 export type PeOverlayLeadingFormat =
   (typeof PE_OVERLAY_LEADING_FORMATS)[number];
