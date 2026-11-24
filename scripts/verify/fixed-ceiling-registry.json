@@ -603,5 +603,22 @@
       "issue": 14237,
       "reason": "SQLite worker diagnostic capture is a producer budget."
     }
+  },
+  "src/unreal/UnrealPakProvider.ts": {
+    "`The Unreal pak entry allowance of ${String(ENTRIES)} entries (this release has no runtime override)`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Unreal pak entry, index-region and complete-report allowances are resource policies, not Unreal pak format maxima."
+    },
+    "`The Unreal pak index-region allowance of ${String(REGION_BYTES)} bytes (this release has no runtime override)`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Unreal pak entry, index-region and complete-report allowances are resource policies, not Unreal pak format maxima."
+    },
+    "`The Unreal pak complete-report allowance of ${String(maximumBytes)} bytes (this release has no runtime override)`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Unreal pak entry, index-region and complete-report allowances are resource policies, not Unreal pak format maxima."
+    }
   }
 }
