@@ -86,6 +86,55 @@ export type HeaderArchitecture = Exclude<
   (typeof HEADER_ARCHITECTURE_EXCLUSIONS)[number]
 >;
 
+/** Typed declaration-inspection limitation; consumers switch on `kind`, never prose. */
+export type MipsElfLimitation =
+  | {
+      readonly kind: "truncated_section_table";
+      readonly offset: number;
+      readonly examined: number;
+      readonly declared: number;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "unexamined_declarations";
+      readonly message: string;
+    };
+
+/** Extract human-readable messages from typed MIPS ELF inspection limitations. */
+export const mipsLimitationMessages = (
+  limitations?: readonly MipsElfLimitation[],
+): readonly string[] =>
+  (limitations ?? []).map((limitation) => limitation.message);
+
+const MIPS_ET_EXEC = 2;
+const MIPS_ARCH_1 = 0x00000000;
+const MIPS_ARCH_32 = 0x50000000;
+const MIPS_ARCH_32R2 = 0x70000000;
+
+/**
+ * Whether an ELF header has the recordless legacy ELF32 MIPS ET_EXEC shape:
+ * MIPS-I / MIPS32 / MIPS32r2 with no declared ABI field or 64-bit-mode bit.
+ * Does not by itself establish lane admission (ABI flags, GNU attributes,
+ * ASE/machine flags, and limitations are checked by the provider profile).
+ */
+export const isRecordlessLegacyMipsExecHeader = (
+  metadata: ElfFamilyMetadata,
+): boolean => {
+  const { flags } = metadata;
+  const arch = flags & 0xf0000000;
+  return (
+    metadata.elfClass === 32 &&
+    metadata.type === MIPS_ET_EXEC &&
+    (arch === MIPS_ARCH_1 ||
+      arch === MIPS_ARCH_32 ||
+      arch === MIPS_ARCH_32R2) &&
+    (flags & 0x0000f000) === 0 &&
+    (flags & 0x20) === 0 &&
+    (flags & 0x40) === 0 &&
+    (flags & 0x100) === 0
+  );
+};
+
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
 export interface MipsElfMetadata extends ElfFamilyMetadata {
   /** Undefined until inspected; null means no ABI record was observed. */
@@ -93,7 +142,7 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
   /** Undefined until inspected; null means no GNU attribute section was observed. */
   readonly gnuAttributes?: MipsGnuAttributes | null;
   /** Unavailable declaration sources; missing records there remain unknown. */
-  readonly limitations?: readonly string[];
+  readonly limitations?: readonly MipsElfLimitation[];
   /** Complete dynamic REL declarations, or the reason they could not be inspected. */
   readonly sharedLoad?:
     | {

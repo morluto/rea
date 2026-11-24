@@ -28,6 +28,7 @@ import {
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
 import {
+  isRecordlessLegacyMipsExecHeader,
   PE_CODEVIEW_PREFIX_BYTES,
   type PeCodeViewRecord,
   type UniversalMachOSlice,
@@ -237,10 +238,14 @@ const readElfMetadata = async (
   const { fileSize, hostArchitecture, signal } = options;
   const parsed = parseExecutableHeader(bytes, hostArchitecture, fileSize);
   if (!parsed.ok || parsed.value.format !== "elf") return parsed;
+  const isMips32 =
+    parsed.value.architecture === "mips" && parsed.value.mips.elfClass === 32;
   const ranges = await readElfDeclarations(
     handle,
     bytes,
-    validateElfDeclaredRanges(bytes, fileSize),
+    validateElfDeclaredRanges(bytes, fileSize, {
+      sectionRanges: isMips32 ? "observe" : "strict",
+    }),
     signal,
   );
   if (!ranges.ok) return ranges;
@@ -258,14 +263,21 @@ const readElfMetadata = async (
         ),
       },
     });
-  if (parsed.value.architecture !== "mips" || parsed.value.mips.elfClass !== 32)
-    return parsed;
+  if (!isMips32) return parsed;
   const declarations = await readMipsElfMetadata(
     handle,
     parsed.value.mips,
     () => throwIfTargetResolutionCancelled(signal),
   );
   if (!declarations.ok) return declarations;
+  const { sectionTruncation } = ranges.value;
+  if (sectionTruncation !== undefined) {
+    const admitsTruncatedSectionTable =
+      sectionTruncation.kind === "truncated_section_table" &&
+      isRecordlessLegacyMipsExecHeader(parsed.value.mips) &&
+      declarations.value.abiFlags === null;
+    if (!admitsTruncatedSectionTable) return err(sectionTruncation.reason);
+  }
   return ok({
     ...parsed.value,
     mips: {

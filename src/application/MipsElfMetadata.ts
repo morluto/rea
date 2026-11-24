@@ -11,10 +11,12 @@ import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.j
 import { isElfRelocationSectionType } from "../domain/elfRelocation.js";
 import type { FileHandle } from "node:fs/promises";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import type {
-  MipsAbiFlags,
-  MipsElfMetadata,
-  MipsGnuAttributes,
+import {
+  mipsLimitationMessages,
+  type MipsAbiFlags,
+  type MipsElfLimitation,
+  type MipsElfMetadata,
+  type MipsGnuAttributes,
 } from "../domain/binaryTargetTypes.js";
 import {
   elfFixedHeaderWidth,
@@ -34,7 +36,7 @@ const MIPS_GNU_ATTRIBUTES_MAX_BYTES = 4096;
 export interface MipsElfInspection {
   readonly abiFlags: MipsAbiFlags | null;
   readonly gnuAttributes: MipsGnuAttributes | null;
-  readonly limitations: readonly string[];
+  readonly limitations: readonly MipsElfLimitation[];
   readonly sharedLoad?: MipsElfMetadata["sharedLoad"];
 }
 
@@ -137,7 +139,7 @@ export const readMipsElfMetadata = async (
   let sharedLoad: MipsElfMetadata["sharedLoad"];
   let programHeaders: ElfProgramHeader[] | undefined;
   const relocationSections: MipsElfRelocationSection[] = [];
-  const limitations: string[] = [];
+  const limitations: MipsElfLimitation[] = [];
   let gnuAttributes: MipsGnuAttributes | null = null;
   for (const table of tables) {
     if (table.count === 0) {
@@ -154,9 +156,13 @@ export const readMipsElfMetadata = async (
         )
       : table.count;
     if (count < table.count)
-      limitations.push(
-        `MIPS ${table.label} at file offset ${table.offset} extends beyond the captured file: examined ${count} of ${table.count} complete headers. ABI declarations in unavailable headers remain unknown.`,
-      );
+      limitations.push({
+        kind: "truncated_section_table",
+        offset: table.offset,
+        examined: count,
+        declared: table.count,
+        message: `MIPS ${table.label} at file offset ${table.offset} extends beyond the captured file: examined ${count} of ${table.count} complete headers. ABI declarations in unavailable headers remain unknown.`,
+      });
     if (count === 0) continue;
     // Counts are bounded by the ELF16 fields and strides by their exact ELF32
     // structure sizes. Never allocate according to an untrusted section size.
@@ -243,7 +249,7 @@ export const readMipsElfMetadata = async (
     if (limitations.length > 0)
       sharedLoad = {
         status: "unavailable",
-        reason: `MIPS shared-image relocation declaration sources are incomplete. ${limitations.join(" ")}`,
+        reason: `MIPS shared-image relocation declaration sources are incomplete. ${mipsLimitationMessages(limitations).join(" ")}`,
       };
     else {
       const shared = await readMipsElfSharedLoad(
