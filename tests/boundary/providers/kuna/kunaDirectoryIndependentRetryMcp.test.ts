@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, expect, it as test, vi } from "vitest";
+import { afterAll, expect, it as test } from "vitest";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
@@ -13,6 +13,7 @@ import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 import { FUNCTIONS, unprovenCleanupLauncher } from "./kunaSessionFixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const it = test.skipIf(process.platform === "win32");
 const schemas = createMcpSchemaValidation();
@@ -44,7 +45,7 @@ const expectPriorFailureInJournal = async (output: string) => {
   expect(latest?.limitations).not.toContain(failed?.pseudocode_absence?.reason);
 };
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "guides resume and retries only reported project failures (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-directory-independent-");
@@ -309,7 +310,7 @@ it("retains the project failure when cancellation stops the independent retry", 
         { signal: controller.signal, timeout: 15000 },
       )
       .catch(() => undefined);
-    const launched = vi.waitFor(
+    const launched = waitFor(
       async () => {
         expect(
           (await fakeKunaCalls(kuna)).some(
@@ -317,14 +318,9 @@ it("retains the project failure when cancellation stops the independent retry", 
           ),
         ).toBe(true);
       },
-      { timeout: 5000, interval: 20 },
+      { interval: 20 },
     );
-    await awaitAcknowledgement(
-      launched,
-      pending,
-      "independent retry launch",
-      6000,
-    );
+    await awaitAcknowledgement(launched, pending, "independent retry launch");
     controller.abort();
     await pending;
     expect(

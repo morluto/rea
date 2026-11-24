@@ -1,3 +1,5 @@
+import { boundedList } from "../boundedList.js";
+import { ellipsisExcerpt } from "../excerpt.js";
 import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
@@ -35,6 +37,7 @@ import {
 import { diffNamedMembers, diffStateViews } from "./stateChanges.js";
 import { DRAFT_VIEW_CHARS } from "./valueCuts.js";
 import { resolvePointer } from "./viewPointer.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -52,11 +55,6 @@ const versions = (baseline: Version, final: Version) => ({
   final: final.view,
 });
 
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** A JSON value cut to a size an agent can read, and whether anything was cut. */
 const bounded = (
   value: JsonValue | null,
@@ -65,17 +63,18 @@ const bounded = (
   const visit = (node: JsonValue): JsonValue => {
     if (typeof node === "string" && node.length > MAX_CHARS) {
       cut = true;
-      return `${node.slice(0, MAX_CHARS)}…`;
+      return ellipsisExcerpt(node, MAX_CHARS);
     }
     if (Array.isArray(node)) {
-      cut ||= node.length > MAX_ITEMS;
-      return node.slice(0, MAX_ITEMS).map(visit);
+      const kept = boundedList(node, MAX_ITEMS);
+      cut ||= kept.omitted > 0;
+      return kept.items.map(visit);
     }
     if (!isRecord(node)) return node;
-    const entries = Object.entries(node);
-    cut ||= entries.length > MAX_ITEMS;
+    const kept = boundedList(Object.entries(node), MAX_ITEMS);
+    cut ||= kept.omitted > 0;
     return Object.fromEntries(
-      entries.slice(0, MAX_ITEMS).map(([key, item]) => [key, visit(item)]),
+      kept.items.map(([key, item]) => [key, visit(item)]),
     );
   };
   return { value: value === null ? null : visit(value), cut };
@@ -355,6 +354,7 @@ const valueSuggestions = (
     valuesCut: cut,
     // The count guard sits outside the cap, as for XML.
     guards: [
+      // generation-cap: suggested checks an author picks among
       ...recordGuards(file, suggested.slice(0, MAX_SUGGESTIONS), ends, added),
       ...counts.guards,
     ],
@@ -402,6 +402,7 @@ const suggestedChecks = (
           : valueSuggestions(file, baseline, final, document);
   return {
     ...content,
+    // generation-cap: suggested checks an author picks among
     suggested: [...created, ...content.suggested].slice(0, MAX_SUGGESTIONS),
   };
 };
@@ -527,9 +528,11 @@ export const draftTaskFiles = (
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
       const drafted = path.role === role && !isLeftOut(home);
-      const draft: FileDraft = drafted
-        ? suggestedChecks(home, baseline, final, role === "document")
-        : { suggested: [], ...NO_VALUES };
+      const shape = changeShape(change, final);
+      const draft: FileDraft =
+        drafted && shape.kind !== "unreadable" && shape.kind !== "format"
+          ? suggestedChecks(home, baseline, final, role === "document")
+          : { suggested: [], ...NO_VALUES };
       return {
         file: home,
         role: path.role,
@@ -541,10 +544,7 @@ export const draftTaskFiles = (
         values_cut: draft.valuesCut,
         guards: draft.guards,
         notes: drafted
-          ? [
-              ...fileNotes(home, changeShape(change, final), draft.facts),
-              ...(draft.notes ?? []),
-            ]
+          ? [...fileNotes(home, shape, draft.facts), ...(draft.notes ?? [])]
           : [],
       };
     }),

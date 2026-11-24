@@ -1,6 +1,18 @@
-import { artifactOperationCause } from "./ArtifactFileOperation.js";
-import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
-import { Readable } from "node:stream";
+import { ParseFailureError } from "../domain/parseFailure.js";
+import {
+  artifactOperationCause,
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactTraversalOptions,
+  streamChunkToBuffer,
+  abortIfNeeded,
+  ArtifactResourceScope,
+} from "../resources/index.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { Transform, pipeline, type Readable } from "node:stream";
 import {
   parseInesLayout,
   type InesInventory,
@@ -9,31 +21,42 @@ import {
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
   RegularFileChangedError,
+  RegularFileOperationCancelled,
   assertStableRegularFileIdentity,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-} from "./ArtifactReader.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
-import { streamChunkToBuffer } from "./StreamBytes.js";
 
-export const INES_LIMITATION =
-  "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. NES 2.0 and UNIF are unsupported.";
+const CLASSIC_INES_LIMITATION =
+  "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. UNIF is unsupported.";
+const NES_2_LIMITATION =
+  "NES 2.0 file regions are observed; header mapper, nametable layout flags, RAM/NVRAM, timing, console and expansion-device values are declarations. Effective nametable wiring, mapper execution, CPU bank mappings, CHR-RAM contents, miscellaneous ROM boundaries, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. UNIF is unsupported.";
+
+/** Report the analysis limits of the selected iNES container format. */
+export const inesInventoryLimitation = (
+  header: InesInventory["header"],
+): string =>
+  header.format === "ines" ? CLASSIC_INES_LIMITATION : NES_2_LIMITATION;
 
 /** Actual concatenated bytes observed by the inventory's ordered region scan. */
 export type InesRegionScan = Omit<InesInventory["reconstruction"], "verified">;
+
+const regionReadFailure = (cause: unknown): ArtifactReaderFailure =>
+  cause instanceof ArtifactReaderFailure
+    ? cause
+    : new ArtifactReaderFailure("io", "Could not read iNES region", { cause });
 
 /** Read positional regions from a descriptor retained by the artifact resource scope. */
 export class InesArtifactReader implements ArtifactReader {
   readonly format = "ines" as const;
   readonly #entries = new Map<string, ArtifactEntry>();
+  readonly #scope = new ArtifactResourceScope();
+  readonly #lifecycle = new AbortController();
+  readonly #closedFailure = new ArtifactReaderFailure(
+    "unavailable",
+    "iNES reader is closed",
+  );
   #layout: InesLayout | undefined;
   #closed = false;
 
@@ -43,20 +66,28 @@ export class InesArtifactReader implements ArtifactReader {
     private readonly ownedSource?: OwnedFileHandle,
   ) {}
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
-    abortIfNeeded(signal);
-    await this.#verifySource(signal);
-    const prefix = await readFileHandlePrefix(this.source.handle, 16, () =>
-      abortIfNeeded(signal),
-    );
-    abortIfNeeded(signal);
-    // Concurrent source changes take precedence over malformed header diagnostics.
-    await this.#verifySource(signal);
-    const parsed = parseInesLayout(prefix, this.source.initial.size);
-    if (!parsed.ok) throw new ArtifactReaderFailure("format", parsed.error);
-    this.#layout = parsed.value;
-    this.#entries.clear();
-    for (const region of parsed.value.regions) {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
+    const layout = await this.#scope.run(async () => {
+      await this.#verifySource(signal);
+      const prefix = await readFileHandleRange(this.source.handle, 0, 16, () =>
+        abortIfNeeded(signal),
+      );
+      abortIfNeeded(signal);
+      // Concurrent source changes take precedence over malformed header diagnostics.
+      await this.#verifySource(signal);
+      const parsed = parseInesLayout(prefix, this.source.initial.size);
+      if (!parsed.ok)
+        throw new ArtifactReaderFailure("format", parsed.error.detail, {
+          cause: new ParseFailureError(parsed.error),
+        });
+      this.#layout = parsed.value;
+      this.#entries.clear();
+      return parsed.value;
+    });
+    for (const region of layout.regions) {
       this.#assertOpen(signal);
       const entry: ArtifactEntry = {
         path: region.path,
@@ -75,52 +106,113 @@ export class InesArtifactReader implements ArtifactReader {
       yield entry;
     }
     this.#assertOpen(signal);
+    // The regions tile the file: header, trainer, units and any trailing bytes.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    abortIfNeeded(signal);
+    return this.#scope.run(() => this.#openRegion(entry, signal));
+  }
+
+  async #openRegion(
+    entry: ArtifactEntry,
+    signal?: AbortSignal,
+  ): Promise<Readable> {
+    this.#assertOpen(signal);
     const produced = this.#entries.get(entry.adapterKey);
-    if (produced === undefined || !sameArtifactEntry(entry, produced))
-      throw new ArtifactReaderFailure(
-        "integrity",
-        "iNES region does not match this reader's inventory",
-      );
+    assertProducedEntry(
+      entry,
+      produced,
+      "iNES region does not match this reader's inventory",
+    );
     await this.#verifySource(signal);
+    this.#assertOpen(signal);
     const offset = produced.byteOffset;
     const size = produced.declaredSize;
     if (offset === null || size === null || size <= 0)
-      throw new ArtifactReaderFailure("integrity", "Invalid iNES region range");
-    const stream = readArtifactFileChunks(this.source.handle, {
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Invalid iNES region range",
+        { integrityCheck: "layout-consistency" },
+      );
+    const active = AbortSignal.any([
+      this.#lifecycle.signal,
+      ...(signal === undefined ? [] : [signal]),
+    ]);
+    const failure = (): ArtifactReaderFailure =>
+      this.#lifecycle.signal.aborted && active.reason === this.#closedFailure
+        ? this.#closedFailure
+        : new ArtifactReaderFailure("cancelled", "iNES region read cancelled", {
+            cause: active.reason,
+          });
+    const source = readFileHandleChunks(this.source.handle, {
       start: offset,
       end: offset + size - 1,
-      signal,
+      signal: active,
+      cancellationFailure: failure,
     });
-    const verify = () => this.#verifySource(signal);
-    return Readable.from(
-      (async function* () {
-        let bytes = 0;
+    // Transform destruction can precede an asynchronous final callback. Keep
+    // that descriptor validation admitted independently of stream retirement.
+    const verify = () =>
+      this.#scope.run(() => this.#verifySource(active, failure));
+    const assertActive = () => this.#assertOpen(active, failure);
+    let bytes = 0;
+    const output = new Transform({
+      destroy(cause, callback) {
+        callback(cause === null ? null : regionReadFailure(cause));
+      },
+      transform(raw: unknown, _encoding, callback) {
         try {
-          for await (const raw of stream) {
-            abortIfNeeded(signal);
-            const chunk = streamChunkToBuffer(raw);
-            bytes += chunk.length;
-            yield chunk;
-          }
+          assertActive();
+          const chunk = streamChunkToBuffer(raw);
+          bytes += chunk.length;
+          callback(null, chunk);
+        } catch (cause: unknown) {
+          callback(regionReadFailure(cause));
+        }
+      },
+      final(callback) {
+        void (async () => {
           if (bytes !== size)
             throw new ArtifactReaderFailure(
               "integrity",
               "Truncated iNES region",
+              { integrityCheck: "read-coverage" },
             );
           await verify();
-        } catch (cause: unknown) {
-          if (cause instanceof ArtifactReaderFailure) throw cause;
-          throw new ArtifactReaderFailure("io", "Could not read iNES region", {
-            cause,
-          });
-        }
-      })(),
-      { objectMode: false },
-    );
+        })().then(
+          () => callback(),
+          (cause: unknown) => callback(regionReadFailure(cause)),
+        );
+      },
+    });
+    output.on("error", () => undefined);
+    let producerComplete = false;
+    const onAbort = (): void => {
+      if (producerComplete && !output.destroyed) output.destroy(failure());
+    };
+    const retired = new Promise<void>((resolve) => {
+      output.once("close", () => {
+        active.removeEventListener("abort", onAbort);
+        resolve();
+      });
+    });
+    active.addEventListener("abort", onAbort, { once: true });
+    void this.#scope
+      .run(async () => {
+        await Promise.all([
+          new Promise<void>((resolve) => {
+            pipeline(source, output, () => {
+              producerComplete = true;
+              if (active.aborted) onAbort();
+              resolve();
+            });
+          }),
+          retired,
+        ]);
+      })
+      .catch((cause: unknown) => output.destroy(regionReadFailure(cause)));
+    return output;
   }
 
   /** Validate the completed region scan without rereading its payload. */
@@ -129,10 +221,26 @@ export class InesArtifactReader implements ArtifactReader {
     observed: InesRegionScan,
     signal?: AbortSignal,
   ): Promise<InesInventory> {
-    abortIfNeeded(signal);
+    return this.#scope.run(() =>
+      this.#verifyReconstruction(expectedSha256, observed, signal),
+    );
+  }
+
+  async #verifyReconstruction(
+    expectedSha256: string,
+    observed: InesRegionScan,
+    signal?: AbortSignal,
+  ): Promise<InesInventory> {
+    this.#assertOpen(signal);
     const layout = this.#layout;
     if (layout === undefined || this.#entries.size !== layout.regions.length)
-      throw new ArtifactReaderFailure("integrity", "Incomplete iNES inventory");
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Incomplete iNES inventory",
+        {
+          integrityCheck: "reconstruction",
+        },
+      );
     await this.#verifySource(signal);
     if (
       observed.region_order.length !== layout.regions.length ||
@@ -145,6 +253,7 @@ export class InesArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         "iNES reconstruction differs from the source",
+        { integrityCheck: "reconstruction" },
       );
     return {
       header: layout.header,
@@ -159,15 +268,20 @@ export class InesArtifactReader implements ArtifactReader {
     return [];
   }
 
-  close(): Promise<void> {
+  async close(): Promise<void> {
     // Inventory borrows its admitting scope's descriptor. Extraction owns its
     // separately opened descriptor and retains this reader if close fails.
     this.#closed = true;
-    return this.ownedSource?.close() ?? Promise.resolve();
+    this.#lifecycle.abort(this.#closedFailure);
+    await this.#scope.close();
+    await this.ownedSource?.close();
   }
 
-  async #verifySource(signal?: AbortSignal): Promise<void> {
-    this.#assertOpen(signal);
+  async #verifySource(
+    signal?: AbortSignal,
+    interruption?: () => ArtifactReaderFailure,
+  ): Promise<void> {
+    this.#assertOpen(signal, interruption);
     try {
       await assertStableRegularFileIdentity(
         this.source.handle,
@@ -176,21 +290,30 @@ export class InesArtifactReader implements ArtifactReader {
         { symlinks: "reject", ...(signal === undefined ? {} : { signal }) },
       );
     } catch (cause: unknown) {
+      if (
+        interruption !== undefined &&
+        cause instanceof RegularFileOperationCancelled
+      )
+        throw interruption();
       if (cause instanceof RegularFileChangedError)
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES source changed during reading",
-          { cause: cause.cause ?? cause },
+          { cause: cause.cause ?? cause, integrityCheck: "container-identity" },
         );
       throw artifactOperationCause(cause);
     }
     // State validation is asynchronous even after the final byte was consumed.
-    abortIfNeeded(signal);
+    this.#assertOpen(signal, interruption);
   }
 
-  #assertOpen(signal?: AbortSignal): void {
+  #assertOpen(
+    signal?: AbortSignal,
+    interruption?: () => ArtifactReaderFailure,
+  ): void {
+    if (signal?.aborted === true && interruption !== undefined)
+      throw interruption();
     abortIfNeeded(signal);
-    if (this.#closed)
-      throw new ArtifactReaderFailure("unavailable", "iNES reader is closed");
+    if (this.#closed) throw this.#closedFailure;
   }
 }

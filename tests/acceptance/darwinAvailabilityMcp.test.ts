@@ -3,10 +3,11 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
-import { z } from "incur";
+import { z } from "zod";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest.skipIf(process.platform !== "darwin")(
   "target-free MCP discovery survives an unavailable macOS compiler",
@@ -31,7 +32,10 @@ cliTest.skipIf(process.platform !== "darwin")(
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({ name: "darwin-availability", version: "1" });
+    const client = new Client(
+      { name: "darwin-availability", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const result = await client.callTool({
@@ -56,14 +60,17 @@ cliTest.skipIf(process.platform !== "darwin")(
           }),
         })
         .parse(result.structuredContent);
-      const apktoolGroup = discovery.result.tool_availability.groups.find(
-        ({ names }) => names.includes("inspect_apktool_client"),
-      );
-      expect(apktoolGroup).toMatchObject({
-        available: false,
-        reason: "provider_unavailable",
-        remediation: expect.stringContaining("Swift compiler configuration"),
-      });
+      // Each owned-process provider reports the same host prerequisite.
+      for (const tool of ["inspect_apktool_client", "inspect_adb_client"]) {
+        const group = discovery.result.tool_availability.groups.find(
+          ({ names }) => names.includes(tool),
+        );
+        expect(group, tool).toMatchObject({
+          available: false,
+          reason: "provider_unavailable",
+          remediation: expect.stringContaining("Swift compiler configuration"),
+        });
+      }
       const failedProbe = await client.callTool({
         name: "inspect_apktool_client",
         arguments: {},

@@ -52,3 +52,51 @@ it.skipIf(process.platform === "win32").each(["gitdir", "commondir"] as const)(
     });
   },
 );
+
+it.each(["gitdir", "commondir"] as const)(
+  "keeps provenance unknown when a %s pointer is not valid UTF-8",
+  async (pointer) => {
+    const root = await createTestTempDirectory("rea-reference-git-encoding-");
+    const source = join(root, "source");
+    const metadata = join(root, "metadata-�");
+    await mkdir(source);
+    await mkdir(metadata);
+    const head = "1".repeat(40);
+    await writeFile(
+      join(metadata, "HEAD"),
+      pointer === "gitdir" ? `${head}\n` : "ref: refs/heads/main\n",
+    );
+    await mkdir(join(metadata, "refs", "heads"), { recursive: true });
+    await writeFile(join(metadata, "refs", "heads", "main"), `${head}\n`);
+    const path =
+      pointer === "gitdir"
+        ? join(source, ".git")
+        : join(source, ".git", "commondir");
+    if (pointer === "commondir") {
+      await mkdir(join(source, ".git"));
+      await writeFile(join(source, ".git", "HEAD"), "ref: refs/heads/main\n");
+    }
+    const prefix = `${pointer === "gitdir" ? "gitdir: " : ""}${join(root, "metadata-")}`;
+    const read = () =>
+      withArtifactResourceScope((resources) =>
+        readReferenceSourceVcs(source, resources),
+      );
+    await writeFile(path, `${prefix}�\n`);
+    expect(await read()).toMatchObject({
+      ok: true,
+      value: { kind: "git", head },
+    });
+    await writeFile(
+      path,
+      Buffer.concat([
+        Buffer.from(prefix),
+        Buffer.from([0xff]),
+        Buffer.from("\n"),
+      ]),
+    );
+    expect(await read()).toMatchObject({
+      ok: true,
+      value: { kind: "unknown", head: null },
+    });
+  },
+);

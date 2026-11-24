@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseArrival, phaseGate } from "../support/lifecycleHarness.js";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
@@ -12,11 +13,7 @@ import { run } from "../../src/main.js";
 import { registerProcessShutdown } from "../../src/main/processShutdown.js";
 import { ownStdioStartupInput } from "../../src/main/StdioStartupInput.js";
 import { MCP_SHUTDOWN_FAILED } from "../../src/main/messages.js";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
-import {
-  createDeferred,
-  createTestBinarySession,
-} from "../fixtures/binarySession.js";
+import { createTestBinarySession } from "../fixtures/binarySession.js";
 
 const control = vi.hoisted(() => ({
   session: undefined as BinarySession | undefined,
@@ -67,12 +64,12 @@ it.each([
     const session = sessionOwner();
     const input = new PassThrough();
     const signals = new EventEmitter();
-    const entered = createDeferred<AbortSignal>();
+    const initialOpen = phaseArrival<AbortSignal>();
     vi.spyOn(session, "open").mockImplementation(async (_path, options) => {
       const signal = options?.signal;
       if (signal === undefined)
         throw new Error("Initial open has no cancellation owner");
-      entered.resolve(signal);
+      initialOpen.arrive(signal);
       await new Promise<void>((resolve) =>
         signal.addEventListener("abort", () => resolve(), { once: true }),
       );
@@ -109,13 +106,7 @@ it.each([
         registerProcessShutdown(handler, { signals, stdin: input }),
     });
     try {
-      await awaitAcknowledgement(
-        entered.promise.then(() => undefined),
-        pending,
-        "initial target open",
-        10_000,
-      );
-      const signal = await entered.promise;
+      const signal = await initialOpen.reached(pending, "initial target open");
       expect(signals.listenerCount("SIGINT")).toBe(1);
       expect(signals.listenerCount("SIGTERM")).toBe(1);
       if (trigger === "EOF") input.end();
@@ -162,12 +153,10 @@ it.each(["optional", "late-handle"] as const)(
     const closeSession = vi.spyOn(session, "close").mockResolvedValue(ok(null));
     const input = new PassThrough();
     const signals = new EventEmitter();
-    const entered = createDeferred<void>();
-    const release = createDeferred<void>();
+    const startupStage = phaseGate();
     const closeHandle = vi.fn(async () => {});
     const serve = vi.fn(async () => {
-      entered.resolve();
-      await release.promise;
+      await startupStage.hold();
       return { close: closeHandle };
     });
     const pending = run({
@@ -176,8 +165,7 @@ it.each(["optional", "late-handle"] as const)(
       serve,
       loadOptionalProviders: async () => {
         if (stage === "optional") {
-          entered.resolve();
-          await release.promise;
+          await startupStage.hold();
         }
         return {};
       },
@@ -187,12 +175,7 @@ it.each(["optional", "late-handle"] as const)(
         registerProcessShutdown(handler, { signals, stdin: input }),
     });
     try {
-      await awaitAcknowledgement(
-        entered.promise,
-        pending,
-        "startup stage",
-        10_000,
-      );
+      await startupStage.reached(pending, "startup stage");
       if (stage === "optional") {
         await new Promise<void>((resolve) => {
           input.once("end", resolve);
@@ -201,7 +184,7 @@ it.each(["optional", "late-handle"] as const)(
       } else signals.emit("SIGTERM");
       expect(closeHandle).not.toHaveBeenCalled();
       expect(closeSession).not.toHaveBeenCalled();
-      release.resolve();
+      startupStage.release();
       expect(await pending).toBe(0);
       expect(serve).toHaveBeenCalledTimes(stage === "optional" ? 0 : 1);
       expect(closeHandle).toHaveBeenCalledTimes(stage === "optional" ? 0 : 1);
@@ -212,7 +195,7 @@ it.each(["optional", "late-handle"] as const)(
       expect(signals.listenerCount("SIGINT")).toBe(0);
     } finally {
       signals.emit("SIGTERM");
-      release.resolve();
+      startupStage.release();
       input.destroy();
       await pending.catch(() => undefined);
     }

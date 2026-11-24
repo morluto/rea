@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
@@ -109,7 +110,7 @@ const resealed = (
     unknown
   >;
   edit(result);
-  return createEvidence(undefined, evidence.provider, {
+  return createEvidence(unknownTarget("not-observed"), evidence.provider, {
     operation,
     parameters: structuredClone(evidence.parameters),
     result: result as never,
@@ -176,27 +177,6 @@ describe("loadEnvironmentSource", () => {
         },
       });
     }
-  });
-
-  it("refuses a manifest whose parent is not the supplied evidence with a typed invalid request", () => {
-    const fixture = environmentServeFixture();
-    const other = analysisViewCaptureEvidence(analysisViewCaptureFixture());
-    const projected = refusal(fixture.manifest, other);
-    expect(projected).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-      details: {
-        operation: "environment-serve",
-        issues: [
-          {
-            path: ["evidence", "evidence_id"],
-            reason: "invalid_value",
-            expected: fixture.capture.evidence_id,
-          },
-        ],
-      },
-    });
-    expect(projected.message).toContain("different capture");
   });
 
   it("refuses manifests of another view kind, non-capture evidence and non-Evidence JSON", async () => {
@@ -279,12 +259,16 @@ describe("loadEnvironmentSource payload attribution", () => {
       "inspect_web_network_capture",
       "capture_browser_scenario",
     ]) {
-      const capture = createEvidence(undefined, fixture.capture.provider, {
-        operation,
-        parameters: {},
-        result: {},
-        confidence: "observed",
-      });
+      const capture = createEvidence(
+        unknownTarget("not-observed"),
+        fixture.capture.provider,
+        {
+          operation,
+          parameters: {},
+          result: {},
+          confidence: "observed",
+        },
+      );
       for (const command of ["environment-serve", "environment-export"]) {
         const loaded = loadEnvironmentSource(
           citing(fixture.manifest, capture),

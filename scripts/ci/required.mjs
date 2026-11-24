@@ -1,4 +1,4 @@
-import { CI_FLAGS, CI_LANES } from "./scopes.mjs";
+import { CI_FLAGS, CI_LANES, testShardJob } from "./scopes.mjs";
 import { recordQualification } from "./qualification.mjs";
 
 const jobs = JSON.parse(process.env.CI_JOBS);
@@ -28,13 +28,33 @@ if (
   );
 if (outputs.tier === "full" && selectedScopes.length !== CI_FLAGS.length)
   throw new Error("Full qualification requires every canonical CI scope");
-const required = reused ? ["changes"] : ["changes", "static", "test"];
+// Only a fast pull-request plan may run a selected test subset.
+const testMode = outputs.test_mode;
+if (
+  !["full", "selected"].includes(testMode) ||
+  (testMode === "selected" &&
+    (outputs.tier !== "fast" ||
+      process.env.GITHUB_EVENT_NAME !== "pull_request" ||
+      outputs.code !== "true"))
+)
+  throw new Error(
+    "CI classification requires a valid test mode: full, or selected on a fast pull request",
+  );
+const required = reused ? ["changes"] : ["changes", "static"];
 if (outputs.tier === "full") required.push("static-deep");
 for (const scope of selectedScopes)
-  required.push(...CI_LANES[scope].required[outputs.tier]);
-const failed = [...new Set(required)].filter(
-  (name) => jobs[name]?.result !== "success",
+  required.push(
+    ...((testMode === "selected" && CI_LANES[scope].selectedTests) ||
+      CI_LANES[scope].required[outputs.tier]),
+  );
+const matrix = testShardJob(
+  process.env.GITHUB_EVENT_NAME,
+  outputs.tier,
+  testMode,
 );
+const failed = [...new Set(required)]
+  .map((name) => (name === "test-shard" ? matrix : name))
+  .filter((name) => jobs[name]?.result !== "success");
 for (const [name, job] of Object.entries(jobs)) {
   if (["failure", "cancelled"].includes(job.result) && !failed.includes(name))
     failed.push(name);

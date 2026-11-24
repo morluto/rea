@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -23,6 +22,8 @@ import {
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
+import { readRegularFile } from "../../process/RegularFileRead.js";
 import type { SeedVersion } from "./DesktopExportFiles.js";
 import {
   planOutputTree,
@@ -34,6 +35,8 @@ import {
   withRetainedContent,
   type RetainedContent,
 } from "./DesktopRetainedContent.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest retained file read back, as the export reads seeds. */
@@ -68,13 +71,24 @@ export interface WithheldPlan {
   readonly consent: string | undefined;
 }
 
-/** The consent file's records as the bundle ships them, refused unless it parses; undefined when none was given. */
+/** Read a consent record from one checked descriptor; undefined when omitted. */
 const readConsent = async (path: string | undefined) => {
   if (path === undefined) return undefined;
-  const bytes = await readFile(path).catch(() => undefined);
-  const parsed = bytes === undefined ? undefined : safeParseUtf8Json(bytes);
-  const consent =
-    parsed?.ok === true ? consentFileSchema.safeParse(parsed.value) : undefined;
+  let bytes: Buffer;
+  try {
+    bytes = await readRegularFile(path, { symlinks: "reject" });
+  } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) throw cause;
+    throw refused(
+      "consent",
+      `The consent file ${path} could not be read as a stable regular file.`,
+      "Pass the original consent record as a readable regular file and keep it unchanged while exporting.",
+    );
+  }
+  const parsed = safeParseUtf8Json(bytes);
+  const consent = parsed.ok
+    ? consentFileSchema.safeParse(parsed.value)
+    : undefined;
   if (consent?.success !== true)
     throw refused(
       "consent",
@@ -187,15 +201,12 @@ const dconfKeys = (
   version: DesktopStatePath["versions"][number] | undefined,
 ): ReadonlyMap<string, string> => {
   const view = version?.present === true ? version.view : null;
-  const groups =
-    typeof view === "object" && view !== null && !Array.isArray(view)
-      ? view.groups
-      : undefined;
+  const groups = isRecord(view) ? view.groups : undefined;
   if (typeof groups !== "object" || groups === null || Array.isArray(groups))
     return new Map();
   return new Map(
     Object.entries(groups).flatMap(([group, keys]) =>
-      typeof keys === "object" && keys !== null && !Array.isArray(keys)
+      isRecord(keys)
         ? Object.entries(keys).map(
             ([key, value]) =>
               [`${group}/${key}`, JSON.stringify(value)] as const,
@@ -280,7 +291,7 @@ const writeWithheldCopy = (
           Readable.from([bytes]),
           {
             bytes: bytes.length,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
+            sha256: sha256Hex(bytes),
           },
           signal,
         );

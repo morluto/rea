@@ -55,10 +55,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { traceDylibResolution } from "../../src/artifacts/apple/DylibResolutionReader.js";
 import { machoImage } from "../../src/artifacts/apple/MachoImage.fixture.js";
-import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { ArtifactProvider } from "../../src/artifacts/ArtifactProvider.js";
-import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -219,7 +219,7 @@ it.skipIf(process.platform === "win32")(
     });
     if (result.ok) throw new Error("Expected nonregular admission failure");
     expect(result.error).toMatchObject({
-      reason: "format",
+      reason: "path",
       cleanupIncomplete: true,
     });
     expect(result.error.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
@@ -302,7 +302,7 @@ it.skipIf(process.platform === "win32").each(["magic", "image", "digest"])(
           parameters: stage === 'magic' ? {} : { roots: ['Main'] } });
         throw new Error('Unexpected FIFO success');
       } catch (error) {
-        if (error.reason !== 'format') throw error;
+        if (error.reason !== 'path') throw error;
         process.stdout.write(JSON.stringify({ stage, opens, substituted, reason: error.reason }));
       }
     `;
@@ -315,7 +315,7 @@ it.skipIf(process.platform === "win32").each(["magic", "image", "digest"])(
       stage,
       opens: stage === "digest" ? 2 : 1,
       substituted: true,
-      reason: "format",
+      reason: "path",
     });
   },
 );
@@ -415,6 +415,7 @@ it.each(["image", "digest"] as const)(
       ok: false,
       error: {
         reason: "integrity",
+        integrityCheck: "member-identity",
         detail: expect.stringContaining(fault.path),
         cause: {
           reason: "integrity",

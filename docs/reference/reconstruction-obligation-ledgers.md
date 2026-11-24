@@ -36,6 +36,7 @@ never claims closure:
 rea build-reconstruction-obligation-ledger \
   '{
     "evidence_bundle": {
+      "evidence_format": 2,
       "artifacts": [],
       "providers": [],
       "environments": [],
@@ -318,7 +319,7 @@ does not define it.
   "verifier": {
     "verifier_id": "rpc.cancel.conformance",
     "claim_id": "protocol.rpc.cancel.v1",
-    "command": "npm run test:protocol -- cancel",
+    "command": "npm run test:focused -- tests/boundary/mcp/progressMcp.test.ts",
     "authority": "protocol",
     "status": "pass",
     "result_evidence_id": "ev_5555555555555555555555555555555555555555555555555555555555555555",

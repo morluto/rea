@@ -1076,7 +1076,7 @@ describe("property mutation collection on minified bundles", () => {
         { value: { status: "unknown" } },
       ],
     });
-  }, 30000);
+  });
 });
 
 describe("results of methods on an escaped receiver", () => {
@@ -1112,7 +1112,7 @@ describe("results of methods on an escaped receiver", () => {
       status: "array",
       items: [{ value: { status: "unknown" } }],
     });
-  }, 30000);
+  });
 });
 
 it.each([

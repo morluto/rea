@@ -1,3 +1,5 @@
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../domain/adb/adbDeviceAnalysis.js";
 import { chmod, readFile } from "node:fs/promises";
 import { expect, it, onTestFinished } from "vitest";
 import {
@@ -7,8 +9,7 @@ import {
 import { AdbProvider } from "../../adb/AdbProvider.js";
 
 import { AdbDeviceAnalysisService } from "./AdbDeviceAnalysisService.js";
-import type { AdbDeviceAnalysisPort } from "./AdbDeviceAnalysisPort.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -32,7 +33,7 @@ const execution = createAnalysisExecution(
   identity,
 );
 
-const refusedPort: AdbDeviceAnalysisPort = {
+const refusedPort: RequestAnalysisPort<AdbRequest> = {
   async inspectAvailability() {
     throw new Error("must not probe");
   },
@@ -104,7 +105,7 @@ it("rejects an unknown operation before any effect", async () => {
 });
 
 it("composes observed Evidence with the caller parameters inline", async () => {
-  const port: AdbDeviceAnalysisPort = {
+  const port: RequestAnalysisPort<AdbRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
@@ -127,6 +128,8 @@ it("composes observed Evidence with the caller parameters inline", async () => {
   expect(evidence.operation).toBe("list_adb_devices");
   expect(evidence.parameters).toEqual({});
   expect(evidence.confidence).toBe("observed");
+  // A device REA attaches to is not one it owns, so the observation names the service rather than a replay.
+  expect(evidence.authority).toBe("external-service");
 });
 
 it("preserves cancellation before execution", async () => {
@@ -161,13 +164,13 @@ it.skipIf(process.platform === "win32").each([false, true])(
     const logPath = workspace.path("commands.jsonl");
     const binary = await workspace.write(
       "adb",
-      `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';\nconst args=process.argv.slice(2);appendFileSync(${JSON.stringify(logPath)},JSON.stringify(args)+'\\n');\nif(args[0]==='version')process.stdout.write('Android Debug Bridge version 1.0.41\\nVersion 35.0.2-inert\\n');\nelse if(args[0]==='devices'&&args[1]==='-l')process.stdout.write(${JSON.stringify(lines.join("\n") + "\n")});\nelse if(args[0]==='-s'&&args[1]==='exact'&&args[2]==='shell'&&args[3]==='getprop')process.stdout.write('[ro.build.version.sdk]: [34]\\n');\nelse throw Error('No other command authorized');\n`,
+      `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';\nconst args=process.argv.slice(2);appendFileSync(${JSON.stringify(logPath)},JSON.stringify(args)+'\\n');\nif(args[0]==='version')process.stdout.write('Android Debug Bridge version 1.0.41\\nVersion 35.0.2-inert\\n');\nelse if(args[0]==='start-server');\nelse if(args[0]==='devices'&&args[1]==='-l')process.stdout.write(${JSON.stringify(lines.join("\n") + "\n")});\nelse if(args[0]==='-s'&&args[1]==='exact'&&args[2]==='shell'&&args[3]==='getprop')process.stdout.write('[ro.build.version.sdk]: [34]\\n');\nelse throw Error('No other command authorized');\n`,
     );
     await chmod(binary, 0o755);
     const provider = new AdbProvider({ environment: { REA_ADB_PATH: binary } });
     onTestFinished(() => provider.close());
     const controller = new AbortController();
-    const port: AdbDeviceAnalysisPort = {
+    const port: RequestAnalysisPort<AdbRequest> = {
       inspectAvailability: provider.inspectAvailability.bind(provider),
       close: provider.close.bind(provider),
       async execute(request, options) {

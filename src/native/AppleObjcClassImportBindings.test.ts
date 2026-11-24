@@ -1,226 +1,179 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import { expect, it, vi } from "vitest";
+import { nativeObjcClassImportMachO } from "../../tests/fixtures/nativeObjcClassImportMachO.js";
+import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 
-import type { PointerFixups } from "./AppleMachoFixups.js";
-import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
-import type { MachoLayout } from "./AppleMachoSelection.js";
-import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
-
-const createInput = (
-  overrides: Partial<Parameters<typeof inspectObjcClassImportBindings>[0]> = {},
+const scan = (
+  { bytes }: ReturnType<typeof nativeObjcClassImportMachO>,
+  addresses: readonly string[],
+  complete: boolean | undefined,
+  maxRecords = 100,
 ) => {
-  const bytes = Buffer.alloc(16);
-  const fixups: PointerFixups = {
-    kind: "chained",
-    formats: ["DYLD_CHAINED_PTR_64"],
-    failures: [],
-    issues: [],
-    examined: 1,
-    decoded: 1,
-    legacyRebaseStreams: 0,
-    legacyBindStreams: 0,
-    unreadRebaseBytes: 0,
-    hasUnresolvedLegacyBytes: () => false,
-    decode: (address) =>
-      address === 0x1000n
-        ? {
-            kind: "bind",
-            symbol: "_OBJC_CLASS_$_Document",
-            binding_source: "chained",
-            library_ordinal: 1,
-            library: "/System/Library/Frameworks/AppKit.framework/AppKit",
-            weak: false,
-            addend: 0n,
-          }
-        : address === 0x1008n
-          ? {
-              kind: "bind",
-              symbol: "_free",
-              binding_source: "chained",
-              library_ordinal: 2,
-              library: "/usr/lib/libSystem.B.dylib",
-              weak: false,
-              addend: 0n,
-            }
-          : { kind: "rebase", target: 0n },
-  };
-  const layout: MachoLayout = {
-    segments: [],
-    sections: [],
-    selectedImage: {
-      container: "thin",
-      offset: 0,
-      byteLength: bytes.length,
-      cpuType: 0x0100000c,
-      cpuSubtype: 0,
-      containerTableSha256: null,
-    },
-    fixups: { chained: null, binds: [], rebases: [], dylibs: [] },
-    baseAddress: 0n,
-    offset: (address, size = 1) => {
-      if (address === 0x1000n && size === 8) return 0;
-      if (address === 0x1008n && size === 8) return 8;
-      throw new RangeError("address is outside fixture");
-    },
-  };
-  return {
+  const result = decodeAppleDispatchMetadata(
     bytes,
-    layout,
-    fixups,
-    addresses: ["0x1000", "0x1008"],
-    addressesComplete: true,
-    maxRecords: 100,
-    ...overrides,
+    maxRecords,
+    { path: "/fixture", sha256: "fixture" },
+    "arm64",
+    addresses,
+    complete,
+  );
+  return {
+    bindings: result.objc_class_import_bindings,
+    coverage: result.objc_class_import_binding_coverage,
   };
 };
 
-describe("Objective-C import binding address inspection", () => {
-  it("retains only exact class-symbol binds for the requested slot addresses", () => {
-    expect(inspectObjcClassImportBindings(createInput())).toEqual({
-      bindings: [
-        {
-          requested_address: "0x1000",
-          symbol: "_OBJC_CLASS_$_Document",
-          binding_source: "chained",
-          library_ordinal: 1,
-          library: "/System/Library/Frameworks/AppKit.framework/AppKit",
-          weak: false,
-          addend: "0",
-        },
-      ],
-      coverage: {
-        status: "complete",
-        reason: null,
-        examined: 2,
-        decoded: 1,
-      },
-    });
+it("retains exact address spellings and separates unusable candidates from mapped slots", () => {
+  const fixture = nativeObjcClassImportMachO();
+  const { address, nonClassAddress, unboundAddress } = fixture;
+  const alternateAddress = "0X0100001000";
+  const outside = "0x100002000";
+  const result = scan(
+    fixture,
+    [
+      address,
+      nonClassAddress,
+      "0x00000000000000001",
+      outside,
+      address,
+      alternateAddress,
+      unboundAddress,
+    ],
+    true,
+  );
+  expect(result.bindings).toEqual(
+    [address, alternateAddress].map((requested_address) => ({
+      requested_address,
+      symbol: "_OBJC_CLASS_$_Document",
+      binding_source: "bind",
+      library_ordinal: 1,
+      library: "/System/Library/Frameworks/AppKit.framework/AppKit",
+      weak: false,
+      addend: "0",
+    })),
+  );
+  expect(result.coverage).toMatchObject({
+    status: "partial",
+    examined: 6,
+    decoded: 2,
   });
+  expect(result.coverage?.reason).toContain("not a 64-bit hexadecimal address");
+  expect(result.coverage?.reason).toContain(outside);
+});
 
-  it("keeps exact binds while marking malformed or unresolved addresses partial", () => {
-    expect(
-      inspectObjcClassImportBindings(
-        createInput({ addresses: ["0x1000", "not-an-address", "0x2000"] }),
+it("keeps a bind with an invalid encoded ordinal visible as a coverage gap", () => {
+  const fixture = nativeObjcClassImportMachO();
+  fixture.bytes.writeUInt8(0x14, fixture.bindOffset); // The image declares one dylib.
+  expect(scan(fixture, [fixture.address], true)).toMatchObject({
+    bindings: [],
+    coverage: {
+      status: "partial",
+      examined: 1,
+      decoded: 0,
+      reason: expect.stringContaining(
+        `${fixture.address}: Dylib ordinal 4 exceeds the 1 declared dependencies`,
       ),
-    ).toMatchObject({
-      bindings: [{ requested_address: "0x1000" }],
-      coverage: {
-        status: "partial",
-        examined: 3,
-        decoded: 1,
-        reason: expect.stringContaining("not a 64-bit hexadecimal address"),
-      },
-    });
+    },
   });
+});
 
-  it("keeps an invalid raw ordinal unsupported instead of treating it as an absent bind", () => {
-    const input = createInput();
-    expect(
-      inspectObjcClassImportBindings({
-        ...input,
-        addresses: ["0x1000"],
-        fixups: {
-          ...input.fixups,
-          decode: () => ({
-            kind: "unsupported",
-            reason: "Dylib ordinal 4 exceeds the 3 declared dependencies",
-          }),
-        },
-      }),
-    ).toEqual({
-      bindings: [],
-      coverage: {
-        status: "partial",
-        reason: "0x1000: Dylib ordinal 4 exceeds the 3 declared dependencies",
-        examined: 1,
-        decoded: 0,
-      },
-    });
+it("reports a selected raw slot as unknown when rebase applicability is incomplete", () => {
+  const fixture = nativeObjcClassImportMachO();
+  const { bytes, dyldCommandOffset, unboundAddress } = fixture;
+  // A segment operand with a continuation byte but no terminating byte.
+  Buffer.from([0x20, 0x80]).copy(bytes, 0x280);
+  bytes.writeUInt32LE(0x280, dyldCommandOffset + 8);
+  bytes.writeUInt32LE(2, dyldCommandOffset + 12);
+  expect(scan(fixture, [unboundAddress], true)).toMatchObject({
+    bindings: [],
+    coverage: {
+      status: "partial",
+      examined: 1,
+      decoded: 0,
+      reason: expect.stringContaining(
+        `${unboundAddress}: LC_DYLD_INFO pointer-fixup applicability was not completely decoded`,
+      ),
+    },
   });
+});
 
-  it("marks selected slots partial when legacy rebase ownership is unknown", () => {
-    const input = createInput();
-    const streams = Buffer.from([0x20, 0x80, 0]); // Truncated rebase operand; valid bind DONE.
-    const fixups = parsePointerFixups(
-      streams,
-      {
-        chained: null,
-        binds: [{ offset: 2, size: 1, stream: "bind" }],
-        rebases: [{ offset: 0, size: 2 }],
-        dylibs: [],
-      },
-      [{ address: 0x1000n, size: 0x1000n, offset: 0, executable: false }],
-      0n,
+it("reports unsupported fixups without inferring absent imports", () => {
+  const fixture = nativeObjcClassImportMachO();
+  fixture.bytes.writeUInt32LE(0, fixture.dyldCommandOffset + 20);
+  expect(scan(fixture, [fixture.address], true)).toMatchObject({
+    bindings: [],
+    coverage: {
+      status: "unsupported",
+      examined: 0,
+      decoded: 0,
+      reason: expect.stringContaining("no supported pointer fixup commands"),
+    },
+  });
+});
+
+it.each([
+  ["not_requested", true, true, 100, 0, null],
+  ["partial", true, false, 100, 0, "max_records limit"],
+  ["unknown", true, undefined, 100, 0, "did not state"],
+  ["unknown", false, undefined, 100, 2, "did not state"],
+  ["partial", false, true, 1, 1, "max_records limit"],
+] as const)(
+  "reports %s for empty=%s completeness=%s max_records=%s",
+  (status, empty, complete, max, examined, reason) => {
+    const fixture = nativeObjcClassImportMachO();
+    const result = scan(
+      fixture,
+      empty ? [] : [fixture.address, fixture.unboundAddress],
+      complete,
+      max,
     );
-    expect(
-      inspectObjcClassImportBindings({
-        ...input,
-        addresses: ["0x1000"],
-        fixups,
-      }),
-    ).toMatchObject({
-      bindings: [],
-      coverage: {
-        status: "partial",
-        reason: expect.stringContaining(
-          "LC_DYLD_INFO pointer-fixup applicability was not completely decoded",
-        ),
-        examined: 1,
-        decoded: 0,
-      },
+    expect(result.bindings).toMatchObject(
+      empty ? [] : [{ requested_address: fixture.address }],
+    );
+    expect(result.coverage).toMatchObject({
+      status,
+      examined,
+      decoded: empty ? 0 : 1,
+      reason: reason === null ? null : expect.stringContaining(reason),
     });
-  });
+  },
+);
 
-  it("does not infer absent imports from unsupported fixup coverage", () => {
-    const input = createInput({
-      fixups: { ...createInput().fixups, kind: "none" },
-      addresses: ["0x1000"],
-    });
-    expect(inspectObjcClassImportBindings(input)).toMatchObject({
-      bindings: [],
-      coverage: {
-        status: "unsupported",
-        reason: expect.stringContaining("no supported pointer fixup commands"),
+it("retains the chained source of an exact class import", () => {
+  const fixture = nativeObjcClassImportMachO("chained");
+  expect(scan(fixture, [fixture.address], true)).toMatchObject({
+    bindings: [
+      {
+        requested_address: fixture.address,
+        symbol: "_OBJC_CLASS_$_Document",
+        binding_source: "chained",
+        library_ordinal: 1,
       },
-    });
+    ],
+    coverage: { status: "complete", examined: 1, decoded: 1 },
   });
+});
 
-  it("preserves partial facts when the existing record budget truncates candidates", () => {
-    expect(
-      inspectObjcClassImportBindings(
-        createInput({
-          addresses: ["0x1000", "0x1008"],
-          maxRecords: 1,
-        }),
-      ),
-    ).toMatchObject({
-      bindings: [{ requested_address: "0x1000" }],
-      coverage: {
-        status: "partial",
-        examined: 1,
-        decoded: 1,
-        reason: expect.stringContaining("max_records limit"),
-      },
-    });
+it("propagates host capacity errors from candidate slot reads", () => {
+  const fixture = nativeObjcClassImportMachO();
+  const { bytes, address, slotOffset } = fixture;
+  expect(scan(fixture, [address], true).coverage?.status).toBe("complete");
+  const cause = Object.assign(new Error("host string capacity exceeded"), {
+    code: "ERR_STRING_TOO_LONG",
   });
-
-  it("keeps an explicitly truncated empty candidate scan partial", () => {
-    expect(
-      inspectObjcClassImportBindings(
-        createInput({ addresses: [], addressesComplete: false }),
-      ),
-    ).toMatchObject({
-      bindings: [],
-      coverage: {
-        status: "partial",
-        examined: 0,
-        decoded: 0,
-        reason: expect.stringContaining("max_records limit"),
-      },
+  const readWord = bytes.readBigUInt64LE.bind(bytes);
+  const fault = vi
+    .spyOn(bytes, "readBigUInt64LE")
+    .mockImplementation((offset) => {
+      if (offset === slotOffset) throw cause;
+      return readWord(offset);
     });
-    expect(
-      inspectObjcClassImportBindings(
-        createInput({ addresses: [], addressesComplete: true }),
-      ).coverage,
-    ).toMatchObject({ status: "not_requested", reason: null, examined: 0 });
-  });
+  try {
+    assert.throws(
+      () => scan(fixture, [address], true),
+      (caught) => caught === cause,
+    );
+  } finally {
+    fault.mockRestore();
+  }
 });

@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { fileURLToPath } from "node:url";
 import { access, chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -17,6 +18,7 @@ import { silentLogger } from "../../../src/logger.js";
 import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const processFixture = fileURLToPath(
   new URL("../../fixtures/processFidelity.mjs", import.meta.url),
@@ -46,7 +48,10 @@ it("rejects oversized initial and resize terminal buffers through MCP before lau
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "terminal-admission", version: "1" });
+  const client = new Client(
+    { name: "terminal-admission", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   resources.push(client, server, session);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -92,7 +97,10 @@ itWithCaptureCapability(
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const client = new Client({ name: "process-plan", version: "1" });
+    const client = new Client(
+      { name: "process-plan", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     resources.push(client, server, session);
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -138,10 +146,13 @@ itWithCaptureCapability(
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const client = new Client({
-      name: "process-normalized-budget",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-normalized-budget",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     resources.push(client, server, session);
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -241,7 +252,10 @@ itWithCaptureCapability(
         logger: silentLogger,
       },
     );
-    const mcp = new Client({ name: "process-unknown", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "process-unknown", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -260,11 +274,11 @@ itWithCaptureCapability(
     const wire = (await mcp.listTools()).tools.find(
       ({ name }) => name === contract.name,
     );
-    if (wire?.outputSchema === undefined)
+    if (wire === undefined)
       throw new Error("Missing process capture output schema");
     expect(
       new Ajv2020({ strict: false, validateFormats: false }).validate(
-        z.record(z.string(), z.unknown()).parse(wire.outputSchema),
+        canonicalOutputSchema(wire.name),
         captured.structuredContent,
       ),
     ).toBe(true);
@@ -325,7 +339,10 @@ itWithCaptureCapability(
         },
       },
     );
-    const client = new Client({ name: "process-mcp-env", version: "1" });
+    const client = new Client(
+      { name: "process-mcp-env", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     resources.push(client, server, session);
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

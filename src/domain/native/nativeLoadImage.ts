@@ -33,10 +33,9 @@ export const nativeLoadImageObservationSchema = z.strictObject({
       initialized: z.boolean(),
       loaded: z.boolean(),
       overlay: z.boolean(),
-      // Optional so inspection snapshots saved before permissions were measured still parse.
-      readable: z.boolean().optional(),
-      writable: z.boolean().optional(),
-      executable: z.boolean().optional(),
+      readable: z.boolean(),
+      writable: z.boolean(),
+      executable: z.boolean(),
       length: integer.min(1),
       source_file_index: integer.nullable(),
       file_offset: integer.nullable(),
@@ -50,8 +49,8 @@ export const nativeLoadImageObservationSchema = z.strictObject({
       offset: integer.max(0xffff).nullable(),
       status: z.string().min(1),
       type: z.int(),
-      // Missing on retained observations made before the provider recorded it.
-      symbol: z.string().nullable().exactOptional(),
+      /** Ghidra's relocation symbol name; null when the relocation has none. */
+      symbol: z.string().nullable(),
       values: z.array(
         z.int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
       ),
@@ -93,23 +92,86 @@ export const nativeUnsupportedLoadImageSchema = z.strictObject({
   observations: nativeLoadImageObservationSchema,
   limitations: z.array(z.string().min(1)),
 });
-export const nativeDosLoadImageSchema = z.strictObject({
-  status: z.enum(["verified", "mismatch"]),
-  format: z.enum(["dos-mz", "dos-com"]),
+const dosLoadImageEntrySchema = z.strictObject({
+  relative_segment: integer.max(0xffff),
+  offset: integer.max(0xffff),
+  linear_address: nativeAddressObservationSchema,
+});
+const dosLoadImageFacts = {
   target_sha256: digest,
-  load_segment: integer.max(0xffff),
   header_bytes: integer,
   module_bytes: integer,
   overlay_bytes: integer,
-  entry: z.strictObject({
-    relative_segment: integer.max(0xffff),
-    offset: integer.max(0xffff),
-    linear_address: nativeAddressObservationSchema,
-  }),
   observations: nativeLoadImageObservationSchema,
   checks: z.array(nativeLoadImageCheckSchema),
   limitations: z.array(z.string().min(1)),
+};
+const comLoadAddressSchema = z.string().regex(/^[0-9a-f]{4}:[0-9a-f]{4}$/u);
+const comLoaderFallbackSchema = z.strictObject({
+  loader: z.literal("ComLoader"),
+  reason: z.enum(["filename_extension", "mz_signature", "recognition_score"]),
 });
+/** Measured COM identity. Each field is present only when that fact was observed. */
+const comMeasuredIdentity = {
+  format: z.literal("dos-com"),
+  loader: z.enum(["ComLoader", "BinaryLoader"]).optional(),
+  load_address: comLoadAddressSchema.optional(),
+  loader_fallback: comLoaderFallbackSchema.optional(),
+};
+
+/** DOS MZ always names its load segment and entry. */
+export const nativeDosMzLoadImageSchema = z.strictObject({
+  status: z.enum(["verified", "mismatch"]),
+  format: z.literal("dos-mz"),
+  load_segment: integer.max(0xffff),
+  entry: dosLoadImageEntrySchema,
+  ...dosLoadImageFacts,
+});
+const comVerifiedFacts = {
+  status: z.literal("verified"),
+  format: z.literal("dos-com"),
+  ...dosLoadImageFacts,
+};
+const comVerifiedEntry = (linearAddress: "0x100" | "0x10100") =>
+  z.strictObject({
+    relative_segment: z.literal(0),
+    offset: z.literal(0x100),
+    linear_address: z.literal(linearAddress),
+  });
+/** Verified ComLoader: file at 0000:0100, no fallback record. */
+export const nativeDosComVerifiedComLoaderLoadImageSchema = z.strictObject({
+  ...comVerifiedFacts,
+  loader: z.literal("ComLoader"),
+  load_address: z.literal("0000:0100"),
+  load_segment: z.literal(0),
+  entry: comVerifiedEntry("0x100"),
+});
+/** Verified BinaryLoader fallback: file at 1000:0100 with a typed reason. */
+export const nativeDosComVerifiedBinaryLoaderLoadImageSchema = z.strictObject({
+  ...comVerifiedFacts,
+  loader: z.literal("BinaryLoader"),
+  load_address: z.literal("1000:0100"),
+  loader_fallback: comLoaderFallbackSchema,
+  load_segment: z.literal(0x1000),
+  entry: comVerifiedEntry("0x10100"),
+});
+/**
+ * A COM mismatch may omit the segment and entry when the measured loader and
+ * address are not one known layout. Loader and load address stay independent.
+ */
+export const nativeDosComMismatchLoadImageSchema = z.strictObject({
+  status: z.literal("mismatch"),
+  ...comMeasuredIdentity,
+  load_segment: integer.max(0xffff).optional(),
+  entry: dosLoadImageEntrySchema.optional(),
+  ...dosLoadImageFacts,
+});
+export const nativeDosLoadImageSchema = z.union([
+  nativeDosMzLoadImageSchema,
+  nativeDosComVerifiedComLoaderLoadImageSchema,
+  nativeDosComVerifiedBinaryLoaderLoadImageSchema,
+  nativeDosComMismatchLoadImageSchema,
+]);
 export const nativeRawLoadImageSchema = z.strictObject({
   status: z.enum(["verified", "mismatch"]),
   format: z.literal("raw-binary"),

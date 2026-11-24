@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
@@ -154,6 +155,7 @@ export async function buildMipsRelocatableFixture(
   directory,
   byteOrder,
   kernelModule = false,
+  run = execute,
 ) {
   if (byteOrder !== "little" && byteOrder !== "big")
     throw new Error("MIPS fixture byte order must be little or big");
@@ -179,9 +181,60 @@ export async function buildMipsRelocatableFixture(
     path,
   ];
   return {
-    ...(await compileMipsFixture(path, byteOrder, 1, args)),
+    ...(await compileMipsFixture(path, byteOrder, 1, args, {}, run)),
     float_abi: kernelModule ? "soft" : "hard",
     kernel_module_options: kernelModule,
+    source_sha256: createHash("sha256")
+      .update(await readFile(source))
+      .digest("hex"),
+  };
+}
+
+/**
+ * Build the source-owned PIC shared library (ET_DYN) with LLD, which records
+ * the MIPS GOT layout in MIPS_LOCAL_GOTNO/MIPS_GOTSYM. `softFloat` builds the
+ * same library for a soft-float o32 system. Like GNU ld output, text shares
+ * the first segment (page zero, so its local GOT page entry is zero) and
+ * PIC calls stay `jalr $25` through the GOT instead of relaxing to `bal`.
+ */
+export async function buildMipsSharedFixture(
+  directory,
+  byteOrder,
+  softFloat = false,
+  run = execute,
+) {
+  if (byteOrder !== "little" && byteOrder !== "big")
+    throw new Error("MIPS fixture byte order must be little or big");
+  const target = byteOrder === "little" ? "mipsel-linux-gnu" : "mips-linux-gnu";
+  const source = fileURLToPath(new URL("../c/mips-shared.c", import.meta.url));
+  const path = join(directory, `${target}${softFloat ? "-soft-float" : ""}.so`);
+  const args = [
+    `--target=${target}`,
+    "-march=mips32r2",
+    "-mabi=32",
+    ...(softFloat ? ["-msoft-float"] : []),
+    "-mno-relax-pic-calls",
+    "-fPIC",
+    "-shared",
+    "-nostdlib",
+    "-fuse-ld=lld",
+    "-O1",
+    "-Wl,--build-id=none",
+    "-Wl,--no-rosegment",
+    source,
+    "-o",
+    path,
+  ];
+  return {
+    ...(await compileMipsFixture(
+      path,
+      byteOrder,
+      3,
+      args,
+      { expectedFlags: 0x70001007 },
+      run,
+    )),
+    float_abi: softFloat ? "soft" : "hard",
     source_sha256: createHash("sha256")
       .update(await readFile(source))
       .digest("hex"),
@@ -195,10 +248,11 @@ async function compileMipsFixture(
   objectType,
   args,
   options = {},
+  run = execute,
 ) {
-  const compiler = process.env.REA_MIPS_CLANG ?? "clang";
-  const version = await execute(compiler, ["--version"], { timeout: 10000 });
-  await execute(compiler, args, { timeout: 60000 });
+  const compiler = fixtureCommand(FIXTURE_TOOLS.mipsClang);
+  const version = await run(compiler, ["--version"], { timeout: 10000 });
+  await run(compiler, args, { timeout: 60000 });
   const bytes = await readFile(path);
   const read16 =
     byteOrder === "little"

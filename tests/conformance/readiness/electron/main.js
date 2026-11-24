@@ -7,6 +7,13 @@ const {
 } = require("electron");
 const { spawn } = require("node:child_process");
 
+const profileArgument = "--rea-verifier-profile=";
+const profile = process.argv.find((argument) =>
+  argument.startsWith(profileArgument),
+);
+if (profile !== undefined)
+  app.setPath("userData", profile.slice(profileArgument.length));
+
 const windows = new Set();
 const deliverDeepLink = (url) => {
   for (const window of windows) window.webContents.send("deep-link", url);
