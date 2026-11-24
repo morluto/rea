@@ -141,12 +141,22 @@ export const managedMembersViewPageSchema = z.discriminatedUnion("collection", [
   ),
   rowsOf(
     "call_edges",
-    rows.call_edges.partial().required({
-      caller_token: true,
-      il_offset: true,
-      target_token: true,
-      opcode: true,
-    }),
+    rows.call_edges
+      .extend({
+        // Full reports normalize historical omission; projected rows must not.
+        generic_method_token: rows.call_edges.shape.generic_method_token
+          .removeDefault()
+          .describe(
+            "Underlying MethodDef or MemberRef token of a validated MethodSpec; null when unavailable.",
+          ),
+      })
+      .partial()
+      .required({
+        caller_token: true,
+        il_offset: true,
+        target_token: true,
+        opcode: true,
+      }),
   ),
   rowsOf(
     "field_accesses",
