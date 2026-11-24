@@ -280,6 +280,16 @@ describe("truncated tar", () => {
 });
 
 describe("gzip expansion", () => {
+  it("charges stored member reads to the plaintext-work allowance", async () => {
+    const bytes = tarFixture([
+      { name: "zeros.bin", data: Buffer.alloc(256 * 1024) },
+    ]);
+    await expect(read(bytes, { expanded: 64 * 1024 })).rejects.toMatchObject({
+      reason: "limit",
+      readerLimit: { parameter: "artifact_limits.expanded_bytes" },
+    });
+  });
+
   it("charges decompressed bytes to the plaintext-work allowance", async () => {
     const bytes = gzipTarFixture([
       { name: "zeros.bin", data: Buffer.alloc(256 * 1024) },
@@ -599,5 +609,63 @@ describe("tar header edge cases", () => {
     expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
     expect(result.contents.get("a.txt")).toBe("a");
     expect(result.metadata?.end_state).toBe("malformed");
+  });
+
+  it("reports non-zero bytes appended after zero-padded gzip as unknown coverage", async () => {
+    const gzip = gzipTarFixture([{ name: "a.txt", data: "a" }]);
+    const result = await read(
+      Buffer.concat([gzip, Buffer.alloc(16), Buffer.from("tail")]),
+    );
+    expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+    expect(result.contents.get("a.txt")).toBe("a");
+    expect(result.metadata).toMatchObject({
+      end_state: "end-marker",
+      trailing_nonzero_bytes: 4,
+    });
+    expect(result.coverage).toEqual([
+      {
+        status: "unknown",
+        limitations: [
+          `4 non-zero byte(s) follow the gzip stream at file offset ${String(gzip.length)}; they were not inventoried.`,
+        ],
+      },
+    ]);
+  });
+
+  it("keeps complete coverage when only zero padding follows a gzip tar", async () => {
+    const gzip = gzipTarFixture([{ name: "a.txt", data: "a" }]);
+    const result = await read(Buffer.concat([gzip, Buffer.alloc(512)]));
+    expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+    expect(result.metadata).toMatchObject({
+      end_state: "end-marker",
+      trailing_nonzero_bytes: 0,
+    });
+    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+  });
+
+  it("uses the resolved GNU long name when classifying directories", async () => {
+    const longDir = `${"d/".repeat(60)}dir/`;
+    const result = await read(
+      tarFixture([
+        {
+          name: "././@LongLink",
+          type: "L",
+          data: `${longDir}\u0000`,
+          dialect: "gnu",
+        },
+        { name: "./", type: "5", dialect: "gnu" },
+        {
+          name: "././@LongLink",
+          type: "L",
+          data: `${longDir}historic/\u0000`,
+          dialect: "gnu",
+        },
+        { name: "truncated", type: "\u0000", dialect: "gnu" },
+      ]),
+    );
+    expect(result.entries.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: longDir, kind: "directory" },
+      { path: `${longDir}historic/`, kind: "directory" },
+    ]);
   });
 });

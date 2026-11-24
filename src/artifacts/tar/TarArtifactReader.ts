@@ -61,7 +61,7 @@ interface PreparedTar {
  * every header once. Stored members are carrier ranges. Gzip members are
  * read by decompressing forward from the start; an idle decompression is
  * kept so members opened in archive order cost one pass. Every decompressed
- * byte, including preparation, is charged to the plaintext-work allowance.
+ * byte and every stored member read is charged to the plaintext-work allowance.
  */
 export class TarArtifactReader implements ArtifactReader {
   readonly format = "tar" as const;
@@ -72,7 +72,7 @@ export class TarArtifactReader implements ArtifactReader {
   readonly #expandedBytes: number | undefined;
   #prepared: PreparedTar | undefined;
   #compression: TarMetadata["compression"] = "none";
-  /** Decompressed bytes allowed across preparation and every member read. */
+  /** Plaintext bytes allowed across gzip decompression and stored member reads. */
   #inflation = new Budget(0);
   /** An idle gzip decompression positioned after the last member it served. */
   #idle: GzipTarStream | undefined;
@@ -211,7 +211,7 @@ export class TarArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure("unavailable", "tar reader is closed");
   }
 
-  /** Charge decompressed bytes to the archive plaintext-work allowance. */
+  /** Charge plaintext bytes to the archive expansion allowance. */
   #charge = (bytes: number): void => {
     const budget = this.#inflation;
     budget.charge(bytes, () =>
@@ -325,10 +325,12 @@ export class TarArtifactReader implements ArtifactReader {
     for (let position = member.dataOffset; position < end;) {
       if (chunks++ % 64 === 63) await setImmediate();
       this.#assertOpen(signal);
+      const toRead = Math.min(CHUNK_BYTES, end - position);
+      this.#charge(toRead);
       const chunk = await readArtifactFileBytes(
         handle,
         position,
-        Math.min(CHUNK_BYTES, end - position),
+        toRead,
         size,
         signal,
       );

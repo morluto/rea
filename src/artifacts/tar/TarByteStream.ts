@@ -1,10 +1,19 @@
 import type { FileHandle } from "node:fs/promises";
 import { pipeline, Readable } from "node:stream";
-import { createGunzip } from "node:zlib";
+import { setImmediate } from "node:timers/promises";
+import { createGunzip, type Gunzip } from "node:zlib";
 
 import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
 import { readArtifactFileBytes } from "../ArtifactFileRange.js";
 import { assertArtifactReadActive } from "../../resources/index.js";
+
+const SCAN_CHUNK_BYTES = 64 * 1024;
+
+/** Unconsumed non-zero carrier bytes left after the stream ended. */
+export interface TrailingCarrierBytes {
+  readonly offset: number;
+  readonly nonZeroBytes: number;
+}
 
 /** Why the decompressed tar stream ended before its own end. */
 export class TarStreamEnded extends Error {
@@ -27,6 +36,11 @@ export interface TarByteStream {
   read(length: number, signal?: AbortSignal): Promise<Buffer>;
   /** Advance up to `length` bytes; returns the bytes skipped. */
   skip(length: number, signal?: AbortSignal): Promise<number>;
+  /**
+   * Count non-zero carrier bytes left after the stream reached EOF (for
+   * example, data appended after zero padding following a gzip member).
+   */
+  trailingCarrierNonZero(signal?: AbortSignal): Promise<TrailingCarrierBytes>;
   close(): void;
 }
 
@@ -60,6 +74,10 @@ export class PlainTarStream implements TarByteStream {
     const skipped = Math.min(length, this.size - this.#position);
     this.#position += skipped;
     return Promise.resolve(skipped);
+  }
+
+  trailingCarrierNonZero(): Promise<TrailingCarrierBytes> {
+    return Promise.resolve({ offset: this.#position, nonZeroBytes: 0 });
   }
 
   close(): void {
@@ -104,9 +122,13 @@ const QUEUE_HIGH_WATER_BYTES = 1024 * 1024;
 export class GzipTarStream implements TarByteStream {
   #position = 0;
   #pending: Buffer = Buffer.alloc(0);
+  readonly #handle: Pick<FileHandle, "read">;
+  readonly #size: number;
+  readonly #gunzip: Gunzip;
   readonly #output: Readable;
   readonly #queue: Buffer[] = [];
   #queuedBytes = 0;
+  #consumedCarrierBytes = 0;
   #state: "open" | "ended" | { readonly failure: unknown } = "open";
   #wake: (() => void) | undefined;
   #closed = false;
@@ -116,7 +138,10 @@ export class GzipTarStream implements TarByteStream {
     size: number,
     private readonly charge: (bytes: number) => void,
   ) {
+    this.#handle = handle;
+    this.#size = size;
     const gunzip = createGunzip();
+    this.#gunzip = gunzip;
     this.#output = pipeline(
       Readable.from(compressedInput(handle, size)),
       gunzip,
@@ -141,7 +166,10 @@ export class GzipTarStream implements TarByteStream {
       this.#notify();
     });
     this.#output.once("end", () => {
-      if (this.#state === "open") this.#state = "ended";
+      if (this.#state === "open") {
+        this.#consumedCarrierBytes = this.#gunzip.bytesWritten;
+        this.#state = "ended";
+      }
       this.#notify();
     });
     this.#output.once("error", (failure: unknown) => {
@@ -174,6 +202,29 @@ export class GzipTarStream implements TarByteStream {
       skipped += chunk.length;
     }
     return skipped;
+  }
+
+  async trailingCarrierNonZero(
+    signal?: AbortSignal,
+  ): Promise<TrailingCarrierBytes> {
+    const offset = this.#consumedCarrierBytes;
+    if (offset >= this.#size) return { offset, nonZeroBytes: 0 };
+    let nonZeroBytes = 0;
+    for (let position = offset, chunks = 0; position < this.#size; chunks++) {
+      if (chunks % 64 === 63) await setImmediate();
+      assertArtifactReadActive(signal);
+      const chunk = await readArtifactFileBytes(
+        this.#handle,
+        position,
+        Math.min(SCAN_CHUNK_BYTES, this.#size - position),
+        this.#size,
+        signal,
+      );
+      if (chunk.length === 0) break;
+      for (const byte of chunk) if (byte !== 0) nonZeroBytes++;
+      position += chunk.length;
+    }
+    return { offset, nonZeroBytes };
   }
 
   close(): void {

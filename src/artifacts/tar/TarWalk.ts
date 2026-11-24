@@ -9,7 +9,6 @@ import {
   TAR_BLOCK_BYTES,
   TAR_TYPEFLAGS,
   tarPaddedSize,
-  type TarHeaderBlock,
   type TarHeaderDialect,
   type TarPaxRecords,
 } from "../../domain/tarFormat.js";
@@ -244,6 +243,13 @@ export const walkTar = async (
           headerOffset,
           `Tar stream ended at offset ${String(headerOffset)} without its end-of-archive marker; members after the last header may be missing.`,
         );
+        const trailingCarrier = await stream.trailingCarrierNonZero(signal);
+        if (trailingCarrier.nonZeroBytes > 0) {
+          trailingNonZeroBytes += trailingCarrier.nonZeroBytes;
+          limitations.push(
+            `${String(trailingCarrier.nonZeroBytes)} non-zero byte(s) follow the gzip stream at file offset ${String(trailingCarrier.offset)}; they were not inventoried.`,
+          );
+        }
         break;
       }
       if (block.length < TAR_BLOCK_BYTES) {
@@ -260,11 +266,20 @@ export const walkTar = async (
       if (parsed.state === "zero") {
         endOffset = headerOffset;
         endState = "end-marker";
-        trailingNonZeroBytes = await countTrailingNonZero(stream, signal);
-        if (trailingNonZeroBytes > 0)
+        const tarTrailing = await countTrailingNonZero(stream, signal);
+        if (tarTrailing > 0) {
+          trailingNonZeroBytes += tarTrailing;
           limitations.push(
-            `${String(trailingNonZeroBytes)} non-zero byte(s) follow the tar end-of-archive marker at offset ${String(headerOffset)}; they were not inventoried.`,
+            `${String(tarTrailing)} non-zero byte(s) follow the tar end-of-archive marker at offset ${String(headerOffset)}; they were not inventoried.`,
           );
+        }
+        const trailingCarrier = await stream.trailingCarrierNonZero(signal);
+        if (trailingCarrier.nonZeroBytes > 0) {
+          trailingNonZeroBytes += trailingCarrier.nonZeroBytes;
+          limitations.push(
+            `${String(trailingCarrier.nonZeroBytes)} non-zero byte(s) follow the gzip stream at file offset ${String(trailingCarrier.offset)}; they were not inventoried.`,
+          );
+        }
         break;
       }
       if (parsed.state === "invalid") {
@@ -388,7 +403,7 @@ export const walkTar = async (
       }
       const sourcePath = name;
       const path = name.replace(/^(?:\.\/)+/u, "");
-      const role = memberRole(header, records);
+      const role = memberRole(typeflag, name, records);
       // Omissions are retained too, so they share the metadata allowance.
       if ("omit" in role || role.member !== "root")
         retained.charge(
@@ -473,14 +488,12 @@ export const walkTar = async (
  * for the archive's own `./` root and a GNU volume label.
  */
 const memberRole = (
-  header: TarHeaderBlock,
+  flag: number,
+  name: string,
   records: TarPaxRecords,
 ):
   | { readonly member: TarMember["kind"] | "root" }
   | { readonly omit: ArtifactTraversalOmissionKind } => {
-  const flag = header.typeflag;
-  const name =
-    records.get("path") ?? Buffer.from(header.name).toString("latin1");
   const directory =
     flag === TAR_TYPEFLAGS.directory || (flag === 0 && name.endsWith("/"));
   if (flag === TAR_TYPEFLAGS.gnuVolumeLabel) return { member: "root" };
