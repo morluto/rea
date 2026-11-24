@@ -311,7 +311,7 @@ describe("raw-binary load rejection diagnostics", () => {
       category: "invalid_input",
       details: {
         constraint: "load_selection_rejected",
-        related_parameters: ["format", "architecture", "entry_point"],
+        related_parameters: RAW_LOAD_PARAMETERS,
       },
     });
     expect(projected.message).toContain("x86 address width");

@@ -314,7 +314,7 @@ const coordinateKey = (identity: TargetIdentity): string => {
       : undefined;
   if (identity.kind !== "file" || load === undefined)
     return targetIdentityKey(identity);
-  const encoded = canonicalize({
+  const encoded = serializeCanonicalValue({
     kind: "raw-load-coordinates",
     sha256: identity.sha256,
     format: identity.format,
