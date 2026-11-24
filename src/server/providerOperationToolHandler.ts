@@ -135,7 +135,7 @@ export const createProviderOperationToolHandler =
                 executionParameters,
                 (parameters) =>
                   analysis.execute(operation, parameters, executionOptions),
-                context.mcpReq.signal,
+                { signal: context.mcpReq.signal },
               ),
           );
           if (!execution.ok)

@@ -22,6 +22,7 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   AnalysisOperationPort,
+  ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 
@@ -62,6 +63,20 @@ const isLookupMiss = (error: AnalysisError): boolean =>
   ) &&
   classifyAnalysisError(error).category === "invalid_input";
 
+type NativeSymbolExecutionOptions = Pick<
+  ExecutionOptions,
+  "signal" | "snapshotContext"
+>;
+
+const lookupOptions = (
+  options?: NativeSymbolExecutionOptions,
+): NativeSymbolExecutionOptions => ({
+  ...(options?.signal === undefined ? {} : { signal: options.signal }),
+  ...(options?.snapshotContext === undefined
+    ? {}
+    : { snapshotContext: options.snapshotContext }),
+});
+
 /**
  * Resolve a name selector once for every name-taking native operation: an
  * exact observed name, then a provider-reported import by its imported or
@@ -74,10 +89,19 @@ export const resolveNativeSymbol = async (
   selector: string,
   operation: NativeSymbolOperation,
   signal: AbortSignal | undefined,
-  { procedureLookup }: { readonly procedureLookup: boolean },
+  {
+    procedureLookup,
+    snapshotContext,
+  }: {
+    readonly procedureLookup: boolean;
+    readonly snapshotContext?: ExecutionOptions["snapshotContext"];
+  },
 ): Promise<Result<NativeSymbolResolution, AnalysisError>> => {
   if (signal?.aborted) return err(cancelledBy(operation, signal));
-  const options = signal === undefined ? {} : { signal };
+  const options = lookupOptions({
+    ...(signal === undefined ? {} : { signal }),
+    ...(snapshotContext === undefined ? {} : { snapshotContext }),
+  });
   const inventory = await executeFact(analysis, listNamesFact, {}, options);
   if (!inventory.ok) {
     if (
@@ -86,7 +110,13 @@ export const resolveNativeSymbol = async (
       inventory.error.operation !== "list_names"
     )
       return inventory;
-    return procedureLookupResolution(analysis, selector, signal, []);
+    return procedureLookupResolution(
+      analysis,
+      selector,
+      signal,
+      [],
+      snapshotContext,
+    );
   }
   if (signal?.aborted) return err(cancelledBy(operation, signal));
   const rows = inventory.value.fact;
@@ -129,6 +159,7 @@ export const resolveNativeSymbol = async (
         selector,
         signal,
         selection.candidates,
+        snapshotContext,
       )
     : ok(selection);
 };
@@ -138,13 +169,17 @@ const procedureLookupResolution = async (
   selector: string,
   signal: AbortSignal | undefined,
   candidates: readonly NativeSymbolCandidate[],
+  snapshotContext?: ExecutionOptions["snapshotContext"],
 ): Promise<Result<NativeSymbolResolution, AnalysisError>> => {
   const resolved = await resolveProcedureAddress(
     async (operation, parameters, signal) => {
       const result = await analysis.execute(
         operation,
         parameters,
-        signal === undefined ? {} : { signal },
+        lookupOptions({
+          ...(signal === undefined ? {} : { signal }),
+          ...(snapshotContext === undefined ? {} : { snapshotContext }),
+        }),
       );
       return result.ok ? ok(result.value.result) : result;
     },
@@ -214,13 +249,13 @@ const refusesAddressFormatOnly = (error: AnalysisError): boolean =>
 const answersSymbolByAddress = async (
   analysis: AnalysisOperationPort,
   address: string,
-  signal: AbortSignal | undefined,
+  options: NativeSymbolExecutionOptions | undefined,
 ): Promise<Result<boolean, AnalysisError>> => {
   const containing = await executeFact(
     analysis,
     resolveContainingProcedureFact,
     { address },
-    signal === undefined ? {} : { signal },
+    lookupOptions(options),
   );
   if (!containing.ok)
     return permitsCapabilityFallback(containing.error) ? ok(false) : containing;
@@ -254,19 +289,34 @@ const nameSelector = (
 };
 
 const answeredByAddress = (
+  analysis: AnalysisOperationPort,
+  operation: NativeSymbolOperation,
+  parameters: Readonly<Record<string, JsonValue>>,
   answered: Result<AnalysisExecution, AnalysisError>,
   selector: string,
   resolution: Extract<NativeSymbolResolution, { status: "resolved" }>,
-): Result<AnalysisExecution, AnalysisError> =>
-  !answered.ok || resolution.address === selector
-    ? answered
-    : ok({
-        ...answered.value,
-        limitations: [
-          `REA resolved ${JSON.stringify(selector)} to ${resolution.name === selector ? "" : `${resolution.name} at `}${resolution.address} (${resolution.match}) and the provider answered by that address.`,
-          ...answered.value.limitations,
-        ],
-      });
+  options: NativeSymbolExecutionOptions | undefined,
+): Result<AnalysisExecution, AnalysisError> => {
+  if (!answered.ok || resolution.address === selector) return answered;
+  const { evidenceId: _resolvedEvidenceId, ...execution } = answered.value;
+  const resolvedExecution: AnalysisExecution = {
+    ...execution,
+    limitations: [
+      `REA resolved ${JSON.stringify(selector)} to ${resolution.name === selector ? "" : `${resolution.name} at `}${resolution.address} (${resolution.match}) and the provider answered by that address.`,
+      ...execution.limitations,
+    ],
+  };
+  return analysis.retainResolvedExecution === undefined
+    ? ok(resolvedExecution)
+    : analysis.retainResolvedExecution(
+        operation,
+        parameters,
+        resolvedExecution,
+        options?.snapshotContext === undefined
+          ? {}
+          : { snapshotContext: options.snapshotContext },
+      );
+};
 
 /**
  * Run one native operation for CLI and MCP alike, resolving a name selector
@@ -290,13 +340,13 @@ export const executeWithNativeSymbolSelection = async (
   execute: (
     parameters: Readonly<Record<string, JsonValue>>,
   ) => Promise<Result<AnalysisExecution, AnalysisError>>,
-  signal?: AbortSignal,
+  options?: NativeSymbolExecutionOptions,
 ): Promise<Result<AnalysisExecution, AnalysisError>> => {
   const named = nameSelector(operation, parameters);
   if (named === undefined) return execute(parameters);
   return named.operation === "xrefs"
-    ? executeXrefs(analysis, parameters, execute, named.selector, signal)
-    : executeIncoming(analysis, parameters, execute, named, signal);
+    ? executeXrefs(analysis, parameters, execute, named.selector, options)
+    : executeIncoming(analysis, parameters, execute, named, options);
 };
 
 const executeIncoming = async (
@@ -309,15 +359,30 @@ const executeIncoming = async (
     operation,
     selector,
   }: { operation: NativeSymbolOperation; selector: string },
-  signal: AbortSignal | undefined,
+  options: NativeSymbolExecutionOptions | undefined,
 ): Promise<Result<AnalysisExecution, AnalysisError>> => {
+  if (options?.signal?.aborted)
+    return err(cancelledBy(operation, options.signal));
+  const cached = analysis.lookupCachedExecution?.(
+    operation,
+    parameters,
+    options?.snapshotContext === undefined
+      ? {}
+      : { snapshotContext: options.snapshotContext },
+  );
+  if (cached !== undefined) return ok(cached);
   const resolved = await resolveNativeSymbol(
     analysis,
     selector,
     operation,
-    signal,
+    options?.signal,
     // The provider's own procedure lookup runs below when the owner misses.
-    { procedureLookup: false },
+    {
+      procedureLookup: false,
+      ...(options?.snapshotContext === undefined
+        ? {}
+        : { snapshotContext: options.snapshotContext }),
+    },
   );
   // Without a name inventory the provider's procedure lookup is the owner.
   if (!resolved.ok)
@@ -331,14 +396,18 @@ const executeIncoming = async (
     const answers = await answersSymbolByAddress(
       analysis,
       resolution.address,
-      signal,
+      options,
     );
     if (!answers.ok) return answers;
     if (answers.value)
       return answeredByAddress(
+        analysis,
+        operation,
+        parameters,
         await execute({ ...parameters, procedure: resolution.address }),
         selector,
         resolution,
+        options,
       );
     return execute(parameters);
   }
@@ -357,7 +426,7 @@ const executeXrefs = async (
     parameters: Readonly<Record<string, JsonValue>>,
   ) => Promise<Result<AnalysisExecution, AnalysisError>>,
   selector: string,
-  signal: AbortSignal | undefined,
+  options: NativeSymbolExecutionOptions | undefined,
 ): Promise<Result<AnalysisExecution, AnalysisError>> => {
   const first = await execute(parameters);
   if (first.ok || !isLookupMiss(first.error)) return first;
@@ -365,8 +434,13 @@ const executeXrefs = async (
     analysis,
     selector,
     "xrefs",
-    signal,
-    { procedureLookup: true },
+    options?.signal,
+    {
+      procedureLookup: true,
+      ...(options?.snapshotContext === undefined
+        ? {}
+        : { snapshotContext: options.snapshotContext }),
+    },
   );
   // Without a name inventory, the provider's own refusal remains the answer.
   if (!resolved.ok)
@@ -381,8 +455,12 @@ const executeXrefs = async (
       : first;
   if (resolution.address === selector) return first;
   return answeredByAddress(
+    analysis,
+    "xrefs",
+    parameters,
     await execute({ ...parameters, address: resolution.address }),
     selector,
     resolution,
+    options,
   );
 };

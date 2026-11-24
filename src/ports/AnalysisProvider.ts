@@ -232,6 +232,19 @@ export interface AnalysisOperationPort {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>>;
+  /** Look up a snapshot-replayed observation for an exact query without running the provider. */
+  lookupCachedExecution?(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: Pick<ExecutionOptions, "snapshotContext">,
+  ): AnalysisExecution | undefined;
+  /** Retain Evidence and snapshot replay for an execution answered under a resolved selector. */
+  retainResolvedExecution?(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    execution: AnalysisExecution,
+    options?: Pick<ExecutionOptions, "snapshotContext">,
+  ): Result<AnalysisExecution, AnalysisError>;
 }
 
 /** Retained provider-process observation attributed to its producing provider. */

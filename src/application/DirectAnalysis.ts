@@ -801,7 +801,7 @@ const executeAnalysisTool = async (input: {
         input.evidenceParameters,
         executionOptions,
       ),
-    signal,
+    executionOptions,
   );
   if (!result.ok) return result;
   const evidence = completedOperationEvidence(
