@@ -2,6 +2,8 @@ import type { Client } from "@modelcontextprotocol/client";
 
 import { TOOL_CONTRACTS } from "../../src/contracts/toolContracts.js";
 import { AGENT_BUDGET_OPERATIONS } from "../../src/domain/agentBudgetOperations.js";
+import { createCli } from "../../src/cli.js";
+import { cliCommands } from "../../src/cli/commandRegistry.js";
 import { COMPLETE_DETAIL } from "./completeDetail.js";
 
 /**
@@ -33,11 +35,27 @@ const budgeted: ReadonlySet<string> = new Set(
     return name;
   }),
 );
-const cliContracts: ReadonlySet<string> = new Set(
-  TOOL_CONTRACTS.filter(
-    (contract) => "cli" in contract && contract.cli === true,
-  ).map(({ name }) => name.replaceAll("_", "-")),
-);
+/**
+ * CLI commands that accept `--detail`, read from the CLI's own registry. The
+ * CLI budgets every Evidence-delivery command whose `--detail` is omitted,
+ * and only those commands take `--detail`, so a contract's `cli` flag alone
+ * cannot tell.
+ */
+let detailCommandSet: ReadonlySet<string> | undefined;
+const detailCommandNames = (): ReadonlySet<string> =>
+  (detailCommandSet ??= new Set(
+    cliCommands(createCli({}))
+      .filter(
+        (entry) =>
+          (entry.definition.options as { readonly shape?: object } | undefined)
+            ?.shape !== undefined &&
+          Object.hasOwn(
+            (entry.definition.options as { readonly shape: object }).shape,
+            "detail",
+          ),
+      )
+      .map(({ name }) => name),
+  ));
 
 /**
  * The arguments one MCP call sends under the complete-Evidence default: a
@@ -57,16 +75,16 @@ export const completeEvidenceArguments = (
 
 /**
  * The argv one CLI invocation runs under the complete-Evidence default: a
- * command whose contract is budgeted, given neither `--detail` nor `--view`,
- * gets `--detail complete` after the command word. Commands without a tool
- * contract (doctor, mcp, help) have no detail selector and run as written.
+ * command that takes `--detail`, given neither `--detail` nor `--view`, gets
+ * `--detail complete` after the command word. Other commands (doctor, mcp,
+ * help, commands without Evidence delivery) run as written.
  */
 export const completeEvidenceCliArguments = (
   arguments_: readonly string[],
 ): readonly string[] => {
   const [command, ...rest] = arguments_;
-  if (command === undefined || !cliContracts.has(command)) return arguments_;
-  if (!budgeted.has(command.replaceAll("-", "_"))) return arguments_;
+  if (command === undefined || !detailCommandNames().has(command))
+    return arguments_;
   const selects = (flag: string) =>
     rest.some(
       (argument) => argument === flag || argument.startsWith(`${flag}=`),

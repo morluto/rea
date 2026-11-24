@@ -43,7 +43,7 @@ it("adds --detail complete to budgeted CLI commands under the same rule", () => 
     ["inspect-byte-entropy", "/f", "--detail", "summary", "--json"],
     ["inspect-byte-entropy", "/f", "--detail=summary"],
     ["inspect-rust-binary", "/f", "--view", "{}"],
-    ["inspect-desktop-application", "/apps"],
+    ["inspect-binary-layout", "/f", "--json"],
     ["doctor"],
   ])
     expect(completeEvidenceCliArguments(argv)).toBe(argv);

@@ -6,6 +6,7 @@ import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "./mcp-verification-environment.mjs";
 import { withCanonicalOutputSchema } from "./canonical-output-schema.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence-cli.mjs";
 
 // Bind parsed definitions to this connection. Hot/cold catalogs may add tools;
 // refresh a missing name once without throwing away already validated bindings.
@@ -119,7 +120,7 @@ export async function artifactCli(
     .normalized_result;
 }
 
-const executeArtifactCli = (
+const executeArtifactCli = async (
   owner,
   command,
   target,
@@ -130,10 +131,13 @@ const executeArtifactCli = (
     process.execPath,
     [
       fileURLToPath(new URL("../rea.mjs", import.meta.url)),
-      command,
-      target,
-      ...arguments_,
-      "--json",
+      // These helpers return complete Evidence records, so they request them.
+      ...(await completeEvidenceCliArguments([
+        command,
+        target,
+        ...arguments_,
+        "--json",
+      ])),
     ],
     {
       env: environment(),
