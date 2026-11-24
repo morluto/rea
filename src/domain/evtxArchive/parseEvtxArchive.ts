@@ -33,12 +33,19 @@ interface DecodeState {
 const digest = (prefix: string, ...parts: (string | number)[]) =>
   `${prefix}_${sha256Hex(parts.join("\u0000"))}`;
 
-/** Reads a 64-bit little-endian value as a number, or null past 2^53. */
-const reader = (bytes: Buffer): BinaryReader =>
-  new BinaryReader(bytes, true, "evtx");
+/** One reader per buffer: every field read in a chunk reuses it. */
+const readers = new WeakMap<Buffer, BinaryReader>();
 
-const readCount = (bytes: Buffer, offset: number): number | null => {
-  const value = reader(bytes).word(offset, 64);
+const reader = (bytes: Buffer): BinaryReader => {
+  const cached = readers.get(bytes);
+  if (cached !== undefined) return cached;
+  const created = new BinaryReader(bytes, true, "evtx");
+  readers.set(bytes, created);
+  return created;
+};
+
+const readCount = (reading: BinaryReader, offset: number): number | null => {
+  const value = reading.word(offset, 64);
   return value > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(value);
 };
 
@@ -63,12 +70,15 @@ const crc32 = (bytes: Buffer): number => {
  * EVTX stores the checksum as CRC32 over the 512-byte chunk header, skipping
  * bytes `0x78..0x7f`, including the stored checksum at `0x7c`.
  */
-const chunkChecksumMatches = (chunk: Buffer): boolean => {
+const chunkChecksumMatches = (
+  chunk: Buffer,
+  reading: BinaryReader,
+): boolean => {
   const signed = Buffer.concat([
     chunk.subarray(0, 0x78),
     chunk.subarray(0x80, CHUNK_HEADER_BYTES),
   ]);
-  return crc32(signed) >>> 0 === reader(chunk).u32(0x7c);
+  return crc32(signed) >>> 0 === reading.u32(0x7c);
 };
 
 const diagnose = (
@@ -124,7 +134,8 @@ const readChunk = (
   // unused. A wrapped log discards records without zeroing them, so stale
   // bytes that still parse as a record header would otherwise be inventoried
   // as live events. An invalid offset cannot establish which bytes are live.
-  const freeSpaceOffset = reader(chunk).u32(0x30);
+  const reading = reader(chunk);
+  const freeSpaceOffset = reading.u32(0x30);
   const validOffset =
     freeSpaceOffset >= CHUNK_HEADER_BYTES && freeSpaceOffset <= chunk.length;
   if (!validOffset)
@@ -136,7 +147,7 @@ const readChunk = (
       `Invalid free-space offset ${freeSpaceOffset}; the record region is unknown.`,
     );
   const recordLimit = validOffset ? freeSpaceOffset : CHUNK_HEADER_BYTES;
-  const lastRecordOffset = reader(chunk).u32(0x2c);
+  const lastRecordOffset = reading.u32(0x2c);
   const empty =
     lastRecordOffset === 0 &&
     chunk.subarray(CHUNK_HEADER_BYTES, recordLimit).every((byte) => byte === 0);
@@ -154,7 +165,7 @@ const readChunk = (
   while (validLast && cursor <= lastRecordOffset) {
     if (
       cursor + RECORD_HEADER_BYTES > recordLimit ||
-      reader(chunk).u32(cursor) !== RECORD_MAGIC
+      reading.u32(cursor) !== RECORD_MAGIC
     ) {
       diagnose(
         state,
@@ -166,7 +177,7 @@ const readChunk = (
       damaged = true;
       break;
     }
-    const size = reader(chunk).u32(cursor + 4);
+    const size = reading.u32(cursor + 4);
     if (
       size < RECORD_HEADER_BYTES ||
       cursor + size > recordLimit ||
@@ -204,12 +215,14 @@ const readChunk = (
         last_event_record_id: null,
         first_timestamp_ms: firstTs,
         last_timestamp_ms: null,
-        checksum: chunkChecksumMatches(chunk) ? "matched" : "mismatched",
+        checksum: chunkChecksumMatches(chunk, reading)
+          ? "matched"
+          : "mismatched",
         stopped: true,
         damaged: false,
       };
     }
-    const recordId = readCount(chunk, cursor + 8);
+    const recordId = readCount(reading, cursor + 8);
     const writtenMs = timestampMs(chunk, cursor + 16);
     state.events.push({
       event_id: digest("evtx_event", chunkNumber, cursor),
@@ -244,7 +257,7 @@ const readChunk = (
     last_event_record_id: last,
     first_timestamp_ms: firstTs,
     last_timestamp_ms: lastTs,
-    checksum: chunkChecksumMatches(chunk) ? "matched" : "mismatched",
+    checksum: chunkChecksumMatches(chunk, reading) ? "matched" : "mismatched",
     stopped: false,
     damaged,
   };
@@ -369,7 +382,7 @@ export const parseEvtxArchive = (
     }
     // Record numbers and identifiers are distinct header fields; record
     // headers carry identifiers, which can only be compared with offset 0x18.
-    const statedFirstRecordId = readCount(chunk, 0x18);
+    const statedFirstRecordId = readCount(reader(chunk), 0x18);
     const inventory = readChunk(chunk, index, index, state);
     if (
       statedFirstRecordId !== null &&

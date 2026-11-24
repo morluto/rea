@@ -1,17 +1,10 @@
-import { isAbsolute } from "node:path";
 import {
-  ArtifactReaderFailure,
   projectStableArtifactFailure,
   readStableArtifact,
-  stableArtifactInputRecovery,
   type ArtifactResourceScope,
 } from "../../resources/index.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
@@ -26,29 +19,9 @@ import {
 } from "../../domain/evtxArchive/evtxArchiveQuery.js";
 import { parseEvtxArchive } from "../../domain/evtxArchive/parseEvtxArchive.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-
-const inputFailure = (message: string, cause?: unknown) =>
-  new AnalysisInputError(
-    operation,
-    {
-      cause,
-      ...(isSelectedRegularFileError(cause)
-        ? {
-            conformsToInputContract: true,
-            remediationAction:
-              "Check that the selected path exists and is a readable regular file on the host running REA.",
-          }
-        : {}),
-      ...(cause instanceof ArtifactReaderFailure
-        ? stableArtifactInputRecovery(cause)
-        : {}),
-    },
-    [{ path: ["path"], reason: "invalid_format", message }],
-  );
 
 /**
  * The shared owner classifies the file read's typed reasons; this dialect only
@@ -134,10 +107,6 @@ export const inspectEvtxArchiveEvidence = async (
   );
   if (!admitted.ok) return admitted;
   const input = admitted.value;
-  if (!isAbsolute(input.path))
-    return err(
-      inputFailure("Expected an absolute filesystem path on this host."),
-    );
   const source = await readArchive(input, resources, options.signal);
   if (!source.ok) return source;
   const { bytes, sha256 } = source.value;
