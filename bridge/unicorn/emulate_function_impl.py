@@ -259,6 +259,8 @@ def validate_request(request):
         "stub_policy": stub_policy,
         "instruction_cap": instruction_cap,
         "timeout_ms": timeout_ms,
+        "address_space_bytes": address_space_bytes,
+        "mapped_total": mapped_total,
     }
 
 
@@ -373,6 +375,9 @@ def run_emulation(uc_module, x86, req):
         # instruction addresses inside them (entry and its ret).
         "dynamic_pages": set(),
         "dynamic_code": set(),
+        # Address space already mapped by setup, plus pages mapped on
+        # demand for undeclared imports; the declared budget covers both.
+        "mapped_total": req["mapped_total"],
     }
 
     def read_register(name):
@@ -460,7 +465,12 @@ def run_emulation(uc_module, x86, req):
             u.emu_stop()
             return
         state["count"] += 1
-        if code_address <= address < code_end:
+        # An instruction counts as in-code only when it lies wholly inside
+        # the declared function bytes: the last code page is zero-filled and
+        # mapped, so an instruction starting at the tail would otherwise
+        # borrow padding bytes as operands or opcode and keep running.
+        in_code = code_address <= address and address + size <= code_end
+        if in_code:
             state["last_code_address"] = address
         if address in stubs:
             call = {
@@ -504,10 +514,14 @@ def run_emulation(uc_module, x86, req):
                 state["stop"] = "unmapped_access"
                 u.emu_stop()
                 return
+            # Synthesizing the return consumes the pushed return address:
+            # without advancing RSP, the caller's RET pops the same address
+            # again and re-executes the post-call continuation.
+            u.reg_write(x86.UC_X86_REG_RSP, u.reg_read(x86.UC_X86_REG_RSP) + 8)
             u.reg_write(x86.UC_X86_REG_RAX, 0)
             u.reg_write(x86.UC_X86_REG_RIP, ret)
             return
-        if not (code_address <= address < code_end):
+        if not in_code:
             state["stop"] = "escaped_code_region"
             u.emu_stop()
             return
@@ -526,10 +540,18 @@ def run_emulation(uc_module, x86, req):
             if address - page > PAGE_SIZE - 3:
                 state["stop"] = "unmapped_access"
                 return False
+            # Dynamic mappings count against the declared address-space
+            # budget, like the setup mappings do; a run that keeps calling
+            # new imports stops instead of mapping past it. Checked before
+            # recording, mirroring the tail-straddle case above.
+            if state["mapped_total"] + PAGE_SIZE > req["address_space_bytes"]:
+                state["stop"] = "unmapped_access"
+                return False
             _record_call(_import_call_record(u, address))
             u.reg_write(x86.UC_X86_REG_RAX, 0)
             u.mem_map(page, PAGE_SIZE, UC_PROT_ALL)
             u.mem_write(address, b"\x31\xc0\xc3")
+            state["mapped_total"] += PAGE_SIZE
             state["dynamic_pages"].add(page)
             state["dynamic_code"].add(address)
             state["dynamic_code"].add(address + 2)

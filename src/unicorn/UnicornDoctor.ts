@@ -7,8 +7,11 @@ import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../ports/DoctorProviderInspection.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import { err } from "../domain/result.js";
 import {
   runUnicornBridge,
+  UNICORN_OPERATION,
   type UnicornBridgeLauncher,
 } from "./UnicornBridge.js";
 import {
@@ -141,17 +144,35 @@ export const inspectUnicornProvider = async (
       fileURLToPath(
         new URL("../../bridge/unicorn/emulate_function.py", import.meta.url),
       );
-    const probe = await runUnicornBridge({
-      pythonPath,
-      bridgePath,
-      request: { probe: true },
-      timeoutMs: 10_000,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.launcher === undefined ? {} : { launcher: options.launcher }),
-      ...(options.runtimeDirBase === undefined
-        ? {}
-        : { runtimeDirBase: options.runtimeDirBase }),
-    });
+    // The probe must never throw: a failure here degrades to a failed check
+    // so one optional probe cannot abort the whole doctor report. Caller
+    // cancellation still throws.
+    let probe: Awaited<ReturnType<typeof runUnicornBridge>>;
+    try {
+      probe = await runUnicornBridge({
+        pythonPath,
+        bridgePath,
+        request: { probe: true },
+        timeoutMs: 10_000,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.launcher === undefined
+          ? {}
+          : { launcher: options.launcher }),
+        ...(options.runtimeDirBase === undefined
+          ? {}
+          : { runtimeDirBase: options.runtimeDirBase }),
+      });
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      probe = err(
+        new AnalysisOutputError(
+          UNICORN_OPERATION,
+          error instanceof Error
+            ? error.message
+            : "Unicorn probe failed before returning a result.",
+        ),
+      );
+    }
     if (probe.ok && probe.value.ok === true && "probe" in probe.value) {
       providerVersion = probe.value.probe.engine.version;
       checks.push({

@@ -129,4 +129,47 @@ describe("inspectUnicornProvider", () => {
     expect(inspection.available).toBe(false);
     expect(check(inspection, "python_executable")?.ok).toBe(false);
   });
+
+  it("degrades to a failed check when the run directory cannot be created", async () => {
+    // A setup failure (mkdtemp / request write) must return a typed error,
+    // not throw: one optional probe must not abort the doctor report
+    // (Greptile 2026-11-03 P1).
+    const python = await makeExecutable();
+    try {
+      const inspection = await inspectUnicornProvider(
+        { [UNICORN_PYTHON_ENV_VAR]: python.path },
+        "linux",
+        "x64",
+        { runtimeDirBase: join(tmpdir(), "rea-unicorn-nonexistent-dir") },
+      );
+      expect(inspection.available).toBe(false);
+      expect(inspection.providerVersion).toBeNull();
+      expect(check(inspection, "unicorn_importable")?.ok).toBe(false);
+    } finally {
+      await python.cleanup();
+    }
+  });
+
+  it("degrades to a failed check when the launcher throws", async () => {
+    const python = await makeExecutable();
+    try {
+      const inspection = await inspectUnicornProvider(
+        { [UNICORN_PYTHON_ENV_VAR]: python.path },
+        "linux",
+        "x64",
+        {
+          launcher: () => {
+            throw new Error("launcher exploded");
+          },
+        },
+      );
+      expect(inspection.available).toBe(false);
+      expect(check(inspection, "unicorn_importable")?.ok).toBe(false);
+      expect(check(inspection, "unicorn_importable")?.detail).toMatch(
+        /launcher exploded/,
+      );
+    } finally {
+      await python.cleanup();
+    }
+  });
 });

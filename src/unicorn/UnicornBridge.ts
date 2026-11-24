@@ -222,18 +222,51 @@ export const runUnicornBridge = async (
         cause: options.signal.reason,
       }),
     );
-  const runDir = await mkdtemp(
-    join(options.runtimeDirBase ?? tmpdir(), "rea-unicorn-"),
-  );
+  // Setup failures are typed errors, not throws: a caller that probes the
+  // bridge (notably the doctor) must be able to degrade, not abort.
+  let runDir: string;
+  try {
+    runDir = await mkdtemp(
+      join(options.runtimeDirBase ?? tmpdir(), "rea-unicorn-"),
+    );
+  } catch (error) {
+    return err(
+      new AnalysisResourceConstraintError(
+        UNICORN_OPERATION,
+        "capacity",
+        `Unicorn bridge could not create its run directory: ${error instanceof Error ? error.message : String(error)}`,
+        null,
+        {
+          remediationAction:
+            "Check disk space and write permission for the temporary directory and retry.",
+        },
+      ),
+    );
+  }
   try {
     const requestPath = join(runDir, "request.json");
     const replyPath = join(runDir, "reply.json");
     const failureMarkerPath = join(runDir, "failure.marker");
-    await writeFile(
-      requestPath,
-      JSON.stringify({ ...options.request, reply_path: replyPath }),
-      { flag: "wx", mode: 0o600 },
-    );
+    try {
+      await writeFile(
+        requestPath,
+        JSON.stringify({ ...options.request, reply_path: replyPath }),
+        { flag: "wx", mode: 0o600 },
+      );
+    } catch (error) {
+      return err(
+        new AnalysisResourceConstraintError(
+          UNICORN_OPERATION,
+          "capacity",
+          `Unicorn bridge could not write its request file: ${error instanceof Error ? error.message : String(error)}`,
+          null,
+          {
+            remediationAction:
+              "Check disk space and write permission for the temporary directory and retry.",
+          },
+        ),
+      );
+    }
     const launcher = options.launcher ?? defaultLauncher;
     let snapshot: ProviderProcessSnapshot;
     try {

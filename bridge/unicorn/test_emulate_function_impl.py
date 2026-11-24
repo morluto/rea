@@ -247,6 +247,57 @@ class UnicornEngineTests(unittest.TestCase):
         self.assertTrue(reply["calls_truncated"])
         self.assertEqual(len(reply["calls_hit"]), impl.MAX_CALL_RECORDS)
 
+    def test_second_undeclared_import_on_same_page_returns_once(self):
+        # Kaoru0822's bytes: call 0x2000000; call 0x2000010; inc eax; ret.
+        # The second import lands on an already-mapped dynamic page, so the
+        # bridge synthesizes its return; that return must consume the pushed
+        # return address, or the caller's RET pops it again and re-runs the
+        # continuation (the unfixed bridge returned 2: inc ran twice).
+        req = base_request(function_bytes="e8fbffff00e806000001ffc0c3")
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "returned")
+        self.assertEqual(reply["return_value"], "0x1")
+        self.assertEqual(
+            [call["address"] for call in reply["calls_hit"]],
+            ["0x2000000", "0x2000010"],
+        )
+
+    def test_instruction_straddling_code_end_stops_instead_of_running_padding(self):
+        # Five nops, then c6 as the last function byte: the mov needs two
+        # more bytes, which only exist as zero padding in the last code page.
+        # The padding must not become instruction bytes (Greptile 2026-11-03
+        # P1): the unfixed bridge ran the padding as `add [rax], al` and
+        # faulted on a write to address 0.
+        req = base_request(
+            function_bytes="9090909090c6",
+            registers={"rdi": "0x2000000"},
+            memory=[{"address": "0x2000000", "bytes": "ff"}],
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "escaped_code_region")
+        self.assertEqual(reply["memory_writes"], [])
+
+    def test_dynamic_import_pages_count_against_address_space_budget(self):
+        # Setup maps 17 pages (code + 64 KiB stack); the budget allows two
+        # more. Three calls to distinct undeclared imports on three pages
+        # must stop at the third, before recording it (Greptile 2026-11-03
+        # P1): dynamic mappings count against the budget like setup does.
+        req = base_request(
+            function_bytes="e8fbffff00e8f6ff0001e8f1ff0101c3",
+            budgets={
+                "instruction_cap": 1_000_000,
+                "timeout_ms": 30_000,
+                "address_space_bytes": 19 * 4096,
+            },
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "unmapped_access")
+        self.assertEqual(len(reply["calls_hit"]), 2)
+        self.assertEqual(
+            [call["address"] for call in reply["calls_hit"]],
+            ["0x2000000", "0x2010000"],
+        )
+
     def test_declared_stub_still_returns_its_value(self):
         # call IMPORT; ret
         req = base_request(

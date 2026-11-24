@@ -1,4 +1,5 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -330,5 +331,24 @@ describe("Unicorn bridge boundary fixes", () => {
         expect(result.error.resource).toBe("memory");
     }
     expect(await readdir(dir)).toContain("exit75.sh");
+  });
+
+  it("returns a resource error instead of throwing when setup fails", async () => {
+    // mkdtemp / request-write failures are typed errors at the bridge
+    // boundary, so a probing caller can degrade instead of aborting
+    // (Greptile 2026-11-03 P1).
+    const result = await runUnicornBridge({
+      pythonPath: "/usr/bin/python3",
+      bridgePath: "bridge.py",
+      request: {},
+      timeoutMs: 5000,
+      runtimeDirBase: join(tmpdir(), "rea-unicorn-nonexistent-dir"),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      if (result.error instanceof AnalysisResourceConstraintError)
+        expect(result.error.resource).toBe("capacity");
+    }
   });
 });
