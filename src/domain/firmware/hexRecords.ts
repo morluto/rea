@@ -122,7 +122,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   #start: (DeclaredValue<number> & { readonly record: string }) | undefined;
   #startSegment: DeclaredValue<readonly [number, number]> | undefined;
   #header: DeclaredValue<Uint8Array> | undefined;
-  #declaredCount: number | null = null;
+  #declaredCount: DeclaredValue<number> | undefined;
   readonly #dataTypes = new Set<string>();
 
   constructor(encoding: HexRecordEncoding, fileBytes: number) {
@@ -279,7 +279,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
               `record type ${record.type} declares ${String(record.address)} data records, but ${String(this.#dataRecordCount)} precede it`,
             ),
           );
-        this.#declaredCount = record.address;
+        this.#declaredCount = { value: record.address, line: this.#lineNumber };
         return ok(undefined);
       default:
         this.#termination = { value: record.type, line: this.#lineNumber };
@@ -393,18 +393,28 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   }
 
   #limitations(): string[] {
-    const label = HEX_RECORD_ENCODING_LABELS[this.#encoding];
-    if (this.#termination === undefined)
-      return [`${label} has no termination record; the file may be truncated.`];
-    const termination = this.#termination.value;
-    const mismatched = [...this.#dataTypes].filter(
-      (type) => SREC_WIDTH_OF[type] !== SREC_WIDTH_OF[termination],
-    );
-    return this.#encoding === "srec" && mismatched.length > 0
-      ? [
+    const limitations: string[] = [];
+    const count = this.#declaredCount;
+    if (count !== undefined && count.value < this.#dataRecordCount)
+      limitations.push(
+        `S-record line ${String(count.line)}: the final count covers ${String(count.value)} of ${String(this.#dataRecordCount)} data records. Data after the count is retained.`,
+      );
+    const termination = this.#termination?.value;
+    if (termination === undefined) {
+      const label = HEX_RECORD_ENCODING_LABELS[this.#encoding];
+      limitations.push(
+        `${label} has no termination record; the file may be truncated.`,
+      );
+    } else if (this.#encoding === "srec") {
+      const mismatched = [...this.#dataTypes].filter(
+        (type) => SREC_WIDTH_OF[type] !== SREC_WIDTH_OF[termination],
+      );
+      if (mismatched.length > 0)
+        limitations.push(
           `S-record termination ${termination} does not match the address width of ${mismatched.sort().join(", ")} data records.`,
-        ]
-      : [];
+        );
+    }
+    return limitations;
   }
 
   #metadata(
@@ -438,7 +448,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
         header?.every((byte) => byte >= 0x20 && byte <= 0x7e) === true
           ? String.fromCharCode(...header)
           : null,
-      declared_data_record_count: this.#declaredCount,
+      declared_data_record_count: this.#declaredCount?.value ?? null,
     };
   }
 }
