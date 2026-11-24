@@ -219,7 +219,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
   uefi: plain(
     () => import("./uefiCommands.js"),
     (module, context) =>
-      module.registerUefiCommands(context.cli, context.logger),
+      module.registerUefiCommands(
+        context.cli,
+        context.logger,
+        context.environment,
+      ),
   ),
   android: plain(
     () => import("./androidCommands.js"),

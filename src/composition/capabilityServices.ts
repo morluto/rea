@@ -491,9 +491,9 @@ const modules = {
       },
     }),
   ),
-  uefiAnalysis: service(({ options }) =>
+  uefiAnalysis: service(({ options, providerEnvironment }) =>
     createUefiAnalysisService(
-      options.uefiAnalysis ?? createUefiAnalysisProvider(),
+      options.uefiAnalysis ?? createUefiAnalysisProvider(providerEnvironment),
     ),
   ),
   gdbSessions: capability(

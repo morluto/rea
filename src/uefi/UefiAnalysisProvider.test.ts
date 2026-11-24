@@ -40,6 +40,7 @@ import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
+import { createUefiAnalysisProvider } from "../composition/uefi.js";
 import { AMD_ZLIB_HEADER_LENGTH } from "./FfsSections.js";
 import {
   buildCompressionSection,
@@ -9666,4 +9667,96 @@ it("preserves native POSIX payload files containing backslashes without rejectin
   } finally {
     await provider.close();
   }
+});
+
+it("preserves caller-selected provider environment for tool configuration over ambient process.env", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-provider-env-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(
+    join(inDir, "Sample.efi"),
+    createMinimalPeBuffer(0x8664, 1, 256),
+  );
+
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command.includes("analyzeHeadless")) {
+        capturedEnv = options?.env;
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "EFI_STATUS UefiMain() { return 0; }");
+        }
+        return {
+          stdout: "decompiled output",
+          stderr: "",
+          stdoutBytes: 17,
+          stderrBytes: 0,
+        };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const origGhidra = process.env.GHIDRA_INSTALL_DIR;
+  try {
+    process.env.GHIDRA_INSTALL_DIR = "/ambient/wrong/ghidra";
+
+    const customEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      GHIDRA_INSTALL_DIR: mockGhidraDir,
+      REA_OBJDUMP_COMMAND: "custom-selected-objdump",
+    };
+
+    const provider = new UefiAnalysisProvider({
+      environment: customEnv,
+      ghidraInstallationHost: ghidraProfileInstallationHost,
+    });
+    try {
+      const executed = expectOk(
+        await provider.execute(
+          decompileRequest(inDir, outDir, { include_disassembly: false }),
+        ),
+      );
+      const result = executed.value.result as UefiDecompileResult;
+      expect(result.coverage).toBe("complete");
+      expect(capturedEnv).toBeDefined();
+      expect(result.producers?.ghidra).toBeDefined();
+      expect(result.limitations).not.toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("/ambient/wrong/ghidra"),
+        ]),
+      );
+    } finally {
+      await provider.close();
+    }
+  } finally {
+    spy.mockRestore();
+    if (origGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = origGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+  }
+});
+
+it("passes caller-selected environment to UefiAnalysisProvider via createUefiAnalysisProvider", async () => {
+  const customEnv: NodeJS.ProcessEnv = {
+    GHIDRA_INSTALL_DIR: "/custom/configured/ghidra",
+    REA_OBJDUMP_COMMAND: "custom-objdump",
+  };
+  const provider = createUefiAnalysisProvider(customEnv);
+  expect(provider).toBeInstanceOf(UefiAnalysisProvider);
 });

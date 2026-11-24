@@ -26,8 +26,11 @@ const targetOffset = cliDecimalField(z.number().int().nonnegative().optional());
 export const registerUefiCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): void => {
-  const service = createUefiAnalysisService(createUefiAnalysisProvider());
+  const service = createUefiAnalysisService(
+    createUefiAnalysisProvider(environment),
+  );
   const run = (operation: UefiOperation) =>
     inspectWithService(
       () => ({

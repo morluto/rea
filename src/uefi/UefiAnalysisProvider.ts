@@ -671,6 +671,7 @@ export interface UefiProviderOptions {
   readonly workerModulePath?: string;
   readonly ghidraInstallationHost?: GhidraInstallationHost;
   readonly hostPlatform?: HostPlatform;
+  readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
 
 /**
@@ -686,6 +687,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   readonly #workerModulePath: string;
   readonly #ghidraInstallationHost?: GhidraInstallationHost | undefined;
   readonly #hostPlatform: HostPlatform;
+  readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #inspectionOwner: RetainedResourceScope = {
     retain: (owner, resource) =>
       this.#resources.retain({
@@ -703,6 +705,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     if (typeof workerModulePathOrOptions === "string") {
       this.#workerModulePath = workerModulePathOrOptions;
       this.#hostPlatform = HOST_PLATFORM;
+      this.#environment = process.env;
     } else {
       this.#workerModulePath =
         workerModulePathOrOptions?.workerModulePath ??
@@ -711,6 +714,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         workerModulePathOrOptions?.ghidraInstallationHost;
       this.#hostPlatform =
         workerModulePathOrOptions?.hostPlatform ?? HOST_PLATFORM;
+      this.#environment = workerModulePathOrOptions?.environment ?? process.env;
     }
   }
 
@@ -1444,12 +1448,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       },
     );
 
-    const ghidraInstallDir = process.env.GHIDRA_INSTALL_DIR;
-    const ghidraJavaHome = process.env.JAVA_HOME;
+    const ghidraInstallDir = this.#environment.GHIDRA_INSTALL_DIR;
+    const ghidraJavaHome = this.#environment.JAVA_HOME;
     const ghidraOptions: GhidraInstallationOptions = {
       signal,
       resourceOwner: this.#inspectionOwner,
-      environment: process.env,
+      environment: this.#environment,
       ...(ghidraInstallDir ? { installDir: ghidraInstallDir } : {}),
       ...(ghidraJavaHome ? { javaHome: ghidraJavaHome } : {}),
     };
@@ -1468,10 +1472,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
     if (
       ghidraInspection?.status === "unavailable" &&
-      (Boolean(process.env.GHIDRA_INSTALL_DIR) ||
+      (Boolean(this.#environment.GHIDRA_INSTALL_DIR) ||
         ghidraInspection.installDir !== null)
     ) {
-      const sourceLabel = process.env.GHIDRA_INSTALL_DIR
+      const sourceLabel = this.#environment.GHIDRA_INSTALL_DIR
         ? "Configured Ghidra installation"
         : "Discovered Ghidra installation";
       effectiveLimitations.push(
@@ -1642,7 +1646,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             ]);
             const baseJavaEnv = ghidraJavaEnvironment(
               ghidraInspection?.javaHome ?? undefined,
-              process.env,
+              this.#environment,
               this.#hostPlatform.platform,
             );
             const ghidraEnv: NodeJS.ProcessEnv = {
@@ -1867,7 +1871,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     windowsVerbatimArguments: true,
                     platform: "win32",
                     env: ghidraEnv,
-                    hostEnvironment: process.env,
+                    hostEnvironment: this.#environment,
                     signal,
                   },
                   {
@@ -2248,7 +2252,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       Math.min(15_000, Math.max(500, remainingForObjdump)),
                     );
                     const configuredCommand =
-                      process.env.REA_OBJDUMP_COMMAND ?? "objdump";
+                      this.#environment.REA_OBJDUMP_COMMAND ?? "objdump";
                     const objdumpExecutable =
                       configuredCommand.includes("/") ||
                       configuredCommand.includes("\\")
@@ -2264,7 +2268,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                           stopSignal: "SIGTERM",
                           timeout: objdumpTimeout,
                           maxBuffer: maxAsmBuffer,
-                          env: { ...process.env, DEBUGINFOD_URLS: "" },
+                          env: { ...this.#environment, DEBUGINFOD_URLS: "" },
                         },
                       );
                       asmOutput = stdout;
