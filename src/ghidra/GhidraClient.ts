@@ -912,13 +912,16 @@ export class GhidraClient {
 
   /** Stop the owned process group and remove all project/runtime artifacts. */
   async close(): Promise<Result<null, AnalysisError>> {
-    // Closing is the caller's explicit retry: the next start imports again.
-    this.#elapsedStartup = undefined;
     try {
       await this.#requestClose(false);
       return ok(null);
     } catch (cause: unknown) {
       return err(this.#cleanupError(cause));
+    } finally {
+      // Closing is the caller's explicit retry: the next start imports again.
+      // Cleared after close settles, since a startup it waited for may have
+      // recorded its elapsed deadline meanwhile.
+      this.#elapsedStartup = undefined;
     }
   }
 

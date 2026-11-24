@@ -1587,6 +1587,41 @@ it("returns an elapsed startup again until its deadline changes or the client cl
   expect(launcher.runtimeRoots).toHaveLength(3);
 });
 
+it("forgets an elapsed startup that a close interrupted during its cleanup", async () => {
+  const fixture = new FixtureLauncher("silent");
+  const elapsedCleanup = phaseGate();
+  let launches = 0;
+  const launcher: GhidraLauncher = {
+    launch: async (session) => {
+      const launched = await fixture.launch(session);
+      if (!launched.ok) return launched;
+      const held = ++launches === 1;
+      return ok({
+        ...launched.value,
+        cleanup: async () => {
+          if (held) await elapsedCleanup.hold();
+          return { cleaned: true as const, signaled: false };
+        },
+      });
+    },
+  };
+  const client = clientFor(launcher, { startupTimeoutMs: 200 });
+  const pending = client.start();
+  await elapsedCleanup.reached(pending, "elapsed startup cleanup");
+  // The deadline already decided this startup; close lands during cleanup.
+  const closing = client.close();
+  elapsedCleanup.release();
+  const elapsed = await pending;
+  expect(elapsed).toMatchObject({ ok: false, error: { kind: "timeout" } });
+  await closing;
+
+  // The close is the caller's retry: the next start must not return the
+  // failure the interrupted cleanup would otherwise have recorded.
+  const retry = await client.start();
+  if (elapsed.ok || retry.ok) throw new Error("Expected startup failures");
+  expect(retry.error).not.toBe(elapsed.error);
+});
+
 it("cancels startup promptly and leaves no project or process", async () => {
   const launcher = new FixtureLauncher("silent");
   const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
