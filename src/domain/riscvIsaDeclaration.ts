@@ -250,8 +250,8 @@ const unavailable = (reason: string): RiscvIsaDeclaration => ({
 
 /**
  * The RISC-V declarations the section table makes, from one pass over it: the
- * ISA, and for fixed-address images the section overlap. The caller satisfies
- * each read from its own descriptor.
+ * ISA, and when requested (`ET_EXEC` and `ET_DYN`) the section overlap. The
+ * caller satisfies each read from its own descriptor.
  */
 export function* readRiscvElfDeclarations(
   prefix: Buffer,

@@ -147,7 +147,7 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
 export interface RiscvElfMetadata extends ElfFamilyMetadata {
   /** Undefined until `.riscv.attributes` is inspected. */
   readonly isa?: RiscvIsaDeclaration;
-  /** Undefined until the section table is inspected; read for ET_EXEC only. */
+  /** Undefined until the section table is inspected; read for ET_EXEC and ET_DYN. */
   readonly sectionOverlap?: ElfSectionOverlap;
 }
 

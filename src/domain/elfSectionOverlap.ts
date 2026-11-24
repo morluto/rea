@@ -86,8 +86,9 @@ const executableOverlaps = (sorted: readonly Allocated[]): Pair[] => {
 
 /**
  * Collect allocated sections during one section-table pass, then derive the
- * overlap fact. Section addresses are load addresses only in fixed-address
- * (`ET_EXEC`) images, so callers collect for those. Overlaps between two
+ * overlap fact. Section addresses are load addresses in `ET_EXEC` images and
+ * fixed offsets from the load base in `ET_DYN` (PIE) images, so callers
+ * collect for both. Overlaps between two
  * non-executable sections are outside the fact, unless one of them is the
  * reservation, which then departs from the verified shape.
  */
