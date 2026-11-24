@@ -10,7 +10,6 @@ import {
 import { ElfNotesService } from "../../application/binaryDiagnostics/ElfNotesService.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -132,22 +131,18 @@ it("cancels a many-frame compressed section-name table", async () => {
 });
 
 describe("ELF note provider failures", () => {
-  it("reports a note table past the end of the file as invalid input", async () => {
+  it("refuses a note table past the end of the file as a malformed target", async () => {
     const root = await createTestTempDirectory("rea-elf-note-past-end-");
     const path = join(root, "program");
     await writeFile(path, elfNoteTablePastEnd());
     const result = await inspect(path);
-    if (result.ok) throw new Error("Expected invalid input");
-    expect(result.error).toBeInstanceOf(AnalysisInputError);
+    if (result.ok) throw new Error("Expected a malformed target");
+    // The image's bytes, not the request, are at fault.
     expect(result.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      issues: [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining("leaves the artifact"),
-        },
-      ],
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_elf_notes",
+      path,
+      failure: { kind: "malformed", format: "elf" },
     });
   });
 
