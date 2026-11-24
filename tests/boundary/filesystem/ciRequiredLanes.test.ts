@@ -456,7 +456,7 @@ it("runs architecture guards for fast code feedback before installing dependenci
   expect(steps[guard]?.["continue-on-error"]).toBeUndefined();
 });
 
-it("holds native and provider fan-out behind static validation while portable feedback stays independent", async () => {
+it("holds broad PR shards and native checks behind static validation", async () => {
   const { jobs } = await workflow();
   const earlyJobs = new Set([
     "changes",
@@ -651,7 +651,14 @@ it("binds provider build reuse to the current run while keeping standalone dispa
       ),
     ),
   );
-  expect(jobs["test-shard"]?.if).toBe("needs.changes.outputs.code == 'true'");
+  for (const name of ["test-shard", "test-shard-broad"])
+    expect(jobs[name]?.if).toBe(
+      `needs.changes.outputs.code == 'true' && needs.changes.outputs.test_shard_job == '${name}'`,
+    );
+  expect(jobs["test-shard-broad"]?.steps).toEqual(jobs["test-shard"]?.steps);
+  expect(jobs["test-shard-broad"]?.strategy).toEqual(
+    jobs["test-shard"]?.strategy,
+  );
   await assertProviderCacheCallers(jobs, consumers);
   const action = z
     .object({
@@ -1058,6 +1065,15 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
         stderr: expect.stringContaining(name),
       },
     );
+  const broad = { ...ran, "test-source": "success", "test-shard": "skipped" };
+  await expect(
+    gate({ test_mode: "full" }, { ...broad, "test-shard-broad": "success" }),
+  ).resolves.toMatchObject({ stderr: "" });
+  await expect(
+    gate({ test_mode: "full" }, { ...broad, "test-shard": "success" }),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("test-shard-broad"),
+  });
   // The complete fast suite still requires its source job.
   await expect(gate({ test_mode: "full" }, ran)).rejects.toMatchObject({
     stderr: expect.stringContaining("test-source"),
@@ -1157,6 +1173,7 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       {
         env: {
           ...process.env,
+          GITHUB_EVENT_NAME: "push",
           CI_JOBS: JSON.stringify(context),
           CI_QUALIFICATION_DIRECTORY: "",
         },

@@ -737,6 +737,14 @@ const PATH_SCOPES = {
   ],
 };
 
+// Only the broad PR matrix waits for static checks. Shared qualification and
+// selected PR tests can start as soon as their runtime artifact is available.
+export function testShardJob(event, tier, mode) {
+  return event === "pull_request" && tier === "fast" && mode === "full"
+    ? "test-shard-broad"
+    : "test-shard";
+}
+
 // Each lane owns its path inputs, selection policy, and required jobs. The
 // workflow stays explicit; contract tests bind it to this registry.
 const sameJobs = (paths, jobs, selection = {}) => ({
