@@ -480,7 +480,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
-                writeFailure(writer, request.id, failure.code, failure.getMessage());
+                writeFailure(writer, request.id, failure.code, failure.getMessage(), failure.candidates);
             }
             catch (Exception exception) {
                 writeFailure(
@@ -1295,7 +1295,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure(failure.code, "Selector " + selector +
                 " mapped to analysis address " + selection.get("mapped_address").getAsString() +
                 " and procedure " + canonicalAddress(function.getEntryPoint()) +
-                "; " + failure.getMessage());
+                "; " + failure.getMessage(), failure.candidates);
         }
     }
 
@@ -1405,7 +1405,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private JsonObject procedureCalls(JsonObject params, boolean callers) throws Exception {
         requireKeys(params, Set.of("document", "procedure"));
         requireDocument(params);
-        Function function = resolveProcedure(requireString(params, "procedure"));
+        String selector = requireString(params, "procedure");
+        if (callers) {
+            Address target = incomingNonProcedureAddress(selector);
+            if (target != null) return addressCallers(target);
+        }
+        Function function = resolveProcedure(selector);
         Set<Function> observed = callers
             ? function.getCallingFunctions(monitor)
             : function.getCalledFunctions(monitor);
@@ -1465,11 +1470,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             )
         );
         requireDocument(params);
-        Function function = resolveProcedure(requireString(params, "procedure"));
+        String selector = requireString(params, "procedure");
         String direction = requireString(params, "direction");
         if (!direction.equals("incoming") && !direction.equals("outgoing")) {
             throw new RequestFailure("invalid_request", "direction must be incoming or outgoing");
         }
+        if (direction.equals("incoming")) {
+            Address target = incomingNonProcedureAddress(selector);
+            if (target != null) return addressReferences(target);
+        }
+        Function function = resolveProcedure(selector);
         List<Reference> references = collectReferences(function, direction);
         JsonArray edges = referenceEdges(references);
         JsonObject result = new JsonObject();
@@ -3115,11 +3125,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static RequestFailure ambiguousProcedureFailure(String value, List<Function> matches) {
+        JsonArray candidates = new JsonArray();
+        for (Function function : matches) candidates.add(canonicalAddress(function.getEntryPoint()));
         return new RequestFailure(
             "procedure_ambiguous",
             "Ghidra procedure name is ambiguous: " + value +
                 "; select an exact entry address from " + matches.stream()
-                    .map(function -> canonicalAddress(function.getEntryPoint())).toList()
+                    .map(function -> canonicalAddress(function.getEntryPoint())).toList(),
+            candidates
         );
     }
 
@@ -3147,6 +3160,67 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "and rea inspect-native-load-image <path> --provider ghidra --json, or MCP binary_overview and inspect_native_load_image. " +
                 "Repeat the original target options. For decompile, select source coordinates explicitly with --file-offset=0x... or MCP procedure file-offset:0x....");
         return function;
+    }
+
+    private static final String NON_PROCEDURE_LIMITATION =
+        "The selected address is outside every Ghidra function, such as an import address-table slot or a data label. " +
+        "The result lists the ReferenceManager's references to that address with their containing functions; unrecorded references remain unknown.";
+
+    /**
+     * An explicit memory address outside every function selects that address
+     * for incoming references, such as an import address-table slot. Names stay
+     * procedure selectors: REA's shared selector owner resolves a name outside
+     * every function and asks again by its address.
+     */
+    private Address incomingNonProcedureAddress(String value) {
+        if (!isExplicitReaAddress(value)) return null;
+        Address address = tryParseAddress(value);
+        if (address == null || !address.isMemoryAddress() || !currentProgram.getMemory().contains(address)) return null;
+        return functionAtOrContaining(address) == null ? address : null;
+    }
+
+    private JsonObject nonProcedureIdentity(Address address) {
+        JsonObject result = new JsonObject();
+        result.addProperty("address", canonicalAddress(address));
+        Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(address);
+        result.addProperty("name", symbol == null ? canonicalAddress(address) : symbol.getName(true));
+        result.add("symbol", symbol == null ? JsonNull.INSTANCE : symbolMetadata(symbol));
+        result.add("classification", JsonNull.INSTANCE);
+        JsonObject body = new JsonObject();
+        body.addProperty("available", false);
+        body.addProperty("reason", "The address is outside every Ghidra function; it has no function body");
+        result.add("body", body);
+        return result;
+    }
+
+    private List<Reference> referencesToAddress(Address address) throws Exception {
+        TreeMap<String, Reference> observed = new TreeMap<>();
+        visitObservedReferencesTo(address, reference -> addReference(observed, reference));
+        List<Reference> result = new ArrayList<>(observed.values());
+        result.sort(REFERENCE_ORDER);
+        return result;
+    }
+
+    private JsonObject addressReferences(Address address) throws Exception {
+        JsonObject result = new JsonObject();
+        result.add("procedure", nonProcedureIdentity(address));
+        result.addProperty("direction", "incoming");
+        result.add("references", referenceEdges(referencesToAddress(address)));
+        result.addProperty("reference_kinds_available", true);
+        result.add("unresolved_calls", new JsonArray());
+        return functionObservation(result, List.of(NON_PROCEDURE_LIMITATION));
+    }
+
+    private JsonObject addressCallers(Address address) throws Exception {
+        TreeMap<Address, Function> callers = new TreeMap<>();
+        for (Reference reference : referencesToAddress(address)) {
+            monitor.checkCancelled();
+            Function function = functionAtOrContaining(reference.getFromAddress());
+            if (function != null) callers.putIfAbsent(function.getEntryPoint(), function);
+        }
+        JsonArray result = new JsonArray();
+        for (Address entry : callers.keySet()) result.add(canonicalAddress(entry));
+        return functionObservation(result, List.of(NON_PROCEDURE_LIMITATION));
     }
 
     /** Exact entries include externals; containment applies only to memory addresses. */
@@ -6517,9 +6591,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
             int id,
             String code,
             String message) throws IOException {
+        writeFailure(writer, id, code, message, null);
+    }
+
+    private static void writeFailure(
+            BufferedWriter writer,
+            int id,
+            String code,
+            String message,
+            JsonArray candidates) throws IOException {
         JsonObject error = new JsonObject();
         error.addProperty("code", code);
         error.addProperty("message", message);
+        if (candidates != null) error.add("candidates", candidates);
         JsonObject response = new JsonObject();
         response.addProperty("id", id);
         response.addProperty("ok", false);
@@ -6875,10 +6959,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private static final class RequestFailure extends RuntimeException {
         private final String code;
+        /** Every matching selector candidate, for an ambiguous selection only. */
+        private final JsonArray candidates;
 
         RequestFailure(String code, String message) {
+            this(code, message, null);
+        }
+
+        RequestFailure(String code, String message, JsonArray candidates) {
             super(message);
             this.code = code;
+            this.candidates = candidates;
         }
     }
 
