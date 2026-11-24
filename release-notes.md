@@ -126,6 +126,7 @@
 * **ci:** read portable build plan from a file instead of a pipe ([#13456](https://github.com/morluto/rea/issues/13456)) ([60dfeec](https://github.com/morluto/rea/commit/60dfeec745235e7b8c6f524b54960dbb31729dd9))
 * **ci:** rerun TODO scans against the host interpreter ([ba093e0](https://github.com/morluto/rea/commit/ba093e0777a1480d45e4391a65b54b4b7c8bd40f))
 * **ci:** retain cache generations per restore version ([#14084](https://github.com/morluto/rea/issues/14084)) ([30b8249](https://github.com/morluto/rea/commit/30b82493ab7f8a1b95be7e5a498ef3bcf5345324))
+* **ci:** retry recorded crash dependency acquisition without stale index cache ([#14076](https://github.com/morluto/rea/issues/14076)) ([98beb54](https://github.com/morluto/rea/commit/98beb5424acc52e6e6116411bf738cb88fa9d8aa))
 * **ci:** retry release history reads after transport disconnects ([dcb36f6](https://github.com/morluto/rea/commit/dcb36f66c7ae28b9fd7ea529a914eeea3d37cbaa))
 * **ci:** run type-aware lint on changed files in fast PRs ([#14068](https://github.com/morluto/rea/issues/14068)) ([313f2f8](https://github.com/morluto/rea/commit/313f2f8372e3d9d6944197ebe4aa6ea48034a532))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
