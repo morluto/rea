@@ -1,6 +1,7 @@
 import { mkdtempSync, renameSync, writeFileSync, writeSync } from "node:fs";
-import { open, rm, type FileHandle } from "node:fs/promises";
+import { open, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 
@@ -9,7 +10,7 @@ class RedactedFile {
   readonly #token: Buffer;
   #tail = Buffer.alloc(0);
   private constructor(
-    private readonly handle: FileHandle,
+    private readonly handle: OwnedFileHandle,
     token: string,
     private readonly resources: ArtifactResourceScope,
     private readonly path: string,
@@ -22,7 +23,7 @@ class RedactedFile {
     resources: ArtifactResourceScope,
   ): Promise<RedactedFile> {
     return new RedactedFile(
-      await open(path, "wx", 0o600),
+      new OwnedFileHandle(await open(path, "wx", 0o600)),
       token,
       resources,
       path,
@@ -31,7 +32,7 @@ class RedactedFile {
   #write(bytes: Buffer): void {
     let offset = 0;
     while (offset < bytes.length)
-      offset += writeSync(this.handle.fd, bytes, offset);
+      offset += writeSync(this.handle.handle.fd, bytes, offset);
   }
   write(chunk: Buffer): void {
     let input = Buffer.concat([this.#tail, chunk]);
