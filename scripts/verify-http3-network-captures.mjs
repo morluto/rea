@@ -103,6 +103,8 @@ async function cli(input, name) {
       arguments: [
         entrypoint,
         "inspect-web-network-capture",
+        "--detail",
+        "complete",
         input.capture_path,
         input.format,
         "--json",

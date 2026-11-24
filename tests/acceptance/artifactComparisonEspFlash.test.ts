@@ -44,7 +44,7 @@ const comparisonSession = async () => {
     await writeFile(path, bytes);
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const response = await call("inspect_artifact", {});
+    const response = await call("inspect_artifact", { detail: "complete" });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const inventory = artifactInspectionResultSchema
       .parse(parseEvidence(response.structuredContent).normalized_result)

@@ -42,7 +42,7 @@ const interfaceBuilderReports = async (cli: TestCli, app: string) => {
   if (call === undefined) throw new Error("Expected stdio MCP session");
   const opened = await call("open_bundle_resources", { path: app });
   expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-  const reply = await call("decode_interface_builder", {});
+  const reply = await call("decode_interface_builder", { detail: "complete" });
   expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
   return [
     parseEvidence(output.json),

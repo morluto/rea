@@ -117,7 +117,13 @@ workspaceCliTest(
       arguments: ["inspect-artifact", archive, "--format", "md"],
     });
     const json = await cli.run({
-      arguments: ["inspect-artifact", archive, "--json"],
+      arguments: [
+        "inspect-artifact",
+        "--detail",
+        "complete",
+        archive,
+        "--json",
+      ],
     });
     expect(markdown.exitCode).toBe(0);
     expect(json.exitCode).toBe(0);

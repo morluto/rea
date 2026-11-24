@@ -181,7 +181,7 @@ export async function verifyScenarioFailureEvidence(executable, origin) {
     await client.connect(transport);
     const result = await client.callTool({
       name: "capture_browser_scenario",
-      arguments: scenario,
+      arguments: { ...scenario, detail: "complete" },
     });
     assert.equal(result.isError, true);
     assertFailedNavigation(requireMcpToolError(result), scenario.start_url.url);

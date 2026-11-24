@@ -154,6 +154,7 @@ try {
   );
   const fromOffset = parseEvidence(
     await call("procedure_pseudo_code", {
+      detail: "complete",
       procedure: `file-offset:0x${offset.toString(16)}`,
     }),
   );
@@ -166,6 +167,7 @@ try {
   assert.equal(fromOffset.raw_result.selection.mapped_address, entry.address);
   const fromNumericOffset = parseEvidence(
     await call("procedure_pseudo_code", {
+      detail: "complete",
       procedure: `0x${offset.toString(16)}`,
     }),
   );
@@ -177,7 +179,7 @@ try {
   const missingName = await client.callTool(
     {
       name: "procedure_pseudo_code",
-      arguments: { procedure: missingProcedure },
+      arguments: { detail: "complete", procedure: missingProcedure },
     },
     { timeout: 240000 },
   );
@@ -193,7 +195,10 @@ try {
   const unmappedOffset = await client.callTool(
     {
       name: "procedure_pseudo_code",
-      arguments: { procedure: "file-offset:0x1fffffffffffff" },
+      arguments: {
+        detail: "complete",
+        procedure: "file-offset:0x1fffffffffffff",
+      },
     },
     { timeout: 240000 },
   );
@@ -207,7 +212,10 @@ try {
   assert.equal(unmappedError.recovery, undefined);
   const missingAddress = "ram:0xffffffff";
   const rejected = await client.callTool(
-    { name: "procedure_pseudo_code", arguments: { procedure: missingAddress } },
+    {
+      name: "procedure_pseudo_code",
+      arguments: { detail: "complete", procedure: missingAddress },
+    },
     { timeout: 240000 },
   );
   // procedure_not_found keeps the caller-selected procedure and the inventory tools.
@@ -229,7 +237,10 @@ try {
   });
   assert.equal(rejectedError.recovery, undefined);
   const pseudo = parseEvidence(
-    await call("procedure_pseudo_code", { procedure: addition.address }),
+    await call("procedure_pseudo_code", {
+      detail: "complete",
+      procedure: addition.address,
+    }),
   );
   assert.match(pseudo.normalized_result, /\+\s*(?:7|0x7)\b/u);
   const retained = await call("binary_session");

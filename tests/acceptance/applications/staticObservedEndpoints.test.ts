@@ -52,6 +52,8 @@ const prepareInputs = async (cli: TestCli) => {
   const analyzed = await run({
     arguments: [
       "analyze-javascript-application",
+      "--detail",
+      "complete",
       appPath,
       "--artifact-format",
       "directory",
@@ -61,7 +63,14 @@ const prepareInputs = async (cli: TestCli) => {
   expect(analyzed.exitCode, analyzed.stderr).toBe(0);
   const application = parseEvidence(analyzed.json);
   const inspected = await run({
-    arguments: ["inspect-web-network-capture", harPath, "har", "--json"],
+    arguments: [
+      "inspect-web-network-capture",
+      "--detail",
+      "complete",
+      harPath,
+      "har",
+      "--json",
+    ],
   });
   expect(inspected.exitCode, inspected.stderr).toBe(0);
   const capture = parseEvidence(inspected.json);

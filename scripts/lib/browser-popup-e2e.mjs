@@ -168,6 +168,8 @@ const verifyTransports = async (executable, origin) => {
     [
       entrypoint,
       "capture-browser-scenario",
+      "--detail",
+      "complete",
       JSON.stringify(scenario),
       "--json",
     ],
@@ -189,7 +191,10 @@ const verifyTransports = async (executable, origin) => {
   try {
     await client.connect(transport);
     const captured = await client.callTool(
-      { name: "capture_browser_scenario", arguments: scenario },
+      {
+        name: "capture_browser_scenario",
+        arguments: { ...scenario, detail: "complete" },
+      },
       { timeout: 60_000 },
     );
     assert.notEqual(captured.isError, true, JSON.stringify(captured));

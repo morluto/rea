@@ -208,7 +208,7 @@ try {
   );
   assert(
     (
-      await call("procedure_callees", { procedure: from })
+      await call("procedure_callees", { detail: "complete", procedure: from })
     ).normalized_result.includes(to),
   );
   const callers = await call("procedure_callers", {
@@ -224,7 +224,11 @@ try {
     "forward caller provenance missing",
   );
   const refs = (
-    await call("procedure_references", { procedure: to, direction: "incoming" })
+    await call("procedure_references", {
+      detail: "complete",
+      procedure: to,
+      direction: "incoming",
+    })
   ).normalized_result.references;
   assert(
     refs.some((x) => matchingRef(x, site, from, to)),
@@ -306,7 +310,7 @@ try {
   try {
     await artifactMcpCall(
       client,
-      { name: "get_call_graph", arguments: query },
+      { name: "get_call_graph", arguments: { ...query, detail: "complete" } },
       {
         timeout: 120000,
         signal: controller.signal,

@@ -16,7 +16,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     await copyFile("/usr/bin/true", target);
     const original = await readFile(target);
     const result = await cli.run({
-      arguments: ["inspect-macho", target, "--json"],
+      arguments: ["inspect-macho", "--detail", "complete", target, "--json"],
       environment: {
         TMPDIR: temporary,
         ...(process.env.DEVELOPER_DIR === undefined

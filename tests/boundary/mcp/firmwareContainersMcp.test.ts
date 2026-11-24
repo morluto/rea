@@ -155,7 +155,7 @@ it("preserves valid regions while excluding a UF2 payload overlapping MD5 metada
   try {
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const inspected = await call("inspect_artifact", {});
+    const inspected = await call("inspect_artifact", { detail: "complete" });
     expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(
       parseEvidence(inspected.structuredContent).normalized_result,
@@ -220,7 +220,9 @@ it("delivers a DfuSe CRC contradiction under both integrity policies through MCP
   const { call } = await connectLocalToolsMcp({});
   const opened = await call("open_binary", { path });
   expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-  const rejected = parseMcpToolError(await call("inspect_artifact", {}));
+  const rejected = parseMcpToolError(
+    await call("inspect_artifact", { detail: "complete" }),
+  );
   expect(rejected.error).toMatchObject({
     code: "artifact_integrity_mismatch",
     details: {
@@ -231,6 +233,7 @@ it("delivers a DfuSe CRC contradiction under both integrity policies through MCP
     },
   });
   const recorded = await call("inspect_artifact", {
+    detail: "complete",
     integrity_policy: "record-and-continue",
   });
   expect(recorded.isError, JSON.stringify(recorded)).not.toBe(true);

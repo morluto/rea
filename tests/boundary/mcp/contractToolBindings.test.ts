@@ -140,10 +140,13 @@ mcpTest(
       });
       expect(reply.isError).toBe(true);
     };
-    await call("inspect_byte_entropy", {});
-    await call("inspect_byte_entropy", { block_size: 256 });
-    await call("inspect_elf_dependencies", {});
-    await call("inspect_elf_dependencies", { max_needed: 1024 });
+    await call("inspect_byte_entropy", { detail: "complete" });
+    await call("inspect_byte_entropy", { detail: "complete", block_size: 256 });
+    await call("inspect_elf_dependencies", { detail: "complete" });
+    await call("inspect_elf_dependencies", {
+      detail: "complete",
+      max_needed: 1024,
+    });
 
     expect(inspectEntropy.mock.calls.map(([input]) => input)).toEqual([
       { path, block_size: 4096, offset: 0 },

@@ -204,6 +204,7 @@ cliTest.skipIf(isWindows)(
 
     const { call } = await connectLocalToolsMcp();
     const analysis = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: application,
     });
     expect(analysis.isError, JSON.stringify(analysis)).not.toBe(true);

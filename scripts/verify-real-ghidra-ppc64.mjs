@@ -237,6 +237,7 @@ try {
       const local = await dossier(entry.local);
       assertPowerPc64EntryPair(await dossier(entry.global), local, entry);
       const callees = await call("procedure_callees", {
+        detail: "complete",
         procedure: entry.local,
       });
       assert.ok(

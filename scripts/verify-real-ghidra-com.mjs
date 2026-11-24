@@ -406,7 +406,10 @@ await withVerifierFixture(workspaceFixture, async () => {
     assert.equal(outside.comment.state, "unavailable");
     assert.match(outside.comment.remediation, /binary_session/u);
     assert.equal(
-      await call("procedure_address", { procedure: changes.name }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: changes.name,
+      }),
       fixture.entry,
     );
     assert.equal(
@@ -594,7 +597,7 @@ async function verifyRejectedCom() {
     const session = requireMcpLifecycleResult(opened, "open_binary");
     assert.equal(session.format, "dos-com");
     const response = await rejectedClient.callTool(
-      { name: "inspect_native_load_image", arguments: {} },
+      { name: "inspect_native_load_image", arguments: { detail: "complete" } },
       { timeout: 240000 },
     );
     const evidence = parseEvidence(

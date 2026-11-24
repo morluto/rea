@@ -290,6 +290,8 @@ await withVerifierFixture(workspaceFixture, async () => {
       [
         entrypoint,
         "inspect-native-load-image",
+        "--detail",
+        "complete",
         path,
         "--target-format",
         "raw-binary",
@@ -321,7 +323,11 @@ await withVerifierFixture(workspaceFixture, async () => {
         architecture,
         entry_point: "0x1000",
       });
-      const image = await call("inspect_native_load_image", {}, x86Sha256);
+      const image = await call(
+        "inspect_native_load_image",
+        { detail: "complete" },
+        x86Sha256,
+      );
       assert.equal(
         image.normalized_result.status,
         "verified",
@@ -344,7 +350,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       );
       const pseudo = await call(
         "procedure_pseudo_code",
-        { procedure: "0x1000" },
+        { detail: "complete", procedure: "0x1000" },
         x86Sha256,
       );
       assert.match(pseudo.normalized_result, /\b(?:42|0x2a)\b/iu);

@@ -85,7 +85,7 @@ it("executes a realistic workflow: list methods, decompile selected, get xrefs",
 
   const listResult = await client.callTool({
     name: "list_procedures",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(listResult.isError).not.toBe(true);
   expect(structured(listResult)).toMatchObject({
@@ -97,7 +97,7 @@ it("executes a realistic workflow: list methods, decompile selected, get xrefs",
 
   const decompileResult = await client.callTool({
     name: "procedure_pseudo_code",
-    arguments: { procedure: "0x1000" },
+    arguments: { detail: "complete", procedure: "0x1000" },
   });
   expect(structured(decompileResult)).toMatchObject({
     normalized_result: "pseudo for 0x1000",

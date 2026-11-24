@@ -27,7 +27,13 @@ cliTest(
       const path = join(root, `${name}.elf`);
       await writeFile(path, bytes);
       const output = await cli.run({
-        arguments: ["inspect-rust-binary", path, "--json"],
+        arguments: [
+          "inspect-rust-binary",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
@@ -50,7 +56,10 @@ cliTest(
         expect(report.limitations).toContainEqual(
           expect.stringContaining("no section-name string table is declared"),
         );
-      const response = await call("inspect_rust_binary", { path });
+      const response = await call("inspect_rust_binary", {
+        detail: "complete",
+        path,
+      });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);

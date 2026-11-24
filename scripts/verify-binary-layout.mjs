@@ -28,7 +28,6 @@ import {
   completeVerifierRun,
 } from "./lib/verifier-run.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
-import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "./lib/mcp-verification-environment.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
@@ -59,16 +58,9 @@ const entrypoint =
 const root = await VerifierFixture.open({
   prefix: "rea-layout-verifier-",
 });
-const environment = {
-  ...Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([, value]) => typeof value === "string",
-    ),
-  ),
-  // Layout checks read complete Evidence, not the budgeted default.
-  REA_AGENT_RESULT_BUDGET_BYTES:
-    INLINE_EVIDENCE_MCP_ENVIRONMENT.REA_AGENT_RESULT_BUDGET_BYTES,
-};
+const environment = Object.fromEntries(
+  Object.entries(process.env).filter(([, value]) => typeof value === "string"),
+);
 const limitedPython = join(root.path, "limited-python");
 const limitedEnvironment = (option) => ({
   ...environment,
@@ -1642,7 +1634,7 @@ async function inspect(
     const response = await selectedClient.callTool(
       {
         name: "inspect_binary_layout",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       },
       { timeout: 300_000 },
     );

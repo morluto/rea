@@ -165,6 +165,8 @@ cliTest(
     const analyzed = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         root,
         "--artifact-format",
         "directory",

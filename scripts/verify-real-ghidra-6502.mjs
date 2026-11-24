@@ -199,12 +199,18 @@ await withVerifierFixture(workspaceFixture, async () => {
       ),
     );
     const pseudo = evidence(
-      await call("procedure_pseudo_code", { procedure: "0x8010" }),
+      await call("procedure_pseudo_code", {
+        detail: "complete",
+        procedure: "0x8010",
+      }),
       sha256,
     );
     assert.match(pseudo.normalized_result, /\+\s*(?:3|0x3|'\\x03')/u);
     const filePseudo = evidence(
-      await call("procedure_pseudo_code", { procedure: "file-offset:0xf" }),
+      await call("procedure_pseudo_code", {
+        detail: "complete",
+        procedure: "file-offset:0xf",
+      }),
       sha256,
     );
     assert.equal(filePseudo.normalized_result, pseudo.normalized_result);
@@ -243,6 +249,8 @@ await withVerifierFixture(workspaceFixture, async () => {
       [
         entrypoint,
         "inspect-native-load-image",
+        "--detail",
+        "complete",
         path,
         "--target-format",
         "raw-binary",
@@ -265,6 +273,8 @@ await withVerifierFixture(workspaceFixture, async () => {
       [
         entrypoint,
         "decompile",
+        "--detail",
+        "complete",
         path,
         "--file-offset=0xf",
         "--target-format",
@@ -378,6 +388,8 @@ await withVerifierFixture(workspaceFixture, async () => {
         [
           entrypoint,
           "inspect-native-load-image",
+          "--detail",
+          "complete",
           lowPath,
           "--target-format",
           "raw-binary",
@@ -437,7 +449,10 @@ await withVerifierFixture(workspaceFixture, async () => {
         });
         // open_binary selects a lazy session; the first analysis admits the snapshot.
         const linkedImage = await client.callTool(
-          { name: "inspect_native_load_image", arguments: {} },
+          {
+            name: "inspect_native_load_image",
+            arguments: { detail: "complete" },
+          },
           { timeout: 240000 },
         );
         // Native Windows admission refuses the junction before Ghidra imports it.

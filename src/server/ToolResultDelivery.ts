@@ -45,10 +45,15 @@ import {
   currentAgentResultBudget,
   type AgentBudgetDelivery,
 } from "../domain/agentResultBudget.js";
+import { currentMcpToolRequest } from "./McpToolRequest.js";
+import { AGENT_BUDGET_OPERATIONS } from "../domain/agentBudgetOperations.js";
+
+const AGENT_BUDGET_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  AGENT_BUDGET_OPERATIONS,
+);
 
 /** `_meta` key for the delivery facts of a budget-replaced result. */
 export const AGENT_BUDGET_DELIVERY_META = "rea/agent-budget-delivery";
-import { currentMcpToolRequest } from "./McpToolRequest.js";
 
 /** Project a response-budget refusal without labeling REA's reserved string limit as Node's ceiling. */
 export const mcpResponseOverflowProjection = (input: {
@@ -659,6 +664,9 @@ const overBudgetSummary = (
   | { readonly summary: Evidence; readonly delivery: AgentBudgetDelivery }
   | undefined => {
   if (evidence.operation === INSPECT_ANALYSIS_VIEW_OPERATION) return undefined;
+  // Only a tool with a detail selector is budgeted: its caller can always
+  // request complete delivery with detail complete.
+  if (!AGENT_BUDGET_OPERATION_NAMES.has(contract.name)) return undefined;
   const selection = currentMcpToolRequest()?.deliverySelection;
   if (selection === undefined || selection.detail !== undefined)
     return undefined;

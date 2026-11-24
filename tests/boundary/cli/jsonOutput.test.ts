@@ -497,6 +497,8 @@ describe("full-output token counts", () => {
     };
     const argv = [
       "inspect-managed-artifact",
+      "--detail",
+      "complete",
       "missing.dll",
       "--json",
       "--full-output",
@@ -663,7 +665,13 @@ describe("CLI result output surface", () => {
     });
     // A terminal destination exercises the indented encoding past the limit.
     Object.defineProperty(destination, "isTTY", { value: true });
-    const argv = ["inspect-managed-members", "fixture.dll", "--json"];
+    const argv = [
+      "inspect-managed-members",
+      "--detail",
+      "complete",
+      "fixture.dll",
+      "--json",
+    ];
     const output = createCliResultOutput(
       parseCliOutputArguments(argv),
       destination,

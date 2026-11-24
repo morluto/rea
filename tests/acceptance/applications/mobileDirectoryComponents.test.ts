@@ -170,7 +170,7 @@ cliTest.for(fixtures)(
       await writeFile(path, bytes);
 
       const inspected = await run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -334,7 +334,7 @@ cliTest.for([
       const path = join(root, `${encrypted}.${fixture.extension}`);
       await writeFile(path, bytes);
       const inspected = await run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);

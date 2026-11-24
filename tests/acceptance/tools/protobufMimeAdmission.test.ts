@@ -33,6 +33,8 @@ cliTest(
       const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
+          "--detail",
+          "complete",
           path,
           "har",
           "--record",
@@ -80,6 +82,7 @@ cliTest(
         }),
       );
       const reply = await call("inspect_web_network_capture", {
+        detail: "complete",
         capture_path: path,
         format: "har",
         record_ordinals: [0],
@@ -112,6 +115,8 @@ cliTest(
       const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
+          "--detail",
+          "complete",
           path,
           "har",
           "--record",
@@ -156,6 +161,7 @@ cliTest(
         });
       }
       const reply = await call("inspect_web_network_capture", {
+        detail: "complete",
         capture_path: path,
         format: "har",
         record_ordinals: [0],
@@ -207,6 +213,7 @@ cliTest(
     ]) {
       const selected = protobuf.body_pointers?.length !== 0;
       const reply = await call("inspect_web_network_capture", {
+        detail: "complete",
         capture_path: path,
         format: "har",
         record_ordinals: [0, 1, 2, 3],
@@ -280,6 +287,8 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
+        "--detail",
+        "complete",
         path,
         "har",
         "--record",
@@ -303,6 +312,7 @@ cliTest(
     );
     const call = await cli.sharedMcpCall!();
     const reply = await call("inspect_web_network_capture", {
+      detail: "complete",
       capture_path: path,
       format: "har",
       record_ordinals: [0],

@@ -151,7 +151,13 @@ const serveScenario = async () => {
   let stdout = "";
   let exitCode = 0;
   await cli.serve(
-    ["capture-browser-scenario", JSON.stringify(scenario), "--json"],
+    [
+      "capture-browser-scenario",
+      "--detail",
+      "complete",
+      JSON.stringify(scenario),
+      "--json",
+    ],
     {
       env: {},
       exit: (code) => {

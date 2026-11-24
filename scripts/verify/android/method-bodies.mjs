@@ -167,6 +167,7 @@ export const verifyAndroidMethodBodies = async ({
         {
           name: "inspect_android_method",
           arguments: {
+            detail: "complete",
             path: apk,
             class_name: scenario.class_name,
             method_name: scenario.method_name,

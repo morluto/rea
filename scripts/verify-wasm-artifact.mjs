@@ -289,7 +289,7 @@ try {
     const cli = parseEvidence(cliValue);
     const reply = await callTool({
       name: "inspect_wasm_artifact",
-      arguments: input,
+      arguments: { ...input, detail: "complete" },
     });
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(
@@ -435,7 +435,7 @@ try {
       const error = requireMcpToolError(
         await callTool({
           name: "inspect_wasm_artifact",
-          arguments: invalidInput,
+          arguments: { ...invalidInput, detail: "complete" },
         }),
       );
       assert.equal(error.category, "invalid_input");
@@ -533,7 +533,7 @@ try {
     const cli = parseEvidence(await inspectCli(input));
     const reply = await callTool({
       name: "inspect_wasm_artifact",
-      arguments: input,
+      arguments: { ...input, detail: "complete" },
     });
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(
@@ -602,7 +602,7 @@ try {
     const cli = parseEvidence(await inspectCli(input));
     const reply = await callTool({
       name: "inspect_wasm_artifact",
-      arguments: input,
+      arguments: { ...input, detail: "complete" },
     });
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(

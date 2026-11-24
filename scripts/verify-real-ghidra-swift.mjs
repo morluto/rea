@@ -159,7 +159,9 @@ await withVerifierFixture(rootFixture, async () => {
     ]) {
       await call("open_binary", { path, provider_id: "ghidra" });
       await withVerifierCleanup(async () => {
-        const procedures = await call("list_procedures", {});
+        const procedures = await call("list_procedures", {
+          detail: "complete",
+        });
         const inventory = await call("analyze_swift_types", {});
         assert(
           inventory.total > 0,
@@ -292,7 +294,7 @@ async function call(name, arguments_) {
 async function verifyStringLiterals() {
   await call("open_binary", { path: literalBinary, provider_id: "ghidra" });
   return withVerifierCleanup(async () => {
-    const procedures = await call("list_procedures", {});
+    const procedures = await call("list_procedures", { detail: "complete" });
     const expected = {
       smallLiteral: [["SleepDisabled", "small"]],
       largeLiteral: [["The power setting could not be changed.", "large"]],

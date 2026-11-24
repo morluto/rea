@@ -247,7 +247,11 @@ it("retains handler-region limitations on incoming and outgoing reference Eviden
     for (const direction of ["incoming", "outgoing"] as const) {
       const reply = await harness.mcp.callTool({
         name: "procedure_references",
-        arguments: { procedure: procedure.address, direction },
+        arguments: {
+          detail: "complete",
+          procedure: procedure.address,
+          direction,
+        },
       });
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const evidence = sessionEvidence(
@@ -632,7 +636,7 @@ describe("Ghidra MCP evidence parity", () => {
         (
           await mcp.callTool({
             name: "list_procedures",
-            arguments: {},
+            arguments: { detail: "complete" },
           })
         ).structuredContent,
       );
@@ -702,7 +706,7 @@ describe("Ghidra MCP evidence parity", () => {
         (
           await mcp.callTool({
             name: "procedure_pseudo_code",
-            arguments: { procedure: "fixture_main" },
+            arguments: { detail: "complete", procedure: "fixture_main" },
           })
         ).structuredContent,
       );

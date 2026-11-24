@@ -74,7 +74,7 @@ describe.skipIf(process.platform !== "darwin")(
           Number(new RegExp(`\\n\\s*${name} (\\d+)`, "u").exec(otool)?.[1]);
 
         const result = await cli.run({
-          arguments: ["inspect-macho", fat, "--json"],
+          arguments: ["inspect-macho", "--detail", "complete", fat, "--json"],
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(result.exitCode, result.stdout + result.stderr).toBe(0);

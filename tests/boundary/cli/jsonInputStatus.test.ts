@@ -374,7 +374,13 @@ describe("compiled CLI JSON path ambiguity", () => {
       await writeFile(join(root, "[prefix"), "regular file");
       const input = "[prefix/rest";
       const result = await cli.run({
-        arguments: ["capture-browser-scenario", input, "--json"],
+        arguments: [
+          "capture-browser-scenario",
+          "--detail",
+          "complete",
+          input,
+          "--json",
+        ],
         cwd: root,
         environment: isolatedHomeEnvironment,
       });
@@ -407,7 +413,13 @@ describe("compiled CLI JSON path ambiguity", () => {
           code: "EACCES",
         });
         const result = await cli.run({
-          arguments: ["capture-browser-scenario", input, "--json"],
+          arguments: [
+            "capture-browser-scenario",
+            "--detail",
+            "complete",
+            input,
+            "--json",
+          ],
           cwd: root,
           environment: isolatedHomeEnvironment,
         });

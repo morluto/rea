@@ -51,7 +51,7 @@ cliTest(
     });
     await writeFile(source, dump);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const { graph, root } = rootMetadata(inspected.json);
@@ -107,6 +107,8 @@ cliTest(
     const unpaired = await cli.run({
       arguments: [
         "inspect-artifact",
+        "--detail",
+        "complete",
         source,
         "--flash-offset",
         "0x1000",
@@ -120,7 +122,7 @@ cliTest(
     // Without the format, the bootloader is read as one ESP image, and the
     // table at file offset 0x7000 says how to reopen the dump.
     const automatic = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(automatic.exitCode, automatic.stdout + automatic.stderr).toBe(0);
     const guessed = rootMetadata(automatic.json);
@@ -148,6 +150,8 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-artifact",
+        "--detail",
+        "complete",
         source,
         "--target-format",
         "esp-flash-image",

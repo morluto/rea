@@ -365,6 +365,7 @@ async function stageGhidra(mcpFiles) {
   );
 
   const pseudoRaw = await callTool("procedure_pseudo_code", {
+    detail: "complete",
     procedure: "firmware_probe",
   });
   assert.equal(parseEvidence(pseudoRaw).provider.id, "ghidra");

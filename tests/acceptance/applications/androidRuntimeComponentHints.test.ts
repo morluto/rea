@@ -28,7 +28,7 @@ cliTest(
       const path = join(root, `${prefix || "dot-names"}.apk`);
       await writeFile(path, await writer.close());
       const inspected = await cli.run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -87,7 +87,7 @@ cliTest(
     await writeFile(path, await writer.close());
 
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
       environment,
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);

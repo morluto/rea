@@ -51,7 +51,13 @@ cliTest(
 
     const analyze = async () => {
       const output = await cli.run({
-        arguments: ["analyze-javascript-application", archive, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          archive,
+          "--json",
+        ],
       });
       expect(output.exitCode, output.stderr).toBe(0);
       return javascriptApplicationAnalysisResultSchema.parse(
@@ -114,7 +120,13 @@ cliTest(
       "feature\tname.js": "export const value = 1;\n",
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -151,7 +163,13 @@ cliTest(
     const { archive, addon } = await createStrippedAsarAddon();
     await rm(join(`${archive}.unpacked`, addon));
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", archive, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        archive,
+        "--json",
+      ],
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -197,7 +215,13 @@ cliTest(
       "runtime.js": "throw new Error('runtime must stay inert');",
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -253,7 +277,13 @@ cliTest(
       "b.js": 'import { value } from "./a.js";\nconsole.log(value);\n',
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(output.exitCode).toBe(0);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -316,7 +346,13 @@ cliTest(
         'import "./util.ts";\nimport "./util.js";\nexport const value = 1;\n',
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(output.exitCode).toBe(0);
     const result = javascriptApplicationAnalysisResultSchema.parse(

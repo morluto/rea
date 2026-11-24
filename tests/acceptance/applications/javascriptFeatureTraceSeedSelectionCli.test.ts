@@ -137,6 +137,8 @@ const analyzeFixture = async (cli: TestCli, root: string) => {
   const response = await cli.run({
     arguments: [
       "analyze-javascript-application",
+      "--detail",
+      "complete",
       root,
       "--artifact-format",
       "directory",

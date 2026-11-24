@@ -158,7 +158,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
     };
     try {
       const inspected = await cli.run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -192,7 +192,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
       const observed = await client.callTool({
         name: "inspect_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(observed.isError, JSON.stringify(observed)).not.toBe(true);
       expect(
@@ -241,7 +241,7 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
   );
 
   const result = await cli.run({
-    arguments: ["inspect-artifact", path, "--json"],
+    arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     environment: { REA_LOG_LEVEL: "silent" },
   });
   expect(result.exitCode, result.stderr).toBe(1);

@@ -131,6 +131,7 @@ it("keeps a batch cleanup owner and its completed prefix after source retention 
       (await call("open_binary", { path: target, format: "dos-com" })).isError,
     ).not.toBe(true);
     const response = await call("batch_decompile", {
+      detail: "complete",
       addresses: ["first", "second"],
     });
     expectRecoveredBatch(response, owned);

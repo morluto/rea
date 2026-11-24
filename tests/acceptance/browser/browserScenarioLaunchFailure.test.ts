@@ -35,6 +35,8 @@ cliTest.skipIf(process.platform === "win32")(
       const response = await cli.run({
         arguments: [
           "capture-browser-scenario",
+          "--detail",
+          "complete",
           JSON.stringify(scenario),
           "--json",
         ],

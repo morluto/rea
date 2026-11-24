@@ -122,6 +122,8 @@ cliTest(
           const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",
+              "--detail",
+              "complete",
               capture,
               "har",
               "--record",
@@ -137,6 +139,7 @@ cliTest(
           expect(output.json).toMatchObject(expected);
         }
         const response = await call("inspect_web_network_capture", {
+          detail: "complete",
           capture_path: capture,
           format: "har",
           record_ordinals: [0],
@@ -201,6 +204,7 @@ cliTest(
       ["capture.Message", "package_value"],
     ] as const) {
       const response = await call("inspect_web_network_capture", {
+        detail: "complete",
         capture_path: capture,
         format: "har",
         record_ordinals: [0],

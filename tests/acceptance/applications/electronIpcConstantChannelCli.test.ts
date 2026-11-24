@@ -62,7 +62,13 @@ cliTest.for([
     ]);
 
     const response = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(response.exitCode, response.stderr).toBe(0);
     const { normalized_result: application } = z

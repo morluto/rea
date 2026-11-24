@@ -88,13 +88,19 @@ cliTest(
       expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const output = await cli.run({
-        arguments: ["inspect-managed-members", path, "--json"],
+        arguments: [
+          "inspect-managed-members",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const cliEvidence = parseEvidence(output.json);
       const response = await artifactMcpCall(client, {
         name: "inspect_managed_members",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expect(
@@ -113,6 +119,8 @@ cliTest(
       const selectedCli = await cli.run({
         arguments: [
           "inspect-managed-members",
+          "--detail",
+          "complete",
           path,
           "--type",
           empty.full_name,
@@ -122,7 +130,7 @@ cliTest(
       expect(selectedCli.exitCode, selectedCli.stderr).toBe(0);
       const selected = await artifactMcpCall(client, {
         name: "inspect_managed_members",
-        arguments: { path, type_names: [empty.full_name] },
+        arguments: { detail: "complete", path, type_names: [empty.full_name] },
       });
       expect(selected.isError).not.toBe(true);
       const selectedEvidence = parseEvidence(selected.structuredContent);

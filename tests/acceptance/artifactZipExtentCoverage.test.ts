@@ -37,7 +37,7 @@ cliTest.for([
     ]);
     await writeFile(path, bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -61,7 +61,7 @@ cliTest.for([
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
     try {
-      const response = await call("inspect_artifact", {});
+      const response = await call("inspect_artifact", { detail: "complete" });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       const mcpInspection = artifactInspectionResultSchema.parse(
         parseEvidence(response.structuredContent).normalized_result,
@@ -80,7 +80,13 @@ cliTest.for([
       const seedPath = join(root, "seed.zip");
       await writeFile(seedPath, zipArchive([{ name, method: 0 }, hidden]));
       const seedResult = await cli.run({
-        arguments: ["inspect-artifact", seedPath, "--json"],
+        arguments: [
+          "inspect-artifact",
+          "--detail",
+          "complete",
+          seedPath,
+          "--json",
+        ],
       });
       expect(seedResult.exitCode, seedResult.stdout + seedResult.stderr).toBe(
         0,

@@ -45,7 +45,7 @@ it("delivers a complete Ghidra inventory within the existing MCP response budget
   try {
     const reply = await harness.mcp.callTool({
       name: "list_procedures",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     if (reply.isError) throw new Error(JSON.stringify(reply));
     const evidence = sessionEvidence(harness.session, reply.structuredContent);
@@ -398,7 +398,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
   try {
     const reply = await harness.mcp.callTool({
       name: "search_procedures",
-      arguments: { pattern: "add_numbers" },
+      arguments: { detail: "complete", pattern: "add_numbers" },
     });
     expect(reply.isError).not.toBe(true);
     const evidence = sessionEvidence(harness.session, reply.structuredContent);
@@ -414,7 +414,11 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
     expect(limitation).toContain("not loaded");
     const decompiled = await harness.mcp.callTool({
       name: "procedure_pseudo_code",
-      arguments: { procedure: "0x140001000", document: "fixture" },
+      arguments: {
+        detail: "complete",
+        procedure: "0x140001000",
+        document: "fixture",
+      },
     });
     expect(decompiled.isError).not.toBe(true);
     const functionEvidence = sessionEvidence(
@@ -444,11 +448,18 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
   );
   try {
     for (const request of [
-      { name: "list_strings", arguments: {} },
-      { name: "search_strings", arguments: { pattern: "projection" } },
+      { name: "list_strings", arguments: { detail: "complete" } },
       {
         name: "search_strings",
-        arguments: { pattern: "projection.*", mode: "regex" },
+        arguments: { detail: "complete", pattern: "projection" },
+      },
+      {
+        name: "search_strings",
+        arguments: {
+          detail: "complete",
+          pattern: "projection.*",
+          mode: "regex",
+        },
       },
     ]) {
       const reply = await harness.mcp.callTool(request);
@@ -483,7 +494,7 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
     ]);
     const matched = await harness.mcp.callTool({
       name: "search_strings",
-      arguments: { pattern: "projection" },
+      arguments: { detail: "complete", pattern: "projection" },
     });
     const evidence = sessionEvidence(
       harness.session,
@@ -497,7 +508,7 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
     output = jsonValueSchema.parse([]);
     const procedures = await harness.mcp.callTool({
       name: "search_procedures",
-      arguments: { pattern: "projection" },
+      arguments: { detail: "complete", pattern: "projection" },
     });
     expect(
       sessionEvidence(harness.session, procedures.structuredContent)
@@ -550,7 +561,7 @@ it("rejects contradictory provider output before emitting MCP Evidence", async (
       },
       {
         name: "list_procedures",
-        arguments: {},
+        arguments: { detail: "complete" },
         output: [
           {
             address: "00401000",
@@ -561,17 +572,17 @@ it("rejects contradictory provider output before emitting MCP Evidence", async (
       },
       {
         name: "search_strings",
-        arguments: { pattern: "needle" },
+        arguments: { detail: "complete", pattern: "needle" },
         output: [{ address: "0x401000" }],
       },
       {
         name: "search_strings",
-        arguments: { pattern: "needle" },
+        arguments: { detail: "complete", pattern: "needle" },
         output: [{ address: "0x401000", value: "needle" }],
       },
       {
         name: "search_strings",
-        arguments: { pattern: "needle" },
+        arguments: { detail: "complete", pattern: "needle" },
         output: [
           {
             address: "0x401000",
@@ -586,7 +597,7 @@ it("rejects contradictory provider output before emitting MCP Evidence", async (
       },
       {
         name: "search_procedures",
-        arguments: { pattern: "fixture" },
+        arguments: { detail: "complete", pattern: "fixture" },
         output: [{ address: "0x401000", value: "fixture_main" }],
       },
       {
@@ -600,7 +611,7 @@ it("rejects contradictory provider output before emitting MCP Evidence", async (
       },
       {
         name: "resolve_containing_procedure",
-        arguments: { address: "EXTERNAL:0x2" },
+        arguments: { detail: "complete", address: "EXTERNAL:0x2" },
         output: {
           query_address: "EXTERNAL:0x2",
           found: true,
@@ -675,7 +686,7 @@ it("returns a procedure once with the exact-entry names its search matched", asy
   const search = async (arguments_: Record<string, unknown>) => {
     const reply = await harness.mcp.callTool({
       name: "search_procedures",
-      arguments: arguments_,
+      arguments: { ...arguments_, detail: "complete" },
     });
     if (reply.isError === true) throw new Error(JSON.stringify(reply));
     return sessionEvidence(harness.session, reply.structuredContent);
@@ -782,7 +793,7 @@ it("returns a procedure once with the exact-entry names its search matched", asy
       output = jsonValueSchema.parse([invalid.value]);
       const malformed = await harness.mcp.callTool({
         name: "search_procedures",
-        arguments: invalid.arguments,
+        arguments: { ...invalid.arguments, detail: "complete" },
       });
       expect(parseMcpToolError(malformed)).toMatchObject({
         error: { code: "unreadable_output" },
@@ -830,7 +841,7 @@ it("keeps a namespaced entry name that matched by its leaf spelling", async () =
     ] as const) {
       const reply = await harness.mcp.callTool({
         name: "search_procedures",
-        arguments: arguments_,
+        arguments: { ...arguments_, detail: "complete" },
       });
       expect(reply.isError, JSON.stringify(arguments_)).not.toBe(true);
       expect(

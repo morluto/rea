@@ -40,7 +40,7 @@ it.skipIf(
     );
     const captured = await client.callTool({
       name: "inspect_pcap_capture",
-      arguments: { path },
+      arguments: { detail: "complete", path },
     });
     expect(captured.isError).not.toBe(true);
     const record = parseEvidence(captured.structuredContent);

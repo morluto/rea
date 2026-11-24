@@ -111,7 +111,10 @@ async function verifyMcp({ entrypoint, environment, path, repository }, mode) {
     const controller = new AbortController();
     const pending = client
       .callTool(
-        { name: "inspect_android_package", arguments: { path } },
+        {
+          name: "inspect_android_package",
+          arguments: { detail: "complete", path },
+        },
         { timeout: 150000, signal: controller.signal },
       )
       .then(
@@ -144,7 +147,10 @@ async function verifyMcp({ entrypoint, environment, path, repository }, mode) {
       );
       await client.ping();
       const next = await client.callTool(
-        { name: "inspect_android_package", arguments: { path } },
+        {
+          name: "inspect_android_package",
+          arguments: { detail: "complete", path },
+        },
         { timeout: 150000 },
       );
       assert.notEqual(next.isError, true, JSON.stringify(next));

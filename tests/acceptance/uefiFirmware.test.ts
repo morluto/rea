@@ -123,7 +123,9 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
   const opened = await call("open_binary", { path: imagePath });
   expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
 
-  const inspectedSession = await call("inspect_artifact", {});
+  const inspectedSession = await call("inspect_artifact", {
+    detail: "complete",
+  });
   expect(inspectedSession.isError, JSON.stringify(inspectedSession)).not.toBe(
     true,
   );
@@ -264,6 +266,8 @@ it("never admits prose carrying a `_FVH` string as the flash image format", asyn
     const cliResult = await execute(process.execPath, [
       cli,
       "inspect-artifact",
+      "--detail",
+      "complete",
       path,
       "--json",
     ]);
@@ -296,6 +300,8 @@ it.each([
     const command = await execute(process.execPath, [
       cli,
       "inspect-artifact",
+      "--detail",
+      "complete",
       path,
       "--json",
     ]);
@@ -383,7 +389,7 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
   const opened = await call("open_binary", { path });
   expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
   const inventoryEvidence = parseEvidence(
-    (await call("inspect_artifact", {})).structuredContent,
+    (await call("inspect_artifact", { detail: "complete" })).structuredContent,
   );
   const inventory = artifactInventoryResultSchema.parse(
     artifactInspectionResultSchema.parse(inventoryEvidence.normalized_result)

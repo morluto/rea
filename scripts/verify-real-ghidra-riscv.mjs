@@ -342,6 +342,7 @@ try {
     });
     assert.equal(global.bytes_hex, "07000000");
     const callees = await call("procedure_callees", {
+      detail: "complete",
       procedure: addressFor("rea_riscv_entry"),
     });
     for (const name of soft
@@ -360,6 +361,7 @@ try {
     assert.ok(dossier.pseudocode.trim().length > 0);
     if (!stripped) {
       const floatCode = await call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: addressFor(soft ? "rea_riscv_abi_wide" : "rea_riscv_float"),
       });
       assert.ok(typeof floatCode === "string" && floatCode.trim().length > 0);

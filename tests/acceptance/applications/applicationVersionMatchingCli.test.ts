@@ -27,6 +27,8 @@ cliTest(
       const response = await cli.run({
         arguments: [
           "analyze-javascript-application",
+          "--detail",
+          "complete",
           application,
           ...(selected ? ["--source-path", "main.js"] : []),
           "--json",
@@ -151,7 +153,13 @@ cliTest(
           `globalThis.webpackChunkApp.push([[1], {17(module, exports) {${side === 1 ? left : right}}}]);`,
         );
       const response = await cli.run({
-        arguments: ["analyze-javascript-application", application, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          application,
+          "--json",
+        ],
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);
@@ -278,7 +286,13 @@ cliTest(
         );
         await writeFile(join(application, "chunk.js"), bundle);
         const response = await cli.run({
-          arguments: ["analyze-javascript-application", application, "--json"],
+          arguments: [
+            "analyze-javascript-application",
+            "--detail",
+            "complete",
+            application,
+            "--json",
+          ],
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(response.exitCode, response.stderr).toBe(0);
@@ -371,7 +385,13 @@ cliTest(
           `module.exports = ${JSON.stringify(name)};\n`,
         );
         const response = await cli.run({
-          arguments: ["analyze-javascript-application", application, "--json"],
+          arguments: [
+            "analyze-javascript-application",
+            "--detail",
+            "complete",
+            application,
+            "--json",
+          ],
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(response.exitCode, response.stderr).toBe(0);
@@ -481,7 +501,13 @@ cliTest(
       );
       await writeFile(join(application, "src/util.js"), utilSource);
       const response = await cli.run({
-        arguments: ["analyze-javascript-application", application, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          application,
+          "--json",
+        ],
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);

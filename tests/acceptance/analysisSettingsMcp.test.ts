@@ -45,7 +45,7 @@ it("recovers expanded ASAR listing admission on the same MCP connection independ
         })
       ).isError,
     ).not.toBe(true);
-    const refused = await call("inspect_artifact", {});
+    const refused = await call("inspect_artifact", { detail: "complete" });
     expect(refused.isError).toBe(true);
     const text = refused.content.find((item) => item.type === "text");
     if (text?.type !== "text") throw new Error("Missing projected error");
@@ -67,7 +67,7 @@ it("recovers expanded ASAR listing admission on the same MCP connection independ
         })
       ).isError,
     ).not.toBe(true);
-    const recovered = await call("inspect_artifact", {});
+    const recovered = await call("inspect_artifact", { detail: "complete" });
     expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
     const inspected = artifactInspectionResultSchema.parse(
       parseEvidence(recovered.structuredContent).normalized_result,
@@ -496,8 +496,11 @@ it("starts with invalid runtime seeds and recovers ASAR and capture work on the 
     expect((await call("open_binary", { path: archive })).isError).not.toBe(
       true,
     );
-    expect((await call("inspect_artifact", {})).isError).not.toBe(true);
+    expect(
+      (await call("inspect_artifact", { detail: "complete" })).isError,
+    ).not.toBe(true);
     const inspected = await call("inspect_web_network_capture", {
+      detail: "complete",
       capture_path: capture,
       format: "har",
     });
@@ -510,18 +513,19 @@ it("starts with invalid runtime seeds and recovers ASAR and capture work on the 
       ).isError,
     ).not.toBe(true);
     expectSettingRefusal(
-      await call("inspect_artifact", {}),
+      await call("inspect_artifact", { detail: "complete" }),
       "REA_ASAR_MAX_HEADER_BYTES",
     );
     expect(
       (await call("update_analysis_settings", { changes: [header] })).isError,
     ).not.toBe(true);
     expectSettingRefusal(
-      await call("inspect_artifact", {}),
+      await call("inspect_artifact", { detail: "complete" }),
       "REA_ASAR_MAX_LISTING_BYTES",
     );
     expectSettingRefusal(
       await call("inspect_web_network_capture", {
+        detail: "complete",
         capture_path: capture,
         format: "har",
       }),
@@ -530,10 +534,13 @@ it("starts with invalid runtime seeds and recovers ASAR and capture work on the 
     expect(
       (await call("update_analysis_settings", { changes })).isError,
     ).not.toBe(true);
-    expect((await call("inspect_artifact", {})).isError).not.toBe(true);
+    expect(
+      (await call("inspect_artifact", { detail: "complete" })).isError,
+    ).not.toBe(true);
     expect(
       (
         await call("inspect_web_network_capture", {
+          detail: "complete",
           capture_path: capture,
           format: "har",
         })
@@ -558,7 +565,7 @@ it.skipIf(process.platform === "win32")(
     try {
       const opened = await call("open_binary", { path: archive });
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-      const inspected = await call("inspect_artifact", {});
+      const inspected = await call("inspect_artifact", { detail: "complete" });
       expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
     } finally {
       await client.close();

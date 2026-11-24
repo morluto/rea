@@ -25,7 +25,7 @@ cliTest(
     const path = join(directory, "equality.pyc");
     await writeFile(path, Buffer.from(golden.pyc_base64, "base64"));
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", path, "--json"],
+      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = completePycEvidenceSchema.parse(
@@ -70,7 +70,13 @@ cliTest(
       );
 
       const response = await cli.run({
-        arguments: ["inspect-python-pyc", path, "--json"],
+        arguments: [
+          "inspect-python-pyc",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(response.exitCode, response.stderr).toBe(0);
       const report = completePycEvidenceSchema.parse(
@@ -92,7 +98,10 @@ cliTest(
         ),
       ).toBe(!hashBased);
 
-      const mcp = await call("inspect_python_pyc", { path });
+      const mcp = await call("inspect_python_pyc", {
+        detail: "complete",
+        path,
+      });
       expect(mcp.isError).not.toBe(true);
       expect(
         completePycEvidenceSchema.parse(mcp.structuredContent)
@@ -128,7 +137,7 @@ cliTest(
     const path = join(root, "code-set.pyc");
     await writeFile(path, pyc);
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", path, "--json"],
+      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completePycEvidenceSchema.parse(result.json);
@@ -179,7 +188,7 @@ cliTest.for([
     const path = join(root, `slice-${version}.pyc`);
     await writeFile(path, pyc);
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", path, "--json"],
+      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completePycEvidenceSchema.parse(result.json);
@@ -217,7 +226,7 @@ cliTest("reads a CPython 3.15 magic 3666 stdlib pyc", async ({ cli }) => {
   const path = join(root, "utf_8.cpython-315.pyc");
   await writeFile(path, pyc);
   const result = await cli.run({
-    arguments: ["inspect-python-pyc", path, "--json"],
+    arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
   });
   expect(result.exitCode, result.stderr).toBe(0);
   const evidence = completePycEvidenceSchema.parse(result.json);
@@ -294,7 +303,7 @@ cliTest(
     const header = Buffer.from("3e0d0d0a0000000000000000", "hex");
     await writeFile(path, Buffer.concat([header, marshal]));
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", path, "--json"],
+      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -326,7 +335,7 @@ cliTest(
     ]);
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", path, "--json"],
+      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completePycEvidenceSchema.parse(result.json);
@@ -377,7 +386,13 @@ cliTest(
         ]),
       );
       const result = await cli.run({
-        arguments: ["inspect-python-pyc", path, "--json"],
+        arguments: [
+          "inspect-python-pyc",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = completePycEvidenceSchema.parse(result.json);
@@ -454,7 +469,13 @@ cliTest(
         ]),
       );
       const result = await cli.run({
-        arguments: ["inspect-python-pyc", path, "--json"],
+        arguments: [
+          "inspect-python-pyc",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = completePycEvidenceSchema.parse(result.json);
@@ -485,7 +506,13 @@ cliTest(
         ]),
       );
       const rawResult = await cli.run({
-        arguments: ["inspect-python-pyc", rawPath, "--json"],
+        arguments: [
+          "inspect-python-pyc",
+          "--detail",
+          "complete",
+          rawPath,
+          "--json",
+        ],
       });
       expect(rawResult.exitCode, rawResult.stderr).toBe(0);
       const rawEvidence = completePycEvidenceSchema.parse(rawResult.json);
@@ -511,7 +538,13 @@ cliTest(
     ]);
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", "sample.pyc", "--json"],
+      arguments: [
+        "inspect-python-pyc",
+        "--detail",
+        "complete",
+        "sample.pyc",
+        "--json",
+      ],
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -545,7 +578,13 @@ cliTest.skipIf(process.platform === "win32")(
     await writeFile(join(root, "sample.pyc"), pythonPycFixture("py311"));
     await symlink(join(target, "child"), join(root, "link"));
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", "link/../sample.pyc", "--json"],
+      arguments: [
+        "inspect-python-pyc",
+        "--detail",
+        "complete",
+        "link/../sample.pyc",
+        "--json",
+      ],
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -562,7 +601,7 @@ cliTest(
     const path = join(root, "broken.pyc");
     await writeFile(path, pythonPycHeader(3531).subarray(0, 8));
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", path, "--json"],
+      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -632,7 +671,7 @@ cliTest(
     const path = join(root, "unicode.pyc");
     await writeFile(path, bytes);
     const response = await cli.run({
-      arguments: ["inspect-python-pyc", path, "--json"],
+      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
     });
     expect(response.exitCode, response.stderr).toBe(0);
     const report = completePycEvidenceSchema.parse(
@@ -651,7 +690,7 @@ cliTest(
     ]);
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected file MCP session");
-    const mcp = await call("inspect_python_pyc", { path });
+    const mcp = await call("inspect_python_pyc", { detail: "complete", path });
     expect(mcp.isError).not.toBe(true);
     expect(
       completePycEvidenceSchema.parse(mcp.structuredContent).normalized_result,
@@ -692,6 +731,8 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "inspect-python-pyc",
+          "--detail",
+          "complete",
           path,
           flag,
           String(maximum),

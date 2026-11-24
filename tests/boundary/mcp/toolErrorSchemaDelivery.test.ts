@@ -22,9 +22,9 @@ it("delivers typed tool failures without violating the advertised success schema
     { name: "open_binary", arguments: { path: missing } },
     {
       name: "analyze_javascript_application",
-      arguments: { input_path: missing },
+      arguments: { detail: "complete", input_path: missing },
     },
-    { name: "inspect_artifact", arguments: {} },
+    { name: "inspect_artifact", arguments: { detail: "complete" } },
   ];
   for (const request of requests) {
     const tool = tools.find(({ name }) => name === request.name);

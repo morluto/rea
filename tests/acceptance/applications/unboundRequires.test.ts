@@ -1177,6 +1177,7 @@ cliTest(
 
     const call = await resolveJavaScriptApplicationMcpCall(cli, undefined);
     const mcp = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: root,
       format: "directory",
     });

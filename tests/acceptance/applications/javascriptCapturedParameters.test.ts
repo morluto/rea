@@ -443,7 +443,13 @@ cliTest(
         `export function read(x) { ${body} }`,
       );
       const response = await cli.run({
-        arguments: ["analyze-javascript-application", directory, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          directory,
+          "--json",
+        ],
       });
       expect(response.exitCode, response.stderr).toBe(0);
       evidence.push(parseEvidence(response.json));

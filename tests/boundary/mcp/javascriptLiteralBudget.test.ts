@@ -45,7 +45,13 @@ for (const scenario of [
       await writeFile(path, source);
       const digest = createHash("sha256").update(source).digest("hex");
       const cliResponse = await cli.run({
-        arguments: ["analyze-javascript-application", root, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          root,
+          "--json",
+        ],
       });
       expect(cliResponse.exitCode).toBe(0);
       const cliEvidence = toolContract(
@@ -53,7 +59,7 @@ for (const scenario of [
       ).outputSchema.parse(cliResponse.json);
       const response = await mcp.client.callTool({
         name: "analyze_javascript_application",
-        arguments: { input_path: root },
+        arguments: { detail: "complete", input_path: root },
       });
       expect(response.isError).not.toBe(true);
       const evidence = toolContract(

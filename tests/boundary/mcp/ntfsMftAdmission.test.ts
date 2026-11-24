@@ -98,7 +98,13 @@ mcpTest(
     record.writeUInt16LE(5, 1022);
     await writeFile(path, record);
 
-    const cli = await serveCli(["inspect-artifact", path, "--json"]);
+    const cli = await serveCli([
+      "inspect-artifact",
+      "--detail",
+      "complete",
+      path,
+      "--json",
+    ]);
     expect(cli.exitCode, cli.stdout).toBe(0);
     expectMftInventory(JSON.parse(cli.stdout));
 
@@ -118,7 +124,7 @@ mcpTest(
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
     expectMftInventory(inspected.structuredContent);

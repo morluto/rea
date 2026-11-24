@@ -31,7 +31,13 @@ cliTest
     await writeFile(stored, await writer.close());
     await symlink(stored, selected);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", selected, "--json"],
+      arguments: [
+        "inspect-artifact",
+        "--detail",
+        "complete",
+        selected,
+        "--json",
+      ],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspectedEvidence = parseEvidence(inspected.json);

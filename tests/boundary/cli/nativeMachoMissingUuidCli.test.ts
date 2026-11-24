@@ -64,7 +64,13 @@ describe.skipIf(process.platform !== "darwin")(
 
         const inspect = async (path: string) => {
           const result = await cli.run({
-            arguments: ["inspect-macho", path, "--json"],
+            arguments: [
+              "inspect-macho",
+              "--detail",
+              "complete",
+              path,
+              "--json",
+            ],
             environment: { REA_LOG_LEVEL: "silent" },
           });
           expect(result.exitCode, result.stdout + result.stderr).toBe(0);
@@ -156,7 +162,13 @@ describe.skipIf(process.platform !== "darwin")(
             },
           };
           const refused = await cli.run({
-            arguments: ["inspect-macho", path, "--json"],
+            arguments: [
+              "inspect-macho",
+              "--detail",
+              "complete",
+              path,
+              "--json",
+            ],
             environment: { REA_LOG_LEVEL: "silent" },
           });
           expect(refused.exitCode, refused.stdout + refused.stderr).toBe(1);
@@ -165,7 +177,7 @@ describe.skipIf(process.platform !== "darwin")(
           );
 
           expect((await call("open_binary", { path })).isError).not.toBe(true);
-          const inspected = await call("inspect_macho", {});
+          const inspected = await call("inspect_macho", { detail: "complete" });
           expect(inspected.isError).toBe(true);
           expect(parseMcpToolError(inspected)).toMatchObject({
             error: expectedRefusal,

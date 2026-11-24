@@ -167,7 +167,7 @@ export async function verifyWabtCleanup(entrypoint, environment, parent) {
         await client.connect(transport);
         const request = {
           name: "inspect_wasm_artifact",
-          arguments: { path: valid },
+          arguments: { detail: "complete", path: valid },
         };
         const call = () =>
           client.callTool(request, { timeout: WABT_OPERATION_TIMEOUT_MS });

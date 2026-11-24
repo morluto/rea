@@ -34,12 +34,21 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         let document: unknown;
         if (surface === "CLI") {
           const response = await cli.run({
-            arguments: ["inspect-native-exports", path, "--json"],
+            arguments: [
+              "inspect-native-exports",
+              "--detail",
+              "complete",
+              path,
+              "--json",
+            ],
           });
           expect(response.exitCode, response.stderr).toBe(0);
           document = response.json;
         } else {
-          const response = await mcp!.call("inspect_native_exports", { path });
+          const response = await mcp!.call("inspect_native_exports", {
+            detail: "complete",
+            path,
+          });
           expect(response.isError, JSON.stringify(response)).not.toBe(true);
           document = response.structuredContent;
         }
@@ -91,12 +100,21 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       let error: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
-          arguments: ["inspect-native-exports", path, "--json"],
+          arguments: [
+            "inspect-native-exports",
+            "--detail",
+            "complete",
+            path,
+            "--json",
+          ],
         });
         expect(response.exitCode).toBe(1);
         error = response.json;
       } else {
-        const response = await mcp!.call("inspect_native_exports", { path });
+        const response = await mcp!.call("inspect_native_exports", {
+          detail: "complete",
+          path,
+        });
         expect(response.isError).toBe(true);
         error = parseMcpToolError(response).error;
       }
@@ -114,11 +132,21 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         surface === "CLI"
           ? (
               await cli.run({
-                arguments: ["inspect-native-exports", path, "--json"],
+                arguments: [
+                  "inspect-native-exports",
+                  "--detail",
+                  "complete",
+                  path,
+                  "--json",
+                ],
               })
             ).json
-          : (await mcp!.call("inspect_native_exports", { path }))
-              .structuredContent;
+          : (
+              await mcp!.call("inspect_native_exports", {
+                detail: "complete",
+                path,
+              })
+            ).structuredContent;
       const evidence = toolContract(
         "inspect_native_exports",
       ).outputSchema.parse(document);
@@ -153,12 +181,21 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       let document: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
-          arguments: ["inspect-native-exports", path, "--json"],
+          arguments: [
+            "inspect-native-exports",
+            "--detail",
+            "complete",
+            path,
+            "--json",
+          ],
         });
         expect(response.exitCode, response.stderr).toBe(0);
         document = response.json;
       } else {
-        const response = await mcp!.call("inspect_native_exports", { path });
+        const response = await mcp!.call("inspect_native_exports", {
+          detail: "complete",
+          path,
+        });
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
         document = response.structuredContent;
       }

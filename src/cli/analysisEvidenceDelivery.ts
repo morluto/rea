@@ -1,6 +1,6 @@
 import { explicitValuesOccurIn } from "../domain/explicitSensitiveValues.js";
 import {
-  cliAgentBudgetSeed,
+  cliPublicationInvocation,
   recordCliEvidencePublication,
 } from "./cliEvidencePublication.js";
 import { recordCliDeliveredEvidence } from "./cliResultControls.js";
@@ -191,7 +191,12 @@ export const publishCliAnalysisEvidence = async (
       ? complete
       : {
           summary,
-          delivery: deliveryJson(overBudget({ kind: "not-retained" })),
+          delivery: deliveryJson(
+            overBudget({
+              kind: "not-retained",
+              argv: cliPublicationInvocation().argv,
+            }),
+          ),
         };
   }
   const outputPath = absoluteCallerPath(evidenceOutput);
@@ -239,7 +244,9 @@ const budgetDelivery = (
   input: CliEvidencePublication,
 ): ((recovery: AgentBudgetRecovery) => AgentBudgetDelivery) | undefined => {
   if (input.detail !== undefined) return undefined;
-  const budget = currentAgentResultBudget(cliAgentBudgetSeed());
+  const budget = currentAgentResultBudget(
+    cliPublicationInvocation().agentBudgetSeed,
+  );
   if (budget === undefined) return undefined;
   const completeBytes = agentBudgetOverflowBytes(complete, budget);
   return completeBytes === undefined

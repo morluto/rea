@@ -17,11 +17,11 @@ cliTest.skipIf(process.platform === "win32")(
     await writeFile(target, await createSingleEntryZip("payload.txt"));
     await symlink(target, join(root, alias));
     const selected = await cli.run({
-      arguments: ["inspect-artifact", alias, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", alias, "--json"],
       cwd: root,
     });
     const control = await cli.run({
-      arguments: ["inspect-artifact", target, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", target, "--json"],
       cwd: root,
     });
     expect(selected.exitCode).toBe(0);

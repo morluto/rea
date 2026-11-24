@@ -250,7 +250,13 @@ cliTest(
     for (const [path, source] of sources)
       await writeFile(join(root, path), source);
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(output.exitCode).toBe(0);
     const application = parseEvidence(output.json);

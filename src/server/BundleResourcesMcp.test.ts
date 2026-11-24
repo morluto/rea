@@ -272,7 +272,7 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
 
   const decoded = await client.callTool({
     name: "decode_interface_builder",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(decoded.isError).not.toBe(true);
   const decodedEvidence = toolContract(

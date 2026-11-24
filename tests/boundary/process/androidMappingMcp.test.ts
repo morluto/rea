@@ -51,6 +51,7 @@ const connect = async () => {
     client.callTool({
       name: "inspect_android_class",
       arguments: {
+        detail: "complete",
         path: fixture.apk,
         class_name: "fixture.Target",
         mapping_path,
@@ -240,7 +241,7 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
   });
   const unannotated = await client.callTool({
     name: "inspect_android_class",
-    arguments: { path: apk, class_name: "fixture.Target" },
+    arguments: { detail: "complete", path: apk, class_name: "fixture.Target" },
   });
   expect(unannotated.isError).not.toBe(true);
   expect(

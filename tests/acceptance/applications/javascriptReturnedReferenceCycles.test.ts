@@ -134,6 +134,7 @@ fetch("/copied-module");`,
 
     const { call } = await connectLocalToolsMcp();
     const analyzed = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: root,
       max_heap_mb: 256,
       analysis_timeout_ms: 30_000,

@@ -15,7 +15,7 @@ describe("Ghidra MCP capability routing", () => {
     try {
       const batch = await mcp.callTool({
         name: "batch_decompile",
-        arguments: { addresses: ["fixture_main"] },
+        arguments: { detail: "complete", addresses: ["fixture_main"] },
       });
       expect(batch.isError).not.toBe(true);
       expect(batch.structuredContent).toMatchObject({
@@ -102,7 +102,7 @@ describe("Ghidra MCP capability routing", () => {
     try {
       const direct = await harness.mcp.callTool({
         name: "procedure_pseudo_code",
-        arguments: { procedure: bodyless },
+        arguments: { detail: "complete", procedure: bodyless },
       });
       expect(direct.isError).not.toBe(true);
       const observed = parseEvidence(direct.structuredContent);
@@ -111,7 +111,7 @@ describe("Ghidra MCP capability routing", () => {
 
       const batch = await harness.mcp.callTool({
         name: "batch_decompile",
-        arguments: { addresses: ["0x401000", bodyless] },
+        arguments: { detail: "complete", addresses: ["0x401000", bodyless] },
       });
       expect(batch.isError).not.toBe(true);
       const result = batchDecompileResultSchema.parse(
@@ -124,7 +124,7 @@ describe("Ghidra MCP capability routing", () => {
         (
           await harness.mcp.callTool({
             name: "procedure_pseudo_code",
-            arguments: { procedure: "0x401000" },
+            arguments: { detail: "complete", procedure: "0x401000" },
           })
         ).structuredContent,
       );

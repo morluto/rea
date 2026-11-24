@@ -199,6 +199,7 @@ try {
         Buffer.from("rea-ppc-source-owned-fixture\0").toString("hex"),
       );
       const callees = await call("procedure_callees", {
+        detail: "complete",
         procedure: entry.address,
       });
       assert.ok(

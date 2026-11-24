@@ -55,12 +55,19 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     let applicationEvidence: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
-        arguments: ["analyze-javascript-application", root, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          root,
+          "--json",
+        ],
       });
       expect(response.exitCode, response.stderr).toBe(0);
       applicationEvidence = response.json;
     } else {
       const response = await mcp!.call("analyze_javascript_application", {
+        detail: "complete",
         input_path: root,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);

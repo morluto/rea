@@ -21,7 +21,7 @@ const verifyMcpParity = async (
   const client = await openBundleResourcesTarget(mcp, onTestFinished, app);
   const complete = await client.callTool({
     name: "decode_interface_builder",
-    arguments: { max_objects: 2 },
+    arguments: { detail: "complete", max_objects: 2 },
   });
   expect(complete.isError, JSON.stringify(complete)).not.toBe(true);
   const evidence = parseEvidence(complete.structuredContent);

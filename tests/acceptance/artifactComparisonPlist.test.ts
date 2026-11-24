@@ -23,7 +23,13 @@ cliTest(
     ]);
 
     const cliResult = await driver.run({
-      arguments: ["inspect-artifact", leftPath, "--json"],
+      arguments: [
+        "inspect-artifact",
+        "--detail",
+        "complete",
+        leftPath,
+        "--json",
+      ],
       environment: process.env,
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
@@ -44,7 +50,7 @@ cliTest(
     const { call } = await connectLocalToolsMcp();
     const opened = await call("open_binary", { path: rightPath });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const inspected = await call("inspect_artifact", {});
+    const inspected = await call("inspect_artifact", { detail: "complete" });
     expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
     const mcpEvidence = parseEvidence(inspected.structuredContent);
     const mcpInspection = artifactInspectionResultSchema.parse(

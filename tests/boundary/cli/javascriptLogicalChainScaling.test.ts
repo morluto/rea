@@ -31,6 +31,8 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         root,
         "--analysis-timeout-ms",
         "15000",

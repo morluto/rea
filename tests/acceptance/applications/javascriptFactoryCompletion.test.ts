@@ -376,6 +376,7 @@ cliTest(
       )
         expect(runtime).toEqual([["test:copy"], []]);
       const response = await call("analyze_javascript_application", {
+        detail: "complete",
         input_path: directory,
         format: "directory",
       });
@@ -404,6 +405,8 @@ cliTest(
         const analyzed = await cli.run({
           arguments: [
             "analyze-javascript-application",
+            "--detail",
+            "complete",
             directory,
             "--artifact-format",
             "directory",
@@ -458,6 +461,7 @@ cliTest(
       await writeFile(join(directory, "package.json"), '{"type":"commonjs"}');
       await writeFile(join(directory, "main.js"), source);
       const response = await call("analyze_javascript_application", {
+        detail: "complete",
         input_path: directory,
         format: "directory",
       });
@@ -487,6 +491,8 @@ cliTest(
       const analyzed = await cli.run({
         arguments: [
           "analyze-javascript-application",
+          "--detail",
+          "complete",
           directory,
           "--artifact-format",
           "directory",

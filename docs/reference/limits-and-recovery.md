@@ -300,10 +300,13 @@ not, the work is never refused or truncated:
   and so on) select facts more cheaply.
 - The CLI with `--evidence_output` prints
   `{"summary", "evidence_bundle", "delivery"}`, whose `delivery.next` names
-  the bundle as an `evidence-file` source. Without it, the one-shot CLI has
-  nowhere to retain the record: it prints `{"summary", "delivery"}` with
-  `retained: "not-retained"`, and the note names `--evidence_output` or
-  `--detail complete` for a rerun.
+  the bundle as an `evidence-file` source. Without it, the one-shot CLI
+  writes nothing to disk, no bundle, cache or spill file: it prints
+  `{"summary", "delivery"}` with `retained: "not-retained"`, and
+  `delivery.rerun` gives the exact commands as argv arrays, `complete` with
+  `--detail complete` added and `retained` with
+  `--evidence_output <new-bundle-path>` added. The note names both. A
+  command that declares sensitive values gives only the arguments to add.
 
 Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
 inline on one call, or raise the setting for the runtime with

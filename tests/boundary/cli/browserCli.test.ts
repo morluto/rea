@@ -606,6 +606,8 @@ describe("browser CLI capture parity", () => {
       const analyzedInvocation = await cli.run({
         arguments: [
           "analyze-web-bundle",
+          "--detail",
+          "complete",
           browser.endpoint,
           "allowed-page",
           ...scopeArgs,

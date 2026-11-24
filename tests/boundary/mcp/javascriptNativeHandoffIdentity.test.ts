@@ -105,7 +105,13 @@ for (const available of [false, true]) {
       const containerEvidence = nativeObservation(archive, archiveDigest);
       const nativeEvidence = nativeObservation(companion, nativeDigest);
       const analysis = await cli.run({
-        arguments: ["analyze-javascript-application", archive, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          archive,
+          "--json",
+        ],
       });
       expect(analysis.exitCode, analysis.stderr).toBe(0);
       const parent = toolContract(

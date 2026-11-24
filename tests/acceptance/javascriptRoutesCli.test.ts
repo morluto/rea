@@ -387,6 +387,8 @@ cliTest(
       const response = await cli.run({
         arguments: [
           "analyze-javascript-application",
+          "--detail",
+          "complete",
           "/not-opened",
           ...args,
           "--json",
@@ -406,6 +408,7 @@ it.each(["compact"] as const)(
       });
     for (const source_paths of [[], [""], [1]]) {
       const invalid = await call("analyze_javascript_application", {
+        detail: "complete",
         input_path: path,
         source_paths,
       });

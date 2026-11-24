@@ -137,6 +137,8 @@ cliTest(
         const cliResult = await cli.run({
           arguments: [
             "capture-browser-scenario",
+            "--detail",
+            "complete",
             JSON.stringify(input),
             "--json",
           ],

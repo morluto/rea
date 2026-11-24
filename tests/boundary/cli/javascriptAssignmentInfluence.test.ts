@@ -35,7 +35,13 @@ cliTest(
           ? {}
           : { SDKROOT: process.env.SDKROOT };
       const analyzed = await cli.run({
-        arguments: ["analyze-javascript-application", directory, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          directory,
+          "--json",
+        ],
         environment,
       });
       expect(analyzed.exitCode, `${name} analyzed: ${analyzed.stderr}`).toBe(0);

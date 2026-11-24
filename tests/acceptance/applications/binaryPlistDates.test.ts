@@ -197,7 +197,9 @@ cliTest(
     toolContract("open_bundle_resources").outputSchema.parse(
       openedBundle.structuredContent,
     );
-    const ibMcp = await call("decode_interface_builder", {});
+    const ibMcp = await call("decode_interface_builder", {
+      detail: "complete",
+    });
     expect(ibMcp.isError, JSON.stringify(ibMcp)).not.toBe(true);
     const validatedIb = toolContract(
       "decode_interface_builder",

@@ -23,7 +23,7 @@ cliTest(
   async ({ cli }) => {
     const cwd = await createTestTempDirectory("rea-explicit-target-");
     const result = await cli.run({
-      arguments: ["inspect-artifact", ".", "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", ".", "--json"],
       cwd,
     });
     expect(result.exitCode).toBe(1);

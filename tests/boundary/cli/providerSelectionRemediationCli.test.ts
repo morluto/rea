@@ -23,7 +23,16 @@ workspaceCliTest(
       throw new Error("A missing registration must be unavailable");
 
     const result = await cli.run({
-      arguments: ["decompile", target, "main", "--provider", "ida", "--json"],
+      arguments: [
+        "decompile",
+        "--detail",
+        "complete",
+        target,
+        "main",
+        "--provider",
+        "ida",
+        "--json",
+      ],
       environment: {
         ...workspace.environment,
         REA_IDA_MCP_CONFIG: registration,

@@ -310,7 +310,7 @@ it("delivers partial UUID-less inspection Evidence through production MCP", asyn
 
   const inspected = await client.callTool({
     name: "inspect_macho",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
   expect(inspected.structuredContent).toMatchObject({

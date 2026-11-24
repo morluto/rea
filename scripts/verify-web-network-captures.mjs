@@ -953,7 +953,7 @@ async function inspect(mode, input, errorCategory) {
   if (mode === "mcp") {
     const result = await client.callTool({
       name: "inspect_web_network_capture",
-      arguments: input,
+      arguments: { ...input, detail: "complete" },
     });
     if (errorCategory !== undefined) {
       const error = requireMcpToolError(result);
@@ -1018,6 +1018,8 @@ async function inspect(mode, input, errorCategory) {
   const args = [
     entrypoint,
     "inspect-web-network-capture",
+    "--detail",
+    "complete",
     input.capture_path,
     input.format,
     "--json",

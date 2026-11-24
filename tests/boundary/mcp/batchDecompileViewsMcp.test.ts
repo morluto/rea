@@ -377,6 +377,7 @@ it("counts both forms of an unavailable entry label", async () => {
   const harness = await connect("compact");
   const parent = (
     await harness.call("batch_decompile", {
+      detail: "complete",
       addresses: ["main", "unlabeled", "label-failure"],
     })
   ).evidence.evidence_id;
@@ -409,6 +410,7 @@ it("counts both forms of an unavailable entry label", async () => {
 it("pages one body exactly without splitting a Unicode character", async () => {
   const harness = await connect("compact");
   const { evidence } = await harness.call("batch_decompile", {
+    detail: "complete",
     addresses: SELECTORS,
   });
   const parent = evidence.evidence_id;
@@ -479,6 +481,7 @@ it("recovers oversized batches and pages through smaller selections of the paren
   // The complete batch names a body-free first page of its retained parent.
   const first = constraint(
     await harness.reply("batch_decompile", {
+      detail: "complete",
       addresses: ["main", "emoji", "bodyless"],
     }),
   );
@@ -544,7 +547,10 @@ it("recovers oversized batches and pages through smaller selections of the paren
 it("reads the same rows from a bundle and an Evidence file without a provider", async () => {
   const harness = await connect("compact");
   const parent = (
-    await harness.call("batch_decompile", { addresses: SELECTORS })
+    await harness.call("batch_decompile", {
+      detail: "complete",
+      addresses: SELECTORS,
+    })
   ).evidence;
   const selected = {
     kind: "batch-decompile",
@@ -853,7 +859,10 @@ it("binds views to their parent and each page to its own collection", async () =
   });
 
   const parent = (
-    await harness.call("batch_decompile", { addresses: ["main"] })
+    await harness.call("batch_decompile", {
+      detail: "complete",
+      addresses: ["main"],
+    })
   ).evidence.evidence_id;
   const items = await view(harness, parent, { collection: "items" });
   const body = await view(harness, parent, {
@@ -878,7 +887,9 @@ it("binds views to their parent and each page to its own collection", async () =
       await inspect(retained(parent), { kind: "native-inventory" }),
     ).error,
   ).toMatchObject(invalidIssue("batch_decompile Evidence supports"));
-  const inventory = (await harness.call("list_procedures", {})).evidence;
+  const inventory = (
+    await harness.call("list_procedures", { detail: "complete" })
+  ).evidence;
   expect(
     parseMcpToolError(
       await inspect(retained(inventory.evidence_id), {

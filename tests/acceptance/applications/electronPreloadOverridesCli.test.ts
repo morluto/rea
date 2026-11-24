@@ -86,6 +86,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     } else {
       const { call } = await connectLocalToolsMcp();
       const response = await call("analyze_javascript_application", {
+        detail: "complete",
         input_path: root,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
@@ -232,6 +233,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     } else {
       const { call } = await connectLocalToolsMcp();
       const response = await call("analyze_javascript_application", {
+        detail: "complete",
         input_path: root,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);

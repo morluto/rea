@@ -19,7 +19,10 @@ mcpTest(
     await writeFile(path, bytes);
     const client = await openArtifactTarget(mcp, onTestFinished, path);
     const inspect = () =>
-      client.callTool({ name: "inspect_artifact", arguments: {} });
+      client.callTool({
+        name: "inspect_artifact",
+        arguments: { detail: "complete" },
+      });
     const refused = await inspect();
     expect(parseMcpToolError(refused).error).toMatchObject({
       code: "truncated",

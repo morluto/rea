@@ -33,11 +33,18 @@ cliTest(
     );
     await writeFile(archive, Buffer.concat([header, script, mapText]));
     const cliResult = await cli.run({
-      arguments: ["analyze-javascript-application", archive, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        archive,
+        "--json",
+      ],
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const call = await resolveJavaScriptApplicationMcpCall(cli, undefined);
     const mcpResult = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: archive,
       format: "asar",
     });

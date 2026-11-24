@@ -121,7 +121,7 @@ cliTest(
     });
     await writeFile(path, bytes);
     const cliResult = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const inventory = inventoryFrom(cliResult.json);
@@ -181,7 +181,7 @@ cliTest(
     const { call } = await connectLocalToolsMcp();
     const opened = await call("open_binary", { path });
     if (opened.isError) throw new Error(JSON.stringify(opened));
-    const inspected = await call("inspect_artifact", {});
+    const inspected = await call("inspect_artifact", { detail: "complete" });
     expect(
       inspected.isError,
       JSON.stringify(inspected.structuredContent),
@@ -277,7 +277,7 @@ cliTest(
     });
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const inventory = inventoryFrom(result.json);
@@ -335,7 +335,7 @@ cliTest(
       const path = join(root, `${name}.nes`);
       await writeFile(path, bytes);
       const refused = await cli.run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
       });
       expect(refused.exitCode).not.toBe(0);
       expect(JSON.stringify(refused.json)).toContain(reason);
@@ -343,7 +343,7 @@ cliTest(
       expect(switched.isError).toBe(true);
       expect(JSON.stringify(parseMcpToolError(switched))).toContain(reason);
     }
-    const retained = await call("inspect_artifact", {});
+    const retained = await call("inspect_artifact", { detail: "complete" });
     expect(
       retained.isError,
       JSON.stringify(retained.structuredContent),

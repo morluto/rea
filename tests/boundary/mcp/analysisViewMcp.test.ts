@@ -631,7 +631,7 @@ it("advertises exact schemas and projects one layout section from retained Evide
   ).toBe(false);
   const inspected = await client.callTool({
     name: "inspect_binary_layout",
-    arguments: { path: layout.artifact.path },
+    arguments: { detail: "complete", path: layout.artifact.path },
   });
   expect(inspected.isError).not.toBe(true);
   const parent = toolContract("inspect_binary_layout").outputSchema.parse(
@@ -1374,7 +1374,7 @@ it("projects an actual HAR capture retained by the public MCP workflow", async (
   const { client } = await connect(undefined, service);
   const captureResponse = await client.callTool({
     name: "inspect_web_network_capture",
-    arguments: { capture_path: path, format: "har" },
+    arguments: { detail: "complete", capture_path: path, format: "har" },
   });
   expect(captureResponse.isError).not.toBe(true);
   const parent = parseEvidence(captureResponse.structuredContent);
@@ -1455,7 +1455,7 @@ it.each(PUBLISHED_EXAMPLES)(
     const { client } = await connect(undefined, service);
     const capture = await client.callTool({
       name: "inspect_web_network_capture",
-      arguments: { capture_path: path, format: "har" },
+      arguments: { detail: "complete", capture_path: path, format: "har" },
     });
     expect(parseEvidence(capture.structuredContent).evidence_id).toBe(
       example.input.source.evidence_id,

@@ -103,7 +103,7 @@ const verifyMcpNonLinuxCurrentDocument = async (
   const batch = await client.callTool(
     {
       name: "batch_decompile",
-      arguments: { addresses: ["0x1000"] },
+      arguments: { detail: "complete", addresses: ["0x1000"] },
     },
     mcpOptions,
   );
@@ -171,7 +171,7 @@ const verifyMcpInlineArtifactEvidence = async (
   let outputRoot;
   try {
     const inspected = await client.callTool(
-      { name: "inspect_artifact", arguments: {} },
+      { name: "inspect_artifact", arguments: { detail: "complete" } },
       mcpOptions,
     );
     assert.notEqual(inspected.structuredContent, undefined);

@@ -902,7 +902,7 @@ it("keeps each provider's failures and ignores cancelled requests", async () => 
   fixtureBroken = true;
   expect(await call("address_name", ADDRESS)).toBe("error");
   // A cancelled request is not evidence that the provider recovered.
-  expect(await call("list_procedures", {})).toBe("error");
+  expect(await call("list_procedures", { detail: "complete" })).toBe("error");
   const fixtureFailure = {
     address_name: observedFailure("address_name"),
     current_address: inferredFailure("address_name"),
@@ -1079,7 +1079,7 @@ it("restores composed tools in a scoped catalog after one composed success", asy
   const batchItemStatus = async () => {
     const reply = await client.callTool({
       name: "batch_decompile",
-      arguments: { addresses: ["0x1"] },
+      arguments: { detail: "complete", addresses: ["0x1"] },
     });
     expect(reply.isError).not.toBe(true);
     return reply.structuredContent;

@@ -222,7 +222,7 @@ it("recovers an oversized complete inventory through a working retained page wit
   onTestFinished(() => harness.close());
   const complete = await harness.mcp.callTool({
     name: "list_strings",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(complete.isError).toBe(true);
   const error = parseMcpToolError(complete).error;

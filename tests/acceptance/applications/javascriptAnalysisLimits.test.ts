@@ -240,6 +240,7 @@ cliTest(
       NODE_OPTIONS: "--max-old-space-size=512",
     });
     const response = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: root,
       max_heap_mb: 128,
       analysis_timeout_ms: 1,
@@ -290,6 +291,7 @@ cliTest(
       .parse(cliTimeout.json);
     const cliPartial = parseEvidence(cliFailure.details.partial_observation);
     const control = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: root,
       max_heap_mb: 128,
       source_paths: sourcePaths,

@@ -57,6 +57,8 @@ it.skipIf(process.platform === "win32")(
     });
     const reply = await serveInProcessCli(cli, [
       "debug-with-gdb",
+      "--detail",
+      "complete",
       "info files",
       "--executable",
       f.executable,
@@ -286,7 +288,7 @@ it.skipIf(process.platform === "win32")(
     for (const command of ["info files", "file /other/file", "info files"]) {
       const reply = await f.client.callTool({
         name: "gdb_console",
-        arguments: { session_id, command },
+        arguments: { detail: "complete", session_id, command },
       });
       expect(reply.isError).not.toBe(true);
       const evidence = evidenceSchema.parse(reply.structuredContent);
@@ -323,7 +325,7 @@ it.skipIf(process.platform === "win32")(
     const { session_id } = startSchema.parse(started.structuredContent);
     const reply = await f.client.callTool({
       name: "gdb_console",
-      arguments: { session_id, command: "info files" },
+      arguments: { detail: "complete", session_id, command: "info files" },
     });
     const evidence = evidenceSchema.parse(reply.structuredContent);
     expect(evidence.subject.identity).toMatchObject({

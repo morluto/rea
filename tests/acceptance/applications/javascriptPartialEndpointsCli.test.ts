@@ -17,7 +17,13 @@ cliTest(
       "fetch(target); fetch('target'); fetch(`https://${hosts['a@b']}/items/${id}`); function other(target) { fetch(target); }",
     );
     const cliResult = await driver.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
       environment: process.env,
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);

@@ -38,14 +38,14 @@ const verifyPackagedArtifact = async ({
   const artifactInspection = JSON.parse(
     await commands.run(
       cli,
-      ["inspect-artifact", artifactArchive, "--json"],
+      ["inspect-artifact", "--detail", "complete", artifactArchive, "--json"],
       environment,
     ),
   );
   const repeatedArtifactInspection = JSON.parse(
     await commands.run(
       cli,
-      ["inspect-artifact", artifactArchive, "--json"],
+      ["inspect-artifact", "--detail", "complete", artifactArchive, "--json"],
       environment,
     ),
   );

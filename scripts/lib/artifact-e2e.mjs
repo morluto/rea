@@ -103,9 +103,6 @@ const environment = () => {
       : {}),
     REA_LOG_LEVEL: "silent",
     REA_ANALYSIS_PROVIDER: "auto",
-    // These helpers return complete Evidence records.
-    REA_AGENT_RESULT_BUDGET_BYTES:
-      INLINE_EVIDENCE_MCP_ENVIRONMENT.REA_AGENT_RESULT_BUDGET_BYTES,
     // Artifact workflows have no deep-provider prerequisite or GUI authority.
     HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
   };

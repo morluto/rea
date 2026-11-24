@@ -129,6 +129,7 @@ it.each(["switch", "restart"] as const)(
       // independently of the investigation's Evidence and Unknown history.
       await call("address_name", query);
       const analyzed = await call("analyze_javascript_application", {
+        detail: "complete",
         input_path: application,
         format: "directory",
         max_heap_mb: 128,

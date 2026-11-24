@@ -52,6 +52,8 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "inspect-android-method",
+          "--detail",
+          "complete",
           "/nonexistent/missing.apk",
           "com.example.Main",
           "run",
@@ -70,6 +72,8 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "inspect-android-method",
+          "--detail",
+          "complete",
           "/nonexistent/missing.apk",
           "com.example.Main",
           "run",
@@ -111,6 +115,8 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "trace-web-source-location",
+          "--detail",
+          "complete",
           "/nonexistent/manifest.json",
           "0",
           "/nonexistent/app.js.map",
@@ -175,6 +181,8 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "inspect-web-network-capture",
+          "--detail",
+          "complete",
           "/nonexistent/capture.qlog",
           "qlog",
           "--record",
@@ -205,6 +213,8 @@ describe("byte-entropy window options", () => {
         const result = await cli.run({
           arguments: [
             "inspect-byte-entropy",
+            "--detail",
+            "complete",
             await entropySample(),
             `${flag}=${value}`,
             "--json",
@@ -222,7 +232,14 @@ describe("byte-entropy window options", () => {
       const path = await entropySample();
       const window = async (...flags: string[]): Promise<unknown> => {
         const result = await cli.run({
-          arguments: ["inspect-byte-entropy", path, ...flags, "--json"],
+          arguments: [
+            "inspect-byte-entropy",
+            "--detail",
+            "complete",
+            path,
+            ...flags,
+            "--json",
+          ],
         });
         expect(result.exitCode, result.stdout).toBe(0);
         const { normalized_result: report } = JSON.parse(result.stdout) as {

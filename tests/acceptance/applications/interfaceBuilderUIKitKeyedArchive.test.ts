@@ -171,7 +171,9 @@ cliTest.for(["xml", "binary"] as const)(
     const { call } = await connectLocalToolsMcp();
     const opened = await call("open_bundle_resources", { path: app });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const reply = await call("decode_interface_builder", {});
+    const reply = await call("decode_interface_builder", {
+      detail: "complete",
+    });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     expect(parseEvidence(reply.structuredContent).normalized_result).toEqual(
       evidence.normalized_result,

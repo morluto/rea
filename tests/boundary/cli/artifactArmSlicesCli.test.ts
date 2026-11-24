@@ -22,6 +22,8 @@ describe.skipIf(process.platform !== "darwin")(
         const inspected = await cli.run({
           arguments: [
             "inspect-artifact",
+            "--detail",
+            "complete",
             fixture.path,
             "--json",
             "--full-output",

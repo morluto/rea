@@ -58,7 +58,7 @@ const assemble = async (name, wat) => {
 const inspect = async (path) => {
   const result = await client.callTool({
     name: "inspect_wasm_artifact",
-    arguments: { path },
+    arguments: { detail: "complete", path },
   });
   assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.notEqual(result.structuredContent, undefined);

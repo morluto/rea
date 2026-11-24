@@ -54,6 +54,8 @@ cliTest(
     const analyzed = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         root,
         "--evidence_output",
         bundle,

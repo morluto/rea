@@ -8,7 +8,13 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 describe("scenario CLI schema diagnostics", () => {
   cliTest("reports browser scenario schema paths", async ({ cli }) => {
     const result = await cli.run({
-      arguments: ["capture-browser-scenario", "{}", "--json"],
+      arguments: [
+        "capture-browser-scenario",
+        "--detail",
+        "complete",
+        "{}",
+        "--json",
+      ],
       environment: { REA_LOG_LEVEL: "silent" },
     });
 

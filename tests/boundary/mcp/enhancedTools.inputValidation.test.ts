@@ -11,12 +11,16 @@ describe("enhanced MCP input validation", () => {
     const client = await connect({ execute: () => Promise.resolve(ok([])) });
     const valid = await client.callTool({
       name: "trace_feature",
-      arguments: { query: "needle" },
+      arguments: { detail: "complete", query: "needle" },
     });
     expect(valid.isError).not.toBe(true);
     const misspelled = await client.callTool({
       name: "trace_feature",
-      arguments: { query: "needle", unrecognized_option: true },
+      arguments: {
+        detail: "complete",
+        query: "needle",
+        unrecognized_option: true,
+      },
     });
     expect(misspelled.isError).toBe(true);
     expect(misspelled.structuredContent).toBeUndefined();

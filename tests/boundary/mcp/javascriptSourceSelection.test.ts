@@ -65,7 +65,7 @@ it("resolves ESM whitespace specifiers through the public application tool", asy
     await client.connect(transport);
     const output = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: root },
+      arguments: { detail: "complete", input_path: root },
     });
     expect(output.isError, JSON.stringify(output.content)).not.toBe(true);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -103,7 +103,7 @@ it("retains missing ASAR native-addon inventory through the public application t
     await client.connect(transport);
     const output = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: archive },
+      arguments: { detail: "complete", input_path: archive },
     });
     expect(output.isError, JSON.stringify(output.content)).not.toBe(true);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -220,7 +220,7 @@ it("advertises exact source selection and retains its scope through summary, Evi
     ]) {
       const invalid = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: { input_path: root, source_paths },
+        arguments: { detail: "complete", input_path: root, source_paths },
       });
       expect(invalid.isError).toBe(true);
       const text = invalid.content.find((item) => item.type === "text");
@@ -238,7 +238,11 @@ it("advertises exact source selection and retains its scope through summary, Evi
     }
     const next = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: root, source_paths: ["main.mjs"] },
+      arguments: {
+        detail: "complete",
+        input_path: root,
+        source_paths: ["main.mjs"],
+      },
     });
     expect(next.isError).not.toBe(true);
     expect(
@@ -270,6 +274,7 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
     const nested = await client.callTool({
       name: "analyze_javascript_application",
       arguments: {
+        detail: "complete",
         input_path: nestedRoot,
         source_paths: ["nested.asar/main.mjs"],
       },
@@ -303,7 +308,11 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
     await rm(join(unpacked + ".unpacked", "main.mjs"));
     const unavailable = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: unpacked, source_paths: ["main.mjs"] },
+      arguments: {
+        detail: "complete",
+        input_path: unpacked,
+        source_paths: ["main.mjs"],
+      },
     });
     expect(unavailable.isError).toBe(true);
     const unavailableText = unavailable.content.find(
@@ -340,7 +349,11 @@ it("accepts ASAR headers with long legal JSON whitespace through the public appl
     await client.connect(transport);
     const output = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: archive, source_paths: ["main.mjs"] },
+      arguments: {
+        detail: "complete",
+        input_path: archive,
+        source_paths: ["main.mjs"],
+      },
     });
     expect(output.isError, JSON.stringify(output.content)).not.toBe(true);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -385,7 +398,7 @@ it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP
     await client.connect(transport);
     const output = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: archive },
+      arguments: { detail: "complete", input_path: archive },
     });
     expect(output.isError).toBe(true);
     const message = output.content.find((item) => item.type === "text");

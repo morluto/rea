@@ -30,6 +30,8 @@ cliTest(
       const output = await cli.run({
         arguments: [
           "inspect-managed-members",
+          "--detail",
+          "complete",
           path,
           ...selection.flatMap((name) => ["--type", name]),
           "--json",
@@ -102,6 +104,8 @@ cliTest(
         const output = await cli.run({
           arguments: [
             "inspect-managed-members",
+            "--detail",
+            "complete",
             path,
             ...(isSelected ? ["--type", "Fixture.Inner"] : []),
             "--json",

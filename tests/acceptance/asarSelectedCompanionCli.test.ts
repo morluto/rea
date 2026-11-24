@@ -41,7 +41,13 @@ cliTest.skipIf(process.platform === "win32")(
     expect(extractFile(selected, "native.node").equals(bytes)).toBe(true);
 
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", selected, "--json"],
+      arguments: [
+        "inspect-artifact",
+        "--detail",
+        "complete",
+        selected,
+        "--json",
+      ],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     expect(parseEvidence(inspected.json).subject?.local_path).toBe(selected);

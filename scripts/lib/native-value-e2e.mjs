@@ -473,7 +473,7 @@ async function verifyNativeValueAdapters(
 async function verifyUnresolvedCallEvidence(client) {
   const inventory = await client.callTool({
     name: "list_procedures",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   assert.notEqual(inventory.isError, true, JSON.stringify(inventory));
   assert.notEqual(inventory.structuredContent, undefined);

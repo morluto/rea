@@ -58,7 +58,7 @@ cliTest.for([
     );
     await writeFile(path, await writer.close());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const evidence = parseEvidence(inspected.json);
@@ -120,7 +120,7 @@ cliTest(
     }
     const environment = { HOME: root, USERPROFILE: root };
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", app, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", app, "--json"],
       environment,
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -172,7 +172,7 @@ cliTest(
     await writer.add("Fake.app/Contents", new TextReader("ordinary resource"));
     await writeFile(path, await writer.close());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const source = parseEvidence(inspected.json);

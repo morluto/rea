@@ -8,20 +8,31 @@ export interface PublishedEvidenceReceipt {
 
 interface PublicationContext {
   receipt?: PublishedEvidenceReceipt;
-  /** REA_AGENT_RESULT_BUDGET_BYTES from the environment this invocation captured. */
-  readonly agentBudgetSeed?: string | undefined;
+  readonly invocation?: CliPublicationInvocation;
 }
 const publication = new AsyncLocalStorage<PublicationContext>();
+
+/** What one CLI invocation captured that its delivery reads. */
+export interface CliPublicationInvocation {
+  /** REA_AGENT_RESULT_BUDGET_BYTES from the environment this invocation captured. */
+  readonly agentBudgetSeed?: string | undefined;
+  /**
+   * The command words and arguments as given, for exact rerun commands;
+   * omitted when the invocation declares sensitive values.
+   */
+  readonly argv?: readonly string[] | undefined;
+}
 
 /** Keep publication state in the invocation that owns delivery and formatting. */
 export const withCliEvidencePublication = <Value>(
   run: () => Value,
-  agentBudgetSeed?: string,
-): Value => publication.run({ agentBudgetSeed }, run);
+  invocation?: CliPublicationInvocation,
+): Value =>
+  publication.run(invocation === undefined ? {} : { invocation }, run);
 
-/** The agent result budget seed of this invocation; none outside one. */
-export const cliAgentBudgetSeed = (): string | undefined =>
-  publication.getStore()?.agentBudgetSeed;
+/** What this invocation captured; nothing outside one. */
+export const cliPublicationInvocation = (): CliPublicationInvocation =>
+  publication.getStore()?.invocation ?? {};
 
 export const recordCliEvidencePublication = (
   receipt: PublishedEvidenceReceipt,

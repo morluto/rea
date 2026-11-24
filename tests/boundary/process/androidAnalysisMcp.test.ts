@@ -247,7 +247,7 @@ test.each([
 
     const response = await client.callTool({
       name: "inspect_android_package",
-      arguments: { path: apk },
+      arguments: { detail: "complete", path: apk },
     });
     const projected = parseMcpToolError(response).error;
     expect(projected.code).toBe(errorCode);
@@ -321,7 +321,10 @@ it("cleans an active engine when the MCP client disconnects", async () => {
     serverOptions: { androidAnalysis: provider },
   });
   const pending = client
-    .callTool({ name: "inspect_android_package", arguments: { path: apk } })
+    .callTool({
+      name: "inspect_android_package",
+      arguments: { detail: "complete", path: apk },
+    })
     .catch(() => undefined);
   await expect.poll(() => launches.length).toBe(1);
   await client.close();

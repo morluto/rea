@@ -26,7 +26,13 @@ cliTest(
     await writeFile(path, source);
     const digest = createHash("sha256").update(source).digest("hex");
     const cliResult = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(cliResult.exitCode).toBe(0);
     const contract = toolContract("analyze_javascript_application");

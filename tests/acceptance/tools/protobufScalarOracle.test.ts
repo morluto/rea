@@ -79,6 +79,8 @@ cliTest(
         const result = await cli.run({
           arguments: [
             "inspect-web-network-capture",
+            "--detail",
+            "complete",
             capturePath,
             "har",
             "--record",
@@ -96,6 +98,7 @@ cliTest(
         output = result.json;
       } else {
         const response = await call("inspect_web_network_capture", {
+          detail: "complete",
           capture_path: capturePath,
           format: "har",
           record_ordinals: [0, 1],

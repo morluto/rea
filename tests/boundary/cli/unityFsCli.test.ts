@@ -33,7 +33,7 @@ cliTest.for([
     bytes.writeBigUInt64BE(BigInt(declaredSize), 32);
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.json).toMatchObject({
@@ -67,7 +67,7 @@ cliTest.for([false, true])(
     );
     await writeFile(path, Buffer.concat([original, directory]));
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const inventory = artifactInspectionResultSchema.parse(
@@ -108,7 +108,7 @@ cliTest(
       buildUnityFs([{ path: "data..bin", data: payload, flags: 4 }]),
     );
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -155,7 +155,7 @@ cliTest(
       }),
     );
     const unavailable = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(unavailable.exitCode, unavailable.stderr).toBe(0);
     const partial = artifactInspectionResultSchema.parse(
@@ -219,7 +219,7 @@ cliTest(
     const path = join(assets, "content.bundle");
     await writeFile(path, bytes);
     const inventory = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(inventory.exitCode, inventory.stderr).toBe(0);
     const artifact = artifactInspectionResultSchema.parse(

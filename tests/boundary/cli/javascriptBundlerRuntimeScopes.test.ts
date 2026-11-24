@@ -55,7 +55,13 @@ for (const includesLoader of [false, true]) {
       })();`,
       });
       const output = await cli.run({
-        arguments: ["analyze-javascript-application", root, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          root,
+          "--json",
+        ],
       });
       expect(output.exitCode).toBe(0);
       const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -102,7 +108,13 @@ cliTest(
       .join("\n");
     await writeFixtureFiles(root, { "bundle.js": source });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(output.exitCode).toBe(0);
     const { graph } = javascriptApplicationAnalysisResultSchema.parse(
@@ -176,7 +188,13 @@ for (const scenario of [
       const root = await createTestTempDirectory("rea-bundler-runtime-scope-");
       await writeFixtureFiles(root, { "bundle.cjs": scenario.source });
       const output = await cli.run({
-        arguments: ["analyze-javascript-application", root, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          root,
+          "--json",
+        ],
       });
       expect(output.exitCode).toBe(0);
       const { graph } = javascriptApplicationAnalysisResultSchema.parse(
@@ -255,7 +273,13 @@ cliTest(
     const root = await createTestTempDirectory("rea-bundler-unknown-host-");
     await writeFixtureFiles(root, { "bundle.js": appA + appB });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(output.exitCode).toBe(0);
     const { graph } = javascriptApplicationAnalysisResultSchema.parse(
@@ -303,7 +327,13 @@ cliTest(
   `,
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(output.exitCode).toBe(0);
     const { graph } = javascriptApplicationAnalysisResultSchema.parse(

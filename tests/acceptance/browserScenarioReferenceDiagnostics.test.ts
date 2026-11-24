@@ -39,7 +39,13 @@ cliTest.for([
       await writeFile(path, JSON.stringify(input));
       // A real file argument avoids the host argv limit for this valid JSON.
       const result = await cli.run({
-        arguments: ["capture-browser-scenario", path, "--json"],
+        arguments: [
+          "capture-browser-scenario",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
         environment: { HOME: home, REA_LOG_LEVEL: "silent" },
       });
       expect(result.exitCode).toBe(1);
@@ -71,7 +77,7 @@ cliTest.for([
       await client.connect(transport);
       const result = await client.callTool({
         name: "capture_browser_scenario",
-        arguments: input,
+        arguments: { ...input, detail: "complete" },
       });
       expect(result.isError).toBe(true);
       expect(parseMcpToolError(result).error).toMatchObject(expected);

@@ -612,7 +612,13 @@ cliTest(
     await writer.add("main.js", new TextReader("console.log(1);\n"));
     await writeFile(archive, await writer.close());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", archive, "--json"],
+      arguments: [
+        "inspect-artifact",
+        "--detail",
+        "complete",
+        archive,
+        "--json",
+      ],
     });
     expect(inspected.exitCode).toBe(0);
     const inspection = parseEvidence(inspected.json);
@@ -1403,7 +1409,14 @@ cliTest(
     };
     await writeFile(capturePath, bytes);
     const capture = await cli.run({
-      arguments: ["inspect-web-network-capture", capturePath, "har", "--json"],
+      arguments: [
+        "inspect-web-network-capture",
+        "--detail",
+        "complete",
+        capturePath,
+        "har",
+        "--json",
+      ],
       environment,
     });
     expect(capture.exitCode, capture.stdout).toBe(0);
@@ -1693,7 +1706,14 @@ cliTest(
     const capturePath = join(root, "capture.har");
     await writeFile(capturePath, JSON.stringify(environmentManifestHar()));
     const capture = await cli.run({
-      arguments: ["inspect-web-network-capture", capturePath, "har", "--json"],
+      arguments: [
+        "inspect-web-network-capture",
+        "--detail",
+        "complete",
+        capturePath,
+        "har",
+        "--json",
+      ],
     });
     expect(capture.exitCode, capture.stdout).toBe(0);
     const parent = parseEvidence(capture.json);

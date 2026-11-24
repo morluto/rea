@@ -239,7 +239,7 @@ it("returns the static JavaScript application Evidence contract", async () => {
   };
 
   const analyzed = await runCli(
-    ["analyze-javascript-application", root, "--json"],
+    ["analyze-javascript-application", "--detail", "complete", root, "--json"],
     environment,
   );
 

@@ -37,6 +37,7 @@ cliTest(
     );
     const { call } = await connectLocalToolsMcp();
     const response = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: root,
       format: "directory",
     });

@@ -259,6 +259,8 @@ cliTest(
     const cliResult = await cli.run({
       arguments: [
         "analyze-web-bundle",
+        "--detail",
+        "complete",
         browser.endpoint,
         "allowed-page",
         "--allowed-origins",
@@ -446,6 +448,7 @@ it("exposes CLI-equivalent Evidence results and session tools", async () => {
   const analyzed = await connected.client.callTool({
     name: "analyze_web_bundle",
     arguments: {
+      detail: "complete",
       cdp_endpoint: browser.endpoint,
       target_id: "allowed-page",
       observation_ms: 0,
@@ -774,6 +777,7 @@ cliTest(
     const result = await connected.client.callTool({
       name: "analyze_web_bundle",
       arguments: {
+        detail: "complete",
         cdp_endpoint: browser.endpoint,
         target_id: "allowed-page",
         allowed_origins: [browser.allowedOrigin],
@@ -812,6 +816,8 @@ cliTest(
     const cliResult = await cli.run({
       arguments: [
         "analyze-web-bundle",
+        "--detail",
+        "complete",
         browser.endpoint,
         "allowed-page",
         "--allowed-origins",

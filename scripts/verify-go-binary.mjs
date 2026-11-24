@@ -384,7 +384,10 @@ async function inspect(mode, path, includeStringLiterals = false) {
       : { path, detail: "complete" };
     const response = await artifactMcpCall(
       client,
-      { name: "inspect_go_binary", arguments: argumentsPayload },
+      {
+        name: "inspect_go_binary",
+        arguments: { ...argumentsPayload, detail: "complete" },
+      },
       { timeout: 30_000 },
     );
     envelope = requireMcpOutput(response, "inspect_go_binary");

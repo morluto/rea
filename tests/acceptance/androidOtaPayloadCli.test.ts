@@ -40,7 +40,7 @@ cliTest.for([
       }),
     );
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -93,7 +93,7 @@ cliTest(
     });
     await writeFile(source, image);
     const complete = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(complete.exitCode).toBe(1);
     expect(complete.json).toMatchObject({
@@ -102,7 +102,7 @@ cliTest(
 
     await writeFile(source, image.subarray(0, -1));
     const incomplete = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(incomplete.exitCode, incomplete.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -150,7 +150,7 @@ cliTest(
     const bytes = buildAndroidOtaPayload({ partitions });
     await writeFile(source, bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -242,6 +242,8 @@ cliTest(
     const recorded = await cli.run({
       arguments: [
         "inspect-artifact",
+        "--detail",
+        "complete",
         source,
         "--integrity-policy",
         "record-and-continue",
@@ -291,7 +293,7 @@ cliTest(
     const source = join(root, "payload.bin");
     await writeFile(source, fullAndroidOtaPayload());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -341,7 +343,7 @@ cliTest(
     const source = join(root, "payload.bin");
     await writeFile(source, v1AndroidOtaPayload());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode).toBe(1);
     expect(inspected.json).toMatchObject({
@@ -361,7 +363,7 @@ cliTest(
     const source = join(root, "payload.bin");
     await writeFile(source, deltaAndroidOtaPayload());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(

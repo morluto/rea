@@ -64,7 +64,7 @@ cliTest.for(["jar", "zip"])(
       await writeFile(path, await writer.close());
 
       const reply = await cli.run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
       });
       expect(reply.exitCode, reply.stdout + reply.stderr).toBe(0);
       const inspection = artifactInspectionResultSchema.parse(

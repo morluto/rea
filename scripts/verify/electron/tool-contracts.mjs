@@ -213,6 +213,7 @@ bridge.exposeInMainWorld("fixture", {
         ),
       );
       const staticAnalysis = await call("analyze_javascript_application", {
+        detail: "complete",
         input_path: applicationRoot,
       });
       assert.equal(staticAnalysis.normalized_result.summary.browser_windows, 1);

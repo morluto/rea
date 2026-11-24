@@ -80,7 +80,7 @@ export async function verifyLinuxHopperOwnerExit({
         );
         const procedures = requireMcpEvidenceResult(
           await client.callTool(
-            { name: "list_procedures", arguments: {} },
+            { name: "list_procedures", arguments: { detail: "complete" } },
             options,
           ),
           "list_procedures",

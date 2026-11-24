@@ -21,7 +21,13 @@ cliTest(
     const validPath = join(root, "elf-cross-load-contents");
     await writeFile(validPath, fixture.bytes);
     const result = await cli.run({
-      arguments: ["inspect-go-binary", validPath, "--json"],
+      arguments: [
+        "inspect-go-binary",
+        "--detail",
+        "complete",
+        validPath,
+        "--json",
+      ],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
@@ -40,7 +46,10 @@ cliTest(
     expect(fileIdentity(evidence.subject).sha256).toBe(
       createHash("sha256").update(fixture.bytes).digest("hex"),
     );
-    const accepted = await call("inspect_go_binary", { path: validPath });
+    const accepted = await call("inspect_go_binary", {
+      detail: "complete",
+      path: validPath,
+    });
     expect(accepted.isError, JSON.stringify(accepted)).not.toBe(true);
     expectCliMcpEvidenceParity(evidence, accepted.structuredContent, validPath);
     expect(Buffer.compare(await readFile(validPath), fixture.bytes)).toBe(0);
@@ -52,7 +61,7 @@ cliTest(
     const path = join(root, "elf-cross-load-gap");
     await writeFile(path, damaged.bytes);
     const rejected = await cli.run({
-      arguments: ["inspect-go-binary", path, "--json"],
+      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
     });
     expect(rejected.exitCode).toBe(1);
     expect(rejected.json).toMatchObject({
@@ -61,7 +70,10 @@ cliTest(
         format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
       },
     });
-    const response = await call("inspect_go_binary", { path });
+    const response = await call("inspect_go_binary", {
+      detail: "complete",
+      path,
+    });
     expect(parseMcpToolError(response)).toEqual({ error: rejected.json });
     await client.ping();
   },

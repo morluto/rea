@@ -35,6 +35,8 @@ const runCli = async (
   await cli.serve(
     [
       "capture-browser-scenario",
+      "--detail",
+      "complete",
       JSON.stringify({
         browser: { mode: "launch", executable_path: process.execPath },
         start_url: { url: "http://127.0.0.1:3101/" },

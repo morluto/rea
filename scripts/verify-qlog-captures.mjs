@@ -88,7 +88,15 @@ const report = await withVerifierCleanup(async () => {
     );
     const completed = await promisify(execFile)(
       process.execPath,
-      [entrypoint, "inspect-web-network-capture", path, "qlog", "--json"],
+      [
+        entrypoint,
+        "inspect-web-network-capture",
+        "--detail",
+        "complete",
+        path,
+        "qlog",
+        "--json",
+      ],
       { env: environment, timeout: 40_000, maxBuffer: 96 * 1024 * 1024 },
     );
     const cli = parseEvidence(JSON.parse(completed.stdout));

@@ -89,13 +89,21 @@ cliTest(
     };
 
     const fromCli = await cli.run({
-      arguments: ["inspect-web-network-capture", path, "har", "--json"],
+      arguments: [
+        "inspect-web-network-capture",
+        "--detail",
+        "complete",
+        path,
+        "har",
+        "--json",
+      ],
     });
     expect(fromCli.exitCode).toBe(0);
     const cliSummary = summarize(fromCli.json);
 
     const { call } = await connectLocalToolsMcp();
     const response = await call("inspect_web_network_capture", {
+      detail: "complete",
       capture_path: path,
       format: "har",
     });

@@ -23,7 +23,13 @@ cliTest(
   `,
     );
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(output.exitCode).toBe(0);
     const envelope = z

@@ -30,7 +30,7 @@ cliTest(
       );
       await writeFile(path, await writer.close());
       const inspected = await cli.run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const inspection = artifactInspectionResultSchema.parse(

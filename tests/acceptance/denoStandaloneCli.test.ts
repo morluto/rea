@@ -41,7 +41,7 @@ cliTest.for(carriers)(
     const source = join(root, "app");
     await writeFile(source, bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -103,7 +103,7 @@ cliTest(
     const path = join(root, "large-table.exe");
     await writeFile(path, fixture.bytes);
     const capped = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(capped.exitCode).toBe(1);
     expect(capped.json).toMatchObject({
@@ -125,7 +125,7 @@ cliTest(
     );
     await writeFile(path, fixture.bytes);
     const malformed = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(malformed.exitCode).toBe(1);
     expect(malformed.json).toMatchObject({

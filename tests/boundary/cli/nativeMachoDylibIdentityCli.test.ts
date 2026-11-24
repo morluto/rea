@@ -30,7 +30,13 @@ describe.skipIf(process.platform !== "darwin")(
         ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         const result = await cli.run({
-          arguments: ["inspect-macho", library, "--json"],
+          arguments: [
+            "inspect-macho",
+            "--detail",
+            "complete",
+            library,
+            "--json",
+          ],
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(result.exitCode, result.stdout + result.stderr).toBe(0);
@@ -58,7 +64,13 @@ describe.skipIf(process.platform !== "darwin")(
         ]);
         expect(combined.exitCode, combined.stderr).toBe(0);
         const fatResult = await cli.run({
-          arguments: ["inspect-macho", universal, "--json"],
+          arguments: [
+            "inspect-macho",
+            "--detail",
+            "complete",
+            universal,
+            "--json",
+          ],
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(fatResult.exitCode, fatResult.stdout + fatResult.stderr).toBe(0);

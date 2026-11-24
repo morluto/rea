@@ -43,7 +43,13 @@ cliTest(
       await writeFile(leftPath, bytes);
       await writeFile(rightPath, bytes);
       const inspection = await cli.run({
-        arguments: ["inspect-managed-members", leftPath, "--json"],
+        arguments: [
+          "inspect-managed-members",
+          "--detail",
+          "complete",
+          leftPath,
+          "--json",
+        ],
       });
       expect(inspection.exitCode, inspection.stderr).toBe(0);
       const left = parseEvidence(inspection.json);
@@ -52,7 +58,10 @@ cliTest(
         target_identity_sha256: null,
         target_row_resolved: resolved,
       });
-      const other = await call("inspect_managed_members", { path: rightPath });
+      const other = await call("inspect_managed_members", {
+        detail: "complete",
+        path: rightPath,
+      });
       expect(other.isError, JSON.stringify(other)).not.toBe(true);
       const right = parseEvidence(other.structuredContent);
       const compared = await cli.run({
@@ -212,7 +221,13 @@ cliTest(
     }
 
     const inspection = await cli.run({
-      arguments: ["inspect-managed-members", bad, "--json"],
+      arguments: [
+        "inspect-managed-members",
+        "--detail",
+        "complete",
+        bad,
+        "--json",
+      ],
     });
     expect(inspection.exitCode, inspection.stderr).toBe(1);
     expect(inspection.json).toMatchObject({
@@ -249,11 +264,18 @@ cliTest(
       await writeFile(path, bytes);
       await writeFile(peerPath, bytes);
       const inspected = await cli.run({
-        arguments: ["inspect-managed-members", path, "--json"],
+        arguments: [
+          "inspect-managed-members",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const cliEvidence = parseEvidence(inspected.json);
       const mcpInspected = await call("inspect_managed_members", {
+        detail: "complete",
         path: peerPath,
       });
       expect(mcpInspected.isError, JSON.stringify(mcpInspected)).not.toBe(true);
@@ -344,7 +366,10 @@ cliTest(
     const call = await cli.sharedMcpCall!();
     const sources = [];
     for (const path of [left, right]) {
-      const reply = await call("inspect_managed_members", { path });
+      const reply = await call("inspect_managed_members", {
+        detail: "complete",
+        path,
+      });
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const evidence = parseEvidence(reply.structuredContent);
       sources.push({

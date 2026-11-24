@@ -19,7 +19,13 @@ const analyzeBundle = async (
   const root = await createTestTempDirectory(prefix);
   await writeFixtureFiles(root, files);
   const output = await cli.run({
-    arguments: ["analyze-javascript-application", root, "--json"],
+    arguments: [
+      "analyze-javascript-application",
+      "--detail",
+      "complete",
+      root,
+      "--json",
+    ],
   });
   expect(output.exitCode).toBe(0);
   const result = javascriptApplicationAnalysisResultSchema.parse(

@@ -36,7 +36,7 @@ cliTest(
       }),
     );
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(

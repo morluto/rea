@@ -77,7 +77,7 @@ const inspectWith = async (allocate: Allocate, path: string) => {
   return parseMcpToolError(
     await client.callTool({
       name: "inspect_pcap_capture",
-      arguments: { path },
+      arguments: { detail: "complete", path },
     }),
   ).error;
 };

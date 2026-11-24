@@ -54,7 +54,7 @@ mcpTest(
       await writeFile(path, erlangBeamFixture("mcp_mod"));
       const response = await client.callTool({
         name: "inspect_erlang_beam",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const evidence = completeBeamEvidenceSchema.parse(
@@ -75,7 +75,7 @@ mcpTest(
     try {
       const response = await client.callTool({
         name: "inspect_erlang_beam",
-        arguments: { path: "app.beam" },
+        arguments: { detail: "complete", path: "app.beam" },
       });
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "invalid_request",
@@ -181,7 +181,7 @@ mcpTest(
       );
       const response = await client.callTool({
         name: "inspect_erlang_beam",
-        arguments: { path: malformed, max_atoms: 1 },
+        arguments: { detail: "complete", path: malformed, max_atoms: 1 },
       });
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "unsupported_target",
@@ -229,7 +229,7 @@ mcpTest(
       await writeFile(path, erlangBeamFixture("without_retention"));
       const complete = await client.callTool({
         name: "inspect_erlang_beam",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(complete.isError).not.toBe(true);
       expect(
@@ -257,7 +257,7 @@ mcpTest(
       );
       const response = await client.callTool({
         name: "inspect_erlang_beam",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "unsupported_target",

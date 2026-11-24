@@ -164,7 +164,7 @@ mcpTest(
     // Only then compare with a complete call made for reference.
     const complete = await client.callTool({
       name: "decode_interface_builder",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(complete.isError, JSON.stringify(complete.content)).not.toBe(true);
     const full = evidenceOf(interfaceBuilderAnalysisSchema).parse(

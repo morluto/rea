@@ -25,7 +25,7 @@ for (const shared of [false, true])
       elfAppendedBunPayload(bunModuleGraphPayload({ modules })),
     );
     const result = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
     if (!shared) {

@@ -886,7 +886,16 @@ test("keeps a malformed JSON command's failure status and serves the next comman
     "app.mjs": "export function current() { return 1; }\n",
   });
   const recovered = await session.run(
-    command(["analyze-javascript-application", root, "--json"], environment),
+    command(
+      [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
+      environment,
+    ),
   );
   expect(recovered.exitCode, recovered.stderr).toBe(0);
   expect(recovered.json).toMatchObject({
@@ -928,10 +937,19 @@ test("closes the real JavaScript CLI worker through its resource cleanup", async
     "app.mjs": "export function current() { return 1; }\n",
   });
   const analyzed = await session.run(
-    command(["analyze-javascript-application", root, "--json"], {
-      PATH: process.env.PATH ?? "",
-      REA_LOG_LEVEL: "silent",
-    }),
+    command(
+      [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
+      {
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+      },
+    ),
   );
   expect(analyzed.exitCode, analyzed.stderr).toBe(0);
   expect(analyzed.json).toMatchObject({

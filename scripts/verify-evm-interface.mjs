@@ -105,7 +105,7 @@ try {
     } else {
       const reply = await scope.client.callTool({
         name: "inspect_evm_interface",
-        arguments: { path, encoding },
+        arguments: { detail: "complete", path, encoding },
       });
       value =
         expectedCategory !== undefined

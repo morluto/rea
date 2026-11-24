@@ -82,7 +82,10 @@ it.each(["compact"] as const)(
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
     const progress: string[] = [];
     const reply = await client.callTool(
-      { name: "trace_feature", arguments: { query: "goal" } },
+      {
+        name: "trace_feature",
+        arguments: { detail: "complete", query: "goal" },
+      },
       {
         onprogress: (update) => {
           if (update.message) progress.push(update.message);

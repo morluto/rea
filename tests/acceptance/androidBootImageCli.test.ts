@@ -41,7 +41,13 @@ cliTest(
       }),
     );
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", callerPath, "--json"],
+      arguments: [
+        "inspect-artifact",
+        "--detail",
+        "complete",
+        callerPath,
+        "--json",
+      ],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const evidence = parseEvidence(inspected.json);
@@ -109,7 +115,7 @@ cliTest(
       const path = join(root, `${fixture.name}.img`);
       await writeFile(path, fixture.bytes);
       const result = await cli.run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
       });
       expect(result.exitCode, result.stdout + result.stderr).toBe(1);
       expect(result.json).toMatchObject({

@@ -52,9 +52,18 @@ cliTest(
       const path = join(root, `${item.name}.macho`);
       await writeFile(path, item.bytes);
       const result = await cli.run({
-        arguments: ["inspect-go-binary", path, "--json"],
+        arguments: [
+          "inspect-go-binary",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
-      const response = await call("inspect_go_binary", { path });
+      const response = await call("inspect_go_binary", {
+        detail: "complete",
+        path,
+      });
       if (item.expected === "success") {
         expect(result.exitCode, result.stderr).toBe(0);
         const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
@@ -135,9 +144,18 @@ cliTest(
       const path = join(root, `${item.name}.elf`);
       await writeFile(path, item.fixture.bytes);
       const result = await cli.run({
-        arguments: ["inspect-go-binary", path, "--json"],
+        arguments: [
+          "inspect-go-binary",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
-      const response = await call("inspect_go_binary", { path });
+      const response = await call("inspect_go_binary", {
+        detail: "complete",
+        path,
+      });
 
       if (item.outcome === "success") {
         expect(result.exitCode, result.stderr).toBe(0);
@@ -212,7 +230,7 @@ cliTest(
     const output = join(root, "source.json");
     await writeFile(path, createGoBinaryFixture().bytes);
     const complete = await cli.run({
-      arguments: ["inspect-go-binary", path, "--json"],
+      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
     });
     expect(complete.exitCode, complete.stderr).toBe(0);
     const full = evidenceResultOf(goBinarySchema).parse(complete.json);
@@ -269,7 +287,7 @@ cliTest(
     const path = join(root, "overlapping.elf");
     await writeFile(path, createGoOverlappingElfFixture());
     const result = await cli.run({
-      arguments: ["inspect-go-binary", path, "--json"],
+      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
     const expected = {
@@ -285,7 +303,10 @@ cliTest(
     };
     expect(result.json).toMatchObject(expected);
     const { client, call } = await connectLocalToolsMcp();
-    const response = await call("inspect_go_binary", { path });
+    const response = await call("inspect_go_binary", {
+      detail: "complete",
+      path,
+    });
     expect(parseMcpToolError(response).error).toMatchObject(expected);
     await client.ping();
   },
@@ -302,13 +323,22 @@ cliTest(
       const path = join(root, sectionless ? "sectionless.elf" : "original.elf");
       await writeFile(path, fixture.bytes);
       const result = await cli.run({
-        arguments: ["inspect-go-binary", path, "--json"],
+        arguments: [
+          "inspect-go-binary",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
       expect(evidence.normalized_result.build_info).not.toBeNull();
       infos.push(evidence.normalized_result.build_info);
-      const response = await call("inspect_go_binary", { path });
+      const response = await call("inspect_go_binary", {
+        detail: "complete",
+        path,
+      });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     }
@@ -330,7 +360,7 @@ cliTest(
     setGoPeVirtualSize(fixture.bytes, 0);
     await writeFile(path, fixture.bytes);
     const result = await cli.run({
-      arguments: ["inspect-go-binary", path, "--json"],
+      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
@@ -350,7 +380,10 @@ cliTest(
     });
 
     const { client, call } = await connectLocalToolsMcp();
-    const response = await call("inspect_go_binary", { path });
+    const response = await call("inspect_go_binary", {
+      detail: "complete",
+      path,
+    });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     await client.ping();
@@ -381,9 +414,18 @@ cliTest(
         machoImageWithUnknownCommand(fixture.wide, fixture.size),
       );
       const result = await cli.run({
-        arguments: ["inspect-go-binary", path, "--json"],
+        arguments: [
+          "inspect-go-binary",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
-      const response = await call("inspect_go_binary", { path });
+      const response = await call("inspect_go_binary", {
+        detail: "complete",
+        path,
+      });
 
       if (fixture.malformed) {
         expect(result.exitCode).toBe(1);
@@ -420,7 +462,13 @@ for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
         expectedErrno,
       );
       const result = await cli.run({
-        arguments: ["inspect-go-binary", path, "--json"],
+        arguments: [
+          "inspect-go-binary",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -451,7 +499,7 @@ cliTest(
     const fixture = createGoBinaryByteStringFixture();
     await writeFile(path, fixture.bytes);
     const result = await cli.run({
-      arguments: ["inspect-go-binary", path, "--json"],
+      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
@@ -469,7 +517,13 @@ for (const fixture of createGoBinaryDiagnosticFixtures()) {
       const path = join(root, `${fixture.name}.exe`);
       await writeFile(path, fixture.bytes);
       const result = await cli.run({
-        arguments: ["inspect-go-binary", path, "--json"],
+        arguments: [
+          "inspect-go-binary",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -490,7 +544,7 @@ cliTest(
     const path = join(root, "text.bin");
     await writeFile(path, "This is not an executable container.");
     const result = await cli.run({
-      arguments: ["inspect-go-binary", path, "--json"],
+      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -510,7 +564,13 @@ for (const format of ["elf", "pe", "macho"] as const) {
         const path = join(root, "application.bin");
         await writeFile(path, fixture.bytes);
         const result = await cli.run({
-          arguments: ["inspect-go-binary", "application.bin", "--json"],
+          arguments: [
+            "inspect-go-binary",
+            "--detail",
+            "complete",
+            "application.bin",
+            "--json",
+          ],
           cwd: root,
         });
         expect(result.exitCode, result.stderr).toBe(0);
@@ -584,7 +644,7 @@ cliTest("preserves MIPS identity in Go CLI Evidence", async ({ cli }) => {
   const path = join(root, "application.elf");
   await writeFile(path, fixture.bytes);
   const result = await cli.run({
-    arguments: ["inspect-go-binary", path, "--json"],
+    arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
   });
   expect(result.exitCode, result.stderr).toBe(0);
   const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
@@ -603,7 +663,7 @@ cliTest(
     const path = join(root, "metadata-free.elf");
     await writeFile(path, createGoBinaryFixture({ omitBuildInfo: true }).bytes);
     const result = await cli.run({
-      arguments: ["inspect-go-binary", path, "--json"],
+      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode).toBe(0);
     const report = evidenceResultOf(goBinarySchema).parse(
@@ -627,7 +687,7 @@ cliTest(
     const path = join(root, "application.elf");
     await writeFile(path, createGoBinaryFixture({ moduleText }).bytes);
     const result = await cli.run({
-      arguments: ["inspect-go-binary", path, "--json"],
+      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
@@ -654,7 +714,10 @@ cliTest(
     const requestPath = join(root, "cyclonedx-view.json");
     await writeFile(path, createGoBinaryFixture().bytes);
     const { call } = await connectLocalToolsMcp();
-    const inspected = await call("inspect_go_binary", { path });
+    const inspected = await call("inspect_go_binary", {
+      detail: "complete",
+      path,
+    });
     expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
     const parent = parseEvidence(inspected.structuredContent);
     await writeFile(evidencePath, JSON.stringify(parent));
@@ -733,6 +796,8 @@ cliTest(
     const standaloneCap = await cli.run({
       arguments: [
         "inspect-go-binary",
+        "--detail",
+        "complete",
         path,
         "--max-string-literals",
         "2",
@@ -751,6 +816,8 @@ cliTest(
     const cliResult = await cli.run({
       arguments: [
         "inspect-go-binary",
+        "--detail",
+        "complete",
         path,
         "--include-string-literals",
         "--max-string-literals",
@@ -770,6 +837,7 @@ cliTest(
 
     const { client, call } = await connectLocalToolsMcp();
     const mcpReply = await call("inspect_go_binary", {
+      detail: "complete",
       path,
       include_string_literals: true,
       max_string_literals: 2,

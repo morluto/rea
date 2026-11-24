@@ -29,7 +29,13 @@ describe.skipIf(process.platform !== "darwin")(
         ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         const result = await cli.run({
-          arguments: ["inspect-macho", object, "--json"],
+          arguments: [
+            "inspect-macho",
+            "--detail",
+            "complete",
+            object,
+            "--json",
+          ],
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(result.exitCode, result.stdout + result.stderr).toBe(0);

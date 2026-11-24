@@ -193,7 +193,7 @@ cliTest(
     );
     // Evidence the CLI produced was never retained by this MCP session.
     const produced = await cli.run({
-      arguments: ["inspect-artifact", one, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", one, "--json"],
     });
     expect(produced.exitCode, produced.stderr).toBe(0);
     const foreign = parseEvidence(produced.json);

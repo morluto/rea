@@ -28,6 +28,8 @@ cliTest(
     });
     const baseArguments = [
       "analyze-web-bundle",
+      "--detail",
+      "complete",
       browser.endpoint,
       "allowed-page",
       "--allowed-origins",

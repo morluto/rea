@@ -109,7 +109,13 @@ cliTest(
     await writeFile(path, erlangBeamFixture("views"));
     const run = cli.run.bind(cli);
     const complete = await run({
-      arguments: ["inspect-erlang-beam", path, "--json"],
+      arguments: [
+        "inspect-erlang-beam",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(complete.exitCode, complete.stderr).toBe(0);
     const parent = completeSchema.parse(complete.json);
@@ -328,6 +334,8 @@ cliTest(
       const result = await run({
         arguments: [
           "inspect-erlang-beam",
+          "--detail",
+          "complete",
           "/rea-missing/app.beam",
           ...flags,
           "--json",

@@ -62,7 +62,7 @@ for (const sample of oracle.samples) {
       );
       await writeFile(path, bytes);
       const response = await cli.run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
       });
       expect(response.exitCode, response.stdout + response.stderr).toBe(0);
       const inspection = artifactInspectionResultSchema.parse(

@@ -76,7 +76,7 @@ cliTest.for(cases)(
     const source = join(directory, name);
     await writeFile(source, bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -134,7 +134,7 @@ cliTest(
     corrupt.writeUInt32LE(0x1234_5678, corrupt.length - 4);
     await writeFile(source, corrupt);
     const rejected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(rejected.exitCode).toBe(1);
     expect(rejected.json).toMatchObject({
@@ -150,6 +150,8 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-artifact",
+        "--detail",
+        "complete",
         source,
         "--integrity-policy",
         "record-and-continue",
@@ -199,7 +201,7 @@ cliTest(
       ]),
     );
     const result = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

@@ -204,9 +204,15 @@ it("preserves the selected path when reusing an identical observation for a diff
       return r.structuredContent;
     };
     await call("open_binary", { path: first, format: "dos-com" });
-    const before = await call("procedure_callees", { procedure: "0x100" });
+    const before = await call("procedure_callees", {
+      detail: "complete",
+      procedure: "0x100",
+    });
     await call("open_binary", { path: second, format: "dos-com" });
-    const after = await call("procedure_callees", { procedure: "0x100" });
+    const after = await call("procedure_callees", {
+      detail: "complete",
+      procedure: "0x100",
+    });
     expect(before).toMatchObject({
       subject: { name: "first.com", local_path: first },
     });
@@ -223,7 +229,10 @@ it("preserves the selected path when reusing an identical observation for a diff
         ]),
       ).ok,
     ).toBe(true);
-    const sameTarget = await call("procedure_callees", { procedure: "0x100" });
+    const sameTarget = await call("procedure_callees", {
+      detail: "complete",
+      procedure: "0x100",
+    });
     expect(sameTarget).not.toHaveProperty("caller_input_path");
   } finally {
     await client.close();

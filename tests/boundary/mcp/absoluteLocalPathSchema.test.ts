@@ -403,6 +403,7 @@ it("rejects unpaired surrogates through in-memory MCP handlers", async () => {
     const symbol = await client.callTool({
       name: "inspect_with_objdump",
       arguments: {
+        detail: "complete",
         path: absolute,
         operation: "disassemble",
         symbol: "main\ud800",

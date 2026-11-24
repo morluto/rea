@@ -47,7 +47,13 @@ cliTest.for(["promise", "awaited", "reassigned", "opaque"] as const)(
       writeFile(join(root, "main.js"), source),
     ]);
     const response = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(response.exitCode, response.stdout).toBe(0);
     const args = { input_path: root };

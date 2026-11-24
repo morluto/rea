@@ -61,7 +61,7 @@ it.each([2, 3])(
     try {
       const result = await mcp.callTool({
         name: "trace_feature",
-        arguments: { query: "a.b" },
+        arguments: { detail: "complete", query: "a.b" },
       });
       const error = parseMcpToolError(result).error;
       expect(error).toMatchObject({

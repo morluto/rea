@@ -233,7 +233,13 @@ cliTest(
       ].join("\n"),
     );
     const analyzed = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
     });
     expect(analyzed.exitCode).toBe(0);
     const application = parseEvidence(analyzed.json);

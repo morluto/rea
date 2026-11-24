@@ -138,7 +138,10 @@ describe("Hopper provider lifecycle health", () => {
       exitCode: null,
     });
     expect(
-      await client.callTool("procedure_pseudo_code", { procedure: "main" }),
+      await client.callTool("procedure_pseudo_code", {
+        detail: "complete",
+        procedure: "main",
+      }),
     ).toMatchObject({
       ok: false,
       error: {
@@ -257,6 +260,7 @@ it("preserves an owned signal exit and diagnostics for active, queued and later 
     expect(JSON.stringify(projected)).not.toContain(token);
   }
   const later = await client.callTool("procedure_pseudo_code", {
+    detail: "complete",
     procedure: "main",
   });
   if (later.ok) throw new Error("An exited provider must reject later queries");

@@ -20,6 +20,8 @@ describe("CLI analysis selector boundaries", () => {
       const selected = await cli.run({
         arguments: [
           "decompile",
+          "--detail",
+          "complete",
           "does-not-exist",
           "--file-offset=0x210",
           "--json",
@@ -30,6 +32,8 @@ describe("CLI analysis selector boundaries", () => {
       const conflicting = await cli.run({
         arguments: [
           "decompile",
+          "--detail",
+          "complete",
           "does-not-exist",
           "0x140001010",
           "--file-offset=0x210",

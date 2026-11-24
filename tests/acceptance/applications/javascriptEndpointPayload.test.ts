@@ -41,6 +41,8 @@ cliTest(
     const cliResponse = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         root,
         "--artifact-format",
         "directory",
@@ -55,7 +57,7 @@ cliTest(
     const { client } = await connectLocalToolsMcp();
     const response = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: root, format: "directory" },
+      arguments: { detail: "complete", input_path: root, format: "directory" },
     });
     expect(response.isError).not.toBe(true);
     const evidence = toolContract(
@@ -215,7 +217,7 @@ const verifyEndpointWorkflows = async ({
   await writeFile(sourcePath, `// next artifact version\n${source}`);
   const nextResponse = await client.callTool({
     name: "analyze_javascript_application",
-    arguments: { input_path: root, format: "directory" },
+    arguments: { detail: "complete", input_path: root, format: "directory" },
   });
   expect(nextResponse.isError).not.toBe(true);
   const nextEvidence = toolContract(

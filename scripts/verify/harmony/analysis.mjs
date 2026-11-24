@@ -176,7 +176,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     assert.equal(status.structuredContent?.result?.open, true);
     assert.equal(status.structuredContent?.result?.format, "hap");
     const inspected = await client.callTool(
-      { name: "inspect_artifact", arguments: {} },
+      { name: "inspect_artifact", arguments: { detail: "complete" } },
       { timeout: 150_000 },
     );
     assert.notEqual(inspected.structuredContent, undefined);

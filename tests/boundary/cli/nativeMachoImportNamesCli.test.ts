@@ -45,7 +45,13 @@ describe.skipIf(process.platform !== "darwin")(
           /__Z3inli {2}\(from <weak-def-coalesce>\)/u,
         );
         const result = await cli.run({
-          arguments: ["inspect-macho", library, "--json"],
+          arguments: [
+            "inspect-macho",
+            "--detail",
+            "complete",
+            library,
+            "--json",
+          ],
           environment: {
             REA_LOG_LEVEL: "silent",
             REA_ANALYSIS_PROVIDER: "auto",

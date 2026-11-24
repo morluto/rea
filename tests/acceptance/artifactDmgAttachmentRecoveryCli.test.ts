@@ -81,7 +81,13 @@ cliTest.skipIf(process.platform !== "darwin")(
       const busy = await cli.run({
         // Each command must release its own attachment when its process ends.
         freshProcess: true,
-        arguments: ["inspect-artifact", image, "--json"],
+        arguments: [
+          "inspect-artifact",
+          "--detail",
+          "complete",
+          image,
+          "--json",
+        ],
       });
       expect(busy.exitCode, busy.stdout).toBe(1);
       expect(busy.json).toMatchObject({
@@ -120,7 +126,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     expect(mountedDevices(await attachedImages())).toEqual([]);
     const control = await cli.run({
       freshProcess: true,
-      arguments: ["inspect-artifact", image, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", image, "--json"],
     });
     expect(control.exitCode, control.stdout).toBe(0);
     expect(control.json).toMatchObject({

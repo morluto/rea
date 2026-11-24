@@ -2,7 +2,9 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
+import { readdir } from "node:fs/promises";
+import { expect, it, onTestFinished } from "vitest";
+import { createCli } from "../../../src/cli.js";
 
 import {
   DEFAULT_AGENT_RESULT_BUDGET_BYTES,
@@ -13,8 +15,8 @@ import { ok } from "../../../src/domain/result.js";
 import { analysisViewLayoutFixture } from "../../fixtures/analysisView.js";
 import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
 import {
-  AGENT_RESULT_BUDGET_ENVIRONMENT,
   AGENT_RESULT_BUDGET_SETTING,
+  EVIDENCE_OUTPUT_PLACEHOLDER,
 } from "../../../src/domain/agentResultBudget.js";
 import { AGENT_BUDGET_DELIVERY_META } from "../../../src/server/ToolResultDelivery.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
@@ -26,15 +28,6 @@ import { inspectAnalysisView } from "../../../src/application/analysisView/Analy
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-// The shared test environment raises the launch seed for semantic tests;
-// these tests observe the built-in default.
-beforeEach(() => {
-  vi.stubEnv(AGENT_RESULT_BUDGET_ENVIRONMENT, undefined);
-});
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 const connect = async () => {
   const session = createTestBinarySession(() => {
@@ -77,6 +70,7 @@ type Delivery = {
   readonly complete_bytes: number;
   readonly evidence_id: string;
   readonly retained: string;
+  readonly note: string;
   readonly next?: {
     readonly operation: string;
     readonly arguments: {
@@ -323,6 +317,67 @@ it("budgets tools whose SDK schema defers validation to the application", async 
   });
 });
 
+it("writes nothing for CLI overflow without --evidence_output and names both rerun commands", async () => {
+  const input = await entropyTarget(1024 * 1024);
+  // Every location a spill could use is a fresh, empty directory.
+  const home = await createTestTempDirectory("rea-agent-budget-home-");
+  const temporary = await createTestTempDirectory("rea-agent-budget-tmp-");
+  const cache = await createTestTempDirectory("rea-agent-budget-cache-");
+  const environment = {
+    HOME: home,
+    TMPDIR: temporary,
+    XDG_CACHE_HOME: cache,
+    XDG_STATE_HOME: cache,
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+  };
+  const argv = [
+    "inspect-byte-entropy",
+    input.path,
+    "--block-size",
+    "256",
+    "--json",
+  ];
+  let stdout = "";
+  let exitCode = 0;
+  await createCli(environment).serve([...argv], {
+    env: environment,
+    exit: (code) => {
+      exitCode = code;
+    },
+    stdout: (text) => {
+      stdout += text;
+    },
+  });
+  expect(exitCode, stdout).toBe(0);
+  const output = JSON.parse(stdout) as {
+    readonly summary: unknown;
+    readonly delivery: Delivery & {
+      readonly rerun: {
+        readonly complete: readonly string[];
+        readonly retained: readonly string[];
+      };
+    };
+    readonly evidence_bundle?: unknown;
+  };
+  expect(parseEvidence(output.summary).operation).toBe("inspect_analysis_view");
+  expect(output.evidence_bundle).toBeUndefined();
+  expect(output.delivery).toMatchObject({ retained: "not-retained" });
+  expect(output.delivery.rerun).toEqual({
+    complete: ["rea", ...argv, "--detail", "complete"],
+    retained: [
+      "rea",
+      ...argv,
+      "--evidence_output",
+      EVIDENCE_OUTPUT_PLACEHOLDER,
+    ],
+  });
+  expect(output.delivery.note).toContain("--detail complete");
+  expect(output.delivery.note).toContain("--evidence_output");
+  for (const directory of [home, temporary, cache])
+    expect(await readdir(directory)).toEqual([]);
+  expect(await readdir(join(input.path, ".."))).toEqual(["bytes"]);
+});
+
 it("keeps admission refusals unchanged by the delivery budget", async () => {
   const client = await connect();
   // 32,769 blocks of 256 bytes exceed the 32,768-block admission limit.
@@ -375,10 +430,9 @@ it("delivers the same over-budget summary through CLI publication, with complete
     complete.evidence_id,
   );
   // The invocation's captured seed, not the ambient process, raises it.
-  const seeded = await withCliEvidencePublication(
-    () => publish(undefined),
-    String(16 * 1024 * 1024),
-  );
+  const seeded = await withCliEvidencePublication(() => publish(undefined), {
+    agentBudgetSeed: String(16 * 1024 * 1024),
+  });
   expect(parseEvidence(seeded).evidence_id).toBe(complete.evidence_id);
 
   const bundle = join(

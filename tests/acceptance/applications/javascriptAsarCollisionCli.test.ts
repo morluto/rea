@@ -40,7 +40,13 @@ cliTest(
       ]),
     );
     const result = await cli.run({
-      arguments: ["analyze-javascript-application", path, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -67,7 +73,13 @@ cliTest(
       Buffer.concat([asarHeaderBytes(JSON.stringify({ files })), main]),
     );
     const result = await cli.run({
-      arguments: ["analyze-javascript-application", path, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({

@@ -22,7 +22,7 @@ cliTest(
     const path = join(root, "nacl-amd64p32.nexe");
     await writeFile(path, fixture.bytes);
     const result = await cli.run({
-      arguments: ["inspect-go-binary", path, "--json"],
+      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
     });
 
     expect(result.exitCode, result.stderr).toBe(0);

@@ -152,17 +152,26 @@ try {
     ),
   );
   const pseudo = evidence(
-    await call("procedure_pseudo_code", { procedure: "0x1012" }),
+    await call("procedure_pseudo_code", {
+      detail: "complete",
+      procedure: "0x1012",
+    }),
   );
   assert.match(pseudo.normalized_result, /\+\s*(?:3|0x3)\b/u);
   const caller = evidence(
-    await call("procedure_pseudo_code", { procedure: "0x1000" }),
+    await call("procedure_pseudo_code", {
+      detail: "complete",
+      procedure: "0x1000",
+    }),
   );
   assert.match(caller.normalized_result, /==\s*(?:10|0xa)\b/iu);
   assert.match(caller.normalized_result, /return\s+(?:42|0x2a)\s*;/iu);
   assert.match(caller.normalized_result, /return\s+0\s*;/u);
   const filePseudo = evidence(
-    await call("procedure_pseudo_code", { procedure: "file-offset:0x12" }),
+    await call("procedure_pseudo_code", {
+      detail: "complete",
+      procedure: "file-offset:0x12",
+    }),
   );
   assert.equal(filePseudo.normalized_result, pseudo.normalized_result);
   assert.ok(
@@ -208,6 +217,8 @@ try {
     [
       entrypoint,
       "inspect-native-load-image",
+      "--detail",
+      "complete",
       path,
       "--target-format",
       "raw-binary",
@@ -229,6 +240,8 @@ try {
     [
       entrypoint,
       "decompile",
+      "--detail",
+      "complete",
       path,
       "--file-offset=0x12",
       "--target-format",

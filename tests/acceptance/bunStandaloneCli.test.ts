@@ -39,6 +39,8 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "inspect-artifact",
+          "--detail",
+          "complete",
           path,
           "--artifact-limits",
           JSON.stringify({ bun: { module_count: moduleCount } }),
@@ -80,6 +82,8 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "inspect-artifact",
+          "--detail",
+          "complete",
           source,
           "--artifact-limits",
           limits,
@@ -126,7 +130,7 @@ cliTest(
     ]);
     await writeFile(source, fat.bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(1);
     expect(inspected.json).toMatchObject({
@@ -162,7 +166,7 @@ cliTest(
       ),
     );
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(

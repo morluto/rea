@@ -221,7 +221,16 @@ workspaceCliTest.for([
       );
       const target = await workspace.write("target.elf", elf(2, 1, 62));
       const result = await cli.run({
-        arguments: ["decompile", target, "main", "--provider", "ida", "--json"],
+        arguments: [
+          "decompile",
+          "--detail",
+          "complete",
+          target,
+          "main",
+          "--provider",
+          "ida",
+          "--json",
+        ],
         environment: {
           ...workspace.environment,
           REA_IDA_MCP_CONFIG: registration,

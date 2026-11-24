@@ -207,7 +207,7 @@ async function assertPublicPair(cli, client, oracle) {
   const expected = assertPoint(evidence, oracle);
   const response = await client.callTool({
     name: "trace_web_source_location",
-    arguments: input,
+    arguments: { ...input, detail: "complete" },
   });
   assert.notEqual(response.isError, true, mcpTextValue(response));
   const mcpEvidence = parseEvidence(JSON.parse(mcpTextValue(response)));

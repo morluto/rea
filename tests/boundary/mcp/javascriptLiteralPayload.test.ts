@@ -43,6 +43,8 @@ cliTest(
     const cliResponse = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         root,
         "--artifact-format",
         "directory",
@@ -57,7 +59,7 @@ cliTest(
     const { client } = await connectLocalToolsMcp();
     const response = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: root, format: "directory" },
+      arguments: { detail: "complete", input_path: root, format: "directory" },
     });
     // Default wire delivery must retain every admitted value in the aggregate.
     expect(response.isError).not.toBe(true);

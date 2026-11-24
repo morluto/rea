@@ -42,6 +42,8 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         root,
         "--max-heap-mb",
         "256",

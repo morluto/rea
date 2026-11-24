@@ -234,6 +234,8 @@ const cancellationCommands: readonly CliCancellationCommand[] = [
     operation: "analyze_web_bundle",
     buildArgs: (endpoint) => [
       "analyze-web-bundle",
+      "--detail",
+      "complete",
       endpoint,
       "page-fixture",
       "--json",

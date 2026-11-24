@@ -22,7 +22,13 @@ cliTest(
         `${side === 1 ? "" : "/* earlier bundle edit */\n"}${bundle}`,
       );
       const response = await cli.run({
-        arguments: ["analyze-javascript-application", application, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          application,
+          "--json",
+        ],
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);
@@ -112,7 +118,13 @@ cliTest(
         `${side === 1 ? "" : "/* shifted */\n"}${bundle}`,
       );
       const run = await cli.run({
-        arguments: ["analyze-javascript-application", application, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          application,
+          "--json",
+        ],
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(run.exitCode, run.stderr).toBe(0);

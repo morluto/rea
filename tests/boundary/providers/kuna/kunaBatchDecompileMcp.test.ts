@@ -108,7 +108,8 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
 
     const direct = async (procedure: string) =>
       parseEvidence(
-        (await call("procedure_pseudo_code", { procedure })).structuredContent,
+        (await call("procedure_pseudo_code", { detail: "complete", procedure }))
+          .structuredContent,
       );
     const mainDirect = await direct("main");
     const broken = await direct("broken");
@@ -128,6 +129,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     const batch = parseEvidence(
       (
         await call("batch_decompile", {
+          detail: "complete",
           addresses: ["main", "broken", "puts", "0xdead"],
         })
       ).structuredContent,

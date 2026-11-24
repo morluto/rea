@@ -209,7 +209,10 @@ async function verifyFixture(byteOrder, kernelModule) {
       return found[0].address;
     };
     const entry = named("rea_mips_rel_entry");
-    const callees = await call("procedure_callees", { procedure: entry });
+    const callees = await call("procedure_callees", {
+      detail: "complete",
+      procedure: entry,
+    });
     for (const callee of [
       named("rea_mips_rel_leaf"),
       named("rea_mips_rel_far"),

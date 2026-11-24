@@ -185,7 +185,7 @@ try {
   const verifyCurrentTarget = async (client, options) => {
     const procedures = requireMcpEvidenceResult(
       await client.callTool(
-        { name: "list_procedures", arguments: {} },
+        { name: "list_procedures", arguments: { detail: "complete" } },
         options,
       ),
       "list_procedures",
@@ -206,7 +206,7 @@ try {
       await client.callTool(
         {
           name: "batch_decompile",
-          arguments: { addresses: [firstAddress] },
+          arguments: { detail: "complete", addresses: [firstAddress] },
         },
         options,
       ),

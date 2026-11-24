@@ -145,7 +145,13 @@ const analyze = async (cli: TestCli, extra = "") => {
       register("test:cut",event=>event.sender.cut());${extra}`,
   });
   const output = await cli.run({
-    arguments: ["analyze-javascript-application", root, "--json"],
+    arguments: [
+      "analyze-javascript-application",
+      "--detail",
+      "complete",
+      root,
+      "--json",
+    ],
     environment: silentCliEnv,
   });
   expect(output.exitCode, output.stderr).toBe(0);
@@ -429,7 +435,13 @@ cliTest(
         ipcMain.handle("nested:write", (event, value) => clipboard.writeText(value));`,
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
       environment: silentCliEnv,
     });
     expect(output.exitCode, output.stderr).toBe(0);
@@ -501,7 +513,13 @@ cliTest(
         ipcMain.on("write", (event) => event.sender.copy());`,
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
       environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
@@ -559,7 +577,13 @@ cliTest(
         ipcMain.handle("nested:write", (event, value) => value);`,
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
       environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
@@ -866,7 +890,13 @@ cliTest(
         e.ipcMain.on("deep:run", event => event.sender.copy());`,
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
       environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
@@ -921,7 +951,13 @@ cliTest(
         e.ipcMain.on("shared:run", event => event.sender.copy());`,
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
       environment: silentCliEnv,
     });
     expect(output.exitCode, output.stderr).toBe(0);
@@ -957,7 +993,13 @@ cliTest(
       'const e=require("electron"); e.ipcMain.on("shared:run", () => {}); e.ipcMain.on("shared:run", () => {});',
     );
     const competing = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
       environment: silentCliEnv,
     });
     expect(competing.exitCode, competing.stderr).toBe(0);
@@ -989,7 +1031,13 @@ cliTest(
         ipcMain.on("empty:key", event => event.sender.copy());`,
     });
     const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: [
+        "analyze-javascript-application",
+        "--detail",
+        "complete",
+        root,
+        "--json",
+      ],
       environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
@@ -1262,6 +1310,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const connection = surface === "stdio MCP" ? await sharedMcp() : undefined;
     if (connection !== undefined) {
       const failure = await connection.call("analyze_javascript_application", {
+        detail: "complete",
         input_path: join(root, "absent"),
         format: "directory",
       });

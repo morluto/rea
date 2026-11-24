@@ -66,7 +66,7 @@ cliTest(
 
     const raised = await client.callTool({
       name: "analyze_web_bundle",
-      arguments: parameters,
+      arguments: { ...parameters, detail: "complete" },
     });
     expect(raised.isError, JSON.stringify(raised.content)).not.toBe(true);
     const recovered = webBundleAnalysisSchema.parse(

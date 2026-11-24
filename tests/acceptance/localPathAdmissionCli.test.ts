@@ -191,7 +191,13 @@ cliTest(
     const path = join(cwd, "selected.pyc");
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", "./selected.pyc", "--json"],
+      arguments: [
+        "inspect-python-pyc",
+        "--detail",
+        "complete",
+        "./selected.pyc",
+        "--json",
+      ],
       cwd,
     });
     expect(result.exitCode, result.stderr).toBe(0);

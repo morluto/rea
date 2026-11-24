@@ -42,7 +42,13 @@ cliTest.for(["pe", "elf"] as const)(
     await writeFile(path, bytes);
     const run = cli.run.bind(cli);
     const complete = await run({
-      arguments: ["inspect-native-exports", path, "--json"],
+      arguments: [
+        "inspect-native-exports",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(complete.exitCode, complete.stderr).toBe(0);
     const parent = exportsContract.outputSchema.parse(complete.json);

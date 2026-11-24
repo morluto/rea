@@ -100,7 +100,14 @@ cliTest(
       const path = join(root, `redirects.${format}`);
       await writeFile(path, format === "har" ? harBytes() : await sazBytes());
       const output = await cli.run({
-        arguments: ["inspect-web-network-capture", path, format, "--json"],
+        arguments: [
+          "inspect-web-network-capture",
+          "--detail",
+          "complete",
+          path,
+          format,
+          "--json",
+        ],
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const evidence = parseEvidence(output.json);
@@ -152,6 +159,7 @@ cliTest(
         /source-pass|redirect-pass/u,
       );
       const reply = await call("inspect_web_network_capture", {
+        detail: "complete",
         capture_path: path,
         format,
       });

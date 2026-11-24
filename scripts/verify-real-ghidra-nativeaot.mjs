@@ -211,7 +211,10 @@ await withVerifierFixture(workspaceFixture, async () => {
       if (failure.isError !== true) {
         opened = true;
         failure = await client.callTool(
-          { name: "inspect_native_load_image", arguments: {} },
+          {
+            name: "inspect_native_load_image",
+            arguments: { detail: "complete" },
+          },
           { timeout: 360000, signal: commandInterruption.signal },
         );
       }
@@ -357,7 +360,12 @@ await withVerifierFixture(workspaceFixture, async () => {
         assert.ok(dispatch.pseudocode.trim());
         for (const literal of oracle.expected_strings)
           assert.ok(
-            (await call("search_strings", { pattern: literal })).length > 0,
+            (
+              await call("search_strings", {
+                detail: "complete",
+                pattern: literal,
+              })
+            ).length > 0,
             `Frozen string missing: ${literal}`,
           );
         const observed = await call("read_bytes", {

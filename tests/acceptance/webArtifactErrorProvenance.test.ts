@@ -23,6 +23,8 @@ const locationSelection = (manifestPath: string, mapPath: string) => ({
   operation: "trace_web_source_location",
   arguments: [
     "trace-web-source-location",
+    "--detail",
+    "complete",
     manifestPath,
     "0",
     mapPath,

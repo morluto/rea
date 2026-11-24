@@ -26,6 +26,8 @@ const traceCliArgs = (
   column = 0,
 ) => [
   "trace-web-source-location",
+  "--detail",
+  "complete",
   manifest,
   "0",
   path,
@@ -251,6 +253,8 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "trace-web-source-location",
+        "--detail",
+        "complete",
         process.platform === "win32"
           ? "manifest.json"
           : "lexical/link/../manifest.json",
@@ -330,6 +334,7 @@ cliTest(
     const pastColumn = await client.callTool({
       name: "trace_web_source_location",
       arguments: {
+        detail: "complete",
         manifest_path: manifest,
         script_index: 0,
         source_map: { path: map, url: fixture.sourceMap.url },
@@ -340,6 +345,8 @@ cliTest(
     const invalid = await cli.run({
       arguments: [
         "trace-web-source-location",
+        "--detail",
+        "complete",
         manifest,
         "0",
         map,
@@ -397,6 +404,7 @@ cliTest(
       const path = join(root, `nested-${index}.map`);
       await writeFile(path, text);
       const response = await call("trace_web_source_location", {
+        detail: "complete",
         manifest_path: manifest,
         script_index: 0,
         source_map: { path, url: fixture.sourceMap.url },
@@ -553,6 +561,7 @@ cliTest(
         }),
       );
       const response = await call("trace_web_source_location", {
+        detail: "complete",
         manifest_path: manifest,
         script_index: 0,
         source_map: { path, url: fixture.sourceMap.url },
@@ -670,6 +679,7 @@ cliTest(
     });
     const { call } = await browserUnconfiguredMcp();
     const response = await call("trace_web_source_location", {
+      detail: "complete",
       manifest_path: manifest,
       script_index: 0,
       source_map: { path: map, url },

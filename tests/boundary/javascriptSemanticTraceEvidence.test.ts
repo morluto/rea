@@ -34,6 +34,8 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
   const cli = createCli({});
   const analyzed = await serveCli(cli, [
     "analyze-javascript-application",
+    "--detail",
+    "complete",
     root,
     "--json",
   ]);
@@ -139,6 +141,8 @@ it("excludes local exports from writes-only traces through CLI and MCP", async (
   const cli = createCli({});
   const analyzed = await serveCli(cli, [
     "analyze-javascript-application",
+    "--detail",
+    "complete",
     root,
     "--json",
   ]);
@@ -203,6 +207,8 @@ it("traces exact empty property names through CLI and MCP", async () => {
   const cli = createCli({});
   const analyzed = await serveCli(cli, [
     "analyze-javascript-application",
+    "--detail",
+    "complete",
     root,
     "--json",
   ]);
@@ -342,6 +348,8 @@ it("reports offered semantic capacity when a large template exceeds it", async (
   );
   const analyzed = await serveCli(createCli({}), [
     "analyze-javascript-application",
+    "--detail",
+    "complete",
     root,
     "--max-semantic-nodes-per-file",
     "4",

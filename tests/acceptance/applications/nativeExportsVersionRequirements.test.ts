@@ -23,7 +23,13 @@ cliTest(
       }),
     );
     const result = await cli.run({
-      arguments: ["inspect-native-exports", path, "--json"],
+      arguments: [
+        "inspect-native-exports",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = nativeExportsSchema.parse(
@@ -53,7 +59,13 @@ cliTest(
     await writeFile(path, bytes);
 
     const result = await cli.run({
-      arguments: ["inspect-native-exports", path, "--json"],
+      arguments: [
+        "inspect-native-exports",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(result.exitCode).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
@@ -88,7 +100,13 @@ cliTest(
     );
 
     const result = await cli.run({
-      arguments: ["inspect-native-exports", path, "--json"],
+      arguments: [
+        "inspect-native-exports",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);

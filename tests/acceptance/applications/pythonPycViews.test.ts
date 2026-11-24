@@ -138,7 +138,7 @@ cliTest(
     await writeSameNamePyc(path);
     const run = cli.run.bind(cli);
     const complete = await run({
-      arguments: ["inspect-python-pyc", path, "--json"],
+      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
     });
     expect(complete.exitCode, complete.stderr).toBe(0);
     const parent = pycContract.outputSchema.parse(complete.json);
@@ -305,6 +305,8 @@ cliTest(
       const result = await run({
         arguments: [
           "inspect-python-pyc",
+          "--detail",
+          "complete",
           "/rea-missing/module.pyc",
           ...flags,
           "--json",

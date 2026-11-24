@@ -72,7 +72,13 @@ cliTest(
     const path = join(root, "app.beam");
     await writeFile(path, erlangBeamFixture("cli_mod"));
     const result = await cli.run({
-      arguments: ["inspect-erlang-beam", "app.beam", "--json"],
+      arguments: [
+        "inspect-erlang-beam",
+        "--detail",
+        "complete",
+        "app.beam",
+        "--json",
+      ],
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -167,13 +173,22 @@ cliTest(
       const path = join(root, `${label}.beam`);
       await writeFile(path, bytes);
       const output = await cli.run({
-        arguments: ["inspect-erlang-beam", path, "--json"],
+        arguments: [
+          "inspect-erlang-beam",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const report = completeBeamEvidenceSchema.parse(
         output.json,
       ).normalized_result;
-      const reply = await call("inspect_erlang_beam", { path });
+      const reply = await call("inspect_erlang_beam", {
+        detail: "complete",
+        path,
+      });
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       expect(
         completeBeamEvidenceSchema.parse(reply.structuredContent)
@@ -222,7 +237,13 @@ cliTest(
     const path = join(root, "repeated.beam");
     await writeFile(path, repeated);
     const result = await cli.run({
-      arguments: ["inspect-erlang-beam", path, "--json"],
+      arguments: [
+        "inspect-erlang-beam",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = completeBeamEvidenceSchema.parse(
@@ -264,7 +285,13 @@ cliTest(
 
     const inspect = async (path: string) => {
       const result = await cli.run({
-        arguments: ["inspect-erlang-beam", path, "--json"],
+        arguments: [
+          "inspect-erlang-beam",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       return completeBeamEvidenceSchema.parse(result.json);
@@ -346,7 +373,13 @@ cliTest(
 
     const inspect = async (path: string) => {
       const result = await cli.run({
-        arguments: ["inspect-erlang-beam", path, "--json"],
+        arguments: [
+          "inspect-erlang-beam",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       return completeBeamEvidenceSchema.parse(result.json);
@@ -376,7 +409,13 @@ cliTest(
     bytes.writeUInt32BE(7, 16);
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: ["inspect-erlang-beam", path, "--json"],
+      arguments: [
+        "inspect-erlang-beam",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = completeBeamEvidenceSchema.parse(
@@ -391,7 +430,10 @@ cliTest(
       "The selected AtU8 table has 1 trailing byte that was not examined.",
     );
     const { call } = await connectLocalToolsMcp();
-    const reply = await call("inspect_erlang_beam", { path });
+    const reply = await call("inspect_erlang_beam", {
+      detail: "complete",
+      path,
+    });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     expect(
       completeBeamEvidenceSchema.parse(reply.structuredContent)
@@ -413,7 +455,13 @@ cliTest(
 
     const inspect = async (path: string) => {
       const result = await cli.run({
-        arguments: ["inspect-erlang-beam", path, "--json"],
+        arguments: [
+          "inspect-erlang-beam",
+          "--detail",
+          "complete",
+          path,
+          "--json",
+        ],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       return completeBeamEvidenceSchema.parse(result.json);
@@ -463,7 +511,13 @@ cliTest(
     bytes.writeUInt32BE(19, 4);
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: ["inspect-erlang-beam", path, "--json"],
+      arguments: [
+        "inspect-erlang-beam",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -488,7 +542,15 @@ cliTest(
     await writeFile(path, bytes);
     const inspect = () =>
       cli.run({
-        arguments: ["inspect-erlang-beam", path, "--max-chunks", "1", "--json"],
+        arguments: [
+          "inspect-erlang-beam",
+          "--detail",
+          "complete",
+          path,
+          "--max-chunks",
+          "1",
+          "--json",
+        ],
       });
     const admitted = await inspect();
     expect(admitted.exitCode).toBe(1);
@@ -523,7 +585,7 @@ cliTest(
 cliTest("rejects an empty BEAM path before reading", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-beam-cli-path-");
   const result = await cli.run({
-    arguments: ["inspect-erlang-beam", "", "--json"],
+    arguments: ["inspect-erlang-beam", "--detail", "complete", "", "--json"],
     cwd: root,
   });
   expect(result.exitCode, result.stderr).not.toBe(0);

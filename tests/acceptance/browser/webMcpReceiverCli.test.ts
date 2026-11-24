@@ -22,6 +22,8 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "analyze-web-bundle",
+          "--detail",
+          "complete",
           browser.endpoint,
           "allowed-page",
           "--allowed-origins",

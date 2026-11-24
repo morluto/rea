@@ -76,7 +76,7 @@ createInterface({ input: process.stdin }).on('line', line => {
     ).session_id;
     const running = await client.callTool({
       name: "gdb_console",
-      arguments: { session_id: sessionId, command: "run" },
+      arguments: { detail: "complete", session_id: sessionId, command: "run" },
     });
     expect(running.isError).not.toBe(true);
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -103,7 +103,11 @@ createInterface({ input: process.stdin }).on('line', line => {
     }
     const disposed = await client.callTool({
       name: "gdb_console",
-      arguments: { session_id: sessionId, command: disposition },
+      arguments: {
+        detail: "complete",
+        session_id: sessionId,
+        command: disposition,
+      },
     });
     expect(disposed.isError).not.toBe(true);
     const closed = await client.callTool({

@@ -127,6 +127,8 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         root,
         "--json",
         "--filter-output",
@@ -145,6 +147,8 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         join(root, "absent"),
         "--json",
       ],
@@ -164,6 +168,8 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         root,
         "--json",
         "--filter-output",

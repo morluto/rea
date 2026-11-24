@@ -31,6 +31,8 @@ cliTest(
     const analyzed = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         application,
         "--artifact-format",
         "directory",
@@ -48,6 +50,7 @@ cliTest(
       );
     const { client, call } = await connectLocalToolsMcp();
     const response = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: application,
       format: "directory",
     });

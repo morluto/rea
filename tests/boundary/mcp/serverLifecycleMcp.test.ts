@@ -421,7 +421,7 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
     await client.connect(clientTransport);
     const result = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { path: "/tmp/go-fixture" },
+      arguments: { detail: "complete", path: "/tmp/go-fixture" },
     });
     expect(result.isError).toBe(true);
     expect(goCalls).toBe(1);

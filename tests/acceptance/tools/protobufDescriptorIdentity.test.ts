@@ -160,6 +160,8 @@ cliTest.for([
         const output = await cli.run({
           arguments: [
             "inspect-web-network-capture",
+            "--detail",
+            "complete",
             capture,
             "har",
             "--record",
@@ -175,6 +177,7 @@ cliTest.for([
         expect(output.json, variant).toMatchObject(expected);
       }
       const response = await call("inspect_web_network_capture", {
+        detail: "complete",
         capture_path: capture,
         format: "har",
         record_ordinals: [0],
@@ -241,6 +244,8 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
+        "--detail",
+        "complete",
         capture,
         "har",
         "--record",
@@ -298,6 +303,7 @@ cliTest(
     expect(decoded?.fields).toHaveLength(5);
     const call = await cli.sharedMcpCall!();
     const response = await call("inspect_web_network_capture", {
+      detail: "complete",
       capture_path: capture,
       format: "har",
       record_ordinals: [0],

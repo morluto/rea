@@ -39,6 +39,8 @@ cliTest(
     const cliResponse = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         selectedPath,
         "--artifact-format",
         "directory",
@@ -102,6 +104,7 @@ cliTest(
 
     const { call } = await connectLocalToolsMcp({ REA_LOG_LEVEL: "silent" });
     const aliasResponse = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: selectedPath,
       format: "directory",
       integrity_policy: "fail",
@@ -112,6 +115,7 @@ cliTest(
     ).not.toBe(true);
     const aliasEvidence = parseEvidence(aliasResponse.structuredContent);
     const physicalResponse = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: physicalPath,
       format: "directory",
       integrity_policy: "fail",

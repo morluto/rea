@@ -26,11 +26,15 @@ cliTest(
     };
     const complete = await run([
       "analyze-javascript-application",
+      "--detail",
+      "complete",
       root,
       "--json",
     ]);
     const selected = await run([
       "analyze-javascript-application",
+      "--detail",
+      "complete",
       root,
       "--source-path",
       "main.js",

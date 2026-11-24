@@ -336,7 +336,10 @@ cliTest(
         ],
       });
       await writeFile(path, rustArtifact(format, payload));
-      const fullReply = await call("inspect_rust_binary", { path });
+      const fullReply = await call("inspect_rust_binary", {
+        detail: "complete",
+        path,
+      });
       expect(fullReply.isError).not.toBe(true);
       const full = parseEvidence(fullReply.structuredContent);
       const report = rustBinarySchema.parse(full.normalized_result);
@@ -346,6 +349,7 @@ cliTest(
         fields: ["name", "version", "dependencies", "features"],
       };
       const direct = await call("inspect_rust_binary", {
+        detail: "complete",
         path,
         view: selection,
       });
@@ -393,6 +397,8 @@ cliTest(
       const delivered = await cli.run({
         arguments: [
           "inspect-rust-binary",
+          "--detail",
+          "complete",
           path,
           "--view",
           JSON.stringify(selection),
@@ -466,7 +472,10 @@ cliTest(
       }),
     );
     const { call } = await connectLocalToolsMcp();
-    const captured = await call("inspect_rust_binary", { path });
+    const captured = await call("inspect_rust_binary", {
+      detail: "complete",
+      path,
+    });
     expect(captured.isError, JSON.stringify(captured.content)).not.toBe(true);
     const full = parseEvidence(captured.structuredContent);
     const explicit = await call("inspect_rust_binary", {
@@ -617,7 +626,14 @@ cliTest(
       ["--detail", "complete", "--view", '{"collection":"packages"}'],
     ]) {
       const refused = await cli.run({
-        arguments: ["inspect-rust-binary", missing, ...args, "--json"],
+        arguments: [
+          "inspect-rust-binary",
+          "--detail",
+          "complete",
+          missing,
+          ...args,
+          "--json",
+        ],
       });
       expect(refused.exitCode).toBe(1);
       expect(refused.json).toMatchObject({ code: "invalid_request" });

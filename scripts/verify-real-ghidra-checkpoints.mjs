@@ -103,6 +103,8 @@ async function cli(procedure, flags = [], path = target) {
       [
         entrypoint,
         "decompile",
+        "--detail",
+        "complete",
         path,
         procedure,
         "--provider",
@@ -193,6 +195,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       try {
         await cold.call("open_binary", { path: target, provider_id: "ghidra" });
         await cold.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_leaf",
         });
         const id = (await cold.call("binary_session")).analysis_run.run_id;
@@ -206,6 +209,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
           id,
         );
         const current = await cold.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_leaf",
         });
         assert.match(JSON.stringify(current), /cold-session unsaved comment/);
@@ -288,6 +292,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
           provider_id: "ghidra",
         });
         await active.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_leaf",
         });
         const id = (await active.call("binary_session")).analysis_run.run_id;
@@ -388,6 +393,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
           provider_id: "ghidra",
         });
         const result = await active.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_retained",
         });
         assert.match(JSON.stringify(result), /saved during alias switch/);

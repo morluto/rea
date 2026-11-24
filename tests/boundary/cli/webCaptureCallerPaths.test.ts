@@ -21,6 +21,8 @@ cliTest(
     await writeFile(join(cwd, "capture.pb"), protobufCaptureDescriptor());
     const args = [
       "inspect-web-network-capture",
+      "--detail",
+      "complete",
       "./capture.har",
       "har",
       "--record",
@@ -98,6 +100,7 @@ cliTest(
     const { client, call } = await connectLocalToolsMcp();
     try {
       const response = await call("inspect_web_network_capture", {
+        detail: "complete",
         capture_path: join(cwd, "capture.har"),
         format: "har",
         record_ordinals: [0],

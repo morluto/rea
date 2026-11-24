@@ -71,7 +71,7 @@ it("reads signed TYPE_INT64 constants and rejects a truncated payload", async ()
     );
     const response = await client.callTool({
       name: "inspect_python_pyc",
-      arguments: { path },
+      arguments: { detail: "complete", path },
     });
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     const { normalized_result } = completePycEvidenceSchema.parse(
@@ -96,7 +96,7 @@ it("reads signed TYPE_INT64 constants and rejects a truncated payload", async ()
     );
     const truncated = await client.callTool({
       name: "inspect_python_pyc",
-      arguments: { path: truncatedPath },
+      arguments: { detail: "complete", path: truncatedPath },
     });
     expect(truncated.isError).toBe(true);
     expect(parseMcpToolError(truncated).error).toMatchObject({
@@ -141,7 +141,7 @@ it("advertises inspect_python_pyc and reads nested code objects", async () => {
     ]);
     await writeFile(path, bytes);
     const response = await client.callTool(
-      { name: "inspect_python_pyc", arguments: { path } },
+      { name: "inspect_python_pyc", arguments: { detail: "complete", path } },
       { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
@@ -180,7 +180,7 @@ it("requires an absolute path for inspect_python_pyc", async () => {
   try {
     const response = await client.callTool({
       name: "inspect_python_pyc",
-      arguments: { path: "sample.pyc" },
+      arguments: { detail: "complete", path: "sample.pyc" },
     });
     expect(response.isError).toBe(true);
     expect(parseMcpToolError(response).error).toMatchObject({
@@ -210,7 +210,7 @@ it("advertised pyc output schema preserves historical signed fields", async () =
       ]),
     );
     const response = await client.callTool(
-      { name: "inspect_python_pyc", arguments: { path } },
+      { name: "inspect_python_pyc", arguments: { detail: "complete", path } },
       { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
@@ -243,7 +243,7 @@ it("rejects negative code fields for magics after constructor validation was add
     );
     const response = await client.callTool({
       name: "inspect_python_pyc",
-      arguments: { path },
+      arguments: { detail: "complete", path },
     });
     expect(response.isError).toBe(true);
     expect(parseMcpToolError(response).error).toMatchObject({
@@ -269,7 +269,7 @@ it("reports an unknown pyc magic as unsupported", async () => {
     await writeFile(path, bytes);
     const response = await client.callTool({
       name: "inspect_python_pyc",
-      arguments: { path },
+      arguments: { detail: "complete", path },
     });
     expect(response.isError).toBe(true);
     expect(parseMcpToolError(response).error).toMatchObject({

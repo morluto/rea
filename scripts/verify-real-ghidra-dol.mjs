@@ -173,6 +173,7 @@ async function runPass({ fixture, languageOverride, label, layout }) {
           "Leaf function missing from real Ghidra inventory",
         );
         const callees = await call("procedure_callees", {
+          detail: "complete",
           procedure: entry.address,
         });
         assert.ok(

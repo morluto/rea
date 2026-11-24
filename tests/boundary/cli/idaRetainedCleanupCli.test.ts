@@ -51,7 +51,14 @@ describe("headless IDA timeout through the one-shot CLI", () => {
       const target = await workspace.write("target.elf", elf(2, 1, 62));
 
       const result = await cli.run({
-        arguments: ["decompile", target, "main", "--json"],
+        arguments: [
+          "decompile",
+          "--detail",
+          "complete",
+          target,
+          "main",
+          "--json",
+        ],
         environment: {
           ...workspace.environment,
           REA_ANALYSIS_PROVIDER: "ida",

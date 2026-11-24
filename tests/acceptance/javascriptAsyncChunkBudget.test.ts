@@ -19,6 +19,8 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        "--detail",
+        "complete",
         root,
         "--max-semantic-nodes",
         "1",

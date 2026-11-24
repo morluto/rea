@@ -90,7 +90,13 @@ export function untouched() {
     let document: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
-        arguments: ["analyze-javascript-application", root, "--json"],
+        arguments: [
+          "analyze-javascript-application",
+          "--detail",
+          "complete",
+          root,
+          "--json",
+        ],
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);
@@ -98,6 +104,7 @@ export function untouched() {
     } else {
       const { call } = await connectLocalToolsMcp();
       const response = await call("analyze_javascript_application", {
+        detail: "complete",
         input_path: root,
         format: "directory",
       });

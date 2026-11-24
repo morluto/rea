@@ -38,7 +38,7 @@ const inspectPair = async (
   rightPath: string,
 ) => {
   const result = await cli.run({
-    arguments: ["inspect-artifact", leftPath, "--json"],
+    arguments: ["inspect-artifact", "--detail", "complete", leftPath, "--json"],
   });
   expect(result.exitCode, `${result.stderr}\n${result.stdout}`).toBe(0);
   const left = inventoryEvidence(result.json);
@@ -241,7 +241,7 @@ cliTest(
     await writer.add("b.txt", new TextReader("def"));
     await writeFile(path, await writer.close());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
+      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const source = inventoryEvidence(inspected.json);
@@ -348,7 +348,13 @@ cliTest(
       writeFile(rightPath, plist("hello")),
     ]);
     const leftResult = await cli.run({
-      arguments: ["inspect-artifact", leftPath, "--json"],
+      arguments: [
+        "inspect-artifact",
+        "--detail",
+        "complete",
+        leftPath,
+        "--json",
+      ],
     });
     expect(leftResult.exitCode, leftResult.stderr).toBe(0);
     const left = inventoryEvidence(leftResult.json);
@@ -450,7 +456,13 @@ cliTest.skipIf(process.platform === "win32")(
     ]);
     await Promise.all([chmod(leftPath, 0o644), chmod(rightPath, 0o755)]);
     const result = await cli.run({
-      arguments: ["inspect-artifact", leftPath, "--json"],
+      arguments: [
+        "inspect-artifact",
+        "--detail",
+        "complete",
+        leftPath,
+        "--json",
+      ],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const left = inventoryEvidence(result.json);

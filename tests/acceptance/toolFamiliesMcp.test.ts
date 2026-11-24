@@ -46,6 +46,7 @@ it.each([
     ).toEqual(names);
     await expect(
       call("inspect_native_exports", {
+        detail: "complete",
         path: join(process.cwd(), "disabled-target-is-never-read.elf"),
       }),
     ).rejects.toThrow(/disabled/u);

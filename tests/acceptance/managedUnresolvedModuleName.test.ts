@@ -42,7 +42,13 @@ cliTest(
     await writeFile(path, bytes);
 
     const output = await cli.run({
-      arguments: ["inspect-managed-members", path, "--json"],
+      arguments: [
+        "inspect-managed-members",
+        "--detail",
+        "complete",
+        path,
+        "--json",
+      ],
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const report = managedMemberInspectionSchema.parse(
@@ -99,7 +105,10 @@ cliTest(
     });
 
     const call = await cli.sharedMcpCall!();
-    const mcp = await call("inspect_managed_members", { path });
+    const mcp = await call("inspect_managed_members", {
+      detail: "complete",
+      path,
+    });
     expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
     const parent = parseEvidence(mcp.structuredContent);
     expect(parent.normalized_result).toEqual(report);
