@@ -702,11 +702,13 @@ cliTest(
       expect.soft(result.json, flag).toMatchObject({
         code: "resource_constraint",
         retryable: false,
-        details: { resource, reported_limits: { boundary, maximum } },
+        details: {
+          resource,
+          reported_limits: { boundary, maximum },
+          limit: { parameter: field, effective_value: maximum, cli_flag: flag },
+        },
         remediation: {
-          action: expect.stringContaining(
-            `Raise ${field} (${flag}) above ${maximum}`,
-          ),
+          action: expect.stringContaining(`Raise ${field} above ${maximum}`),
         },
       });
     }
