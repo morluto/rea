@@ -123,7 +123,7 @@ const unityAddressablesFailureDialect = (
   const site = { path, field, maximum };
   // Provider-owned typed refusals, examined before the shared file facts.
   const recognise = (cause: unknown) =>
-    parseFailureAnalysisError(OPERATION, path, cause, field) ??
+    parseFailureAnalysisError(OPERATION, path, cause) ??
     (cause instanceof ArtifactReaderFailure
       ? undefined
       : cause instanceof Error && "code" in cause
