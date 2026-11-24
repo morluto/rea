@@ -1,13 +1,114 @@
-import {
-  il2cppMetadataSectionNames,
-  type IL2cppMetadataSectionName,
-} from "../../../src/domain/il2cpp/il2cppMetadata.js";
+import type { IL2cppMetadataSectionName } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 
 type SectionName = IL2cppMetadataSectionName;
 type Width = 1 | 2 | 4;
 
+/** Authored serialized header slots; never derive fixture bytes from the decoder catalog. */
+const V24_HEADER = [
+  "stringLiterals",
+  "stringLiteralData",
+  "strings",
+  "events",
+  "properties",
+  "methods",
+  "parameterDefaultValues",
+  "fieldDefaultValues",
+  "fieldAndParameterDefaultValueData",
+  "fieldMarshaledSizes",
+  "parameters",
+  "fields",
+  "genericParameters",
+  "genericParameterConstraints",
+  "genericContainers",
+  "nestedTypes",
+  "interfaces",
+  "vtableMethods",
+  "interfaceOffsets",
+  "typeDefinitions",
+  "images",
+  "assemblies",
+  "metadataUsageLists",
+  "metadataUsagePairs",
+  "fieldRefs",
+  "referencedAssemblies",
+  "attributesInfo",
+  "attributeTypes",
+  "unresolvedVirtualCallParameterTypes",
+  "unresolvedVirtualCallParameterRanges",
+  "windowsRuntimeTypeNames",
+  "exportedTypeDefinitions",
+] as const satisfies readonly SectionName[];
+
+const V27_HEADER = [
+  "stringLiterals",
+  "stringLiteralData",
+  "strings",
+  "events",
+  "properties",
+  "methods",
+  "parameterDefaultValues",
+  "fieldDefaultValues",
+  "fieldAndParameterDefaultValueData",
+  "fieldMarshaledSizes",
+  "parameters",
+  "fields",
+  "genericParameters",
+  "genericParameterConstraints",
+  "genericContainers",
+  "nestedTypes",
+  "interfaces",
+  "vtableMethods",
+  "interfaceOffsets",
+  "typeDefinitions",
+  "images",
+  "assemblies",
+  "fieldRefs",
+  "referencedAssemblies",
+  "attributesInfo",
+  "attributeTypes",
+  "unresolvedVirtualCallParameterTypes",
+  "unresolvedVirtualCallParameterRanges",
+  "windowsRuntimeTypeNames",
+  "windowsRuntimeStrings",
+  "exportedTypeDefinitions",
+] as const satisfies readonly SectionName[];
+
+const MODERN_HEADER = [
+  "stringLiterals",
+  "stringLiteralData",
+  "strings",
+  "events",
+  "properties",
+  "methods",
+  "parameterDefaultValues",
+  "fieldDefaultValues",
+  "fieldAndParameterDefaultValueData",
+  "fieldMarshaledSizes",
+  "parameters",
+  "fields",
+  "genericParameters",
+  "genericParameterConstraints",
+  "genericContainers",
+  "nestedTypes",
+  "interfaces",
+  "vtableMethods",
+  "interfaceOffsets",
+  "typeDefinitions",
+  "images",
+  "assemblies",
+  "fieldRefs",
+  "referencedAssemblies",
+  "attributeData",
+  "attributeDataRanges",
+  "unresolvedIndirectCallParameterTypes",
+  "unresolvedIndirectCallParameterRanges",
+  "windowsRuntimeTypeNames",
+  "windowsRuntimeStrings",
+  "exportedTypeDefinitions",
+] as const satisfies readonly SectionName[];
+
 /** Synthetic version 39 metadata small enough to read in a hex dump. */
-export interface Il2cppMetadataFixtureOptions {
+interface Il2cppMetadataFixtureOptions {
   /** Serialized TypeIndex width. */
   readonly typeIndexWidth?: Width;
   /** Omit interfaceOffsets so the TypeIndex width comes from type records. */
@@ -37,7 +138,20 @@ export interface Il2cppMetadataFixtureOptions {
     readonly genericContainers: number;
     readonly parameters: number;
   };
+  /** Write FIXTURE_GENERIC_CONTAINERS and point their owners at them. */
+  readonly genericOwners?: boolean;
 }
+
+/**
+ * Generic containers as [owner, argument count, is method, first parameter]:
+ * System.Größe<T0>, Game.Player.Slot.Add<T0, T1> and System.Größe.ToString<T0>;
+ * the fixture names each container's parameters T0, T1 and so on.
+ */
+const FIXTURE_GENERIC_CONTAINERS = [
+  [3, 1, 0, 0],
+  [2, 2, 1, 1],
+  [4, 1, 1, 3],
+] as const;
 
 export const FIXTURE_IMAGES = [
   { name: "Assembly-CSharp.dll", type_start: 0, type_count: 3 },
@@ -121,7 +235,7 @@ export const FIXTURE_STRING_LITERALS = [
  * Per-image method tokens. Row ids restart in each image and do not follow
  * metadata order, so linking must use the token rather than the position.
  */
-export const FIXTURE_METHOD_TOKENS = [
+const FIXTURE_METHOD_TOKENS = [
   0x06000002, 0x06000001, 0x06000003, 0x06000001, 0x06000002,
 ] as const;
 
@@ -167,7 +281,8 @@ const assembleFile = (
 ) => {
   const fixed = version !== 39;
   const entryBytes = fixed ? 8 : 12;
-  const names = il2cppMetadataSectionNames(version);
+  const names: readonly SectionName[] =
+    version === 24 ? V24_HEADER : version === 27 ? V27_HEADER : MODERN_HEADER;
   const headerBytes = 8 + names.length * entryBytes;
   const header = Buffer.alloc(headerBytes);
   header.writeUInt32LE(0xfab11baf, 0);
@@ -221,6 +336,7 @@ const encodeMethods = (
   { D, T, P, G }: Readonly<Record<"D" | "T" | "P" | "G", Width>>,
   returnToken: number,
   intern: (value: string) => number,
+  methodContainerIndices: ReadonlyMap<number, number>,
 ) => {
   const recordBytes = { methods: methodBytes };
   const methods = Buffer.alloc(rows.length * recordBytes.methods);
@@ -243,7 +359,12 @@ const encodeMethods = (
             (parameter) => parameter.method === index,
           ),
     );
-    writeIndex(methods, parameterStart + P, G, -1);
+    writeIndex(
+      methods,
+      parameterStart + P,
+      G,
+      methodContainerIndices.get(index) ?? -1,
+    );
     methods.writeUInt32LE(
       FIXTURE_METHOD_TOKENS[index]!,
       parameterStart + P + G,
@@ -364,16 +485,6 @@ export const fixtureRows = (options: Il2cppMetadataFixtureOptions = {}) => {
   return { types, methods };
 };
 
-/** A zero-filled section of `count` records, or none when `count` is 0. */
-const zeroFilledSection = (
-  name: SectionName,
-  count: number,
-  recordBytes: number,
-): [SectionName, SectionContent][] =>
-  count === 0
-    ? []
-    : [[name, { bytes: Buffer.alloc(count * recordBytes), count }]];
-
 /** Real rows followed by zero-filled rows that no owner claims. */
 const paddedRows = (
   rows: Buffer,
@@ -463,23 +574,50 @@ const genericContainerLayout = (
   options: Il2cppMetadataFixtureOptions,
   fixed: boolean,
 ) => {
-  const definitions = Object.entries(options.genericTypeArgumentCounts ?? {})
-    .map(([type, argumentCount]) => ({ type: Number(type), argumentCount }))
-    .sort((left, right) => left.type - right.type);
+  if (
+    options.genericOwners === true &&
+    options.genericTypeArgumentCounts !== undefined
+  )
+    throw new Error("genericOwners already declares the type containers");
+  const definitions =
+    options.genericOwners === true
+      ? FIXTURE_GENERIC_CONTAINERS.map(([type, argumentCount, isMethod]) => ({
+          type,
+          argumentCount,
+          isMethod,
+        }))
+      : Object.entries(options.genericTypeArgumentCounts ?? {})
+          .map(([type, argumentCount]) => ({
+            type: Number(type),
+            argumentCount,
+            isMethod: 0,
+          }))
+          .sort((left, right) => left.type - right.type);
   const count = Math.max(
     options.wide?.genericContainers ?? 0,
     definitions.length,
   );
+  const owners = (isMethod: number) =>
+    new Map(
+      definitions.flatMap(({ type, isMethod: method }, index) =>
+        method === isMethod ? [[type, index] as const] : [],
+      ),
+    );
   return {
     definitions,
-    indices: new Map(definitions.map(({ type }, index) => [type, index])),
+    indices: owners(0),
+    methodIndices: owners(1),
     count,
     width: fixed ? 4 : widthFor(count),
   };
 };
 
 const encodeGenericContainerTables = (
-  definitions: readonly { type: number; argumentCount: number }[],
+  definitions: readonly {
+    type: number;
+    argumentCount: number;
+    isMethod: number;
+  }[],
   containerCount: number,
   width: Width,
   intern: (value: string) => number,
@@ -495,11 +633,11 @@ const encodeGenericContainerTables = (
 
   const containers = Buffer.alloc(containerCount * 16);
   let parameterStart = 0;
-  definitions.forEach(({ type, argumentCount }, index) => {
+  definitions.forEach(({ type, argumentCount, isMethod }, index) => {
     const at = index * 16;
     containers.writeInt32LE(type, at);
     containers.writeInt32LE(argumentCount, at + 4);
-    containers.writeInt32LE(0, at + 8);
+    containers.writeInt32LE(isMethod, at + 8);
     containers.writeInt32LE(parameterStart, at + 12);
     parameterStart += argumentCount;
   });
@@ -639,6 +777,7 @@ export const createIl2cppMetadataFixture = (
     { D, T, P, G },
     returnToken,
     intern,
+    genericLayout.methodIndices,
   );
 
   const {

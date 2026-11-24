@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { writeFile } from "node:fs/promises";
@@ -9,6 +10,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../src/domain/java
 import { projectedExportReturnShapesSchema } from "../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 import type { TestCli } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
 
 const exportedReturnFields = (value: unknown) => {
   const analysis = javascriptApplicationAnalysisResultSchema.parse(value);
@@ -36,13 +38,12 @@ const exportedReturnFields = (value: unknown) => {
 /** Select complete return fields from a real JavaScript application result. */
 export type JavaScriptReturnFields = ReturnType<typeof exportedReturnFields>;
 
-/** Exercise identical return assertions through the compiled CLI and stdio MCP. */
-export const verifyJavaScriptReturnShapes = async (
+const analyzeReturnShapesThroughCli = async (
   cli: TestCli,
   source: string,
   check: (fields: JavaScriptReturnFields) => void,
-  fileName = "app.js",
-): Promise<void> => {
+  fileName: string,
+) => {
   const root = await createTestTempDirectory("rea-return-shapes-");
   await writeFile(join(root, fileName), source);
   const cliResponse = await cli.run({
@@ -58,7 +59,36 @@ export const verifyJavaScriptReturnShapes = async (
   const contract = toolContract("analyze_javascript_application");
   const cliEvidence = contract.outputSchema.parse(cliResponse.json);
   check(exportedReturnFields(cliEvidence.normalized_result));
-  const client = new Client({ name: "return-shapes-e2e", version: "1" });
+  return { root, contract, cliEvidence };
+};
+
+/** Exercise return assertions through the compiled CLI and its real worker. */
+export const verifyJavaScriptReturnShapesThroughCli = async (
+  cli: TestCli,
+  source: string,
+  check: (fields: JavaScriptReturnFields) => void,
+): Promise<void> => {
+  await analyzeReturnShapesThroughCli(cli, source, check, "app.js");
+};
+
+/** Exercise identical return assertions through the compiled CLI and stdio MCP. */
+export const verifyJavaScriptReturnShapes = async (
+  cli: TestCli,
+  source: string,
+  check: (fields: JavaScriptReturnFields) => void,
+  fileName = "app.js",
+): Promise<void> => {
+  const { root, contract, cliEvidence } = await analyzeReturnShapesThroughCli(
+    cli,
+    source,
+    check,
+    fileName,
+  );
+  const validation = createMcpSchemaValidation();
+  const client = new Client(
+    { name: "return-shapes-e2e", version: "1" },
+    { jsonSchemaValidator: validation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -67,7 +97,7 @@ export const verifyJavaScriptReturnShapes = async (
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => undefined);
-  try {
+  await withVerifierCleanup(async () => {
     await client.connect(transport);
     const response = await client.callTool({
       name: "analyze_javascript_application",
@@ -85,8 +115,5 @@ export const verifyJavaScriptReturnShapes = async (
       ),
     );
     await client.ping();
-  } finally {
-    await client.close();
-    await transport.close();
-  }
+  }, [() => client.close(), () => transport.close(), () => validation.clear()]);
 };

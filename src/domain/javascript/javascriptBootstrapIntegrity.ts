@@ -1,18 +1,23 @@
 import * as t from "@babel/types";
 
 import type { javascriptBootstrapAt } from "./javascriptBootstrap.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  semanticWriteSiteTarget,
+  semanticWriteTargets,
+} from "./javascriptAstValues.js";
+import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 
 type Bootstrap = NonNullable<ReturnType<typeof javascriptBootstrapAt>>;
 
-/** Slots a visible literal write may have replaced; the rest stay as declared. */
+/** Slots a visible write may have replaced; the rest stay as declared. */
 export interface JavaScriptBootstrapIntegrity {
   readonly replacedKeys: ReadonlySet<string>;
 }
@@ -33,8 +38,8 @@ interface LoaderShape {
  * `table[key]`: every normal completion of the loader returns the dispatched
  * module's exports or a cache entry it created for that module, the table has
  * only literal keys, and the table and cache are referenced only by the loader
- * or through the runtime's `loader.m`/`loader.c` exposure. Literal-key writes
- * through that exposure replace their slot. Returns undefined when any of this
+ * or through the runtime's `loader.m`/`loader.c` exposure. Writes with finite keys
+ * through that exposure invalidate each affected slot. Returns undefined when any of this
  * is unproven.
  */
 export const proveJavaScriptBootstrapIntegrity = (
@@ -89,7 +94,7 @@ const loaderShape = (
   const calls: t.CallExpression[] = [];
   const modules = new Set<string>();
   const returns: (t.Expression | null | undefined)[] = [];
-  traverseJavaScriptAst(loader.body, {
+  traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
     enter: (node) => {
       if (t.isReturnStatement(node)) returns.push(node.argument);
@@ -284,15 +289,21 @@ const moduleObjectContained = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   let contained = true;
-  traverseJavaScriptAst(loader.body, {
+  const writtenTargets = new Set<t.Node>();
+  traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
+      const target = semanticWriteSiteTarget(node);
+      if (target !== null)
+        for (const leaf of semanticWriteTargets(target))
+          writtenTargets.add(leaf);
       if (!contained || !t.isIdentifier(node) || parent === null) return;
       const ancestors = readAncestors();
-      if (!t.isReferenced(node, parent, ancestors.at(-2))) return;
+      if (semanticIdentifierRole(node, parent, () => ancestors) === null)
+        return;
       if (bindingOf(state, node) !== moduleId) return;
       contained =
         !ancestors.some((ancestor) => t.isFunction(ancestor)) &&
-        moduleUse(node, [parent, ancestors.at(-2)], dispatch);
+        moduleUse(node, parent, dispatch, writtenTargets.has(parent));
     },
   });
   return contained;
@@ -300,21 +311,18 @@ const moduleObjectContained = (
 
 const moduleUse = (
   node: t.Identifier,
-  [parent, grandparent]: readonly [t.Node, t.Node | undefined],
+  parent: t.Node,
   dispatch: t.CallExpression,
+  written: boolean,
 ): boolean => {
   if (parent === dispatch) return dispatch.arguments.includes(node);
   if (!t.isMemberExpression(parent) || parent.object !== node) return false;
   const key = semanticStaticPropertyKey(parent.property, parent.computed);
-  const written =
-    (t.isAssignmentExpression(grandparent) && grandparent.left === parent) ||
-    t.isUpdateExpression(grandparent) ||
-    t.isUnaryExpression(grandparent, { operator: "delete" });
   if (written) return key !== null && key !== "exports";
   if (key !== "exports") return false;
   // `module.exports` passed to the factory, or read after the dispatch ran.
   return (
-    grandparent === dispatch ||
+    dispatch.arguments.some((argument) => argument === parent) ||
     (parent.start ?? -1) > (dispatch.end ?? Number.POSITIVE_INFINITY)
   );
 };
@@ -328,7 +336,7 @@ const withCacheReads = (
   if (shape.cacheId === undefined) return shape;
   const sites = new Set(shape.cacheSites);
   let contained = true;
-  traverseJavaScriptAst(loader.body, {
+  traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
     enter: (node, parent) => {
       if (
@@ -445,13 +453,14 @@ const referencesAreContained = (
     state,
   );
   let contained = true;
-  traverseJavaScriptAst(call, {
+  traverseJavaScriptValueAst(call, state.erasedSyntaxNodes, {
     skip: () => !contained,
     enter: (node, parent, readAncestors) => {
       if (!t.isIdentifier(node) || !names.has(node.name) || parent === null)
         return;
       const ancestors = readAncestors();
-      if (!t.isReferenced(node, parent, ancestors.at(-2))) return;
+      if (semanticIdentifierRole(node, parent, () => ancestors) === null)
+        return;
       const id = bindingOf(state, node);
       const role = id === undefined ? undefined : tracked.get(id);
       if (role === undefined) return;
@@ -486,7 +495,7 @@ const unreadRuntimeDefinitions = (
   const definitions = new Map<t.Node, string>();
   const readKeys = new Set<string>();
   let confined = true;
-  traverseJavaScriptAst(call, {
+  traverseJavaScriptValueAst(call, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
       // A helper invoked as `loader.helper()` can obtain the namespace through
       // its receiver instead of a tracked loader identifier.
@@ -494,7 +503,7 @@ const unreadRuntimeDefinitions = (
       if (!t.isIdentifier(node) || parent === null) return;
       const ancestors = readAncestors();
       if (
-        !t.isReferenced(node, parent, ancestors.at(-2)) ||
+        semanticIdentifierRole(node, parent, () => ancestors) === null ||
         !loaderIds.has(bindingOf(state, node) ?? "")
       )
         return;
@@ -603,7 +612,7 @@ const exposedTableUse = (use: Use): "other" | "contained" | "escaped" => {
   return entryWritten ? "escaped" : "contained";
 };
 
-/** Unknown computed writes may replace any existing slot; fresh installation is unproven. */
+/** Retain all finite written keys. An unknown key leaves every slot uncertain. */
 const exposedSlotWrite = (use: Use, replacedKeys: Set<string>): boolean => {
   const { parent, ancestors, state } = use;
   const slot = ancestors.at(-2);
@@ -623,19 +632,28 @@ const exposedSlotWrite = (use: Use, replacedKeys: Set<string>): boolean => {
     )
   )
     return true;
-  if (!slot.computed) {
-    const key = semanticStaticPropertyKey(slot.property, false);
-    if (key === null) return false;
-    replacedKeys.add(key);
-    return true;
-  }
-  const key = evaluateSemanticExpression(slot.property, state);
+  const key = slot.computed
+    ? evaluateSemanticExpression(slot.property, state)
+    : {
+        status: "literal" as const,
+        value: semanticStaticPropertyKey(slot.property, false),
+      };
+  const keys =
+    key.status === "union"
+      ? key.values
+      : key.status === "literal"
+        ? [key.value]
+        : [];
   if (
-    key.status !== "literal" ||
-    (typeof key.value !== "string" && typeof key.value !== "number")
+    keys.length === 0 ||
+    keys.some(
+      (key) =>
+        (typeof key !== "string" && typeof key !== "number") ||
+        key === "__proto__",
+    )
   )
     return false;
-  replacedKeys.add(String(key.value));
+  for (const key of keys) replacedKeys.add(String(key));
   return true;
 };
 

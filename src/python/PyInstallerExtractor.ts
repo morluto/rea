@@ -8,14 +8,25 @@ import { readMarshalSubset } from "../artifacts/pyinstaller/MarshalSubset.js";
 import {
   isCArchiveDeclaration,
   MAX_TOC_BYTES,
-  MAX_TOC_ENTRIES,
   parseCArchiveCookieAt,
+  parseCArchiveToc,
   PYINSTALLER_COOKIE_SEARCH_BYTES,
   PYINSTALLER_COOKIE_V20_BYTES,
   PYINSTALLER_COOKIE_V21_BYTES,
+  validateCArchiveMembers,
+  type CArchiveEntry,
 } from "../artifacts/pyinstaller/CArchiveLayout.js";
-import { MAX_PYZ_TABLE_BYTES } from "../artifacts/pyinstaller/PyzArchive.js";
+import {
+  MAX_PYZ_TABLE_BYTES,
+  parsePyzEntries,
+} from "../artifacts/pyinstaller/PyzArchive.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
+import {
+  readInt32At,
+  readUint16At,
+  readUint32At,
+} from "../domain/binaryContainer.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** PyInstaller standard cookie signature: b'MEI\x0c\x0b\x0a\x0b\x0e' */
 export const PYINSTALLER_MAGIC = Buffer.from([
@@ -44,6 +55,7 @@ export interface PyInstallerCookie {
 export interface PyInstallerTocEntry {
   readonly name: string;
   readonly typeFlag: string;
+  readonly role?: CArchiveEntry["role"] | undefined;
   readonly compressionFlag: number;
   readonly pkgOffset: number;
   readonly compressedLength: number;
@@ -119,7 +131,7 @@ const scanCookieWithMagic = (
         pkgLength: parsed.value.packageLength,
         tocOffset: parsed.value.tocOffset,
         tocLength: parsed.value.tocLength,
-        pythonVersion: tail.readInt32BE(relative + 20),
+        pythonVersion: readInt32At(tail, relative + 20, false),
         pythonLibName: parsed.value.pythonLibrary ?? "",
         layout: parsed.value.layout,
       };
@@ -144,10 +156,12 @@ export const findPyInstallerCookie = (
   );
 };
 
-/** Parse Table of Contents and structure from a PyInstaller executable buffer. */
-export const parsePyInstallerArchive = (
-  buffer: Buffer,
-): PyInstallerArchive | null => {
+interface ParsedCArchiveData {
+  readonly archive: PyInstallerArchive;
+  readonly rawEntries: readonly CArchiveEntry[];
+}
+
+const parseCArchiveBuffer = (buffer: Buffer): ParsedCArchiveData | null => {
   const cookie = findPyInstallerCookie(buffer);
   if (!cookie) return null;
 
@@ -174,49 +188,27 @@ export const parsePyInstallerArchive = (
     return null;
   }
 
-  const tocEntries: PyInstallerTocEntry[] = [];
-  let currentOffset = absoluteTocOffset;
-  const endOffset = absoluteTocOffset + cookie.tocLength;
+  const tocSlice = buffer.subarray(
+    absoluteTocOffset,
+    absoluteTocOffset + cookie.tocLength,
+  );
+  const parsedToc = parseCArchiveToc(tocSlice);
+  if (!parsedToc.ok) return null;
+  const validMembers = validateCArchiveMembers(
+    parsedToc.value,
+    cookie.tocOffset,
+  );
+  if (!validMembers.ok) return null;
 
-  while (
-    currentOffset + 18 <= endOffset &&
-    currentOffset + 18 <= buffer.length
-  ) {
-    if (tocEntries.length >= MAX_TOC_ENTRIES) {
-      return null;
-    }
-    const entryStructLen = buffer.readUInt32BE(currentOffset);
-    if (
-      entryStructLen < 18 ||
-      currentOffset + entryStructLen > endOffset ||
-      currentOffset + entryStructLen > buffer.length
-    ) {
-      break;
-    }
-
-    const pkgOffset = buffer.readUInt32BE(currentOffset + 4);
-    const compressedLength = buffer.readUInt32BE(currentOffset + 8);
-    const uncompressedLength = buffer.readUInt32BE(currentOffset + 12);
-    const compressionFlag = buffer.readUInt8(currentOffset + 16);
-    const typeFlag = String.fromCharCode(buffer.readUInt8(currentOffset + 17));
-
-    const nameRaw = buffer.subarray(
-      currentOffset + 18,
-      currentOffset + entryStructLen,
-    );
-    const name = nameRaw.toString("utf8").replace(/\0.*$/s, "");
-
-    tocEntries.push({
-      name,
-      typeFlag,
-      compressionFlag,
-      pkgOffset,
-      compressedLength,
-      uncompressedLength,
-    });
-
-    currentOffset += entryStructLen;
-  }
+  const tocEntries: PyInstallerTocEntry[] = parsedToc.value.map((entry) => ({
+    name: entry.name,
+    typeFlag: entry.typeCode,
+    role: entry.role,
+    compressionFlag: entry.compressionFlag,
+    pkgOffset: entry.offset,
+    compressedLength: entry.compressedSize,
+    uncompressedLength: entry.uncompressedSize,
+  }));
 
   // Find embedded PYZ if present
   let embeddedPyz: PyzArchive | undefined;
@@ -248,12 +240,20 @@ export const parsePyInstallerArchive = (
   }
 
   return {
-    cookie,
-    carchiveOffset,
-    tocEntries,
-    embeddedPyz,
+    archive: {
+      cookie,
+      carchiveOffset,
+      tocEntries,
+      embeddedPyz,
+    },
+    rawEntries: parsedToc.value,
   };
 };
+
+/** Parse Table of Contents and structure from a PyInstaller executable buffer. */
+export const parsePyInstallerArchive = (
+  buffer: Buffer,
+): PyInstallerArchive | null => parseCArchiveBuffer(buffer)?.archive ?? null;
 
 /** Parse embedded PYZ archive header and its marshaled module table. */
 export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
@@ -261,9 +261,9 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
   const magic = pyzBuffer.subarray(0, 4);
   if (!magic.equals(PYZ_MAGIC)) return null;
 
-  const pycMagic = pyzBuffer.readUInt16LE(4);
+  const pycMagic = readUint16At(pyzBuffer, 4, true);
   const pythonVersion = resolvePythonVersion(pycMagic);
-  const tocOffset = pyzBuffer.readUInt32BE(8);
+  const tocOffset = readUint32At(pyzBuffer, 8, false);
 
   if (tocOffset < 12 || tocOffset > pyzBuffer.length) return null;
 
@@ -276,45 +276,26 @@ export const parsePyzArchive = (pyzBuffer: Buffer): PyzArchive | null => {
     );
   } else {
     const marshalled = readMarshalSubset(table);
-    if (marshalled.ok && Array.isArray(marshalled.value)) {
-      let nameBytes = 0;
-      for (const item of marshalled.value) {
-        if (!Array.isArray(item) || item.length !== 2) continue;
-        const [rawName, position] = item;
-        if (
-          typeof rawName !== "string" ||
-          !Array.isArray(position) ||
-          position.length !== 3
-        )
-          continue;
-        const [typeCode, dataOffset, dataLength] = position;
-        if (
-          typeof typeCode !== "number" ||
-          typeof dataOffset !== "number" ||
-          typeof dataLength !== "number" ||
-          !Number.isSafeInteger(typeCode) ||
-          !Number.isSafeInteger(dataOffset) ||
-          !Number.isSafeInteger(dataLength)
-        )
-          continue;
-
-        nameBytes += Buffer.byteLength(rawName, "utf8");
-        if (nameBytes > table.length) break;
-
-        if (
-          typeCode >= 0 &&
-          typeCode <= 3 &&
-          dataOffset >= 0 &&
-          dataLength >= 0 &&
-          dataOffset <= tocOffset &&
-          dataLength <= tocOffset - dataOffset
-        ) {
+    if (!marshalled.ok) {
+      limitations.push(
+        `PYZ table of contents could not be parsed (${marshalled.error.message}); module list omitted.`,
+      );
+    } else {
+      const entries = parsePyzEntries(
+        marshalled.value,
+        tocOffset,
+        table.length,
+      );
+      if (!entries.ok) {
+        limitations.push(`${entries.error.message}; module list omitted.`);
+      } else {
+        for (const entry of entries.value) {
           modules.push({
-            name: rawName,
-            typeCode,
-            isPackage: typeCode === 1 || typeCode === 3,
-            dataOffset,
-            dataLength,
+            name: entry.name,
+            typeCode: entry.typeCode,
+            isPackage: entry.role === "package" || entry.role === "namespace",
+            dataOffset: entry.offset,
+            dataLength: entry.length,
           });
         }
       }
@@ -402,7 +383,7 @@ const inflatePayload = (
     return {
       data: raw,
       decompressed: false,
-      error: `${prefix}${err instanceof Error ? err.message : String(err)}`,
+      error: `${prefix}${errorMessage(err)}`,
     };
   }
 };
@@ -538,23 +519,26 @@ const extractScriptEntry = (
 export const extractPyInstallerEntries = (
   buffer: Buffer,
 ): ExtractedPyInstallerFile[] => {
-  const archive = parsePyInstallerArchive(buffer);
-  if (!archive) return [];
+  const parsed = parseCArchiveBuffer(buffer);
+  if (!parsed) return [];
+  const { archive, rawEntries } = parsed;
 
   const totalBudget = artifactExpansionBudgetBytes(buffer.length);
   let remainingBudget = totalBudget;
   const payloadEndOffset = archive.carchiveOffset + archive.cookie.tocOffset;
   const results: ExtractedPyInstallerFile[] = [];
 
-  for (const entry of archive.tocEntries) {
-    if (isCArchiveDeclaration({ typeCode: entry.typeFlag })) {
+  for (let index = 0; index < archive.tocEntries.length; index += 1) {
+    const entry = archive.tocEntries[index]!;
+    const rawEntry = rawEntries[index]!;
+    if (isCArchiveDeclaration(rawEntry)) {
       results.push({
         name: entry.name,
-        kind: entry.typeFlag === "o" ? "metadata" : "binary",
+        kind: rawEntry.role === "runtime-option" ? "metadata" : "binary",
         data: Buffer.alloc(0),
         decompressed: false,
         limitations:
-          entry.typeFlag === "d"
+          rawEntry.role === "dependency"
             ? [
                 "Multipackage dependency bytes belong to another executable and remain unresolved.",
               ]

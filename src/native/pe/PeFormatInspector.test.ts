@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { pkcs7SignedDataFixture } from "./PeCertificates.fixture.js";
 import { inspectPeFormat } from "./PeFormatInspector.js";
 import { parsePeRichHeader } from "./PeRichHeaderParser.js";
 
+const align8 = (value: number): number => Math.ceil(value / 8) * 8;
+
 const createMockPeBinary = (): Buffer => {
-  const buf = Buffer.alloc(2048, 0);
+  const pkcs7 = pkcs7SignedDataFixture();
+  const certEntryLen = align8(8 + pkcs7.length);
+  const certOffset = 1024;
+  const textRawOffset = align8(certOffset + certEntryLen + 64);
+  const dataRawOffset = textRawOffset + 256;
+  const totalSize = dataRawOffset + 256;
+  const buf = Buffer.alloc(totalSize, 0);
 
   // 1. DOS Header
   buf[0] = 0x4d; // 'M'
@@ -49,6 +58,10 @@ const createMockPeBinary = (): Buffer => {
   buf.writeUInt16LE(0x20b, optOffset); // Magic: PE32+
   buf.writeUInt32LE(0x1000, optOffset + 16); // AddressOfEntryPoint (RVA 0x1000)
   buf.writeBigUInt64LE(0x140000000n, optOffset + 24); // ImageBase (0x140000000)
+  buf.writeUInt32LE(0x1000, optOffset + 32); // SectionAlignment
+  buf.writeUInt32LE(0x200, optOffset + 36); // FileAlignment
+  buf.writeUInt32LE(0x4000, optOffset + 56); // SizeOfImage
+  buf.writeUInt32LE(0x200, optOffset + 60); // SizeOfHeaders (512 < certOffset 1024)
   buf.writeUInt16LE(3, optOffset + 68); // Subsystem: Windows CUI (Console)
   buf.writeUInt16LE(0x0160, optOffset + 70); // DllCharacteristics: ASLR | DEP | HIGH_ENTROPY_VA
 
@@ -58,15 +71,14 @@ const createMockPeBinary = (): Buffer => {
   // Data directories (Offset 112 into Optional Header for 64-bit)
   const rvaBase = optOffset + 112;
   // Security directory (index 4)
-  const certOffset = 1024;
-  const certSize = 64;
   buf.writeUInt32LE(certOffset, rvaBase + 4 * 8); // Raw file offset for certificate
-  buf.writeUInt32LE(certSize, rvaBase + 4 * 8 + 4); // Size
+  buf.writeUInt32LE(certEntryLen, rvaBase + 4 * 8 + 4); // Size
 
-  // Write mock WIN_CERTIFICATE structure at 1024
-  buf.writeUInt32LE(certSize, certOffset); // dwLength
+  // Write valid WIN_CERTIFICATE + PKCS#7 structure at certOffset
+  buf.writeUInt32LE(certEntryLen, certOffset); // dwLength
   buf.writeUInt16LE(0x0200, certOffset + 4); // wRevision = WIN_CERT_REVISION_2_0
   buf.writeUInt16LE(0x0002, certOffset + 6); // wCertificateType = PKCS_SIGNED_DATA
+  pkcs7.copy(buf, certOffset + 8);
 
   // 6. Section Headers (2 sections: .text and .data)
   const secOffset = optOffset + optHeaderSize;
@@ -76,7 +88,6 @@ const createMockPeBinary = (): Buffer => {
   buf.writeUInt32LE(0x1000, secOffset + 8); // VirtualSize
   buf.writeUInt32LE(0x1000, secOffset + 12); // VirtualAddress
   buf.writeUInt32LE(128, secOffset + 16); // SizeOfRawData
-  const textRawOffset = 1200;
   buf.writeUInt32LE(textRawOffset, secOffset + 20); // PointerToRawData
   buf.writeUInt32LE(0x60000020, secOffset + 36); // IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ
 
@@ -89,7 +100,7 @@ const createMockPeBinary = (): Buffer => {
   buf.writeUInt32LE(0x1000, sec2Offset + 8);
   buf.writeUInt32LE(0x2000, sec2Offset + 12);
   buf.writeUInt32LE(64, sec2Offset + 16);
-  buf.writeUInt32LE(1400, sec2Offset + 20);
+  buf.writeUInt32LE(dataRawOffset, sec2Offset + 20);
   buf.writeUInt32LE(0xc0000040, sec2Offset + 36); // IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE
 
   return buf;
@@ -111,6 +122,7 @@ describe("PeFormatInspector", () => {
     expect(report?.subsystem).toBe("WINDOWS_CUI (Console)");
     expect(report?.entryPointRva).toBe(0x1000);
     expect(report?.imageBase).toBe(0x140000000n);
+    expect(report?.limitations).toEqual([]);
   });
 
   it("decodes DllCharacteristics security mitigations", () => {
@@ -138,14 +150,24 @@ describe("PeFormatInspector", () => {
     expect(dataSec?.isWritable).toBe(true);
   });
 
-  it("extracts Authenticode digital certificate metadata", () => {
+  it("extracts Authenticode digital certificate metadata through parsePeCertificates", () => {
     const peBuf = createMockPeBinary();
     const report = inspectPeFormat(peBuf);
     expect(report?.authenticode).toBeDefined();
     expect(report?.authenticode?.fileOffset).toBe(1024);
-    expect(report?.authenticode?.size).toBe(64);
+    expect(report?.authenticode?.size).toBeGreaterThan(8);
     expect(report?.authenticode?.revision).toBe(0x0200);
     expect(report?.authenticode?.certificateType).toBe(0x0002);
+  });
+
+  it("agrees with parsePeCertificates by rejecting WIN_CERTIFICATE entries with zero dwLength", () => {
+    const peBuf = createMockPeBinary();
+    // Corrupt WIN_CERTIFICATE.dwLength at certOffset = 1024 to 0
+    peBuf.writeUInt32LE(0, 1024);
+    const report = inspectPeFormat(peBuf);
+    expect(report).not.toBeNull();
+    expect(report?.authenticode).toBeUndefined();
+    expect(report?.limitations[0]).toMatch(/dwLength/i);
   });
 
   it("parses Microsoft Rich Header and resolves VS compiler telemetry", () => {
@@ -161,31 +183,53 @@ describe("PeFormatInspector", () => {
     expect(record?.count).toBe(5);
   });
 
-  it("rejects short or invalid optional headers", () => {
+  it("rejects short, invalid, or truncated optional headers and data-directory tables", () => {
     // 88 bytes with SizeOfOptionalHeader = 0
     const shortBuf = Buffer.alloc(88);
     shortBuf[0] = 0x4d; // MZ
     shortBuf[1] = 0x5a;
     shortBuf.writeUInt32LE(64, 0x3c); // e_lfanew = 64
     shortBuf.write("PE\0\0", 64, "ascii");
-    // SizeOfOptionalHeader is 0
     expect(inspectPeFormat(shortBuf)).toBeNull();
 
     // Invalid magic
     const invalidMagicBuf = createMockPeBinary();
-    const optOffset = 128 + 4 + 20; // 152 (peOffset is 128 in createMockPeBinary)
+    const optOffset = 128 + 4 + 20;
     invalidMagicBuf.writeUInt16LE(0x9999, optOffset);
     expect(inspectPeFormat(invalidMagicBuf)).toBeNull();
 
-    // Truncated section table (declares 2 sections at offset 392, but buffer ends after 1 section at 432)
+    // Truncated section table (declares 2 sections at offset 392, buffer ends after 1 section at 432)
     const truncatedSectionsBuf = createMockPeBinary().subarray(0, 432);
     expect(inspectPeFormat(truncatedSectionsBuf)).toBeNull();
+
+    // PE32 with 96-byte SizeOfOptionalHeader declaring 16 data directories, truncated at header end
+    const truncDirBuf = Buffer.alloc(64 + 24 + 96);
+    truncDirBuf.write("MZ", 0, "ascii");
+    truncDirBuf.writeUInt32LE(64, 0x3c);
+    truncDirBuf.write("PE\0\0", 64, "ascii");
+    truncDirBuf.writeUInt16LE(0x014c, 68); // i386
+    truncDirBuf.writeUInt16LE(0, 70); // 0 sections
+    truncDirBuf.writeUInt16LE(96, 84); // SizeOfOptionalHeader = 96
+    truncDirBuf.writeUInt16LE(0x10b, 88); // PE32
+    truncDirBuf.writeUInt32LE(16, 88 + 92); // NumberOfRvaAndSizes = 16 (needs 128 more bytes)
+    expect(inspectPeFormat(truncDirBuf)).toBeNull();
+
+    // PE32 with SizeOfOptionalHeader = 96 declaring 16 directories followed by extra bytes surfaces anomaly limitation
+    const shortOptWithBytes = Buffer.alloc(512);
+    truncDirBuf.copy(shortOptWithBytes);
+    shortOptWithBytes.writeUInt32LE(0x200, 88 + 60); // SizeOfHeaders
+    const anomalyReport = inspectPeFormat(shortOptWithBytes);
+    expect(anomalyReport).not.toBeNull();
+    expect(anomalyReport?.limitations.join(" ")).toMatch(
+      /SizeOfOptionalHeader 96 ends before/,
+    );
   });
 
   it("omits entropy and packed classification when a declared section raw range extends past EOF", () => {
-    const truncatedPayloadBuf = createMockPeBinary().subarray(0, 1250);
-    // .text declares rawOffset = 1200, rawSize = 128 (end 1328 > 1250)
-    // .data declares rawOffset = 1400, rawSize = 64 (end 1464 > 1250)
+    const full = createMockPeBinary();
+    const fullReport = inspectPeFormat(full);
+    const textOffset = fullReport!.sections[0]!.rawOffset;
+    const truncatedPayloadBuf = full.subarray(0, textOffset + 32);
     const report = inspectPeFormat(truncatedPayloadBuf);
     expect(report).not.toBeNull();
     expect(report?.sections[0]?.entropy).toBeUndefined();

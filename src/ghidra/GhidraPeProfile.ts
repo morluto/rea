@@ -16,6 +16,7 @@ const reportedPdbMatchesDeclaration = (
   reported: NonNullable<GhidraSessionInfo["pdb"]>,
 ): boolean => {
   if (
+    declared.pdbPath === null ||
     reported.resource_limit?.omitted_attributes.some(
       (attribute) =>
         attribute === "file" || attribute === "guid" || attribute === "age",
@@ -50,6 +51,23 @@ const pdbLocatorFitsInlineBudget = (value: string): boolean => {
   return jsonStringByteLength(value) <= PDB_LOCATOR_INLINE_BYTE_BUDGET;
 };
 
+const declaredPdbLocator = (record: PeCodeViewRecord): string => {
+  // Include JSON escaping in the inline budget before building that representation.
+  if (
+    record.pdbFileName !== null &&
+    pdbLocatorFitsInlineBudget(record.pdbFileName)
+  )
+    return JSON.stringify(record.pdbFileName);
+  const prefix = "(path encoding unknown; original path bytes 0x";
+  if (
+    record.pdbFileName === null &&
+    prefix.length + record.pdbPathBytesHex.length + 1 <=
+      PDB_LOCATOR_INLINE_BYTE_BUDGET
+  )
+    return `${prefix}${record.pdbPathBytesHex})`;
+  return `(declared locator${record.pdbFileName === null ? " with unknown path encoding" : ""} omitted from this inline caveat: ${PDB_LOCATOR_INLINE_BYTE_BUDGET}-byte resource budget)`;
+};
+
 /** Use reported Program facts first, retaining declared PE facts as a fallback. */
 export const ghidraPePdbLimitations = (
   target: BinaryTarget,
@@ -62,11 +80,8 @@ export const ghidraPePdbLimitations = (
     (pdb !== undefined && reportedPdbMatchesDeclaration(target.codeView, pdb))
   )
     return reported;
-  const { pdbFileName, guid, age } = target.codeView;
-  // Include JSON escaping in the inline budget before allocating that representation.
-  const locator = pdbLocatorFitsInlineBudget(pdbFileName)
-    ? JSON.stringify(pdbFileName)
-    : `(declared locator omitted from this inline caveat: ${PDB_LOCATOR_INLINE_BYTE_BUDGET}-byte resource budget)`;
+  const { guid, age } = target.codeView;
+  const locator = declaredPdbLocator(target.codeView);
   const identity =
     guid === null
       ? `age (decimal) ${age}`

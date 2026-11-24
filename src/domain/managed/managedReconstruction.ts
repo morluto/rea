@@ -1,11 +1,13 @@
-import { createHash } from "node:crypto";
-
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { z } from "zod";
 
 import { evidenceSchema, type Evidence } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
+import type { EvidenceRequestFrameInput } from "../evidenceInputContract.js";
 import {
   cliMetadataGuidSchema,
   managedMetadataTokenSchema,
+  managedMetadataStatusSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
@@ -15,13 +17,14 @@ import { readManagedInspectionEvidence } from "./managedInspectionEvidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { err, ok, type Result } from "../result.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const textSchema = z.string().min(1);
 
 const decompilerSchema = z.strictObject({
-  name: textSchema,
-  version: textSchema.nullable().default(null),
+  name: nonEmptyTextSchema,
+  version: nonEmptyTextSchema.nullable().default(null),
   family: z.enum(["ilspy", "dnspy", "dnlib", "mono-cecil", "other"]),
   executable_sha256: digestSchema.nullable().default(null),
   options: z.array(z.string()).default([]),
@@ -34,9 +37,9 @@ const managedReconstructionMethodInputSchema = z.strictObject({
   reconstruction: z.strictObject({
     kind: z.enum(["decompiled-csharp", "decompiled-il", "semantic-pseudocode"]),
     language: z.enum(["csharp", "il", "pseudocode"]),
-    text: textSchema,
+    text: nonEmptyTextSchema,
     text_sha256: digestSchema.optional(),
-    source_path: textSchema.nullable().optional(),
+    source_path: nonEmptyTextSchema.nullable().optional(),
     start_line: z.int().min(1).nullable().optional(),
     end_line: z.int().min(1).nullable().optional(),
   }),
@@ -47,22 +50,24 @@ type ManagedReconstructionMethodInput = z.infer<
 >;
 
 const managedReconstructionImportRequestShape = {
-  static_members: z.unknown(),
   decompiler: decompilerSchema,
   methods: z.array(managedReconstructionMethodInputSchema).min(1),
-  notes: z.array(textSchema).default([]),
+  notes: z.array(nonEmptyTextSchema).default([]),
 };
 
-/** Request envelope parsed before interpreting the nested Evidence source. */
-export const managedReconstructionImportRequestSchema = z.strictObject(
-  managedReconstructionImportRequestShape,
-);
+const reconstructionInput = <Source extends z.ZodType>(source: Source) =>
+  z.strictObject({
+    ...managedReconstructionImportRequestShape,
+    static_members: source,
+  });
 
-/** Public reconstruction request with the complete source Evidence contract. */
-export const managedReconstructionImportInputSchema = z.strictObject({
-  ...managedReconstructionImportRequestShape,
-  static_members: evidenceSchema,
-});
+/** Complete semantic reconstruction input with its original source record. */
+export const managedReconstructionImportInputSchema =
+  reconstructionInput(evidenceSchema);
+
+/** Public reconstruction request accepts records inline or by exact retained identity. */
+export const managedReconstructionImportRequestSchema =
+  reconstructionInput(evidenceInputSchema);
 
 const importedMethodSchema = z.strictObject({
   token: managedMetadataTokenSchema,
@@ -75,11 +80,11 @@ const importedMethodSchema = z.strictObject({
   reconstruction: z.strictObject({
     kind: z.enum(["decompiled-csharp", "decompiled-il", "semantic-pseudocode"]),
     language: z.enum(["csharp", "il", "pseudocode"]),
-    text: textSchema,
+    text: nonEmptyTextSchema,
     text_sha256: digestSchema,
     text_length: z.int().min(1),
     line_count: z.int().min(1),
-    source_path: textSchema.nullable(),
+    source_path: nonEmptyTextSchema.nullable(),
     start_line: z.int().min(1).nullable(),
     end_line: z.int().min(1).nullable(),
   }),
@@ -102,7 +107,7 @@ export const managedReconstructionImportResultSchema = z.strictObject({
     byte_length: z.int().min(0),
     module_name: z.string().nullable(),
     mvid: cliMetadataGuidSchema.nullable(),
-    metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+    metadata_status: managedMetadataStatusSchema,
   }),
   decompiler: decompilerSchema.extend({
     options_sha256: digestSchema,
@@ -115,17 +120,16 @@ export const managedReconstructionImportResultSchema = z.strictObject({
     total_text_bytes: z.int().min(1),
   }),
   methods: z.array(importedMethodSchema).min(1),
-  notes: z.array(textSchema),
+  notes: z.array(nonEmptyTextSchema),
   evidence_links: z.array(evidenceIdSchema).length(1),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ManagedReconstructionImportInput = z.infer<
   typeof managedReconstructionImportInputSchema
 >;
-export type ManagedReconstructionImportRequest = z.infer<
-  typeof managedReconstructionImportRequestSchema
->;
+export type ManagedReconstructionImportRequest =
+  EvidenceRequestFrameInput<ManagedReconstructionImportInput>;
 export type ManagedReconstructionImportResult = z.infer<
   typeof managedReconstructionImportResultSchema
 >;
@@ -134,9 +138,6 @@ type Member = ManagedMemberInspection["methods"][number];
 type ImportedMethod = ManagedReconstructionImportResult["methods"][number];
 type StaticObservation =
   ManagedReconstructionImportResult["static_observation"];
-
-const sha256Text = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");
 
 const countLines = (text: string): number =>
   text.length === 0 ? 0 : text.split(/\r\n|\r|\n/u).length;
@@ -209,15 +210,18 @@ const buildReconstructionSummary = (
 const buildStaticObservation = (
   staticEvidence: Evidence,
   members: ManagedMemberInspection,
-): StaticObservation => ({
-  evidence_id: staticEvidence.evidence_id,
-  artifact_sha256: members.artifact.sha256,
-  artifact_path: members.artifact.path,
-  byte_length: members.artifact.byte_length,
-  module_name: members.module?.name ?? null,
-  mvid: members.module?.mvid ?? null,
-  metadata_status: members.metadata.status,
-});
+): StaticObservation => {
+  const module = managedModuleRow(members);
+  return {
+    evidence_id: staticEvidence.evidence_id,
+    artifact_sha256: members.artifact.sha256,
+    artifact_path: members.artifact.path,
+    byte_length: members.artifact.byte_length,
+    module_name: module?.name ?? null,
+    mvid: module?.mvid ?? null,
+    metadata_status: members.metadata.status,
+  };
+};
 
 const buildDecompilerRecord = (
   decompiler: ManagedReconstructionImportInput["decompiler"],
@@ -286,7 +290,7 @@ export const resolveManagedReconstructionImport = (
         ]),
       );
     }
-    const textSha256 = sha256Text(candidate.reconstruction.text);
+    const textSha256 = sha256Hex(candidate.reconstruction.text);
     if (
       candidate.reconstruction.text_sha256 !== undefined &&
       candidate.reconstruction.text_sha256 !== textSha256

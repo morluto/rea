@@ -166,7 +166,7 @@ const callableIdsForBinding = (
   const selected =
     read === undefined
       ? binding
-      : semanticBindingAtRead(binding, read, state.parentsByNode).binding;
+      : semanticBindingAtRead(binding, read, state).binding;
   const initializer = selected.initializers[0];
   if (
     initializer === undefined ||

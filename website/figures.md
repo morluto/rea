@@ -45,17 +45,20 @@ rendering at desktop and mobile widths.
 
 ## Sharing preview
 
-`public/assets/social-card.svg` is the 1200 × 630 preview source. It uses the
-homepage's direct headline, the site's white/charcoal/slate/blue palette, and a
-short agent → REA → evidence flow. CairoSVG renders the ignored PNG during asset
-preparation. Check the rendered image for readable text and spacing before
-publishing. The build uses DejaVu Sans for consistent typography; only the SVG
-source is committed. Metadata and build instructions are in the website README.
+The default preview uses the pixel wordmark, disassembly and workflow panels from
+`artwork/rea-social-preview.png`.
+The Aegis card uses the demo’s 59-second input, block 1 and code 287082.
+The environment card depicts the guide’s example task and its folder-state
+check. Other previews reuse their guide or case-study figures. Inspect the
+generated PNGs at feed width before publishing.
 
-The card and `public/assets/favicon.svg` each carry a dark
-`prefers-color-scheme` block for people who open the SVG directly or use a dark
-browser tab strip. CairoSVG ignores it, so the PNG that link previews fetch
-stays light.
+## RL environment workflow
+
+The RL environment guide uses the shared semantic HTML flow: record a test app,
+build tools and local data with REA, then run the exported environment with
+AgentEnv. Labels distinguish environment building from task grading and training.
+The homepage links to the same guide and the announcement video. Source and
+verification scope are in [evidence/rl-environments.md](evidence/rl-environments.md).
 
 ## README showcases
 

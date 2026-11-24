@@ -141,8 +141,14 @@ const defaultProbe = (
           operation: "analyze_function",
           rationale: "Capture complete function dossiers under equal limits.",
         }
-      : {
-          operation: "inspect_artifact",
-          rationale:
-            "Capture complete artifact inventories under equal limits.",
-        };
+      : kind === "visual"
+        ? {
+            operation: "capture_web_screenshot",
+            rationale:
+              "Capture both visible viewports under the same browser scope.",
+          }
+        : {
+            operation: "inspect_artifact",
+            rationale:
+              "Capture complete artifact inventories under equal limits.",
+          };

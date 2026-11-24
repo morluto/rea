@@ -243,6 +243,7 @@ describe("PyInstallerExtractor - entry extraction and safety limits", () => {
     const pyz = parsePyzArchive(malformed);
     expect(pyz).not.toBeNull();
     expect(pyz?.modules).toEqual([]);
+    expect(pyz?.limitations?.[0]).toMatch(/could not be parsed/i);
   });
 
   it("bounds decompression when uncompressedLength is smaller than expanded output", () => {
@@ -329,6 +330,7 @@ describe("PyInstallerExtractor - entry extraction and safety limits", () => {
     const pyz = parsePyzArchive(Buffer.concat([header, table]));
     expect(pyz).not.toBeNull();
     expect(pyz?.modules).toEqual([]);
+    expect(pyz?.limitations?.[0]).toMatch(/PYZ table entry/i);
   });
 
   it("charges failed or corrupt inflations against remaining budget", () => {
@@ -367,7 +369,7 @@ describe("PyInstallerExtractor - entry extraction and safety limits", () => {
 });
 
 describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
-  it("rejects TOC entries pointing into the table or cookie and preserves declarations", () => {
+  it("rejects TOC entries pointing into the table or cookie and preserves valid declarations", () => {
     const createTocEntry = (
       name: string,
       typeFlag: string,
@@ -387,29 +389,48 @@ describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
       return entry;
     };
 
+    const buildArchive = (payload: Buffer, tocEntries: Buffer): Buffer => {
+      const tocOffset = payload.length;
+      const tocLength = tocEntries.length;
+      const pkgLength = payload.length + tocLength + 88;
+      const cookie = Buffer.alloc(88);
+      PYINSTALLER_MAGIC.copy(cookie, 0);
+      cookie.writeUInt32BE(pkgLength, 8);
+      cookie.writeUInt32BE(tocOffset, 12);
+      cookie.writeUInt32BE(tocLength, 16);
+      cookie.writeInt32BE(310, 20);
+      return Buffer.concat([payload, tocEntries, cookie]);
+    };
+
     const payload = Buffer.from("REAL_DATA");
-    // Entry 1: points into TOC (offset = payload.length, length = 4) -> must be skipped
-    // Entry 2: runtime option ('o') -> metadata, decompressed: false
-    // Entry 3: dependency ('d') -> unresolved binary, decompressed: false
-    const tocEntries = Buffer.concat([
+
+    // Out-of-bounds member pointing into TOC must reject the archive instead of silently omitting it
+    const badBinary = buildArchive(
+      payload,
       createTocEntry("table_bytes.bin", "x", payload.length, 4),
-      createTocEntry("pyi-runtime-tmpdir", "o", 0, 0),
-      createTocEntry("ext_pkg:lib.dll", "d", 0, 0),
-    ]);
+    );
+    expect(parsePyInstallerArchive(badBinary)).toBeNull();
+    expect(extractPyInstallerEntries(badBinary)).toEqual([]);
 
-    const tocOffset = payload.length;
-    const tocLength = tocEntries.length;
-    const pkgLength = payload.length + tocLength + 88;
-    const cookie = Buffer.alloc(88);
-    PYINSTALLER_MAGIC.copy(cookie, 0);
-    cookie.writeUInt32BE(pkgLength, 8);
-    cookie.writeUInt32BE(tocOffset, 12);
-    cookie.writeUInt32BE(tocLength, 16);
-    cookie.writeInt32BE(310, 20);
+    // Truncated TOC record after a valid entry must reject the archive instead of returning preceding entries
+    const validEntry = createTocEntry("ok.bin", "x", 0, payload.length);
+    const truncatedSecondRecord = Buffer.alloc(18);
+    truncatedSecondRecord.writeUInt32BE(64, 0); // declares 64 bytes past TOC end
+    const truncatedTocBinary = buildArchive(
+      payload,
+      Buffer.concat([validEntry, truncatedSecondRecord]),
+    );
+    expect(parsePyInstallerArchive(truncatedTocBinary)).toBeNull();
 
-    const binary = Buffer.concat([payload, tocEntries, cookie]);
-    const extracted = extractPyInstallerEntries(binary);
-    expect(extracted.find((e) => e.name === "table_bytes.bin")).toBeUndefined();
+    // Valid archive with runtime option ('o') and multipackage dependency ('d') preserves declarations
+    const declBinary = buildArchive(
+      payload,
+      Buffer.concat([
+        createTocEntry("pyi-runtime-tmpdir", "o", 0, 0),
+        createTocEntry("ext_pkg:lib.dll", "d", 0, 0),
+      ]),
+    );
+    const extracted = extractPyInstallerEntries(declBinary);
 
     const opt = extracted.find((e) => e.name === "pyi-runtime-tmpdir");
     expect(opt?.kind).toBe("metadata");
@@ -469,13 +490,17 @@ describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
     overBytesBuf.writeInt32BE(310, cookieOffset + 20);
     expect(parsePyInstallerArchive(overBytesBuf)).toBeNull();
 
-    // 100,001 records of 18 bytes each (fits well within MAX_TOC_BYTES and buffer)
+    // 100,001 valid named records of 20 bytes each (fits well within MAX_TOC_BYTES and buffer)
     const entryCount = 100_001;
-    const tocLen = entryCount * 18;
+    const recLen = 20;
+    const tocLen = entryCount * recLen;
     const overEntriesBuf = Buffer.alloc(tocLen + 88);
     for (let i = 0; i < entryCount; i += 1) {
-      overEntriesBuf.writeUInt32BE(18, i * 18);
-      overEntriesBuf.writeUInt8("o".charCodeAt(0), i * 18 + 17);
+      const off = i * recLen;
+      overEntriesBuf.writeUInt32BE(recLen, off);
+      overEntriesBuf.writeUInt8("o".charCodeAt(0), off + 17);
+      overEntriesBuf.writeUInt8("a".charCodeAt(0), off + 18);
+      overEntriesBuf.writeUInt8(0, off + 19);
     }
     PYINSTALLER_MAGIC.copy(overEntriesBuf, tocLen);
     overEntriesBuf.writeUInt32BE(overEntriesBuf.length, tocLen + 8);

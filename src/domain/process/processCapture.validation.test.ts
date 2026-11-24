@@ -7,17 +7,70 @@ import {
   type ProcessCapture,
 } from "./processCaptureParsing.js";
 import type { UnverifiedProcessCapture } from "./processCapture.js";
-import { partialProcessCaptureObservationSchema } from "./processCapture.js";
-import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
-import { finalizationConsistencyIssue } from "./processCaptureValidation.js";
-import type { FilesystemCoverage } from "./processCaptureCoverage.js";
 import {
+  processCaptureSchema,
+  processFilesystemSnapshotSchema,
+  partialProcessCaptureObservationSchema,
+} from "./processCapture.js";
+import {
+  FINALIZED_PROCESS_CAPTURE_EXAMPLE,
   compareUnverifiedProcessCaptures as compareProcessCaptures,
   emptyUnverifiedProcessCapture as emptyCapture,
   processCaptureIssues,
 } from "./processCapture.fixture.js";
+import { finalizationConsistencyIssue } from "./processCaptureValidation.js";
+import type { FilesystemCoverage } from "./processCaptureCoverage.js";
 
 expectTypeOf<UnverifiedProcessCapture>().not.toExtend<ProcessCapture>();
+
+it("rejects unrecognized fields when admitting a recorded process capture", () => {
+  const parsed = processCaptureSchema.safeParse({
+    ...emptyCapture(),
+    extra_observations: [],
+  });
+  if (parsed.success)
+    throw new Error("Expected unknown observations to be rejected");
+  expect(parsed.error.issues).toEqual([
+    expect.objectContaining({
+      code: "unrecognized_keys",
+      keys: ["extra_observations"],
+      path: [],
+    }),
+  ]);
+});
+
+it.each(["reports", "\ufffd"])(
+  "requires stored target bytes instead of deriving them from symlink text %j",
+  (text) => {
+    const snapshot = {
+      files: [
+        {
+          path: "root_0:link",
+          type: "symlink",
+          mode: 0o120777,
+          size: Buffer.byteLength(text),
+          sha256: null,
+          symlink_target: text,
+        },
+      ],
+      truncated: false,
+      completeRoots: [],
+      coverage: emptyCapture().truncation_details.filesystem_before,
+    };
+    expect(processFilesystemSnapshotSchema.safeParse(snapshot).success).toBe(
+      false,
+    );
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...snapshot,
+        files: snapshot.files.map((file) => ({
+          ...file,
+          symlink_target_hex: Buffer.from(text).toString("hex"),
+        })),
+      }).success,
+    ).toBe(true);
+  },
+);
 
 /** Name every rejected field reported by the production parser. */
 const rejectedPaths = (input: unknown): readonly string[] => {
@@ -137,6 +190,50 @@ it.each([
   expect(parseProcessCapture(capture)).toEqual(capture);
 });
 
+it("preserves distinct byte-name omissions at one directory through finalized capture parsing", () => {
+  const capture = captureWithEnumerationOmission({
+    path: "root_0:.",
+    reason: "unrepresentable_name",
+    system_code: null,
+    raw_name_hex: "ff",
+  });
+  const coverage = capture.truncation_details.filesystem_after;
+  coverage.enumeration_omissions.push({
+    path: "root_0:.",
+    reason: "unrepresentable_name",
+    system_code: null,
+    raw_name_hex: "fe",
+  });
+  expect(parseProcessCapture(capture)).toEqual(capture);
+  coverage.enumeration_omissions.push({
+    path: "root_0:.",
+    reason: "identity_changed",
+    system_code: null,
+  });
+  coverage.enumeration_reasons.push("identity_changed");
+  expect(parseProcessCapture(capture)).toEqual(capture);
+  // Re-reading the same raw basename is not a distinct omission.
+  coverage.enumeration_omissions.push({
+    path: "root_0:.",
+    reason: "unrepresentable_name",
+    system_code: null,
+    raw_name_hex: "ff",
+  });
+  expect(() => parseProcessCapture(capture)).toThrow("enumeration_omissions");
+});
+
+it("requires raw-name evidence for an unrepresentable-name coverage reason", () => {
+  const capture = captureWithEnumerationOmission({
+    path: "root_0:.",
+    reason: "unrepresentable_name",
+    system_code: null,
+    raw_name_hex: "ff",
+  });
+  expect(parseProcessCapture(capture)).toEqual(capture);
+  capture.truncation_details.filesystem_after.enumeration_omissions = [];
+  expect(() => parseProcessCapture(capture)).toThrow("enumeration_omissions");
+});
+
 it.each([
   { path: "root_0:.", reason: "entry_unavailable", system_code: null },
   { path: "root_0:.", reason: "identity_changed", system_code: "ENOENT" },
@@ -191,6 +288,7 @@ it("binds unfollowed coverage to observed symlink metadata without inventing an 
     size: 7,
     sha256: null,
     symlink_target: "reports",
+    symlink_target_hex: "7265706f727473",
   };
   const effect = {
     path: link.path,
@@ -241,6 +339,75 @@ it("binds unfollowed coverage to observed symlink metadata without inventing an 
   ).toThrow("enumeration_omissions");
 });
 
+it("requires top-level filesystem facts to match their checkpoints", () => {
+  const baseline = emptyCapture();
+  const file = {
+    path: "root_0:created.txt",
+    type: "file" as const,
+    mode: 0o100644,
+    size: 4,
+    sha256: "b".repeat(64),
+    symlink_target: null,
+  };
+  const effect = {
+    path: file.path,
+    status: "created" as const,
+    before: null,
+    after: file,
+  };
+  const topLevelOnly = {
+    ...baseline,
+    files_after: [file],
+    filesystem_effects: [effect],
+    truncation_details: {
+      ...baseline.truncation_details,
+      filesystem_after: {
+        ...baseline.truncation_details.filesystem_after,
+        hashed_bytes: 4,
+      },
+    },
+  };
+  const consistent = {
+    ...topLevelOnly,
+    filesystem_checkpoints: baseline.filesystem_checkpoints.map((checkpoint) =>
+      checkpoint.name === "after_settlement"
+        ? { ...checkpoint, files: [file], effects: [effect] }
+        : checkpoint,
+    ),
+  };
+  expect(parseProcessCapture(consistent)).toEqual(consistent);
+  const withCheckpointFiles = (
+    name: string,
+    files: (typeof baseline.files_before)[number][],
+  ) =>
+    consistent.filesystem_checkpoints.map((checkpoint) =>
+      checkpoint.name === name ? { ...checkpoint, files } : checkpoint,
+    );
+  for (const contradictory of [
+    topLevelOnly,
+    { ...consistent, filesystem_effects: [] },
+    // File lists alone disagree; effects still match.
+    {
+      ...consistent,
+      filesystem_checkpoints: withCheckpointFiles("after_settlement", []),
+    },
+    {
+      ...consistent,
+      filesystem_checkpoints: withCheckpointFiles("before", [file]),
+    },
+    {
+      ...baseline,
+      filesystem_checkpoints: baseline.filesystem_checkpoints.map(
+        (checkpoint) =>
+          checkpoint.name === "before"
+            ? { ...checkpoint, effects: [effect] }
+            : checkpoint,
+      ),
+    },
+  ])
+    expect(rejectedPaths(contradictory)).toEqual(["filesystem_checkpoints"]);
+});
+
 it("never considers truncated captures equivalent", () => {
   const complete = emptyCapture();
   const capture = {
@@ -282,6 +449,41 @@ it("rejects altered v4 commitments and accepts canonical key reordering", () => 
       },
     }),
   ).toThrow("executable_identity");
+});
+
+it("withholds the root process identity exactly when PID normalization is selected", () => {
+  const capture = emptyCapture();
+  const observed = {
+    state: "observed",
+    pid: 4242,
+    start_time: "linux-starttime:1",
+  } as const;
+  const withPids = (pids: boolean, root_process: object) =>
+    parseProcessCapture({
+      ...capture,
+      normalization: { ...capture.normalization, pids },
+      manifest: {
+        ...capture.manifest,
+        root_process,
+        normalization_sha256: digestProcessCommitment({
+          ...capture.normalization,
+          pids,
+        }),
+      },
+    });
+
+  expect(
+    () => withPids(true, observed),
+    "a normalized capture never commits the raw root PID",
+  ).toThrow("root_process");
+  expect(
+    () => withPids(false, { state: "withheld-by-caller" }),
+    "an identity is withheld only by the caller's normalization",
+  ).toThrow("root_process");
+  expect(
+    withPids(false, observed).manifest.root_process,
+    "an unnormalized capture keeps the observed root",
+  ).toEqual(observed);
 });
 
 it("requires producer coverage accounting in every parsed capture", () => {
@@ -363,9 +565,9 @@ it("does not infer normalized retention budget from missing scenario defaults", 
   ).toContain("manifest.scenario.limits.output_bytes");
 });
 
-it("rejects settlement and cleanup combinations that cannot occur", () => {
+it("accepts post-quiescence cleanup and rejects unverified settlement combinations", () => {
   const capture = emptyCapture();
-  expect(() =>
+  expect(
     parseProcessCapture({
       ...capture,
       settlement: {
@@ -374,7 +576,9 @@ it("rejects settlement and cleanup combinations that cannot occur", () => {
         cleanup_outcome: "cleaned",
       },
     }),
-  ).toThrow("cleanup_outcome");
+  ).toMatchObject({
+    settlement: { state: "quiesced", cleanup_outcome: "cleaned" },
+  });
   expect(() =>
     parseProcessCapture({
       ...capture,
@@ -1097,7 +1301,7 @@ it("rejects old executable identity representations without migration", () => {
   ).toThrow("legacy_executable_sha256");
 });
 
-it("requires compatible contracts and enforces capture age through a clock seam", () => {
+it("requires compatible contracts and enforces capture age", () => {
   const capture = emptyCapture();
   expect(() =>
     compareProcessCaptures(capture, {
@@ -1123,11 +1327,17 @@ it("requires compatible contracts and enforces capture age through a clock seam"
       ],
     }),
   );
+  const completedAt = new Date(Date.now() - 86_400_000).toISOString();
+  const stale = {
+    ...capture,
+    manifest: {
+      ...capture.manifest,
+      started_at: completedAt,
+      completed_at: completedAt,
+    },
+  };
   expect(() =>
-    compareProcessCaptures(capture, capture, {
-      maxCaptureAgeMs: 1,
-      now: () => Date.parse("2026-01-01T00:00:01.000Z"),
-    }),
+    compareProcessCaptures(stale, stale, { maxCaptureAgeMs: 1_000 }),
   ).toThrow(
     expect.objectContaining({
       issues: [
@@ -1163,4 +1373,30 @@ it("requires interaction dispatch times to follow their sequence", () => {
       message: expect.stringContaining("dispatch timestamps must be ordered"),
     },
   ]);
+});
+
+it("validates private interaction fields together while retaining legacy captures", () => {
+  const event = {
+    sequence: 0,
+    scheduled_at_ms: 0,
+    dispatched_at_ms: 0,
+    type: "input",
+    data: "",
+    outcome: "dispatched",
+  };
+  const shape = processCaptureSchema.shape.interaction_events;
+  expect(
+    shape.safeParse([{ ...event, sensitive: true, input_bytes: 6 }]).success,
+  ).toBe(true);
+  expect(
+    shape.safeParse([{ ...event, data: "<redacted-input:6-bytes>" }]).success,
+  ).toBe(true);
+  for (const invalid of [
+    { ...event, sensitive: true },
+    { ...event, input_bytes: 6 },
+    { ...event, sensitive: true, input_bytes: 6, data: "original" },
+    { ...event, sensitive: true, input_bytes: 6, type: "signal" },
+  ])
+    expect(shape.safeParse([invalid]).success).toBe(false);
+  expect(() => parseProcessCapture(emptyCapture())).not.toThrow();
 });

@@ -160,4 +160,15 @@ describe("MinidumpReader", () => {
       /exceeded the 65536-byte string cap/,
     );
   });
+
+  it("rejects odd-length UTF-16 MINIDUMP_STRING values and records a limitation", () => {
+    const buf = createMockMinidump();
+    // Module name MINIDUMP_STRING lives at RVA 350; set odd byte length 5
+    buf.writeUInt32LE(5, 350);
+
+    const report = parseMinidump(buf);
+    expect(report).not.toBeNull();
+    expect(report?.modules[0]?.name).toBeNull();
+    expect(report?.limitations[0]).toMatch(/odd UTF-16 byte lengths/);
+  });
 });

@@ -3,6 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ensureGeneratedFile } from "./lib/generated-file.mjs";
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+
+const { parseAuthoredSkillManifest } = await importVerifierSource(
+  new URL("../src/domain/skillManifest.ts", import.meta.url).href,
+  import.meta.url,
+);
 
 const arguments_ = new Set(process.argv.slice(2));
 for (const argument of arguments_)
@@ -25,9 +31,9 @@ const skill = await readFile(
   join(root, ".agents/skills/reverse-engineer-anything/SKILL.md"),
   "utf8",
 );
-const skillVersion = /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(skill)?.[1];
-if (skillVersion === undefined)
-  throw new Error("Missing reverse-engineer-anything skill metadata version");
+const skillMetadata = parseAuthoredSkillManifest(skill);
+if (!skillMetadata.ok) throw skillMetadata.error;
+const skillVersion = skillMetadata.value.version;
 const versionOf = (name) => {
   const value = lock.packages?.[`node_modules/${name}`]?.version;
   if (typeof value !== "string")

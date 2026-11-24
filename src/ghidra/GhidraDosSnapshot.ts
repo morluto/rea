@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  dosMzImageByteLength,
-  observeMzWindowsHeader,
+  readArtifactFileChunks,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
+import {
+  dosMzDeclaredImageByteLength,
+  readDosMzDeclarations,
+  parseDeclaredMzHeaderEvidence,
+  withMzWindowsHeaderSignature,
 } from "../domain/dosMz.js";
 import { err } from "../domain/result.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
-import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import {
   attestGhidraDosLoadImage,
@@ -30,14 +33,23 @@ export const attestGhidraDosSnapshot = async (
   signal?: AbortSignal,
 ) => {
   const headerBytes = Math.min(fileBytes, 64);
-  const header = await readBoundedFileBytes(handle, headerBytes, {
-    signal,
-    expectedSize: headerBytes,
-    cancellationFailure: cancelled,
-  });
-  if (header === undefined || header.length !== headerBytes)
-    throw new RegularFileChangedError(path);
-  const extent = dosMzImageByteLength(header);
+  const header = Buffer.allocUnsafe(headerBytes);
+  let headerRead = 0;
+  while (headerRead < headerBytes) {
+    if (signal?.aborted) throw cancelled(signal.reason);
+    const { bytesRead } = await handle.read(
+      header,
+      headerRead,
+      headerBytes - headerRead,
+      headerRead,
+    );
+    if (signal?.aborted) throw cancelled(signal.reason);
+    if (bytesRead === 0) throw new RegularFileChangedError(path);
+    headerRead += bytesRead;
+  }
+  const declarations = readDosMzDeclarations(header);
+  if (!declarations.ok) return declarations;
+  const extent = dosMzDeclaredImageByteLength(declarations.value);
   if (!extent.ok) return extent;
   if (extent.value > fileBytes) return err("truncated DOS MZ load module");
   // Retain the complete initialized image and the Windows-pointer header only.
@@ -57,7 +69,8 @@ export const attestGhidraDosSnapshot = async (
     }
   }
   if (captured !== captureBytes) throw new RegularFileChangedError(path);
-  const windowsHeader = observeMzWindowsHeader(prefix, fileBytes);
+  let evidence = parseDeclaredMzHeaderEvidence(prefix, fileBytes, declarations);
+  const { windowsHeader } = evidence;
   let signature:
     | { readonly offset: number; readonly bytes: Buffer }
     | undefined;
@@ -81,12 +94,27 @@ export const attestGhidraDosSnapshot = async (
       bytes: signatureBytes,
     };
   }
-  const prepared = prepareGhidraDosLoadImage(prefix, fileBytes, signature);
+  if (signature !== undefined)
+    evidence = withMzWindowsHeaderSignature(
+      prefix,
+      fileBytes,
+      evidence,
+      signature,
+    );
+  const prepared = prepareGhidraDosLoadImage(prefix, evidence);
   if (!prepared.ok) return prepared;
   const originalHash = createHash("sha256").update(prefix);
-  const modifiedHash = createHash("sha256")
-    .update(prepared.value.modified)
-    .update(prefix.subarray(prepared.value.header.imageBytes));
+  const image = prepared.value;
+  const expected =
+    image.kind === "exact"
+      ? {
+          kind: image.kind,
+          image,
+          hash: createHash("sha256")
+            .update(image.modified)
+            .update(prefix.subarray(image.header.imageBytes)),
+        }
+      : image;
   let read = prefix.length;
   if (read < fileBytes) {
     for await (const chunk of readArtifactFileChunks(handle, {
@@ -95,7 +123,7 @@ export const attestGhidraDosSnapshot = async (
       signal,
     })) {
       originalHash.update(chunk);
-      modifiedHash.update(chunk);
+      if (expected.kind === "exact") expected.hash.update(chunk);
       read += chunk.length;
     }
   }
@@ -104,8 +132,10 @@ export const attestGhidraDosSnapshot = async (
     {
       sha256: originalHash.digest("hex"),
       fileBytes,
-      modifiedSha256: modifiedHash.digest("hex"),
-      image: prepared.value,
+      image:
+        expected.kind === "exact"
+          ? { ...expected.image, modifiedSha256: expected.hash.digest("hex") }
+          : expected,
     },
     targetSha256,
     observations,

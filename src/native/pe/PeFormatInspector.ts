@@ -1,7 +1,14 @@
 import {
+  readPeImage,
+  type PeImageSection,
+} from "../../domain/native/peImage.js";
+import { MAX_INSPECT_PE_CERTIFICATE_ENTRIES } from "../../domain/native/peCertificates.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import {
   calculateShannonEntropy,
   isLikelyPackedOrEncrypted,
 } from "../ShannonEntropy.js";
+import { parsePeCertificates } from "./PeCertificateParser.js";
 import { parsePeRichHeader, type PeRichHeader } from "./PeRichHeaderParser.js";
 
 export interface PeSectionInfo {
@@ -46,6 +53,7 @@ export interface PeFormatReport {
   readonly richHeader?: PeRichHeader | undefined;
   readonly authenticode?: PeAuthenticodeInfo | undefined;
   readonly overallEntropy?: number | undefined;
+  readonly limitations: readonly string[];
 }
 
 const MACHINE_NAMES: Readonly<Record<number, string>> = {
@@ -87,18 +95,12 @@ const DATA_DIRECTORY_NAMES = [
   "RESERVED",
 ] as const;
 
-/** Decode section flags into semantic booleans. */
 const isExecutableSection = (characteristics: number): boolean =>
   (characteristics & 0x20000000) !== 0; // IMAGE_SCN_MEM_EXECUTE
 
 const isWritableSection = (characteristics: number): boolean =>
   (characteristics & 0x80000000) !== 0; // IMAGE_SCN_MEM_WRITE
 
-const readSectionName = (header: Buffer): string => {
-  return header.subarray(0, 8).toString("utf8").replace(/\0.*$/s, "");
-};
-
-/** Deep-inspect Windows PE executable (PE32 / PE32+) structures, entropy, and telemetry. */
 const decodeDllCharacteristics = (dllCharValue: number): string[] => {
   const flags: string[] = [];
   if ((dllCharValue & 0x0020) !== 0) flags.push("HIGH_ENTROPY_VA");
@@ -109,62 +111,25 @@ const decodeDllCharacteristics = (dllCharValue: number): string[] => {
   return flags;
 };
 
-const parseDataDirectories = (
-  buffer: Buffer,
-  dirOffset: number,
-  count: number,
-  maxOffset: number,
-): {
-  directories: PeDataDirectory[];
-  authenticode?: PeAuthenticodeInfo | undefined;
-} => {
-  const directories: PeDataDirectory[] = [];
-  let certInfo: PeAuthenticodeInfo | undefined;
-  const numDirs = Math.min(count, 16);
-
-  for (let i = 0; i < numDirs; i += 1) {
-    const entryOffset = dirOffset + i * 8;
-    if (entryOffset + 8 > maxOffset || entryOffset + 8 > buffer.length) break;
-    const va = buffer.readUInt32LE(entryOffset);
-    const size = buffer.readUInt32LE(entryOffset + 4);
-    const name = DATA_DIRECTORY_NAMES[i] ?? `DIR_${i}`;
-    directories.push({ name, virtualAddress: va, size });
-
-    if (i === 4 && va > 0 && size > 0 && va + size <= buffer.length) {
-      const revision = size >= 8 ? buffer.readUInt16LE(va + 4) : undefined;
-      const certType = size >= 8 ? buffer.readUInt16LE(va + 6) : undefined;
-      certInfo = { fileOffset: va, size, revision, certificateType: certType };
-    }
-  }
-
-  return { directories, authenticode: certInfo };
-};
-
 export const MAX_TOTAL_SECTION_SCAN_BYTES = 64 * 1024 * 1024; // 64 MiB budget
 const MAX_PE_SECTIONS = 1024;
 
-const parseSections = (
+const buildSectionInfo = (
   buffer: Buffer,
-  sectionsOffset: number,
-  numberOfSections: number,
+  peSections: readonly PeImageSection[],
 ): { sections: PeSectionInfo[]; scannedBytes: number } => {
   const sections: PeSectionInfo[] = [];
   const entropyCache = new Map<string, number>();
   let totalScannedBytes = 0;
 
-  for (let i = 0; i < numberOfSections; i += 1) {
-    const secOffset = sectionsOffset + i * 40;
-    const secBuf = buffer.subarray(secOffset, secOffset + 40);
-    const name = readSectionName(secBuf);
-    const virtualSize = secBuf.readUInt32LE(8);
-    const virtualAddress = secBuf.readUInt32LE(12);
-    const rawSize = secBuf.readUInt32LE(16);
-    const rawOffset = secBuf.readUInt32LE(20);
-    const characteristics = secBuf.readUInt32LE(36);
-
+  for (const sec of peSections) {
+    const rawOffset = sec.raw_offset;
+    const rawSize = sec.raw_size;
     const isRangeComplete =
       rawSize === 0 ||
-      (rawOffset <= buffer.length && rawOffset + rawSize <= buffer.length);
+      (rawOffset >= 0 &&
+        rawOffset <= buffer.length &&
+        rawOffset + rawSize <= buffer.length);
 
     let entropy: number | undefined;
     if (isRangeComplete) {
@@ -190,114 +155,116 @@ const parseSections = (
       entropy !== undefined ? isLikelyPackedOrEncrypted(entropy) : undefined;
 
     sections.push({
-      name,
-      virtualSize,
-      virtualAddress,
+      name: sec.name,
+      virtualSize: sec.virtual_size,
+      virtualAddress: sec.virtual_address,
       rawSize,
       rawOffset,
-      characteristics,
+      characteristics: sec.characteristics,
       entropy: entropy !== undefined ? Number(entropy.toFixed(3)) : undefined,
       isPackedOrEncrypted: isPacked,
-      isExecutable: isExecutableSection(characteristics),
-      isWritable: isWritableSection(characteristics),
+      isExecutable: isExecutableSection(sec.characteristics),
+      isWritable: isWritableSection(sec.characteristics),
     });
   }
 
   return { sections, scannedBytes: totalScannedBytes };
 };
 
-/** Deep-inspect Windows PE executable (PE32 / PE32+) structures, entropy, and telemetry. */
+const inspectAuthenticode = (
+  buffer: Buffer,
+): {
+  readonly authenticode?: PeAuthenticodeInfo | undefined;
+  readonly limitation?: string | undefined;
+} => {
+  try {
+    const parsed = parsePeCertificates(
+      buffer,
+      { path: "<buffer>", sha256: "0".repeat(64), bytes: buffer.length },
+      {
+        path: "/buffer",
+        max_file_bytes: Math.max(64, buffer.length),
+        max_entries: MAX_INSPECT_PE_CERTIFICATE_ENTRIES,
+      },
+    );
+    if (parsed.table === null || parsed.entries.length === 0) {
+      return {};
+    }
+    const first = parsed.entries[0]!;
+    return {
+      authenticode: {
+        fileOffset: parsed.table.location.offset,
+        size: parsed.table.location.bytes,
+        revision: first.revision,
+        certificateType: first.certificate_type,
+      },
+    };
+  } catch (cause: unknown) {
+    return {
+      limitation: `PE certificate table could not be decoded: ${errorMessage(cause)}`,
+    };
+  }
+};
+
+/**
+ * Deep-inspect Windows PE executable (PE32 / PE32+) structures, entropy, and telemetry.
+ * Delegates PE header and Authenticode table decoding to `readPeImage` and `parsePeCertificates`.
+ */
 export const inspectPeFormat = (buffer: Buffer): PeFormatReport | null => {
-  if (buffer.length < 64 || buffer[0] !== 0x4d || buffer[1] !== 0x5a) {
+  let image;
+  try {
+    image = readPeImage(buffer, "headers");
+  } catch {
     return null;
   }
 
-  const peOffset = buffer.readUInt32LE(0x3c);
-  if (
-    peOffset + 24 > buffer.length ||
-    buffer[peOffset] !== 0x50 ||
-    buffer[peOffset + 1] !== 0x45 ||
-    buffer[peOffset + 2] !== 0x00 ||
-    buffer[peOffset + 3] !== 0x00
-  ) {
+  if (image.sections.length > MAX_PE_SECTIONS) {
     return null;
   }
 
-  const fileHeaderOffset = peOffset + 4;
-  const machineCode = buffer.readUInt16LE(fileHeaderOffset);
-  const numberOfSections = buffer.readUInt16LE(fileHeaderOffset + 2);
-  const timeDateStampSec = buffer.readUInt32LE(fileHeaderOffset + 4);
-  const sizeOfOptionalHeader = buffer.readUInt16LE(fileHeaderOffset + 16);
-
-  const optionalHeaderOffset = fileHeaderOffset + 20;
-  if (
-    sizeOfOptionalHeader < 2 ||
-    optionalHeaderOffset + sizeOfOptionalHeader > buffer.length
-  ) {
-    return null;
-  }
-
-  const magic = buffer.readUInt16LE(optionalHeaderOffset);
-  if (magic !== 0x10b && magic !== 0x20b) return null;
-  const is64Bit = magic === 0x20b;
-
-  const minRequiredOptSize = is64Bit ? 112 : 96;
-  if (sizeOfOptionalHeader < minRequiredOptSize) return null;
-
-  const entryPointRva = buffer.readUInt32LE(optionalHeaderOffset + 16);
-  const imageBase = is64Bit
-    ? buffer.readBigUInt64LE(optionalHeaderOffset + 24)
-    : BigInt(buffer.readUInt32LE(optionalHeaderOffset + 28));
-
-  const subsystemCode = buffer.readUInt16LE(optionalHeaderOffset + 68);
-  const dllCharValue = buffer.readUInt16LE(optionalHeaderOffset + 70);
-  const dllCharacteristics = decodeDllCharacteristics(dllCharValue);
-
-  const numRvaAndSizesOffset = optionalHeaderOffset + (is64Bit ? 108 : 92);
-  const numberOfRvaAndSizes = buffer.readUInt32LE(numRvaAndSizesOffset);
-  const dirOffset = optionalHeaderOffset + (is64Bit ? 112 : 96);
-  const optHeaderEnd = optionalHeaderOffset + sizeOfOptionalHeader;
-
-  const { directories: dataDirectories, authenticode } = parseDataDirectories(
-    buffer,
-    dirOffset,
-    numberOfRvaAndSizes,
-    optHeaderEnd,
+  const limitations: string[] = image.pe_header_anomalies.map(
+    (anomaly) => anomaly.message,
+  );
+  const dataDirectories: PeDataDirectory[] = image.pe_data_directories.map(
+    (dir, index) => ({
+      name: DATA_DIRECTORY_NAMES[index] ?? `DIR_${index}`,
+      virtualAddress: dir.address,
+      size: dir.size,
+    }),
   );
 
-  const sectionsOffset = optionalHeaderOffset + sizeOfOptionalHeader;
-  if (
-    numberOfSections > MAX_PE_SECTIONS ||
-    sectionsOffset + numberOfSections * 40 > buffer.length
-  ) {
-    return null;
+  const { authenticode, limitation: certLimitation } =
+    inspectAuthenticode(buffer);
+  if (certLimitation !== undefined) {
+    limitations.push(certLimitation);
   }
-  const { sections, scannedBytes } = parseSections(
-    buffer,
-    sectionsOffset,
-    numberOfSections,
-  );
+
+  const { sections, scannedBytes } = buildSectionInfo(buffer, image.sections);
   const overallEntropy =
     scannedBytes + buffer.length <= MAX_TOTAL_SECTION_SCAN_BYTES
       ? Number(calculateShannonEntropy(buffer).toFixed(3))
       : undefined;
 
+  const machineCode = image.pe_machine;
+  const subsystemCode = image.pe_subsystem;
+
   return {
     machine:
       MACHINE_NAMES[machineCode] ?? `Machine-0x${machineCode.toString(16)}`,
     machineCode,
-    is64Bit,
-    numberOfSections,
-    timestamp: new Date(timeDateStampSec * 1000),
-    entryPointRva,
-    imageBase,
+    is64Bit: image.bits === 64,
+    numberOfSections: image.sections.length,
+    timestamp: new Date(image.pe_timestamp * 1000),
+    entryPointRva: image.pe_entry_point_rva,
+    imageBase: image.image_base,
     subsystem: SUBSYSTEM_NAMES[subsystemCode] ?? `Subsystem-${subsystemCode}`,
     subsystemCode,
-    dllCharacteristics,
+    dllCharacteristics: decodeDllCharacteristics(image.dll_characteristics),
     sections,
     dataDirectories,
     richHeader: parsePeRichHeader(buffer) ?? undefined,
     authenticode,
     overallEntropy,
+    limitations,
   };
 };

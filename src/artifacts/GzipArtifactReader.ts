@@ -1,29 +1,40 @@
 import { createGunzip } from "node:zlib";
-import { PassThrough, pipeline, type Readable } from "node:stream";
+import { Readable } from "node:stream";
 import { basename } from "node:path";
-import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
+import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
+import { readUint16At } from "../domain/binaryContainer.js";
+import { Budget } from "../domain/budget.js";
+import type { ArtifactCommand } from "../domain/artifactGraph.js";
+import { hasGzipHeader } from "../domain/tarFormat.js";
+import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import {
+  ArtifactFileSource,
   ArtifactReaderFailure,
+  ArtifactResourceScope,
+  artifactReadCancelledBy,
+  artifactReaderLimitFailure,
+  assertArtifactReadActive,
+  assertProducedEntry,
   copyArtifactEntry,
-  sameArtifactEntry,
+  normalizeArtifactPath,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { normalizeArtifactPath } from "./ArtifactPaths.js";
-import type { ArtifactCommand } from "../domain/artifactGraph.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import {
-  openRegularFile,
-  type StableRegularFileDescriptor,
-} from "../filesystem/RegularFile.js";
+} from "../resources/index.js";
+import { readArtifactFileBytes } from "./ArtifactFileRange.js";
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
+import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
 
 const MAX_GZIP_FNAME_BYTES = 4_096;
+const CHUNK_BYTES = 64 * 1024;
+const QUEUE_HIGH_WATER_BYTES = 1024 * 1024;
 
 const normalizeSafeGzipFilename = (name: string): string | null => {
-  if (name.includes("/") || name.includes("\\")) {
+  if (name.includes("/") || name.includes("\\") || /^[A-Za-z]:/u.test(name)) {
     return null;
   }
   try {
@@ -49,6 +60,7 @@ const resolveGzipOriginalFilename = async (
   handle: FileHandle,
   size: number,
   fallbackPath: string,
+  signal?: AbortSignal,
 ): Promise<{
   readonly path: string;
   readonly sourcePath?: string;
@@ -58,10 +70,14 @@ const resolveGzipOriginalFilename = async (
   if (size < 10) {
     return { path: fallback, limitations: [] };
   }
-  const headerBuf = Buffer.alloc(Math.min(512, size));
-  const headerRead = await handle.read(headerBuf, 0, headerBuf.length, 0);
-  const prefix = headerBuf.subarray(0, headerRead.bytesRead);
-  if (prefix.length < 10 || prefix[0] !== 0x1f || prefix[1] !== 0x8b) {
+  const prefix = await readArtifactFileBytes(
+    handle,
+    0,
+    Math.min(512, size),
+    size,
+    signal,
+  );
+  if (!hasGzipHeader(prefix)) {
     return { path: fallback, limitations: [] };
   }
   const flags = prefix[3] ?? 0;
@@ -81,7 +97,7 @@ const resolveGzipOriginalFilename = async (
         ],
       };
     }
-    const xlen = prefix.readUInt16LE(10);
+    const xlen = readUint16At(prefix, 10, true);
     fnameOffset = 12 + xlen;
   }
 
@@ -101,9 +117,13 @@ const resolveGzipOriginalFilename = async (
     fnameSlice = prefix.subarray(fnameOffset, nullInPrefix + 1);
   } else {
     const readLen = Math.min(MAX_GZIP_FNAME_BYTES, size - fnameOffset);
-    const fnameBuf = Buffer.alloc(readLen);
-    const fnameRead = await handle.read(fnameBuf, 0, readLen, fnameOffset);
-    fnameSlice = fnameBuf.subarray(0, fnameRead.bytesRead);
+    fnameSlice = await readArtifactFileBytes(
+      handle,
+      fnameOffset,
+      readLen,
+      size,
+      signal,
+    );
   }
 
   const nullByte = fnameSlice.indexOf(0);
@@ -121,6 +141,7 @@ const resolveGzipOriginalFilename = async (
   if (normalizedName === null) {
     return {
       path: fallback,
+      sourcePath: name,
       limitations: [
         "GZIP FNAME header contains an unsafe or empty path; substituted carrier-derived filename.",
       ],
@@ -134,194 +155,276 @@ const resolveGzipOriginalFilename = async (
   };
 };
 
+async function* compressedChunks(
+  handle: Pick<FileHandle, "read">,
+  size: number,
+  signal: AbortSignal,
+): AsyncGenerator<Buffer> {
+  if (size <= 0) return;
+  yield* readFileHandleChunks(handle, { start: 0, end: size - 1, signal });
+}
+
+const gzipStreamFailure = (
+  cause: unknown,
+  signal: AbortSignal,
+): ArtifactReaderFailure => {
+  if (cause instanceof ArtifactReaderFailure) return cause;
+  if (artifactReadCancelledBy(cause, signal) || signal.aborted) {
+    return new ArtifactReaderFailure(
+      "cancelled",
+      "GZIP member read cancelled",
+      {
+        cause: signal.reason ?? cause,
+      },
+    );
+  }
+  const message = errorMessage(cause);
+  return new ArtifactReaderFailure(
+    "format",
+    `GZIP decompression error: ${message}`,
+    { cause },
+  );
+};
+
 /** Single-stream decompression reader for GZIP archives. */
 export class GzipArtifactReader implements ArtifactReader {
   readonly format = "gzip" as const;
-  private handle: FileHandle | undefined;
-  private owner: OwnedFileHandle | undefined;
-  private fileSize = 0;
-  private cachedEntry: ArtifactEntry | null = null;
-  private closed = false;
+  readonly #scope = new ArtifactResourceScope();
+  readonly #streams = new Map<Readable, AbortController>();
+  readonly #source: ArtifactFileSource;
+  readonly #preparation = new ArtifactPreparation();
+  readonly #expandedBytes: number | undefined;
+  #cachedEntry: ArtifactEntry | undefined;
+  #closing = false;
 
   constructor(
     readonly path: string,
-    private readonly admitted?: StableRegularFileDescriptor,
+    admitted?: StableRegularFileDescriptor,
+    expandedBytes?: number,
   ) {
-    if (admitted !== undefined) {
-      this.handle = admitted.handle;
-      this.fileSize = admitted.initial.size;
-    }
+    this.#source = new ArtifactFileSource(path, "gzip archive", admitted);
+    this.#expandedBytes = expandedBytes;
   }
 
   provenance(): readonly ArtifactCommand[] {
     return [];
   }
 
-  private async ensureOpen(
+  async prepareContainer(
+    expectedSha256: string,
     signal?: AbortSignal,
-  ): Promise<{ handle: FileHandle; size: number }> {
-    if (this.closed) {
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "GzipArtifactReader is closed",
-      );
-    }
-    if (this.handle !== undefined) {
-      return { handle: this.handle, size: this.fileSize };
-    }
-    const handle = await openRegularFile(this.path, {
-      symlinks: "follow",
-      signal,
+  ): Promise<void> {
+    await this.#scope.run(async () => {
+      this.#assertOpen(signal);
+      await this.#source.bindSha256(expectedSha256, signal);
     });
-    this.handle = handle;
-    this.owner = new OwnedFileHandle(handle);
-    try {
-      const metadata: Stats = await handle.stat();
-      this.fileSize = metadata.size;
-    } catch (cause) {
-      await this.close();
-      throw cause;
-    }
-    return { handle: this.handle, size: this.fileSize };
   }
 
   async *entries(
     signal?: AbortSignal,
     options?: ArtifactTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
-    if (this.closed) {
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "GzipArtifactReader was already closed",
+    await this.#scope.run(async () => {
+      this.#assertOpen(signal);
+      if (this.#cachedEntry !== undefined) await this.#source.read(signal);
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
       );
-    }
-    if (this.cachedEntry === null) {
-      const { handle, size } = await this.ensureOpen(signal);
-      const {
-        path: innerName,
-        sourcePath,
-        limitations,
-      } = await resolveGzipOriginalFilename(handle, size, this.path);
-
-      this.cachedEntry = {
-        path: innerName,
-        ...(sourcePath !== undefined ? { sourcePath } : {}),
-        kind: "file",
-        declaredSize: null,
-        compressedSize: size,
-        executable: false,
-        encrypted: false,
-        byteOffset: null,
-        declaredIntegrity: null,
-        unpacked: false,
-        limitations,
-        adapterKey: this.path,
-      };
-    }
-    if (signal?.aborted) {
-      throw new ArtifactReaderFailure("cancelled", "Gzip traversal cancelled", {
-        cancellation: { reason: signal.reason },
-      });
-    }
+    });
+    this.#assertOpen(signal);
+    const current = this.#cachedEntry!;
     options?.onCoverage?.({
       status: "complete",
-      limitations: [...this.cachedEntry.limitations],
+      limitations: [...current.limitations],
     });
-    yield copyArtifactEntry(this.cachedEntry);
+    yield copyArtifactEntry(current);
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    if (this.closed) {
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "GzipArtifactReader is closed",
+    return this.#scope.run(async () => {
+      this.#assertOpen(signal);
+      assertProducedEntry(
+        entry,
+        this.#cachedEntry,
+        "GZIP entry does not match its owning inventory",
       );
-    }
-    const { handle } = await this.ensureOpen(signal);
-    const current = this.cachedEntry;
-    if (current === null || !sameArtifactEntry(current, entry)) {
-      throw new ArtifactReaderFailure(
-        "path",
-        `Unknown artifact entry: ${entry.path}`,
+      const { handle, initial } = await this.#source.read(signal);
+      this.#assertOpen(signal);
+      const controller = new AbortController();
+      const budget = new Budget(
+        this.#expandedBytes ?? artifactExpansionBudgetBytes(initial.size),
       );
-    }
-    if (signal?.aborted) {
-      throw new ArtifactReaderFailure("cancelled", "Decompression cancelled", {
-        cancellation: { reason: signal.reason },
-      });
-    }
-
-    const inputStream = handle.createReadStream({
-      start: 0,
-      autoClose: false,
+      return ownAsyncArtifactStream(
+        this.#decompressChunks(handle, initial.size, budget, controller.signal),
+        controller,
+        {
+          scope: this.#scope,
+          streams: this.#streams,
+          signal,
+          label: "gzip",
+          highWaterMark: CHUNK_BYTES,
+        },
+      );
     });
-    const gunzip = createGunzip();
-    const output = new PassThrough();
-
-    let totalBytes = 0;
-    const MAX_GZIP_EXPANSION = 512 * 1024 * 1024; // 512 MiB budget
-    gunzip.on("data", (chunk: Buffer) => {
-      totalBytes += chunk.length;
-      if (totalBytes > MAX_GZIP_EXPANSION) {
-        const err = new ArtifactReaderFailure(
-          "limit",
-          `GZIP decompression exceeded maximum expansion budget of ${MAX_GZIP_EXPANSION} bytes`,
-        );
-        inputStream.destroy();
-        gunzip.destroy(err);
-        output.destroy(err);
-      }
-    });
-
-    pipeline(inputStream, gunzip, output, (err) => {
-      if (err) {
-        if (!inputStream.destroyed) inputStream.destroy();
-        const failure =
-          err instanceof ArtifactReaderFailure
-            ? err
-            : new ArtifactReaderFailure(
-                "format",
-                `GZIP decompression error: ${err.message}`,
-                { cause: err },
-              );
-        output.destroy(failure);
-      }
-    });
-
-    output.on("close", () => {
-      if (!gunzip.destroyed) gunzip.destroy();
-    });
-
-    if (signal) {
-      const onAbort = () => {
-        const failure = new ArtifactReaderFailure(
-          "cancelled",
-          "Decompression cancelled",
-          { cancellation: { reason: signal.reason } },
-        );
-        inputStream.destroy();
-        gunzip.destroy();
-        output.destroy(failure);
-      };
-      if (signal.aborted) {
-        onAbort();
-      } else {
-        signal.addEventListener("abort", onAbort, { once: true });
-        output.on("close", () => {
-          signal.removeEventListener("abort", onAbort);
-        });
-      }
-    }
-
-    return output;
   }
 
   async close(): Promise<void> {
-    this.closed = true;
-    if (this.owner !== undefined) {
-      await this.owner.close();
-      this.owner = undefined;
+    this.#closing = true;
+    for (const [stream, controller] of this.#streams) {
+      const cause = new ArtifactReaderFailure(
+        "unavailable",
+        "GZIP reader closed",
+      );
+      controller.abort(cause);
+      stream.destroy(cause);
     }
-    this.handle = undefined;
+    await this.#scope.close();
+    await this.#source.close();
+    this.#cachedEntry = undefined;
+    this.#preparation.clear();
+  }
+
+  #assertOpen(signal?: AbortSignal): void {
+    assertArtifactReadActive(signal);
+    if (this.#closing) {
+      throw new ArtifactReaderFailure("unavailable", "GZIP reader is closed");
+    }
+  }
+
+  async #prepare(signal?: AbortSignal): Promise<void> {
+    const { handle, initial } = await this.#source.read(signal);
+    const {
+      path: innerName,
+      sourcePath,
+      limitations,
+    } = await resolveGzipOriginalFilename(
+      handle,
+      initial.size,
+      this.path,
+      signal,
+    );
+    await this.#source.read(signal);
+    this.#assertOpen(signal);
+    this.#cachedEntry = {
+      path: innerName,
+      ...(sourcePath !== undefined ? { sourcePath } : {}),
+      kind: "file",
+      declaredSize: null,
+      compressedSize: initial.size,
+      executable: false,
+      encrypted: false,
+      byteOffset: null,
+      declaredIntegrity: null,
+      unpacked: false,
+      limitations,
+      adapterKey: this.path,
+    };
+  }
+
+  /**
+   * Pull decompressed chunks over borrowed `handle.read()` ranges so neither
+   * cancellation nor zlib errors ever close the caller's FileHandle, and
+   * convert decompression failures into tagged `ArtifactReaderFailure` before
+   * they reach the consumer stream.
+   */
+  async *#decompressChunks(
+    handle: Pick<FileHandle, "read">,
+    size: number,
+    budget: Budget,
+    signal: AbortSignal,
+  ): AsyncGenerator<Buffer> {
+    const input = Readable.from(compressedChunks(handle, size, signal), {
+      objectMode: false,
+    });
+    const gunzip = createGunzip();
+    const queue: Buffer[] = [];
+    let queuedBytes = 0;
+    const streamState: {
+      status: "open" | "ended" | "failed";
+      failure?: ArtifactReaderFailure;
+    } = { status: "open" };
+    let wake: (() => void) | undefined;
+
+    const notify = (): void => {
+      const resolve = wake;
+      wake = undefined;
+      resolve?.();
+    };
+
+    const fail = (cause: unknown): void => {
+      if (streamState.status === "open") {
+        streamState.status = "failed";
+        streamState.failure = gzipStreamFailure(cause, signal);
+      }
+      if (!input.destroyed) input.destroy();
+      if (!gunzip.destroyed) gunzip.destroy();
+      notify();
+    };
+
+    input.on("error", fail);
+    gunzip.on("error", fail);
+    gunzip.on("data", (chunk: Buffer) => {
+      if (streamState.status !== "open") return;
+      try {
+        budget.charge(chunk.length, () =>
+          artifactReaderLimitFailure(
+            "artifact_limits.expanded_bytes",
+            budget.maximum,
+            "bytes",
+            undefined,
+            "memory",
+          ),
+        );
+      } catch (cause: unknown) {
+        fail(cause);
+        return;
+      }
+      queue.push(chunk);
+      queuedBytes += chunk.length;
+      if (queuedBytes > QUEUE_HIGH_WATER_BYTES) gunzip.pause();
+      notify();
+    });
+    gunzip.once("end", () => {
+      if (streamState.status === "open") streamState.status = "ended";
+      notify();
+    });
+
+    input.pipe(gunzip);
+
+    const onAbort = (): void => {
+      fail(
+        new ArtifactReaderFailure("cancelled", "GZIP member read cancelled", {
+          cause: signal.reason,
+        }),
+      );
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+
+    try {
+      for (;;) {
+        assertArtifactReadActive(signal);
+        const next = queue.shift();
+        if (next !== undefined) {
+          queuedBytes -= next.length;
+          if (queuedBytes <= QUEUE_HIGH_WATER_BYTES / 2) gunzip.resume();
+          yield next;
+          continue;
+        }
+        if (streamState.status === "ended") return;
+        if (streamState.status === "failed") throw streamState.failure!;
+        gunzip.resume();
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      }
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+      input.unpipe(gunzip);
+      if (!input.destroyed) input.destroy();
+      if (!gunzip.destroyed) gunzip.destroy();
+    }
   }
 }

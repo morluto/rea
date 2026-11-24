@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
+import { analyzeArtifactFiles } from "../../../tests/fixtures/javascriptArtifactAnalysis.js";
 
 const HASH = "a".repeat(64);
 
-it("retains resolved source declarations, Unicode spelling and null source positions", () => {
+it("retains resolved source declarations, Unicode spelling and null source positions", async () => {
   const sourceMapText = JSON.stringify({
     version: 3,
     file: "main.js",
@@ -14,7 +14,7 @@ it("retains resolved source declarations, Unicode spelling and null source posit
     names: [],
     mappings: "",
   });
-  const analysis = analyzeJavaScriptArtifactFiles({
+  const { analysis } = await analyzeArtifactFiles({
     files: [
       {
         path: "dist/main.js.map",

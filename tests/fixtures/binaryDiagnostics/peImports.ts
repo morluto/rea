@@ -8,11 +8,41 @@ const SPLIT_GAP_BYTES = 0x200;
 export const peImportFixtureOffset = (rva: number): number =>
   rva - SECTION_RVA + SECTION_OFFSET;
 
-export type PeImportFixtureFunction =
+interface PeImportLayout {
+  readonly sectionRva: number;
+  readonly sectionOffset: number;
+  readonly headerBytes: number;
+  /** Written only when supplied; the default fixtures leave both fields zero. */
+  readonly sectionAlignment?: number | undefined;
+  readonly fileAlignment?: number | undefined;
+}
+
+const peImportLayout = (
+  requested: Partial<PeImportLayout> | undefined,
+): PeImportLayout => ({
+  sectionRva: requested?.sectionRva ?? SECTION_RVA,
+  sectionOffset: requested?.sectionOffset ?? SECTION_OFFSET,
+  headerBytes: requested?.headerBytes ?? HEADER_BYTES,
+  sectionAlignment: requested?.sectionAlignment,
+  fileAlignment: requested?.fileAlignment,
+});
+
+const writePeImportAlignments = (
+  bytes: Buffer,
+  optional: number,
+  layout: PeImportLayout,
+): void => {
+  if (layout.sectionAlignment !== undefined)
+    bytes.writeUInt32LE(layout.sectionAlignment, optional + 32);
+  if (layout.fileAlignment !== undefined)
+    bytes.writeUInt32LE(layout.fileAlignment, optional + 36);
+};
+
+type PeImportFixtureFunction =
   | { readonly name: string; readonly hint?: number }
   | { readonly ordinal: number };
 
-export interface PeImportFixtureDll {
+interface PeImportFixtureDll {
   readonly name: string;
   readonly functions: readonly PeImportFixtureFunction[];
 }
@@ -35,9 +65,20 @@ export const peImportImage = (
     readonly delayDirectory?: boolean;
     readonly sectionBytes?: number;
     readonly splitAt?: number;
+    /**
+     * Section geometry, when the image must not use the default one.
+     *
+     * `sectionAlignment`/`fileAlignment` are written only when supplied; the default fixtures
+     * leave those optional-header fields zero, and changing that would rewrite their bytes.
+     */
+    readonly layout?: Partial<PeImportLayout>;
   } = {},
 ): Buffer => {
   const sectionBytes = options.sectionBytes ?? SECTION_BYTES;
+  const layout = peImportLayout(options.layout);
+  const sectionRva = layout.sectionRva;
+  const sectionOffset = layout.sectionOffset;
+  const headerBytes = layout.headerBytes;
   const bits = options.bits ?? 64;
   const dlls = options.dlls ?? [
     {
@@ -49,7 +90,7 @@ export const peImportImage = (
     },
   ];
   const delayDlls = options.delayDlls ?? [];
-  const bytes = Buffer.alloc(SECTION_OFFSET + sectionBytes);
+  const bytes = Buffer.alloc(sectionOffset + sectionBytes);
   const wide = bits === 64;
   const thunkSize = wide ? 8 : 4;
   bytes.write("MZ", 0, "ascii");
@@ -65,21 +106,22 @@ export const peImportImage = (
   if (wide) bytes.writeBigUInt64LE(0x180000000n, optional + 24);
   else bytes.writeUInt32LE(0x10000000, optional + 28);
   bytes.writeUInt32LE(16, optional + directoriesAt - 4);
-  bytes.writeUInt32LE(HEADER_BYTES, optional + 60);
+  bytes.writeUInt32LE(headerBytes, optional + 60);
+  writePeImportAlignments(bytes, optional, layout);
   const section = optional + optionalSize;
   bytes.write(".idata", section, "ascii");
   bytes.writeUInt32LE(sectionBytes, section + 8);
-  bytes.writeUInt32LE(SECTION_RVA, section + 12);
+  bytes.writeUInt32LE(sectionRva, section + 12);
   bytes.writeUInt32LE(sectionBytes, section + 16);
-  bytes.writeUInt32LE(SECTION_OFFSET, section + 20);
+  bytes.writeUInt32LE(sectionOffset, section + 20);
   bytes.writeUInt32LE(0x40000040, section + 36);
 
-  const at = (rva: number) => rva - SECTION_RVA + SECTION_OFFSET;
+  const at = (rva: number) => rva - sectionRva + sectionOffset;
   const writeThunk = (rva: number, value: bigint): void => {
     if (wide) bytes.writeBigUInt64LE(value, at(rva));
     else bytes.writeUInt32LE(Number(value), at(rva));
   };
-  let cursor = SECTION_RVA;
+  let cursor = sectionRva;
   const place = (size: number): number => {
     const rva = cursor;
     cursor += size;
@@ -152,22 +194,66 @@ export const peImportImage = (
   if (options.splitAt === undefined) return bytes;
   const head = options.splitAt;
   const tail = sectionBytes - head;
-  const moved = SECTION_OFFSET + sectionBytes + SPLIT_GAP_BYTES;
+  const moved = sectionOffset + sectionBytes + SPLIT_GAP_BYTES;
   const split = Buffer.alloc(moved + tail);
-  bytes.copy(split, 0, 0, SECTION_OFFSET + head);
-  split.fill(0xcc, SECTION_OFFSET + head, moved);
-  bytes.copy(split, moved, SECTION_OFFSET + head);
+  bytes.copy(split, 0, 0, sectionOffset + head);
+  split.fill(0xcc, sectionOffset + head, moved);
+  bytes.copy(split, moved, sectionOffset + head);
   split.writeUInt16LE(2, 134);
   split.writeUInt32LE(head, section + 8);
   split.writeUInt32LE(head, section + 16);
   const second = section + 40;
   split.write(".idata2", second, "ascii");
   split.writeUInt32LE(tail, second + 8);
-  split.writeUInt32LE(SECTION_RVA + head, second + 12);
+  split.writeUInt32LE(sectionRva + head, second + 12);
   split.writeUInt32LE(tail, second + 16);
   split.writeUInt32LE(moved, second + 20);
   split.writeUInt32LE(0x40000040, second + 36);
   return split;
+};
+
+/** A two-byte hint ends one section; its name begins at the next RVA in another file span. */
+export const peImportHintBoundaryImage = (
+  bits: 32 | 64,
+  kind: "standard" | "delay",
+  gap: "none" | "hint" | "name" = "none",
+): Buffer => {
+  const dll = {
+    name: "KERNEL32.dll",
+    functions: [{ name: "GetProcAddress", hint: 7 }],
+  };
+  const sectionBytes = 0x2000;
+  const splitAt = 0x1000;
+  const bytes = peImportImage({
+    bits,
+    sectionBytes,
+    splitAt,
+    ...(kind === "standard" ? { dlls: [dll] } : { dlls: [], delayDlls: [dll] }),
+  });
+  const descriptor = peImportFixtureOffset(SECTION_RVA);
+  const hintRva = SECTION_RVA + splitAt - 2;
+  const ilt = bytes.readUInt32LE(descriptor + (kind === "standard" ? 0 : 16));
+  const iat = bytes.readUInt32LE(descriptor + (kind === "standard" ? 16 : 12));
+  for (const table of [ilt, iat]) {
+    const at = peImportFixtureOffset(table);
+    if (bits === 64) bytes.writeBigUInt64LE(BigInt(hintRva), at);
+    else bytes.writeUInt32LE(hintRva, at);
+  }
+  bytes.writeUInt16LE(7, peImportFixtureOffset(hintRva));
+  bytes.write(
+    "GetProcAddress\0",
+    SECTION_OFFSET + sectionBytes + SPLIT_GAP_BYTES,
+    "ascii",
+  );
+  // Aligned PE section layout; a DLL need not declare an entry point.
+  bytes.writeUInt16LE(0x2002, 150);
+  bytes.writeUInt32LE(0x1000, 152 + 32);
+  bytes.writeUInt32LE(0x200, 152 + 36);
+  bytes.writeUInt32LE(gap === "name" ? 0x4000 : 0x3000, 152 + 56);
+  const section = 152 + (bits === 64 ? 112 : 96) + 16 * 8;
+  if (gap === "hint") bytes.writeUInt32LE(splitAt - 1, section + 16);
+  if (gap === "name") bytes.writeUInt32LE(0x3000, section + 40 + 12);
+  return bytes;
 };
 
 /** PE image whose optional header admits no import data directory. */

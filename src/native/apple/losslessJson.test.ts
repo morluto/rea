@@ -126,3 +126,34 @@ it("refuses nesting beyond the selected depth in kept and skipped values", () =>
   ).toThrow(expect.objectContaining({ reason: "depth" }));
   expect(parseLosslessJson(deep, 0, undefined, { maxDepth: 20 }).end).toBe(40);
 });
+
+it("refuses JSON string escapes for unpaired surrogates", () => {
+  for (const text of ['{"a":"\\ud800"}', '{"a":"ok\\udfff"}'])
+    expect(() => parseLosslessJson(text, 0)).toThrow(
+      expect.objectContaining({
+        reason: "syntax",
+        message: expect.stringContaining("surrogate"),
+      }),
+    );
+  expect(() => parseLosslessJson('{"a":"\\ud83d\\ude00"}', 0)).not.toThrow();
+});
+
+it("applies the surrogate check to skipped strings and nested keys", () => {
+  const skipped: JsonShape = { kind: "object", members: {} };
+  for (const text of [
+    '{"extra":"\\ud800"}',
+    '{"extra":["\\ud800"]}',
+    '{"extra":{"\\ud800":1}}',
+  ])
+    expect(() => parseLosslessJson(text, 0, skipped)).toThrow(
+      expect.objectContaining({
+        reason: "syntax",
+        message: expect.stringContaining("surrogate"),
+      }),
+    );
+  expect(parseLosslessJson('{"extra":"ok"}', 0, skipped).value).toEqual({
+    kind: "object",
+    members: {},
+    unlisted: [],
+  });
+});

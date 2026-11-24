@@ -1,9 +1,12 @@
 /**
  * Python bytecode (.pyc) format identification, header parsing, and metadata extraction.
- * Supports Python 2.7 through Python 3.13 (including PEP 552 hash-based pycs).
+ * Supports Python 2.4 through Python 3.15 (including PEP 552 hash-based pycs).
  */
 
-import { PYTHON_PYC_MAGIC_TABLE } from "../domain/python/pythonPyc.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
+import { unsupportedInput } from "../domain/parseFailure.js";
+import { pythonBytecodeIdentity } from "../domain/python/pythonBytecodeIdentity.js";
+import { interpretPythonPycHeaderFlags } from "../domain/python/pythonPyc.js";
 
 export interface PythonBytecodeMetadata {
   readonly version: string;
@@ -15,15 +18,15 @@ export interface PythonBytecodeMetadata {
   readonly codeObjectOffset: number;
 }
 
-/** Legacy and extended Python magic numbers mapped to version identifiers. */
-const LEGACY_AND_EXTENDED_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
+/** Legacy Python 2.x and 3.0–3.6 magic numbers not in the standalone 3.7+ decoder table. */
+const LEGACY_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
   // Python 2.x
-  62211: "2.7",
-  62161: "2.6",
-  62061: "2.5",
   62011: "2.4",
+  62061: "2.5",
+  62161: "2.6",
+  62211: "2.7",
 
-  // Python 3.0 to 3.6 and 3.14
+  // Python 3.0 to 3.6 (final release magics last so version->magic resolves to final)
   3000: "3.0",
   3131: "3.0",
   3141: "3.1",
@@ -34,19 +37,34 @@ const LEGACY_AND_EXTENDED_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
   3350: "3.5",
   3351: "3.5",
   3379: "3.6",
-  3627: "3.14",
 };
 
-/** Python magic numbers mapped to human-readable version identifiers. */
-const PYTHON_MAGIC_VERSIONS: Readonly<Record<number, string>> = {
-  ...Object.fromEntries(
-    Array.from(PYTHON_PYC_MAGIC_TABLE.entries(), ([magic, entry]) => [
-      magic,
-      entry.python_version,
-    ]),
-  ),
-  ...LEGACY_AND_EXTENDED_MAGIC_VERSIONS,
+/** Final release magic numbers used when constructing headers from a version string. */
+const CANONICAL_VERSION_TO_MAGIC: Readonly<Record<string, number>> = {
+  "2.4": 62011,
+  "2.5": 62061,
+  "2.6": 62161,
+  "2.7": 62211,
+  "3.0": 3131,
+  "3.1": 3151,
+  "3.2": 3180,
+  "3.3": 3230,
+  "3.4": 3310,
+  "3.5": 3351,
+  "3.6": 3379,
+  "3.7": 3394,
+  "3.8": 3413,
+  "3.9": 3425,
+  "3.10": 3439,
+  "3.11": 3495,
+  "3.12": 3531,
+  "3.13": 3571,
+  "3.14": 3627,
+  "3.15": 3666,
 };
+
+const lookupMagicVersion = (magic: number): string | undefined =>
+  pythonBytecodeIdentity(magic)?.pythonVersion ?? LEGACY_MAGIC_VERSIONS[magic];
 
 const isEightByteHeader = (major: number, minor: number): boolean =>
   major === 2 || (major === 3 && minor < 3);
@@ -56,7 +74,7 @@ const isTwelveByteHeader = (
   major: number,
   minor: number,
 ): boolean =>
-  PYTHON_PYC_MAGIC_TABLE.get(magic)?.header_bytes === 12 ||
+  pythonBytecodeIdentity(magic)?.headerBytes === 12 ||
   (major === 3 && minor >= 3 && minor < 7);
 
 const hasPythonMagicFraming = (bytes: Uint8Array): boolean => {
@@ -64,7 +82,7 @@ const hasPythonMagicFraming = (bytes: Uint8Array): boolean => {
   // Pyc files end the 4-byte header prefix with \r\n (0x0d, 0x0a)
   if (bytes[2] !== 0x0d || bytes[3] !== 0x0a) return false;
   const magic = bytes[0]! | (bytes[1]! << 8);
-  return Object.hasOwn(PYTHON_MAGIC_VERSIONS, magic);
+  return lookupMagicVersion(magic) !== undefined;
 };
 
 /** Verify if bytes begin with a structurally valid Python bytecode (.pyc) header. */
@@ -75,7 +93,7 @@ export const isPythonBytecode = (bytes: Uint8Array): boolean =>
 
 /** Identify Python release version from raw magic number. */
 export const resolvePythonVersion = (magic: number): string => {
-  return PYTHON_MAGIC_VERSIONS[magic] ?? `Python-magic-${magic}`;
+  return lookupMagicVersion(magic) ?? `Python-magic-${magic}`;
 };
 
 /**
@@ -85,8 +103,9 @@ export const parsePythonBytecodeHeader = (
   bytes: Buffer,
 ): PythonBytecodeMetadata | null => {
   if (!hasPythonMagicFraming(bytes)) return null;
+  const reader = new BinaryReader(bytes, true, "python-pyc");
 
-  const magic = bytes.readUInt16LE(0);
+  const magic = reader.u16(0);
   const version = resolvePythonVersion(magic);
   const [majorStr, minorStr] = version.split(".");
   const major = Number(majorStr);
@@ -95,7 +114,7 @@ export const parsePythonBytecodeHeader = (
   // Python 2.x and Python 3.0 to 3.2: 4-byte magic + 4-byte timestamp = 8 bytes
   if (isEightByteHeader(major, minor)) {
     if (bytes.length < 8) return null;
-    const timestampSec = bytes.readUInt32LE(4);
+    const timestampSec = reader.u32(4);
     return {
       version,
       magicNumber: magic,
@@ -108,8 +127,8 @@ export const parsePythonBytecodeHeader = (
   // Python 3.3 to 3.6 (and early 3.7 12-byte magics): 4-byte magic + 4-byte timestamp + 4-byte size = 12 bytes
   if (isTwelveByteHeader(magic, major, minor)) {
     if (bytes.length < 12) return null;
-    const timestampSec = bytes.readUInt32LE(4);
-    const sourceSize = bytes.readUInt32LE(8);
+    const timestampSec = reader.u32(4);
+    const sourceSize = reader.u32(8);
     return {
       version,
       magicNumber: magic,
@@ -122,25 +141,24 @@ export const parsePythonBytecodeHeader = (
 
   // Python 3.7+ (PEP 552): 4-byte magic + 4-byte bitfield + 8-byte hash/timestamp + 4-byte size = 16 bytes
   if (bytes.length < 16) return null;
-  const bitfield = bytes.readUInt32LE(4);
-  if ((bitfield & ~0x03) !== 0 || bitfield === 0x02) {
+  const bitfield = reader.u32(4);
+  const flags = interpretPythonPycHeaderFlags(bitfield);
+  if (flags.hasUnknownFlags) {
     return null;
   }
-  const isHashBased = (bitfield & 0x01) !== 0;
 
-  if (isHashBased) {
-    const checkHash = (bitfield & 0x02) !== 0;
+  if (flags.hashBased) {
     return {
       version,
       magicNumber: magic,
       isHashBased: true,
-      hashMode: checkHash ? "checked" : "unchecked",
+      hashMode: flags.checkSource ? "checked" : "unchecked",
       codeObjectOffset: 16,
     };
   }
 
-  const timestampSec = bytes.readUInt32LE(8);
-  const sourceSize = bytes.readUInt32LE(12);
+  const timestampSec = reader.u32(8);
+  const sourceSize = reader.u32(12);
 
   return {
     version,
@@ -152,23 +170,16 @@ export const parsePythonBytecodeHeader = (
   };
 };
 
-const VERSION_TO_MAGIC: Record<string, number> = Object.entries(
-  PYTHON_MAGIC_VERSIONS,
-).reduce<Record<string, number>>((acc, [magic, ver]) => {
-  acc[ver] = Number(magic);
-  return acc;
-}, {});
-
 /** Resolve magic number from Python version string (e.g., "3.10", "2.7", "3.11.2"). */
 export const resolveMagicFromVersion = (version: string): number | null => {
-  if (Object.hasOwn(VERSION_TO_MAGIC, version)) {
-    return VERSION_TO_MAGIC[version]!;
+  if (Object.hasOwn(CANONICAL_VERSION_TO_MAGIC, version)) {
+    return CANONICAL_VERSION_TO_MAGIC[version]!;
   }
   const parts = version.split(".");
   if (parts.length >= 2) {
     const key = `${parts[0]}.${parts[1]}`;
-    if (Object.hasOwn(VERSION_TO_MAGIC, key)) {
-      return VERSION_TO_MAGIC[key]!;
+    if (Object.hasOwn(CANONICAL_VERSION_TO_MAGIC, key)) {
+      return CANONICAL_VERSION_TO_MAGIC[key]!;
     }
   }
   return null;
@@ -193,7 +204,8 @@ export const buildPythonBytecodeHeader = (
   } else {
     const resolved = resolveMagicFromVersion(versionOrMagic);
     if (resolved === null) {
-      throw new Error(
+      throw unsupportedInput(
+        "python-pyc",
         `Unsupported or unknown Python bytecode version: ${versionOrMagic}`,
       );
     }

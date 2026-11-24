@@ -20,7 +20,7 @@ or an MCP client. It does not promise support for every REA provider.
    | `analysis.stderr` | Original diagnostics/progress; an empty file is normal when there are none.                        |
    | `exit-code.txt`   | Original analysis process exit code.                                                               |
 
-The example pins Node.js 24.22.1, REA 6.7.0, and action commit revisions. It installs
+The example pins Node.js 24.22.1, the current REA release, and action commit revisions. It installs
 REA into the runner's temporary directory rather than changing the application's
 dependencies. This pins the tool version, not every transitive npm dependency;
 use a reviewed, committed package lock and `npm ci` if your integration requires
@@ -65,14 +65,14 @@ cancellation can still prevent upload.
 that analysis was complete. A successful operation can retain partial analysis,
 unknowns, and limitations. Exit zero is not a security verdict, proof of complete
 coverage, or a policy gate for those findings. Inspect the saved Evidence and
-coverage before making such a decision. See [output and exit status](cli.md#output-and-exit-status).
+coverage before making such a decision. See [output and exit status](getting-started/cli.md#output-and-exit-status).
 
 A nonzero exit can represent invalid input, unavailable tooling, an unsupported
 host/capability, or another operation failure. Keep the original JSON error (when
 emitted), stderr, and exit code, and use their category/message to diagnose it.
 An early startup failure may leave `analysis.json` empty; do not parse that as
 successful analysis. Select a supported operation or explicitly provision its
-[documented prerequisites](installation.md); do not silently switch providers,
+[documented prerequisites](getting-started/installation.md); do not silently switch providers,
 execute the artifact, or ignore the failure to obtain a green job.
 
 To exercise the failure path, temporarily set `ARTIFACT_PATH` to
@@ -84,7 +84,7 @@ The retained JSON error has category `unsupported_target`; the step exits nonzer
 Restore the correct path before using the example normally.
 
 To exercise partial analysis, append `export const broken = ;` to the demo's
-JavaScript. REA 6.7.0 retains `data.normalized_result.statistics.parse_failures`
+JavaScript. The pinned REA retains `data.normalized_result.statistics.parse_failures`
 and an incomplete-coverage limitation while the operation can still exit zero.
 Inspect those facts instead of treating process success as full coverage. The
 report JSON and diagnostics remain unfiltered in all three cases.

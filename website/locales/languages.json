@@ -130,5 +130,17 @@
     "name": "Roman Urdu",
     "readme": "docs/readme/README_ur-Latn.md",
     "dir": "ltr"
+  },
+  {
+    "code": "ro",
+    "name": "Română",
+    "readme": "docs/readme/README_ro.md",
+    "dir": "ltr"
+  },
+  {
+    "code": "bg",
+    "name": "Български",
+    "readme": "docs/readme/README_bg.md",
+    "dir": "ltr"
   }
 ]

@@ -1,5 +1,7 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { isDeepStrictEqual } from "node:util";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
-import type { ProviderIdentity } from "./AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioCapture } from "../domain/browserScenarioCapture.js";
 import {
@@ -7,26 +9,36 @@ import {
   type Evidence,
   type EvidenceObservation,
 } from "../domain/evidence.js";
-import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+
+/** The own JSON capture and the facts admitted by its named output contract. */
+export interface BrowserScenarioEvidenceReport {
+  readonly source: JsonValue;
+  readonly facts: BrowserScenarioCapture;
+}
 
 const browserScenarioParameters = (
   scenario: BrowserScenario,
-): EvidenceObservation["parameters"] => ({
-  ...jsonObjectSchema.parse(scenario),
-  scenario_sha256: digestCanonicalValue(scenario, "Browser scenario"),
-});
+): EvidenceObservation["parameters"] => {
+  return {
+    ...jsonObjectSchema.parse(scenario),
+    scenario_sha256: digestCanonicalValue(scenario, "Browser scenario"),
+  };
+};
 
 /** Create Evidence without retaining resolved scenario secret values. */
 export const createBrowserScenarioEvidence = (
   scenario: BrowserScenario,
-  capture: BrowserScenarioCapture,
+  report: BrowserScenarioEvidenceReport,
   provider: ProviderIdentity,
-): Evidence =>
-  createEvidence(undefined, provider, {
+): Evidence => {
+  const capture = report.facts;
+  return createEvidence(unknownTarget("not-observed"), provider, {
     predicateType: "rea.browser-scenario-capture",
     operation: "capture_browser_scenario",
     parameters: browserScenarioParameters(scenario),
-    result: jsonValueSchema.parse(capture),
+    result: capture,
+    rawResult: isDeepStrictEqual(report.source, capture) ? null : report.source,
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
@@ -43,3 +55,4 @@ export const createBrowserScenarioEvidence = (
       "Browser host platform and architecture were not observed.",
     ],
   });
+};

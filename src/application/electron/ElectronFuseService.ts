@@ -1,19 +1,14 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ElectronFusePort } from "./ElectronFusePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ElectronFusePort } from "../../ports/electron/ElectronFusePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
 import {
   electronFuseReportSchema,
   inspectElectronFusesInputSchema,
 } from "../../domain/electron/electronFuses.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createElectronFuseEvidence } from "../../domain/electron/electronFuseEvidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_electron_fuses";
 
@@ -23,45 +18,30 @@ export class ElectronFuseService {
 
   /** Await and retry the reader's exact retained descriptor owners. */
   async close(): Promise<void> {
-    await this.provider.close?.();
+    await this.provider.close();
   }
 
   /** Read fuse wires for one explicitly selected path without launching it. */
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectElectronFusesInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    const inspected = await this.provider.inspect(input.data, options);
-    if (!inspected.ok) return inspected;
-    const report = electronFuseReportSchema.safeParse(inspected.value);
-    if (
-      !report.success ||
-      report.data.artifact.selected_path !== input.data.path
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectElectronFusesInputSchema,
+        outputSchema: electronFuseReportSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "Electron fuse reader returned a malformed report or changed the selected artifact identity.",
-        ),
-      );
-    return completeProviderEvidence(
-      createElectronFuseEvidence(
-        input.data,
-        report.data,
-        this.provider.identity,
-      ),
-      options?.signal,
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.selected_path === parameters.path,
+        buildEvidence: (report, identity, parameters) =>
+          createElectronFuseEvidence(parameters, report, identity),
+      },
+      rawInput,
+      options,
     );
   }
 }

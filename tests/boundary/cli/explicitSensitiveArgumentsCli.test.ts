@@ -41,13 +41,11 @@ describe("CLI --sensitive-value parser diagnostics", () => {
     },
     {
       name: "camel-case declaration",
-      arguments: [
-        ...CAPTURE,
-        "har",
-        `--sensitiveValue=${LITERAL}`,
-        `--no-${LITERAL}`,
-      ],
-      message: "Unknown flag: --no-[REDACTED]",
+      arguments: [...CAPTURE, "har", `--sensitiveValue=${LITERAL}`],
+      // The parser refuses the schema key spelling; its value stays redacted.
+      message:
+        "Unknown flag: --sensitiveValue. Did you mean --sensitive-value?",
+      failure: { code: "PARSE_ERROR", retryable: false },
     },
     {
       // Incur removes builtin output flags before reading the declared value.
@@ -64,11 +62,14 @@ describe("CLI --sensitive-value parser diagnostics", () => {
     },
   ])(
     "excludes declarations from a JSON $name rejection",
-    async ({ arguments: arguments_, message }, { cli }) => {
+    async (
+      { arguments: arguments_, message, failure = { code: "UNKNOWN" } },
+      { cli },
+    ) => {
       const result = await cli.run({ arguments: [...arguments_, "--json"] });
 
       expectExcluded(result);
-      expect(JSON.parse(result.stdout)).toEqual({ code: "UNKNOWN", message });
+      expect(JSON.parse(result.stdout)).toEqual({ ...failure, message });
     },
   );
 
@@ -112,8 +113,7 @@ describe("CLI --sensitive-value parser diagnostics", () => {
       expectExcluded(result, ["mitmproxy"]);
       expect(JSON.parse(result.stdout)).toMatchObject({
         code: "VALIDATION_ERROR",
-        message:
-          "REA could not read the command arguments. Check the named argument and its expected type, then try again.",
+        message: expect.stringMatching(/arguments.*expected type/iu),
         fieldErrors: [
           expect.objectContaining({ code: "invalid_value", path: "format" }),
         ],

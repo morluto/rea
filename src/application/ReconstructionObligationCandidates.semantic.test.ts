@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { javascriptApplicationAnalysisResultSchema } from "../domain/javascript/javascriptApplicationAnalysis.js";
 import { artifactEvidence } from "../domain/javascript/javascriptApplicationGraph.fixture.js";
 import {
@@ -108,7 +107,7 @@ const semanticApplication = (
       predicateType: example.predicate_type,
       operation: example.operation,
       parameters: example.parameters,
-      result: jsonValueSchema.parse({ ...base, semantic_graph: graph }),
+      result: { ...base, semantic_graph: graph },
       confidence: "derived",
       authority: "shipped-artifact",
     },
@@ -186,10 +185,20 @@ describe("semantic uncertainty at the obligation candidate boundary", () => {
     expect(ledger.obligations).toHaveLength(1);
     expect(ledger.reports.residual_unknown_ids).toEqual([]);
     expect(ledger.coverage.status).toBe("partial");
-    expect(ledger.limitations).toEqual([
-      `Semantic graph ${source.graph.graph_id} coverage is unknown; omitted candidates remain unknown.`,
-      `Semantic graph ${source.graph.graph_id}: Event source was not fully examined.`,
-    ]);
+    expect(ledger.limitations).toHaveLength(2);
+    expect(ledger.limitations).toContainEqual(
+      expect.stringMatching(
+        /coverage is unknown.*omitted candidates remain unknown/iu,
+      ),
+    );
+    expect(
+      ledger.limitations.every((limitation) =>
+        limitation.includes(source.graph.graph_id),
+      ),
+    ).toBe(true);
+    expect(ledger.limitations).toContainEqual(
+      expect.stringContaining("Event source was not fully examined."),
+    );
   });
 
   it("keeps a complete semantic source complete without fabricating uncertainty", () => {

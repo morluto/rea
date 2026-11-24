@@ -1,14 +1,23 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
-import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
+import {
+  connectGhidraMcp,
+  ghidraFixtureResult,
+  sessionEvidence,
+} from "./ghidraMcpHarness.js";
+import { ghidraProducerIdentity } from "../../../src/ghidra/GhidraProducerIdentity.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
 import {
   ghidraFunctionDossier,
   ghidraFunctionIdentity,
 } from "../../../src/domain/ghidraValues.fixture.js";
 import {
+  jsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
@@ -17,6 +26,7 @@ import {
   isGhidraFunctionOperation,
   type GhidraFunctionOperation,
 } from "../../../src/ghidra/GhidraFunctionValues.js";
+import { limitationsFor } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 
 it.each([
   { pseudocodeAvailable: true, reportsCoverage: true },
@@ -106,20 +116,21 @@ it.each([
         strings_names: "unchanged",
         cfg: "unchanged",
       });
-      const replay = await harness.session.execute(
+      const reobserved = await harness.session.execute(
         "analyze_function",
         evidence.parameters,
       );
-      if (!replay.ok) throw replay.error;
-      expect(replay.value.relationshipCoverage).toEqual(coverage);
-      expect(harness.calls).toEqual(["analyze_function"]);
+      if (!reobserved.ok) throw reobserved.error;
+      expect(reobserved.value.result).toEqual(dossier);
+      expect(reobserved.value.relationshipCoverage).toEqual(coverage);
+      expect(harness.calls).toEqual(["analyze_function", "analyze_function"]);
     } finally {
       await harness.close();
     }
   },
 );
 
-it("retains terminal-call qualifications across function views and snapshot replay", async () => {
+it("retains terminal-call qualifications across live dossiers and snapshot-backed function views", async () => {
   const limitation =
     "Ghidra Listing reports a terminal call at 0x401000 to EXTERNAL:0x20 __tls_get_addr (external=true, thunk=false, hasNoReturn=true); fallthrough is excluded by Ghidra's flow model. This records Ghidra's FunctionManager flag, not an independent verification that the callee cannot return.";
   const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
@@ -185,18 +196,25 @@ it("retains terminal-call qualifications across function views and snapshot repl
       expect(evidence.raw_result, name).toBeNull();
       expect(evidence.limitations, name).toContain(limitation);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
-        function_boundary_observations:
-          "ghidra-function-boundary-limitations-v4",
+        producer: ghidraProducerIdentity(),
       });
       const replay = await harness.session.execute(name, evidence.parameters);
       if (!replay.ok) throw replay.error;
       expect(replay.value.result, name).toEqual(value);
       expect(replay.value.limitations, name).toContain(limitation);
-      expect(replay.value.limitations, name).toContainEqual(
-        expect.stringContaining("Loaded from a local REA analysis snapshot"),
+      const snapshotLimitation = expect.stringMatching(
+        /snapshot.*did not re.run the provider/iu,
       );
+      if (name === "analyze_function")
+        expect(replay.value.limitations, name).not.toContainEqual(
+          snapshotLimitation,
+        );
+      else
+        expect(replay.value.limitations, name).toContainEqual(
+          snapshotLimitation,
+        );
     }
-    expect(harness.calls).toEqual([...values.keys()]);
+    expect(harness.calls).toEqual([...values.keys(), "analyze_function"]);
   } finally {
     await harness.close();
   }
@@ -205,7 +223,7 @@ it("retains terminal-call qualifications across function views and snapshot repl
 it("retains handler-region limitations on incoming and outgoing reference Evidence", async () => {
   const limitation =
     "Ghidra Listing shows a Borland/Delphi-style SEH frame registration at 0x40108f (push 0x4010c0 followed by fs-segment stack chaining); handler 0x4010c0 lies outside this procedure's body, so callees, strings, and cross-references may omit the handler region.";
-  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  const procedure = ghidraFunctionIdentity();
   const harness = await connectGhidraMcp(
     "ghidra-seh-reference-evidence",
     (operation, input) => {
@@ -214,7 +232,7 @@ it("retains handler-region limitations on incoming and outgoing reference Eviden
       return Promise.resolve(
         ok({
           value: jsonValueSchema.parse({
-            procedure: ghidraFunctionIdentity(),
+            procedure,
             direction: input.direction ?? "outgoing",
             references: [],
             reference_kinds_available: true,
@@ -229,7 +247,7 @@ it("retains handler-region limitations on incoming and outgoing reference Eviden
     for (const direction of ["incoming", "outgoing"] as const) {
       const reply = await harness.mcp.callTool({
         name: "procedure_references",
-        arguments: { procedure: dossier.procedure.address, direction },
+        arguments: { procedure: procedure.address, direction },
       });
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const evidence = sessionEvidence(
@@ -239,16 +257,8 @@ it("retains handler-region limitations on incoming and outgoing reference Eviden
       expect(evidence.normalized_result).toMatchObject({ direction });
       expect(evidence.raw_result).toBeNull();
       expect(evidence.limitations).toContain(limitation);
-      const replay = await harness.session.execute(
-        "procedure_references",
-        evidence.parameters,
-      );
-      if (!replay.ok) throw replay.error;
-      expect(replay.value.limitations).toContain(limitation);
     }
     expect(harness.calls).toEqual([
-      "procedure_references",
-      "procedure_references",
       "procedure_references",
       "procedure_references",
     ]);
@@ -312,65 +322,305 @@ it("rejects contradictory annotation readback across the provider and MCP bounda
   }
 });
 
-it("routes address naming to Ghidra with compact per-address results", async () => {
-  const requests: { operation: string; input: unknown }[] = [];
-  let output: unknown = null;
-  const harness = await connectGhidraMcp(
+/** Connect a Ghidra MCP session whose bridge returns the current `output`. */
+const connectNamingMcp = async (name: string) => {
+  const requests: Readonly<Record<string, JsonValue>>[] = [];
+  const bridge = { output: null as unknown };
+  const harness = await connectGhidraMcp(name, (_operation, input) => {
+    requests.push(input);
+    return Promise.resolve(ok(jsonValueSchema.parse(bridge.output)));
+  });
+  const { tools } = await harness.mcp.listTools();
+  // Validate every reply against the advertised named output schema.
+  const call = (tool: string, arguments_: Record<string, unknown>) => {
+    const toolDefinition = tools.find((item) => item.name === tool);
+    if (toolDefinition === undefined) throw new Error(`Missing ${tool}`);
+    return harness.mcp.callTool(
+      { name: tool, arguments: arguments_ },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
+    );
+  };
+  return { harness, requests, bridge, call };
+};
+
+const failure = (
+  address: string | null,
+  reason: string,
+  conflict: number | null = null,
+) => ({ address, reason, conflict });
+const contested = (
+  name: string,
+  requestedBy: readonly string[],
+  heldBy: readonly string[] = [],
+) => ({ namespace: null, name, requested_by: requestedBy, held_by: heldBy });
+
+it("routes address naming to Ghidra with compact results and retained failure reasons", async () => {
+  const { harness, requests, bridge, call } = await connectNamingMcp(
     "ghidra-address-naming",
-    (operation, input) => {
-      requests.push({ operation, input });
-      return Promise.resolve(ok(jsonValueSchema.parse(output)));
-    },
   );
   try {
-    output = true;
-    const single = await harness.mcp.callTool({
-      name: "set_address_name",
-      arguments: { address: "0x1000", name: "fixture_entry" },
+    bridge.output = {
+      results: { "0x1000": true },
+      failures: {},
+      conflicts: [],
+    };
+    const single = await call("set_address_name", {
+      address: "0x1000",
+      name: "fixture_entry",
     });
     expect(single.isError).not.toBe(true);
-    expect(single.structuredContent).toMatchObject({ normalized_result: true });
-    output = { "0x1000": true, "0x2000": false };
-    const batch = await harness.mcp.callTool({
-      name: "set_addresses_names",
-      arguments: { names: { "0x1000": "fixture_entry", "0x2000": "g_value" } },
+    expect(single.structuredContent).toMatchObject({
+      normalized_result: true,
+      raw_result: null,
     });
-    expect(batch.isError).not.toBe(true);
-    expect(batch.structuredContent).toMatchObject({
-      normalized_result: { "0x1000": true, "0x2000": false },
+    const held = {
+      failures: {
+        "0x1000": failure("0x1000", "name_held_by_unselected_address", 0),
+      },
+      conflicts: [contested("g_taken", ["0x1000"], ["0x3000"])],
+    };
+    bridge.output = { results: { "0x1000": false }, ...held };
+    const taken = await call("set_address_name", {
+      address: "0x1000",
+      name: "g_taken",
     });
-    expect(requests).toEqual([
-      {
-        operation: "set_address_name",
-        input: { document: null, address: "0x1000", name: "fixture_entry" },
+    expect(taken.isError).not.toBe(true);
+    expect(taken.structuredContent).toMatchObject({
+      normalized_result: false,
+      raw_result: held,
+    });
+
+    // Bridge reply for three competing requests, a dependent request, the
+    // independent rename of the address holding its name before the batch,
+    // and an address space the target does not define.
+    const results = {
+      "0x1000": false,
+      "0x2000": false,
+      "0x3000": false,
+      "0x4000": true,
+      "0x5000": false,
+      "nospace:0x10": false,
+    };
+    const facts = {
+      failures: {
+        "0x1000": failure("0x1000", "duplicate_requested_name", 0),
+        "0x2000": failure("0x2000", "duplicate_requested_name", 0),
+        "0x3000": failure("0x3000", "duplicate_requested_name", 0),
+        "0x5000": failure("0x5000", "name_held_by_selected_address", 1),
+        "nospace:0x10": failure(null, "invalid_address"),
       },
-      {
-        operation: "set_addresses_names",
-        input: {
-          document: null,
-          names: { "0x1000": "fixture_entry", "0x2000": "g_value" },
-        },
-      },
-    ]);
+      conflicts: [
+        contested("g_shared", ["0x1000", "0x2000", "0x3000"]),
+        contested("g_held_by_4000", ["0x5000"], ["0x4000"]),
+      ],
+    };
+    bridge.output = { results, ...facts };
+    const names = {
+      "0x1000": "g_shared",
+      "0x2000": "g_shared",
+      "0x3000": "g_shared",
+      "0x4000": "g_moved",
+      "0x5000": "g_held_by_4000",
+      "nospace:0x10": "g_unknown_space",
+    };
+    const reversed = Object.fromEntries(Object.entries(names).reverse());
+    const batches = [];
+    for (const ordered of [names, reversed]) {
+      const reply = await call("set_addresses_names", { names: ordered });
+      expect(reply.isError).not.toBe(true);
+      batches.push(sessionEvidence(harness.session, reply.structuredContent));
+    }
+    for (const evidence of batches) {
+      expect(evidence.normalized_result).toEqual(results);
+      // Failure facts are retained without a second copy of the booleans.
+      expect(evidence.raw_result).toEqual(facts);
+      expect(evidence.parameters).toEqual({ names });
+    }
+    // Equal canonical parameters and outcomes give one Evidence identity.
+    expect(batches[1]!.evidence_id).toBe(batches[0]!.evidence_id);
+    // The bridge still receives the caller's member order; it is not a choice.
+    expect(
+      requests
+        .slice(2, 4)
+        .map((input) => Object.keys(jsonObjectSchema.parse(input.names))),
+    ).toEqual([Object.keys(names), Object.keys(reversed)]);
+
+    bridge.output = {
+      results: { "0x1000": true },
+      failures: {},
+      conflicts: [],
+    };
+    const applied = await call("set_addresses_names", {
+      names: { "0x1000": "fixture_entry" },
+    });
+    expect(applied.isError).not.toBe(true);
+    expect(applied.structuredContent).toMatchObject({
+      normalized_result: { "0x1000": true },
+      raw_result: null,
+    });
+    const dispatched = requests.length;
     const empty = await harness.mcp.callTool({
       name: "set_addresses_names",
       arguments: { names: {} },
     });
     expect(empty.isError).toBe(true);
-    expect(requests).toHaveLength(2);
-    output = "fixture_entry";
-    const malformed = await harness.mcp.callTool({
-      name: "set_address_name",
-      arguments: { address: "0x1000", name: "fixture_entry" },
-    });
-    expect(malformed.isError).toBe(true);
-    expect(parseMcpToolError(malformed)).toMatchObject({
-      error: { code: "unreadable_output" },
-    });
+    expect(requests).toHaveLength(dispatched);
   } finally {
     await harness.close();
   }
 });
+
+it("retains one large contested destination in linear Evidence", async () => {
+  const { harness, bridge, call } = await connectNamingMcp(
+    "ghidra-large-naming-conflict",
+  );
+  try {
+    const sizes = [];
+    // The largest batch fits the default 1,024-element MCP input allowance.
+    for (const count of [250, 1_000]) {
+      const addresses = Array.from(
+        { length: count },
+        (_, index) => `0x${(0x100000 + index * 8).toString(16)}`,
+      );
+      bridge.output = {
+        results: Object.fromEntries(addresses.map((key) => [key, false])),
+        failures: Object.fromEntries(
+          addresses.map((key) => [
+            key,
+            failure(key, "duplicate_requested_name", 0),
+          ]),
+        ),
+        conflicts: [contested("g_shared", addresses)],
+      };
+      const reply = await call("set_addresses_names", {
+        names: Object.fromEntries(addresses.map((key) => [key, "g_shared"])),
+      });
+      expect(reply.isError).not.toBe(true);
+      const evidence = sessionEvidence(
+        harness.session,
+        reply.structuredContent,
+      );
+      const facts = z
+        .object({
+          conflicts: z.array(z.object({ requested_by: z.array(z.string()) })),
+        })
+        .parse(evidence.raw_result);
+      expect(facts.conflicts).toHaveLength(1);
+      expect(facts.conflicts[0]!.requested_by).toEqual(addresses);
+      sizes.push(JSON.stringify(evidence.raw_result).length / count);
+    }
+    // Bytes per conflicting address stay constant as the group grows.
+    expect(sizes[1]! / sizes[0]!).toBeLessThan(1.05);
+    expect(sizes[1]!).toBeLessThan(120);
+  } finally {
+    await harness.close();
+  }
+});
+
+it("rejects Ghidra naming replies whose outcomes and reasons disagree", async () => {
+  const { harness, requests, bridge, call } = await connectNamingMcp(
+    "ghidra-malformed-naming",
+  );
+  const duplicate = failure("0x1000", "duplicate_requested_name", 0);
+  const pair = contested("g_shared", ["0x1000", "0x2000"]);
+  const reply = (
+    tool: "set_address_name" | "set_addresses_names",
+    results: Record<string, boolean>,
+    failures: Record<string, unknown>,
+    conflicts: readonly unknown[] = [],
+  ) => [tool, { results, failures, conflicts }] as const;
+  const cases = [
+    ["set_address_name", true],
+    ["set_address_name", { applied: false, failure: null }],
+    ["set_addresses_names", { "0x1000": false }],
+    reply("set_addresses_names", { "0x1000": false, "0x2000": true }, {}),
+    // A conflict reason without its shared destination, or one it is not in.
+    reply("set_addresses_names", { "0x1000": false }, { "0x1000": duplicate }),
+    reply("set_addresses_names", { "0x1000": false }, { "0x1000": duplicate }, [
+      contested("g_shared", ["0x2000", "0x3000"]),
+    ]),
+    // A requesting address omitted from the failures.
+    reply("set_addresses_names", { "0x1000": false }, { "0x1000": duplicate }, [
+      pair,
+    ]),
+    // A held reason for a destination nobody else holds.
+    reply(
+      "set_addresses_names",
+      { "0x1000": false },
+      { "0x1000": failure("0x1000", "name_held_by_unselected_address", 0) },
+      [contested("g_free", ["0x1000"])],
+    ),
+    reply(
+      "set_addresses_names",
+      { "0x1000": false },
+      { "0x1000": failure("0x1000", "invalid_name", 0) },
+      [contested("g_free", ["0x1000"], ["0x3000"])],
+    ),
+    // A single edit cannot report a batch-only reason or several keys.
+    reply(
+      "set_address_name",
+      { "0x1000": false, "0x2000": false },
+      {
+        "0x1000": duplicate,
+        "0x2000": failure("0x2000", "duplicate_requested_name", 0),
+      },
+      [pair],
+    ),
+  ] as const;
+  try {
+    for (const [tool, malformed] of cases) {
+      bridge.output = malformed;
+      const response = await call(
+        tool,
+        tool === "set_address_name"
+          ? { address: "0x1000", name: "fixture_entry" }
+          : { names: { "0x1000": "fixture_entry" } },
+      );
+      expect(response.isError, JSON.stringify(malformed)).toBe(true);
+      expect(parseMcpToolError(response)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+    }
+    expect(requests).toHaveLength(cases.length);
+  } finally {
+    await harness.close();
+  }
+});
+
+const expectOverviewSourceEvidence = (
+  session: Parameters<typeof sessionEvidence>[0],
+  links: readonly string[],
+) => {
+  expect(links).toHaveLength(1);
+  const [overviewSourceId] = links;
+  if (overviewSourceId === undefined)
+    throw new Error("Expected the provider Evidence link");
+  const overviewSource = session.evidenceById(overviewSourceId);
+  expect(overviewSource).toMatchObject({
+    operation: "read_binary_inventory_summary",
+    provider: { id: "ghidra" },
+  });
+  expect(overviewSource?.raw_result).toEqual(
+    ghidraFixtureResult("read_binary_inventory_summary", {}),
+  );
+  expect(overviewSource?.normalized_result).toEqual({
+    document: "fixture",
+    image_base: "0x400000",
+    segment_count: 1,
+    procedure_count: 1,
+    string_count: 2,
+    segments: [
+      {
+        name: ".text",
+        start: "0x401000",
+        end: "0x401100",
+        length: 256,
+        image_base: "0x400000",
+        address_space: "ram",
+      },
+    ],
+  });
+};
 
 describe("Ghidra MCP evidence parity", () => {
   it("preserves provider evidence, composed parity, and capability routing", async () => {
@@ -388,12 +638,16 @@ describe("Ghidra MCP evidence parity", () => {
       );
       expect(listed).toMatchObject({
         operation: "list_procedures",
-        provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+        provider: {
+          id: "ghidra",
+          name: "Ghidra",
+          version: SUPPORTED_GHIDRA_VERSION,
+        },
         analysis_profile: {
-          provider: { id: "ghidra", version: "12.1.4" },
+          provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
           parameters: {
             import_mode: "ephemeral-source-immutable",
-            annotation_policy: "atomic-function-entry-metadata-v1",
+            annotation_policy: "atomic-function-entry-metadata",
             analyzer_preset: "ghidra-default",
           },
         },
@@ -441,6 +695,8 @@ describe("Ghidra MCP evidence parity", () => {
         },
       });
 
+      expectOverviewSourceEvidence(session, mcpOverview.evidence_links);
+
       const pseudocode = sessionEvidence(
         session,
         (
@@ -452,10 +708,10 @@ describe("Ghidra MCP evidence parity", () => {
       );
       expect(pseudocode).toMatchObject({
         operation: "procedure_pseudo_code",
-        provider: { id: "ghidra", version: "12.1.4" },
+        provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
         normalized_result: expect.stringContaining("return 42"),
         limitations: expect.arrayContaining([
-          expect.stringContaining("not text-equivalent to Hopper"),
+          expect.stringMatching(/not text.equivalent to Hopper/iu),
         ]),
       });
 
@@ -470,7 +726,7 @@ describe("Ghidra MCP evidence parity", () => {
       );
       expect(analyzed).toMatchObject({
         operation: "analyze_function",
-        provider: { id: "ghidra", version: "12.1.4" },
+        provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
         normalized_result: {
           procedure: {
             address: "0x401000",
@@ -487,28 +743,37 @@ describe("Ghidra MCP evidence parity", () => {
               kind: { available: true, provenance: "ghidra-reference-manager" },
             },
           ],
-          limitations: expect.arrayContaining([
-            expect.stringContaining("indirect flows without target addresses"),
-            expect.stringContaining(
-              "not original source or Hopper-equivalent text",
-            ),
-          ]),
+          limitations: functionDossierSchema.parse(ghidraFunctionDossier())
+            .limitations,
         },
         limitations: expect.arrayContaining([
-          expect.stringContaining("default auto-analysis complete"),
-          expect.stringContaining(
-            "original executable bytes are never written",
-          ),
+          // Wording-tolerant: the loop below already pins the provider's exact
+          // text, so a literal here would only re-couple the test to prose.
+          expect.stringMatching(/auto.analysis.*complete/iu),
+          expect.stringMatching(/original executable bytes.*unchanged/iu),
         ]),
       });
-      const directAnalyzed = await new EnhancedTools(session).execute(
-        "analyze_function",
-        { procedure: "fixture_main" },
+      // Every source-declared limitation must survive the MCP projection;
+      // pinning a literal here re-copies prose the provider owns.
+      for (const limitation of limitationsFor("analyze_function")) {
+        expect(analyzed.limitations).toContain(limitation);
+      }
+      expect(
+        functionDossierSchema.parse(analyzed.normalized_result).limitations,
+      ).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/indirect flows without target addresses/iu),
+          expect.stringMatching(/not original source.*Hopper.equivalent/iu),
+        ]),
       );
+      const directAnalyzed = await new EnhancedTools(session).executeValidated({
+        name: "analyze_function",
+        input: { procedure: "fixture_main" },
+      });
       if (!directAnalyzed.ok) throw directAnalyzed.error;
       expect(analyzed.normalized_result).toEqual(directAnalyzed.value);
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 });

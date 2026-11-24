@@ -1,5 +1,78 @@
-import { expect, it } from "vitest";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
+import { expect, it, vi } from "vitest";
+import {
+  createMcpSchemaValidation,
+  SHARED_COMPILED_VALIDATORS,
+} from "../../fixtures/mcpSchemaValidation.js";
+
+it("compiles a listed tool's validator only when it first validates", () => {
+  // The SDK requests a validator for every listed tool before its first call.
+  const compile = vi.spyOn(AjvJsonSchemaValidator.prototype, "getValidator");
+  const validation = createMcpSchemaValidation();
+  try {
+    const listed = [
+      { type: "string" },
+      { type: "integer" },
+      { type: "boolean" },
+    ];
+    const validators = listed.map((schema) => validation.getValidator(schema));
+    expect(compile).not.toHaveBeenCalled();
+    expect(validators[1]?.(7).valid).toBe(true);
+    expect(validators[1]?.("seven").valid).toBe(false);
+    expect(compile).toHaveBeenCalledTimes(1);
+  } finally {
+    compile.mockRestore();
+    validation.clear();
+  }
+});
+
+it("shares compiled validators across fixtures and evicts the least recently used", () => {
+  const compile = vi.spyOn(AjvJsonSchemaValidator.prototype, "getValidator");
+  const first = createMcpSchemaValidation();
+  const second = createMcpSchemaValidation();
+  // A per-test title keeps schemas compiled by other tests in this worker
+  // out of the shared cache counts.
+  const nonce = crypto.randomUUID();
+  const schema = (index: number) => ({
+    title: `${nonce}-${index}`,
+    type: "integer",
+  });
+  try {
+    expect(first.getValidator(schema(0))(1).valid).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(1);
+    // Another fixture, and the same fixture after clear(), reuse the result.
+    expect(second.getValidator(schema(0))("one").valid).toBe(false);
+    first.clear();
+    expect(first.getValidator(schema(0))(2).valid).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(1);
+
+    // Fill the remaining capacity, touch the oldest entry, then overflow:
+    // the least recently used entry (schema 1) goes, schema 0 stays.
+    for (let index = 1; index < SHARED_COMPILED_VALIDATORS; index += 1) {
+      expect(first.getValidator(schema(index))(index).valid).toBe(true);
+    }
+    expect(compile).toHaveBeenCalledTimes(SHARED_COMPILED_VALIDATORS);
+    // A fixture's own validator keeps its compiled function, so a new fixture
+    // is what reaches the shared cache again.
+    const touch = createMcpSchemaValidation();
+    expect(touch.getValidator(schema(0))(3).valid).toBe(true);
+    touch.clear();
+    expect(
+      second.getValidator(schema(SHARED_COMPILED_VALIDATORS))(4).valid,
+    ).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(SHARED_COMPILED_VALIDATORS + 1);
+    const fresh = createMcpSchemaValidation();
+    expect(fresh.getValidator(schema(0))(5).valid).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(SHARED_COMPILED_VALIDATORS + 1);
+    expect(fresh.getValidator(schema(1))(6).valid).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(SHARED_COMPILED_VALIDATORS + 2);
+    fresh.clear();
+  } finally {
+    compile.mockRestore();
+    first.clear();
+    second.clear();
+  }
+});
 
 it("reuses equal schemas and recompiles changed schemas sharing an id", () => {
   const validation = createMcpSchemaValidation();
@@ -7,7 +80,8 @@ it("reuses equal schemas and recompiles changed schemas sharing an id", () => {
     const schema = {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       $id: "https://fixture.test/result",
-      type: "string" as "string" | "integer",
+      $defs: { value: { type: "string" as "string" | "integer" } },
+      $ref: "#/$defs/value",
     };
     const first = validation.getValidator(schema);
     expect(validation.getValidator(structuredClone(schema))).toBe(first);
@@ -16,7 +90,7 @@ it("reuses equal schemas and recompiles changed schemas sharing an id", () => {
     expect(validation.assertions.validate(schema, "recorded")).toBe(true);
     expect(validation.assertions.validate(schema, 42)).toBe(false);
 
-    schema.type = "integer";
+    schema.$defs.value.type = "integer";
     const changed = validation.getValidator(schema);
     expect(changed).not.toBe(first);
     expect(changed(42).valid).toBe(true);
@@ -31,13 +105,17 @@ it("reuses equal schemas and recompiles changed schemas sharing an id", () => {
   }
 });
 
-it("preserves SDK format validation and declared dialect dispatch", () => {
+it.each([
+  "https://json-schema.org/draft/2020-12/schema",
+  "https://json-schema.org/draft/2019-09/schema",
+  "http://json-schema.org/draft-07/schema#",
+])("preserves SDK format validation and references for %s", (dialect) => {
   const validation = createMcpSchemaValidation();
   try {
     const schema = {
-      $schema: "http://json-schema.org/draft-07/schema#",
-      type: "string",
-      format: "email",
+      $schema: dialect,
+      $defs: { address: { type: "string", format: "email" } },
+      $ref: "#/$defs/address",
     } as const;
     const validator = validation.getValidator(schema);
     expect(validator("analyst@example.test").valid).toBe(true);

@@ -70,11 +70,13 @@ const createMockClassFile = (): Uint8Array => {
   u2(8); // descriptor: "()Ljava/lang/String;"
   u2(1); // 1 attribute
   u2(9); // attr name: "Code"
-  u4(12); // attr length = 12
+  u4(16); // attr length = 16 (max_stack + max_locals + code_length + 4 code + exc_count + attr_count)
   u2(1); // max_stack
   u2(1); // max_locals
   u4(4); // code_length = 4 bytes
   parts.push(new Uint8Array([0x2a, 0xb4, 0x00, 0xb0])); // aload_0, getfield, return
+  u2(0); // exception_table_length = 0
+  u2(0); // attributes_count = 0
 
   // Class attributes (SourceFile)
   u2(1); // 1 attribute
@@ -180,7 +182,7 @@ describe("JvmClassReader", () => {
     expect(parseJvmClass(b)).toBeNull();
   });
 
-  it("rejects empty constant pools and invalid pre-preview minor versions", () => {
+  it("rejects empty constant pools and invalid major 56+ minor versions", () => {
     // 24-byte CAFEBABE buffer with cpCount = 0 and thisClass = 0
     const emptyPool = new Uint8Array(24);
     const emptyView = new DataView(emptyPool.buffer);
@@ -190,21 +192,74 @@ describe("JvmClassReader", () => {
     emptyView.setUint16(8, 0, false); // cpCount = 0 (invalid per JVMS)
     expect(parseJvmClass(emptyPool)).toBeNull();
 
-    // Pre-preview Java 8 (major 52) with non-zero minor version (52.3) is invalid
-    const invalidJava8 = new Uint8Array(createMockClassFile());
-    new DataView(invalidJava8.buffer).setUint16(4, 3, false); // minor = 3
-    new DataView(invalidJava8.buffer).setUint16(6, 52, false); // major = 52
-    expect(parseJvmClass(invalidJava8)).toBeNull();
+    // JVMS §4.1: major >= 56 permits only minor 0 or 65535
+    const invalidJava12 = new Uint8Array(createMockClassFile());
+    new DataView(invalidJava12.buffer).setUint16(4, 3, false); // minor = 3
+    new DataView(invalidJava12.buffer).setUint16(6, 56, false); // major = 56
+    expect(parseJvmClass(invalidJava12)).toBeNull();
 
-    // Java 17 preview (61.65535) and Java 1.1 (45.3) remain valid
+    // Java 17 preview (61.65535), Java 11 (55.1), and Java 1.1 (45.3) remain valid per JVMS §4.1
     const previewJava17 = new Uint8Array(createMockClassFile());
     new DataView(previewJava17.buffer).setUint16(4, 0xffff, false);
     new DataView(previewJava17.buffer).setUint16(6, 61, false);
     expect(parseJvmClass(previewJava17)?.minorVersion).toBe(0xffff);
 
+    const java11Minor = new Uint8Array(createMockClassFile());
+    new DataView(java11Minor.buffer).setUint16(4, 1, false);
+    new DataView(java11Minor.buffer).setUint16(6, 55, false);
+    expect(parseJvmClass(java11Minor)?.majorVersion).toBe(55);
+
     const legacyJava11 = new Uint8Array(createMockClassFile());
     new DataView(legacyJava11.buffer).setUint16(4, 3, false);
     new DataView(legacyJava11.buffer).setUint16(6, 45, false);
     expect(parseJvmClass(legacyJava11)?.majorVersion).toBe(45);
+  });
+
+  it("rejects malformed Code attributes whose code_length or tables exceed the attribute extent", () => {
+    // Build a class whose Code attribute declares attrLen = 8 and code_length = 4 (missing code + tables)
+    const valid = createMockClassFile();
+    // Locate the Code attribute length (16) and replace Code attribute with 8-byte truncated one
+    const view = new DataView(valid.buffer, valid.byteOffset, valid.byteLength);
+    let codeAttrLenOffset = -1;
+    for (let i = 0; i <= valid.length - 16; i += 1) {
+      if (
+        view.getUint16(i, false) === 9 &&
+        view.getUint32(i + 2, false) === 16
+      ) {
+        codeAttrLenOffset = i + 2;
+        break;
+      }
+    }
+    expect(codeAttrLenOffset).toBeGreaterThan(0);
+
+    // 1. attrLen = 8, code_length = 4 (truncated Code_attribute)
+    const truncatedCodeAttr = new Uint8Array([
+      ...valid.subarray(0, codeAttrLenOffset),
+      0,
+      0,
+      0,
+      8, // attrLen = 8
+      ...valid.subarray(codeAttrLenOffset + 4, codeAttrLenOffset + 12), // max_stack, max_locals, code_length=4
+      ...valid.subarray(codeAttrLenOffset + 4 + 16), // class attributes
+    ]);
+    expect(parseJvmClass(truncatedCodeAttr)).toBeNull();
+
+    // 2. attrLen = 16, code_length = 100 (exceeds attribute extent)
+    const oversizedCodeLen = new Uint8Array(valid);
+    new DataView(oversizedCodeLen.buffer).setUint32(
+      codeAttrLenOffset + 8,
+      100,
+      false,
+    );
+    expect(parseJvmClass(oversizedCodeLen)).toBeNull();
+
+    // 3. attrLen = 16, exception_table_length = 5 (exceeds remaining bytes)
+    const oversizedExceptionTable = new Uint8Array(valid);
+    new DataView(oversizedExceptionTable.buffer).setUint16(
+      codeAttrLenOffset + 16,
+      5,
+      false,
+    );
+    expect(parseJvmClass(oversizedExceptionTable)).toBeNull();
   });
 });

@@ -19,6 +19,7 @@ import {
   RegularFileAdmissionFailure,
   assertRegularFileActive,
   sameRegularFileState,
+  type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 
@@ -57,7 +58,7 @@ export const androidSnapshotCopy = (
     : undefined;
 
 /** Adopt a snapshot descriptor whose close rejected, keyed by its exact path. */
-export type AndroidSnapshotCloseRetention = (
+type AndroidSnapshotCloseRetention = (
   path: string,
   owner: OwnedFileHandle,
 ) => void;
@@ -68,8 +69,8 @@ export const snapshotAndroidTarget = async (
   sha256: string,
   root: string,
   operation: AndroidOperation,
-  signal?: AbortSignal,
-  retainFailedClose?: AndroidSnapshotCloseRetention,
+  signal: AbortSignal | undefined,
+  retainFailedClose: AndroidSnapshotCloseRetention,
 ): Promise<string> => {
   const snapshot = join(root, "target.apk");
   try {
@@ -104,8 +105,8 @@ export const snapshotAndroidEngine = async (
   sha256: string,
   root: string,
   operation: AndroidOperation,
-  signal?: AbortSignal,
-  retainFailedClose?: AndroidSnapshotCloseRetention,
+  signal: AbortSignal | undefined,
+  retainFailedClose: AndroidSnapshotCloseRetention,
 ): Promise<{ path: string; sha256: string }> => {
   const path = join(root, "engine.jar");
   try {
@@ -158,24 +159,24 @@ const copyAndroidSnapshot = async (
   snapshotPath: string,
   expectedSha256: string,
   signal: AbortSignal | undefined,
-  retainFailedClose: AndroidSnapshotCloseRetention | undefined,
+  retainFailedClose: AndroidSnapshotCloseRetention,
 ): Promise<AndroidSnapshotCopy> => {
   assertRegularFileActive(signal);
   let removeSnapshot = false;
-  const retain = (path: string) =>
-    retainFailedClose === undefined
-      ? {}
-      : {
-          retainFailedClose: (owner: OwnedFileHandle) =>
-            retainFailedClose(path, owner),
-        };
+  const retain = (path: string) => ({
+    retainFailedClose: (owner: OwnedFileHandle) =>
+      retainFailedClose(path, owner),
+  });
   try {
     // Close each descriptor through its owner. A rejected close keeps the
     // copy outcome and stays retained until that owner is retried; the
     // partial file is removed only after those close attempts.
-    const source = adoptSnapshotHandle(
-      await openSnapshotSource(sourcePath, signal, retain(sourcePath)),
+    const { handle, initial } = await openSnapshotSource(
+      sourcePath,
+      signal,
+      retain(sourcePath),
     );
+    const source = adoptSnapshotHandle(handle);
     return await withOwnedFileHandle(
       sourcePath,
       source.owner,
@@ -184,7 +185,6 @@ const copyAndroidSnapshot = async (
         ...retain(sourcePath),
       },
       async () => {
-        const initial = await source.handle.stat();
         assertRegularFileActive(signal);
         let copiedBytes = 0;
         const hash = createHash("sha256");
@@ -284,9 +284,9 @@ const openSnapshotSource = async (
   path: string,
   signal: AbortSignal | undefined,
   retention: {
-    readonly retainFailedClose?: (owner: OwnedFileHandle) => void;
+    readonly retainFailedClose: (owner: OwnedFileHandle) => void;
   },
-): Promise<FileHandle> => {
+): Promise<StableRegularFileDescriptor> => {
   try {
     return await openRegularFile(path, { symlinks: "follow", signal });
   } catch (cause: unknown) {
@@ -302,10 +302,9 @@ const openSnapshotSource = async (
 };
 
 const retainAdmissionOwner = (
-  retain: ((owner: OwnedFileHandle) => void) | undefined,
+  retain: (owner: OwnedFileHandle) => void,
   owner: OwnedFileHandle,
 ): RegularFileCleanupFailure["retention"] => {
-  if (retain === undefined) return { kind: "not_requested" };
   try {
     retain(owner);
     return { kind: "callback_returned" };

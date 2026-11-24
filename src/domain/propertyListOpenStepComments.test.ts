@@ -1,6 +1,5 @@
 import { expect, it } from "vitest";
 
-import { plistNestingLimitMessage } from "./apple/plistValue.js";
 import { parseXmlPropertyList } from "./propertyListKeys.js";
 
 it("preserves array values and comment-like string content after leading trivia", () => {
@@ -11,18 +10,20 @@ it("preserves array values and comment-like string content after leading trivia"
   expect(parsed.numberLiterals.incomplete).toBe(true);
 });
 
-it("retains prototype-key omission through commented OpenStep dispatch", () => {
+it("preserves own prototype keys through commented OpenStep dispatch", () => {
   const parsed = parseXmlPropertyList(
     '/* header */ { __proto__ = { secret = value; }; kept = "/*literal*/"; }',
   );
-  expect(parsed.value).toEqual({ kept: "/*literal*/" });
-  expect(parsed.omittedPrototypeKeys).toBe(1);
+  expect(parsed.value).toEqual({
+    ["__proto__"]: { secret: "value" },
+    kept: "/*literal*/",
+  });
 });
 
-it("retains the depth preflight after a leading comment", () => {
+it("retains the source depth limit after a leading comment", () => {
   expect(() =>
     parseXmlPropertyList(`// header\n${"(".repeat(129)}x${")".repeat(129)}`),
-  ).toThrow(plistNestingLimitMessage());
+  ).toThrow(/128 nesting levels/iu);
 });
 
 it.each(["// header only", "/* unterminated", "/* header */ not-a-container"])(

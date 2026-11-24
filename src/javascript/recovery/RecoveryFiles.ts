@@ -3,16 +3,22 @@ import {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
-} from "../../artifacts/ArtifactFileOperation.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  normalizeArtifactPath,
+} from "../../resources/index.js";
 import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedDirectoryHandle } from "../../filesystem/OwnedDirectoryHandle.js";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, opendir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { TextDecoder } from "node:util";
-import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
+import {
+  lstat,
+  mkdir,
+  opendir,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -21,18 +27,19 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   NonRegularFileReadError,
   sameRegularFileState,
 } from "../../filesystem/RegularFile.js";
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
+import { isStrictUtf8 } from "../../domain/strictUtf8.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const OPERATION = "recover_javascript_sources";
-
-/** Fingerprint exact selected or derived bytes. */
-export const recoveryDigest = (bytes: Uint8Array): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /** A file exceeded the byte bound its caller selected; the caller owns what that bound means. */
 class RecoveryFileSizeError extends AnalysisOutputError {
@@ -65,9 +72,8 @@ const scanRecoveryFile = async (
       path,
       resources ?? new ArtifactResourceScope(),
       signal,
-      async (handle) => {
+      async ({ handle, initial: before }) => {
         const hash = createHash("sha256");
-        const before = await handle.stat();
         if (before.size > maximum)
           throw new RecoveryFileSizeError(
             `Expected a regular file no larger than ${String(maximum)} bytes: ${path}`,
@@ -103,19 +109,23 @@ const scanRecoveryFile = async (
   } catch (cause: unknown) {
     if (cause instanceof ArtifactFileCleanupFailure) throw cause;
     if (cause instanceof ArtifactFileCancelled)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: cause.fileCancellation.reason,
-        partialObservation: fileSnapshotPartialObservationSchema.parse(
-          Object.assign({}, cause.fileCancellation.outcome.value, {
-            kind: "file-snapshot-hash",
-            path,
-          }),
-        ),
-      });
+      throw cancelledBy(
+        OPERATION,
+        carriedReason(cause.fileCancellation.reason),
+        {
+          partialObservation: fileSnapshotPartialObservationSchema.parse(
+            Object.assign({}, cause.fileCancellation.outcome.value, {
+              kind: "file-snapshot-hash",
+              path,
+            }),
+          ),
+        },
+      );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      throw cancelledBy(
+        OPERATION,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (
       cause instanceof Error &&
       "code" in cause &&
@@ -176,11 +186,6 @@ const snapshotRecoveryInput = async (
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
 ): Promise<RecoveryInputSnapshot> => {
-  if (!isAbsolute(path))
-    throw recoveryInputFailure(
-      "path",
-      "Select an absolute JavaScript file path",
-    );
   let bytes: Buffer;
   try {
     bytes = await readRecoveryFile(path, maximum, signal, resources);
@@ -211,14 +216,12 @@ const snapshotRecoveryInput = async (
       );
     throw recoveryInputFailure(
       "path",
-      `Cannot snapshot UTF-8 JavaScript input ${path}: ${recoveryFailureMessage(cause)}`,
+      `Cannot snapshot UTF-8 JavaScript input ${path}: ${errorMessage(cause)}`,
       cause,
     );
   }
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch (cause: unknown) {
-    throw new AnalysisInputError(OPERATION, { cause }, [
+  if (!isStrictUtf8(bytes))
+    throw new AnalysisInputError(OPERATION, {}, [
       {
         path: ["path"],
         reason: "invalid_format",
@@ -226,7 +229,6 @@ const snapshotRecoveryInput = async (
         message: `JavaScript input is not valid UTF-8: ${path}`,
       },
     ]);
-  }
   try {
     await mkdir(dirname(snapshotPath), { recursive: true, mode: 0o700 });
     await writeFile(snapshotPath, bytes, { flag: "wx", mode: 0o600 });
@@ -250,22 +252,69 @@ const snapshotRecoveryInput = async (
     path,
     snapshot_path: snapshotPath,
     relative_path: relativePath,
-    sha256: recoveryDigest(bytes),
+    sha256: sha256Hex(bytes),
     bytes: bytes.length,
   };
 };
 
-/** Preserve each selected file and its relative input layout without concatenation. */
+/** Resolve native parent traversal while keeping the selected final filename. */
+const recoveryInputLayoutPath = async (
+  path: string,
+  signal?: AbortSignal,
+): Promise<string> => {
+  try {
+    checkRecoveryCancellation(signal);
+    const parent = dirname(path);
+    // Native lookup must accept the parent before realpath can collapse it:
+    // Darwin realpath(file/..) otherwise succeeds despite ENOTDIR on reads.
+    if (!(await stat(parent)).isDirectory())
+      throw new NonRegularFileReadError(path, false);
+    const canonicalParent = await realpath(parent);
+    checkRecoveryCancellation(signal);
+    return join(canonicalParent, basename(path));
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisCancelledError) throw cause;
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "EACCES" || cause.code === "EPERM")
+    )
+      throw new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
+        cause,
+      });
+    throw recoveryInputFailure(
+      "path",
+      `Cannot resolve selected JavaScript input parent ${path}: ${errorMessage(cause)}`,
+      cause,
+    );
+  }
+};
+
+/** Own selected path interpretation, native collisions and sequential snapshots. */
 export const snapshotRecoveryInputs = async (
   paths: readonly [string, ...string[]],
   directory: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
 ): Promise<readonly [RecoveryInputSnapshot, ...RecoveryInputSnapshot[]]> => {
-  let commonDirectory = dirname(resolve(paths[0]));
-  for (const path of paths) {
+  const selections: [
+    { readonly path: string; readonly layoutPath: string },
+    ...{ readonly path: string; readonly layoutPath: string }[],
+  ] = [
+    {
+      path: paths[0],
+      layoutPath: await recoveryInputLayoutPath(paths[0], signal),
+    },
+  ];
+  for (const path of paths.slice(1))
+    selections.push({
+      path,
+      layoutPath: await recoveryInputLayoutPath(path, signal),
+    });
+  let commonDirectory = dirname(selections[0].layoutPath);
+  for (const { layoutPath } of selections) {
     while (true) {
-      const fromCommon = relative(commonDirectory, resolve(path));
+      const fromCommon = relative(commonDirectory, layoutPath);
       if (
         fromCommon !== ".." &&
         !fromCommon.startsWith(`..${sep}`) &&
@@ -283,11 +332,11 @@ export const snapshotRecoveryInputs = async (
   }
   const snapshots: RecoveryInputSnapshot[] = [];
   let remaining = RECOVERY_LIMITS.inputBytes;
-  for (const path of paths) {
+  for (const { path, layoutPath } of selections) {
     const relativePath =
-      paths.length === 1
+      selections.length === 1
         ? "bundle.js"
-        : relative(commonDirectory, resolve(path)).split(sep).join("/");
+        : relative(commonDirectory, layoutPath).split(sep).join("/");
     try {
       // Wakaru's multi-input public paths interpret backslashes as separators.
       if (relativePath.includes("\\"))
@@ -301,7 +350,7 @@ export const snapshotRecoveryInputs = async (
     } catch (cause: unknown) {
       throw recoveryInputFailure(
         "path",
-        `Cannot preserve selected input path in published artifacts: ${path}: ${recoveryFailureMessage(cause)}`,
+        `Cannot preserve selected input path in published artifacts: ${path}: ${errorMessage(cause)}`,
         cause,
       );
     }
@@ -428,14 +477,9 @@ export const recoveryInputFailure = (
     { path: [field], reason: "invalid_value", message },
   ]);
 
-/** Convert one caught boundary cause into diagnostic text without masking its type. */
-export const recoveryFailureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 /** Cancellation remains distinct from malformed source or provider output. */
 export const checkRecoveryCancellation = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
 };
 
 /** Keep both tool invocations within one operation's execution budget. */

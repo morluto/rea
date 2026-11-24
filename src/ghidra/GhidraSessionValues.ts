@@ -1,18 +1,22 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { ghidraSeedReportSchema } from "./GhidraAnalysisSeeds.js";
 import { ghidraDisabledAnalyzerReportSchema } from "./GhidraDisabledAnalyzers.js";
 import { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  GHIDRA_INVENTORY_OPERATIONS,
-  GHIDRA_NAMING_OPERATIONS,
-} from "./GhidraInventoryValues.js";
-import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
+import { GHIDRA_NAMING_OPERATIONS } from "./GhidraInventoryValues.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
+import {
+  GHIDRA_RISCV_CALLING_CONVENTION_IDS,
+  GHIDRA_RISCV_LOAD_PREPARATION,
+} from "./GhidraRiscvProfile.js";
+import { isRecord } from "../kernel/isRecord.js";
 
-/** Exact methods proved by the bridge handshake after auto-analysis. */
+/** Exact methods proved by the selected Program bridge handshake. */
 export const GHIDRA_SESSION_CAPABILITIES = [
   "ping",
   "shutdown",
@@ -35,6 +39,20 @@ const pdbAttributeSchema = z
 
 const capabilitySchema = z.enum(GHIDRA_SESSION_CAPABILITIES);
 
+const hexSchema = z.string().regex(/^0x[0-9a-f]+$/u);
+const preparedBlockSchema = z
+  .object({
+    name: z.string().min(1),
+    address: hexSchema,
+    size: hexSchema,
+    space_before: z.string().min(1),
+    space_after: z.string().min(1),
+  })
+  .strict();
+const preparedCodeSchema = preparedBlockSchema
+  .extend({ file_offset: hexSchema })
+  .strict();
+
 const sessionInfoSchema = z
   .object({
     name: z.literal("REA Ghidra bridge"),
@@ -47,7 +65,8 @@ const sessionInfoSchema = z
       })
       .strict(),
     read_only: z.boolean(),
-    analysis_complete: z.boolean(),
+    analysis_complete: z.boolean().nullable(),
+    existing_project: z.literal(true).optional(),
     analysis_timed_out: z.boolean(),
     /** Program Information attributes; absent load state remains unknown. */
     pdb: z
@@ -93,13 +112,50 @@ const sessionInfoSchema = z
       })
       .strict()
       .optional(),
+    riscv_calling_convention: z
+      .object({
+        policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
+        functions: z.int().nonnegative(),
+        definitions: z.int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    // Written by ReaGhidraPrepareElfLoad before auto-analysis.
+    elf_load_preparation: z
+      .union([
+        z
+          .object({
+            policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
+            outcome: z.literal("moved"),
+            code: preparedCodeSchema,
+            reservation: preparedBlockSchema,
+            functions: z.int().nonnegative(),
+            entry_points: z.int().nonnegative(),
+            reservation_labels: z.int().nonnegative(),
+          })
+          .strict(),
+        z
+          .object({
+            policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
+            outcome: z.literal("canonical"),
+            code: preparedCodeSchema,
+          })
+          .strict(),
+        z
+          .object({
+            policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
+            refused: z.string().min(1).max(1024),
+          })
+          .strict(),
+      ])
+      .optional(),
     capabilities: z.array(capabilitySchema),
     target: z
       .object({
         name: z.string().min(1),
         language_id: z.string().min(1),
         compiler_spec_id: z.string().min(1),
-        image_base: z.string().regex(/^0x[0-9a-f]+$/u),
+        image_base: hexSchema,
         default_address_space: z.string().min(1),
         sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       })
@@ -107,7 +163,7 @@ const sessionInfoSchema = z
   })
   .strict();
 
-/** Authenticated metadata produced after Ghidra finishes auto-analysis. */
+/** Authenticated Program metadata; original analysis can remain unknown. */
 export type GhidraSessionInfo = z.infer<typeof sessionInfoSchema>;
 
 /** Describe missing PDB authority without claiming all names are generated. */
@@ -155,8 +211,10 @@ export const parseGhidraSessionInfo = (
     readonly profileDigest: string;
     readonly targetSha256: string;
     readonly expectedReadOnly?: boolean;
+    readonly expectedExistingProject?: boolean;
     readonly expectedLanguageId?: string;
     readonly expectedCompilerSpecId?: string;
+    readonly expectedImageBase?: string;
   },
 ): Result<GhidraSessionInfo, Error> => {
   const parsed = sessionInfoSchema.safeParse(value);
@@ -177,20 +235,25 @@ export const parseGhidraSessionInfo = (
     (expected.expectedCompilerSpecId !== undefined &&
       parsed.data.target.compiler_spec_id !==
         expected.expectedCompilerSpecId) ||
-    new Set(parsed.data.capabilities).size !== expectedCapabilities.length ||
+    (expected.expectedImageBase !== undefined &&
+      parsed.data.target.image_base !== expected.expectedImageBase) ||
     expectedCapabilities.some(
       (capability) => !parsed.data.capabilities.includes(capability),
     ) ||
-    parsed.data.analysis_complete === parsed.data.analysis_timed_out
+    (expected.expectedExistingProject === true
+      ? parsed.data.existing_project !== true ||
+        parsed.data.analysis_complete !== null ||
+        parsed.data.analysis_timed_out
+      : parsed.data.existing_project !== undefined ||
+        parsed.data.analysis_complete === null ||
+        parsed.data.analysis_complete === parsed.data.analysis_timed_out)
   )
-    return err(new Error("Ghidra bridge handshake identity is invalid"));
+    return err(new GhidraAdmissionError("handshake_identity"));
   return ok(parsed.data);
 };
 
 /** Require acknowledgement that the private bridge loop has ended. */
 export const isGhidraShutdownAcknowledgement = (value: JsonValue): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
+  isRecord(value) &&
   value.shutdown === true &&
   value.project_ephemeral === true;

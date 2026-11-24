@@ -169,21 +169,29 @@ describe("PythonBytecode - header building and parsing", () => {
     );
   });
 
-  it("rejects Python 3.7+ headers with reserved PEP 552 bitfield values", () => {
+  it("rejects reserved PEP 552 bitfield bits while accepting bitfield 0x02 as timestamp-based", () => {
     const reservedBit = buildPythonBytecodeHeader(3439, { sourceSize: 64 });
     reservedBit.writeUInt32LE(0x04, 4);
     expect(parsePythonBytecodeHeader(reservedBit)).toBeNull();
     expect(isPythonBytecode(reservedBit)).toBe(false);
 
-    const checkSourceWithoutHash = buildPythonBytecodeHeader(3439, {
+    // Per PEP 552 and CPython, bitfield 0x02 without bit 0 is a valid timestamp header.
+    const checkSourceWithoutHash = buildPythonBytecodeHeader(3495, {
+      timestamp: new Date(1680000000000),
       sourceSize: 64,
     });
     checkSourceWithoutHash.writeUInt32LE(0x02, 4);
-    expect(parsePythonBytecodeHeader(checkSourceWithoutHash)).toBeNull();
-    expect(isPythonBytecode(checkSourceWithoutHash)).toBe(false);
+    expect(isPythonBytecode(checkSourceWithoutHash)).toBe(true);
+    expect(parsePythonBytecodeHeader(checkSourceWithoutHash)).toMatchObject({
+      version: "3.11",
+      magicNumber: 3495,
+      isHashBased: false,
+      sourceSize: 64,
+      codeObjectOffset: 16,
+    });
   });
 
-  it("recognizes all magics from PYTHON_PYC_MAGIC_TABLE including pre-release and 12-byte 3.7 magics", () => {
+  it("recognizes pinned magics from pythonBytecodeIdentity including pre-release and 12-byte 3.7 magics", () => {
     const py312Pre = buildPythonBytecodeHeader(3530, { sourceSize: 256 });
     expect(py312Pre.length).toBe(16);
     expect(isPythonBytecode(py312Pre)).toBe(true);

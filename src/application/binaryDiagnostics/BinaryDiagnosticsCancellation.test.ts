@@ -1,11 +1,17 @@
 import { expect, it } from "vitest";
 import { ElfNotesService } from "./ElfNotesService.js";
+import { KernelModuleService } from "./KernelModuleService.js";
+import { ElfDependenciesService } from "./ElfDependenciesService.js";
 import { PeCertificatesService } from "./PeCertificatesService.js";
 import { PeImportsService } from "./PeImportsService.js";
+import { WindowsShortcutService } from "./WindowsShortcutService.js";
 import {
   ELF_NOTES_PROVIDER,
+  KERNEL_MODULE_PROVIDER,
+  ELF_DEPENDENCIES_PROVIDER,
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
+  WINDOWS_SHORTCUT_PROVIDER,
 } from "../../domain/investigationProviders.js";
 
 const inspect = (): never => {
@@ -28,6 +34,27 @@ it.each([
   [
     "ELF notes",
     () => new ElfNotesService({ identity: ELF_NOTES_PROVIDER, inspect }),
+  ],
+  [
+    "kernel module",
+    () =>
+      new KernelModuleService({ identity: KERNEL_MODULE_PROVIDER, inspect }),
+  ],
+  [
+    "ELF dependencies",
+    () =>
+      new ElfDependenciesService({
+        identity: ELF_DEPENDENCIES_PROVIDER,
+        inspect,
+      }),
+  ],
+  [
+    "Windows shortcut",
+    () =>
+      new WindowsShortcutService({
+        identity: WINDOWS_SHORTCUT_PROVIDER,
+        inspect,
+      }),
   ],
 ] as const)(
   "preserves an early cancellation reason for %s before validation",

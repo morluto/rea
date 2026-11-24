@@ -1,7 +1,7 @@
 import type { InspectAppleIpsInput } from "../../domain/native/appleIps.js";
 import {
-  AppleIpsFormatFailure,
-  AppleIpsResourceFailure,
+  APPLE_IPS_FORMAT,
+  appleIpsLimit,
   type AppleIpsFixedBoundary,
 } from "./AppleIps.errors.js";
 import {
@@ -10,6 +10,10 @@ import {
   type JsonShape,
   type LosslessJson,
 } from "./losslessJson.js";
+import {
+  malformedInput,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
 
 /** IPS JSON is at most a handful of levels deep; deeper input is not a crash report shape. */
 const MAX_IPS_JSON_DEPTH = 64;
@@ -29,7 +33,7 @@ const fixedAllowance =
   (boundary: AppleIpsFixedBoundary, maximum: number, noun: string) =>
   (count: number) => {
     if (count > maximum)
-      throw new AppleIpsResourceFailure(
+      throw appleIpsLimit(
         boundary,
         maximum,
         `Crash report lists more than ${String(maximum)} ${noun}`,
@@ -49,7 +53,7 @@ const selectedAllowances = (input: InspectAppleIpsInput) => {
     (boundary: keyof typeof counts, maximum: number, noun: string) => () => {
       counts[boundary] += 1;
       if (counts[boundary] > maximum)
-        throw new AppleIpsResourceFailure(
+        throw appleIpsLimit(
           boundary,
           maximum,
           `Crash report lists more than ${String(maximum)} ${noun}, above the selected ${String(maximum)}-entry ${boundary} allowance`,
@@ -86,8 +90,10 @@ const threadShape = (
             "imageIndex",
             "imageOffset",
             "symbol",
+            "symbolLocation",
             "inline",
           ),
+          beforeUnlisted: unlistedKeys,
         },
         beforeItem: take.frames,
       },
@@ -96,11 +102,19 @@ const threadShape = (
         members: {
           flavor: SCALAR,
           x: { kind: "array", items: register, beforeItem: take.registers },
+          // Rosetta-translated processes nest their translator registers.
+          rosetta: {
+            kind: "object",
+            members: {},
+            rest: register,
+            beforeRest: take.registers,
+          },
         },
         rest: register,
         beforeRest: take.registers,
       },
     },
+    beforeUnlisted: unlistedKeys,
   };
 };
 
@@ -114,7 +128,14 @@ const terminationShape = (): JsonShape => {
   return {
     kind: "object",
     members: {
-      ...scalarMembers("namespace", "code", "indicator"),
+      ...scalarMembers(
+        "namespace",
+        "code",
+        "indicator",
+        "flags",
+        "byPid",
+        "byProc",
+      ),
       reasons: {
         kind: "array",
         items: SCALAR,
@@ -142,6 +163,7 @@ export const ipsBodyShape = (input: InspectAppleIpsInput): JsonShape => {
         "procName",
         "procPath",
         "pid",
+        "parentPid",
         "parentProc",
         "cpuType",
         "translated",
@@ -173,8 +195,10 @@ export const ipsBodyShape = (input: InspectAppleIpsInput): JsonShape => {
             "base",
             "size",
             "uuid",
+            "name",
             "path",
           ),
+          beforeUnlisted: unlistedKeys,
         },
         beforeItem: take.images,
       },
@@ -193,6 +217,8 @@ export const IPS_METADATA_SHAPE: JsonShape = {
     "bundleID",
     "incident_id",
     "name",
+    "build_version",
+    "platform",
   ),
   beforeUnlisted: unlistedKeys,
 };
@@ -208,25 +234,21 @@ export const consumeJson = (
       maxDepth: MAX_IPS_JSON_DEPTH,
     });
     if (!/^[\u0020\u0009\u000a\u000d]*$/u.test(text.slice(parsed.end)))
-      throw new AppleIpsFormatFailure(
-        "malformed",
+      throw malformedInput(
+        APPLE_IPS_FORMAT,
         `${label} has trailing JSON text after the first complete value`,
       );
     return parsed.value;
   } catch (cause) {
-    if (
-      cause instanceof AppleIpsFormatFailure ||
-      cause instanceof AppleIpsResourceFailure
-    )
-      throw cause;
+    if (cause instanceof ParseFailureError) throw cause;
     if (cause instanceof LosslessJsonFailure && cause.reason === "depth")
-      throw new AppleIpsResourceFailure(
+      throw appleIpsLimit(
         "nesting",
         cause.maximum ?? MAX_IPS_JSON_DEPTH,
         `${label}: ${cause.message}`,
       );
     const message =
       cause instanceof LosslessJsonFailure ? cause.message : String(cause);
-    throw new AppleIpsFormatFailure("malformed", `${label}: ${message}`);
+    throw malformedInput(APPLE_IPS_FORMAT, `${label}: ${message}`);
   }
 };

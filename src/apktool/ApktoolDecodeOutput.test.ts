@@ -190,6 +190,52 @@ sdkInfo:
   });
 });
 
+describe("parseApktoolYml Apktool 2.9+ metadata dialect", () => {
+  // Source-derived from ApkInfo.write, VersionInfo.write and YamlWriter at
+  // Apktool v2.9.0 and v2.12.1, whose string escaping matches 3.0.3.
+  const yml = (version: string, versionName: string) =>
+    [
+      `version: ${version}`,
+      "apkFileName: app-release.apk",
+      "isFrameworkApk: false",
+      "usesFramework:",
+      "  ids:",
+      "  - 1",
+      "  tag: null",
+      "sdkInfo:",
+      "  minSdkVersion: 24",
+      "  targetSdkVersion: 34",
+      "packageInfo:",
+      "  forcedPackageId: 127",
+      "  renameManifestPackage: null",
+      "versionInfo:",
+      "  versionCode: 7",
+      `  versionName: ${versionName}`,
+      "sharedLibrary: false",
+      "sparseResources: false",
+      "doNotCompress:",
+      "- arsc",
+      "",
+    ].join("\n");
+
+  it.each([
+    ["2.9.0", "1.0 #beta", "1.0 #beta"],
+    ["2.9.3", String.raw`release \"quoted\"`, 'release "quoted"'],
+    ["2.12.1", "1.0: beta", "1.0: beta"],
+    ["2.12.1", "", ""],
+  ])(
+    "reads Apktool %s version string %j as its writer escaped it",
+    (version, source, expected) => {
+      expect(parseApktoolYml(yml(version, source))).toEqual({
+        versionName: expected,
+        versionCode: "7",
+        minSdkVersion: "24",
+        targetSdkVersion: "34",
+      });
+    },
+  );
+});
+
 describe("parseManifestPackage", () => {
   it("reads the package attribute from a decoded manifest", () => {
     const manifest =
@@ -277,6 +323,14 @@ describe("parseDecodedStrings", () => {
     );
   });
 
+  it("ignores foreign namespace string elements", () => {
+    const xml =
+      '<resources><string xmlns="urn:vendor" name="foreign">decoy</string><string name="local">one</string></resources>';
+    expect(parseDecodedStrings(xml)).toEqual(
+      ok({ entries: [{ name: "local", value: "one" }], unparsedCount: 0 }),
+    );
+  });
+
   it("preserves literal U+FFFD and unaffected sibling strings", () => {
     expect(
       parseDecodedStrings(
@@ -300,9 +354,9 @@ describe("parseDecodedStrings", () => {
     expect(parseDecodedStrings(xml)).toMatchObject({
       ok: false,
       error: {
-        _tag: "ApktoolStringsDocumentError",
-        reason: "malformed",
-        cause: { _tag: "XmlDocumentParseError" },
+        _tag: "ParseFailureError",
+        kind: "malformed",
+        failure: { format: "xml" },
       },
     });
   });
@@ -390,7 +444,11 @@ describe("string document validity and omission counts", () => {
       parseDecodedStrings("<resources><string name='broken'>no</resources>"),
     ).toMatchObject({
       ok: false,
-      error: { _tag: "ApktoolStringsDocumentError", reason: "malformed" },
+      error: {
+        _tag: "ParseFailureError",
+        kind: "malformed",
+        failure: { format: "xml" },
+      },
     });
     expect(
       parseDecodedStrings(
@@ -400,16 +458,24 @@ describe("string document validity and omission counts", () => {
   });
 });
 
-it.each(["<manifest/>", '<other><string name="a">one</string></other>'])(
-  "keeps a wrong document root separate from an entry count: %s",
-  (xml) => {
-    const parsed = parseDecodedStrings(xml);
-    expect(parsed).toMatchObject({
-      ok: false,
-      error: { _tag: "ApktoolStringsDocumentError", reason: "wrong_root" },
-    });
-    expect(parsed).not.toHaveProperty("value");
-    if (parsed.ok) throw new Error("Expected document failure");
-    expect(parsed.error).not.toHaveProperty("unparsedCount");
-  },
-);
+it.each([
+  "<manifest/>",
+  '<other><string name="a">one</string></other>',
+  '<resources xmlns="urn:vendor"><string name="a">one</string></resources>',
+])("keeps a wrong document root separate from an entry count: %s", (xml) => {
+  const parsed = parseDecodedStrings(xml);
+  expect(parsed).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ParseFailureError",
+      kind: "malformed",
+      failure: {
+        format: "android-string-resources",
+        field: "documentElement",
+      },
+    },
+  });
+  expect(parsed).not.toHaveProperty("value");
+  if (parsed.ok) throw new Error("Expected document failure");
+  expect(parsed.error).not.toHaveProperty("unparsedCount");
+});

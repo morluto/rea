@@ -1,3 +1,9 @@
+import {
+  BinaryReader,
+  readUint16At,
+  readUint32At,
+} from "../binaryContainer.js";
+
 /** Maximum complete class-file buffer retained for FAT/JVM disambiguation. */
 export const MAX_JVM_CLASS_IDENTITY_BYTES = 16 * 1024 * 1024;
 
@@ -9,42 +15,41 @@ export const MAX_JVM_CLASS_PROBE_BYTES = 10 + 3 * (3 + 0xffff);
 
 export type JvmClassProbeState = "pending" | "matched" | "rejected";
 
-/** Validate JVMS Table 4.1-A major/minor version combinations. */
-const isValidJvmVersion = (major: number, minor: number): boolean => {
-  if (major < 45 || major > 100) return false;
-  if (major === 45) return minor >= 0 && minor <= 0xffff;
-  if (major < 56) return minor === 0;
-  return minor === 0 || minor === 0xffff;
-};
+/** Validate JVMS §4.1 major/minor version combinations: 45–55 permit any minor; 56+ require 0 or 65535. */
+const isValidJvmVersion = (major: number, minor: number): boolean =>
+  major >= 45 && (major < 56 || minor === 0 || minor === 65535);
 
 /** Class-file identity used to disambiguate JVM CAFEBABE from Mach-O FAT. */
 class ClassFileCursor {
   private offset = 0;
-  private readonly view: DataView;
+  private readonly reader: BinaryReader;
 
-  constructor(private readonly bytes: Uint8Array) {
-    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  constructor(bytes: Uint8Array) {
+    const view = Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.reader = new BinaryReader(view, false, "JVM class");
   }
 
-  get atEnd(): boolean {
-    return this.offset === this.bytes.byteLength;
+  get remaining(): number {
+    return this.reader.bytes.length - this.offset;
   }
 
   u1(): number | null {
     if (!this.has(1)) return null;
-    return this.bytes[this.offset++]!;
+    return this.reader.u8(this.offset++);
   }
 
   u2(): number | null {
     if (!this.has(2)) return null;
-    const value = this.view.getUint16(this.offset, false);
+    const value = this.reader.u16(this.offset);
     this.offset += 2;
     return value;
   }
 
   u4(): number | null {
     if (!this.has(4)) return null;
-    const value = this.view.getUint32(this.offset, false);
+    const value = this.reader.u32(this.offset);
     this.offset += 4;
     return value;
   }
@@ -57,9 +62,22 @@ class ClassFileCursor {
   }
 
   private has(length: number): boolean {
-    return this.offset <= this.bytes.byteLength - length;
+    return length <= this.remaining;
   }
 }
+
+const readMajorVersion = (cursor: ClassFileCursor): number | null => {
+  if (cursor.u4() !== 0xcafebabe) return null;
+  const minor = cursor.u2();
+  const major = cursor.u2();
+  if (minor === null || major === null || !isValidJvmVersion(major, minor))
+    return null;
+  return major;
+};
+
+/** Establish whether the fixed prefix warrants a complete JVM identity scan. */
+export const hasJvmClassHeader = (bytes: Uint8Array): boolean =>
+  readMajorVersion(new ClassFileCursor(bytes)) !== null;
 
 interface ConstantPool {
   readonly tags: (number | null)[];
@@ -71,6 +89,10 @@ const readConstantPool = (
   cursor: ClassFileCursor,
   count: number,
 ): ConstantPool | null => {
+  // JVMS §4.4: the smallest entries take three bytes. A long or double
+  // consumes two pool slots in nine bytes, so that lower bound still holds.
+  // §4.1 also requires seven u2 fields after the pool, even with no members.
+  if ((count - 1) * 3 + 14 > cursor.remaining) return null;
   const pool: ConstantPool = {
     tags: Array.from({ length: count }, () => null),
     first: Array.from({ length: count }, () => null),
@@ -244,18 +266,10 @@ const readMembers = (cursor: ClassFileCursor, pool: ConstantPool): boolean => {
 /** Validate class-file framing and constant-pool references before FAT parsing. */
 export const isJvmClassFile = (bytes: Uint8Array): boolean => {
   const cursor = new ClassFileCursor(bytes);
-  if (cursor.u4() !== 0xcafebabe) return false;
-  const minor = cursor.u2();
-  const major = cursor.u2();
+  const major = readMajorVersion(cursor);
+  if (major === null) return false;
   const poolCount = cursor.u2();
-  if (
-    minor === null ||
-    major === null ||
-    !isValidJvmVersion(major, minor) ||
-    poolCount === null ||
-    poolCount === 0
-  )
-    return false;
+  if (poolCount === null || poolCount === 0) return false;
   const pool = readConstantPool(cursor, poolCount);
   if (pool === null || !hasValidPoolReferences(pool, major)) return false;
   if (cursor.u2() === null) return false;
@@ -269,13 +283,20 @@ export const isJvmClassFile = (bytes: Uint8Array): boolean => {
   )
     return false;
   const interfaces = cursor.u2();
-  if (interfaces === null || !cursor.skip(interfaces * 2)) return false;
+  if (interfaces === null) return false;
+  // JVMS 4.1: every interface index must name CONSTANT_Class_info, just
+  // like this_class and nonzero super_class. Framing alone is insufficient
+  // to establish JVM identity when the same magic also identifies FAT.
+  for (let index = 0; index < interfaces; index += 1) {
+    const reference = cursor.u2();
+    if (reference === null || !poolHasTag(pool, reference, 7)) return false;
+  }
   if (!readMembers(cursor, pool) || !readMembers(cursor, pool)) return false;
   const attributes = cursor.u2();
   return (
     attributes !== null &&
     readAttributes(cursor, pool, attributes) &&
-    cursor.atEnd
+    cursor.remaining === 0
   );
 };
 
@@ -286,7 +307,6 @@ type ProbeConstantStep =
 
 const stepProbeConstant = (
   buffered: Uint8Array,
-  view: DataView,
   offset: number,
   index: number,
   poolCount: number,
@@ -294,7 +314,7 @@ const stepProbeConstant = (
   const tag = buffered[offset]!;
   if (tag === 1) {
     if (offset + 3 > buffered.length) return "need-more";
-    const len = view.getUint16(offset + 1, false);
+    const len = readUint16At(buffered, offset + 1, false);
     if (offset + 3 + len > buffered.length) return "need-more";
     return { nextOffset: offset + 3 + len, extraSlots: 0 };
   }
@@ -368,20 +388,15 @@ export const createJvmClassSignatureProbe = (): {
       buffered = next;
 
       if (buffered.length < 4) return state;
-      const view = new DataView(
-        buffered.buffer,
-        buffered.byteOffset,
-        buffered.byteLength,
-      );
-      if (view.getUint32(0, false) !== 0xcafebabe) {
+      if (readUint32At(buffered, 0, false) !== 0xcafebabe) {
         state = "rejected";
         return state;
       }
       if (buffered.length < 10) return state;
 
-      const minor = view.getUint16(4, false);
-      const major = view.getUint16(6, false);
-      const poolCount = view.getUint16(8, false);
+      const minor = readUint16At(buffered, 4, false);
+      const major = readUint16At(buffered, 6, false);
+      const poolCount = readUint16At(buffered, 8, false);
       if (!isValidJvmVersion(major, minor) || poolCount === 0) {
         state = "rejected";
         return state;
@@ -397,13 +412,7 @@ export const createJvmClassSignatureProbe = (): {
       let parsed = 0;
       for (let index = 1; index < poolCount; index += 1) {
         if (offset >= buffered.length) break;
-        const step = stepProbeConstant(
-          buffered,
-          view,
-          offset,
-          index,
-          poolCount,
-        );
+        const step = stepProbeConstant(buffered, offset, index, poolCount);
         if (step === "need-more") break;
         if (step === "invalid") {
           state = "rejected";

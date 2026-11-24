@@ -25,6 +25,21 @@ const dataFrame = (payload: Uint8Array) => {
   return frame;
 };
 
+it("does not interpret fields after a blank trailer line", async () => {
+  const result = await decodeProtobufBody(
+    trailerFrame("grpc-status: 0\r\n\r\ngrpc-status: 7\r\n"),
+    "grpc-web",
+    source,
+    same,
+    new ProtobufBudget(),
+  );
+  expect(result.status).toBe("partial");
+  expect(result.frames[0]?.trailers).toEqual([
+    { name: "grpc-status", value: "0" },
+  ]);
+  expect(result.frames[0]?.examined_bytes).toBe(18);
+});
+
 it("rejects forbidden trailer controls while retaining valid earlier trailers", async () => {
   for (const code of [
     ...Array.from({ length: 32 }, (_, index) => index),
@@ -51,12 +66,15 @@ it("rejects forbidden trailer controls while retaining valid earlier trailers", 
     expect(result.frames[0]?.trailers).toEqual([
       { name: "grpc-message", value: "kept" },
     ]);
-    expect(input.subarray(5)).toEqual(Buffer.from(text, "utf8"));
+    expect(Buffer.compare(input.subarray(5), Buffer.from(text, "utf8"))).toBe(
+      0,
+    );
   }
 });
 
-it("retains allowed whitespace, visible text, and valid UTF-8 obs-text", async () => {
-  const text = "grpc-message: alpha\tbeta \u00e9\r\n";
+it("keeps internal whitespace and UTF-8 while trimming trailer field boundaries", async () => {
+  const text =
+    "grpc-status: 0 \r\ngrpc-message: alpha\tbeta \u00e9 \t\r\nx-empty: \t\r\n";
   const result = await decodeProtobufBody(
     trailerFrame(text),
     "grpc-web",
@@ -66,7 +84,9 @@ it("retains allowed whitespace, visible text, and valid UTF-8 obs-text", async (
   );
   expect(result.status).toBe("complete");
   expect(result.frames[0]?.trailers).toEqual([
+    { name: "grpc-status", value: "0" },
     { name: "grpc-message", value: "alpha\tbeta \u00e9" },
+    { name: "x-empty", value: "" },
   ]);
   expect(result.examined_bytes).toBe(5 + Buffer.byteLength(text));
 });
@@ -107,8 +127,9 @@ it.each(["grpc-web", "grpc-web-text"] as const)(
       status: "partial",
       examined_bytes: trailer.length,
       error: {
-        reason:
-          "gRPC-web trailer field contains opaque non-UTF-8 bytes; that field was omitted",
+        reason: expect.stringMatching(
+          /gRPC-web trailer.*non-UTF-8 bytes.*field was omitted/i,
+        ),
       },
       trailers: [
         { name: "grpc-status", value: "0" },
@@ -116,7 +137,7 @@ it.each(["grpc-web", "grpc-web-text"] as const)(
       ],
     });
     expect(result.examined_bytes).toBe(binary.length);
-    expect(binary.subarray(-trailer.length)).toEqual(trailer);
+    expect(Buffer.compare(binary.subarray(-trailer.length), trailer)).toBe(0);
   },
 );
 

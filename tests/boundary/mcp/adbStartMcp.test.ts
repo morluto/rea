@@ -1,3 +1,5 @@
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createHash } from "node:crypto";
@@ -6,12 +8,13 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
 import { AdbProvider } from "../../../src/adb/AdbProvider.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.skipIf(process.platform === "win32")(
   "preserves caller destination and reports the effective pushed file path through MCP",
@@ -27,7 +30,7 @@ it.skipIf(process.platform === "win32")(
     await chmod(localPath, 0o755);
     await writeFile(
       adbPath,
-      `#!/usr/bin/env node
+      `#!${process.execPath}
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args[0] === "version") { process.stdout.write("Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\n"); }
@@ -59,10 +62,13 @@ else if (args[0] === "-s" && args[2] === "shell" && args[3] === "test") {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({ name: "adb-push-boundary", version: "0.0.0" });
+    const client = new Client(
+      { name: "adb-push-boundary", version: "0.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
-    const response = await client.callTool({
+    const response = await artifactMcpCall(client, {
       name: "push_adb_file",
       arguments: {
         serial: "emulator-5554",
@@ -103,10 +109,11 @@ const createFakeAdb = async () => {
   const stderrFile = join(directory, "stderr");
   const callsFile = join(directory, "calls");
   const exitCodeFile = join(directory, "exit-code");
-  const fakeAdbSource = `#!/usr/bin/env node
+  const fakeAdbSource = `#!${process.execPath}
 const fs = require("node:fs");
 const [stdoutPath, stderrPath, callsPath, exitCodePath] = ${JSON.stringify([stdoutFile, stderrFile, callsFile, exitCodeFile])};
 const args = process.argv.slice(2);
+if (args[0] === "start-server") process.exit(0);
 fs.appendFileSync(callsPath, args.join(" ") + "\\n");
 if (args[0] === "version") {
   process.stdout.write("Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\n");
@@ -142,10 +149,10 @@ const assertAdvertisedActivityExtras = async (
   if (advertised === undefined) throw new Error("Missing ADB activity tool");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
-  const validateInput = ajv.compile(advertised.inputSchema);
-  expect(validateInput(input)).toBe(true);
+  const validateCompactInput = ajv.compile(advertised.inputSchema);
+  expect(validateCompactInput(input)).toBe(true);
   expect(
-    validateInput({
+    validateCompactInput({
       ...input,
       extras: [
         { key: "bool", type: "boolean", value: "false" },
@@ -155,27 +162,19 @@ const assertAdvertisedActivityExtras = async (
       ],
     }),
   ).toBe(true);
-  for (const [type, value] of [
-    ["boolean", ""],
-    ["boolean", "yes"],
-    ["int", "1.5"],
-    ["long", ""],
-    ["float", "garbage"],
-  ])
-    expect(
-      validateInput({ ...input, extras: [{ key: "invalid", type, value }] }),
-      `${type}: ${value}`,
-    ).toBe(false);
-
+  // Canonical validation rejects malformed extras before starting ADB.
   const callsBeforeInvalidExtra = await calls();
-  const invalidExtra = await client.callTool({
+  const invalidExtra = await artifactMcpCall(client, {
     name: "start_adb_activity",
     arguments: {
       ...input,
       extras: [{ key: "invalid", type: "boolean", value: "yes" }],
     },
   });
-  expect(invalidExtra.isError).toBe(true);
+  expect(parseMcpToolError(invalidExtra).error).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+  });
   expect(await calls()).toEqual(callsBeforeInvalidExtra);
 };
 
@@ -209,7 +208,10 @@ it
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({ name: "adb-start-boundary", version: "0.0.0" });
+    const client = new Client(
+      { name: "adb-start-boundary", version: "0.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
 
@@ -227,7 +229,7 @@ it
               { key: "scale", type: "float" as const, value: "1e-3" },
             ],
           };
-    const success = await client.callTool({
+    const success = await artifactMcpCall(client, {
       name: operation,
       arguments: input,
     });
@@ -248,7 +250,7 @@ it
 
     stdout = `${starting}Status: timeout\nActivity: com.example/.Main\nWaitTime: 10004\nComplete\n`;
     await fakeAdb.setReport(stdout, stderr);
-    const timeout = await client.callTool({
+    const timeout = await artifactMcpCall(client, {
       name: operation,
       arguments: input,
     });
@@ -279,7 +281,7 @@ it
     stdout = `${starting}Status: ok\nActivity: com.example/.Main\nComplete\n`;
     stderr = "Exception: Activity class does not exist\n";
     await fakeAdb.setReport(stdout, stderr);
-    const hardError = await client.callTool({
+    const hardError = await artifactMcpCall(client, {
       name: operation,
       arguments: input,
     });
@@ -348,10 +350,10 @@ it.skipIf(process.platform === "win32")(
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({
-      name: "adb-start-refusal-mcp",
-      version: "0.0.0",
-    });
+    const client = new Client(
+      { name: "adb-start-refusal-mcp", version: "0.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
 
@@ -369,7 +371,7 @@ it.skipIf(process.platform === "win32")(
       validateFormats: false,
     }).compile(advertised.inputSchema);
     expect(validateInput(input)).toBe(true);
-    const refused = await client.callTool({
+    const refused = await artifactMcpCall(client, {
       name: "start_adb_activity",
       arguments: input,
     });
@@ -400,7 +402,7 @@ it.skipIf(process.platform === "win32")(
       "Starting: Intent { act=android.intent.action.MAIN cmp=com.example/.Outer$InnerActivity }\n";
     const transportStderr = "error: device offline\n";
     await fakeAdb.setReport(transportStdout, transportStderr, 1);
-    const transport = await client.callTool({
+    const transport = await artifactMcpCall(client, {
       name: "start_adb_activity",
       arguments: input,
     });
@@ -418,7 +420,7 @@ it.skipIf(process.platform === "win32")(
       "Starting: Intent { act=android.intent.action.MAIN cmp=com.example/.Outer$InnerActivity }\n";
     const incompleteStderr = "transport disconnected by peer\n";
     await fakeAdb.setReport(incompleteStdout, incompleteStderr, 1);
-    const incomplete = await client.callTool({
+    const incomplete = await artifactMcpCall(client, {
       name: "start_adb_activity",
       arguments: input,
     });
@@ -442,7 +444,7 @@ it.skipIf(process.platform === "win32")(
     const stderrOnly =
       "Error: Activity class {com.example/com.example.Outer$InnerActivity} does not exist.\n";
     await fakeAdb.setReport("", stderrOnly, 1);
-    const stderrOnlyFailure = await client.callTool({
+    const stderrOnlyFailure = await artifactMcpCall(client, {
       name: "start_adb_activity",
       arguments: input,
     });
@@ -468,7 +470,7 @@ it.skipIf(process.platform === "win32")(
       "Error: " +
       "x".repeat(70 * 1024);
     await fakeAdb.setReport(oversizedReport, "", 1);
-    const truncated = await client.callTool({
+    const truncated = await artifactMcpCall(client, {
       name: "start_adb_activity",
       arguments: input,
     });

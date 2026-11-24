@@ -1,3 +1,5 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { access, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -6,25 +8,25 @@ import { expect, it, vi } from "vitest";
 
 import { registerWebScriptCommands } from "../../../src/cli/webScriptCommands.js";
 import * as webScriptExport from "../../../src/application/WebScriptExportService.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../../src/contracts/cliCommandNames.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { scriptScenarioFixture } from "../../fixtures/webScriptCapture.js";
+import {
+  scriptCaptureEvidenceFixture,
+  scriptScenarioFixture,
+} from "../../fixtures/webScriptCapture.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-it("forwards an interrupt into the export workflow and reports cancellation", async () => {
-  const commands = new Map<string, { run(input: unknown): Promise<unknown> }>();
-  const cli = {
-    command: (
-      name: string,
-      definition: { run(input: unknown): Promise<unknown> },
-    ) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as Parameters<typeof registerWebScriptCommands>[0];
+const registeredExportCommand = () => {
+  const cli = createCommandCli();
   registerWebScriptCommands(cli, pino({ enabled: false }));
+  return cliCommand(cli, cliCommandFor("export_web_scripts"))!.definition;
+};
+
+it("forwards an interrupt into the export workflow and reports cancellation", async () => {
+  const command = registeredExportCommand();
   const exported = vi
     .spyOn(webScriptExport, "exportWebScripts")
     .mockImplementation(async (_input, _resources, options) => {
@@ -37,7 +39,9 @@ it("forwards an interrupt into the export workflow and reports cancellation", as
     });
   const previousExitCode = process.exitCode;
   try {
-    const output = await commands.get(CLI_COMMANDS.exportWebScripts)?.run({
+    const output = await command.run({
+      formatExplicit: false,
+      options: {},
       args: {
         capturePath: "/unused/capture.json",
         outputDirectory: "/unused/out",
@@ -52,21 +56,85 @@ it("forwards an interrupt into the export workflow and reports cancellation", as
   }
 });
 
+it.each(["cleanup failure", "cancellation during cleanup"] as const)(
+  "retains exported Evidence on %s",
+  async (outcome) => {
+    const command = registeredExportCommand();
+    const evidence = scriptCaptureEvidenceFixture();
+    const exported = vi
+      .spyOn(webScriptExport, "exportWebScripts")
+      .mockResolvedValue(ok(evidence));
+    const close = vi
+      .spyOn(ArtifactResourceScope.prototype, "close")
+      .mockImplementation(async () => {
+        if (outcome === "cleanup failure") throw new Error("close denied");
+        process.emit("SIGINT");
+      });
+    const previousExitCode = process.exitCode;
+    try {
+      const output = await command.run({
+        formatExplicit: false,
+        options: {},
+        args: {
+          capturePath: "/unused/capture.json",
+          outputDirectory: "/unused/out",
+        },
+      });
+      expect(close).toHaveBeenCalledOnce();
+      expect(output).toMatchObject({
+        error: "Script export failed",
+        code:
+          outcome === "cleanup failure" ? "cleanup_incomplete" : "cancelled",
+        details: { partial_observation: evidence },
+      });
+    } finally {
+      exported.mockRestore();
+      close.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  },
+);
+
+it("closes export resources when the operation throws", async () => {
+  const command = registeredExportCommand();
+  const exported = vi
+    .spyOn(webScriptExport, "exportWebScripts")
+    .mockRejectedValue(new Error("unexpected export failure"));
+  const close = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockResolvedValue();
+  try {
+    const output = await command.run({
+      formatExplicit: false,
+      options: {},
+      args: {
+        capturePath: "/unused/capture.json",
+        outputDirectory: "/unused/out",
+      },
+    });
+    expect(close).toHaveBeenCalledOnce();
+    expect(output).toMatchObject({
+      error: "Script export failed",
+      details: { operation: "export_web_scripts" },
+    });
+  } finally {
+    exported.mockRestore();
+    close.mockRestore();
+  }
+});
+
 cliTest.skipIf(process.platform === "win32")(
   "exits with a capture_path invalid_request for a named pipe before publishing output",
   async ({ cli, processes }) => {
     const root = await createTestTempDirectory("rea-script-selection-cli-");
     const capturePath = join(root, "capture.pipe");
     const outputDirectory = join(root, "export");
-    const created = await processes.run("mkfifo", [capturePath], {
-      timeoutMs: 5_000,
-    });
+    const created = await processes.run("mkfifo", [capturePath]);
     expect(created.exitCode).toBe(0);
 
     const response = await cli.run({
       arguments: ["export-web-scripts", capturePath, outputDirectory, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
-      timeoutMs: 5_000,
     });
     expect(response.exitCode).toBe(1);
     expect(response.signal).toBeNull();
@@ -77,7 +145,7 @@ cliTest.skipIf(process.platform === "win32")(
         operation: "export_web_scripts",
         issues: [
           {
-            path: ["capture_path"],
+            path: ["capturePath"],
             reason: "invalid_value",
             message: expect.stringContaining("regular file"),
           },
@@ -129,9 +197,9 @@ cliTest(
           operation: "export_web_scripts",
           issues: [
             {
-              path: ["output_directory"],
+              path: ["outputDirectory"],
               reason: "invalid_value",
-              message: "Extraction output root already exists",
+              message: "Output root already exists",
             },
           ],
         },

@@ -25,17 +25,53 @@ Keep the original analysis inputs in that call. For the CLI, pass the same
 selection as `--view '<JSON>' --detail summary --evidence_output routes.json`.
 The complete Evidence bundle is written without overwriting existing files.
 Unselected delivery retains the existing complete result. A web-bundle summary
-requires an explicit route view; application summaries also support the existing
+requires an explicit route or web-bundle view; application summaries also support the existing
 general summary when `view` is omitted.
 
 Use the returned `normalized_result.parent_evidence_id` with
 `inspect_analysis_view` on the same connection. The CLI's exported bundle can be
 reopened with `inspect-evidence-bundle`; its `records` contain the complete
-Evidence. To use `inspect_analysis_view`'s `evidence-file` source, extract the
-selected parent record into a separate local Evidence JSON file (that source
-accepts one Evidence record, not a bundle). Views do not reopen source files or
-reconnect to a browser. Historical Evidence without `route_inventory` is
-unmeasured, rather than an empty route set.
+Evidence. `inspect_analysis_view`'s `evidence-file` source accepts either one
+Evidence record or an exported bundle with the selected `evidence_id`.
+Views do not reopen source files or
+reconnect to a browser. A parent without `route_inventory` is unmeasured,
+rather than an empty route set.
+
+## Page captured endpoint observations and inferences
+
+For `analyze_web_bundle`, select `detail: "summary"` and
+`view: {kind: "web-bundle", collection: "endpoints", limit: 32}`. The CLI
+accepts the same JSON through `--view`, with `--detail summary` and
+`--evidence_output bundle.json`. Query the returned parent with
+`inspect_analysis_view` to read `endpoints`, `inferences`, or `summary` without
+recapturing the page or repeating JavaScript analysis.
+
+Both row collections accept exact `indices`, `values`, `script_keys`, `fields`,
+`offset`, and `limit`; endpoints also accept `mechanisms`, and inferences accept
+`kinds`. Filters combine with AND, and an explicit empty selector matches no
+rows. Every row retains its `source_index` in the original collection, including
+when other fields are omitted. This identity is scoped to the parent Evidence
+and collection. Original ordering is preserved. Endpoints are deduplicated
+across scripts by value and mechanism: the retained row keeps the first
+occurrence's `location`, and `occurrences` and `script_keys` record how many
+scripts contained the same finding and which ones; request endpoint
+`location` or inference `basis` for source details.
+
+Follow `coverage.next_offset` until `coverage.exhausted`; those fields describe
+the selected rows, independently of producer `completeness`. Each response also
+preserves structured `source_unknowns`, including `affected_script_keys`, so a
+filtered or value-only page cannot hide a source gap. The summary's
+`limitation_count` counts distinct parent and report limitations before display
+bounding. An `endpoint_candidate` remains an inference, with its original
+confidence and basis, and does not prove a backend endpoint or reachability.
+
+Pages obey the shared 1 MiB projection budget; MCP transport applies its own
+wire-size guard. A byte-limited page returns a continuation; an indivisible
+oversized record or metadata returns a typed resource error. Select fewer
+fields or retrieve the complete retained parent through `get_evidence_bundle`
+(`detail: "records"` with its `evidence_id`), `export_evidence_bundle`, or the
+CLI's exported bundle. Full Evidence is never
+silently truncated.
 
 Collections are `summary`, `routes`, `occurrences`, `sources`, and `unknowns`.
 All row collections support exact batch `where.ids`, field selection, `offset`,
@@ -60,8 +96,9 @@ filename-only discoveries have no invented AST range.
 
 The shared parser handles literal router calls, nested route objects, typed
 `_$` trees with explicitly inferred property-name fallbacks, Next App Router
-page paths, and navigation targets. It follows stable lexical bindings and
-keeps unresolved parents, mutations, spreads, and dynamic fields explicit.
+page paths, Expo Router `require.context` keys, and navigation targets. It
+follows stable lexical bindings and keeps unresolved parents, mutations,
+spreads, and dynamic fields explicit.
 Index-route flags use the same value-at-read boundary as path fields: erased
 type wrappers and initialized stable boolean aliases preserve `true`/`false`;
 uninitialized or unresolved flags retain an interpretation unknown instead of
@@ -118,6 +155,24 @@ which maps `%5F` to `_`; private-folder checks apply to the source spelling
 before that escape is mapped. When classifying a chunk URL, REA reads its
 pathname, then applies these same Next-specific rules. This is static source-path
 interpretation, not browser request-path decoding or reachability.
+
+Metro compiles `require.context` into
+`Object.defineProperties({}, {"./file.tsx": getter, ...})`, and Expo Router web
+exports bundle the app directory this way. The scanner checks an unshadowed
+`Object.defineProperties` call on a new object, with statically visible getters
+for every file. When every key is a `./`-relative `.js`, `.jsx`, `.ts` or `.tsx`
+file and at least one is a `_layout` or `+` file, each other key becomes an `expo-router-context-key`
+occurrence at the key literal. Expo Router file conventions convert it: groups,
+including `(a,b)` group arrays, contribute no segment; `[id]` maps to `:id` and
+`[...rest]` to `:rest+`; a trailing `index` names its directory; platform
+extensions select the same route; and `+api` files keep their API path.
+Layouts and other `+` files, such as `+not-found` and `+html`, are not URL
+patterns. These occurrences have low confidence and `inferred` derivation. A
+bundled key does not establish which platform, navigator or server serves the
+file, so it adds no classification of its own; the existing path-name
+heuristic still applies, and `./login.tsx` becomes `/login`, classified
+`system` by `path-name-heuristic`. A file map without a layout or `+` file
+keeps an interpretation unknown instead of becoming routes.
 
 Known capture omissions remain inline in `summary.reported_capture_omissions`
 and queryable as `unknowns` of kind `capture-omission`. Each keeps a stable gap ID,

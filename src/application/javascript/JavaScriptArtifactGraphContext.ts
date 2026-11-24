@@ -14,16 +14,16 @@ import type { ApplicationNode } from "../../domain/javascript/javascriptApplicat
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type {
   JavaScriptHtmlInlineScriptsObservation,
-  JavaScriptModuleArtifactAnalysis,
+  JavaScriptArtifactAnalysis,
   JavaScriptArtifactAnalysisScope,
 } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptUnanalyzedArtifactLookup } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../../domain/javascript/htmlArtifactReferences.js";
 import type {
+  JavaScriptUnanalyzedArtifactLookup,
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
   JavaScriptArtifactFileKind,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../../domain/javascript/htmlArtifactReferences.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   artifactObservationEvidence,
@@ -41,10 +41,18 @@ export interface JavaScriptArtifactGraphContext {
   readonly accumulator: JavaScriptArtifactGraphAccumulator;
   readonly snapshot: ArtifactInventorySnapshot;
   readonly fileSet: JavaScriptArtifactFileSet;
-  readonly analysis: JavaScriptModuleArtifactAnalysis;
+  readonly analysis: JavaScriptArtifactAnalysis;
   readonly directoryPaths: ReadonlySet<string>;
   readonly root: ApplicationNode;
   readonly filesByPath: ReadonlyMap<string, JavaScriptArtifactFile>;
+  readonly analyzedFilesByPath?: ReadonlyMap<
+    string,
+    JavaScriptArtifactAnalysis["files"][number]
+  >;
+  readonly packagesByPath?: ReadonlyMap<
+    string,
+    JavaScriptArtifactAnalysis["packages"][number]
+  >;
   /** Borrowed inventory lookup for present files outside the source projection. */
   readonly unanalyzedFiles: JavaScriptUnanalyzedArtifactLookup | undefined;
   readonly fileNodes: Map<string, ApplicationNode>;
@@ -143,9 +151,10 @@ export const applicationRootPath = (
     const file =
       context.filesByPath.get(path) ?? context.unanalyzedFiles?.get(path);
     if (file?.container_sha256 !== source.container_sha256) continue;
-    const metadata = context.analysis.packages.find(
-      (value) => value.path === path,
-    );
+    const metadata =
+      context.packagesByPath !== undefined
+        ? context.packagesByPath.get(path)
+        : context.analysis.packages.find((value) => value.path === path);
     if (metadata?.status !== "included") return null;
     const defaultEntry = context.filesByPath.get(`${prefix}index.js`);
     if (
@@ -380,7 +389,7 @@ export const addUnavailableStaticParseScope = (
 /** Coverage for one bounded JavaScript AST analysis. */
 export const javascriptAnalysisCoverage = (
   analysis: NonNullable<
-    JavaScriptModuleArtifactAnalysis["files"][number]["javascript"]
+    JavaScriptArtifactAnalysis["files"][number]["javascript"]
   >,
 ): JavaScriptArtifactGraphCoverage =>
   analysis.parse_status === "complete"

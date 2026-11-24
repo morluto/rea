@@ -1,10 +1,11 @@
 import { describe, expect } from "vitest";
 
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const selectors = [
   ["function", "procedure", "analyze_function"],
   ["inspect-native-api", "procedure", "inspect_native_api"],
+  ["procedure-references", "procedure", "procedure_references"],
   ["instructions", "procedure", "read_function_instructions"],
   ["decompile", "procedure", "procedure_pseudo_code"],
   ["xrefs", "address", "xrefs"],
@@ -72,6 +73,28 @@ describe("CLI analysis selector boundaries", () => {
       },
     );
     cliTest(
+      `rejects empty ${command} selectors in either spelling before opening a target`,
+      async ({ cli }) => {
+        for (const selection of [[""], [`--${option}=`]]) {
+          const label = `${command} ${JSON.stringify(selection)}`;
+          const result = await cli.run({
+            arguments: [
+              command,
+              "does-not-exist",
+              ...selection,
+              "--format",
+              "json",
+            ],
+            environment: { REA_LOG_LEVEL: "silent" },
+          });
+          expect(result.exitCode, label).not.toBe(0);
+          expect(result.json, label).toMatchObject({
+            code: "VALIDATION_ERROR",
+          });
+        }
+      },
+    );
+    cliTest(
       `keeps named ${command} dash values out of global-option parsing`,
       async ({ cli }) => {
         const result = await cli.run({
@@ -100,7 +123,7 @@ describe("CLI analysis selector boundaries", () => {
           ["selector", `--${option}=selector`],
         ]) {
           const label = `${command} ${selection.join(" ")}`;
-          const result = await runFileCli(cli, {
+          const result = await cli.run({
             arguments: [
               command,
               "does-not-exist",
@@ -136,3 +159,151 @@ cliTest(
     expect(result.json).toMatchObject({ code: "target_unavailable" });
   },
 );
+
+cliTest(
+  "admits exactly one nonempty native data type selector before opening a target",
+  async ({ cli }) => {
+    const choice = {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_native_data_type",
+        issues: [
+          {
+            path: [],
+            reason: "invalid_value",
+            message: expect.stringMatching(
+              /exactly one.*\btype\b.*\baddress\b/iu,
+            ),
+          },
+        ],
+      },
+    };
+    for (const [selection, expected] of [
+      [[], choice],
+      [["--type", "/MyStruct", "--address", "0x1000"], choice],
+      // Each selector's own constraint is an argv constraint.
+      [["--type", ""], { code: "VALIDATION_ERROR" }],
+      [["--address", ""], { code: "VALIDATION_ERROR" }],
+      [["--type", "/MyStruct"], { code: "target_unavailable" }],
+      [["--address", "0x1000"], { code: "target_unavailable" }],
+    ] as const) {
+      const label = `inspect-native-data-type ${selection.join(" ")}`;
+      const result = await cli.run({
+        arguments: [
+          "inspect-native-data-type",
+          "does-not-exist",
+          ...selection,
+          "--format",
+          "json",
+        ],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.exitCode, label).not.toBe(0);
+      expect(result.json, label).toMatchObject(expected);
+    }
+  },
+);
+
+cliTest(
+  "validates native operation inputs before opening a target",
+  async ({ cli }) => {
+    for (const [selection, code] of [
+      [
+        ["inspect-native-instruction", "missing-target", ""],
+        "VALIDATION_ERROR",
+      ],
+      [
+        ["resolve-native-call-targets", "missing-target", ""],
+        "VALIDATION_ERROR",
+      ],
+      [["annotate-native-function", "missing-target", ""], "VALIDATION_ERROR"],
+      [
+        ["annotate-native-function", "missing-target", "main"],
+        "invalid_request",
+      ],
+      [
+        ["annotate-native-function", "missing-target", "main", "--comment="],
+        "target_unavailable",
+      ],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [...selection, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.json, JSON.stringify(selection)).toMatchObject({ code });
+    }
+  },
+);
+
+for (const [command, option] of [
+  ["xrefs", "address"],
+  ["function", "procedure"],
+  ["instructions", "procedure"],
+  ["decompile", "procedure"],
+  ["inspect-native-api", "procedure"],
+  ["procedure-references", "procedure"],
+] as const) {
+  cliTest(
+    `admits equivalent native coordinates through ${command}`,
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: [
+          command,
+          "does-not-exist",
+          "0x1a",
+          `--${option}=0x001A`,
+          "--json",
+        ],
+      });
+      expect(result.json).toMatchObject({ code: "target_unavailable" });
+      if (command === "xrefs") {
+        for (const [left, right] of [
+          ["ram:0x1", "RAM:0x1"],
+          ["Symbol", "symbol"],
+        ] as const) {
+          const conflict = await cli.run({
+            arguments: [
+              command,
+              "does-not-exist",
+              left,
+              `--${option}=${right}`,
+              "--json",
+            ],
+          });
+          expect(conflict.json).toMatchObject({ code: "invalid_request" });
+        }
+      }
+    },
+  );
+}
+cliTest(
+  "admits search selectors against the inventory --kind selects",
+  async ({ cli }) => {
+    for (const [kind, operation] of [
+      [[], "search_strings"],
+      [["--kind", "strings"], "search_strings"],
+      [["--kind", "procedures"], "search_procedures"],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "search",
+          "does-not-exist",
+          "first",
+          "--pattern=second",
+          ...kind,
+          "--json",
+        ],
+      });
+      expect(result.json, operation).toMatchObject({
+        code: "invalid_request",
+        details: { operation },
+      });
+    }
+  },
+);
+cliTest("keeps address-looking search text exact", async ({ cli }) => {
+  const result = await cli.run({
+    arguments: ["search", "does-not-exist", "0x1a", "--pattern=0x1A", "--json"],
+  });
+  expect(result.json).toMatchObject({ code: "invalid_request" });
+});

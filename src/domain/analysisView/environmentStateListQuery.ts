@@ -1,18 +1,19 @@
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import { literalSubstringPredicate } from "../analysisSearch.js";
+import { directionOf, orderRole } from "./environmentStateOrderParameters.js";
 import {
+  ownMember,
   isObject,
   recordedItemCount,
   formatItemCount,
-  pointerTo,
   renderStateList,
-  replaceAt,
   scalarText,
   type JsonObject,
   type StateEntity,
   type StateListView,
 } from "./environmentStateRules.js";
+import { counterAt, withCounter } from "./environmentStateCounters.js";
 
 /** What one list query parameter does to a list, learned from the recorded lines it explains. */
 export type QueryParameter =
@@ -41,30 +42,13 @@ export interface QueryLine {
   readonly entities: readonly StateEntity[];
 }
 
-const SORT = new Set([
-  "order",
-  "orderby",
-  "order_by",
-  "ordering",
-  "sort",
-  "sortby",
-  "sort_by",
-]);
-const DIRECTION = new Set([
-  "dir",
-  "direction",
-  "order",
-  "orderdirection",
-  "order_direction",
-  "sortdir",
-  "sort_dir",
-  "sortorder",
-  "sort_order",
-]);
 const LIMIT = new Set([
   "count",
   "itemsperpage",
   "limit",
+  "max_results",
+  "maxresults",
+  "maxsize",
   "page_size",
   "pagesize",
   "per_page",
@@ -83,7 +67,6 @@ const SEARCH = new Set([
   "searchterm",
   "term",
 ]);
-const DIRECTIONS = new Set(["asc", "desc"]);
 const IDENTIFYING = ["id", "slug", "name"];
 /** At most this many role combinations are tried for one line. */
 const MAX_COMBINATIONS = 256;
@@ -102,7 +85,8 @@ const textOf = (value: JsonValue | undefined): string | undefined =>
 /** Whether a field holds a value: equal as text, or in an array directly or as an object's id, slug or name. */
 const holds = (field: JsonValue | undefined, value: string): boolean => {
   const names = (item: JsonValue | undefined) =>
-    isObject(item) && IDENTIFYING.some((key) => textOf(item[key]) === value);
+    isObject(item) &&
+    IDENTIFYING.some((key) => textOf(ownMember(item, key)) === value);
   return Array.isArray(field)
     ? field.some((item) => textOf(item) === value || names(item))
     : textOf(field) === value || names(field);
@@ -116,7 +100,7 @@ const contains = (
   const matches = literalSubstringPredicate(term, false);
   return (entity) =>
     fields.some((field) => {
-      const value = entity.fields[field];
+      const value = ownMember(entity.fields, field);
       return typeof value === "string" && matches(value);
     });
 };
@@ -202,15 +186,16 @@ const readCall = (
     if (PAGING_ROLES.has(parameter.role)) taken.add(parameter.role);
     if (parameter.role === "filter")
       call.selections.push((entity) =>
-        holds(entity.fields[parameter.field], value),
+        holds(ownMember(entity.fields, parameter.field), value),
       );
     else if (parameter.role === "search") {
       if (!plainSearch(value)) return undefined;
       call.selections.push(contains(parameter.fields, value));
     } else if (parameter.role === "sort") call.sort = value;
     else if (parameter.role === "direction") {
-      if (!DIRECTIONS.has(value.toLowerCase())) return undefined;
-      call.direction = value.toLowerCase();
+      const direction = directionOf(value);
+      if (direction === undefined) return undefined;
+      call.direction = direction;
     } else if (parameter.role === "inert") {
       if (!parameter.values.includes(value)) return undefined;
     } else if (number === undefined) return undefined;
@@ -221,12 +206,16 @@ const readCall = (
       call.page = { index: number, first: parameter.first };
     else return undefined;
   }
-  return call;
+  // A direction cannot identify the field being ordered. Leaving it unused
+  // would turn a recorded direction into permission to answer its opposite.
+  return call.direction !== undefined && call.sort === undefined
+    ? undefined
+    : call;
 };
 
 /** Entities in the order a sort value names, ties in state order, and those whose place state order decides: all without a sort, else those tied with a neighbour; undefined when it names no field. */
 const sorted = (
-  matched: readonly StateEntity[],
+  matched: StateEntity[],
   entities: readonly StateEntity[],
   call: QueryCall,
 ):
@@ -237,40 +226,41 @@ const sorted = (
   | undefined => {
   // Nothing to order: an emptied collection answers no entities rather than a recording.
   if (call.sort === undefined || matched.length === 0)
-    return { entities: [...matched], positional: "all" };
-  const names = [
-    ...new Set(entities.flatMap((entity) => Object.keys(entity.fields))),
-  ];
-  const key = sortKey(call.sort, names);
+    return { entities: matched, positional: "all" };
+  const names = new Set<string>();
+  for (const entity of entities)
+    for (const name of Object.keys(entity.fields)) names.add(name);
+  const key = sortKey(call.sort, [...names]);
   if (key === undefined) return undefined;
   const sign = (
     call.direction === undefined ? key.descending : call.direction === "desc"
   )
     ? -1
     : 1;
-  const ordered = matched
-    .map((entity, index) => ({ entity, index }))
-    .sort(
-      (left, right) =>
-        sign *
-          ascending(
-            left.entity.fields[key.field],
-            right.entity.fields[key.field],
-          ) || left.index - right.index,
-    )
-    .map(({ entity }) => entity);
+  // The filter owns this array. Stable sort retains state order at ties.
+  matched.sort(
+    (left, right) =>
+      sign *
+      ascending(
+        ownMember(left.fields, key.field),
+        ownMember(right.fields, key.field),
+      ),
+  );
   const tied = (
     left: StateEntity | undefined,
     right: StateEntity | undefined,
   ) =>
     left !== undefined &&
     right !== undefined &&
-    ascending(left.fields[key.field], right.fields[key.field]) === 0;
+    ascending(
+      ownMember(left.fields, key.field),
+      ownMember(right.fields, key.field),
+    ) === 0;
   return {
-    entities: ordered,
-    positional: ordered.filter(
+    entities: matched,
+    positional: matched.filter(
       (entity, index) =>
-        tied(ordered[index - 1], entity) || tied(entity, ordered[index + 1]),
+        tied(matched[index - 1], entity) || tied(entity, matched[index + 1]),
     ),
   };
 };
@@ -351,7 +341,9 @@ const filterFields = (
   items.length === 0
     ? []
     : Object.keys(items[0]!)
-        .filter((field) => items.every((item) => holds(item[field], value)))
+        .filter((field) =>
+          items.every((item) => holds(ownMember(item, field), value)),
+        )
         .sort(
           (left, right) =>
             Number(normalized(right) === normalized(name)) -
@@ -397,10 +389,9 @@ const choicesFor = (
     (SEARCH.has(key) && !plainSearch(value))
   )
     return [];
-  if (DIRECTION.has(key) && DIRECTIONS.has(value.toLowerCase()))
-    choices.push({ role: "direction" });
-  else if (SORT.has(key)) choices.push({ role: "sort" });
-  else if (LIMIT.has(key)) choices.push({ role: "limit" });
+  const order = orderRole(name, value);
+  if (order !== undefined) return order === "none" ? [] : [{ role: order }];
+  if (LIMIT.has(key)) choices.push({ role: "limit" });
   else if (OFFSET.has(key)) choices.push({ role: "offset" });
   else if (key === "page")
     choices.push({ role: "page", first: 1 }, { role: "page", first: 0 });
@@ -449,7 +440,9 @@ const withoutIdleFilters = (
     Object.entries(chosen).map(([name, role]) => {
       const value = line.values.get(name)!;
       return role.role === "filter" &&
-        line.entities.every((entity) => holds(entity.fields[role.field], value))
+        line.entities.every((entity) =>
+          holds(ownMember(entity.fields, role.field), value),
+        )
         ? [name, { role: "inert", values: [value] }]
         : [name, role];
     }),
@@ -503,8 +496,11 @@ const mergeRoles = (
 ): Record<string, QueryParameter> => {
   const roles = new Map<string, QueryParameter[]>();
   for (const parameters of explained)
-    for (const [name, role] of Object.entries(parameters))
-      roles.set(name, [...(roles.get(name) ?? []), role]);
+    for (const [name, role] of Object.entries(parameters)) {
+      const seen = roles.get(name);
+      if (seen === undefined) roles.set(name, [role]);
+      else seen.push(role);
+    }
   // Entries become own members even for names such as `__proto__`, which assignment would treat as the prototype.
   const merged: [string, QueryParameter][] = [];
   for (const [name, seen] of roles) {
@@ -543,7 +539,8 @@ const mergeRoles = (
         ]);
       continue;
     }
-    if (active.every((role) => JSON.stringify(role) === JSON.stringify(first)))
+    const firstJson = JSON.stringify(first);
+    if (active.every((role) => JSON.stringify(role) === firstJson))
       merged.push([name, first!]);
   }
   return Object.fromEntries(merged);
@@ -568,7 +565,9 @@ const trustedRoles = (
       if (role.role !== "filter" || namedLike(role.field, name)) return true;
       const values = new Set(
         explained
-          .filter((entry) => entry.parameters[name]?.role === "filter")
+          .filter(
+            (entry) => ownMember(entry.parameters, name)?.role === "filter",
+          )
           .map((entry) => entry.line.values.get(name)),
       );
       return values.size >= 2;
@@ -611,7 +610,7 @@ export const queryTotalCount = (
 
 /** A query answer: the base line's envelope with the selected entities, counters at the number listed and totals at the number matched. */
 export const renderQueryList = (
-  view: Pick<StateListView, "pointer" | "counters"> & {
+  view: Pick<StateListView, "pointer" | "counters" | "listed_ids"> & {
     readonly query: Pick<ListQuery, "totals">;
   },
   base: JsonValue,
@@ -619,11 +618,11 @@ export const renderQueryList = (
   total: number,
 ): JsonValue =>
   view.query.totals.reduce(
-    (body, name) =>
-      isObject(base) &&
-      Object.hasOwn(base, name) &&
-      queryTotalCount(base[name]) !== undefined
-        ? replaceAt(body, pointerTo(name), formatItemCount(total, base[name]!))
-        : body,
-    renderStateList(view, base, items),
+    (body, name) => {
+      const recorded = counterAt(base, name);
+      return queryTotalCount(recorded) === undefined
+        ? body
+        : withCounter(body, name, formatItemCount(total, recorded!));
+    },
+    renderStateList(view, base, items, total === items.length),
   );

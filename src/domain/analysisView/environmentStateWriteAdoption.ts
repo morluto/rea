@@ -1,7 +1,10 @@
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
+  succeeded,
+  ownMember,
   at,
   isObject,
+  markedDeleted,
   stateValueRetentionBytes,
   scalarText,
   type StateEntity,
@@ -12,7 +15,6 @@ import {
   collectionTarget,
   entityTarget,
   itemTarget,
-  succeeded,
   type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import type { WriteIo } from "./environmentStateWriteEffects.js";
@@ -87,8 +89,9 @@ export class UnseenEntities {
     const idField = this.facts.idField(view.type);
     if (
       !isObject(object) ||
+      markedDeleted(object) ||
       idField === undefined ||
-      scalarText(object[idField]) !== id
+      scalarText(ownMember(object, idField)) !== id
     )
       return undefined;
     const entity = {

@@ -3,21 +3,21 @@ import {
   pythonPycSchema,
   type PythonPycCodeObject,
 } from "../python/pythonPyc.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const code = pythonPycSchema.shape.code_objects.element;
 
@@ -40,10 +40,6 @@ export const pythonPycSummaryDeliveryShape = {
   detail: z.literal("summary"),
   view: pythonPycViewRequestSchema.exactOptional(),
 };
-export const pythonPycDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(pythonPycCompleteDeliveryShape),
-  z.strictObject(pythonPycSummaryDeliveryShape),
-]);
 
 export const pythonPycViewItemsSchema = z.array(
   code.partial().extend({ source_index: z.int().nonnegative() }),
@@ -62,17 +58,14 @@ const readReport = createAnalysisViewResultReader(pythonPycSchema);
 /** Project code-constant references from historical facts, without reopening the pyc. */
 export const projectPythonPycView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "python-pyc")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Python pyc Evidence supports summary and python-pyc views.",
-        },
-      ]),
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof pythonPycViewRequestSchema>
+  >(admitted, "summary", "python-pyc");
+  if (view === undefined)
+    return invalidAnalysisView(
+      "Python pyc Evidence supports summary and python-pyc views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
@@ -96,13 +89,10 @@ export const projectPythonPycView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(
-        code_objects.length,
-        code_objects.length,
-      ),
+      coverage: completeWithinViewCoverage(code_objects.length),
     });
   const names = view.names === undefined ? undefined : new Set(view.names);
   const indices =
@@ -114,6 +104,8 @@ export const projectPythonPycView = (
     ),
     source_index,
   });
+  const matches = (row: PythonPycCodeObject) =>
+    names === undefined || names.has(row.name);
   const selected =
     names === undefined && indices === undefined
       ? {
@@ -122,17 +114,18 @@ export const projectPythonPycView = (
             .map((row, index) => projectRow(row, view.offset + index)),
           total: code_objects.length,
         }
-      : selectViewRows(
-          code_objects,
-          view,
-          (row, index) =>
-            (names === undefined || names.has(row.name)) &&
-            (indices === undefined || indices.has(index)),
-          projectRow,
-        );
+      : indices !== undefined
+        ? selectIndexedViewRows(
+            code_objects,
+            indices,
+            view,
+            matches,
+            projectRow,
+          )
+        : selectViewRows(code_objects, view, matches, projectRow);
   return ok({
     ...shared,
-    kind: "python-pyc",
+    kind: "python-pyc" as const,
     view,
     pyc: summary,
     items: selected.rows,

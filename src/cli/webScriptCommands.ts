@@ -1,78 +1,51 @@
-import { Cli, z } from "incur";
+import type { Logger } from "pino";
 
 import { exportWebScripts } from "../application/WebScriptExportService.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { Logger } from "pino";
-import { withCommandCancellation } from "./commandCancellation.js";
+import { ArtifactResourceScope } from "../resources/index.js";
+import { WEB_SCRIPT_TOOL_CONTRACTS } from "../contracts/webScriptToolContracts.js";
+import { WEB_SCRIPT_EXPORT_PROVIDER } from "../domain/investigationProviders.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import type { CliInstance } from "./types.js";
 
 /** Register the local captured-script export CLI workflow. */
 export const registerWebScriptCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
-): void => {
-  cli.command(CLI_COMMANDS.exportWebScripts, {
-    description:
-      "Export retained website scripts into an absent directory for static JavaScript analysis",
-    args: z.object({
-      capturePath: z
-        .string()
-        .describe("Absolute path to saved page or scenario capture JSON"),
-      outputDirectory: z
-        .string()
-        .describe(
-          "Absolute absent directory for verified scripts and manifest",
-        ),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.exportWebScripts, async () => {
-          const resources = new ArtifactResourceScope();
-          const result = await exportWebScripts(
-            {
-              capture_path: args.capturePath,
-              output_directory: args.outputDirectory,
-            },
-            resources,
-            { signal },
-          );
-          try {
-            await resources.close();
-          } catch (cause: unknown) {
-            const cleanup = ArtifactReaderFailure.cleanupObservation(
-              cause,
-              "Web script export resources",
-            );
-            const failure = new ProviderCleanupError(
-              "web-script-export",
-              cleanup.resources,
-              { reason: cleanup.reason },
-              { cause, operation: "export_web_scripts" },
-            );
-            const error = result.ok
-              ? failure
-              : analysisErrorWithCleanupFailure(
-                  result.error,
-                  failure,
-                  "export_web_scripts",
-                );
-            return {
-              error: "Script export failed",
-              ...projectAnalysisError(error),
-            };
-          }
-          return result.ok
-            ? result.value
-            : {
-                error: "Script export failed",
-                ...projectAnalysisError(result.error),
-              };
-        }),
-      ),
-  });
-};
+): void =>
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(WEB_SCRIPT_TOOL_CONTRACTS, "export_web_scripts"),
+    {
+      description:
+        "Export retained website scripts into an absent directory for static JavaScript analysis",
+      positionals: ["capture_path", "output_directory"],
+      callerPaths: ["capture_path", "output_directory"],
+      fields: {
+        capture_path: {
+          description:
+            "Saved inspect_web_page or capture_browser_scenario JSON, normalized result or complete Evidence; a relative path resolves against the current directory",
+        },
+        output_directory: {
+          description:
+            "Absent directory for verified scripts and manifest; its parent must exist. A relative path resolves against the current directory",
+        },
+      },
+    },
+    async (input, { operation, signal }) => {
+      const resources = new ArtifactResourceScope();
+      const result = await finishAnalysisCommand(
+        () => exportWebScripts(input, resources, { signal }),
+        resources,
+        WEB_SCRIPT_EXPORT_PROVIDER.id,
+        operation,
+        signal,
+        "Web script export resources",
+      );
+      return result.ok
+        ? result.value
+        : { error: "Script export failed", ...result.error };
+    },
+  );

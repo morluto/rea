@@ -1,4 +1,10 @@
 import { isJvmClassFile } from "../domain/apple/jvmClassFile.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
+import {
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 
 /**
  * Pure TypeScript Java Class (.class) byte format analyzer.
@@ -64,18 +70,21 @@ export const decodeModifiedUtf8 = (bytes: Uint8Array): string => {
     if ((b1 & 0x80) === 0) {
       result += String.fromCharCode(b1);
     } else if ((b1 & 0xe0) === 0xc0) {
-      if (i >= len) throw new Error("Truncated modified UTF-8 sequence");
+      if (i >= len)
+        throw truncatedInput("jvm-class", "Truncated modified UTF-8 sequence");
       const b2 = bytes[i++]!;
       const code = ((b1 & 0x1f) << 6) | (b2 & 0x3f);
       result += String.fromCharCode(code);
     } else if ((b1 & 0xf0) === 0xe0) {
-      if (i + 1 >= len) throw new Error("Truncated modified UTF-8 sequence");
+      if (i + 1 >= len)
+        throw truncatedInput("jvm-class", "Truncated modified UTF-8 sequence");
       const b2 = bytes[i++]!;
       const b3 = bytes[i++]!;
       const code = ((b1 & 0x0f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
       result += String.fromCharCode(code);
     } else if ((b1 & 0xf8) === 0xf0) {
-      if (i + 2 >= len) throw new Error("Truncated UTF-8 sequence");
+      if (i + 2 >= len)
+        throw truncatedInput("jvm-class", "Truncated UTF-8 sequence");
       const b2 = bytes[i++]!;
       const b3 = bytes[i++]!;
       const b4 = bytes[i++]!;
@@ -86,7 +95,10 @@ export const decodeModifiedUtf8 = (bytes: Uint8Array): string => {
         (b4 & 0x3f);
       result += String.fromCodePoint(cp);
     } else {
-      throw new Error(`Invalid modified UTF-8 byte: 0x${b1.toString(16)}`);
+      throw malformedInput(
+        "jvm-class",
+        `Invalid modified UTF-8 byte: 0x${b1.toString(16)}`,
+      );
     }
   }
   return result;
@@ -120,49 +132,55 @@ export const decodeAccessFlags = (
 
 class ClassByteCursor {
   private offset = 0;
-  private readonly view: DataView;
+  private readonly reader: BinaryReader;
 
   constructor(private readonly bytes: Uint8Array) {
-    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const view = Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.reader = new BinaryReader(view, false, "jvm-class");
+  }
+
+  get position(): number {
+    return this.offset;
   }
 
   has(n: number): boolean {
-    return this.offset + n <= this.bytes.byteLength;
+    return n >= 0 && this.offset + n <= this.bytes.byteLength;
   }
 
   u1(): number {
-    if (!this.has(1)) throw new Error("Unexpected EOF");
-    return this.bytes[this.offset++]!;
+    const val = this.reader.u8(this.offset);
+    this.offset += 1;
+    return val;
   }
 
   u2(): number {
-    if (!this.has(2)) throw new Error("Unexpected EOF");
-    const val = this.view.getUint16(this.offset, false);
+    const val = this.reader.u16(this.offset);
     this.offset += 2;
     return val;
   }
 
   u4(): number {
-    if (!this.has(4)) throw new Error("Unexpected EOF");
-    const val = this.view.getUint32(this.offset, false);
+    const val = this.reader.u32(this.offset);
     this.offset += 4;
     return val;
   }
 
   bytesSlice(len: number): Uint8Array {
-    if (!this.has(len)) throw new Error("Unexpected EOF");
-    const slice = this.bytes.subarray(this.offset, this.offset + len);
+    const slice = this.reader.range(this.offset, len, "JVM class bytes");
     this.offset += len;
     return slice;
   }
 
   skip(len: number): void {
-    if (!this.has(len)) throw new Error("Unexpected EOF");
+    this.reader.range(this.offset, len, "JVM class structure");
     this.offset += len;
   }
 }
 
 interface ConstantPoolMap {
+  hasUtf8(index: number): boolean;
   utf8(index: number): string;
   className(index: number): string;
 }
@@ -207,11 +225,15 @@ const parseConstantPool = (
       // Dynamic, InvokeDynamic
       cursor.skip(4);
     } else {
-      throw new Error(`Unsupported constant-pool tag: ${tag}`);
+      throw unsupportedInput(
+        "jvm-class",
+        `Unsupported constant-pool tag: ${tag}`,
+      );
     }
   }
 
   return {
+    hasUtf8: (idx: number) => typeof pool.get(idx) === "string",
     utf8: (idx: number) => {
       const val = pool.get(idx);
       return typeof val === "string" ? val : "";
@@ -226,6 +248,67 @@ const parseConstantPool = (
       return "";
     },
   };
+};
+
+/** Validate a JVMS §4.7.3 Code_attribute layout before reporting code_length. */
+const parseCodeAttributeLength = (
+  cursor: ClassByteCursor,
+  pool: ConstantPoolMap,
+  attrLen: number,
+): number => {
+  // Minimum Code_attribute: max_stack(2) + max_locals(2) + code_length(4)
+  // + exception_table_length(2) + attributes_count(2) = 12 bytes.
+  if (attrLen < 12) {
+    throw malformedInput(
+      "jvm-class",
+      "Code attribute is shorter than its fixed 12-byte header",
+    );
+  }
+  const attrEnd = cursor.position + attrLen;
+  cursor.skip(4); // max_stack (u2) + max_locals (u2)
+  const codeLength = cursor.u4();
+  // Require space for code bytes plus exception_table_length (u2) and attributes_count (u2).
+  if (codeLength > attrEnd - cursor.position - 4) {
+    throw malformedInput(
+      "jvm-class",
+      "Code attribute code_length exceeds attribute extent",
+    );
+  }
+  cursor.skip(codeLength);
+  const exceptionTableLength = cursor.u2();
+  const exceptionTableBytes = exceptionTableLength * 8;
+  if (exceptionTableBytes > attrEnd - cursor.position - 2) {
+    throw malformedInput(
+      "jvm-class",
+      "Code attribute exception_table exceeds attribute extent",
+    );
+  }
+  cursor.skip(exceptionTableBytes);
+  const nestedAttrCount = cursor.u2();
+  for (let i = 0; i < nestedAttrCount; i += 1) {
+    if (cursor.position + 6 > attrEnd) {
+      throw truncatedInput(
+        "jvm-class",
+        "Truncated nested attribute header inside Code attribute",
+      );
+    }
+    const nestedNameIdx = cursor.u2();
+    const nestedLen = cursor.u4();
+    if (!pool.hasUtf8(nestedNameIdx) || nestedLen > attrEnd - cursor.position) {
+      throw malformedInput(
+        "jvm-class",
+        "Malformed nested attribute inside Code attribute",
+      );
+    }
+    cursor.skip(nestedLen);
+  }
+  if (cursor.position !== attrEnd) {
+    throw malformedInput(
+      "jvm-class",
+      "Code attribute contains trailing bytes past its declared layout",
+    );
+  }
+  return codeLength;
 };
 
 const parseMembers = (
@@ -246,11 +329,8 @@ const parseMembers = (
     for (let a = 0; a < attrCount; a += 1) {
       const attrName = pool.utf8(cursor.u2());
       const attrLen = cursor.u4();
-      if (attrName === "Code" && attrLen >= 8) {
-        // max_stack (u2) + max_locals (u2) + code_length (u4)
-        cursor.skip(4);
-        codeLength = cursor.u4();
-        cursor.skip(attrLen - 8);
+      if (kind === "method" && attrName === "Code") {
+        codeLength = parseCodeAttributeLength(cursor, pool, attrLen);
       } else {
         cursor.skip(attrLen);
       }

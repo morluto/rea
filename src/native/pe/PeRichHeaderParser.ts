@@ -3,6 +3,8 @@
  * Extracts compiler, linker, and build tool telemetry encrypted between DOS stub and PE header.
  */
 
+import { BinaryReader } from "../../domain/binaryContainer.js";
+
 export interface PeRichRecord {
   readonly prodId: number;
   readonly buildNumber: number;
@@ -84,15 +86,16 @@ const PROD_ID_TOOLS: Readonly<Record<number, { name: string; vs: string }>> = {
 /** Scan buffer for Microsoft DanS/Rich header structure. */
 export const parsePeRichHeader = (buffer: Buffer): PeRichHeader | null => {
   if (buffer.length < 128) return null;
+  const reader = new BinaryReader(buffer, true, "pe");
 
   // e_lfanew offset is at 0x3c
-  const peOffset = buffer.readUInt32LE(0x3c);
+  const peOffset = reader.u32(0x3c);
   if (peOffset < 64 || peOffset > buffer.length) return null;
 
   // Search for "Rich" marker before peOffset
   let richOffset = -1;
   for (let offset = 0x40; offset <= peOffset - 8; offset += 4) {
-    if (buffer.readUInt32LE(offset) === RICH_MAGIC) {
+    if (reader.u32(offset) === RICH_MAGIC) {
       richOffset = offset;
       break;
     }
@@ -100,12 +103,12 @@ export const parsePeRichHeader = (buffer: Buffer): PeRichHeader | null => {
 
   if (richOffset === -1 || richOffset + 8 > buffer.length) return null;
 
-  const xorKey = buffer.readUInt32LE(richOffset + 4);
+  const xorKey = reader.u32(richOffset + 4);
 
   // Search backwards for decrypted "DanS" marker
   let dansOffset = -1;
   for (let offset = richOffset - 4; offset >= 0x40; offset -= 4) {
-    const decrypted = buffer.readUInt32LE(offset) ^ xorKey;
+    const decrypted = (reader.u32(offset) ^ xorKey) >>> 0;
     if (decrypted === DANS_MAGIC) {
       dansOffset = offset;
       break;
@@ -117,8 +120,8 @@ export const parsePeRichHeader = (buffer: Buffer): PeRichHeader | null => {
   // Decrypt and parse 8-byte tool records (skipping 16 bytes: DanS + 3 padding DWORDs)
   const records: PeRichRecord[] = [];
   for (let offset = dansOffset + 16; offset < richOffset; offset += 8) {
-    const dword1 = (buffer.readUInt32LE(offset) ^ xorKey) >>> 0;
-    const count = (buffer.readUInt32LE(offset + 4) ^ xorKey) >>> 0;
+    const dword1 = (reader.u32(offset) ^ xorKey) >>> 0;
+    const count = (reader.u32(offset + 4) ^ xorKey) >>> 0;
 
     const prodId = (dword1 >>> 16) & 0xffff;
     const buildNumber = dword1 & 0xffff;
