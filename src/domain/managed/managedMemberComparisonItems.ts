@@ -1,6 +1,7 @@
-import canonicalize from "canonicalize";
-
-import { digestCanonicalValue } from "../canonicalDigest.js";
+import {
+  digestCanonicalValue,
+  serializeCanonicalValue,
+} from "../canonicalDigest.js";
 import type { ManagedMemberInspection } from "./managedArtifact.js";
 import type { ManagedMemberComparisonResult } from "./managedMemberComparison.js";
 import type {
@@ -136,24 +137,30 @@ const methodDimensions = (
       exceptionTargetUnknown: false,
     };
   const sameCallShape =
-    callShape(left.body.anchors) === callShape(right.body.anchors);
+    referenceShape(left.body.anchors, "method") ===
+    referenceShape(right.body.anchors, "method");
   const callTargets = sameCallShape
-    ? compareCallTargets(
+    ? compareReferenceTargets(
         left,
         right,
+        "method",
         leftCallEdgesByCaller.get(left.token) ?? [],
         rightCallEdgesByCaller.get(right.token) ?? [],
+        (edge) => edge.target_token,
         sameArtifact,
       )
     : { changed: false, unknown: false };
   const sameFieldShape =
-    fieldShape(left.body.anchors) === fieldShape(right.body.anchors);
+    referenceShape(left.body.anchors, "field") ===
+    referenceShape(right.body.anchors, "field");
   const fieldTargets = sameFieldShape
-    ? compareFieldTargets(
+    ? compareReferenceTargets(
         left,
         right,
+        "field",
         leftFieldAccessesByCaller.get(left.token) ?? [],
         rightFieldAccessesByCaller.get(right.token) ?? [],
+        (edge) => edge.field_token,
         sameArtifact,
       )
     : { changed: false, unknown: false };
@@ -187,8 +194,8 @@ const methodDimensions = (
   )
     dimensions.push("cil");
   if (
-    canonicalize(left.body.opcode_counts) !==
-    canonicalize(right.body.opcode_counts)
+    serializeCanonicalValue(left.body.opcode_counts) !==
+    serializeCanonicalValue(right.body.opcode_counts)
   )
     dimensions.push("opcode-shape");
   if (!sameFieldShape) dimensions.push("field-shape");
@@ -288,39 +295,56 @@ const sameAssemblyIdentity = (
   left.public_key.sha256 === right.public_key.sha256 &&
   left.public_key.token === right.public_key.token;
 
-interface ReferenceTarget {
-  readonly rowResolved: boolean;
-  readonly offset: number | null;
-  readonly opcode: string;
-  readonly token: string;
-  readonly identity: string | null;
-}
+type ReferenceEdge =
+  | ManagedMemberInspection["field_accesses"][number]
+  | ManagedMemberInspection["call_edges"][number];
+
+const referenceAnchors = (
+  anchors: Method["body"]["anchors"],
+  kind: "method" | "field",
+) =>
+  anchors.filter(
+    (anchor) =>
+      isManagedMemberReferenceInstruction(anchor) &&
+      anchor.operand_kind === kind,
+  );
+
+const referenceShape = (
+  anchors: Method["body"]["anchors"],
+  kind: "method" | "field",
+) =>
+  JSON.stringify(
+    referenceAnchors(anchors, kind).map(({ opcode, operand_kind }) => [
+      opcode,
+      operand_kind,
+    ]),
+  );
 
 /** Join each edge to its instruction site, then compare aligned instructions. */
-const compareReferenceTargets = (
+const compareReferenceTargets = <Edge extends ReferenceEdge>(
   left: Method,
   right: Method,
   kind: "field" | "method",
-  leftTargets: readonly ReferenceTarget[],
-  rightTargets: readonly ReferenceTarget[],
+  leftTargets: readonly Edge[],
+  rightTargets: readonly Edge[],
+  tokenOf: (edge: Edge) => string,
   sameArtifact: boolean,
 ): { readonly changed: boolean; readonly unknown: boolean } => {
-  const align = (method: Method, targets: readonly ReferenceTarget[]) => {
-    const anchors = method.body.anchors.filter(
-      (anchor) =>
-        isManagedMemberReferenceInstruction(anchor) &&
-        anchor.operand_kind === kind,
-    );
-    const byOffset = new Map<number | null, ReferenceTarget | null>();
+  const align = (method: Method, targets: readonly Edge[]) => {
+    const anchors = referenceAnchors(method.body.anchors, kind);
+    const byOffset = new Map<number | null, Edge | null>();
     for (const target of targets)
-      byOffset.set(target.offset, byOffset.has(target.offset) ? null : target);
+      byOffset.set(
+        target.il_offset,
+        byOffset.has(target.il_offset) ? null : target,
+      );
     let unknown = targets.length !== anchors.length;
     const aligned = anchors.map((anchor) => {
       const target = byOffset.get(anchor.il_offset);
       if (
         target == null ||
         target.opcode !== anchor.opcode ||
-        target.token !== anchor.operand
+        tokenOf(target) !== anchor.operand
       ) {
         unknown = true;
         return null;
@@ -344,106 +368,34 @@ const compareReferenceTargets = (
       unknown = true;
       continue;
     }
-    if (leftTarget.identity != null && rightTarget.identity != null) {
-      if (leftTarget.identity !== rightTarget.identity) changed = true;
+    if (
+      leftTarget.target_identity_sha256 != null &&
+      rightTarget.target_identity_sha256 != null
+    ) {
+      if (
+        leftTarget.target_identity_sha256 !== rightTarget.target_identity_sha256
+      )
+        changed = true;
       continue;
     }
     // Same-artifact token equality requires both producers to establish the
     // referenced row. Missing/historical facts or malformed operands stay unknown.
     if (
       sameArtifact &&
-      leftTarget.rowResolved === true &&
+      leftTarget.target_row_resolved === true &&
       left.token === right.token &&
-      rightTarget.rowResolved === true &&
+      rightTarget.target_row_resolved === true &&
       left.signature.parse_status === "decoded" &&
       right.signature.parse_status === "decoded" &&
-      leftTarget.identity == null &&
-      rightTarget.identity == null &&
-      leftTarget.token === rightTarget.token
+      leftTarget.target_identity_sha256 == null &&
+      rightTarget.target_identity_sha256 == null &&
+      tokenOf(leftTarget) === tokenOf(rightTarget)
     )
       continue;
     unknown = true;
   }
   return { changed, unknown };
 };
-
-const compareFieldTargets = (
-  left: Method,
-  right: Method,
-  leftAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
-  rightAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
-  sameArtifact: boolean,
-) =>
-  compareReferenceTargets(
-    left,
-    right,
-    "field",
-    leftAccesses.map((edge) => ({
-      offset: edge.il_offset,
-      opcode: edge.opcode,
-      token: edge.field_token,
-      rowResolved: edge.target_row_resolved,
-      identity: edge.target_identity_sha256,
-    })),
-    rightAccesses.map((edge) => ({
-      offset: edge.il_offset,
-      opcode: edge.opcode,
-      token: edge.field_token,
-      rowResolved: edge.target_row_resolved,
-      identity: edge.target_identity_sha256,
-    })),
-    sameArtifact,
-  );
-
-const compareCallTargets = (
-  left: Method,
-  right: Method,
-  leftEdges: readonly ManagedMemberInspection["call_edges"][number][],
-  rightEdges: readonly ManagedMemberInspection["call_edges"][number][],
-  sameArtifact: boolean,
-) =>
-  compareReferenceTargets(
-    left,
-    right,
-    "method",
-    leftEdges.map((edge) => ({
-      offset: edge.il_offset,
-      opcode: edge.opcode,
-      token: edge.target_token,
-      rowResolved: edge.target_row_resolved,
-      identity: edge.target_identity_sha256,
-    })),
-    rightEdges.map((edge) => ({
-      offset: edge.il_offset,
-      opcode: edge.opcode,
-      token: edge.target_token,
-      rowResolved: edge.target_row_resolved,
-      identity: edge.target_identity_sha256,
-    })),
-    sameArtifact,
-  );
-
-const callShape = (anchors: Method["body"]["anchors"]): string =>
-  JSON.stringify(
-    anchors
-      .filter(
-        (instruction) =>
-          isManagedMemberReferenceInstruction(instruction) &&
-          instruction.operand_kind === "method",
-      )
-      .map(({ opcode, operand_kind }) => [opcode, operand_kind]),
-  );
-
-const fieldShape = (anchors: Method["body"]["anchors"]): string =>
-  JSON.stringify(
-    anchors
-      .filter(
-        (instruction) =>
-          isManagedMemberReferenceInstruction(instruction) &&
-          instruction.operand_kind === "field",
-      )
-      .map(({ opcode, operand_kind }) => [opcode, operand_kind]),
-  );
 
 const methodIdentity = (item: Method): NonNullable<MethodItem["left"]> => ({
   token: item.token,

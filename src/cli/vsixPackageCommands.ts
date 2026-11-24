@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createVsixPackageService } from "../composition/vsixPackage.js";
 import { VSIX_PACKAGE_TOOL_CONTRACTS } from "../contracts/vsix/vsixPackageToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Inspect operator-selected VS Code extensions through the same shared workflow as MCP. */

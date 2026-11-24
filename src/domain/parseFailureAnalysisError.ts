@@ -1,6 +1,6 @@
 import {
   type ANALYSIS_RESOURCE_KINDS,
-  AnalysisInputError,
+  AnalysisMalformedTargetError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
   type ResourceConstraintRecovery,
@@ -57,17 +57,20 @@ export const parseLimitConstraint = (
 /**
  * The public refusal for a parser's format failure on the selected artifact.
  *
- * Malformed and truncated bytes are an invalid `field` (the input that
- * selected the artifact, `path` by default); unsupported bytes are an
- * unsupported target. A `limit` and any other cause return `undefined`:
- * a limit's recovery names a budget only its producer knows.
+ * The parser reads the target's bytes, not the request, so every format
+ * failure is a target refusal: malformed and truncated bytes are a malformed
+ * target and unsupported bytes are an unsupported target. A `limit` and any
+ * other cause return `undefined`: a limit's recovery names a budget only its
+ * producer knows.
  */
 export const parseFailureAnalysisError = (
   operation: string,
   path: string,
   cause: unknown,
-  field = "path",
-): AnalysisInputError | AnalysisUnsupportedTargetError | undefined => {
+):
+  | AnalysisMalformedTargetError
+  | AnalysisUnsupportedTargetError
+  | undefined => {
   if (!(cause instanceof ParseFailureError)) return undefined;
   const { failure } = cause;
   switch (failure.kind) {
@@ -82,12 +85,8 @@ export const parseFailureAnalysisError = (
       );
     case "malformed":
     case "truncated":
-      return new AnalysisInputError(operation, { cause }, [
-        {
-          path: [field],
-          reason: "invalid_format",
-          message: `Selected artifact ${path}: ${failure.detail}`,
-        },
-      ]);
+      return new AnalysisMalformedTargetError(operation, path, failure, {
+        cause,
+      });
   }
 };

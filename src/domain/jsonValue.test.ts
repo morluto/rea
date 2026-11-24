@@ -7,6 +7,7 @@ import {
   equalJsonValues,
   jsonObjectSchema,
   ownedJsonObjectSchema,
+  jsonValueExceedsDepth,
   jsonValueSchema,
   jsonValueValidationIssue,
   jsonValueValidationSteps,
@@ -97,6 +98,24 @@ describe("jsonValueSchema depth bound", () => {
     expect(jsonValueSchema.safeParse(deepObject(MAX_JSON_DEPTH)).success).toBe(
       true,
     );
+    expect(jsonValueExceedsDepth({}, 0)).toBe(false);
+    expect(jsonValueExceedsDepth([], 0)).toBe(false);
+    expect(jsonValueExceedsDepth({ a: 1 }, 0)).toBe(true);
+    expect(jsonValueExceedsDepth([1], 0)).toBe(true);
+    expect(jsonValueExceedsDepth({ a: [1] }, 2)).toBe(false);
+    expect(jsonValueExceedsDepth({ a: [1] }, 1)).toBe(true);
+    expect(
+      jsonValueExceedsDepth(
+        deepObject(MAX_JSON_DEPTH) as Record<string, never>,
+        MAX_JSON_DEPTH,
+      ),
+    ).toBe(false);
+    expect(
+      jsonValueExceedsDepth(
+        deepObject(MAX_JSON_DEPTH + 1) as Record<string, never>,
+        MAX_JSON_DEPTH,
+      ),
+    ).toBe(true);
   });
 
   it("rejects values nested past the maximum depth without throwing", () => {

@@ -114,7 +114,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-      // Malformed and truncated bytes are an invalid `path`; unsupported
+      // Malformed and truncated bytes are a malformed target; unsupported
       // bytes are an unsupported target, as for every other format parser.
       const formatFailure = parseFailureAnalysisError(
         OPERATION,

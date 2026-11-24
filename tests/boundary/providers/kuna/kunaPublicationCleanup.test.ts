@@ -6,6 +6,7 @@ import {
   KunaProjectCache,
   KunaPublishedProjectCleanupError,
 } from "../../../../src/kuna/KunaProjectCache.js";
+import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { inspectKunaInstallationOwned } from "./kunaResourceScope.js";
@@ -108,6 +109,19 @@ it("retains the completed publication receipt while retrying only stopped stagin
     fault.blocked = false;
     expect(await cache.close()).toEqual({ ok: true, value: null });
     expect(error.cleanupIncomplete).toBe(false);
+    const retired = error.cause;
+    if (!(retired instanceof ProviderCleanupError))
+      throw new Error("Expected the staging cleanup failure");
+    expect(retired.cleanupIncomplete).toBe(false);
+    const projectedAfterRelease = new KunaPublishedProjectCleanupError(
+      error.project,
+      retired,
+    );
+    expect(projectedAfterRelease.cleanupIncomplete).toBe(false);
+    expect(projectedAfterRelease.cleanupResources).toEqual([]);
+    expect(projectAnalysisError(projectedAfterRelease).details).toMatchObject({
+      diagnostics: { published_export: { key: error.project.key } },
+    });
     if (!firstClose.ok) expect(firstClose.error.cleanupIncomplete).toBe(false);
     expect(
       (await fakeKunaCalls(kuna)).filter(

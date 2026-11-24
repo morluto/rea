@@ -15,6 +15,13 @@ type CliFailureIdentity = Pick<
 interface CliOperationFailure {
   readonly payload: unknown;
   readonly identity?: CliFailureIdentity;
+  /**
+   * The command completed and returned its whole report, whose verdict is a
+   * failure (an unhealthy doctor report). Output controls select from it as
+   * from any result; only the exit status and full-output envelope record the
+   * failure.
+   */
+  readonly completedReport?: true;
 }
 const loggedFailures = new WeakMap<object, CliOperationFailure | undefined>();
 
@@ -71,7 +78,8 @@ const inferCliOperationFailure = (
 ): CliOperationFailure | undefined => {
   const projection = projectCliOperationFailure(value);
   if (projection !== undefined) return canonicalFailure(projection);
-  if (isRecord(value) && value.healthy === false) return { payload: value };
+  if (isRecord(value) && value.healthy === false)
+    return { payload: value, completedReport: true };
   return undefined;
 };
 
@@ -84,6 +92,13 @@ export const cliOperationFailurePayload = (
   if (failure !== undefined && isRecord(value))
     loggedFailures.set(value, failure);
   return failure?.payload;
+};
+
+/** Whether a failed outcome is a completed report rather than an error payload. */
+export const isCliCompletedFailureReport = (value: unknown): boolean => {
+  if (cliOperationFailurePayload(value) === undefined || !isRecord(value))
+    return false;
+  return loggedFailures.get(value)?.completedReport === true;
 };
 
 /** Identify caller-visible CLI outcomes that mean the requested operation failed. */

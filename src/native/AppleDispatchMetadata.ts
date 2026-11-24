@@ -12,6 +12,7 @@ import {
 } from "../resources/index.js";
 import {
   malformedInput,
+  ParseFailureError,
   parseFailureFromCause,
 } from "../domain/parseFailure.js";
 import { setImmediate as immediate } from "node:timers/promises";
@@ -91,8 +92,8 @@ export function* decodeAppleDispatchMetadataSteps(
     slice: admittedSlice,
   });
   if (!selected.ok) {
-    if (selected.error.kind === "malformed")
-      throw malformedInput("macho", selected.error.message);
+    if (selected.error.kind === "format")
+      throw new ParseFailureError(selected.error.failure);
     // Admission bound this architecture and slice to these exact bytes, so a
     // refusal is an inconsistency inside REA, not the caller's selection.
     throw new ProviderAdapterError(IDENTITY.id, OPERATION, {
@@ -325,7 +326,7 @@ export function* decodeAppleDispatchMetadataSteps(
     vtables: vtables.facts(),
     swift,
   });
-  return objcSwiftMetadataSchema.parse(result);
+  return result;
 }
 
 const OPERATION = "inspect_native_dispatch_metadata";
@@ -432,6 +433,7 @@ export const inspectAppleDispatchMetadata = async (
       if (signal?.aborted) throw cancelled();
       const read = await readBoundedFileBytes(handle, maximumBytes, {
         signal,
+        expectedSize: before.size,
         cancellationFailure: () => cancelled(),
       });
       if (read === undefined) throw inputBudgetExceeded(admission, null);
@@ -459,15 +461,18 @@ export const inspectAppleDispatchMetadata = async (
     if (signal?.aborted) throw cancelled();
     next = steps.next();
   }
-  return nativeDispatchMetadataResultSchema.parse({
+  const envelope = nativeDispatchMetadataEnvelopeSchema.parse({
     target_sha256: target.sha256,
     target_architecture: target.architecture,
     provider: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.provider,
     analysis_profile_digest: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.digest,
     input_admission: { ...admission, retained_bytes: bytes.length },
-    result: next.value,
   });
+  return { ...envelope, result: next.value };
 };
+
+const nativeDispatchMetadataEnvelopeSchema =
+  nativeDispatchMetadataResultSchema.omit({ result: true });
 
 /** Translate the owned target read, keeping a failed close beside its physical outcome. */
 export const appleDispatchMetadataFailure = (

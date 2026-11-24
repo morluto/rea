@@ -1,4 +1,3 @@
-import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { decode, Tokenizer, Type, type Token } from "cborg";
 import type {
@@ -9,7 +8,6 @@ import { errorMessage } from "../kernel/errorMessage.js";
 
 const PROFILE = "terminal-cbor-scalars-v1";
 const MAX_DEPTH = 64;
-const utf8 = strictUtf8Decoder("preserve");
 const decodeOptions = {
   useMaps: true,
   allowBigInt: true,
@@ -18,76 +16,87 @@ const decodeOptions = {
   allowInfinity: false,
   allowNaN: false,
   rejectDuplicateMapKeys: false,
-  retainStringBytes: true,
+  rejectInvalidUtf8: true,
 } as const;
+
+const uint8ArrayToHex = (bytes: Uint8Array): string =>
+  Buffer.isBuffer(bytes)
+    ? bytes.toString("hex")
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(
+        "hex",
+      );
+
+const fastScalarKey = (value: unknown): string => {
+  if (typeof value === "string") return `s:${value}`;
+  if (typeof value === "bigint") return `i:${value.toString()}`;
+  if (typeof value === "number" && Number.isSafeInteger(value))
+    return `i:${String(value)}`;
+  if (typeof value === "boolean") return value ? "T" : "F";
+  if (value === null) return "N";
+  if (value instanceof Uint8Array) return `b:${uint8ArrayToHex(value)}`;
+  throw new EvmAdmissionError("value_outside_profile");
+};
 
 /** Bound recursive decoder entry before collection interpretation/allocation. */
 class BoundedMetadataTokenizer extends Tokenizer {
   readonly remaining: number[] = [];
   readonly #mapKeys: Array<Set<string> | undefined> = [];
+  hasContainerKey = false;
+
   constructor(bytes: Uint8Array) {
     super(bytes, decodeOptions);
   }
 
   override next(): Token {
-    while (this.remaining.at(-1) === 0) {
+    while (
+      this.remaining.length > 0 &&
+      this.remaining[this.remaining.length - 1] === 0
+    ) {
       this.remaining.pop();
       this.#mapKeys.pop();
     }
     const token = super.next();
-    if (
-      Type.equals(token.type, Type.tag) ||
-      Type.equals(token.type, Type.float)
-    )
+    const type = token.type;
+    if (Type.equals(type, Type.tag) || Type.equals(type, Type.float))
       throw new EvmAdmissionError("tag_or_float");
-    if (Type.equals(token.type, Type.string)) {
-      if (token.byteValue !== undefined)
-        token.value = utf8.decode(token.byteValue);
-      // cborg answers the shortest-form empty text (0x60) with a shared token that has no
-      // bytes; it can only mean "", which is already its value.
-      else if (token.value !== "" || token.encodedLength !== 1)
-        throw new EvmAdmissionError("text_bytes_unavailable");
-    }
-    const parent = this.remaining.length - 1;
-    const mapKeys = parent >= 0 ? this.#mapKeys[parent] : undefined;
-    const onKey =
-      mapKeys !== undefined && parent >= 0 && this.remaining[parent]! % 2 === 0;
-    if (parent >= 0) this.remaining[parent]!--;
-    if (
-      onKey &&
-      mapKeys !== undefined &&
-      !Type.equals(token.type, Type.map) &&
-      !Type.equals(token.type, Type.array)
-    ) {
-      const identity = keyIdentity(token.value);
-      if (mapKeys.has(identity)) throw repeatedMapKey(identity);
-      mapKeys.add(identity);
-    }
-    if (
-      Type.equals(token.type, Type.map) ||
-      Type.equals(token.type, Type.array)
-    ) {
-      const count: unknown = token.value;
-      const children =
-        typeof count === "number"
-          ? count * (Type.equals(token.type, Type.map) ? 2 : 1)
-          : NaN;
-      if (
-        !Number.isSafeInteger(children) ||
-        children < 0 ||
-        children > this.data.length
-      )
-        throw new EvmAdmissionError("collection_exceeds_bound");
-      if (this.remaining.length >= MAX_DEPTH)
-        throw new EvmAdmissionError("nesting_exceeds_profile", {
-          max_depth: MAX_DEPTH,
-        });
-      this.#mapKeys.push(
-        Type.equals(token.type, Type.map) ? new Set() : undefined,
-      );
-      this.remaining.push(children);
-    }
+    const isMap = Type.equals(type, Type.map);
+    const isArray = !isMap && Type.equals(type, Type.array);
+    this.#trackMapKey(token, isMap, isArray);
+    if (isMap || isArray) this.#enterCollection(token, isMap);
     return token;
+  }
+
+  #trackMapKey(token: Token, isMap: boolean, isArray: boolean): void {
+    const parent = this.remaining.length - 1;
+    if (parent < 0) return;
+    const mapKeys = this.#mapKeys[parent];
+    const onKey = mapKeys !== undefined && this.remaining[parent]! % 2 === 0;
+    this.remaining[parent]!--;
+    if (!onKey || mapKeys === undefined) return;
+    if (isMap || isArray) {
+      this.hasContainerKey = true;
+      return;
+    }
+    const fast = fastScalarKey(token.value);
+    if (mapKeys.has(fast)) throw repeatedMapKey(keyIdentity(token.value));
+    mapKeys.add(fast);
+  }
+
+  #enterCollection(token: Token, isMap: boolean): void {
+    const count: unknown = token.value;
+    const children = typeof count === "number" ? count * (isMap ? 2 : 1) : NaN;
+    if (
+      !Number.isSafeInteger(children) ||
+      children < 0 ||
+      children > this.data.length
+    )
+      throw new EvmAdmissionError("collection_exceeds_bound");
+    if (this.remaining.length >= MAX_DEPTH)
+      throw new EvmAdmissionError("nesting_exceeds_profile", {
+        max_depth: MAX_DEPTH,
+      });
+    this.#mapKeys.push(isMap ? new Set() : undefined);
+    this.remaining.push(children);
   }
 }
 
@@ -100,7 +109,7 @@ const scalar = (value: unknown): SolidityMetadataScalar => {
   if (typeof value === "boolean") return { kind: "boolean", value };
   if (value === null) return { kind: "null" };
   if (value instanceof Uint8Array)
-    return { kind: "bytes", value: Buffer.from(value).toString("hex") };
+    return { kind: "bytes", value: uint8ArrayToHex(value) };
   if (value instanceof Map) return { kind: "uninterpreted", container: "map" };
   if (Array.isArray(value))
     return { kind: "uninterpreted", container: "array" };
@@ -191,33 +200,36 @@ export const inspectSolidityMetadata = (
     cbor_bytes: length,
   };
   try {
+    const tokenizer = new BoundedMetadataTokenizer(selected);
     const raw: unknown = decode(selected, {
       ...decodeOptions,
-      tokenizer: new BoundedMetadataTokenizer(selected),
+      tokenizer,
     });
     if (!(raw instanceof Map)) throw new EvmAdmissionError("root_not_map");
-    validateMapKeys(raw);
+    if (tokenizer.hasContainerKey) validateMapKeys(raw);
     // cborg compares Map keys by identity, so repeated byte-string or container
     // keys (each its own object) pass its duplicate check; compare by value at
     // every map boundary before projecting any entries.
+    let hasUninterpreted = false;
     for (const [key, value] of raw as Map<unknown, unknown>) {
-      result.entries.push({ key: scalar(key), value: scalar(value) });
+      const projectedKey = scalar(key);
+      const projectedValue = scalar(value);
+      if (
+        projectedKey.kind === "uninterpreted" ||
+        projectedValue.kind === "uninterpreted"
+      )
+        hasUninterpreted = true;
+      result.entries.push({ key: projectedKey, value: projectedValue });
     }
-    result.status = result.entries.some(
-      ({ key, value }) =>
-        key.kind === "uninterpreted" || value.kind === "uninterpreted",
-    )
-      ? "partial"
-      : "decoded";
-    result.diagnostic =
-      result.status === "partial"
-        ? "Nested containers are uninterpreted; their exact bytes remain at the recorded range in original bytecode."
-        : null;
+    result.status = hasUninterpreted ? "partial" : "decoded";
+    result.diagnostic = hasUninterpreted
+      ? "Nested containers are uninterpreted; their exact bytes remain at the recorded range in original bytecode."
+      : null;
     const version: unknown = raw.get("solc");
     if (version instanceof Uint8Array && version.length === 3)
       result.compiler_version = {
         representation: "release-bytes",
-        value: [...version].join("."),
+        value: `${version[0]}.${version[1]}.${version[2]}`,
       };
     else if (typeof version === "string" && version.length > 0)
       result.compiler_version = {

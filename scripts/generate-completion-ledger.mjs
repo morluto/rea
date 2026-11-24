@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir } from "node:fs/promises";
-import { dirname, join, relative, sep } from "node:path";
+import { mkdir, readFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { ensureGeneratedFile } from "./lib/generated-file.mjs";
+import {
+  ensureGeneratedFile,
+  regularFilePaths,
+} from "./lib/generated-file.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
 const exec = promisify(execFile);
@@ -79,32 +82,18 @@ process.stdout.write(
 );
 
 async function directoryDigest(directory) {
-  const paths = await filePaths(directory);
+  const paths = await regularFilePaths(
+    directory,
+    (name) =>
+      `Completion skill digest does not admit ${basename(name)}: expected a regular file or directory`,
+  );
   const records = await Promise.all(
-    paths.map(async (path) => {
-      const name = relative(directory, path).split(sep).join("/");
+    paths.map(async (name) => {
       const digest = createHash("sha256")
-        .update(await readFile(path))
+        .update(await readFile(join(directory, name)))
         .digest("hex");
       return `${name}\0${digest}\n`;
     }),
   );
   return createHash("sha256").update(records.join("")).digest("hex");
-}
-
-async function filePaths(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const paths = [];
-  for (const entry of entries.sort((left, right) =>
-    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
-  )) {
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) paths.push(...(await filePaths(path)));
-    else if (entry.isFile()) paths.push(path);
-    else
-      throw new Error(
-        `Completion skill digest does not admit ${entry.name}: expected a regular file or directory`,
-      );
-  }
-  return paths;
 }

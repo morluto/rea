@@ -262,6 +262,76 @@ it.each([
     );
   },
 );
+it.each([
+  ["empty", Buffer.alloc(0)],
+  ["short", Buffer.from([0, 0])],
+  ["multiple cells", cells(1, 2)],
+])(
+  "reports a malformed linux,phandle (%s) and keeps canonical phandle unresolved",
+  (_name, legacy) => {
+    const r = parse(
+      devicetreeFixture({
+        name: "",
+        children: [
+          {
+            name: "target",
+            properties: { phandle: cells(3), "linux,phandle": legacy },
+          },
+          {
+            name: "legacy_only",
+            properties: { "linux,phandle": legacy },
+          },
+          { name: "consumer", properties: { "interrupt-parent": cells(3) } },
+        ],
+      }),
+    );
+    expect(r.references).toMatchObject([
+      { source: "/consumer", phandle: 3, target: null },
+    ]);
+    expect(r.nodes[1]?.properties[1]).toMatchObject({
+      name: "linux,phandle",
+      bytes: legacy.length,
+      hex: legacy.toString("hex"),
+      derived: { cells: null },
+    });
+    expect(r.limitations).toContainEqual(
+      expect.stringMatching(
+        /linux,phandle.*\/target.*not a single cell.*unresolved/iu,
+      ),
+    );
+    expect(r.limitations).toContainEqual(
+      expect.stringMatching(
+        /linux,phandle.*\/legacy_only.*not a single cell.*unresolved/iu,
+      ),
+    );
+  },
+);
+it("reports both limitations when phandle and linux,phandle are both malformed", () => {
+  const r = parse(
+    devicetreeFixture({
+      name: "",
+      children: [
+        {
+          name: "both_bad",
+          properties: {
+            phandle: Buffer.from([0, 1]),
+            "linux,phandle": cells(1, 2),
+          },
+        },
+      ],
+    }),
+  );
+  expect(r.limitations).toContainEqual(
+    expect.stringMatching(
+      /^phandle at \/both_bad is not a single cell; this node's reference identity remains unresolved\.$/u,
+    ),
+  );
+  expect(r.limitations).toContainEqual(
+    expect.stringMatching(
+      /^linux,phandle at \/both_bad is not a single cell; this node's reference identity remains unresolved\.$/u,
+    ),
+  );
+});
 it("resolves a legacy phandle only when the canonical property is absent", () => {
   const r = parse(
     devicetreeFixture({
@@ -292,21 +362,15 @@ it("rejects unterminated reservations and unknown tokens", () => {
   token.writeUInt32BE(0x12345678, 72);
   expect(() => parse(token)).toThrow("Unknown FDT token");
 });
-it.each([16, 17] as const)(
-  "accepts an empty strings block at the reservation boundary in v%s",
-  (version) => {
-    const report = parse(emptyStringsAtReservationBoundaryFixture(version));
-    expect(report.nodes).toHaveLength(1);
-    expect(report.reservations).toEqual([]);
-  },
-);
 it.each([
   [16, 0],
   [16, 44],
+  [16, 56],
   [16, 60],
   [16, 72],
   [17, 0],
   [17, 44],
+  [17, 56],
   [17, 60],
   [17, 72],
 ] as const)(
@@ -315,6 +379,7 @@ it.each([
     const bytes = emptyStringsAtReservationBoundaryFixture(version);
     bytes.writeUInt32BE(offset, 12);
     expect(parse(bytes)).toMatchObject({
+      header: { off_dt_strings: offset, size_dt_strings: 0 },
       nodes: [{ path: "/" }],
       reservations: [],
     });

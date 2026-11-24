@@ -20,8 +20,8 @@ import {
   closeBinaryInputSchema,
   resetInvestigationInputSchema,
   openBundleResourcesInputSchema,
-  openBinaryInputSchema,
 } from "./sessionLifecycleInputs.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "./openBinaryToolContract.js";
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
 import { processComparisonInputSchema } from "./processComparisonContracts.js";
 import { artifactComparisonInputSchema } from "./artifactComparisonContracts.js";
@@ -80,26 +80,7 @@ export const exportEvidenceBundleInputSchema = z.strictObject({
   overwrite: z.boolean().default(false),
 });
 
-/**
- * The contract an MCP client opens a target with. CLI commands that open their
- * target take its fields as options; startup reads it here rather than through
- * the complete catalog.
- */
-export const OPEN_BINARY_TOOL_CONTRACT = session(
-  "open_binary",
-  // Lifecycle transitions can retire an IDA client, including a pending
-  // cleanup from an earlier provider, over its configured MCP transport.
-  // Retiring Ghidra can discard ephemeral edits or save a configured checkpoint.
-  toolEffects({
-    mutatesSession: true,
-    writesFilesystem: true,
-    launchesProcess: true,
-    accessesNetwork: true,
-    mayDiscardData: true,
-  }),
-  "Open a validated local artifact or analysis database and bind its analysis provider. Switching target/provider can discard ephemeral Ghidra edits even if the later open fails; retained investigation Evidence does not restore them. Reopening the same target/profile retains the engine and edits. provider_id selects a provider or deterministic auto routing, with no failure fallback. Omitted format uses headers; format dos-com admits 1..65280 headerless bytes, while raw-binary requires architecture and entry_point and maps file offset 0 there. Optional snapshots must match target, provider and analysis profile; close/reopen before importing into a mutated engine. For Ghidra cross-process edits, set a private absolute REA_GHIDRA_CHECKPOINT_DIR at startup (stock ELF/PE/Mach-O on Linux/macOS); normal opens/closes restore/save metadata. Failed opens report selection_at_failure and target/provider at completion; use binary_session for current state. close_binary releases engine resources; reset_investigation clears retained records.",
-  openBinaryInputSchema,
-);
+export { OPEN_BINARY_TOOL_CONTRACT };
 
 /** Target lifecycle tools available only on the long-lived MCP adapter. */
 export const SESSION_TOOL_CONTRACTS = [

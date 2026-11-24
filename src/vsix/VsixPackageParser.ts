@@ -23,7 +23,7 @@ import {
   zipEntryPath,
   zipListingCoverage,
 } from "../resources/index.js";
-import { countXmlNodes, parseXmlDocument } from "../domain/xmlDocument.js";
+import { parseXmlDocumentWithinNodeLimit } from "../domain/xmlDocument.js";
 import { countJsonValues } from "../domain/jsonValue.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
@@ -589,10 +589,22 @@ const parseVsixManifestDocument = (
     extensionKind: [],
     assets: [],
   };
-  const parsed = parseXmlDocument(xml, {
-    doctype: "reject",
+  // Count nodes as a stream first, so a compressed manifest of many tiny
+  // elements is refused before its document tree is allocated.
+  const parsed = parseXmlDocumentWithinNodeLimit(xml, {
+    maximumNodes: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
     lineEndings: "normalize",
   });
+  if (!parsed.ok && parsed.error.kind === "node-limit")
+    throw decodeLimit(
+      VSIX_PACKAGE_FORMAT,
+      `Selected extension.vsixmanifest holds more than ${String(parsed.error.maximum)} XML nodes, above the node allowance for its document tree.`,
+      {
+        name: "xml_nodes",
+        maximum: parsed.error.maximum,
+        required: parsed.error.required,
+      },
+    );
   if (!parsed.ok) {
     limitations.push(
       parsed.error.kind === "unsupported"
@@ -1032,22 +1044,6 @@ export const parseVsixPackage = async (
         );
       }
       if (vsixText !== undefined) {
-        // Count nodes as a stream first, so a compressed manifest of many tiny
-        // elements is refused before its document tree is allocated.
-        const nodes = countXmlNodes(
-          vsixText,
-          MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
-        );
-        if (nodes > MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES)
-          throw decodeLimit(
-            VSIX_PACKAGE_FORMAT,
-            `Selected extension.vsixmanifest holds more than ${String(MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES)} XML nodes, above the node allowance for its document tree.`,
-            {
-              name: "xml_nodes",
-              maximum: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
-              required: nodes,
-            },
-          );
         vsixParsed = parseVsixManifestDocument(
           vsixText,
           limitations,
