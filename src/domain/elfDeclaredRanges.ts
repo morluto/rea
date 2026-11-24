@@ -306,7 +306,11 @@ export function* validateElfDeclaredRanges(
   Result<ElfDeclaredRangeFacts, string>,
   Buffer
 > {
-  const declarations = yield* readElfTableDeclarations(prefix, fileSize, options);
+  const declarations = yield* readElfTableDeclarations(
+    prefix,
+    fileSize,
+    options,
+  );
   if (!declarations.ok) return declarations;
   const { header, programs, sections, sectionTableTruncated } =
     declarations.value;
@@ -316,8 +320,24 @@ export function* validateElfDeclaredRanges(
     ["section", sections],
   ] as const) {
     if (table.count === 0) continue;
-    if (kind === "section" && sectionTableTruncated) continue;
-    const inspected = yield* inspectTableRanges(kind, table, header, fileSize);
+    let inspectedTable = table;
+    if (kind === "section" && sectionTableTruncated) {
+      const capturedCount =
+        table.offset >= BigInt(fileSize)
+          ? 0
+          : Math.min(
+              table.count,
+              Number((BigInt(fileSize) - table.offset) / BigInt(table.width)),
+            );
+      if (capturedCount === 0) continue;
+      inspectedTable = { ...table, count: capturedCount };
+    }
+    const inspected = yield* inspectTableRanges(
+      kind,
+      inspectedTable,
+      header,
+      fileSize,
+    );
     if (!inspected.ok) return inspected;
     if (kind === "program") {
       hasInterpreter = inspected.value.hasInterpreter;
