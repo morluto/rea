@@ -42,7 +42,7 @@ it("recovers relative Cargo paths packed after another Rust source path", () => 
   });
   const result = recoverRustSourceFingerprints(
     bytes,
-    readBinaryContainer(bytes),
+    readBinaryContainer(bytes, "inspect_rust_binary"),
   );
   expect(result.inferred_crates.discovered_count).toBe(3);
   expect(result.inferred_crates.items.map((item) => item.name)).toEqual([
@@ -77,7 +77,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
     omitSection: true,
     readOnlyBytes: rodata,
   });
-  const container = readBinaryContainer(bytes);
+  const container = readBinaryContainer(bytes, "inspect_rust_binary");
   const result = recoverRustSourceFingerprints(bytes, container);
 
   expect(result.inferred_crates).toMatchObject({
@@ -190,7 +190,7 @@ it("recovers deduplicated rustc version banners from read-only sections and ELF 
     readOnlyBytes: rodata,
     elfComment: comment,
   });
-  const container = readBinaryContainer(bytes);
+  const container = readBinaryContainer(bytes, "inspect_rust_binary");
   const result = recoverRustSourceFingerprints(bytes, container);
 
   expect(result.rustc_versions).toEqual({
@@ -374,7 +374,6 @@ it("recovers tokens straddling the 1 MiB scan window boundary without double-cou
       },
     ),
   ).rejects.toBe(cancelled);
-
 });
 
 it("enforces max_inferred_crates, 64-banner rustc_versions cap, 64 MiB scan budget, and cooperative cancellation", () => {
@@ -644,7 +643,7 @@ it("retains git checkout_id and Cargo URL path-segment punctuation while rejecti
   });
   const result = recoverRustSourceFingerprints(
     bytes,
-    readBinaryContainer(bytes),
+    readBinaryContainer(bytes, "inspect_rust_binary"),
   );
   expect(result.inferred_crates.discovered_count).toBe(6);
   expect(
@@ -755,7 +754,7 @@ it("enforces Cargo u64::MAX bounds on SemVer major, minor, and patch components"
   });
   const result = recoverRustSourceFingerprints(
     bytes,
-    readBinaryContainer(bytes),
+    readBinaryContainer(bytes, "inspect_rust_binary"),
   );
   expect(
     result.inferred_crates.items.map(({ name, version }) => ({
@@ -812,7 +811,7 @@ it("rejects numeric prerelease leading zeros while preserving build metadata and
   });
   const result = recoverRustSourceFingerprints(
     bytes,
-    readBinaryContainer(bytes),
+    readBinaryContainer(bytes, "inspect_rust_binary"),
   );
   expect(
     result.inferred_crates.items.map(({ name, version }) => ({
@@ -842,7 +841,7 @@ it("rejects overlong rustc channel banners without emitting invalid prefixes", (
   });
   const result = recoverRustSourceFingerprints(
     bytes,
-    readBinaryContainer(bytes),
+    readBinaryContainer(bytes, "inspect_rust_binary"),
   );
   expect(result.rustc_versions.items.map((item) => item.banner)).toEqual([
     validNightly,
@@ -1037,7 +1036,7 @@ it("recovers IPv6-hosted Cargo registry crates and rejects malformed registry ho
   });
   const result = recoverRustSourceFingerprints(
     bytes,
-    readBinaryContainer(bytes),
+    readBinaryContainer(bytes, "inspect_rust_binary"),
   );
   expect(result.inferred_crates.truncated).toBe(false);
   expect(
@@ -1111,6 +1110,7 @@ it("recovers Cargo-valid Unicode registry crate names and enforces UTF-8 byte bo
         `/cargo/registry/src/private.example-1ecc6299db9ec823/${exact256Utf8Name}-1.0.0/src/lib.rs`,
         "/cargo/registry/src/private.example-1ecc6299db9ec823/emoji😀-0.1.0/src/lib.rs",
         "/cargo/registry/src/private.example-1ecc6299db9ec823/\u00b7bad_start-0.1.0/src/lib.rs",
+        "/cargo/registry/src/private.example-1ecc6299db9ec823/\ufeffbom_dep-0.1.0/src/lib.rs",
       ].join("\0") + "\0",
       "utf8",
     ),
@@ -1128,7 +1128,7 @@ it("recovers Cargo-valid Unicode registry crate names and enforces UTF-8 byte bo
   });
   const result = recoverRustSourceFingerprints(
     bytes,
-    readBinaryContainer(bytes),
+    readBinaryContainer(bytes, "inspect_rust_binary"),
   );
   expect(result.inferred_crates.truncated).toBe(false);
   expect(result.inferred_crates.discovered_count).toBe(5);
@@ -1202,7 +1202,7 @@ it("recovers Cargo-valid Unicode registry crate names and enforces UTF-8 byte bo
   });
   const overCapResult = recoverRustSourceFingerprints(
     overCapBytes,
-    readBinaryContainer(overCapBytes),
+    readBinaryContainer(overCapBytes, "inspect_rust_binary"),
   );
   expect(overCapResult.inferred_crates.items).toEqual([]);
   expect(overCapResult.inferred_crates.discovered_count).toBe(0);
@@ -1225,7 +1225,7 @@ it("rejects digit-prefixed registry crate names in scanner and retained-report s
   });
   const result = recoverRustSourceFingerprints(
     bytes,
-    readBinaryContainer(bytes),
+    readBinaryContainer(bytes, "inspect_rust_binary"),
   );
   expect(result.inferred_crates.truncated).toBe(false);
   expect(result.inferred_crates.discovered_count).toBe(2);
@@ -1290,13 +1290,9 @@ it("keeps default reader reports unchanged while inferring crates through native
     );
     expect(disabled).toEqual(baseline);
     const { inferred_crates, rustc_versions, ...observed } =
-      await readRustBinaryImageFromHandle(
-        source,
-        undefined,
-        undefined,
-        pause,
-        { includeInferredCrates: true },
-      );
+      await readRustBinaryImageFromHandle(source, undefined, undefined, pause, {
+        includeInferredCrates: true,
+      });
     expect(observed).toEqual(baseline);
     expect(inferred_crates?.items).toEqual([
       expect.objectContaining({

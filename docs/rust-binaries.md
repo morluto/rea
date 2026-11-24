@@ -181,13 +181,13 @@ When requested, the result adds two `evidence_kind: "inferred"` inventories:
 
 Default `inspect_rust_binary` calls omit `inferred_crates` and `rustc_versions`
 so default parameters, payloads, and `evidence_id` digests remain unchanged.
-Retained summaries add `source_coverage.inferred_crates` (`"not-requested" | "complete" | "truncated"`)
+Retained summaries add `source_coverage.inferred_crates` (`"not-requested" | "complete" | "partial"`)
 and summary counts, and `inspect_analysis_view` (`kind: "rust"`,
 `collection: "inferred_crates"`) pages recovered crates with `indices`, `name`,
 `names`, `contains`, `source_kind`, `fields`, `offset`, and `limit` (refusing
 cleanly when the parent Evidence did not request `include_inferred_crates`).
 Candidate scanning uses bounded range reads and is limited to 64 MiB; hitting the item or scan cap sets
-`truncated: true` and records a limitation rather than failing. Path-inferred
+`truncated: true`, reports `"partial"` source coverage, and records a limitation rather than failing. Path-inferred
 crates reflect surviving panic/debug strings and do not establish a complete
 `Cargo.lock` dependency graph.
 

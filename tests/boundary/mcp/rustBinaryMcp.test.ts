@@ -294,7 +294,7 @@ mcpTest(
       expect(paged.isError, JSON.stringify(paged.content)).not.toBe(true);
       expect(paged.structuredContent).toMatchObject({
         normalized_result: {
-          source_coverage: { inferred_crates: "truncated" },
+          source_coverage: { inferred_crates: "partial" },
           page: {
             collection: "inferred_crates",
             rows: [{ index: 0, name: "tokio-util", version: "0.7.13" }],

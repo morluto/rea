@@ -846,7 +846,7 @@ cliTest(
       summary: {
         normalized_result: {
           kind: "rust",
-          source_coverage: { inferred_crates: "truncated" },
+          source_coverage: { inferred_crates: "partial" },
           rust: {
             inferred_crates: {
               available_count: 2,

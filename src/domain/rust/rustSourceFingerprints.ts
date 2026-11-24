@@ -31,9 +31,6 @@ export const isAsciiAlnum = (code: number): boolean =>
 export const isCrateNameByte = (code: number): boolean =>
   isAsciiAlnum(code) || code === 0x2d || code === 0x5f;
 
-export const isRegistryOrGitSlugByte = (code: number): boolean =>
-  isCrateNameByte(code) || code === 0x2e;
-
 /**
  * Printable non-space ASCII bytes permitted in unbracketed Cargo registry host
  * or local path-segment identifiers (`url::Url::host_str()` / fallback segment).

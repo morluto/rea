@@ -281,8 +281,13 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
   });
   if (!uncollectedSummary.ok) throw uncollectedSummary.error;
   expect(uncollectedSummary.value).toMatchObject({
+    kind: "summary",
     source_coverage: { inferred_crates: "not-requested" },
   });
+  expect(uncollectedSummary.value).not.toHaveProperty(
+    "summary.inferred_crates",
+  );
+  expect(uncollectedSummary.value).not.toHaveProperty("summary.rustc_versions");
   const refused = projectAnalysisView(uncollected, {
     kind: "rust",
     collection: "inferred_crates",
@@ -347,7 +352,7 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
   const summary = projectAnalysisView(collected, { kind: "summary" });
   if (!summary.ok) throw summary.error;
   expect(summary.value).toMatchObject({
-    source_coverage: { inferred_crates: "truncated" },
+    source_coverage: { inferred_crates: "partial" },
     summary: {
       inferred_crates: {
         evidence_kind: "inferred",
@@ -365,6 +370,18 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
         truncated: false,
       },
     },
+  });
+
+  const complete = structuredClone(withCrates);
+  complete.inferred_crates!.discovered_count = 2;
+  complete.inferred_crates!.truncated = false;
+  const completeSummary = projectAnalysisView(parent(complete), {
+    kind: "summary",
+  });
+  if (!completeSummary.ok) throw completeSummary.error;
+  expect(completeSummary.value).toMatchObject({
+    source_coverage: { inferred_crates: "complete" },
+    summary: { inferred_crates: { truncated: false } },
   });
 
   const gitOnly = projectAnalysisView(collected, {

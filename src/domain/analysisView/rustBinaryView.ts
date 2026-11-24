@@ -1,4 +1,7 @@
-import { completeOrUnknownCoverageSchema } from "../coverage.js";
+import {
+  completeOrUnknownCoverageSchema,
+  knownCoverageStatusSchema,
+} from "../coverage.js";
 import { z } from "zod";
 import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
@@ -116,7 +119,10 @@ export const rustBinaryViewContextSchema = z.strictObject({
     auditable_metadata_available: z.boolean(),
     embedded_records: completeOrUnknownCoverageSchema,
     runtime_dependencies: z.literal("unknown"),
-    inferred_crates: z.enum(["not-requested", "complete", "truncated"]),
+    inferred_crates: z.enum([
+      "not-requested",
+      ...knownCoverageStatusSchema.options,
+    ]),
   }),
 });
 
@@ -240,7 +246,7 @@ export const projectRustBinaryView = (
         inferredCrates === undefined
           ? ("not-requested" as const)
           : inferredCrates.truncated
-            ? ("truncated" as const)
+            ? ("partial" as const)
             : ("complete" as const),
     },
     limitations: boundedViewMessages(

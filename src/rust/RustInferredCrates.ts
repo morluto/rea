@@ -1,5 +1,7 @@
 import { setImmediate } from "node:timers/promises";
 import { readByteSourceSlice, type ByteSource } from "../domain/byteSource.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 import {
   DEFAULT_MAX_RUST_INFERRED_CRATES,
@@ -170,19 +172,6 @@ const matchesAscii = (
   return true;
 };
 
-const UTF8_FATAL_DECODER = new TextDecoder("utf-8", {
-  fatal: true,
-  ignoreBOM: true,
-});
-
-const decodeStrictUtf8 = (bytes: Uint8Array): string | null => {
-  try {
-    return UTF8_FATAL_DECODER.decode(bytes);
-  } catch {
-    return null;
-  }
-};
-
 const isRegistryCrateDirByte = (byte: number): boolean =>
   isCrateNameByte(byte) ||
   byte === 0x2e ||
@@ -261,8 +250,15 @@ const parseCargoRegistryCrateAt = (
 
   const registryIndex = region.toString("latin1", indexStart, indexEnd);
   if (!isValidCargoRegistryHostComponent(registryIndex)) return null;
-  const crateSegment = decodeStrictUtf8(region.subarray(crateStart, crateEnd));
-  if (crateSegment === null) return null;
+  let crateSegment: string;
+  try {
+    crateSegment = decodeStrictUtf8(
+      region.subarray(crateStart, crateEnd),
+      "preserve",
+    );
+  } catch {
+    return null;
+  }
 
   if (
     indexEnd - indexStart <= MAX_CARGO_REGISTRY_INDEX_BYTES &&
@@ -516,7 +512,9 @@ function* recoverRustSourceFingerprintsSteps(
       );
       const region = yield { offset: readStart, length: readEnd - readStart };
       if (region === undefined)
-        throw new Error("Rust fingerprint scan requires the requested byte range.");
+        throw invariantViolation(
+          "Rust fingerprint scan requires the requested byte range.",
+        );
       yield* scanWindowCargoCandidates(
         region,
         readStart,
@@ -584,7 +582,10 @@ export const recoverRustSourceFingerprints = (
     region =
       next.value === undefined
         ? undefined
-        : bytes.subarray(next.value.offset, next.value.offset + next.value.length);
+        : bytes.subarray(
+            next.value.offset,
+            next.value.offset + next.value.length,
+          );
   }
 };
 
@@ -610,7 +611,10 @@ export const recoverRustSourceFingerprintsAsync = async (
     region =
       next.value === undefined
         ? undefined
-        : bytes.subarray(next.value.offset, next.value.offset + next.value.length);
+        : bytes.subarray(
+            next.value.offset,
+            next.value.offset + next.value.length,
+          );
     checkActive?.();
     await setImmediate();
   }
@@ -632,6 +636,10 @@ export const recoverRustSourceFingerprintsFromReader = async (
     region =
       next.value === undefined
         ? undefined
-        : await readByteSourceSlice(source, next.value.offset, next.value.length);
+        : await readByteSourceSlice(
+            source,
+            next.value.offset,
+            next.value.length,
+          );
   }
 };

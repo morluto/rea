@@ -169,10 +169,12 @@ const wasmLayoutFromReader = async (
     fingerprint_ranges:
       data_section === null
         ? []
-        : [{
-            offset: data_section.offset,
-            end: data_section.offset + data_section.size,
-          }],
+        : [
+            {
+              offset: data_section.offset,
+              end: data_section.offset + data_section.size,
+            },
+          ],
   };
 };
 

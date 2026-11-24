@@ -52,9 +52,13 @@ export const readBinaryContainerFromReader = async (
   pause: ZstandardFramePause,
 ): Promise<BinaryContainer> => {
   const probeLength = Math.min(source.size, 64);
-  const prefix =
+  const retainedPrefix =
     source.prefix !== undefined && source.prefix.length >= probeLength
-      ? source.prefix.subarray(0, probeLength)
+      ? source.prefix
+      : undefined;
+  const prefix =
+    retainedPrefix !== undefined
+      ? retainedPrefix.subarray(0, probeLength)
       : probeLength === 0
         ? Buffer.alloc(0)
         : await source.readRange(0, probeLength);
@@ -63,7 +67,7 @@ export const readBinaryContainerFromReader = async (
   if (prefix.subarray(0, 2).equals(Buffer.from("MZ")))
     return readPeImageFromReader({
       size: source.size,
-      prefix: source.prefix ?? prefix,
+      prefix: retainedPrefix ?? prefix,
       readRange: source.readRange,
     });
   if (prefix.length >= 4) {

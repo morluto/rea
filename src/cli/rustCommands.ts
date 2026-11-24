@@ -25,7 +25,8 @@ export const registerRustCommands = (
       jsonText: ["producer_limits"],
       evidenceDelivery: true,
       viewDelivery: {
-        invalidJson: "view must be a JSON package, edge or inferred_crates selection",
+        invalidJson:
+          "view must be a JSON package, edge or inferred_crates selection",
         kind: "rust",
         viewSelectsSummary: true,
       },
