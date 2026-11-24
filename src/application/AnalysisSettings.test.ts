@@ -2,6 +2,15 @@ import { expect, it } from "vitest";
 import { AnalysisSettings } from "./AnalysisSettings.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+  DEFAULT_ASAR_MAX_LISTING_BYTES,
+  DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+  DEFAULT_REGEX_MATCHING_DEADLINE_MS,
+} from "../domain/analysisResourceLimits.js";
+import {
   applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
 } from "../config/windowsChangeTimeSettle.js";
@@ -110,13 +119,21 @@ it("keeps accepted operations and their typed provider views stable across concu
   });
   const pending = store.run(async () => {
     await barrier;
-    expect(asar.maximumBytes).toBe(16777216);
-    expect(asar.listing?.maximumBytes).toBe(67108864);
-    expect(live.ghidraValueFlowMaxOperations).toBe(3000);
-    expect(live.ghidraValueFlowMaxInputsPerOperation).toBe(64);
-    expect(live.ghidraValueFlowMaxEdges).toBe(12000);
-    expect(live.ghidraStartupTimeoutMs).toBe(330000);
-    expect(live.regexMatchingDeadline.deadlineMs).toBe(5000);
+    expect(asar.maximumBytes).toBe(DEFAULT_ASAR_MAX_HEADER_BYTES);
+    expect(asar.listing?.maximumBytes).toBe(DEFAULT_ASAR_MAX_LISTING_BYTES);
+    expect(live.ghidraValueFlowMaxOperations).toBe(
+      DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+    );
+    expect(live.ghidraValueFlowMaxInputsPerOperation).toBe(
+      DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+    );
+    expect(live.ghidraValueFlowMaxEdges).toBe(
+      DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+    );
+    expect(live.ghidraStartupTimeoutMs).toBe(DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS);
+    expect(live.regexMatchingDeadline.deadlineMs).toBe(
+      DEFAULT_REGEX_MATCHING_DEADLINE_MS,
+    );
     expect(store.read().revision).toBe(0);
   });
   try {
@@ -154,6 +171,53 @@ it("keeps accepted operations and their typed provider views stable across concu
     expect(live.ghidraStartupTimeoutMs).toBe(999999);
     expect(live.regexMatchingDeadline.deadlineMs).toBe(10000);
   });
+});
+
+it("lists zstd.max_frames for every operation that enforces the cap", () => {
+  const store = new AnalysisSettings({});
+  for (const operation of [
+    "inspect_artifact",
+    "extract_artifact",
+    "inspect_gpu_code_objects",
+    "inspect_dwarf_units",
+    "inspect_elf_notes",
+    "inspect_binary_hardening",
+    "inspect_elf_unwind_ranges",
+    "inspect_native_exports",
+    "inspect_native_initializers",
+    "inspect_kernel_module",
+    "inspect_elf_debug_link",
+    "inspect_go_binary",
+    "inspect_rust_binary",
+    "inspect_il2cpp_metadata",
+    "inspect_android_jni_bindings",
+  ])
+    expect(
+      store.inspect({ operation }).settings.map(({ setting }) => setting),
+    ).toContain("zstd.max_frames");
+  for (const provider of [
+    "gpu-code-objects",
+    "rea-dwarf-units",
+    "rea-elf-notes",
+    "rea-binary-hardening",
+    "rea-elf-unwind-ranges",
+    "rea-native-exports",
+    "rea-native-initializers",
+    "rea-kernel-module",
+    "rea-elf-debug-link",
+    "go-build-info",
+    "rust-auditable",
+    "il2cpp-metadata",
+    "jadx",
+  ])
+    expect(
+      store.inspect({ provider }).settings.map(({ setting }) => setting),
+    ).toContain("zstd.max_frames");
+  expect(
+    store
+      .inspect({ operation: "inspect_binary_layout" })
+      .settings.map(({ setting }) => setting),
+  ).not.toContain("zstd.max_frames");
 });
 
 it("exposes shared provider controls and preserves the explicit unbounded decompile value", () => {

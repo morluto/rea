@@ -14,32 +14,41 @@ const isExecutable = async (path: string): Promise<boolean> => {
   }
 };
 
+/** Candidate spellings in launch order, anchored without reserializing PATH. */
+export function* programCandidates(
+  program: string,
+  environment: Readonly<Record<string, string | undefined>>,
+  startedIn: string,
+): IterableIterator<FoundProgram> {
+  if (program.includes("/")) {
+    yield {
+      path: absoluteCallerPath(program, { cwd: startedIn }),
+      fromRelativeEntry: false,
+    };
+    return;
+  }
+  if (environment.PATH === undefined) return;
+  for (const candidate of posixPathCandidates(program, environment.PATH, {
+    relativeEntries: "resolve",
+    workingDirectory: startedIn,
+  }))
+    yield {
+      path: candidate.path,
+      fromRelativeEntry: candidate.relativeEntry,
+    };
+}
+
 /**
- * Find a program as the launch will, without running a shell: a relative path,
- * or an empty or relative PATH entry, is read from the directory the program
- * is started in, in PATH order. `..` is kept, so after a symbolic link it
- * means what it means to the launch.
+ * Inspect availability in the original launch context. This does not establish
+ * that execution will succeed: an executable can have a missing interpreter.
+ * Callers that launch must retain execution-time PATH fallback themselves.
  */
 export const resolveProgram = async (
   program: string,
   environment: Readonly<Record<string, string | undefined>>,
   startedIn: string,
 ): Promise<FoundProgram | undefined> => {
-  if (program.includes("/")) {
-    const path = absoluteCallerPath(program, { cwd: startedIn });
-    return (await isExecutable(path))
-      ? { path, fromRelativeEntry: false }
-      : undefined;
-  }
-  if (environment.PATH === undefined) return undefined;
-  for (const candidate of posixPathCandidates(program, environment.PATH, {
-    relativeEntries: "resolve",
-    workingDirectory: startedIn,
-  }))
-    if (await isExecutable(candidate.path))
-      return {
-        path: candidate.path,
-        fromRelativeEntry: candidate.relativeEntry,
-      };
+  for (const candidate of programCandidates(program, environment, startedIn))
+    if (await isExecutable(candidate.path)) return candidate;
   return undefined;
 };

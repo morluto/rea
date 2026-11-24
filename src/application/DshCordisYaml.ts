@@ -15,6 +15,9 @@ import {
 } from "yaml";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 
+/** A native Cordis document cannot be admitted or edited. */
+export class CordisDocumentError extends ConfigurationError {}
+
 /** Expression source is never a literal value and is never evaluated by REA. */
 export class CordisExpression {
   readonly kind = "cordis-expression";
@@ -35,13 +38,13 @@ export class DshCordisYaml {
       logLevel: "error",
     });
     if (this.document.errors.length > 0 || this.document.warnings.length > 0)
-      throw new ConfigurationError("Invalid or unsupported Cordis YAML", {
+      throw new CordisDocumentError("Invalid or unsupported Cordis YAML", {
         cause: this.document.errors[0] ?? this.document.warnings[0],
       });
     if (this.document.contents === null)
       this.document.contents = this.document.createNode([]);
     if (!isSeq(this.document.contents))
-      throw new ConfigurationError(
+      throw new CordisDocumentError(
         "Cordis patches must be a YAML operation list",
       );
     this.value(this.document.contents);
@@ -50,7 +53,7 @@ export class DshCordisYaml {
       // This value is discarded; source nodes own every Cordis interpretation.
       this.document.toJS();
     } catch (cause) {
-      throw new ConfigurationError("Unsafe Cordis YAML alias expansion", {
+      throw new CordisDocumentError("Unsafe Cordis YAML alias expansion", {
         cause,
       });
     }
@@ -60,7 +63,7 @@ export class DshCordisYaml {
     if (!isAlias(node)) return node;
     const resolved = node.resolve(this.document);
     if (resolved === undefined)
-      throw new ConfigurationError("Cordis YAML contains an unresolved alias");
+      throw new CordisDocumentError("Cordis YAML contains an unresolved alias");
     return resolved;
   }
 
@@ -69,7 +72,7 @@ export class DshCordisYaml {
     if (!isNode(resolved)) return resolved;
     if (this.#values.has(resolved)) return this.#values.get(resolved);
     if (this.#visiting.has(resolved))
-      throw new ConfigurationError(
+      throw new CordisDocumentError(
         "Cyclic Cordis YAML cannot be safely edited",
       );
     this.#visiting.add(resolved);
@@ -96,7 +99,7 @@ export class DshCordisYaml {
   key(node: unknown): string {
     const key = this.value(node);
     if (typeof key === "object" && key !== null)
-      throw new ConfigurationError(
+      throw new CordisDocumentError(
         "Cordis YAML mapping keys must be literal scalars",
       );
     // Match YAML's JS object projection while retaining the original key node.
@@ -169,10 +172,24 @@ export class DshCordisYaml {
   copy(node: unknown, invalidated?: ReadonlySet<Node>): unknown {
     if (isAlias(node)) {
       const target = this.resolve(node);
-      return invalidated === undefined ||
-        (isNode(target) && invalidated.has(target))
-        ? this.copy(target)
-        : node.clone();
+      if (
+        invalidated !== undefined &&
+        (!isNode(target) || !invalidated.has(target))
+      )
+        return node.clone();
+      const materialized = this.copy(target);
+      if (isNode(materialized)) {
+        for (const name of ["commentBefore", "comment"] as const) {
+          const annotation = node[name];
+          if (annotation === undefined) continue;
+          const existing = materialized[name];
+          materialized[name] =
+            existing === undefined ? annotation : `${existing}\n${annotation}`;
+        }
+        if (node.spaceBefore !== undefined)
+          materialized.spaceBefore = node.spaceBefore;
+      }
+      return materialized;
     }
     if (!isNode(node)) return node;
     const copied = node.clone();
@@ -199,7 +216,7 @@ export class DshCordisYaml {
     if (isNode(copied))
       visit(copied, {
         Pair: (_key, pair) => {
-          if (isAlias(pair.key)) pair.key = this.copy(this.resolve(pair.key));
+          if (isAlias(pair.key)) pair.key = this.copy(pair.key);
         },
         Value: (_key, value) => {
           delete value.anchor;

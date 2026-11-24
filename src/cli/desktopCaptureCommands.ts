@@ -10,10 +10,11 @@ import type { Logger } from "pino";
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
 import type { DesktopStateReaders } from "../application/desktop/DesktopApplicationState.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   ArtifactReaderFailure,
+  ArtifactResourceScope,
   bindArtifactFileCleanup,
 } from "../resources/index.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -201,9 +202,11 @@ const withStateReaders = async (
     import("../desktop/DconfDatabaseReader.js"),
   ]);
   const sqlite = createSqliteDatabaseService(environment);
+  const resources = new ArtifactResourceScope();
   return finishAnalysisCommand(
     async () => {
       const result = await run({
+        resources,
         sqlite: (database, readSignal, policy) =>
           readSqliteStateView(sqlite, database, readSignal, policy),
         dconf: (database, readSignal) =>
@@ -214,6 +217,11 @@ const withStateReaders = async (
     {
       close: async () => {
         const failures: unknown[] = [];
+        try {
+          await resources.close();
+        } catch (cause: unknown) {
+          failures.push(cause);
+        }
         try {
           await sqlite.close();
         } catch (cause: unknown) {
@@ -248,13 +256,10 @@ const withStateReaders = async (
             bindArtifactFileCleanup(cause, failure);
             return failure;
           });
-          const combined = analysisErrorWithCleanupFailure(
-            typed[0]!,
-            typed[1]!,
-            operation,
+          // Fold left so every close failure keeps its reason and owner.
+          throw typed.reduce((primary, cleanup) =>
+            analysisErrorWithCleanupDependencies(primary, cleanup, operation),
           );
-          combined.bindCleanupDependencies(typed);
-          throw combined;
         }
       },
     },

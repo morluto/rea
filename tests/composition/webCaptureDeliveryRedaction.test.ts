@@ -18,12 +18,11 @@ import { err, ok } from "../../src/domain/result.js";
 import { historicalHar } from "../fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
-it("excludes marked output identity from late CLI publication failure while retaining capture Evidence", async () => {
+const capturePublicationFixture = async (marked: boolean) => {
   const root = await createTestTempDirectory("rea-capture-delivery-");
   const outputPath = join(root, "private-publication-marker.json");
-  await writeFile(outputPath, "existing caller file");
   const bytes = JSON.stringify(historicalHar());
-  const values = ["private-publication-marker"];
+  const values = marked ? ["private-publication-marker"] : [];
   const input = {
     capture_path: join(root, "capture.har"),
     format: "har" as const,
@@ -43,6 +42,13 @@ it("excludes marked output identity from late CLI publication failure while reta
         limitations: [],
       }),
   });
+  return { input, service, outputPath, values };
+};
+
+it("excludes marked output identity from late CLI publication failure while retaining capture Evidence", async () => {
+  const { input, service, outputPath, values } =
+    await capturePublicationFixture(true);
+  await writeFile(outputPath, "existing caller file");
   const output = analysisErrorProjectionSchema.parse(
     await deliverCliAnalysisEvidence({
       run: () => service.inspect(input),
@@ -67,29 +73,8 @@ it("excludes marked output identity from late CLI publication failure while reta
 it.each([true, false])(
   "publishes summary bytes while excluding only a marked receipt identity: %s",
   async (marked) => {
-    const root = await createTestTempDirectory("rea-capture-publication-");
-    const outputPath = join(root, "private-publication-marker.json");
-    const values = marked ? ["private-publication-marker"] : [];
-    const bytes = JSON.stringify(historicalHar());
-    const input = {
-      capture_path: join(root, "capture.har"),
-      format: "har" as const,
-      sensitive_values: values,
-    };
-    const service = new WebNetworkCaptureService({
-      inspect: async () =>
-        ok({
-          ...decodeHarCapture(bytes, values),
-          artifact: {
-            path: input.capture_path,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
-            bytes: Buffer.byteLength(bytes),
-          },
-          format: "har" as const,
-          runtime_attribution: "unknown" as const,
-          limitations: [],
-        }),
-    });
+    const { input, service, outputPath, values } =
+      await capturePublicationFixture(marked);
     const output = await deliverCliAnalysisEvidence({
       run: () => service.inspect(input),
       service,
@@ -118,29 +103,8 @@ it.each([true, false])(
 it.each([true, false])(
   "publishes partial Evidence from a failure while excluding only a marked receipt identity: %s",
   async (marked) => {
-    const root = await createTestTempDirectory("rea-capture-partial-");
-    const outputPath = join(root, "private-publication-marker.json");
-    const values = marked ? ["private-publication-marker"] : [];
-    const bytes = JSON.stringify(historicalHar());
-    const input = {
-      capture_path: join(root, "capture.har"),
-      format: "har" as const,
-      sensitive_values: values,
-    };
-    const service = new WebNetworkCaptureService({
-      inspect: async () =>
-        ok({
-          ...decodeHarCapture(bytes, values),
-          artifact: {
-            path: input.capture_path,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
-            bytes: Buffer.byteLength(bytes),
-          },
-          format: "har" as const,
-          runtime_attribution: "unknown" as const,
-          limitations: [],
-        }),
-    });
+    const { input, service, outputPath, values } =
+      await capturePublicationFixture(marked);
     const completed = await service.inspect(input);
     if (!completed.ok) throw completed.error;
     const output = analysisErrorProjectionSchema.parse(

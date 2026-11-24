@@ -76,6 +76,89 @@ cliTest.for([
 );
 
 cliTest(
+  "preserves unreadable environment target uncertainty through CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-shortcut-environment-cli-");
+    const iconLocation = "C:\\Tools\\icon.exe";
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
+    for (const {
+      kind,
+      localBasePath,
+      expectedDifference,
+      expectedExtension,
+    } of [
+      {
+        kind: "environment",
+        localBasePath: "C:\\Tools\\other.dll",
+        expectedDifference: null,
+        expectedExtension: null,
+      },
+      {
+        kind: "environment",
+        localBasePath: iconLocation,
+        expectedDifference: false,
+        expectedExtension: null,
+      },
+      {
+        kind: "icon_environment",
+        localBasePath: "C:\\Tools\\other.dll",
+        expectedDifference: true,
+        expectedExtension: ".dll",
+      },
+    ] as const) {
+      const valid = windowsShortcutBytes({
+        idList: null,
+        relativePath: "",
+        linkInfo: { localBasePath },
+        iconLocation,
+        extraData: [{ kind, unicode: iconLocation }],
+      });
+      const terminal = valid.length - 4;
+      const blockOffset = terminal - 0x314;
+      const tail = Buffer.from([0xab, 0xcd]);
+      const bytes = Buffer.concat([
+        valid.subarray(0, terminal),
+        tail,
+        valid.subarray(terminal),
+      ]);
+      bytes.writeUInt32LE(0x314 + tail.length, blockOffset);
+      const path = join(root, `${kind}-${String(expectedDifference)}.lnk`);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-windows-shortcut", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const response = await call("inspect_windows_shortcut", { path });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      for (const value of [result.json, response.structuredContent]) {
+        const { normalized_result: report } =
+          shortcutContract.outputSchema.parse(value);
+        expect(report.coverage).toMatchObject({
+          status: "partial",
+          failing_offset: blockOffset,
+        });
+        expect(report.extra_data.blocks[0]?.decoded.kind).toBe("raw");
+        expect(report.observations).toEqual(
+          expect.arrayContaining([
+            {
+              kind: "icon_location_differs_from_target",
+              evidence_kind: "derived",
+              value: expectedDifference,
+            },
+            {
+              kind: "target_extension",
+              evidence_kind: "derived",
+              extension: expectedExtension,
+            },
+          ]),
+        );
+      }
+    }
+  },
+);
+
+cliTest(
   "preserves pre-epoch shortcut timestamps through CLI and stdio MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-shortcut-time-cli-");
@@ -184,7 +267,7 @@ cliTest(
   },
 );
 
-cliTest("reports a wrong CLSID as invalid input", async ({ cli }) => {
+cliTest("reports a wrong CLSID as a malformed target", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-windows-shortcut-cli-bad-");
   const path = join(root, "broken.lnk");
   await writeFile(path, wrongClsidShortcut());
@@ -193,8 +276,12 @@ cliTest("reports a wrong CLSID as invalid input", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_windows_shortcut" },
+    code: "unsupported_target",
+    details: {
+      operation: "inspect_windows_shortcut",
+      path,
+      format_failure: "malformed",
+    },
   });
 });
 

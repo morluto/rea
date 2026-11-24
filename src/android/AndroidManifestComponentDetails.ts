@@ -64,6 +64,7 @@ export const createAndroidManifestDetailsReader = (
     let detailLimited = false;
     let processLimited = false;
     let unsupported = 0;
+    let unnamedFilterMembers = 0;
     let remainingRecords = limits.intentValues;
     const take = (value: string | null): string | null => {
       if (value === null) return null;
@@ -126,10 +127,10 @@ export const createAndroidManifestDetailsReader = (
         continue;
       }
       if (child.nodeName !== "intent-filter") continue;
-      // Checked past the filter bound too; one action-bearing filter suffices.
-      actionFilter ||= declaresAction(child);
       const filterIndex = filterCount++;
       if (filterIndex >= limits.intentFilters) {
+        // Export defaults still consider action presence past the detail bound.
+        actionFilter ||= declaresAction(child);
         partial = true;
         legacyTruncated = true;
         continue;
@@ -144,15 +145,21 @@ export const createAndroidManifestDetailsReader = (
         if (!isUnqualifiedXmlElement(member)) continue;
         if (member.nodeName === "action" || member.nodeName === "category") {
           const value = androidAttribute(member, "name");
-          if (value === null) continue;
-          const names =
-            member.nodeName === "action" ? actionNames : categoryNames;
+          if (value === null) {
+            unnamedFilterMembers += 1;
+            filterPartial = true;
+            partial = true;
+            continue;
+          }
+          const isAction = member.nodeName === "action";
+          actionFilter ||= isAction;
+          const names = isAction ? actionNames : categoryNames;
           if (!names.has(value)) {
             if (legacyValuesRemaining === 0) legacyTruncated = true;
             else {
               legacyValuesRemaining -= 1;
               names.add(value);
-              (member.nodeName === "action" ? actions : categories).push(value);
+              (isAction ? actions : categories).push(value);
             }
           }
           if (!admit()) {
@@ -164,10 +171,7 @@ export const createAndroidManifestDetailsReader = (
             filterPartial = true;
             continue;
           }
-          (member.nodeName === "action"
-            ? filterActions
-            : filterCategories
-          ).push(copied);
+          (isAction ? filterActions : filterCategories).push(copied);
         } else if (member.nodeName === "data") {
           if (!admit()) {
             filterPartial = true;
@@ -260,6 +264,7 @@ export const createAndroidManifestDetailsReader = (
       detailLimited,
       processLimited,
       unsupported,
+      unnamedFilterMembers,
       nonliteralEnabled: enabledDeclaration !== null && enabled === null,
       nonliteralGrant: grantDeclaration !== null && grant === null,
     };

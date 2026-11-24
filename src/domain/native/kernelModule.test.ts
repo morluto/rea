@@ -1,16 +1,10 @@
 import { expect, it } from "vitest";
 import {
-  KERNEL_MODULE_MODINFO_ENTRY_REASONS,
   inspectKernelModuleInputSchema,
+  kernelModuleSchema,
 } from "./kernelModule.js";
 
-it("rejects extra caller arguments and applies kernel-module budgets", () => {
-  expect(
-    inspectKernelModuleInputSchema.safeParse({
-      path: "/artifacts/demo.ko",
-      extra: true,
-    }).success,
-  ).toBe(false);
+it("applies the default kernel-module read and entry budgets", () => {
   expect(
     inspectKernelModuleInputSchema.parse({ path: "/artifacts/demo.ko" }),
   ).toMatchObject({
@@ -19,8 +13,11 @@ it("rejects extra caller arguments and applies kernel-module budgets", () => {
   });
 });
 
-it("keeps modinfo field omission separate from entry validity", () => {
-  expect(KERNEL_MODULE_MODINFO_ENTRY_REASONS).not.toContain(
-    "modinfo_field_exceeds_limit",
-  );
+it("limits the external recovery probe to decompression", () => {
+  expect(
+    kernelModuleSchema.shape.next_probe.safeParse({
+      operation: "extract_artifact",
+      rationale: "Test declared operation",
+    }).success,
+  ).toBe(false);
 });

@@ -119,13 +119,12 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.each([
-  { format: "zip", replacement: "valid" },
   { format: "apk", replacement: "valid" },
   { format: "asar", replacement: "valid" },
   { format: "zip", replacement: "malformed" },
   { format: "asar", replacement: "malformed" },
 ])(
-  "binds $format $replacement archive operations to the admitted source before output creation",
+  "rejects $format $replacement replacements without publishing extracted files",
   async ({ format, replacement }) => {
     const root = await createTestTempDirectory(
       "rea-archive-admitted-identity-",
@@ -152,12 +151,12 @@ it.each([
       if (!initial.ok) throw initial.error;
       if (replacement === "malformed") await writeFile(path, "not an archive");
       else await writeArchive("changed version two");
+      const output = join(root, "refused-extraction");
       for (const operation of [
         "inventory_artifact",
         "inspect_artifact",
         "extract_artifact",
       ] as const) {
-        const output = join(root, `refused-${operation}`);
         const result = await session.execute(
           operation,
           operation === "extract_artifact"
@@ -171,8 +170,8 @@ it.each([
             integrityCheck: "container-identity",
           },
         });
-        await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
       }
+      await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
       if (replacement === "valid") {
         const reopened = await session.open(path);
         if (!reopened.ok) throw reopened.error;

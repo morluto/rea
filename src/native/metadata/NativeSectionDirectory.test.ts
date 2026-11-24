@@ -59,6 +59,7 @@ it("does not classify an unconfirmed pointer overlapping DOS data as a PE layout
 it("admits PT_INTERP, PT_GNU_STACK and PT_GNU_RELRO program headers", () => {
   const directory = readElfDirectoryFromBuffer(
     elfHardeningFixture({ interp: true, gnuRelro: true }),
+    "elf-directory",
   );
   expect(directory.elf_type).toBe(3);
   expect(directory.programs.map((program) => program.type)).toEqual(
@@ -74,7 +75,7 @@ it("admits PT_INTERP, PT_GNU_STACK and PT_GNU_RELRO program headers", () => {
 
 it("retains PT_GNU_EH_FRAME with its file and address span", () => {
   const bytes = elfUnwindSectionlessFixture();
-  const directory = readElfDirectoryFromBuffer(bytes);
+  const directory = readElfDirectoryFromBuffer(bytes, "elf-directory");
   expect(directory.programs.map((program) => program.type)).toEqual([
     1,
     ELF_PT_GNU_EH_FRAME,
@@ -110,9 +111,12 @@ it.each([
   "retains ELF%i little=%s compression independently of stored section coverage",
   (bits, little) => {
     const bytes = compressedElfNoteSectionFixture(bits, little);
-    const initial = readElfDirectoryFromBuffer(bytes).sections[1]!;
+    const initial = readElfDirectoryFromBuffer(bytes, "elf-directory")
+      .sections[1]!;
     expect(initial).toMatchObject({ compressed: true, file_backed: true });
-    expect(readElfDirectoryFromBuffer(bytes).sections[2]).toMatchObject({
+    expect(
+      readElfDirectoryFromBuffer(bytes, "elf-directory").sections[2],
+    ).toMatchObject({
       compressed: false,
       file_backed: true,
     });
@@ -124,7 +128,9 @@ it.each([
       else bytes.writeBigUInt64BE(BigInt(bytes.length), sizeAt);
     } else if (little) bytes.writeUInt32LE(bytes.length, sizeAt);
     else bytes.writeUInt32BE(bytes.length, sizeAt);
-    expect(readElfDirectoryFromBuffer(bytes).sections[1]).toMatchObject({
+    expect(
+      readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1],
+    ).toMatchObject({
       compressed: true,
       file_backed: false,
       offset: initial.offset,

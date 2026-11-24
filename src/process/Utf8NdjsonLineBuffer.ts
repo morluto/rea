@@ -80,7 +80,10 @@ export class Utf8NdjsonLineBuffer {
       if (refused !== undefined) yield err(refused);
       return;
     }
-    this.#buffer = Buffer.concat([this.#buffer, ...this.#fragments]);
+    this.#buffer =
+      this.#buffer.length === 0 && this.#fragments.length === 1
+        ? this.#fragments[0]!
+        : Buffer.concat([this.#buffer, ...this.#fragments]);
     this.#fragments = [];
     this.#fragmentBytes = 0;
     if (this.#nextNewline < 0) this.#nextNewline = this.#buffer.indexOf(10);
@@ -119,9 +122,13 @@ export class Utf8NdjsonLineBuffer {
 
   /** Validate the unfinished tail at EOF without treating it as a complete response. */
   finish(): Result<null, ParseFailureError<"malformed">> {
-    const tail = this.#decode(
-      Buffer.concat([this.#buffer, ...this.#fragments]),
-    );
+    const raw =
+      this.#fragments.length === 0
+        ? this.#buffer
+        : this.#buffer.length === 0 && this.#fragments.length === 1
+          ? this.#fragments[0]!
+          : Buffer.concat([this.#buffer, ...this.#fragments]);
+    const tail = this.#decode(raw);
     return tail.ok ? ok(null) : tail;
   }
 

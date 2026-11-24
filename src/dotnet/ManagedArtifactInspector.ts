@@ -17,6 +17,7 @@ import {
 } from "../domain/managed/managedPeReader.js";
 import {
   managedTableRowCounts,
+  unresolvedModuleMetadata,
   readManagedMetadataInventory,
   type ManagedMetadataInventory,
   readManagedResourceDirectory,
@@ -28,6 +29,7 @@ import {
 import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   ManagedReaderFailure,
+  isManagedCoverageGap,
   managedMetadataFailureStatus,
   type ManagedMetadataHeaderFacts,
 } from "../domain/managed/managedReaderFailure.js";
@@ -359,11 +361,11 @@ const partialMetadataResult = ({
   attributes: [],
   coverage: { state: "partial", issues: [issue] },
   limitations: [
-    issue.code === "unsupported-metadata"
+    isManagedCoverageGap(issue.code)
       ? issue.detail
       : issue.code === "resource-limit"
         ? "CLI metadata inspection stopped at its representation budget; omitted facts are unknown."
-        : "CLI metadata could not be read because the PE/CLI structure is malformed or unsupported.",
+        : "CLI metadata could not be read because the PE/CLI structure is malformed.",
   ],
 });
 
@@ -439,6 +441,7 @@ export const inspectManagedArtifactBytes = (
             version: metadata.version,
             stream_names: metadata.streamNames,
             table_row_counts: managedTableRowCounts(metadata),
+            ...unresolvedModuleMetadata(inventory),
           },
           module: inventory.module,
           assembly: inventory.assembly,

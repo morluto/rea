@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { bundleResourceRootSchema } from "../apple/bundleResourceRoot.js";
+import { bundleExecutableProvenanceSchema } from "../apple/bundleExecutableProvenance.js";
+import { digestSchema } from "../digests.js";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import { machoSliceEncryptionSchema } from "../apple/machoEncryption.js";
@@ -170,6 +172,7 @@ const buildMetadataSchema = z.object({
 });
 
 export const inspectMachoSchema = z.object({
+  bundle_provenance: bundleExecutableProvenanceSchema.exactOptional(),
   format: z.enum(["mach-o", "mach-o-universal"]),
   /** Exact lipo slice selected for inspection and its offset in the input container. */
   selected_architecture: z.object({
@@ -217,6 +220,7 @@ export const inspectMachoSchema = z.object({
 });
 
 export const inspectSignatureSchema = z.object({
+  bundle_provenance: bundleExecutableProvenanceSchema.exactOptional(),
   signed: z.boolean(),
   identifier: z.string().nullable(),
   team_identifier: z.string().nullable(),
@@ -270,6 +274,11 @@ export const inspectPlistSchema = z.object({
     short_version: z.string().nullable(),
   }),
   source_path: z.string(),
+  source_sha256: digestSchema
+    .optional()
+    .describe(
+      "SHA-256 of the plist bytes read for this result; omitted in older Evidence.",
+    ),
   resource_root: bundleResourceRootSchema.optional(),
   provenance: z.array(nativeCommandInvocationSchema),
   limitations: z.array(z.string()),
@@ -296,5 +305,6 @@ export const demangleSwiftSchema = z.object({
 export type NativeCommandInvocation = z.infer<
   typeof nativeCommandInvocationSchema
 >;
+export type InspectPlist = z.infer<typeof inspectPlistSchema>;
 export type InspectMacho = z.infer<typeof inspectMachoSchema>;
 export type InspectSignature = z.infer<typeof inspectSignatureSchema>;

@@ -12,6 +12,7 @@ import {
 } from "../application/BrowserObservationService.js";
 
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
+import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
@@ -89,8 +90,33 @@ export const registerBrowserCommands = (
             "Include Cache Storage entry metadata without cached bodies",
         },
       },
+      evidenceDelivery: true,
     },
-    observeThroughBrowser(inspectPage, inspectWebPage),
+    async (input, { signal, delivery }) => {
+      // Delivery fields select the reply; the capture takes the rest.
+      const parsed = inspectWebPageInputSchema.safeParse(input);
+      if (!parsed.success)
+        return browserCliError(
+          analysisInputErrorFromIssues(
+            inspectPage.name,
+            parsed.error.issues,
+            input,
+          ),
+        );
+      const provider = createBrowserObservationProvider();
+      return deliverCliAnalysisEvidence({
+        ...delivery!,
+        run: () => inspectWebPage(provider, parsed.data, { signal }),
+        service: {
+          close: async () => {
+            await provider.close?.();
+          },
+        },
+        providerId: provider.identity().id,
+        operation: inspectPage.name,
+        signal,
+      });
+    },
   );
   registerBundleAnalysis(cli, logger, environment);
   const observeSession = contractNamed(

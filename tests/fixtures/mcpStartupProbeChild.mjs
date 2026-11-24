@@ -35,15 +35,23 @@ input.on("line", (line) => {
     return;
   }
   if (request.id === undefined) return;
-  if (mode === "hang") return;
-  if (mode === "initialize-then-hang" && request.method !== "initialize")
+  if (
+    mode === "hang" ||
+    (mode === "initialize-then-hang" && request.method !== "initialize")
+  ) {
+    const readyPath = process.env.REA_MCP_PROBE_READY_PATH;
+    if (readyPath !== undefined) writeFileSync(readyPath, request.method);
     return;
+  }
   if (mode === "hang-on-call" && request.method === "tools/call") {
     const readyPath = process.env.REA_MCP_PROBE_READY_PATH;
     if (readyPath !== undefined) void writeFile(readyPath, "ready");
     return;
   }
-  if (mode === "refuse-call" && request.method === "tools/call") {
+  if (
+    (mode === "refuse-call" && request.method === "tools/call") ||
+    (mode === "refuse-list" && request.method === "tools/list")
+  ) {
     respond(request.id, undefined);
     return;
   }
@@ -55,9 +63,6 @@ input.on("line", (line) => {
         capabilities: { tools: {}, prompts: {} },
         serverInfo: { name: "probe-fixture", version: "1" },
       };
-      // Synchronous so a parent can observe initialize before the next phase hangs.
-      if (process.env.REA_MCP_PROBE_INITIALIZED_PATH !== undefined)
-        writeFileSync(process.env.REA_MCP_PROBE_INITIALIZED_PATH, "ready");
       break;
     case "tools/list":
       result = { tools: [] };

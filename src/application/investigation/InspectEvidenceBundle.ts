@@ -15,9 +15,10 @@ type InspectionDetail = "complete" | "summary" | "records" | "links";
 
 /** Fields owned by particular deliveries, refused elsewhere rather than ignored. */
 const DELIVERY_FIELDS = [
-  ["offset", ["records", "links"]],
-  ["limit", ["records", "links"]],
+  ["offset", ["summary", "records", "links"]],
+  ["limit", ["summary", "records", "links"]],
   ["traversal", ["links"]],
+  ["linked_evidence_id", ["links"]],
   ["link_status", ["links"]],
 ] as const;
 
@@ -30,6 +31,7 @@ export const inspectEvidenceBundle = (
     readonly offset?: number | undefined;
     readonly limit?: number | undefined;
     readonly traversal?: "direct" | "retained-closure" | undefined;
+    readonly linked_evidence_id?: string | undefined;
     readonly link_status?: "missing" | "retained" | "all" | undefined;
   },
 ): Result<
@@ -85,6 +87,7 @@ export const inspectEvidenceBundle = (
     return ok(
       inspectEvidenceLinks(bundle, options.filters, {
         traversal: options.traversal,
+        linkedEvidenceId: options.linked_evidence_id,
         linkStatus: options.link_status,
         offset: options.offset,
         limit: options.limit,
@@ -92,7 +95,10 @@ export const inspectEvidenceBundle = (
     );
   return ok(
     options.detail === "summary"
-      ? summarizeEvidenceBundle(bundle, options.filters)
+      ? summarizeEvidenceBundle(bundle, options.filters, {
+          offset: options.offset,
+          limit: options.limit,
+        })
       : bundle,
   );
 };

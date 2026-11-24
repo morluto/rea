@@ -7,7 +7,7 @@ import {
   pckU64,
   type GodotPckMember,
 } from "../../tests/fixtures/godotPck.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { once } from "node:events";
@@ -304,6 +304,24 @@ describe("GodotPckArtifactReader", () => {
         reason: "unavailable",
       });
     });
+  });
+
+  it("reports a changed carrier before refusing an encrypted member", async () => {
+    const path = await writePck(
+      buildGodotPck(3, [{ path: "secret.gd", data: "x", flags: 1 }]),
+    );
+    const reader = new GodotPckArtifactReader(path);
+    try {
+      const [entry] = await list(reader);
+      if (entry === undefined) throw new Error("expected one entry");
+      await appendFile(path, "changed");
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        reason: "integrity",
+        integrityCheck: "container-identity",
+      });
+    } finally {
+      await reader.close();
+    }
   });
 
   it.each([
@@ -625,5 +643,38 @@ describe("Godot PCK logical-byte admission", () => {
         expect(entries.every((entry) => entry.encrypted)).toBe(true);
       },
     );
+  });
+});
+
+it.each([
+  [
+    "before the embedded pack",
+    embedGodotPck(
+      buildGodotPck1([
+        { path: "a.bin", data: "a", offset: 1n, md5: Buffer.alloc(16) },
+      ]),
+    ),
+    "member starts before the pack",
+  ],
+  [
+    "inside the directory",
+    buildGodotPck(3, [
+      { path: "a.bin", data: "a", offset: 4n, md5: Buffer.alloc(16) },
+    ]),
+    "member overlaps the directory",
+  ],
+  [
+    "across the directory boundary",
+    buildGodotPck(4, [
+      { path: "a.bin", data: "a", offset: 2n, size: 4n, md5: Buffer.alloc(16) },
+    ]),
+    "member overlaps the directory",
+  ],
+] as const)("refuses a member %s", async (_label, bytes, message) => {
+  await withReader(bytes, async (reader) => {
+    await expect(list(reader)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining(message),
+    });
   });
 });

@@ -366,6 +366,30 @@ it("retains known question identity when a later RR is malformed", () => {
   ]);
 });
 
+it.each(["dns", "llmnr", "mdns"] as const)(
+  "keeps admitted header coverage facts when a %s answer is short",
+  (family) => {
+    const bytes = packet(label("61"), [rr(pointer, 1, address)]);
+    bytes.writeUInt16BE(0x8380, 2);
+    const facts = parse(
+      bytes.subarray(0, bytes.length - 1),
+      ["a"],
+      ["192.0.2.9"],
+      family,
+    );
+    expect(facts).toEqual({
+      questions: [{ query: "a", labels_hex: ["61"] }],
+      assigned: [],
+      unattributed: ["192.0.2.9"],
+      incomplete: true,
+      incomplete_reasons: [
+        expect.stringContaining("record data is truncated"),
+        ...(family === "mdns" ? [] : [expect.stringContaining("(TC)")]),
+      ],
+    });
+  },
+);
+
 it("retains each ambiguous producer question occurrence when raw identity is unavailable", () => {
   const facts = parseDnsMessageRaw(null, {
     "dns.qry.name": ["same", "same"],

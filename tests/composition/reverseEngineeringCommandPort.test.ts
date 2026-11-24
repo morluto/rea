@@ -1,11 +1,12 @@
 import { spawnFailure } from "../support/process/spawnFailure.js";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
+import { findsNoExecutable } from "../support/reverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../src/domain/result.js";
@@ -17,7 +18,7 @@ import {
 } from "../support/reverseEngineeringCompositionFixtures.js";
 
 it("uses provider profiles supplied through the application port", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-port-"));
+  const directory = await createTestTempDirectory("rea-reverse-port-");
   const path = join(directory, "fixture.bin");
   await writeFile(path, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
   const run = vi.fn<typeof runOwnedCommand>(async () =>
@@ -46,27 +47,23 @@ it("uses provider profiles supplied through the application port", async () => {
           identity: { id: "test.rizin", name: "Injected Rizin", version: null },
         }),
     },
-    runOwned: run,
+    processes: { lookup: findsNoExecutable, runOwned: run },
   });
 
-  try {
-    const result = await service.inspectWithObjdump({
-      path,
-      operation: "file_headers",
-    });
-    expect(result.ok).toBe(true);
-    const spawn = run.mock.calls[0]?.[0];
-    expect(spawn?.command).toBe("injected-objdump");
-    expect(spawn?.arguments).toEqual(["--injected", path]);
-    expect(spawn?.env?.INJECTED_PROFILE).toBe("yes");
-    if (result.ok) expect(result.value.provider.id).toBe("test.objdump");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  const result = await service.inspectWithObjdump({
+    path,
+    operation: "file_headers",
+  });
+  expect(result.ok).toBe(true);
+  const spawn = run.mock.calls[0]?.[0];
+  expect(spawn?.command).toBe("injected-objdump");
+  expect(spawn?.arguments).toEqual(["--injected", path]);
+  expect(spawn?.env?.INJECTED_PROFILE).toBe("yes");
+  if (result.ok) expect(result.value.provider.id).toBe("test.objdump");
 });
 
 it("does not reintroduce ambient variables absent from the captured provider environment", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-env-"));
+  const directory = await createTestTempDirectory("rea-reverse-env-");
   const path = join(directory, "fixture.bin");
   const variable = "REA_TEST_LATE_PROVIDER_ENV";
   const previous = process.env[variable];
@@ -98,7 +95,7 @@ it("does not reintroduce ambient variables absent from the captured provider env
           identity: { id: "test.rizin", name: "Captured Rizin", version: null },
         }),
     },
-    runOwned: run,
+    processes: { lookup: findsNoExecutable, runOwned: run },
   });
 
   try {
@@ -110,13 +107,12 @@ it("does not reintroduce ambient variables absent from the captured provider env
   } finally {
     if (previous === undefined) delete process.env[variable];
     else process.env[variable] = previous;
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
 it("projects missing and non-file objdump targets with actionable path reasons", async () => {
-  const directory = await mkdtemp(
-    join(tmpdir(), "rea-reverse-invalid-target-"),
+  const directory = await createTestTempDirectory(
+    "rea-reverse-invalid-target-",
   );
   const missing = join(directory, "missing.bin");
   const run = vi.fn(async () => ownedOutput());
@@ -141,52 +137,50 @@ it("projects missing and non-file objdump targets with actionable path reasons",
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
         }),
     },
-    runOwned: run,
+    processes: { lookup: findsNoExecutable, runOwned: run },
   });
 
-  try {
-    for (const [path, reason] of [
-      [missing, "not found"],
-      [directory, "not a regular file"],
-    ] as const) {
-      const result = await service.inspectWithObjdump({
-        path,
-        operation: "symbols",
-      });
-      if (result.ok) throw new Error("Expected target validation failure");
-      const projection = projectAnalysisError(result.error);
-      expect(analysisErrorProjectionSchema.safeParse(projection).success).toBe(
-        true,
-      );
-      expect(projection).toMatchObject({
-        code: "invalid_request",
-        category: "invalid_input",
-        retryable: false,
-        message: expect.stringContaining(path),
-        remediation: {
-          action: expect.stringContaining("Correct the listed fields"),
-        },
-        details: {
-          operation: "inspect_with_objdump",
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_value",
-              message: expect.stringContaining(reason),
-            },
-          ],
-        },
-      });
-    }
-    expect(run).not.toHaveBeenCalled();
-  } finally {
-    await rm(directory, { recursive: true, force: true });
+  for (const [path, reason, code] of [
+    [missing, "not found", "ENOENT"],
+    [directory, "not a regular file", "EINVAL"],
+  ] as const) {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    if (result.ok) throw new Error("Expected target validation failure");
+    expect(result.error.cause).toMatchObject({ code });
+    const projection = projectAnalysisError(result.error);
+    expect(analysisErrorProjectionSchema.safeParse(projection).success).toBe(
+      true,
+    );
+    expect(projection).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      message: expect.stringContaining(path),
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "inspect_with_objdump",
+      },
+      details: {
+        operation: "inspect_with_objdump",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: expect.stringContaining(reason),
+          },
+        ],
+      },
+    });
   }
+  expect(run).not.toHaveBeenCalled();
 });
 
 it("keeps target preflight I/O failures out of invalid-input classification", async () => {
-  const directory = await mkdtemp(
-    join(tmpdir(), "rea-reverse-target-io-failure-"),
+  const directory = await createTestTempDirectory(
+    "rea-reverse-target-io-failure-",
   );
   const path = join(directory, "fixture.bin");
   await writeFile(path, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
@@ -219,35 +213,31 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
         }),
     },
-    runOwned: run,
+    processes: { lookup: findsNoExecutable, runOwned: run },
   });
 
-  try {
-    const result = await service.inspectWithObjdump({
-      path,
-      operation: "symbols",
-    });
-    if (result.ok) throw new Error("Expected target preflight I/O failure");
-    expect(result.error).toMatchObject({
-      _tag: "ProviderAdapterError",
-      cause: ioFailure,
+  const result = await service.inspectWithObjdump({
+    path,
+    operation: "symbols",
+  });
+  if (result.ok) throw new Error("Expected target preflight I/O failure");
+  expect(result.error).toMatchObject({
+    _tag: "ProviderAdapterError",
+    cause: ioFailure,
+    diagnostics: { phase: "target_preflight", system_code: "EIO" },
+  });
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "execution_failure",
+    category: "execution_failure",
+    retryable: false,
+    details: {
+      provider_id: "test.objdump",
+      operation: "inspect_with_objdump",
       diagnostics: { phase: "target_preflight", system_code: "EIO" },
-    });
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "execution_failure",
-      category: "execution_failure",
-      retryable: false,
-      details: {
-        provider_id: "test.objdump",
-        operation: "inspect_with_objdump",
-        diagnostics: { phase: "target_preflight", system_code: "EIO" },
-      },
-    });
-    expect(run).not.toHaveBeenCalled();
-    expect(stat).toHaveBeenCalledOnce();
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+    },
+  });
+  expect(run).not.toHaveBeenCalled();
+  expect(stat).toHaveBeenCalledOnce();
 });
 
 it.each([
@@ -256,8 +246,8 @@ it.each([
 ])(
   "classifies selected target $code as correctable input",
   async ({ code, reason }) => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-reverse-target-path-error-"),
+    const directory = await createTestTempDirectory(
+      "rea-reverse-target-path-error-",
     );
     const path = join(directory, "fixture.bin");
     const pathFailure = Object.assign(new Error(`stat failed: ${code}`), {
@@ -289,40 +279,36 @@ it.each([
             identity: { id: "test.rizin", name: "Test Rizin", version: null },
           }),
       },
-      runOwned: run,
+      processes: { lookup: findsNoExecutable, runOwned: run },
     });
 
-    try {
-      const result = await service.inspectWithObjdump({
-        path,
-        operation: "symbols",
-      });
-      if (result.ok) throw new Error(`Expected ${code} target path failure`);
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        cause: pathFailure,
-      });
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "invalid_request",
-        category: "invalid_input",
-        retryable: false,
-        message: expect.stringContaining(path),
-        details: {
-          operation: "inspect_with_objdump",
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_value",
-              message: expect.stringContaining(reason),
-            },
-          ],
-        },
-      });
-      expect(run).not.toHaveBeenCalled();
-      expect(stat).toHaveBeenCalledOnce();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    if (result.ok) throw new Error(`Expected ${code} target path failure`);
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      cause: pathFailure,
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      message: expect.stringContaining(path),
+      details: {
+        operation: "inspect_with_objdump",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: expect.stringContaining(reason),
+          },
+        ],
+      },
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(stat).toHaveBeenCalledOnce();
   },
 );
 
@@ -356,7 +342,7 @@ it.each([
     const service = new ReverseEngineeringService({
       environment,
       commands: createReverseEngineeringCommandPort(environment, "win32"),
-      runOwned: run,
+      processes: { lookup: findsNoExecutable, runOwned: run },
     });
     const result = await execute(service);
     if (result.ok) throw new Error("Expected a lookup refusal");
@@ -401,8 +387,11 @@ it("reports a launch refusal with the repair the command port names", async () =
   };
   const service = new ReverseEngineeringService({
     commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
-    runOwned: async (spawn) => {
-      throw spawnFailure("ENOENT", spawn.command);
+    processes: {
+      lookup: findsNoExecutable,
+      runOwned: async (spawn) => {
+        throw spawnFailure("ENOENT", spawn.command);
+      },
     },
   });
   try {

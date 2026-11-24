@@ -2,7 +2,9 @@ import {
   PE_RESOURCE_DATA_ENTRY_BYTES,
   PE_RESOURCE_DIRECTORY_BYTES,
   PE_RESOURCE_ENTRY_BYTES,
+  PE_RESOURCE_ENTRY_LIMIT,
   PE_RESOURCE_NAME_PREFIX_BYTES,
+  peResourceRangeFits,
   readPeResourceDataEntryFacts,
   readPeResourceDirectoryFacts,
   readPeResourceEntryFacts,
@@ -12,6 +14,7 @@ import {
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import type { ArtifactLimitBoundary } from "../artifactOperationError.js";
+import { BinaryReader } from "../binaryContainer.js";
 import { jsonParts } from "../jsonSerialization.js";
 import type {
   InspectPeResourcesInput,
@@ -19,22 +22,26 @@ import type {
   PeResources,
 } from "../native/peResources.js";
 import { decodeLimit, type LimitRef } from "../parseFailure.js";
-import { peFailure, requirePeRange } from "./peImageHeaders.js";
-import { readPeResourceLayout } from "./peResourceLayout.js";
+import { peFailure, requirePeExtent } from "./peImageHeaders.js";
+import { peDirectorySizeAnomaly } from "../native/peHeaderAnomalies.js";
+import {
+  readPeResourceLayout,
+  readPeResourceLayoutAt,
+} from "./peResourceLayout.js";
+import type { PrefixedByteSource } from "../byteSource.js";
+import { bufferByteSource } from "../byteSource.js";
 
 type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
+type PeResourceInventory = Omit<PeResources, "artifact">;
 
 type Range = { offset: number; bytes: number };
 type OccupiedRange = Range & {
   kind: "directory" | "name" | "data-entry" | "payload";
 };
 /** Complete PE resource result retained before a refusal. */
-export const PE_RESOURCE_METADATA_BYTES = 8 * 1024 * 1024;
-const METADATA_BYTES = PE_RESOURCE_METADATA_BYTES;
+const METADATA_BYTES = 8 * 1024 * 1024;
 /** The fixed allowance for retained resource metadata. */
 const METADATA_LIMIT = "pe_resource_metadata_bytes";
-/** The caller-selected resource directory entry budget. */
-const ENTRY_LIMIT = "max_entries";
 const limit = (message: string, name: string, maximum: number): never => {
   throw decodeLimit("pe", message, { name, maximum });
 };
@@ -45,7 +52,7 @@ export const peResourceLimitBoundary = (
 ): ArtifactLimitBoundary | undefined =>
   limit.name === METADATA_LIMIT
     ? "memory"
-    : limit.name === ENTRY_LIMIT
+    : limit.name === PE_RESOURCE_ENTRY_LIMIT
       ? "capacity"
       : undefined;
 /** Count bytes through the canonical bounded JSON writer. */
@@ -60,22 +67,90 @@ const jsonBytes = (value: unknown, maximum: number): number => {
 const identityKey = (id: PeResourceIdentity): string =>
   id.kind === "id" ? `id:${String(id.id)}` : `name:${id.utf16le_hex}`;
 
+/** Attach the selected carrier identity for the public PE resource report. */
+export const parsePeResources = async (
+  bytes: Buffer,
+  artifact: PeResources["artifact"],
+  input: InspectPeResourcesInput,
+  signal?: AbortSignal,
+): Promise<PeResources> =>
+  boundedResourceResult(
+    {
+      artifact,
+      ...(await parsePeResourceInventory(
+        bufferByteSource(bytes),
+        input.max_entries,
+        signal,
+        readPeResourceLayout(bytes),
+      )),
+    },
+    signal,
+  );
+
+/**
+ * Decode PE resources from a verified random-access source without buffering
+ * the full PE image in memory.
+ */
+export const parsePeResourcesFromSource = async (
+  source: PrefixedByteSource,
+  artifact: PeResources["artifact"],
+  input: InspectPeResourcesInput,
+  signal?: AbortSignal,
+): Promise<PeResources> => {
+  signal?.throwIfAborted();
+  const layout = await readPeResourceLayoutAt(
+    source.prefix,
+    source.size,
+    (offset, length) => source.readRange(offset, length),
+  );
+  return boundedResourceResult(
+    {
+      artifact,
+      ...(await parsePeResourceInventory(
+        source,
+        input.max_entries,
+        signal,
+        layout,
+      )),
+    },
+    signal,
+  );
+};
+
+/** Decode entries from an admitted layout without requiring a carrier identity. */
+export const readPeResourceEntries = async (
+  bytes: Buffer,
+  layout: PeResourceLayout,
+  maxEntries: number,
+  signal: AbortSignal | undefined,
+): Promise<PeResources["resources"]> =>
+  boundedResourceResult(
+    await parsePeResourceInventory(
+      bufferByteSource(bytes),
+      maxEntries,
+      signal,
+      layout,
+    ),
+    signal,
+  ).resources;
+
 /**
  * Decode the conventional type/name/language tree; never infer payload
  * meaning or runtime loading. Malformed structure and exhausted budgets are
  * `ParseFailureError`s (`peResourceLimitBoundary` names a limit's bound); a
  * caller's cancellation rethrows `signal.reason`.
  */
-export const parsePeResources = async (
-  bytes: Buffer,
-  artifact: PeResources["artifact"],
-  input: InspectPeResourcesInput,
-  signal?: AbortSignal,
-  /** Already admitted from these same bytes; used by carrier probes that own layout failure policy. */
-  admittedLayout?: PeResourceLayout,
-): Promise<PeResources> => {
+const parsePeResourceInventory = async (
+  source: PrefixedByteSource,
+  maxEntries: number,
+  signal: AbortSignal | undefined,
+  layout: PeResourceLayout,
+): Promise<PeResourceInventory> => {
   signal?.throwIfAborted();
-  const layout = admittedLayout ?? readPeResourceLayout(bytes);
+  const readBytes = (offset: number, length: number): Promise<Buffer> =>
+    length === 0
+      ? Promise.resolve(Buffer.alloc(0))
+      : source.readRange(offset, length);
   const directories: PeResources["directories"] = [];
   const resources: PeResources["resources"] = [];
   const occupied: OccupiedRange[] = [];
@@ -106,12 +181,15 @@ export const parsePeResources = async (
     ensureCapacity(projectedBytes);
   };
   const root = layout.size === 0 ? 0 : layout.map(layout.rva, layout.size);
+  // Farthest tree byte read, relative to the root, to compare with Size.
+  let walked = 0;
   const relative = (at: number, length: number): number => {
-    if (at > layout.size - length || at < 0)
+    if (!peResourceRangeFits(at, length, layout.size))
       peFailure(
-        "Resource directory offset leaves the declared resource interval.",
+        "Resource directory offset leaves the file-backed resource interval.",
       );
-    requirePeRange(bytes, root + at, length);
+    requirePeExtent(source.size, root + at, length);
+    walked = Math.max(walked, at + length);
     return root + at;
   };
   const recordRange = (
@@ -123,9 +201,9 @@ export const parsePeResources = async (
     if (size > 0) occupied.push({ ...range, kind });
     return range;
   };
-  const readIdentity = (
+  const readIdentity = async (
     declaration: PeResourceIdentityDeclaration,
-  ): PeResourceIdentity => {
+  ): Promise<PeResourceIdentity> => {
     if (declaration.kind === "id") return { kind: "id", id: declaration.id };
     const at = declaration.offset;
     const previous = names.get(at);
@@ -133,14 +211,11 @@ export const parsePeResources = async (
     if (at % 2 !== 0) peFailure("Unaligned PE resource name.");
     const start = relative(at, PE_RESOURCE_NAME_PREFIX_BYTES);
     const { utf16Units, payloadBytes: length } = readPeResourceNameFacts(
-      bytes.subarray(start, start + PE_RESOURCE_NAME_PREFIX_BYTES),
+      await readBytes(start, PE_RESOURCE_NAME_PREFIX_BYTES),
     );
-    reserveDecodedName(utf16Units);
     relative(at, PE_RESOURCE_NAME_PREFIX_BYTES + length);
-    const raw = bytes.subarray(
-      start + PE_RESOURCE_NAME_PREFIX_BYTES,
-      start + PE_RESOURCE_NAME_PREFIX_BYTES + length,
-    );
+    reserveDecodedName(utf16Units);
+    const raw = await readBytes(start + PE_RESOURCE_NAME_PREFIX_BYTES, length);
     const value: PeResourceIdentity = {
       kind: "name",
       name: raw.toString("utf16le"),
@@ -163,15 +238,16 @@ export const parsePeResources = async (
     if (ancestors.has(at)) peFailure("Cyclic PE resource directory.");
     const header = relative(at, PE_RESOURCE_DIRECTORY_BYTES);
     const facts = readPeResourceDirectoryFacts(
-      bytes.subarray(header, header + PE_RESOURCE_DIRECTORY_BYTES),
+      await readBytes(header, PE_RESOURCE_DIRECTORY_BYTES),
     );
     const { namedEntries: named, idEntries: ids, entryCount: count } = facts;
-    relative(at, PE_RESOURCE_DIRECTORY_BYTES + PE_RESOURCE_ENTRY_BYTES * count);
-    if (count > input.max_entries - examined)
+    const entriesBytes = PE_RESOURCE_ENTRY_BYTES * count;
+    relative(at, PE_RESOURCE_DIRECTORY_BYTES + entriesBytes);
+    if (count > maxEntries - examined)
       limit(
         "PE resource directory entry budget exceeded; no partial inventory was returned.",
-        ENTRY_LIMIT,
-        input.max_entries,
+        PE_RESOURCE_ENTRY_LIMIT,
+        maxEntries,
       );
     examined += count;
     const directory = {
@@ -179,7 +255,7 @@ export const parsePeResources = async (
       entry_locations: entryLocations,
       location: recordRange(
         header,
-        PE_RESOURCE_DIRECTORY_BYTES + PE_RESOURCE_ENTRY_BYTES * count,
+        PE_RESOURCE_DIRECTORY_BYTES + entriesBytes,
         "directory",
       ),
       characteristics: facts.characteristics,
@@ -191,6 +267,10 @@ export const parsePeResources = async (
     };
     account(directory);
     directories.push(directory);
+    const entryTable = await readBytes(
+      header + PE_RESOURCE_DIRECTORY_BYTES,
+      entriesBytes,
+    );
     const keys = new Set<string>();
     let previousId = -1;
     const nested = new Set([...ancestors, at]);
@@ -199,16 +279,16 @@ export const parsePeResources = async (
         await setImmediate();
         signal?.throwIfAborted();
       }
-      const entry =
-        header + PE_RESOURCE_DIRECTORY_BYTES + index * PE_RESOURCE_ENTRY_BYTES;
+      const entryOffset = index * PE_RESOURCE_ENTRY_BYTES;
+      const entry = header + PE_RESOURCE_DIRECTORY_BYTES + entryOffset;
       const record = readPeResourceEntryFacts(
-        bytes.subarray(entry, entry + PE_RESOURCE_ENTRY_BYTES),
+        entryTable.subarray(entryOffset, entryOffset + PE_RESOURCE_ENTRY_BYTES),
       );
       if ((record.identity.kind === "name") !== index < named)
         peFailure(
           "Resource name/ID entry counts disagree with encoded identities.",
         );
-      const identity = readIdentity(record.identity);
+      const identity = await readIdentity(record.identity);
       const key = identityKey(identity);
       if (keys.has(key))
         peFailure("Duplicate identity within a resource directory.");
@@ -237,7 +317,7 @@ export const parsePeResources = async (
           );
         const data = relative(offset, PE_RESOURCE_DATA_ENTRY_BYTES);
         const { rva, size, codePage, reserved } = readPeResourceDataEntryFacts(
-          bytes.subarray(data, data + PE_RESOURCE_DATA_ENTRY_BYTES),
+          await readBytes(data, PE_RESOURCE_DATA_ENTRY_BYTES),
         );
         const payloadOffset = layout.map(rva, size);
         const [type, name, language] = next;
@@ -280,9 +360,9 @@ export const parsePeResources = async (
         await setImmediate();
         signal?.throwIfAborted();
         hash.update(
-          bytes.subarray(
+          await readBytes(
             range.offset + offset,
-            range.offset + Math.min(range.bytes, offset + 1048576),
+            Math.min(1048576, range.bytes - offset),
           ),
         );
       }
@@ -291,17 +371,28 @@ export const parsePeResources = async (
     }
     resource.payload.sha256 = digest;
   }
-  const iconGroups = readIconGroups(bytes, resources, account, ensureCapacity);
-  const report: PeResources = {
-    artifact,
+  const iconGroups = await readIconGroups(
+    readBytes,
+    resources,
+    account,
+    ensureCapacity,
+  );
+  return {
     format: layout.format,
     machine: layout.machine,
+    image_base: layout.imageBase,
     directory:
-      layout.size === 0
+      layout.size === 0 || layout.directoryAt === null
         ? null
         : {
             rva: layout.rva,
-            location: { offset: root, bytes: layout.size },
+            location: {
+              offset: root,
+              bytes: Math.max(
+                walked,
+                Math.min(layout.declaredSize, layout.size),
+              ),
+            },
             data_directory_location: { offset: layout.directoryAt, bytes: 8 },
           },
     directories,
@@ -312,12 +403,25 @@ export const parsePeResources = async (
       examined_entries: examined,
       resources: resources.length,
     },
+    header_anomalies:
+      walked > layout.declaredSize
+        ? [
+            ...layout.headerAnomalies,
+            peDirectorySizeAnomaly("resource", 2, layout.declaredSize, walked),
+          ]
+        : [...layout.headerAnomalies],
     limitations: [
       "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON remain opaque.",
       "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",
       "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
     ],
   };
+};
+
+const boundedResourceResult = <Report extends PeResourceInventory>(
+  report: Report,
+  signal: AbortSignal | undefined,
+): Report => {
   signal?.throwIfAborted();
   if (jsonBytes(report, METADATA_BYTES) > METADATA_BYTES)
     limit(
@@ -346,12 +450,12 @@ const rejectOverlappingRanges = (ranges: OccupiedRange[]): void => {
   }
 };
 
-const readIconGroups = (
-  bytes: Buffer,
+const readIconGroups = async (
+  readBytes: (offset: number, length: number) => Promise<Buffer>,
   resources: PeResources["resources"],
   account: (value: unknown) => void,
   ensureCapacity: (projectedBytes: number) => void,
-): PeResources["icon_groups"] => {
+): Promise<PeResources["icon_groups"]> => {
   const imagesById = new Map<number, PeResources["resources"]>();
   for (const resource of resources) {
     if (
@@ -364,55 +468,65 @@ const readIconGroups = (
     candidates.push(resource);
     imagesById.set(resource.name.id, candidates);
   }
-  return resources
-    .filter(
-      (resource) => resource.type.kind === "id" && resource.type.id === 14,
-    )
-    .map((group) => {
-      const { offset, bytes: size } = group.payload.location;
-      if (
-        size < 6 ||
-        bytes.readUInt16LE(offset) !== 0 ||
-        bytes.readUInt16LE(offset + 2) !== 1
-      )
-        peFailure("Malformed RT_GROUP_ICON header.");
-      const count = bytes.readUInt16LE(offset + 4);
-      if (size !== 6 + count * 14)
-        peFailure("RT_GROUP_ICON length does not match its image count.");
-      const images: PeResources["icon_groups"][number]["images"] = [];
-      for (let index = 0; index < count; index++) {
-        const at = offset + 6 + index * 14;
-        const id = bytes.readUInt16LE(at + 12);
-        const candidates = imagesById.get(id) ?? [];
-        const exact = candidates.find(
-          (resource) =>
-            identityKey(resource.language) === identityKey(group.language),
-        );
-        // Indices are uint32 values and each needs at most ten decimal digits
-        // plus a comma. Check the expanded candidate list before allocating it.
-        ensureCapacity(302 + candidates.length * 11);
-        const declaredBytes = bytes.readUInt32LE(at + 8);
-        const image = {
-          location: { offset: at, bytes: 14 },
-          width: bytes[at] ?? 0,
-          height: bytes[at + 1] ?? 0,
-          color_count: bytes[at + 2] ?? 0,
-          reserved: bytes[at + 3] ?? 0,
-          planes: bytes.readUInt16LE(at + 4),
-          bit_count: bytes.readUInt16LE(at + 6),
-          declared_bytes: declaredBytes,
-          resource_id: id,
-          candidate_resource_indices: candidates.map(({ index }) => index),
-          same_language_resource_index: exact?.index ?? null,
-          size_matches:
-            exact === undefined
-              ? null
-              : exact.payload.location.bytes === declaredBytes,
-        };
-        account(image);
-        images.push(image);
-      }
-      account({ resource_index: group.index, images: [] });
-      return { resource_index: group.index, images };
-    });
+  const groups: PeResources["icon_groups"] = [];
+  for (const group of resources) {
+    if (group.type.kind !== "id" || group.type.id !== 14) continue;
+    const { offset, bytes: size } = group.payload.location;
+    const headerBytes = 6;
+    const entryBytes = 14;
+    if (size < headerBytes) peFailure("Malformed RT_GROUP_ICON header.");
+    const header = new BinaryReader(
+      await readBytes(offset, headerBytes),
+      true,
+      "pe",
+    );
+    if (header.u16(0) !== 0 || header.u16(2) !== 1)
+      peFailure("Malformed RT_GROUP_ICON header.");
+    const count = header.u16(4);
+    const entriesBytes = count * entryBytes;
+    if (size !== headerBytes + entriesBytes)
+      peFailure("RT_GROUP_ICON length does not match its image count.");
+    const entriesOffset = offset + headerBytes;
+    const reader = new BinaryReader(
+      await readBytes(entriesOffset, entriesBytes),
+      true,
+      "pe",
+    );
+    const images: PeResources["icon_groups"][number]["images"] = [];
+    for (let index = 0; index < count; index++) {
+      const at = index * entryBytes;
+      const id = reader.u16(at + 12);
+      const candidates = imagesById.get(id) ?? [];
+      const exact = candidates.find(
+        (resource) =>
+          identityKey(resource.language) === identityKey(group.language),
+      );
+      // Indices are uint32 values and each needs at most ten decimal digits
+      // plus a comma. Check the expanded candidate list before allocating it.
+      ensureCapacity(302 + candidates.length * 11);
+      const declaredBytes = reader.u32(at + 8);
+      const image = {
+        location: { offset: entriesOffset + at, bytes: entryBytes },
+        width: reader.u8(at),
+        height: reader.u8(at + 1),
+        color_count: reader.u8(at + 2),
+        reserved: reader.u8(at + 3),
+        planes: reader.u16(at + 4),
+        bit_count: reader.u16(at + 6),
+        declared_bytes: declaredBytes,
+        resource_id: id,
+        candidate_resource_indices: candidates.map(({ index }) => index),
+        same_language_resource_index: exact?.index ?? null,
+        size_matches:
+          exact === undefined
+            ? null
+            : exact.payload.location.bytes === declaredBytes,
+      };
+      account(image);
+      images.push(image);
+    }
+    account({ resource_index: group.index, images: [] });
+    groups.push({ resource_index: group.index, images });
+  }
+  return groups;
 };

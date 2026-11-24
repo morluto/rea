@@ -10,7 +10,7 @@ import { artifactExpansionBudgetBytes } from "../../domain/artifactExpansionBudg
 import type {
   FitImageMetadata,
   FitMetadata,
-} from "../../domain/artifactFormatMetadata.js";
+} from "../../domain/formatMetadata/firmwareMetadata.js";
 import {
   MAX_DEVICETREE_FILE_BYTES,
   type Devicetree,
@@ -56,6 +56,7 @@ export interface FitStructure {
 
 interface FitLayout {
   readonly fdt: Buffer;
+  readonly reader: BinaryReader;
   readonly children: ReadonlyMap<string, readonly FitNode[]>;
   readonly totalsize: number;
   readonly fileSize: number;
@@ -64,6 +65,7 @@ interface FitLayout {
 /** Lenient decoding records malformed descriptive facts here instead of failing. */
 interface FitFacts {
   readonly fdt: Buffer;
+  readonly reader: BinaryReader;
   readonly limitations: string[];
 }
 type FitFact<Value> = (facts: FitFacts, node: FitNode, name: string) => Value;
@@ -123,7 +125,7 @@ const valueOf = (fdt: Buffer, property: FitProperty): Buffer =>
 const utf8 = strictUtf8Decoder("preserve");
 const nulCount = (raw: Buffer): number => {
   let count = 0;
-  for (const byte of raw) if (byte === 0) count += 1;
+  for (let i = 0; i < raw.length; i += 1) if (raw[i] === 0) count += 1;
   return count;
 };
 
@@ -199,8 +201,7 @@ const fitStrings: FitFact<string[]> = (facts, node, name) => {
 const fitU32: FitFact<number | null> = (facts, node, name) => {
   const property = propertyOf(node, name);
   if (property === undefined) return null;
-  if (property.bytes === 4)
-    return new BinaryReader(facts.fdt, false, "fit").u32(property.offset);
+  if (property.bytes === 4) return facts.reader.u32(property.offset);
   facts.limitations.push(`${node.path}: ${name} is not a single 32-bit cell`);
   return null;
 };
@@ -215,7 +216,7 @@ const fitAddress: FitFact<string | null> = (facts, node, name) => {
     );
     return null;
   }
-  const reader = new BinaryReader(facts.fdt, false, "fit");
+  const reader = facts.reader;
   let value = 0n;
   for (let offset = 0; offset < property.bytes; offset += 4)
     value = (value << 32n) | BigInt(reader.u32(property.offset + offset));
@@ -224,7 +225,7 @@ const fitAddress: FitFact<string | null> = (facts, node, name) => {
 
 /** Byte-locating cells fail closed: a guessed range would misattribute bytes. */
 const strictCell = (
-  fdt: Buffer,
+  reader: BinaryReader,
   node: FitNode,
   property: FitProperty,
 ): number => {
@@ -232,7 +233,7 @@ const strictCell = (
     throw formatFailure(
       `${node.path}: ${property.name} is not a single 32-bit cell`,
     );
-  return new BinaryReader(fdt, false, "fit").u32(property.offset);
+  return reader.u32(property.offset);
 };
 
 const imageRange = (
@@ -258,11 +259,11 @@ const imageRange = (
       data_source: "embedded",
       declared_offset: null,
     };
-  const declaredOffset = strictCell(layout.fdt, node, source.property);
+  const declaredOffset = strictCell(layout.reader, node, source.property);
   const sizeProperty = propertyOf(node, "data-size");
   if (sizeProperty === undefined)
     throw formatFailure(`${node.path}: ${source.name} requires data-size`);
-  const size = strictCell(layout.fdt, node, sizeProperty);
+  const size = strictCell(layout.reader, node, sizeProperty);
   // data-offset is relative to the 4-byte-aligned end of the devicetree;
   // data-position is an offset from the start of the FIT (fit + position).
   const start =
@@ -355,7 +356,11 @@ const imageDeclaration = (
   node: FitNode,
   index: number,
 ): FitImageDeclaration => {
-  const facts: FitFacts = { fdt: layout.fdt, limitations: [] };
+  const facts: FitFacts = {
+    fdt: layout.fdt,
+    reader: layout.reader,
+    limitations: [],
+  };
   const name = nodeName(node);
   const children = layout.children.get(node.path) ?? [];
   const range = imageRange(layout, node);
@@ -557,7 +562,7 @@ const fitConfigurations = (
   return { default_configuration: defaultConfiguration, configurations };
 };
 
-const parseFit = (fdt: Buffer, path: string): Devicetree => {
+const parseFit = (fdt: Buffer, path: string) => {
   try {
     // The artifact field is only echoed back; the reader binds the carrier hash.
     return parseDevicetree(
@@ -575,13 +580,15 @@ const parseFit = (fdt: Buffer, path: string): Devicetree => {
     if (cause instanceof BinaryFormatFailure)
       throw formatFailure(cause.message);
     if (isParseLimit(cause, DEVICETREE_FORMAT)) {
-      const { name } = cause.failure.limit;
+      const { limit: parserLimit } = cause.failure;
       throw new ArtifactReaderFailure(
         "limit",
-        `FIT devicetree exceeds the fixed ${name} allowance`,
+        `FIT devicetree exceeds the fixed ${parserLimit.name} allowance`,
         {
-          boundary: name === "decoded_bytes" ? "memory" : "capacity",
+          boundary:
+            parserLimit.name === "decoded_bytes" ? "memory" : "capacity",
           cause,
+          parserLimit,
         },
       );
     }
@@ -595,7 +602,7 @@ export const readFitStructure = (
   path: string,
   fileSize: number,
 ): FitStructure => {
-  const tree = parseFit(fdt, path);
+  const { report: tree, structureLimitations } = parseFit(fdt, path);
   const byPath = new Map(tree.nodes.map((node) => [node.path, node]));
   const children = new Map<string, FitNode[]>();
   for (const node of tree.nodes) {
@@ -608,7 +615,8 @@ export const readFitStructure = (
   if (root === undefined || !byPath.has("/images"))
     throw formatFailure("/images node is missing");
   const { totalsize } = tree.header;
-  const layout: FitLayout = { fdt, children, totalsize, fileSize };
+  const reader = new BinaryReader(fdt, false, "fit");
+  const layout: FitLayout = { fdt, reader, children, totalsize, fileSize };
   const imageNodes = children.get("/images") ?? [];
   if (imageNodes.length > FIT_MAX_IMAGES)
     throw capacityFailure(
@@ -627,7 +635,11 @@ export const readFitStructure = (
       `FIT images declare ${String(declared)} bytes, exceeding this file's ${String(budget)}-byte expansion budget`,
       { boundary: "memory" },
     );
-  const facts: FitFacts = { fdt, limitations: [] };
+  const facts: FitFacts = {
+    fdt,
+    reader,
+    limitations: [...structureLimitations],
+  };
   return {
     images,
     limitations: facts.limitations,

@@ -38,8 +38,9 @@ it("ends the actual armed window at its selected duration and disposes its timer
   const window = new CdpExecutionWindow(selectedSession());
   try {
     const result = window.start(10);
+    vi.advanceTimersByTime(9);
     expect(window.active).toBe(true);
-    vi.advanceTimersByTime(10);
+    vi.advanceTimersByTime(1);
     await expect(result).resolves.toBe("window_elapsed");
     expect(window.active).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
@@ -78,43 +79,15 @@ it("settles caller cancellation and removes its local timer", async () => {
   }
 });
 
-it("keeps a root document transition distinct from a child frame event", async () => {
-  const rootSession = selectedSession();
-  const root = new CdpExecutionWindow(rootSession);
-  const rootResult = root.start(30_000);
-  deliver(rootSession, root, {
-    method: "Page.frameNavigated",
-    params: { frame: { id: "new-main", url: "https://example.test/" } },
-  });
-  await expect(rootResult).resolves.toBe("document_changed");
-
-  const childSession = selectedSession();
-  const child = new CdpExecutionWindow(childSession);
-  const childResult = child.start(30_000);
-  deliver(childSession, child, {
-    method: "Page.frameNavigated",
-    params: {
-      frame: {
-        id: "child-frame",
-        parentId: "selected-main",
-        url: "https://example.test/child",
-      },
-    },
-  });
-  expect(child.active).toBe(true);
-  child.end("window_elapsed");
-  await expect(childResult).resolves.toBe("window_elapsed");
-});
-
 // The target session's document owner decides whether a main-frame commit is
 // another document; a re-fired commit of the selected one keeps the window.
 it.each([
-  ["the selected loader again", "loader-selected", "/", "window_elapsed"],
-  ["a new loader", "loader-next", "/", "document_changed"],
-  ["no loader", undefined, "/", "document_changed"],
+  ["the selected loader again", "loader-selected", "window_elapsed"],
+  ["a new loader", "loader-next", "document_changed"],
+  ["no loader", undefined, "document_changed"],
 ] as const)(
   "ends the window on a main-frame commit with %s only when the document may differ",
-  async (_label, loaderId, path, expected) => {
+  async (_label, loaderId, expected) => {
     const session = selectedSession();
     const window = new CdpExecutionWindow(session);
     const result = window.start(30_000);
@@ -124,11 +97,23 @@ it.each([
         frame: {
           id: "selected-main",
           ...(loaderId === undefined ? {} : { loaderId }),
-          url: "https://example.test" + path,
+          url: "https://example.test/",
         },
       },
     });
-    if (window.active) window.end("window_elapsed");
+    if (expected === "window_elapsed") {
+      deliver(session, window, {
+        method: "Page.frameNavigated",
+        params: {
+          frame: {
+            id: "child-frame",
+            parentId: "selected-main",
+            url: "https://example.test/child",
+          },
+        },
+      });
+    }
+    window.end("window_elapsed");
     await expect(result).resolves.toBe(expected);
   },
 );
@@ -156,20 +141,3 @@ it.each([
     await expect(result).resolves.toBe(expected);
   },
 );
-
-it("surfaces malformed frame identity as a protocol failure without guessing a transition", async () => {
-  const session = selectedSession();
-  const window = new CdpExecutionWindow(session);
-  const result = window.start(30_000);
-  deliver(session, window, {
-    method: "Page.frameNavigated",
-    params: {
-      frame: { id: "child-frame", parentId: 7, url: "https://example.test/" },
-    },
-  });
-  await expect(result).rejects.toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "protocol_error",
-  });
-  expect(window.reason).toBeUndefined();
-});

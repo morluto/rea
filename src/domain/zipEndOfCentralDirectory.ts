@@ -73,8 +73,14 @@ export const readZip64DirectoryRecord = (
   offset: number,
   limit: number,
 ): Result<Zip64DirectoryRecord, "fixed-fields" | "signature" | "size"> => {
-  const room = Math.min(limit, reader.bytes.length) - offset;
-  if (offset < 0 || room < ZIP64_END.fixedBytes) return err("fixed-fields");
+  // The structural boundary is the locator. A positional reader only needs
+  // the fixed fields in memory; the extensible sector can remain unread.
+  const room = limit - offset;
+  if (
+    offset < 0 ||
+    Math.min(room, reader.bytes.length - offset) < ZIP64_END.fixedBytes
+  )
+    return err("fixed-fields");
   if (reader.u32(offset) !== ZIP64_END.signature) return err("signature");
   const bodyBytes = reader.word(offset + ZIP64_END.sizeOffset, 64);
   if (

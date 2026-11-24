@@ -1,15 +1,13 @@
 import { expect, it } from "vitest";
 import {
-  analysisViewCaptureEvidence,
-  environmentStateCaptureFixture,
   timedCaptureEvidence,
+  captureParent,
 } from "../../../tests/fixtures/analysisView.js";
 import {
   SCENARIO_EXCHANGES,
   scenarioCaptureEvidence,
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
-import type { Evidence } from "../evidence.js";
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { AnalysisViewResult } from "./analysisViewResult.js";
@@ -28,23 +26,9 @@ const RULES = [
   "sibling-variance",
 ] as const;
 
-const parentOf = (
-  evidence: Evidence = analysisViewCaptureEvidence(
-    environmentStateCaptureFixture(),
-  ),
-): AnalysisViewParent => ({
-  predicateType: evidence.predicate_type,
-  evidenceId: evidence.evidence_id,
-  operation: evidence.operation,
-  normalizedResult: evidence.normalized_result,
-  subject: evidence.subject,
-  limitations: [],
-  parameters: evidence.parameters,
-});
-
 const project = (
   kind: "environment-state" | "environment-coverage",
-  parent: AnalysisViewParent = parentOf(),
+  parent: AnalysisViewParent = captureParent(),
 ): AnalysisViewResult => {
   const projected = projectAnalysisView(
     parent,
@@ -118,7 +102,7 @@ it("counts read tools by how they answer and lists writes as served or withheld 
           tool: "put_folders_by_uid",
           effect: "update",
           reason: "contradicted",
-          hint: expect.stringMatching(/later read.*contradicted_by/iu),
+          hint: WITHHELD_WRITE_HINTS.contradicted,
           exemplar_ordinal: 4,
           contradicted_by: 9,
         },
@@ -173,7 +157,7 @@ it("does not claim reads are missing when a literal delete has no modelled targe
     ["GET", "/api/folders/f1", { message: "not found" }, 404],
     ["GET", "/api/folders", []],
   ]);
-  const parent = parentOf(evidence);
+  const parent = captureParent(evidence);
   const state = project("environment-state", parent);
   const coverage = project("environment-coverage", parent);
   if (
@@ -191,9 +175,7 @@ it("does not claim reads are missing when a literal delete has no modelled targe
     expect.arrayContaining([
       expect.objectContaining({
         reason: "no-state-target",
-        hint: expect.stringContaining(
-          "could not be linked to a modelled state target",
-        ),
+        hint: WITHHELD_WRITE_HINTS["no-state-target"],
       }),
     ]),
   );
@@ -201,7 +183,7 @@ it("does not claim reads are missing when a literal delete has no modelled targe
 
 it("says an untimed capture learns no clock, and only for an untimed capture", () => {
   const untimed = /learns no clock/u;
-  const scenarioParent = parentOf(
+  const scenarioParent = captureParent(
     scenarioCaptureEvidence(
       scenarioCaptureFixture(SCENARIO_EXCHANGES, {
         request_body: true,
@@ -211,7 +193,7 @@ it("says an untimed capture learns no clock, and only for an untimed capture", (
     ),
   );
   for (const [parent, needsClockAdvice] of [
-    [parentOf(), false],
+    [captureParent(), false],
     [scenarioParent, true],
   ] as const) {
     const coverage = project("environment-coverage", parent);
@@ -232,7 +214,7 @@ it("refuses a browser scenario without selected response bodies", () => {
     }),
   );
   expect(
-    projectAnalysisView(parentOf(evidence), {
+    projectAnalysisView(captureParent(evidence), {
       kind: "environment-coverage",
       template_rules: [],
     }),

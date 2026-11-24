@@ -1,4 +1,4 @@
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { buildBinary } from "plist";
@@ -29,6 +29,9 @@ it.skipIf(process.platform !== "darwin")(
     await writeFile(sourcePath, source);
     await writeFile(decoyPath, decoy);
     await symlink("physical/child", join(contents, "alias"));
+    const outside = join(root, "Outside.plist");
+    await writeFile(outside, source);
+    await symlink(outside, join(contents, "Outside.plist"));
     const { call } = await connectLocalToolsMcp({
       HOME: root,
       USERPROFILE: root,
@@ -69,6 +72,38 @@ it.skipIf(process.platform !== "darwin")(
       code: "invalid_request",
       details: { issues: [{ path: ["path"] }] },
     });
+    for (const requested of [
+      outside,
+      "../Outside.plist",
+      "Contents/Outside.plist",
+    ])
+      expect(
+        parseMcpToolError(await call("inspect_plist", { path: requested }))
+          .error,
+      ).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["path"] }] },
+      });
+    const retired = join(root, "Retired.app");
+    await rename(app, retired);
+    expect(
+      parseMcpToolError(await call("inspect_plist", {})).error,
+    ).toMatchObject({
+      code: "artifact_changed",
+      details: { path: app },
+    });
+    expect((await call("open_binary", { path: outside })).isError).not.toBe(
+      true,
+    );
+    const standalone = await call("inspect_plist", {});
+    expect(standalone.isError).not.toBe(true);
+    expect(
+      parseEvidence(standalone.structuredContent).normalized_result,
+    ).toMatchObject({
+      source_path: outside,
+      value: { Marker: "physical source" },
+    });
+    await rename(retired, app);
     expect(
       Buffer.compare(await readFile(sourcePath), Buffer.from(source)),
     ).toBe(0);

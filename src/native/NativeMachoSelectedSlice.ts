@@ -1,14 +1,20 @@
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
   readFatHeaderPrefix,
   readFatSliceDeclarations,
   validateFatSlice,
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
-import { decodeLimit, malformedInput } from "../domain/parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  truncatedInput,
+} from "../domain/parseFailure.js";
 import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { NativeMachoSource } from "./NativeMachoSource.js";
-import type { LipoArchitecture } from "../domain/apple/lipo.js";
+import {
+  lipoDescribesCpu,
+  type LipoArchitecture,
+} from "../domain/apple/lipo.js";
 
 export interface ResolvedMachoSlice {
   readonly offset: number;
@@ -48,10 +54,11 @@ export const resolveSelectedMachoSlice = async (
     );
   const entrySize = prefix.wide ? 32 : 20;
   const tableEnd = 8 + rows * entrySize;
-  if (!Number.isSafeInteger(tableEnd) || tableEnd > source.bytes)
-    throw malformedInput(
+  if (tableEnd > source.bytes)
+    throw truncatedInput(
       "macho",
-      "Selected Mach-O universal table is truncated",
+      `Selected Mach-O universal table is truncated: the file has ${source.bytes} bytes and the table needs ${tableEnd}`,
+      { extent: { availableBytes: source.bytes, requiredBytes: tableEnd } },
     );
   const matches: FatSliceDeclaration[] = [];
   const declarations: FatSliceDeclaration[] = [];
@@ -76,12 +83,7 @@ export const resolveSelectedMachoSlice = async (
         (selected.file_offset !== null &&
           row.offset !== selected.file_offset) ||
         (selected.size !== null && row.size !== selected.size) ||
-        (selected.cpu_type_code !== null &&
-          selected.cpu_type_code !== row.cpuType) ||
-        (selected.cpu_subtype_code !== null &&
-          selected.cpu_subtype_code !== row.cpuSubtype) ||
-        (selected.cpu_subtype_base !== null &&
-          selected.cpu_subtype_base !== machoCpuSubtypeBase(row.cpuSubtype)) ||
+        !lipoDescribesCpu(selected, row.cpuType, row.cpuSubtype) ||
         (selected.alignment !== null &&
           selected.alignment !== 2 ** row.alignmentExponent)
       )

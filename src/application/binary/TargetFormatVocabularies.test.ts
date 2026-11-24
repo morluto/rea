@@ -11,6 +11,7 @@ import {
   createImmutableEvidenceBundle,
   parseEvidenceBundle,
 } from "../../domain/evidenceBundle.js";
+import { rawLoadAtEntry } from "../../domain/rawBinary.fixture.js";
 import type {
   BINARY_TARGET_FORMAT_KINDS,
   TargetFormat,
@@ -86,8 +87,7 @@ const TARGETS: TargetFixtures = {
     format: "raw-binary",
     architecture: "m68k",
     availableArchitectures: ["m68k"],
-    entryPoint: "0x1000",
-    entryPointSource: "0x1000",
+    rawLoad: rawLoadAtEntry("0x1000"),
   },
   "gamecube-dol": {
     ...identity,
@@ -111,6 +111,7 @@ const TARGETS: TargetFixtures = {
     ...identity,
     kind: "database",
     format: "analysis-database",
+    databaseEngine: "hopper",
   },
   zip: { ...archive, format: "zip" },
   ipa: { ...archive, format: "ipa" },
@@ -125,8 +126,14 @@ const TARGETS: TargetFixtures = {
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
   wxapkg: { ...archive, format: "wxapkg" },
+  tar: { ...archive, format: "tar" },
+  dds: { ...archive, format: "dds" },
+  glb: { ...archive, format: "glb" },
+  ktx: { ...archive, format: "ktx" },
+  ktx2: { ...archive, format: "ktx2" },
   uimage: { ...archive, format: "uimage" },
   "android-boot-image": { ...archive, format: "android-boot-image" },
+  iso9660: { ...archive, format: "iso9660" },
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
@@ -145,6 +152,11 @@ const TARGETS: TargetFixtures = {
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },
   "source-map": { ...artifact, format: "source-map" },
+  uefi: { ...artifact, format: "uefi" },
+  sqlite: { ...artifact, format: "sqlite" },
+  "windows-shortcut": { ...artifact, format: "windows-shortcut" },
+  "python-pyc": { ...artifact, format: "python-pyc" },
+  devicetree: { ...artifact, format: "devicetree" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;

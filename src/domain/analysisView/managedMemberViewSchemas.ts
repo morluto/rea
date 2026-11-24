@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { managedMemberInspectionSchema } from "../managed/managedArtifact.js";
+import { unresolvedDefinitionSchema } from "../managed/managedUnresolvedDefinitions.js";
 
 const member = managedMemberInspectionSchema.shape;
 
@@ -12,6 +13,7 @@ const rows = {
   call_edges: member.call_edges.element,
   field_accesses: member.field_accesses.element,
   user_strings: member.user_strings.unwrap().shape.literals.element,
+  unresolved_definitions: unresolvedDefinitionSchema,
 };
 const pageRequest = {
   kind: z.literal("managed-members"),
@@ -89,6 +91,10 @@ export const managedMembersViewRequestSchema = z.discriminatedUnion(
       collection: z.literal("user_strings"),
       fields: fieldsOf(rows.user_strings.keyof()),
     }),
+    z.strictObject({
+      ...pageRequest,
+      collection: z.literal("unresolved_definitions"),
+    }),
   ],
 );
 
@@ -155,6 +161,12 @@ export const managedMembersViewPageSchema = z.discriminatedUnion("collection", [
     "user_strings",
     rows.user_strings.partial().required({ token: true, offset: true }),
   ),
+  z.strictObject({
+    collection: z.literal("unresolved_definitions"),
+    rows: z.array(rows.unresolved_definitions),
+    source_count: z.int().nonnegative().exactOptional(),
+    unresolved_filter_rows: z.int().nonnegative().exactOptional(),
+  }),
 ]);
 
 const nullableCount = z.int().nonnegative().nullable();
@@ -170,6 +182,7 @@ export const managedMemberSummarySchema = z.strictObject({
   identity_scope: member.identity_scope,
   selection: member.selection,
   method_rows: member.method_rows,
+  unresolved_method_names_examined: z.boolean().exactOptional(),
   coverage: member.coverage,
   user_strings: z
     .strictObject({
@@ -187,6 +200,7 @@ export const managedMemberSummarySchema = z.strictObject({
     call_edges: z.int().nonnegative(),
     field_accesses: z.int().nonnegative(),
     user_strings: nullableCount,
+    unresolved_definitions: z.int().nonnegative().exactOptional(),
   }),
 });
 
@@ -198,7 +212,9 @@ export const managedMembersViewContextSchema = z.strictObject({
   selection: member.selection,
   method_rows: member.method_rows,
   source_metadata_status: member.metadata.shape.status,
+  unresolved_module_name: member.metadata.shape.unresolved_module_name,
   source_coverage: member.coverage,
+  unresolved_method_names_examined: z.boolean().exactOptional(),
 });
 
 export type ManagedMembersViewRequest = z.infer<

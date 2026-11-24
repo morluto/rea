@@ -48,17 +48,29 @@ describe("dpkg output", () => {
     ]);
   });
 
-  it("reads every owner of a path and skips diversions", () => {
+  it("reads full owner rows and exact paths, and skips both kinds of diversion", () => {
+    const editor = "/usr/bin/editor";
+    const nested = "/opt/catalog: /usr/bin/editor";
+    const missing = "/usr/bin/absent";
     expect(
       parseDpkgOwners(
         [
-          "diversion by foo from: /usr/bin/editor",
+          "local diversion from: /usr/bin/editor",
+          "local diversion to: /usr/bin/editor.old",
+          "diversion by other from: /usr/bin/editor",
           "editor-common, editor:amd64: /usr/bin/editor",
-          "other: /usr/bin/editor-extra",
+          "other: /opt/catalog: /usr/bin/editor",
         ].join("\n"),
-        "/usr/bin/editor",
+        [editor, nested, missing],
       ),
-    ).toEqual(["editor-common", "editor:amd64"]);
+    ).toEqual({
+      complete: true,
+      owners: new Map([
+        [editor, ["editor-common", "editor:amd64"]],
+        [nested, ["other"]],
+        [missing, []],
+      ]),
+    });
   });
 
   it("reads one status line", () => {
@@ -108,6 +120,44 @@ describe("parseAptPolicySources", () => {
         ].join("\n"),
       ),
     ).toEqual([]);
+  });
+
+  it("reads phased versions and priority padding in both policy modes", () => {
+    const installed = "https://example.org/apt noble/main amd64 Packages";
+    const alternate =
+      "https://example.org/apt noble-updates/main amd64 Packages";
+    const disabled = "https://example.org/apt experimental/main amd64 Packages";
+    const versions = [
+      "mousepad:",
+      "  Version table:",
+      "     0.6.3-1 500",
+      `        500 ${alternate}`,
+      " *** 0.6.2-1 1000 (phasenweise 40%)",
+      `       1000 ${installed}`,
+      `         -1 ${disabled}`,
+      "        100 /var/lib/dpkg/status",
+    ].join("\n");
+    const origins = [
+      "Package files:",
+      `1000 ${installed}`,
+      "     release o=Vendor,a=noble",
+      `  -1 ${disabled}`,
+      "     release o=Experimental,a=experimental",
+      "Pinned packages:",
+    ].join("\n");
+
+    expect(parseAptPolicySources(versions)).toEqual([installed, disabled]);
+    expect(parseAptPolicyPackageSources(versions).get("mousepad")).toEqual([
+      alternate,
+      installed,
+      disabled,
+    ]);
+    expect(parseAptPolicyOrigins(origins)).toEqual(
+      new Map([
+        [installed, "Vendor"],
+        [disabled, "Experimental"],
+      ]),
+    );
   });
 });
 
@@ -159,6 +209,28 @@ describe("parseAptPolicyOrigins", () => {
     );
     expect(parseAptPolicyOrigins(policy).get(source ?? "")).toBe("Ubuntu");
   });
+
+  it("keeps a configured status filename intact before reading the next row", () => {
+    const repository = "https://example.org/apt main amd64 Packages";
+    const statusFile = `/custom/installed\n 500 ${repository}`;
+    expect(
+      parseAptPolicyOrigins(
+        [
+          "Package files:",
+          ` 100 ${statusFile}`,
+          "     release a=now",
+          ` 500 ${repository}`,
+          "     release o=Vendor",
+        ].join("\n"),
+        statusFile,
+      ),
+    ).toEqual(
+      new Map([
+        [statusFile, null],
+        [repository, "Vendor"],
+      ]),
+    );
+  });
 });
 
 describe("parseAptPolicyPackageSources", () => {
@@ -186,7 +258,7 @@ describe("parseAptPolicyPackageSources", () => {
         " *** 2:3.98-1ubuntu0.3 500",
         `        500 ${updates}`,
         `        500 ${security}`,
-        `        100 ${statusFile}`,
+        `       1000 ${statusFile}`,
         "     2:3.98-1build1 500",
         `        500 ${noble}`,
         "typora:",
@@ -195,7 +267,7 @@ describe("parseAptPolicyPackageSources", () => {
         "  Version table:",
         " *** 1.14.9-1 500",
         `        500 ${typora}`,
-        `        100 ${statusFile}`,
+        `          1 ${statusFile}`,
         "     1.14.8-1 500",
         `        500 ${typora}`,
         "",

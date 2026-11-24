@@ -38,7 +38,7 @@ const VENDOR_V4_SIZE = 2128;
 const VENDOR_RAMDISK_ENTRY_SIZE = 108;
 const MAX_VENDOR_RAMDISKS = 4096;
 const MAX_RAMDISK_ENTRY_SIZE = 4096;
-const MAX_HEADER_SIZE = 1024 * 1024;
+const MAX_VENDOR_HEADER_SIZE = 1024 * 1024;
 const PAGE_MIN = 2048;
 const PAGE_MAX = 65536;
 const NAME_SIZE = 16;
@@ -140,7 +140,7 @@ export interface AvbFooterFacts {
 }
 
 /** The ParseFailure format of an Android boot or vendor boot image. */
-const ANDROID_BOOT_FORMAT = "android-boot-image";
+export const ANDROID_BOOT_FORMAT = "android-boot-image";
 
 const formatError = (message: string): never => {
   throw malformedInput(ANDROID_BOOT_FORMAT, message);
@@ -152,7 +152,7 @@ const capacityError = (message: string, limit: LimitRef): never => {
 
 const HEADER_SIZE_LIMIT = {
   name: "Android boot image header_size",
-  maximum: MAX_HEADER_SIZE,
+  maximum: MAX_VENDOR_HEADER_SIZE,
   unit: "bytes",
 };
 const VENDOR_RAMDISK_COUNT_LIMIT = {
@@ -193,14 +193,27 @@ const requireBytes = (buffer: Buffer, length: number, what: string): void => {
     );
 };
 
+const LE_BOOT_READERS = new WeakMap<Buffer, BinaryReader>();
+const BE_BOOT_READERS = new WeakMap<Buffer, BinaryReader>();
+
+const cachedBootReader = (buffer: Buffer, little: boolean): BinaryReader => {
+  const cache = little ? LE_BOOT_READERS : BE_BOOT_READERS;
+  let reader = cache.get(buffer);
+  if (reader === undefined) {
+    reader = new BinaryReader(buffer, little, ANDROID_BOOT_FORMAT);
+    cache.set(buffer, reader);
+  }
+  return reader;
+};
+
 const u32 = (buffer: Buffer, offset: number): number => {
   requireBytes(buffer, offset + 4, "header");
-  return new BinaryReader(buffer, true, ANDROID_BOOT_FORMAT).u32(offset);
+  return cachedBootReader(buffer, true).u32(offset);
 };
 
 const u64 = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = new BinaryReader(buffer, true, ANDROID_BOOT_FORMAT);
+  const reader = cachedBootReader(buffer, true);
   const low = reader.u32(offset);
   const high = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);
@@ -209,7 +222,7 @@ const u64 = (buffer: Buffer, offset: number, what: string): number => {
 
 const u64be = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = new BinaryReader(buffer, false, ANDROID_BOOT_FORMAT);
+  const reader = cachedBootReader(buffer, false);
   const high = reader.u32(offset);
   const low = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);
@@ -257,16 +270,17 @@ const requirePageSize = (value: number): number => {
 const requireHeaderSize = (
   value: number,
   minimum: number,
-  maximum: number,
+  maximum?: number,
 ): number => {
-  if (value > MAX_HEADER_SIZE)
-    capacityError(
-      `header_size ${value} exceeds the ${MAX_HEADER_SIZE} byte header bound`,
-      HEADER_SIZE_LIMIT,
-    );
-  if (!Number.isInteger(value) || value < minimum || value > maximum)
+  if (
+    !Number.isInteger(value) ||
+    value < minimum ||
+    (maximum !== undefined && value > maximum)
+  )
     formatError(
-      `header_size ${value} is outside the supported range ${minimum} through ${maximum}`,
+      maximum === undefined
+        ? `header_size ${value} is smaller than the ${minimum}-byte structure`
+        : `header_size ${value} is outside the supported range ${minimum} through ${maximum}`,
     );
   return value;
 };
@@ -766,6 +780,22 @@ const parseModernBoot = (
   });
 };
 
+const vendorTableByteLength = (
+  entryCount: number,
+  entrySize: number,
+): number => {
+  if (entryCount > 0 && entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
+    formatError(
+      `vendor ramdisk table entry size ${entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
+    );
+  const bytes = entryCount * entrySize;
+  if (!Number.isSafeInteger(bytes))
+    formatError(
+      `vendor ramdisk table dimensions ${entryCount} × ${entrySize} exceed a safe byte length`,
+    );
+  return bytes;
+};
+
 const parseVendorTableHeader = (
   prefix: Buffer,
 ): {
@@ -778,6 +808,17 @@ const parseVendorTableHeader = (
   const entryCount = u32(prefix, VENDOR_V3_SIZE + 4);
   const entrySize = u32(prefix, VENDOR_V3_SIZE + 8);
   const bootconfigSize = u32(prefix, VENDOR_V3_SIZE + 12);
+  if (vendorTableByteLength(entryCount, entrySize) !== tableSize)
+    formatError(
+      `vendor ramdisk table size ${tableSize} does not equal ${entryCount} entries of ${entrySize} bytes`,
+    );
+  return { tableSize, entryCount, entrySize, bootconfigSize };
+};
+
+const requireVendorTableCapacity = (
+  entryCount: number,
+  entrySize: number,
+): void => {
   if (entryCount > MAX_VENDOR_RAMDISKS)
     capacityError(
       `vendor ramdisk table declares more than ${MAX_VENDOR_RAMDISKS} entries`,
@@ -788,16 +829,6 @@ const parseVendorTableHeader = (
       `vendor ramdisk table entry size ${entrySize} exceeds the ${MAX_RAMDISK_ENTRY_SIZE} byte entry bound`,
       VENDOR_RAMDISK_ENTRY_SIZE_LIMIT,
     );
-  if (entryCount > 0 && entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
-    formatError(
-      `vendor ramdisk table entry size ${entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
-    );
-  const product = entryCount * entrySize;
-  if (!Number.isSafeInteger(product) || product !== tableSize)
-    formatError(
-      `vendor ramdisk table size ${tableSize} does not equal ${entryCount} entries of ${entrySize} bytes`,
-    );
-  return { tableSize, entryCount, entrySize, bootconfigSize };
 };
 
 const parseVendorHeader = (
@@ -820,11 +851,14 @@ const parseVendorHeader = (
   const vendorRamdiskSize = u32(prefix, 24);
   const tagsAddr = u32(prefix, 2076);
   const name = decodeField(prefix.subarray(2080, 2080 + NAME_SIZE));
-  const headerSize = requireHeaderSize(
-    u32(prefix, 2096),
-    structSize,
-    MAX_HEADER_SIZE,
-  );
+  const headerSize = requireHeaderSize(u32(prefix, 2096), structSize);
+  if (headerSize > MAX_VENDOR_HEADER_SIZE) {
+    requireFileCovers(fileSize, headerSize, []);
+    capacityError(
+      `header_size ${headerSize} exceeds the ${MAX_VENDOR_HEADER_SIZE} byte header bound`,
+      HEADER_SIZE_LIMIT,
+    );
+  }
   const dtbSize = u32(prefix, 2100);
   const dtbAddr = u64(prefix, 2104, "dtb address");
   const table = headerVersion === 4 ? parseVendorTableHeader(prefix) : null;
@@ -878,6 +912,8 @@ const parseVendorHeader = (
   const section = { offset: sectionOffset, size: vendorRamdiskSize };
   const declared = [...components, section, tableRange];
   const dataEnd = requireFileCovers(fileSize, headerSize, declared);
+  if (table !== null)
+    requireVendorTableCapacity(table.entryCount, table.entrySize);
   return bootParse({
     imageKind: "vendor-boot",
     magic: VENDOR_BOOT_MAGIC,
@@ -995,11 +1031,7 @@ const readVendorRamdiskTable = (
     readonly sectionSize: number;
   },
 ): VendorRamdiskTableParse => {
-  if (input.entryCount > 0 && input.entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
-    formatError(
-      `vendor ramdisk table entry size ${input.entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
-    );
-  const expected = input.entryCount * input.entrySize;
+  const expected = vendorTableByteLength(input.entryCount, input.entrySize);
   requireBytes(table, expected, "vendor ramdisk table");
   if (table.length > expected)
     formatError(
@@ -1009,15 +1041,15 @@ const readVendorRamdiskTable = (
   const used = new Set<string>();
   const empty: number[] = [];
   let longer = false;
+  let firstOverrunIndex: number | null = null;
   for (let index = 0; index < input.entryCount; index += 1) {
     const base = index * input.entrySize;
     const size = u32(table, base);
     const offset = u32(table, base + 4);
     const ramdiskType = u32(table, base + 8);
-    if (offset > input.sectionSize || size > input.sectionSize - offset)
-      formatError(
-        `vendor ramdisk table entry ${index} overruns the vendor ramdisk section`,
-      );
+    if (offset > input.sectionSize || size > input.sectionSize - offset) {
+      if (firstOverrunIndex === null) firstOverrunIndex = index;
+    }
     // An empty fragment carries no bytes to expose, like other zero-sized
     // components; omit it rather than rejecting the image.
     if (size === 0) {
@@ -1065,10 +1097,16 @@ const readVendorRamdiskTable = (
       current !== undefined &&
       previous.offset + previous.size > current.offset
     )
-      formatError(
+      throw malformedInput(
+        ANDROID_BOOT_FORMAT,
         `vendor ramdisk table entry ${current.index} overlaps entry ${previous.index}`,
+        { field: "vendor_ramdisk_table_overlap" },
       );
   }
+  if (firstOverrunIndex !== null)
+    formatError(
+      `vendor ramdisk table entry ${firstOverrunIndex} overruns the vendor ramdisk section`,
+    );
   const limitations: string[] = [];
   if (longer)
     limitations.push(
@@ -1097,7 +1135,9 @@ export const parseVendorRamdiskTable = (
 ): Result<VendorRamdiskTableParse, ParseFailureError> =>
   parsed(() => readVendorRamdiskTable(table, input));
 
-const absentFooter = (limitations: readonly string[] = []): AvbFooterFacts => ({
+export const absentAvbFooter = (
+  limitations: readonly string[] = [],
+): AvbFooterFacts => ({
   present: false,
   footerSize: null,
   versionMajor: null,
@@ -1108,6 +1148,10 @@ const absentFooter = (limitations: readonly string[] = []): AvbFooterFacts => ({
   limitations,
 });
 
+const avbOverlapError = (message: string): never => {
+  throw malformedInput(ANDROID_BOOT_FORMAT, message, { field: "avb_overlap" });
+};
+
 const rejectVbmetaOverlap = (
   vbmeta: { readonly offset: number; readonly size: number },
   fileSize: number,
@@ -1116,7 +1160,7 @@ const rejectVbmetaOverlap = (
 ): void => {
   if (vbmeta.size === 0) return;
   if (endOf(vbmeta.offset, vbmeta.size) > fileSize - AVB_FOOTER_SIZE)
-    formatError("AVB vbmeta overlaps the footer");
+    avbOverlapError("AVB vbmeta overlaps the footer");
   const occupied = [{ offset: 0, size: headerOccupied }, ...components];
   for (const componentRange of occupied)
     if (
@@ -1124,7 +1168,7 @@ const rejectVbmetaOverlap = (
       vbmeta.offset < componentRange.offset + componentRange.size &&
       componentRange.offset < vbmeta.offset + vbmeta.size
     )
-      formatError(
+      avbOverlapError(
         componentRange.offset === 0
           ? "AVB vbmeta overlaps the boot image header"
           : `AVB vbmeta overlaps a component at offset ${componentRange.offset}`,
@@ -1163,30 +1207,34 @@ const readAvbFooter = (input: {
     return formatError("AVB footer bytes were not supplied");
   if (offset === null || !tail?.subarray(0, 4).equals(AVB_FOOTER_MAGIC_BYTES)) {
     const trailing = input.fileSize - input.imageEnd;
-    if (trailing <= 0) return absentFooter();
-    return absentFooter([
+    if (trailing <= 0) return absentAvbFooter();
+    return absentAvbFooter([
       trailing < AVB_FOOTER_SIZE
         ? `${trailing} trailing bytes follow the boot image and are shorter than a 64-byte AVB footer.`
         : `${trailing} trailing bytes follow the boot image and were not decoded as an AVB footer.`,
     ]);
   }
-  const originalImageSize = u64be(tail, 12, "AVB original image size");
   const vbmetaOffset = u64be(tail, 20, "AVB vbmeta offset");
   const vbmetaSize = u64be(tail, 28, "AVB vbmeta size");
-  if (originalImageSize < input.dataEnd)
-    formatError(
-      `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
-    );
-  if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
-    formatError(
-      `AVB original image size ${originalImageSize} overlaps the footer`,
-    );
   rejectVbmetaOverlap(
     { offset: vbmetaOffset, size: vbmetaSize },
     input.fileSize,
     input.headerOccupied,
     input.components,
   );
+  const originalImageSize = u64be(tail, 12, "AVB original image size");
+  if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
+    avbOverlapError(
+      `AVB original image size ${originalImageSize} overlaps the footer`,
+    );
+  // vbmeta is appended after the original image, including any padding
+  // within that image. Existing component checks name specific collisions.
+  if (vbmetaSize > 0 && vbmetaOffset < originalImageSize)
+    avbOverlapError("AVB vbmeta overlaps the original boot image");
+  if (originalImageSize < input.dataEnd)
+    formatError(
+      `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
+    );
   return {
     present: true,
     footerSize: AVB_FOOTER_SIZE,

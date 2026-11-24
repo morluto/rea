@@ -249,10 +249,17 @@ const dossierWithCallees = (addresses: readonly string[]) => {
   });
 };
 
-it.each([
+it.each<{
+  label: string;
+  coverage: RelationshipCoverage | undefined;
+  providerLimitations: string[];
+  dossierLimitations: string[];
+  status: string;
+  exhaustive: boolean;
+}>([
   {
     label: "complete",
-    coverage: { status: "complete" } as RelationshipCoverage,
+    coverage: { status: "complete" },
     providerLimitations: ["The provider version identity is unavailable."],
     dossierLimitations: ["The dossier has no native value-flow observation."],
     status: "unknown",
@@ -263,7 +270,7 @@ it.each([
     coverage: {
       status: "complete",
       discovery: { callees: { status: "complete" } },
-    } as RelationshipCoverage,
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "not_found",
@@ -279,7 +286,7 @@ it.each([
           reason: "This node was classified as data.",
         },
       },
-    } as RelationshipCoverage,
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "unknown",
@@ -290,7 +297,8 @@ it.each([
     coverage: {
       status: "partial",
       limitations: ["Callee output was capped."],
-    } as RelationshipCoverage,
+      limited_directions: ["callees"],
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "unknown",
@@ -301,7 +309,8 @@ it.each([
     coverage: {
       status: "unknown",
       reason: "Callee coverage was not established.",
-    } as RelationshipCoverage,
+      limited_directions: ["callees"],
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "unknown",

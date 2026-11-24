@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { browserResponseStatusSchema } from "../browserObservation.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
 
@@ -20,7 +21,7 @@ export interface RecordedResponseBodyRead extends RecordedResponseBody {
 
 const responseDeclarationSchema = z.object({
   response: z.object({
-    status: z.unknown().optional(),
+    status: browserResponseStatusSchema.nullable().optional().catch(null),
     content: z.unknown().optional(),
   }),
 });
@@ -38,7 +39,7 @@ export const readRecordedResponseDeclaration = (reported: unknown) => {
   const { status, content } = parsed.data.response;
   const parsedContent = responseContentDeclarationSchema.safeParse(content);
   return {
-    status,
+    status: status ?? null,
     content: parsedContent.success
       ? parsedContent.data
       : content === null
@@ -50,14 +51,6 @@ export const readRecordedResponseDeclaration = (reported: unknown) => {
 export type RecordedResponseDeclaration = ReturnType<
   typeof readRecordedResponseDeclaration
 >;
-
-/** HAR's zero status sentinel and nonnumeric declarations do not prove a response status. */
-export const recordedResponseStatus = (
-  declaration: RecordedResponseDeclaration,
-): number | null => {
-  const status = declaration?.status;
-  return typeof status === "number" && status !== 0 ? status : null;
-};
 
 /** Strict, and keeping a leading byte-order mark, so callers see the recorded text unchanged. */
 const strictUtf8 = (): TextDecoder => strictUtf8Decoder("preserve");

@@ -34,6 +34,7 @@ import {
   windowsChangeTimeSettlePollMsSchema,
 } from "./windowsChangeTimeSettle.js";
 import { pwntoolsInputBytesSchema } from "./pwntoolsInputLimit.js";
+import { zstandardMaxFramesSchema } from "../domain/compression/zstandardFrameAllowance.js";
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,
@@ -67,6 +68,7 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
     REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: windowsChangeTimeSettlePollMsSchema,
     REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS:
       windowsChangeTimeSettleMaxPollsSchema,
+    REA_ZSTD_MAX_FRAMES: zstandardMaxFramesSchema,
   };
 export const launchAnalysisSetting = (
   id: AnalysisSettingId,

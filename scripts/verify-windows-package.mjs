@@ -6,10 +6,7 @@ import { parse as parseJsonc } from "jsonc-parser";
 import { supportedClients } from "../dist/application/SupportedClients.js";
 import { GHIDRA_BRIDGE_SOURCES } from "../src/ghidra/GhidraBridgeSources.ts";
 
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-
-import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
+import { verifyCanaryMcp } from "./lib/release-package-canary.mjs";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { verifyPackageUpdate } from "./verify-package-update.mjs";
@@ -126,35 +123,30 @@ try {
     throw new Error("Packaged Windows CLI help omitted analysis commands");
 
   timings.begin("mcp_catalog");
-  const server = new StdioClientTransport({
-    command: process.execPath,
-    args: [entry, "mcp"],
-    env: environment,
-    stderr: "pipe",
+  const { mcpTools: toolCount } = await verifyCanaryMcp(entry, workspace, {
+    commands,
+    environment: {
+      ...environment,
+      hopper_target_kind: "invalid-fixture-kind",
+      HOPPER_LOADER_ARGS_JSON: "{",
+    },
   });
-  const client = new Client({ name: "rea-windows-package", version: "1.0.0" });
-  let toolCount = 0;
-  await withVerifierCleanup(async () => {
-    await client.connect(server);
-    toolCount = (await verifyCompleteToolCatalog(client)).length;
-  }, [
-    async () => {
-      try {
-        await client.close();
-      } catch (cause) {
-        commands.adopt(client, entry);
-        throw cause;
-      }
-    },
-    async () => {
-      try {
-        await server.close();
-      } catch (cause) {
-        commands.adopt(server, entry);
-        throw cause;
-      }
-    },
-  ]);
+
+  timings.begin("mcp_doctor_target_free");
+  const mcpDoctor = JSON.parse(
+    (
+      await commands.exec(
+        process.execPath,
+        [entry, "mcp", "doctor", "--json"],
+        {
+          env: { ...environment, hopper_target_kind: "invalid-fixture-kind" },
+          windowsHide: true,
+        },
+      )
+    ).stdout,
+  );
+  if (mcpDoctor.healthy !== true || mcpDoctor.request_flow?.ok !== true)
+    throw new Error("Packaged Windows MCP doctor did not start target-free");
 
   timings.begin("setup");
   const home = join(workspace, "home");
@@ -285,6 +277,7 @@ try {
     platform: process.platform,
     package: packageResult.filename,
     tools: toolCount,
+    mcp_doctor_target_free: true,
     ghidra_bridge: "present",
     agent_setup: ["opencode", "vscode", "copilot_cli"],
     setup_idempotent: true,

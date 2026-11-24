@@ -1,4 +1,5 @@
-import { BinaryReader } from "../../domain/binaryContainer.js";
+import { BinaryReader, hasElfMagic } from "../../domain/binaryContainer.js";
+import { hasDosMzMagic } from "../../domain/dosMz.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
@@ -20,8 +21,14 @@ import {
   validateFatSliceIdentity,
   type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
-import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
+  readElfProgramHeader,
+} from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
@@ -49,16 +56,13 @@ import {
   ArtifactReaderFailure,
   artifactParseFailure,
 } from "../../resources/index.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { locatePeResourcePayloads } from "../../domain/pe/peResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 
 const CPU_TYPE_ARM64 = 0x0100000c;
 const PT_NOTE = 4;
 const PN_XNUM = 0xffff;
-const ELF64_PROGRAM_HEADER_BYTES = 56;
-const ELF32_PROGRAM_HEADER_BYTES = 32;
-const ELF64_SECTION_HEADER_BYTES = 64;
-const ELF32_SECTION_HEADER_BYTES = 40;
 const RT_RCDATA = 10;
 const RESOURCE_NAME = "D3N0L4ND";
 const SECTION_NAME = "d3n0l4nd";
@@ -178,9 +182,9 @@ const findDenoSection = async (
   const fat = readFatHeaderPrefix(prefix);
   if (thin !== null || fat.state === "incomplete" || fat.state === "parsed")
     return collapseRanges(carrier, "mach-o", await locateMachO(carrier));
-  if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
+  if (hasElfMagic(prefix))
     return collapseRanges(carrier, "elf", await locateElfNotes(carrier));
-  if (prefix[0] === 0x4d && prefix[1] === 0x5a)
+  if (hasDosMzMagic(prefix))
     return collapseRanges(
       carrier,
       "pe",
@@ -423,7 +427,10 @@ const locateIntelTrailers = async (
 ): Promise<SliceScan> => {
   const overlap = INTEL_SENTINEL.length + 8;
   let position = base + sliceSize;
-  let tail = Buffer.alloc(0);
+  const tailBuf = Buffer.allocUnsafe(overlap);
+  let tailLen = 0;
+  const seam = Buffer.allocUnsafe(overlap * 2);
+  const seamReader = new BinaryReader(seam, true, "deno");
   let examined = 0;
   let trailers: IntelTrailer[] = [];
   /** Sentinels of marker-confirmed trailers whose payload runs past the slice. */
@@ -432,17 +439,14 @@ const locateIntelTrailers = async (
   let undersized: number[] = [];
   const pending = (): boolean =>
     trailers.length > 0 || truncated.length > 0 || undersized.length > 0;
-  while (position > base) {
-    abortIfNeeded(carrier.signal);
-    const chunkStart = Math.max(base, position - INTEL_CHUNK_BYTES);
-    const chunk = await readExact(carrier, chunkStart, position - chunkStart);
-    if (chunk === undefined) {
-      if (pending())
-        throw denoCarrierFailure("Intel Mach-O slice is truncated");
-      return { found: [], unread: "is truncated before its trailer search" };
-    }
-    const window = tail.length === 0 ? chunk : Buffer.concat([chunk, tail]);
-    let searchFrom = chunk.length - 1;
+  const scanRange = async (
+    window: Buffer,
+    windowReader: BinaryReader | undefined,
+    windowFileOffset: number,
+    initialSearchFrom: number,
+  ): Promise<SliceScan | undefined> => {
+    let searchFrom = initialSearchFrom;
+    let lazyReader = windowReader;
     while (searchFrom >= 0) {
       const index = window.lastIndexOf(INTEL_SENTINEL, searchFrom);
       if (index < 0 || index > searchFrom) break;
@@ -455,12 +459,13 @@ const locateIntelTrailers = async (
         };
       }
       const lengthAt = index + INTEL_SENTINEL.length;
-      const sentinelStart = chunkStart + index;
+      const sentinelStart = windowFileOffset + index;
       searchFrom = index - 1;
       const at = BigInt(sentinelStart);
       if (owned.some((range) => at >= range.start && at < range.end)) continue;
       if (lengthAt + 8 > window.length) continue;
-      const claimed = new BinaryReader(window, true, "deno").word(lengthAt, 64);
+      lazyReader ??= new BinaryReader(window, true, "deno");
+      const claimed = lazyReader.word(lengthAt, 64);
       const sliceEnd = base + sliceSize;
       const offset = sentinelStart + INTEL_SENTINEL.length + 8;
       if (offset < base || offset > sliceEnd) continue;
@@ -500,7 +505,50 @@ const locateIntelTrailers = async (
         embedding: "mach-o-intel-trailer",
       });
     }
-    tail = Buffer.from(chunk.subarray(0, Math.min(chunk.length, overlap)));
+    return undefined;
+  };
+  while (position > base) {
+    abortIfNeeded(carrier.signal);
+    const chunkStart = Math.max(base, position - INTEL_CHUNK_BYTES);
+    const chunk = await readExact(carrier, chunkStart, position - chunkStart);
+    if (chunk === undefined) {
+      if (pending())
+        throw denoCarrierFailure("Intel Mach-O slice is truncated");
+      return { found: [], unread: "is truncated before its trailer search" };
+    }
+    if (tailLen === 0) {
+      const early = await scanRange(
+        chunk,
+        undefined,
+        chunkStart,
+        chunk.length - 1,
+      );
+      if (early !== undefined) return early;
+    } else {
+      const seamPrefixLen = Math.min(overlap, chunk.length);
+      const seamChunkStart = chunk.length - seamPrefixLen;
+      chunk.copy(seam, 0, seamChunkStart, chunk.length);
+      tailBuf.copy(seam, seamPrefixLen, 0, tailLen);
+      const seamEarly = await scanRange(
+        seam.subarray(0, seamPrefixLen + tailLen),
+        seamReader,
+        chunkStart + seamChunkStart,
+        seamPrefixLen - 1,
+      );
+      if (seamEarly !== undefined) return seamEarly;
+      if (seamChunkStart > 0) {
+        const chunkEarly = await scanRange(
+          chunk,
+          undefined,
+          chunkStart,
+          seamChunkStart - 1,
+        );
+        if (chunkEarly !== undefined) return chunkEarly;
+      }
+    }
+    const nextTailLen = Math.min(chunk.length, overlap);
+    chunk.copy(tailBuf, 0, 0, nextTailLen);
+    tailLen = nextTailLen;
     position = chunkStart;
   }
   if (truncated.length > 0)
@@ -550,7 +598,7 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
     walk.damage ??= denoCarrierFailure(detail);
   };
   const little = header.value.byteOrder === "little";
-  const wide = header.value.elfClass === 64;
+  const { elfClass } = header.value;
   const { programs, sections } = raw.value;
   if (programs.count === PN_XNUM)
     damaged("ELF extended program numbering is unsupported");
@@ -566,7 +614,7 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
           carrier,
           walk,
           programs,
-          wide ? ELF64_PROGRAM_HEADER_BYTES : ELF32_PROGRAM_HEADER_BYTES,
+          elfProgramHeaderWidth(elfClass),
           "program header table",
         );
   const sectionHeaders = sectionTable.ok
@@ -574,7 +622,7 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
         carrier,
         walk,
         sections,
-        wide ? ELF64_SECTION_HEADER_BYTES : ELF32_SECTION_HEADER_BYTES,
+        elfSectionHeaderWidth(elfClass),
         "section header table",
       )
     : undefined;
@@ -861,6 +909,20 @@ const locatePeResources = async (
       MAX_INSPECT_PE_DIRECTORY_ENTRIES,
     );
   } catch (cause) {
+    if (cause instanceof ParseFailureError && cause.failure.kind === "limit") {
+      const parserLimit = cause.failure.limit;
+      throw new ArtifactReaderFailure("limit", cause.message, {
+        cause,
+        boundary: "capacity",
+        parserLimit,
+        fixedAllowance: {
+          kind: "parser",
+          name: parserLimit.name,
+          limit: parserLimit.maximum,
+          unit: "entries",
+        },
+      });
+    }
     // Range reads tag cancellation at its origin. Coincidence with the
     // caller's abort reason cannot turn a physical read failure into cancellation.
     throw artifactParseFailure(cause, undefined);

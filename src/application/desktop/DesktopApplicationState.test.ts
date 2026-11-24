@@ -41,6 +41,7 @@ import {
   retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
+import { SQLITE_HEADER } from "../../domain/sqliteFormat.js";
 
 it("retains invalid capture JSON and the descriptor owner through failed final cleanup", async () => {
   const root = await createTestTempDirectory("rea-capture-read-cleanup-");
@@ -268,7 +269,7 @@ describe("inspectDesktopApplicationState", () => {
       extended({
         baseline: [
           retained(json, "null"),
-          retained(database, "SQLite format 3\0v1"),
+          retained(database, `${SQLITE_HEADER}v1`),
           retained(`${database}-wal`, "wal v1"),
         ],
         changes: [
@@ -353,7 +354,7 @@ describe("inspectDesktopApplicationState", () => {
     const database = `${HOME}/.config/notes/log.db`;
     const folder = await writeCaptureFolder(
       extended({
-        baseline: [retained(database, "SQLite format 3\0v1")],
+        baseline: [retained(database, `${SQLITE_HEADER}v1`)],
         changes: [
           {
             path: `${database}-wal`,
@@ -590,7 +591,7 @@ describe("SQLite sidecar checkpoint coverage", () => {
           { checkpoint_index: 1, view: null, view_error: expect.any(String) },
         ],
       );
-      expect(readVersions).toEqual(["SQLite format 3\0v1"]);
+      expect(readVersions).toEqual([`${SQLITE_HEADER}v1`]);
     },
   );
 });
@@ -733,7 +734,7 @@ describe("SQLite coherent checkpoint sets", () => {
       { checkpoint_index: 0, view_error: null },
       { checkpoint_index: 1, view: null, view_error: expect.any(String) },
     ]);
-    expect(readVersions).toEqual(["SQLite format 3\0v1"]);
+    expect(readVersions).toEqual([`${SQLITE_HEADER}v1`]);
   });
 
   it("reads a SQLite set explicitly recorded at the same incomplete checkpoint", async () => {
@@ -903,7 +904,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
     const database = `${HOME}/.config/notes/log.db`;
     const folder = await writeCaptureFolder(
       extended({
-        baseline: [retained(database, "SQLite format 3\0v1")],
+        baseline: [retained(database, `${SQLITE_HEADER}v1`)],
         changes: [
           change(`${database}-journal`, { after: "journal" }, { state: true }),
         ],
@@ -936,7 +937,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
     const database = `${HOME}/.config/notes/log.db`;
     const folder = await writeCaptureFolder(
       extended({
-        baseline: [retained(database, "SQLite format 3\0v1")],
+        baseline: [retained(database, `${SQLITE_HEADER}v1`)],
         changes: [
           {
             path: `${database}-journal`,
@@ -975,8 +976,8 @@ describe("inspectDesktopApplicationState database sidecars", () => {
     const saved = checkpoint(
       "saved",
       "request",
-      [change(database, { after: "SQLite format 3\0v2" }, { state: true })],
-      [retained(database, "SQLite format 3\0v2")],
+      [change(database, { after: `${SQLITE_HEADER}v2` }, { state: true })],
+      [retained(database, `${SQLITE_HEADER}v2`)],
     );
     const folder = await writeCaptureFolder(
       {
@@ -1008,7 +1009,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
     const folder = await writeCaptureFolder(
       extended({
         baseline: [
-          retained(`${HOME}/.local/share/notes/zz.db`, "SQLite format 3\0v1"),
+          retained(`${HOME}/.local/share/notes/zz.db`, `${SQLITE_HEADER}v1`),
         ],
       }),
     );
@@ -1039,7 +1040,7 @@ describe("inspectDesktopApplicationState database selected on its own", () => {
   /** The fixture capture with a database outside home retained under these content roots. */
   const selecting = (roots: readonly string[]): DesktopApplicationCapture => {
     const base = extended({
-      baseline: [retained(books, "SQLite format 3\0v1")],
+      baseline: [retained(books, `${SQLITE_HEADER}v1`)],
     });
     return {
       ...base,

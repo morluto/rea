@@ -25,8 +25,31 @@ import {
   javaScriptRuntimeContext,
   parseJavaScriptSource,
   parseRecoveredJavaScript,
-  parserPluginsForPath,
 } from "./javascriptSourceParser.js";
+
+it.each([
+  ["entry.cts", ["ReservedArrowTypeParam"]],
+  ["entry.mts", ["ReservedArrowTypeParam"]],
+  ["entry.ts", []],
+] as const)(
+  "applies the TypeScript suffix grammar for %s and preserves recovered declarations",
+  (path, errors) => {
+    const source = [
+      "const ambiguous = <T>(value: T) => value;",
+      "const explicit = <T,>(value: T) => value;",
+      "const constrained = <T extends unknown>(value: T) => value;",
+      'const angle = <string>"value";',
+      'const assertion = "value" as string;',
+    ].join("\n");
+    const application = parseJavaScriptSource(source, path);
+    const reference = parseRecoveredJavaScript(source, path, {}).file;
+    if (application === null) throw new Error("Expected recovered source");
+    for (const file of [application, reference]) {
+      expect(file.errors.map(({ reasonCode }) => reasonCode)).toEqual(errors);
+      expect(file.program.body).toHaveLength(5);
+    }
+  },
+);
 
 it.each([
   ["main.js", "commonjs", "void new.target; return;", false],
@@ -48,7 +71,6 @@ it.each([
       source,
       path,
       {
-        plugins: parserPluginsForPath(path),
         allowReturnOutsideFunction: true,
       },
       packageType,
@@ -70,7 +92,7 @@ it.each([
     const reference = parseRecoveredJavaScript(
       source,
       path,
-      { plugins: parserPluginsForPath(path) },
+      {},
       packageType,
     ).file;
 
@@ -106,7 +128,6 @@ it.each([
         source,
         "entry.js",
         {
-          plugins: parserPluginsForPath("entry.js"),
           allowReturnOutsideFunction: true,
         },
         context,
@@ -152,7 +173,7 @@ it.each([
     const reference = parseRecoveredJavaScript(
       source,
       "entry.js",
-      { plugins: parserPluginsForPath("entry.js") },
+      {},
       "unspecified",
     ).file;
     expect(application?.errors).toEqual([]);
@@ -215,14 +236,7 @@ it.each([
 ] as const)(
   "preserves parser-owned %s context over an observed %s package type",
   (path, observed, expected) => {
-    const parsed = parseRecoveredJavaScript(
-      "",
-      path,
-      {
-        plugins: parserPluginsForPath(path),
-      },
-      observed,
-    );
+    const parsed = parseRecoveredJavaScript("", path, {}, observed);
     expect(parsed.file.errors).toEqual([]);
     expect(parsed.moduleOnlyErrors).toEqual([]);
     expect(javaScriptRuntimeContext(parsed.file.program)).toBe(expected);
@@ -252,7 +266,7 @@ it.each([
   const { file } = parseRecoveredJavaScript(
     'import {join} from "node:path"; require("./dep.cjs");',
     path,
-    { plugins: parserPluginsForPath(path) },
+    {},
     "module",
   );
   expect(javaScriptRuntimeContext(file.program)).toBe("unknown");

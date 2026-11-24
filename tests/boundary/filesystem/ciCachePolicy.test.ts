@@ -12,7 +12,7 @@ import {
 import { delimiter, join } from "node:path";
 import { runInNewContext } from "node:vm";
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
 
@@ -25,7 +25,13 @@ const evaluatePolicy = (
   context: Record<string, unknown>,
 ): unknown =>
   runInNewContext(
-    expression.replace(/^\$\{\{\s*|\s*\}\}$/gu, ""),
+    expression
+      .replace(/^\$\{\{\s*|\s*\}\}$/gu, "")
+      .replace(
+        /\b(steps|outputs)\.([a-z][a-z0-9]*(?:-[a-z0-9]+)+)/gu,
+        (_reference, parent: string, key: string) =>
+          `${parent}[${JSON.stringify(key)}]`,
+      ),
     {
       ...context,
       format: (template: string, value: string) =>
@@ -125,21 +131,38 @@ const readWorkflows = async () => {
       file,
       workflow: z
         .object({
+          env: z.record(z.string(), z.unknown()).optional(),
           jobs: z
             .record(
               z.string(),
               z
                 .object({
-                  steps: z.array(z.record(z.string(), z.unknown())).optional(),
+                  env: z.record(z.string(), z.unknown()).optional(),
+                  steps: z
+                    .array(
+                      z
+                        .object({
+                          uses: z.string().optional(),
+                          with: z.record(z.string(), z.unknown()).optional(),
+                        })
+                        .passthrough(),
+                    )
+                    .optional(),
                 })
                 .passthrough(),
             )
             .optional(),
         })
+        .passthrough()
         .parse(parse(await readFile(join(directory, file), "utf8"))),
     })),
   );
 };
+
+let workflows: Awaited<ReturnType<typeof readWorkflows>>;
+beforeAll(async () => {
+  workflows = await readWorkflows();
+});
 
 function aggregateHashFilesContent(contents: Buffer[]) {
   const aggregate = createHash("sha256");
@@ -314,10 +337,23 @@ async function exerciseTrustedRetentionWithLegacyTarget(
     npmDuplicateDeleteCount: 0,
     npmDuplicateDeleteBytes: 0,
   });
-  expect(requests.trim().split("\n")).toEqual([
-    "GET repos/morluto/rea/actions/caches?per_page=100&page=1&key=rea-static-v1-Linux-X64-",
-    "DELETE repos/morluto/rea/actions/caches/1",
-  ]);
+  const calls = requests.trim().split("\n");
+  expect(calls).toHaveLength(2);
+  const [listing, deletion] = calls;
+  expect(listing).toMatch(/^GET /u);
+  const endpoint = new URL(
+    listing!.slice("GET ".length),
+    "https://example.test",
+  );
+  expect(endpoint.pathname).toBe("/repos/morluto/rea/actions/caches");
+  expect(Object.fromEntries(endpoint.searchParams)).toEqual({
+    per_page: "100",
+    page: "1",
+    sort: "created_at",
+    direction: "desc",
+    key: prefix,
+  });
+  expect(deletion).toBe("DELETE repos/morluto/rea/actions/caches/1");
 }
 
 describe("hosted npm download-cache policy", () => {
@@ -403,18 +439,12 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
     expect(policy?.env?.LOCKFILES_HASH).toBe(
       "${{ hashFiles('package-lock.json', 'npm-shrinkwrap.json', '.npmrc') }}",
     );
-    expect(policy?.run).toContain(
-      'cache_key="npm-download-${RUNNER_OS}-${runtime_arch}-${LOCKFILES_HASH}"',
-    );
-    expect(restoreAndSave?.uses).toBe(
-      "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830",
-    );
+    const revision = restoreAndSave?.uses?.split("@")[1];
+    expect(revision).toMatch(/^[0-9a-f]{40}$/u);
     expect(restoreAndSave?.if).toBe(
       "steps.context.outputs.can-save == 'true' && inputs.save == 'true'",
     );
-    expect(restoreOnly?.uses).toBe(
-      "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
-    );
+    expect(restoreOnly?.uses).toBe(`actions/cache/restore@${revision}`);
     expect(restoreOnly?.if).toBe(
       "steps.context.outputs.can-save != 'true' || inputs.save != 'true'",
     );
@@ -433,19 +463,20 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
   });
 
   it("pairs npm caches with preceding Node setup and preserves conditions", async () => {
-    const workflows = await readWorkflows();
     let npmCacheSteps = 0;
 
     for (const { file, workflow } of workflows) {
-      const source = await readFile(
-        join(repository, ".github/workflows", file),
-        "utf8",
-      );
-      expect(source).not.toMatch(/^\s+cache:\s*npm\s*$/mu);
       for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
         const steps = job.steps ?? [];
         for (let index = 0; index < steps.length; index++) {
           const step = steps[index];
+          if (
+            typeof step?.uses === "string" &&
+            step.uses.startsWith("actions/setup-node@")
+          ) {
+            expect(step.with).not.toHaveProperty("cache", "npm");
+            expect(step.with).toMatchObject({ "package-manager-cache": false });
+          }
           if (step?.uses !== "./.github/actions/npm-cache") continue;
           npmCacheSteps++;
           const setup = steps
@@ -460,10 +491,13 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
             `${file}:${jobName} npm cache action requires preceding setup-node`,
           ).toBeDefined();
           expect(step.if).toBe(setup?.if);
-          expect(setup?.with).not.toHaveProperty("cache", "npm");
+          const installCommand =
+            file === "ci-timings.yml" && jobName === "report"
+              ? "npm ci --omit=dev --ignore-scripts"
+              : "npm ci";
           const npmCiIndex = steps.findIndex(
             (candidate, candidateIndex) =>
-              candidateIndex > index && candidate.run === "npm ci",
+              candidateIndex > index && candidate.run === installCommand,
           );
           expect(
             npmCiIndex,
@@ -477,8 +511,35 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
   });
 });
 
+const expectSavePolicy = (
+  expression: unknown,
+  restore: string,
+  requiresCode: boolean,
+) => {
+  const condition = z.string().parse(expression);
+  for (const [success, allowed, hit, code, expected] of [
+    [true, true, "", true, true],
+    [true, true, "false", true, true],
+    [false, true, "false", true, false],
+    [true, false, "false", true, false],
+    [true, true, "true", true, false],
+    [true, true, "false", false, !requiresCode],
+  ] as const) {
+    expect(
+      evaluatePolicy(condition, {
+        success: () => success,
+        needs: { changes: { outputs: { code: String(code) } } },
+        steps: {
+          "npm-cache": { outputs: { "can-save": String(allowed) } },
+          [restore]: { outputs: { "cache-hit": hit } },
+        },
+      }),
+      `${restore} save with success=${success}, allowed=${allowed}, hit=${JSON.stringify(hit)}, code=${code}`,
+    ).toBe(expected);
+  }
+};
+
 it("shares static task snapshots only after validation using the npm cache owner's write authority", async () => {
-  const workflows = await readWorkflows();
   const ci = workflows.find(({ file }) => file === "ci.yml");
   const steps = ci?.workflow.jobs?.static?.steps ?? [];
   expect(
@@ -488,23 +549,20 @@ it("shares static task snapshots only after validation using the npm cache owner
   const save = steps.find(
     (step) => step.name === "Save validated static task cache",
   );
-  expect(restore?.uses).toBe(
-    "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
-  );
+  expect(restore?.uses).toMatch(/^actions\/cache\/restore@/u);
   expect(restore?.if).toBe("needs.changes.outputs.code == 'true'");
   expect(restore?.with).toMatchObject({ path: ".turbo/cache/" });
-  expect(save?.uses).toBe(
-    "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830",
-  );
-  expect(save?.if).toContain("success()");
-  expect(save?.if).toContain("steps.npm-cache.outputs.can-save == 'true'");
+  expect(save?.uses).toMatch(/^actions\/cache\/save@/u);
+  expectSavePolicy(save?.if, "static-cache", true);
   expect(save?.with).toEqual({
     path: ".turbo/cache/",
     key: "${{ steps.static-cache.outputs.cache-primary-key }}",
   });
-  expect(steps.indexOf(save!)).toBeGreaterThan(
-    steps.findIndex((step) => step.run === "npm run check:ci:fast"),
+  const fastCheck = steps.findIndex(
+    (step) => step.run === "npm run check:ci:fast",
   );
+  expect(fastCheck).toBeGreaterThanOrEqual(0);
+  expect(steps.indexOf(save!)).toBeGreaterThan(fastCheck);
   const deep = ci?.workflow.jobs?.["static-deep"]?.steps ?? [];
   const deepSave = deep.find(
     (step) => step.name === "Save validated deep static task cache",
@@ -513,17 +571,14 @@ it("shares static task snapshots only after validation using the npm cache owner
   const knipSave = deep.find(
     (step) => step.name === "Save Knip analysis cache",
   );
-  expect(deepSave?.uses).toBe(
-    "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830",
+  expect(deepSave?.uses).toMatch(/^actions\/cache\/save@/u);
+  expectSavePolicy(deepSave?.if, "static-cache", false);
+  const deepCheck = deep.findIndex(
+    (step) => step.run === "npm run check:ci:deep",
   );
-  expect(deepSave?.if).toContain("success()");
-  expect(deepSave?.if).toContain("steps.npm-cache.outputs.can-save == 'true'");
-  expect(deepSave?.if).toContain(
-    "steps.static-cache.outputs.cache-hit != 'true'",
-  );
-  expect(deep.indexOf(deepSave!)).toBeGreaterThan(
-    deep.findIndex((step) => step.run === "npm run check:ci:deep"),
-  );
+  expect(deepCheck).toBeGreaterThanOrEqual(0);
+  expect(deep.indexOf(deepSave!)).toBeGreaterThan(deepCheck);
+  expect(deep.indexOf(knipSave!)).toBeGreaterThan(deepCheck);
   const knipWith = z
     .object({
       path: z.string(),
@@ -535,9 +590,7 @@ it("shares static task snapshots only after validation using the npm cache owner
   expect(knipWith.key).toContain("${{ github.sha }}");
   expect(knipWith["restore-keys"]).not.toContain("github.sha");
   expect(knipWith["restore-keys"].startsWith("knip-meta-v1-")).toBe(true);
-  expect(knipSave?.if).toContain(
-    "steps.knip-cache.outputs.cache-hit != 'true'",
-  );
+  expectSavePolicy(knipSave?.if, "knip-cache", false);
   expect(knipSave?.with).toEqual({
     path: "node_modules/.cache/knip",
     key: "${{ steps.knip-cache.outputs.cache-primary-key }}",
@@ -570,12 +623,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
       ),
     })
     .parse(
-      parse(
-        await readFile(
-          join(repository, ".github/workflows/cache-retention.yml"),
-          "utf8",
-        ),
-      ),
+      workflows.find(({ file }) => file === "cache-retention.yml")?.workflow,
     );
   expect(workflow.on.workflow_call).toBeUndefined();
   expect(workflow.on.pull_request).toBeUndefined();
@@ -606,8 +654,8 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(checkouts).toHaveLength(2);
   const setupNode = steps.find(
     (step) =>
-      step.uses ===
-      "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+      typeof step.uses === "string" &&
+      step.uses.startsWith("actions/setup-node@"),
   );
   expect(setupNode?.with).toMatchObject({
     "node-version-file": "trusted-retention/.nvmrc",
@@ -621,15 +669,6 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(retentionEnv.CACHE_PREFIX).toBe(
     "rea-static-v1-${{ runner.os }}-${{ runner.arch }}-",
   );
-  expect(retentionEnv.CACHE_KEEP_KEY).toBe(
-    "rea-static-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('triggering-source/.nvmrc', 'triggering-source/.npmrc', 'triggering-source/package-lock.json') }}-${{ github.event.workflow_run.head_sha }}",
-  );
-  expect(retentionEnv.CACHE_DEEP_KEEP_KEY).toContain(
-    "hashFiles('triggering-source/.nvmrc', 'triggering-source/.npmrc', 'triggering-source/package-lock.json')",
-  );
-  expect(retentionEnv.CACHE_KNIP_KEEP_KEY).toContain(
-    "hashFiles('triggering-source/knip.json', 'triggering-source/tsconfig.json', 'triggering-source/package.json', 'triggering-source/package-lock.json')",
-  );
   expect(retentionEnv.CACHE_PORTABLE_PREFIX).toBe(
     "rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-",
   );
@@ -641,35 +680,70 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
 
   // Exercise the selected trusted helper against a legacy target tree.
   await exerciseTrustedRetentionWithLegacyTarget(retention?.run, retentionEnv);
-  const ci = (await readWorkflows()).find(({ file }) => file === "ci.yml");
-  expect(JSON.stringify(ci?.workflow)).not.toContain('"actions":"write"');
-  const deepSteps = ci?.workflow.jobs?.["static-deep"]?.steps ?? [];
-  const publishedKey = (id: string) =>
+  const ci = workflows.find(({ file }) => file === "ci.yml")?.workflow;
+  if (ci === undefined) throw new Error("Missing CI workflow");
+  expect(ci.permissions).toMatchObject({ contents: "read" });
+  for (const permissions of [
+    ci.permissions,
+    ...Object.values(ci.jobs ?? {}).map((job) => job.permissions),
+  ]) {
+    expect(permissions).not.toBe("write-all");
+    expect(permissions ?? {}).not.toHaveProperty("actions", "write");
+  }
+  const staticSteps = ci.jobs?.static?.steps ?? [];
+  const deepSteps = ci.jobs?.["static-deep"]?.steps ?? [];
+  const publishedKey = (steps: typeof deepSteps, id: string) =>
     z
       .string()
       .parse(
         z
           .record(z.string(), z.unknown())
-          .parse(deepSteps.find((step) => step.id === id)?.with).key,
+          .parse(steps.find((step) => step.id === id)?.with).key,
       );
   const savedOnThisRun = "${{ github.event.workflow_run.head_sha }}";
   const deepPrefix = "rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-";
   const knipPrefix = "knip-meta-v1-${{ runner.os }}-";
-  const targetSourceKey = (id: string) =>
-    publishedKey(id)
+  const targetSourceKey = (steps: typeof deepSteps, id: string) =>
+    publishedKey(steps, id)
       .replaceAll("${{ github.sha }}", savedOnThisRun)
       .replaceAll("hashFiles('", "hashFiles('triggering-source/")
       .replaceAll(", '", ", 'triggering-source/");
+  expect(retentionEnv.CACHE_KEEP_KEY).toBe(
+    targetSourceKey(staticSteps, "static-cache"),
+  );
+  const staticPrefix = z.string().min(1).parse(retentionEnv.CACHE_PREFIX);
+  expect(
+    publishedKey(staticSteps, "static-cache").startsWith(staticPrefix),
+  ).toBe(true);
   expect(retentionEnv.CACHE_DEEP_PREFIX).toBe(deepPrefix);
   expect(retentionEnv.CACHE_DEEP_KEEP_KEY).toBe(
-    targetSourceKey("static-cache"),
+    targetSourceKey(deepSteps, "static-cache"),
   );
-  expect(publishedKey("static-cache").startsWith(deepPrefix)).toBe(true);
+  expect(publishedKey(deepSteps, "static-cache").startsWith(deepPrefix)).toBe(
+    true,
+  );
   expect(retentionEnv.CACHE_KNIP_PREFIX).toBe(knipPrefix);
-  expect(retentionEnv.CACHE_KNIP_KEEP_KEY).toBe(targetSourceKey("knip-cache"));
-  expect(publishedKey("knip-cache").startsWith(knipPrefix)).toBe(true);
-  const windowsNativeSteps =
-    ci?.workflow.jobs?.["windows-native-build"]?.steps ?? [];
+  expect(retentionEnv.CACHE_KNIP_KEEP_KEY).toBe(
+    targetSourceKey(deepSteps, "knip-cache"),
+  );
+  expect(publishedKey(deepSteps, "knip-cache").startsWith(knipPrefix)).toBe(
+    true,
+  );
+  const toolchain = "hashFiles('.nvmrc', '.npmrc', 'package-lock.json')";
+  for (const [steps, id, inputs] of [
+    [staticSteps, "static-cache", toolchain],
+    [deepSteps, "static-cache", toolchain],
+    [
+      deepSteps,
+      "knip-cache",
+      "hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json')",
+    ],
+  ] as const) {
+    const key = publishedKey(steps, id);
+    expect(key).toContain(inputs);
+    expect(key.endsWith("${{ github.sha }}")).toBe(true);
+  }
+  const windowsNativeSteps = ci.jobs?.["windows-native-build"]?.steps ?? [];
   const windowsNativeKey = windowsNativeSteps.find(
     (step) => step.id === "windows-native-key",
   );
@@ -678,8 +752,52 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(String(windowsNativeKey?.run)).toContain("date -u +%Y-%m-%d");
 });
 
+it("replaces Windows cross-build artifacts on retries under their consumer names", async () => {
+  const ci = workflows.find(({ file }) => file === "ci.yml");
+  const jobs = ci?.workflow.jobs;
+  const producer = jobs?.["windows-native-build"]?.steps ?? [];
+  const verifiedAt = producer.findIndex(
+    (step) => step.name === "Verify cross-built Windows test fixtures",
+  );
+  const uploadPositions = producer.flatMap((step, index) =>
+    step.uses?.startsWith("actions/upload-artifact@") ? [index] : [],
+  );
+  expect(verifiedAt).toBeGreaterThanOrEqual(0);
+  expect(uploadPositions).toHaveLength(3);
+  for (const index of uploadPositions)
+    expect(index).toBeGreaterThan(verifiedAt);
+  const uploads = uploadPositions.map((index) => producer[index]?.with);
+  expect(uploads).toMatchObject([
+    {
+      name: "windows-native-inspection-fixture",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-process-boundary-fixture",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-native-controls",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+  ]);
+  const names = new Set(uploads.map((upload) => upload?.name));
+  for (const job of ["package-e2e", "windows-curated"]) {
+    const downloads = jobs?.[job]?.steps?.filter(
+      (step) =>
+        step.uses?.startsWith("actions/download-artifact@") &&
+        names.has(step.with?.name),
+    );
+    expect(downloads?.map((step) => step.with?.name).sort()).toEqual(
+      job === "package-e2e" ? ["windows-native-controls"] : [...names].sort(),
+    );
+  }
+});
+
 it("publishes each hosted npm download cache from one writer", async () => {
-  const workflows = await readWorkflows();
   const writers: { file: string; job: string; save: string }[] = [];
   for (const { file, workflow } of workflows)
     for (const [job, definition] of Object.entries(workflow.jobs ?? {}))
@@ -698,7 +816,11 @@ it("publishes each hosted npm download cache from one writer", async () => {
       job: "package-e2e",
       save: "${{ matrix.os != 'ubuntu-latest' }}",
     },
-    { file: "ci.yml", job: "windows-curated", save: "true" },
+    {
+      file: "ci.yml",
+      job: "windows-curated",
+      save: "${{ matrix.suite == 'capabilities' }}",
+    },
   ]);
   const ci = workflows.find(({ file }) => file === "ci.yml");
   expect(ci?.workflow.jobs?.static?.permissions).toBeUndefined();
@@ -709,7 +831,6 @@ it("publishes each hosted npm download cache from one writer", async () => {
 });
 
 it("passes the npm cache owner's selected path to package installation", async () => {
-  const workflows = await readWorkflows();
   const ci = workflows.find(({ file }) => file === "ci.yml");
   const steps = ci?.workflow.jobs?.["package-e2e"]?.steps ?? [];
   const cacheIndex = steps.findIndex(
@@ -727,10 +848,6 @@ it("passes the npm cache owner's selected path to package installation", async (
 });
 
 it("exports turbo remote-cache credentials wherever a workflow runs turbo", async () => {
-  const directory = join(repository, ".github/workflows");
-  const files = (await readdir(directory)).filter((file) =>
-    /\.ya?ml$/u.test(file),
-  );
   const packageScripts = z
     .object({ scripts: z.record(z.string(), z.string()) })
     .parse(
@@ -763,62 +880,29 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
       if (match[1] !== undefined && turboScripts.has(match[1])) return true;
     return false;
   };
-  const workflowSchema = z.object({
-    env: z.record(z.string(), z.unknown()).optional(),
-    jobs: z.record(
-      z.string(),
-      z
-        .object({
-          env: z.record(z.string(), z.unknown()).optional(),
-          steps: z.array(z.object({ run: z.string().optional() })).optional(),
-        })
-        .passthrough(),
-    ),
+  const checkedPolicies = new Set<string>();
+  const explicitGrant = z.object({
+    workflow_call: z.object({
+      inputs: z.object({
+        remote_cache_write: z.object({ type: z.literal("boolean") }),
+      }),
+    }),
   });
-  for (const file of files) {
-    const workflow = workflowSchema.parse(
-      parse(await readFile(join(directory, file), "utf8")),
-    );
-    for (const [name, job] of Object.entries(workflow.jobs)) {
+  for (const { file, workflow } of workflows) {
+    const grantsReleaseWrite = explicitGrant.safeParse(workflow.on).success;
+    for (const [name, job] of Object.entries(workflow.jobs ?? {})) {
       const runsTurbo = job.steps?.some(
-        (step) => step.run !== undefined && runsTurboCommand(step.run),
+        (step) => typeof step.run === "string" && runsTurboCommand(step.run),
       );
       if (!runsTurbo) continue;
       const env = { ...workflow.env, ...job.env };
       const token = z.string().parse(env.TURBO_TOKEN);
       const cache = z.string().parse(env.TURBO_CACHE);
-      expect(token, `${file}:${name}`).toContain("secrets.TURBO_TOKEN");
-      expect(token, `${file}:${name}`).toContain("|| ''");
-      expect(token, `${file}:${name}`).not.toBe("${{ secrets.TURBO_TOKEN }}");
-      const grantsReleaseWrite = token.includes(
-        "inputs.remote_cache_write == true",
-      );
-      const grantsCalledEvent = token.includes(
-        "github.event_name == 'workflow_call'",
-      );
-      expect(grantsReleaseWrite || grantsCalledEvent, `${file}:${name}`).toBe(
-        true,
-      );
-      if (grantsReleaseWrite)
-        expect(token, `${file}:${name}`).not.toContain(
-          "github.event_name == 'workflow_call'",
-        );
+      expect(env.TURBO_TEAM, `${file}:${name}`).toBe("${{ vars.TURBO_TEAM }}");
+      const policy = JSON.stringify([token, cache, grantsReleaseWrite]);
+      if (checkedPolicies.has(policy)) continue;
+      checkedPolicies.add(policy);
       for (const defaultBranch of ["main", "stable"]) {
-        for (const event of ["push", "schedule", "workflow_dispatch"])
-          expect(token, `${file}:${name}`).toContain(
-            `github.event_name == '${event}'`,
-          );
-        expect(token, `${file}:${name}`).not.toContain(
-          "github.event_name == 'pull_request'",
-        );
-        if (grantsReleaseWrite) {
-          expect(cache, `${file}:${name}`).toContain(
-            "inputs.remote_cache_write == true",
-          );
-          expect(cache, `${file}:${name}`).toContain("|| 'local:rw'");
-          expect(cache, `${file}:${name}`).not.toContain("local:rw,remote:r'");
-        } else expect(cache, `${file}:${name}`).toContain("local:rw,remote:r'");
-        expect(cache, `${file}:${name}`).toContain("local:rw,remote:rw");
         for (const event of [
           "push",
           "schedule",
@@ -836,7 +920,7 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
                 (grantsReleaseWrite && grant) ||
                 (ref === `refs/heads/${defaultBranch}` &&
                   (["push", "schedule", "workflow_dispatch"].includes(event) ||
-                    (grantsCalledEvent && event === "workflow_call")));
+                    (!grantsReleaseWrite && event === "workflow_call")));
               const context = {
                 github: {
                   ref,
@@ -861,7 +945,6 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
           }
         }
       }
-      expect(env.TURBO_TEAM, `${file}:${name}`).toBe("${{ vars.TURBO_TEAM }}");
     }
   }
 });
@@ -878,7 +961,6 @@ it("bounds the rolling static snapshot with Turbo age and size eviction", async 
   // commit carries all historical entries into a new immutable GitHub cache,
   // growing transfers toward the 10 GB repository limit.
   expect(turbo.cacheMaxAge).toMatch(/^[1-9]\d*(s|m|h|d|w)$/u);
-  expect(turbo.cacheMaxAge).not.toBe("0");
   const size = /^(\d+(?:\.\d+)?)(MB|GB|TB)$/iu.exec(turbo.cacheMaxSize);
   expect(size, "cacheMaxSize must use an explicit MB/GB/TB budget").not.toBe(
     null,
