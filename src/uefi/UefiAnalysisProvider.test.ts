@@ -57,6 +57,7 @@ import {
   UefiAnalysisProvider,
   buildUefiEntryPointScaffolding,
   detectPeTeMachineWidth,
+  isPhaseSupportedByFfsType,
   parsePeTeHeader,
   phaseFromFfsTypeName,
   sanitizeCComment,
@@ -9865,4 +9866,111 @@ it("exercises factory-created provider to assert caller-selected environment is 
       delete process.env.REA_OBJDUMP_COMMAND;
     }
   }
+});
+
+it("strictly sanitizes C comments, newlines, null bytes, and comment delimiters in module rawName and typeName", () => {
+  const maliciousName =
+    "ExploitDriver*/\n#define INJECTED_MACRO 1\r\n/* \x00\x1b[31mEnd";
+  const sanitized = sanitizeCComment(maliciousName);
+  expect(sanitized).not.toContain("*/");
+  expect(sanitized).toContain("* /");
+  expect(sanitized).not.toContain("\n");
+  expect(sanitized).not.toContain("\r");
+  expect(sanitized).not.toContain("\0");
+  expect(sanitized).not.toContain("\x1b");
+
+  const scaffold = buildUefiEntryPointScaffolding(
+    "ExploitDriver",
+    maliciousName,
+    1024,
+    "DXE",
+    "driver*/\n#include <evil.h>",
+    "64",
+  );
+  expect(scaffold.functionDefinition).not.toContain("*/\n");
+  expect(scaffold.functionDefinition).toContain(
+    "EFI_STATUS EFIAPI ExploitDriverEntryPoint(",
+  );
+  expect(scaffold.prototype).toBe(
+    "EFI_STATUS EFIAPI ExploitDriverEntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);",
+  );
+});
+
+it("detects machine width robustly under corrupted TE/PE headers and refuses mismatched optional-header magics", () => {
+  // Truncated / empty buffers
+  expect(detectPeTeMachineWidth(Buffer.alloc(0))).toBe("unknown");
+  expect(detectPeTeMachineWidth(Buffer.from([0x56]))).toBe("unknown");
+  expect(detectPeTeMachineWidth(Buffer.from([0x56, 0x5a]))).toBe("unknown"); // VZ only 2 bytes
+
+  // TE headers with various machine architectures
+  const makeTe = (machine: number) => {
+    const buf = Buffer.alloc(40);
+    buf[0] = 0x56;
+    buf[1] = 0x5a; // "VZ"
+    buf.writeUInt16LE(machine, 2);
+    buf[4] = 1; // 1 section
+    return buf;
+  };
+
+  expect(detectPeTeMachineWidth(makeTe(0xaa64))).toBe("64"); // ARM64
+  expect(detectPeTeMachineWidth(makeTe(0x8664))).toBe("64"); // x86_64
+  expect(detectPeTeMachineWidth(makeTe(0x014c))).toBe("32"); // x86
+  expect(detectPeTeMachineWidth(makeTe(0x01c0))).toBe("32"); // ARM
+  expect(detectPeTeMachineWidth(makeTe(0x0000))).toBe("unknown"); // Machine 0
+  expect(detectPeTeMachineWidth(makeTe(0xffff))).toBe("unknown"); // Unrecognized machine
+
+  // PE with mismatched optional header magic: x86_64 (0x8664) with PE32 magic (0x10b)
+  const mismatchedPe64 = createMinimalPeBuffer(0x8664, 1, 256, 0x10b);
+  expect(detectPeTeMachineWidth(mismatchedPe64)).toBe("unknown");
+
+  // PE with mismatched optional header magic: x86 (0x014c) with PE32+ magic (0x20b)
+  const mismatchedPe32 = createMinimalPeBuffer(0x014c, 1, 256, 0x20b);
+  expect(detectPeTeMachineWidth(mismatchedPe32)).toBe("unknown");
+});
+
+it("generates fallback typedefs with uintptr_t for unknown machine widths", () => {
+  const scaffoldUnknown = buildUefiEntryPointScaffolding(
+    "UnknownArchModule",
+    "UnknownArchModule",
+    2048,
+    "DXE",
+    "driver",
+    "unknown",
+  );
+  expect(scaffoldUnknown.typedefs).toContain("typedef uintptr_t UINTN;");
+  expect(scaffoldUnknown.typedefs).toContain("typedef UINTN EFI_STATUS;");
+  expect(scaffoldUnknown.prototype).toBe(
+    "EFI_STATUS EFIAPI UnknownArchModuleEntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);",
+  );
+});
+
+it("strictly validates isPhaseSupportedByFfsType across all standard and standalone phases", () => {
+  // SMM types
+  expect(isPhaseSupportedByFfsType("SMM", "smm")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "smm-core")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "mm-standalone")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "mm-core-standalone")).toBe(true);
+  expect(isPhaseSupportedByFfsType("DXE", "smm")).toBe(false);
+  expect(isPhaseSupportedByFfsType("DXE", "smm-core")).toBe(false);
+  expect(isPhaseSupportedByFfsType("PEI", "mm-standalone")).toBe(false);
+
+  // Combined types
+  expect(isPhaseSupportedByFfsType("DXE", "combined-smm-dxe")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "combined-smm-dxe")).toBe(true);
+  expect(isPhaseSupportedByFfsType("PEI", "combined-smm-dxe")).toBe(false);
+
+  expect(isPhaseSupportedByFfsType("PEI", "combined-peim-driver")).toBe(true);
+  expect(isPhaseSupportedByFfsType("DXE", "combined-peim-driver")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "combined-peim-driver")).toBe(false);
+
+  // SEC and PEI types
+  expect(isPhaseSupportedByFfsType("SEC", "security-core")).toBe(true);
+  expect(isPhaseSupportedByFfsType("PEI", "security-core")).toBe(false);
+  expect(isPhaseSupportedByFfsType("PEI", "pei-core")).toBe(true);
+  expect(isPhaseSupportedByFfsType("PEI", "peim")).toBe(true);
+  expect(isPhaseSupportedByFfsType("DXE", "peim")).toBe(false);
+
+  // Application
+  expect(isPhaseSupportedByFfsType("APP", "application")).toBe(true);
+  expect(isPhaseSupportedByFfsType("DXE", "application")).toBe(false);
 });
