@@ -133,117 +133,31 @@ every function of a stripped image, or library code built without debug
 information, are not checked and are taken to follow the C psABI. A limitation
 states this on every session that applies a policy.
 
-### Decision record: D3, RISC-V float ABIs
+### Policy application and compatibility
 
-Decided in [#7477](https://github.com/morluto/rea/issues/7477).
+After analysis on the pinned `RISCV:LE:32:default` language with `gcc`,
+`ReaGhidraRiscvCallingConvention.java` derives the program-specific prototype
+(`__rea_ilp32` or `__rea_ilp32f`) from the program's default prototype,
+installs it through a Ghidra specification extension, and assigns it with
+dynamic storage to every non-thunk function, every external function, and every
+function definition. Thunks follow their targets.
 
-- **Choice.**
-  - Admit little-endian ELF32 `ET_EXEC` images that declare the soft-float ABI
-    (ilp32) through a new lane, `elf32-exec-le-soft-float-generic-v1`. Lane ids
-    are built from their fields: `elf<class>-exec-le-<float ABI>-float-generic-v1`.
-  - Keep the pinned `RISCV:LE:32:default` language and `gcc` compiler
-    specification. After analysis, `ReaGhidraRiscvCallingConvention.java`
-    derives the program-specific `__rea_ilp32` prototype from the program's
-    default prototype as the [ilp32 policy](#ilp32) states. It installs the
-    prototype through a Ghidra specification extension and assigns it, with
-    dynamic storage, to every non-thunk function, every external function and
-    every function definition. Thunks follow their targets. The script fails,
-    and writes no report, if the derived prototype or any function still
-    places a value in a floating-point register, or if the prototype does not
-    pass a 16-byte value by reference.
-  - One derivation serves every policy. A policy row says how it changes the
-    default prototype's floating-point entries and preserved registers; every
-    policy passes values of 9 bytes or more by reference.
-  - The profile commits `riscv_calling_convention: ilp32-prototype-v1`. The
-    bridge reports the policy and its function and definition counts, and REA
-    requires that report exactly when the profile commits the policy.
-  - Admission requires a `Tag_RISCV_arch` declaration with an RV32I base and
-    only extensions that the generic RV32 language implements with p-code
-    (checked in the 12.2 SLEIGH sources;
-    [ISA declarations](#isa-declarations)).
-  - Soft- and single-float profiles add `float_abi` and `arch` to `riscv_elf`.
-    Double-float profiles keep their exact parameters, so their digests,
-    sessions and snapshots are unchanged.
-  - Admit little-endian ELF32 `ET_EXEC` images that declare the single-float
-    ABI (ilp32f) through the lane `elf32-exec-le-single-float-generic-v1`, with
-    policy `ilp32f-prototype-v1` and the `__rea_ilp32f` prototype. Admission
-    also requires `f` in `Tag_RISCV_arch`.
-  - `__rea_ilp32f`'s row limits the default floating-point entries to 4 bytes,
-    keeps `fs0`–`fs11` preserved, and adds one rule ([ilp32f](#ilp32f)): a
-    structure of up to 8 bytes takes Ghidra's `join_dual_class` assignment with
-    `fillalternate`, which puts each 4-byte part that holds one `float` in a
-    float register and each other part in an integer register.
-  - That rule decides by 4-byte part, not by the psABI's count of flattened
-    fields, so the prototype misplaces some shapes. After assigning it, the
-    script compares the storage it gives each signature type with the
-    psABI's, for typed functions and function-pointer types alike. When any
-    signature uses a shape the prototype misplaces, the script refuses the
-    policy: the bridge reports the refusal with the signatures, and REA serves
-    no analysis of the image.
-  - Quad-float, RVE, TSO, and ELF64 soft- or single-float images stay refused.
-- **Alternatives** (and what switching to each would take):
-  - Pin the deprecated soft-float languages (`RISCV:LE:32:RV32IMC` and others,
-    `riscv32.cspec`): REA's language catalog would have to read `old/`, the
-    variants cover only I, IC and IMC, Ghidra marks them deprecated, and no
-    stock specification models ilp32f.
-  - Assign `__rea_ilp32` only to callables whose types use floating-point
-    values, as the MIPS soft-float lane does: typed storage is the same, but
-    prototypes Ghidra infers for untyped code would keep the ilp32d model. In
-    an ilp32 image that contains F or D instructions, that model can still
-    claim `fa0`. Switching is one predicate in the Java script and a new
-    policy id.
-  - Admit with a limitation and no correction: a reduced-capability contract
-    that needs its own review, because arguments, returns and aggregates
-    become unverified.
-  - Keep refusing: the lane rows become refusals again.
-  - Admit images without `Tag_RISCV_arch`, or refuse a list of known
-    extensions instead of admitting a list: a declaration that REA cannot
-    check would be treated as compatible. Widening the decoded set later is
-    additive.
-  - Add `float_abi` and `arch` to double-float profiles as well: one shape for
-    every lane, but every existing RISC-V session and snapshot would be
-    invalidated.
-  - Ship ilp32 and ilp32f together (the question in #7477): ilp32f needs a
-    float-and-integer structure rule that Ghidra's model lacks, so it ships
-    separately with its own fixtures.
-  - For ilp32f, `join_dual_class` without the check: it also splits
-    structures that the psABI passes in integer registers, such as a `float`
-    with two `short` fields, a `float` and a pointer, or a `float` beside a
-    union, and it cannot place a packed structure's `float`. Those signatures
-    would get wrong storage without notice.
-  - For ilp32f, correct typed functions with custom storage instead of
-    refusing them: more images are admitted, but the script becomes a second
-    psABI allocator in Java, and a function and a pointer to it get different
-    answers, because a function-pointer type cannot carry storage. Switching
-    admits images that are refused now; it needs a new policy id.
-  - For ilp32f, admit those images with the misplaced signatures marked
-    unverified: the later widening. It admits images that are refused now and
-    adds a per-signature limitation to the contract.
-- **Semantic owner and consumers.**
-  - Owners:
-    - `src/domain/riscvIsaDeclaration.ts` owns the float-ABI vocabulary of
-      `e_flags` and the parsing of `.riscv.attributes` and `Tag_RISCV_arch`.
-    - `GHIDRA_RISCV_LANES`, `GHIDRA_RISCV_CALLING_CONVENTIONS` and
-      `GHIDRA_RISCV32_DECODED_EXTENSIONS` (`src/ghidra/GhidraRiscvProfile.ts`)
-      own admission, lane ids and the policy table.
-    - `bridge/ghidra/ReaGhidraRiscvCallingConvention.java` owns how each policy
-      becomes a Ghidra prototype.
-  - Consumers: target resolution, Ghidra provider admission, the analysis
-    profile, the provider client and launcher, the session handshake, project
-    history, the real-Ghidra lane and this page. Later work reuses the table:
-    RISC-V ESP images (F6) select a row through D5.
-- **Costs of changing it.**
-  - **Code:** S. A policy or lane is one table row plus its row in the Java
-    derivation; ilp32f's row adds the dual-class rule and the comparison with
-    the psABI.
-  - **Compatibility:** the soft- and single-float lane ids,
-    `riscv_elf.float_abi`, `riscv_elf.arch` and `riscv_calling_convention` are
-    persisted in sessions, snapshots and Evidence once released. A changed derivation ships as a new policy id, such as
-    `ilp32-prototype-v2`, which invalidates that lane's snapshots only.
-  - **Migration:** none for admitted targets; double-float profiles are pinned
-    by tests. Previously refused soft- and single-float targets become
-    admitted.
-  - **Verification:** rerun `npm run verify:ghidra:riscv`.
+The bridge reports the applied policy together with its function and definition
+counts, and REA requires that report whenever the analysis profile commits
+`riscv_calling_convention`. If a policy check fails—for example, if
+`__rea_ilp32` or any function still places a value in a floating-point register
+or fails to pass a 16-byte value by reference, or if `__rea_ilp32f` encounters a
+signature shape it cannot place—the script refuses the policy and REA serves no
+analysis of the image.
+
+Double-float profiles keep their exact parameters, so their digests, sessions,
+and snapshots are unchanged. Soft- and single-float profiles add
+`riscv_elf.float_abi`, `riscv_elf.arch`, and `riscv_calling_convention`
+alongside their lane ids; those fields are persisted in sessions, snapshots, and
+Evidence once released. Any future change to a policy derivation must ship under
+a new policy id (for example `ilp32-prototype-v2`) so that only that lane's
+snapshots are invalidated. The design rationale and alternatives considered for
+these policies are recorded in [#7477](https://github.com/morluto/rea/issues/7477).
 
 ### ilp32
 
