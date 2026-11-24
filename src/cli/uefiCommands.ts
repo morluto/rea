@@ -12,6 +12,7 @@ import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { inspectWithService } from "./contractCommandRunners.js";
 import { cliDecimalField } from "./options.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
 
 const FLASH_PATH = { description: "Local UEFI firmware image" };
@@ -174,6 +175,7 @@ export const registerUefiCommands = (
         "Decompile all PE32 and TE modules of a UEFI flash image or pre-extracted module directory into a structured C source tree",
       positionals: ["path", "output_directory"],
       callerPaths: ["path", "output_directory"],
+      jsonText: ["producer_limits"],
       fields: {
         path: {
           description:
@@ -182,6 +184,7 @@ export const registerUefiCommands = (
         output_directory: {
           description: "Absent output directory; parent must exist",
         },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
       },
     },
     run("decompile_uefi_firmware"),
