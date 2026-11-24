@@ -57,8 +57,9 @@ import {
   finalizeTsharkWithDns,
   parseCapinfosOutput,
   prepareTsharkBaseOutput,
-  TSHARK_JSON_MAX_BYTES,
 } from "./PcapOutput.js";
+import { PCAP_PRODUCER_LIMITS } from "../domain/pcap/pcapAnalysis.js";
+import { resolveProducerLimits } from "../domain/producerResourceLimits.js";
 import {
   runPcapCommand,
   type PcapCommandCleanup,
@@ -933,7 +934,15 @@ export class PcapProvider {
         await this.prepareCaptureBound(request.operation, signal);
         snapshot = await PcapSnapshot.create();
         this.snapshots.add(snapshot);
-        const identity = await snapshot.capture(request.input.path, signal);
+        const limits = resolveProducerLimits(
+          PCAP_PRODUCER_LIMITS,
+          request.input.producer_limits,
+        );
+        const identity = await snapshot.capture(
+          request.input.path,
+          signal,
+          limits.input_bytes,
+        );
         const captured = await this.inspectCapture(
           selection,
           snapshot,
@@ -943,6 +952,7 @@ export class PcapProvider {
           request,
           provider,
           client,
+          limits.output_bytes,
         );
         const data = pcapResultSchemas.inspect_pcap_capture.parse({
           client,
@@ -1105,7 +1115,14 @@ export class PcapProvider {
       readonly version: string | null;
     },
     client: unknown,
+    /** The selected `producer_limits.output_bytes` for each tshark JSON pass. */
+    outputBytes: number,
   ) {
+    const tsharkLimits = {
+      timeoutMs: 300_000,
+      maxOutputBytes: outputBytes,
+      outputBytesControl: "producer_limits.output_bytes",
+    } as const;
     const withOutputCleanup = (
       cause: unknown,
       command: PcapCommandOutput,
@@ -1195,14 +1212,18 @@ export class PcapProvider {
         `--temp-dir=${snapshot.configurationPath}`,
         ...FIELD_ARGS,
       ],
-      { timeoutMs: 300_000, maxOutputBytes: TSHARK_JSON_MAX_BYTES },
+      tsharkLimits,
       signal,
       snapshot,
       path,
     );
     let prepared: Awaited<ReturnType<typeof prepareTsharkBaseOutput>>;
     try {
-      prepared = await prepareTsharkBaseOutput(dissected.stdout, signal);
+      prepared = await prepareTsharkBaseOutput(
+        dissected.stdout,
+        signal,
+        outputBytes,
+      );
     } catch (cause) {
       throw withOutputCleanup(cause, dissected);
     }
@@ -1231,7 +1252,7 @@ export class PcapProvider {
             "-J",
             "frame dns mdns llmnr",
           ],
-          { timeoutMs: 300_000, maxOutputBytes: TSHARK_JSON_MAX_BYTES },
+          tsharkLimits,
           signal,
           snapshot,
           path,
