@@ -10,6 +10,7 @@ import {
   logicalPathEscapesRoot,
   normalizeJoinedLogicalPath,
 } from "../artifactIdentity.js";
+import { artifactNameForClassification } from "../artifactNameSelection.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
@@ -76,17 +77,8 @@ export const mappedRuntimePaths = (
     entity.location.kind === "file"
       ? absoluteFilePathStyle(entity.location.value)
       : null;
-  if (entity.location.kind === "file" && layer.result.format === "directory") {
-    const path = pathBelowRoot(layer.result.input_path, entity.location.value);
-    if (path !== null)
-      paths.push({
-        path,
-        fileStyle,
-        nativeRelativePath: path,
-        artifactPrefix: "",
-        basis: "artifact-path",
-      });
-  }
+  const automatic = automaticArtifactFileMapping(layer, entity.location);
+  if (automatic !== null) paths.push(automatic);
   for (const mapping of layer.runtimeMappings) {
     const translation = translateRuntimeLocation(mapping, entity.location);
     if (translation.kind !== "translated") continue;
@@ -473,6 +465,77 @@ const decodeUrlPathSegments = (value: string): string | null => {
   return segments.join("/");
 };
 
+const automaticArtifactFileMapping = (
+  layer: ParsedStaticLayer,
+  location: RuntimeReconciliationEntity["location"],
+): MappedRuntimePath | null => {
+  if (location.kind !== "file") return null;
+  const fileStyle = absoluteFilePathStyle(location.value);
+  if (layer.result.format === "directory") {
+    const path = pathBelowRoot(layer.result.input_path, location.value);
+    return path === null
+      ? null
+      : {
+          path,
+          fileStyle,
+          nativeRelativePath: path,
+          artifactPrefix: "",
+          basis: "artifact-path",
+        };
+  }
+  if (layer.result.format === "file") {
+    const path = sameRuntimeFilePath(layer.result.input_path, location.value)
+      ? singleFileArtifactPath(layer)
+      : null;
+    return path === null
+      ? null
+      : {
+          path,
+          fileStyle,
+          nativeRelativePath: null,
+          artifactPrefix: path,
+          basis: "artifact-path",
+        };
+  }
+  return null;
+};
+
+const sameRuntimeFilePath = (expected: string, candidate: string): boolean => {
+  const style = absoluteFilePathStyle(expected);
+  if (
+    style === null ||
+    style !== absoluteFilePathStyle(candidate) ||
+    /[\\/]$/u.test(expected) ||
+    /[\\/]$/u.test(candidate)
+  )
+    return false;
+  return style === "windows"
+    ? normalizeWindowsFilePath(expected) === normalizeWindowsFilePath(candidate)
+    : posix.normalize(expected) === posix.normalize(candidate);
+};
+
+const normalizeWindowsFilePath = (value: string): string =>
+  win32.normalize(value).replace(/^[a-z]:/u, (drive) => drive.toUpperCase());
+
+const singleFileArtifactPath = (layer: ParsedStaticLayer): string | null => {
+  const style = absoluteFilePathStyle(layer.result.input_path);
+  if (style === null) return null;
+  const parameterPath = layer.evidence.parameters.input_path;
+  const selectedPath =
+    typeof parameterPath === "string" && parameterPath.length > 0
+      ? parameterPath
+      : layer.result.input_path;
+  const classifiedPath = artifactNameForClassification(
+    selectedPath,
+    layer.result.input_path,
+  );
+  return relativeLogicalPath(
+    style === "windows"
+      ? win32.basename(classifiedPath)
+      : posix.basename(classifiedPath),
+  );
+};
+
 const exercisedArtifactPrefixes = (
   layer: ParsedStaticLayer,
   entities: readonly RuntimeReconciliationEntity[],
@@ -482,15 +545,10 @@ const exercisedArtifactPrefixes = (
 > => {
   const prefixes = new Set<string>();
   const untranslated = new Set<string>();
-  if (
-    layer.result.format === "directory" &&
-    entities.some(
-      ({ location }) =>
-        location.kind === "file" &&
-        pathBelowRoot(layer.result.input_path, location.value) !== null,
-    )
-  )
-    prefixes.add("");
+  for (const entity of entities) {
+    const automatic = automaticArtifactFileMapping(layer, entity.location);
+    if (automatic !== null) prefixes.add(automatic.artifactPrefix);
+  }
   for (const mapping of layer.runtimeMappings) {
     const prefix = normalizeArtifactPrefix(mapping.artifact_prefix);
     for (const entity of entities) {

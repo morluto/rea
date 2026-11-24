@@ -602,7 +602,7 @@ export class JavaScriptAnalysisWorker {
       if (this.#primaryFailure?.kind === "memory")
         throw this.#projectPrimaryFailure(file.path);
     } catch (cause: unknown) {
-      const error = this.#failure(cause, file.path, deadline);
+      let error = this.#failure(cause, file.path, deadline);
       if (deadline?.interruption === "cancelled")
         analysisErrorWithCancellation(
           error,
@@ -632,6 +632,8 @@ export class JavaScriptAnalysisWorker {
           void checkpointCause;
         }
       }
+      if (cleanup === undefined)
+        error = this.#withParentCapacityFailure(file.path, error);
       result = err({ error: cleanup ?? error, javascript, module, projection });
     } finally {
       deadline?.dispose();
@@ -1009,6 +1011,21 @@ export class JavaScriptAnalysisWorker {
     );
   }
 
+  #withParentCapacityFailure(
+    path: string,
+    error: AnalysisError,
+  ): AnalysisError {
+    if (
+      error instanceof AnalysisCancelledError ||
+      (error instanceof AnalysisResourceConstraintError &&
+        error.reportedLimits?.parent_result_budget_exhausted === true)
+    )
+      return error;
+    return (
+      this.#parentCapacityFailure(path)?.retainSecondaryFailure(error) ?? error
+    );
+  }
+
   #limits() {
     return {
       ...(WORKER_HEAP_FLAGS_ENFORCED
@@ -1264,7 +1281,7 @@ export class JavaScriptAnalysisWorker {
       ...(withCapturedOutput ? { capturedOutput: this.#captured() } : {}),
       userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
       remediationAction:
-        "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms on the next call. Alternatively, reduce semantic limits or select exact inventoried source_paths. Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
+        "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms on the next call, or set timeout_policy to record-and-continue to record the timed-out source and continue analyzing remaining files. Alternatively, reduce semantic limits or select exact inventoried source_paths. Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
     });
   }
   #workerExitFailure(

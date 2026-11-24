@@ -289,7 +289,7 @@ const registerJavaScriptApplicationCommand = (
       description:
         "Statically reconstruct a local JavaScript/Electron application",
       ...javaScriptApplicationCliProjection(
-        "ASAR or extracted application path",
+        "ASAR, extracted application directory, or JavaScript source file path",
       ),
       evidenceDelivery: true,
       viewDelivery: { invalidJson: "view must be valid JSON" },

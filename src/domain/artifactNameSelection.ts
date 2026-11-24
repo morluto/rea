@@ -1,3 +1,4 @@
+import { isJavaScriptSourcePath } from "./javascript/javascriptArtifactFiles.js";
 import { zipPackageFormatForPath } from "./zipPackageFormat.js";
 
 /** Name-selected root formats; callers establish byte-signature precedence first. */
@@ -20,6 +21,7 @@ export const artifactNameForClassification = (
   canonicalPath: string,
 ): string =>
   namedArtifactFormat(selectedPath) !== undefined ||
+  isJavaScriptSourcePath(selectedPath) ||
   zipPackageFormatForPath(selectedPath) !== undefined ||
   /\.(?:app|pkg|dmg)$/iu.test(selectedPath)
     ? selectedPath

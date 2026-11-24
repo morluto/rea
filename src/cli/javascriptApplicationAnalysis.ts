@@ -201,6 +201,10 @@ export const javaScriptApplicationCliProjection = (target: string) =>
         description:
           "Behavior when declared application integrity does not match",
       },
+      timeout_policy: {
+        description:
+          "Behavior when a JavaScript source reaches its per-source analysis_timeout_ms deadline, including preload discovery on module .js files (defaults to stop; record-and-continue enforces no separate whole-run time limit unless bounded via a smaller --analysis-timeout-ms, --source-path, or caller cancellation)",
+      },
       semantic_precision: {
         description:
           "Inline JSON or JSON file with per-source semantic_precision evaluator budgets; independent of graph retention and worker memory.",
