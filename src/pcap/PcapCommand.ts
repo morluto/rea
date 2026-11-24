@@ -20,9 +20,9 @@ import { createPcapDiagnosticProjection } from "./PcapDiagnosticOutput.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
   OwnedCommandFailure,
@@ -128,9 +128,10 @@ export const runPcapCommand = async (options: {
         diagnostic,
       )
     )
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         operation,
         options.inputPath,
+        "pcap",
         diagnostic,
         details,
       );

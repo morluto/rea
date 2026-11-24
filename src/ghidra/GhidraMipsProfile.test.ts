@@ -207,8 +207,8 @@ describe("bounded Ghidra MIPS admission", () => {
       expect(resolved).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining(reason),
+          _tag: "AnalysisTargetFailureError",
+          failure: { detail: expect.stringContaining(reason) },
         },
       });
     },
@@ -240,8 +240,8 @@ describe("recordless legacy MIPS admission", () => {
       expect(resolved).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining("ET_EXEC"),
+          _tag: "AnalysisTargetFailureError",
+          failure: { detail: expect.stringContaining("ET_EXEC") },
         },
       });
     },

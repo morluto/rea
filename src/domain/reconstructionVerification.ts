@@ -17,7 +17,8 @@ import { readEvidenceBundle } from "./evidenceBundle.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  targetFailureOfKind,
+  AnalysisTargetFailureError,
 } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
@@ -409,7 +410,11 @@ const assessScreenshotComparison = (
       if (
         !(cause instanceof TypeError) &&
         !(cause instanceof AnalysisResourceConstraintError) &&
-        !(cause instanceof AnalysisUnsupportedTargetError)
+        !(
+          cause instanceof AnalysisTargetFailureError &&
+          targetFailureOfKind(cause, "unsupported", "unrecognized") !==
+            undefined
+        )
       )
         throw cause;
       replayBlocker = `Retained screenshot comparison could not be replayed: ${cause.message}`;

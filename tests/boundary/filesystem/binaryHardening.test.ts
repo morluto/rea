@@ -35,7 +35,7 @@ describe("binary hardening stable filesystem boundary", () => {
       await writeFile(foreign, Buffer.from("not a binary"));
       const unsupported = await service.inspect({ path: foreign });
       if (unsupported.ok) throw new Error("Expected an unsupported target");
-      expect(unsupported.error._tag).toBe("AnalysisUnsupportedTargetError");
+      expect(unsupported.error._tag).toBe("AnalysisTargetFailureError");
     } finally {
       await service.close();
     }

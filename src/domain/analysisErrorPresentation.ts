@@ -8,7 +8,6 @@ import {
   AnalysisInputError,
   AnalysisTargetFailureError,
   AnalysisOutputError,
-  AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
@@ -129,13 +128,12 @@ export const analysisErrorRemediationAction = (
       : "Open an executable analysis target before importing a binary analysis snapshot.";
   if (error instanceof AnalysisSnapshotMismatchError)
     return "Select an artifact, provider, and analysis profile matching the snapshot, or run analysis without it and save a fresh snapshot for the intended binding.";
-  if (error instanceof AnalysisUnsupportedTargetError)
-    return (
-      error.remediationAction ??
-      "Select a target supported by this operation or choose an operation supporting the reported target format."
-    );
   if (error instanceof AnalysisTargetFailureError)
-    return targetFailureRecovery(error.operation, error.failure);
+    return targetFailureRecovery(
+      error.operation,
+      error.failure,
+      analysisErrorRelatedInputs(error),
+    );
   if (error instanceof AnalysisResourceConstraintError) {
     if (error.remediationAction !== undefined) return error.remediationAction;
     const refusal = analysisErrorRefusal(error);
@@ -418,7 +416,6 @@ export const composedCallerGuidance = (sources: {
 
 const outcomeUserMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisSnapshotMismatchError) return error.message;
-  if (error instanceof AnalysisUnsupportedTargetError) return error.message;
   if (error instanceof AnalysisTargetFailureError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
   if (error instanceof AnalysisAccessDeniedError)
@@ -652,10 +649,17 @@ export const analysisErrorRelatedInputs = (
     error.related?.operations,
     presented?.operations,
   );
-  if (parameters === undefined && operations === undefined) return undefined;
+  const providers = mergeRelatedList(error.related?.providers, undefined);
+  if (
+    parameters === undefined &&
+    operations === undefined &&
+    providers === undefined
+  )
+    return undefined;
   return {
     ...(parameters === undefined ? {} : { parameters }),
     ...(operations === undefined ? {} : { operations }),
+    ...(providers === undefined ? {} : { providers }),
   };
 };
 
@@ -697,7 +701,6 @@ const KNOWN_ERROR_TAGS = {
   AnalysisArtifactChangedError: true,
   AnalysisOutputError: true,
   AnalysisCapabilityUnavailableError: true,
-  AnalysisUnsupportedTargetError: true,
   AnalysisTargetFailureError: true,
   AnalysisCancelledError: true,
   AnalysisTimeoutError: true,

@@ -75,10 +75,6 @@ const STATIC_ERROR_CLASSIFICATIONS = {
     "capability_unavailable",
     "unsupported_provider",
   ),
-  AnalysisUnsupportedTargetError: classified(
-    "unsupported_target",
-    "unsupported_target",
-  ),
   AnalysisCancelledError: classified("cancelled", "cancelled"),
   AnalysisTimeoutError: classified("provider_timeout", "timeout"),
   AnalysisResourceConstraintError: classified(

@@ -654,8 +654,12 @@ it("preserves encrypted-member and malformed-compression observations", async ()
   expect(extraction).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: expect.stringContaining("Archive entry secret.txt is encrypted"),
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        detail: expect.stringContaining(
+          "Archive entry secret.txt is encrypted",
+        ),
+      },
     },
   });
   await expect(readFile(extractionRoot)).rejects.toMatchObject({

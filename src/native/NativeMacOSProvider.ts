@@ -83,9 +83,9 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisUnsupportedTargetError,
   type AnalysisResourceConstraintError,
   cancelledBy,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
   DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
@@ -1266,9 +1266,10 @@ class NativeMacOSClient implements AnalysisClient {
     if (!parsed.ok) {
       if (parsed.error instanceof UnsupportedBinaryPlistUidError)
         return err(
-          new AnalysisUnsupportedTargetError(
+          unsupportedTarget(
             "inspect_plist",
             fileInput.selection.path,
+            "bplist",
             parsed.error.message,
             { cause: parsed.error },
           ),

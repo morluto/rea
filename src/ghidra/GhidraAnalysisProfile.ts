@@ -8,10 +8,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import {
-  AnalysisUnsupportedTargetError,
-  cancelledBy,
-} from "../domain/analysisErrorCore.js";
+import { cancelledBy, unsupportedTarget } from "../domain/analysisErrorCore.js";
 import { resolveGhidraComImport } from "./GhidraComImport.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -145,9 +142,10 @@ export const resolveGhidraAnalysisProfile = async (
   if (mipsReason !== null)
     return Promise.resolve(
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "resolve_analysis_profile",
           target.path,
+          target.format,
           mipsReason,
         ),
       ),

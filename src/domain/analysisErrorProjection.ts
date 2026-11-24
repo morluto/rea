@@ -21,7 +21,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   AnalysisTargetFailureError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -80,6 +79,9 @@ const relatedInputDetails = (
   ...(related?.operations === undefined || related.operations.length === 0
     ? {}
     : { related_operations: [...related.operations] }),
+  ...(related?.providers === undefined || related.providers.length === 0
+    ? {}
+    : { related_providers: [...related.providers] }),
 });
 
 /**
@@ -634,12 +636,6 @@ const errorDetails = (
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
-  if (error instanceof AnalysisUnsupportedTargetError)
-    return {
-      operation: error.operation,
-      path: error.path,
-      reason: error.reason,
-    };
   if (error instanceof AnalysisTargetFailureError)
     return {
       operation: error.operation,

@@ -45,13 +45,13 @@ import type {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
+  unsupportedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -580,9 +580,10 @@ export class PwntoolsDecoder<
       }
       if (!reply.ok) {
         if (reply.reason === "unsupported-target")
-          throw new AnalysisUnsupportedTargetError(
+          throw unsupportedTarget(
             OPERATION,
             input.path,
+            this.profile.targetFormat,
             reply.message,
             { capturedOutput },
           );

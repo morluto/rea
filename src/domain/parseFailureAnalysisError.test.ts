@@ -3,7 +3,6 @@ import { expect, it } from "vitest";
 import {
   AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
@@ -94,12 +93,16 @@ it("refuses an unsupported form as an unsupported target, keeping undecoded cont
     undecodedContent: true,
   });
   const error = project(cause);
-  expect(error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(error).toBeInstanceOf(AnalysisTargetFailureError);
   expect(error).toMatchObject({
     cause,
     path: "/tmp/sample.bin",
-    reason: "compressed build-info section",
-    undecodedContent: true,
+    failure: {
+      kind: "unsupported",
+      format: "go",
+      detail: "compressed build-info section",
+      undecodedContent: true,
+    },
   });
 });
 

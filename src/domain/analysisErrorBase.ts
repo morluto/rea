@@ -29,7 +29,6 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisArtifactChangedError",
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
-  "AnalysisUnsupportedTargetError",
   "AnalysisTargetFailureError",
   "AnalysisCancelledError",
   "AnalysisTimeoutError",
@@ -137,6 +136,8 @@ export interface AnalysisContinuingCallerGuidance {
 export interface AnalysisRelatedInputs {
   readonly parameters?: readonly string[];
   readonly operations?: readonly string[];
+  /** Providers, by ID, that offer the operation for this target. */
+  readonly providers?: readonly string[];
 }
 
 /** Optional provider-neutral context that must survive typed error projection. */
@@ -308,6 +309,9 @@ export abstract class AnalysisError extends Error {
             ...(options.related.operations === undefined
               ? {}
               : { operations: Object.freeze([...options.related.operations]) }),
+            ...(options.related.providers === undefined
+              ? {}
+              : { providers: Object.freeze([...options.related.providers]) }),
           });
     this.diagnostics =
       options?.diagnostics === undefined

@@ -296,34 +296,117 @@ export const targetFailureDetails = (
   }
 };
 
-/** What a caller does next, for one failure of a known operation. */
-export const targetFailureRecovery = (
-  operation: string,
-  failure: TargetFailure,
+/**
+ * Operations and providers that read what the refusing operation could not.
+ * The owner names them by contract operation and provider ID; each adapter
+ * spells them its own way.
+ */
+export interface TargetFailureAlternatives {
+  readonly operations?: readonly string[];
+  readonly providers?: readonly string[];
+}
+
+/**
+ * How one adapter names an operation and a provider in recovery text: MCP by
+ * tool name and `open_binary` argument, the CLI by command and option.
+ */
+export interface TargetFailureSpelling {
+  readonly operation: (operation: string) => string;
+  readonly provider: (providerId: string) => string;
+}
+
+/** The MCP spelling, which is also the adapter-independent one in Evidence. */
+export const MCP_TARGET_FAILURE_SPELLING: TargetFailureSpelling = {
+  operation: (operation) => operation,
+  provider: (providerId) => `open_binary with provider_id "${providerId}"`,
+};
+
+/** The facts a recovery is rendered from, in either adapter. */
+export interface TargetFailureRecoveryFacts {
+  readonly operation: string;
+  readonly kind: TargetFailureKind;
+  readonly format: string;
+  /** The conflicting inputs' request fields, in the adapter's spelling. */
+  readonly inputFields?: readonly string[];
+  /** The owner's errno was transient (`retry: "backoff"` for `io`). */
+  readonly transient?: boolean;
+  readonly alternatives?: TargetFailureAlternatives;
+}
+
+const listed = (names: readonly string[]): string =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} or ${names.at(-1) ?? ""}`;
+
+/** The clause that names the alternatives, or a generic one without any. */
+const alternativeClause = (
+  alternatives: TargetFailureAlternatives | undefined,
+  spelling: TargetFailureSpelling,
 ): string => {
-  const { recovery } = TARGET_FAILURE_PROJECTIONS[failure.kind];
+  const operations = (alternatives?.operations ?? []).map(spelling.operation);
+  const providers = (alternatives?.providers ?? []).map(spelling.provider);
+  if (operations.length > 0 && providers.length > 0)
+    return `Use ${listed(operations)} for this target, or reopen it with ${listed(providers)}`;
+  if (operations.length > 0) return `Use ${listed(operations)} for this target`;
+  if (providers.length > 0)
+    return `Reopen this target with ${listed(providers)}`;
+  return "Choose another operation or provider for this target";
+};
+
+/**
+ * Render what a caller does next in one adapter's spelling. This is the only
+ * place a target failure's recovery text is written; the CLI and MCP differ
+ * only in `spelling`.
+ */
+export const renderTargetFailureRecovery = (
+  facts: TargetFailureRecoveryFacts,
+  spelling: TargetFailureSpelling,
+): string => {
+  const operation = spelling.operation(facts.operation);
+  const { recovery } = TARGET_FAILURE_PROJECTIONS[facts.kind];
   switch (recovery) {
     case "fix_request":
       return "Correct the request so it names a valid target for this operation, then retry.";
     case "choose_another_tool":
-      return `The selected target's ${failure.format} form is outside what ${operation} reads. Choose another operation or provider for this target.`;
+      return `The selected target's ${facts.format} form is outside what ${operation} reads. ${alternativeClause(facts.alternatives, spelling)}.`;
     case "choose_another_target":
-      return `The selected target's ${failure.format} bytes break that format's rules where ${operation} reads them. The request arguments are not at fault, so changing them will not help. Choose another operation or provider for this target, or select a well-formed copy.`;
+      return `The selected target's ${facts.format} bytes break that format's rules where ${operation} reads them. The request arguments are not at fault, so changing them will not help. ${alternativeClause(facts.alternatives, spelling)}, or select a well-formed copy.`;
     case "reacquire_complete_file":
-      return `The selected target's ${failure.format} bytes end before a structure they declare. The request arguments are not at fault. Re-acquire the complete file and retry; do not pad or cut the bytes.`;
+      return `The selected target's ${facts.format} bytes end before a structure they declare. The request arguments are not at fault. Re-acquire the complete file and retry; do not pad or cut the bytes.`;
     case "replace_or_record_integrity":
       return "The target's bytes contradict a checksum or digest they declare. Get a fresh copy, or rerun with integrity_policy=record-and-continue to keep the observed bytes as untrusted.";
     case "check_input_pairing":
-      return `The selected inputs (${failure.kind === "conflict" ? failure.inputs.map(({ field }) => field).join(", ") : "all inputs"}) each parse but disagree, so neither is reported as damaged. Select inputs from the same build. If they are from the same build, either may be damaged or its layout may be outside coverage; each input can still be read on its own.`;
+      return `The selected inputs (${facts.inputFields === undefined || facts.inputFields.length === 0 ? "all inputs" : facts.inputFields.join(", ")}) each parse but disagree, so neither is reported as damaged. Select inputs from the same build. If they are from the same build, either may be damaged or its layout may be outside coverage; each input can still be read on its own.`;
     case "retry_on_stable_copy":
       return "The target changed while it was read. Retry once it is stable, or copy it first.";
     case "fix_permissions":
       return "Host permissions denied the read. Grant read access to the selected path, then retry.";
     case "check_host":
-      return failure.kind === "io" && failure.transient
+      return facts.transient === true
         ? "The host reported a transient read failure. Retry with backoff."
         : "The host could not read the target. Check the device and file before retrying.";
     default:
       return unhandledTargetFailureCase(recovery);
   }
 };
+
+/** What a caller does next, for one failure of a known operation. */
+export const targetFailureRecovery = (
+  operation: string,
+  failure: TargetFailure,
+  alternatives?: TargetFailureAlternatives,
+  spelling: TargetFailureSpelling = MCP_TARGET_FAILURE_SPELLING,
+): string =>
+  renderTargetFailureRecovery(
+    {
+      operation,
+      kind: failure.kind,
+      format: failure.format,
+      ...(failure.kind === "conflict"
+        ? { inputFields: failure.inputs.map(({ field }) => field) }
+        : {}),
+      transient: failure.kind === "io" && failure.transient,
+      ...(alternatives === undefined ? {} : { alternatives }),
+    },
+    spelling,
+  );

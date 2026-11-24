@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createDwarfUnitsService } from "../../../src/composition/binaryDiagnostics/dwarfUnits.js";
 import { elfImage } from "../../../src/native/dwarf/DwarfUnits.fixture.js";
-import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
+import { AnalysisTargetFailureError } from "../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("DWARF compile-unit stable filesystem boundary", () => {
@@ -56,9 +56,7 @@ describe("DWARF compile-unit stable filesystem boundary", () => {
       });
       const foreignResult = await service.inspect({ path: foreign });
       if (foreignResult.ok) throw new Error("Expected an unsupported file");
-      expect(foreignResult.error).toBeInstanceOf(
-        AnalysisUnsupportedTargetError,
-      );
+      expect(foreignResult.error).toBeInstanceOf(AnalysisTargetFailureError);
     } finally {
       await service.close();
     }

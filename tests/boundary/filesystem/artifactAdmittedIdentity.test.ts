@@ -353,7 +353,7 @@ it("checks embedded native packs before acceptance while preserving unsupported 
       await session.execute("extract_artifact", { output_root: output }),
     ).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisUnsupportedTargetError" },
+      error: { _tag: "AnalysisTargetFailureError" },
     });
     await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
   } finally {

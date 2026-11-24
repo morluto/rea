@@ -1199,7 +1199,7 @@ it("refuses snapshot names without exported definitions", async () => {
   image[table + 2 * 24 + 4] = 0; // Local isolate data.
   image[table + 3 * 24 + 5] = 1; // Internal isolate instructions.
   await expect(analyzeImage(image, "inspect_dart_aot")).rejects.toMatchObject({
-    _tag: "AnalysisUnsupportedTargetError",
+    _tag: "AnalysisTargetFailureError",
   });
 });
 

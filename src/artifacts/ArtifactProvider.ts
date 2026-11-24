@@ -47,7 +47,8 @@ import {
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
+  AnalysisTargetFailureError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
@@ -431,10 +432,11 @@ class ArtifactClient implements AnalysisClient {
   private unsupportedTarget(
     operation: string,
     reason: string,
-  ): AnalysisUnsupportedTargetError {
-    return new AnalysisUnsupportedTargetError(
+  ): AnalysisTargetFailureError {
+    return unsupportedTarget(
       operation,
       this.target.sourcePath ?? this.target.path,
+      this.target.format,
       reason,
     );
   }

@@ -510,7 +510,7 @@ it
             scenario === "format" || scenario === "literal-replacement"
               ? "AnalysisTargetFailureError"
               : scenario === "unsupported"
-                ? "AnalysisUnsupportedTargetError"
+                ? "AnalysisTargetFailureError"
                 : scenario === "output-limit"
                   ? "AnalysisResourceConstraintError"
                   : "AnalysisOutputError",

@@ -1126,7 +1126,7 @@ it.each(["pe", "elf"] as const)(
         integrityPolicy: "fail",
         resourceScope: new ArtifactResourceScope(),
       }),
-    ).rejects.toMatchObject({ _tag: "AnalysisUnsupportedTargetError" });
+    ).rejects.toMatchObject({ _tag: "AnalysisTargetFailureError" });
     await expect(access(outputRoot)).rejects.toThrow();
   },
 );
