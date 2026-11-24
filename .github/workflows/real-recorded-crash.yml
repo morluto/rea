@@ -100,8 +100,9 @@ jobs:
           apt-get --no-download install "${packages[@]}"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Cache npm package downloads
         id: npm-cache
@@ -120,8 +121,13 @@ jobs:
           core_pwndbg_root="${RUNNER_TEMP}/rea-core-pwndbg"
           core_pwndbg_venv="${RUNNER_TEMP}/rea-core-pwndbg-venv"
           python3 -m venv "${core_decoder_root}"
-          "${core_decoder_root}/bin/python" -m pip install --disable-pip-version-check \
-            'pwntools==4.15.0' 'pyelftools==0.33' 'unicorn==2.1.2' 'uv==0.12.0'
+          decoder_packages=('pwntools==4.15.0' 'pyelftools==0.33' 'unicorn==2.1.2' 'uv==0.12.0')
+          pip_install=("${core_decoder_root}/bin/python" -m pip install --disable-pip-version-check --timeout 20 --retries 2)
+          if ! "${pip_install[@]}" "${decoder_packages[@]}"; then
+            # pip cannot retry a successfully returned but truncated index document.
+            echo '::warning::Decoder dependency install failed; retrying once without the pip cache'
+            "${pip_install[@]}" --no-cache-dir "${decoder_packages[@]}"
+          fi
           git init "${core_pwndbg_root}"
           git -C "${core_pwndbg_root}" remote add origin https://github.com/pwndbg/pwndbg.git
           git -C "${core_pwndbg_root}" fetch --depth=1 origin 55596aa676a2756efb8d67034f31675170eabe48

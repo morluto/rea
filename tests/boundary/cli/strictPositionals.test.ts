@@ -5,25 +5,14 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { expect, it } from "vitest";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 import { createCli } from "../../../src/cli.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 type CliInstance = ReturnType<typeof createCommandCli>;
-const serve = async (cli: CliInstance, argv: string[]) => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv, "--json"], {
-    env: {},
-    stdout: (text) => {
-      stdout += text;
-    },
-    exit: (code) => {
-      exitCode = code;
-    },
-  });
-  return { stdout, exitCode };
-};
+const serve = (cli: CliInstance, argv: string[]) =>
+  serveInProcessCli(cli, [...argv, "--json"]);
 
 it("rejects surplus public CLI inputs before importing and retains the one-path control", async () => {
   const directory = await createTestTempDirectory(

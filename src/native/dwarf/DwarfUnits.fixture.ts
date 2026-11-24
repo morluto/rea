@@ -1,17 +1,8 @@
+import { write16, write64 } from "../BinaryInteger.fixture.js";
 import { deflateSync, zstdCompressSync } from "node:zlib";
 import { MAX_DWARF_DECOMPRESSED_SECTION_BYTES } from "../../domain/native/dwarfUnits.js";
 
 const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
 
 const write32 = (
   bytes: Buffer,
@@ -21,16 +12,6 @@ const write32 = (
 ): void => {
   if (little) bytes.writeUInt32LE(value >>> 0, offset);
   else bytes.writeUInt32BE(value >>> 0, offset);
-};
-
-const write64 = (
-  bytes: Buffer,
-  offset: number,
-  value: bigint,
-  little: boolean,
-): void => {
-  if (little) bytes.writeBigUInt64LE(value, offset);
-  else bytes.writeBigUInt64BE(value, offset);
 };
 
 const writeWord = (

@@ -68,7 +68,7 @@ include its source location when the decoder supplies one.
 
 HAR uses `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
 `ajv-formats@3.0.1`, `jsonc-parser@3.3.1` JSON visitor, and
-`lossless-json@4.3.1` numeric representations, pinned in the npm lockfile.
+`lossless-json@4.3.3` numeric representations, pinned in the npm lockfile.
 Only the HAR 1.2 profile is supported. Unknown extensions remain reported
 evidence. Duplicate object keys, including equal values and escaped spellings,
 are rejected before materialization. Prototype-named members such as

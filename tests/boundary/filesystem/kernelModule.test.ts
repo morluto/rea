@@ -10,6 +10,7 @@ import {
   moduleSignatureTrailer,
 } from "../../../src/native/elf/KernelModule.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("kernel module stable filesystem boundary", () => {
   it("retains trailer fields but withholds an empty PKCS#7 range", async () => {
@@ -110,26 +111,11 @@ describe("kernel module stable filesystem boundary", () => {
     await symlink(path, alias);
     const service = createKernelModuleService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_kernel_module",
-          issues: [
-            {
-              path: ["path"],
-              reason,
-              message: expect.any(String),
-            },
-          ],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_kernel_module", {
+        root,
+        alias,
+        path,
+      });
     } finally {
       await service.close();
     }

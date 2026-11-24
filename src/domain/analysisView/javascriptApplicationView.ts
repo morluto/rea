@@ -1,9 +1,9 @@
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { isJavaScriptModuleUnit } from "../javascript/javascriptModuleUnits.js";
 import {
-  AnalysisInputError,
-  type AnalysisInputIssue,
-} from "../analysisErrorCore.js";
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
@@ -40,21 +40,6 @@ import {
   type PageAnalysisView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-
-const OPERATION = "inspect_analysis_view";
-
-const inputError = (
-  issues: readonly AnalysisInputIssue[],
-): AnalysisInputError => new AnalysisInputError(OPERATION, undefined, issues);
-
-const jsIncompatible = (detail: string): AnalysisError =>
-  inputError([
-    {
-      path: ["view"],
-      reason: "invalid_value",
-      message: detail,
-    },
-  ]);
 
 /** Every exact module path or original source-map reference retained by a node. */
 const javascriptModulePaths = (node: ApplicationNode): readonly string[] => {
@@ -399,7 +384,7 @@ const selectModule = (
         : findSingleNodeById(analysis.graph.nodes, selector.node_id);
     if (selected !== undefined && selected !== null) return ok(selected);
     return err(
-      inputError([
+      analysisViewInputError([
         {
           path: ["view", "selector", "node_id"],
           reason: "invalid_value",
@@ -424,7 +409,7 @@ const selectModule = (
     }
     if (matches.length === 0)
       return err(
-        inputError([
+        analysisViewInputError([
           {
             path: ["view", "selector", "path"],
             reason: "invalid_value",
@@ -433,7 +418,7 @@ const selectModule = (
         ]),
       );
     return err(
-      inputError([
+      analysisViewInputError([
         {
           path: ["view", "selector", "path"],
           reason: "invalid_value",
@@ -443,8 +428,8 @@ const selectModule = (
       ]),
     );
   }
-  return err(
-    jsIncompatible("Module items are selected by exact path or node_id."),
+  return invalidAnalysisView(
+    "Module items are selected by exact path or node_id.",
   );
 };
 
@@ -462,10 +447,8 @@ export const projectJavaScriptApplicationView = (
     view.kind !== "javascript-facts" &&
     view.kind !== "javascript-fact-groups"
   )
-    return err(
-      jsIncompatible(
-        "JavaScript application Evidence supports summary, module item/page, typed module references, selected JavaScript facts or JavaScript fact groups.",
-      ),
+    return invalidAnalysisView(
+      "JavaScript application Evidence supports summary, module item/page, typed module references, selected JavaScript facts or JavaScript fact groups.",
     );
   assertOwnedView<
     | SummaryAnalysisView
@@ -581,10 +564,8 @@ export const projectJavaScriptApplicationView = (
   }
   if (view.kind === "item") {
     if (view.collection !== "modules")
-      return err(
-        jsIncompatible(
-          "Section and symbol collections apply to inspect_binary_layout Evidence.",
-        ),
+      return invalidAnalysisView(
+        "Section and symbol collections apply to inspect_binary_layout Evidence.",
       );
     const selected = selectModule(analysis, view.selector);
     if (!selected.ok) return selected;
@@ -597,10 +578,8 @@ export const projectJavaScriptApplicationView = (
     });
   }
   if (view.kind !== "page" || view.collection !== "modules")
-    return err(
-      jsIncompatible(
-        "Section and symbol collections apply to inspect_binary_layout Evidence.",
-      ),
+    return invalidAnalysisView(
+      "Section and symbol collections apply to inspect_binary_layout Evidence.",
     );
   const { entries, total } = modulePage(analysis, view);
   const items = entries.map(({ node, path }) => ({

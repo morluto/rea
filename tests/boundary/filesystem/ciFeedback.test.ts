@@ -375,7 +375,7 @@ it("collects basic CI telemetry before optional dependency installation can fail
     expect(installation).toBeGreaterThan(collection);
   }
   expect(steps[installation]).toMatchObject({
-    run: "npm ci",
+    run: "npm ci --omit=dev --ignore-scripts",
     "continue-on-error": true,
   });
   expect(
