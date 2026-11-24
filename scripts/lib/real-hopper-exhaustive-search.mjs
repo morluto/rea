@@ -47,11 +47,18 @@ async function collectAllMatches({
   expectedCount,
   normalize,
 }) {
+  // An omitted detail returns a retained summary for Evidence above 32 KiB, so
+  // request every row inline.
   const matches = normalizedResult(
     await client.callTool(
       {
         name: tool,
-        arguments: { pattern, mode: "literal", case_sensitive: true },
+        arguments: {
+          pattern,
+          mode: "literal",
+          case_sensitive: true,
+          detail: "complete",
+        },
       },
       options,
     ),
