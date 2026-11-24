@@ -445,7 +445,9 @@ export const glbLayout = async (
   images.items.forEach((image, index) => {
     // An image named by URI is outside the GLB, not one of its regions.
     if (recordOf(image)["bufferView"] === undefined) {
-      externalImages++;
+      // Only a URI string establishes an external source.
+      if (typeof recordOf(image)["uri"] === "string") externalImages++;
+      else unresolvedImages++;
       return;
     }
     const view = recordOf(
@@ -455,7 +457,7 @@ export const glbLayout = async (
     const buffer = bufferIndex === undefined ? undefined : buffers[bufferIndex];
     // glTF 2.0 GLB: only buffers[0] without a uri is the BIN chunk. A buffer
     // with a uri is external, so its images are not GLB regions either.
-    if (buffer !== undefined && recordOf(buffer)["uri"] !== undefined) {
+    if (buffer !== undefined && typeof recordOf(buffer)["uri"] === "string") {
       externalImages++;
       return;
     }
@@ -488,7 +490,7 @@ export const glbLayout = async (
   if (unresolvedImages > 0) {
     regionsExamined = "unknown";
     limitations.push(
-      `${String(unresolvedImages)} GLB image(s) name a bufferView that does not resolve inside the BIN chunk; they were not listed.`,
+      `${String(unresolvedImages)} GLB image(s) name no URI and no bufferView that resolves inside the BIN chunk; they were not listed.`,
     );
   }
   const asset = recordOf(json["asset"]);

@@ -272,6 +272,24 @@ describe("declared-extent edge cases", () => {
     expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
   });
 
+  it.each([
+    ["a buffer whose uri is null", '"uri":"textures.bin"', '"uri":null'],
+    ["an image with neither uri nor bufferView", '{"uri":"albedo.png"}', "{}"],
+  ])(
+    "keeps coverage unknown for %s instead of counting it external",
+    async (_case, from, to) => {
+      const text = glbFixture({ external: true }).toString("latin1");
+      // Pad the replacement so chunk lengths and alignment are unchanged.
+      const edited = Buffer.from(
+        text.replace(from, to.padEnd(from.length, " ")),
+        "latin1",
+      );
+      const result = await read("glb", edited);
+      expect(result.metadata).toMatchObject({ external_images: 1 });
+      expect(result.coverage[0]?.status).toBe("unknown");
+    },
+  );
+
   it("keeps coverage unknown when a GLB image does not resolve", async () => {
     const bytes = glbFixture();
     const at = bytes.indexOf('"bufferView":1');
@@ -284,7 +302,7 @@ describe("declared-extent edge cases", () => {
     expect(result.coverage[0]).toEqual({
       status: "unknown",
       limitations: [
-        "1 GLB image(s) name a bufferView that does not resolve inside the BIN chunk; they were not listed.",
+        "1 GLB image(s) name no URI and no bufferView that resolves inside the BIN chunk; they were not listed.",
       ],
     });
   });
