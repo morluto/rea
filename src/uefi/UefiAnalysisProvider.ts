@@ -54,6 +54,11 @@ import {
   type GhidraInstallationOptions,
 } from "../ghidra/GhidraInstallation.js";
 import {
+  createGhidraRuntimeDirectories,
+  ghidraLaunchEnvironment,
+  ghidraRuntimePaths,
+} from "../ghidra/GhidraLauncher.js";
+import {
   ghidraKnownProviderDefectLimitations,
   unverifiedGhidraBuildLimitation,
 } from "../ghidra/GhidraReleasePolicy.js";
@@ -1648,36 +1653,30 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               new URL("../../bridge/ghidra", import.meta.url),
             );
             const scriptPath = join(bridgeDir, "ReaDecompileToC.java");
-            const ghidraHome = join(tempRoot.path, "ghidra_home");
-            const ghidraConfig = join(tempRoot.path, "ghidra_config");
-            const ghidraTemp = join(tempRoot.path, "ghidra_temp");
-            await Promise.all([
-              mkdir(ghidraHome, { recursive: true }),
-              mkdir(ghidraConfig, { recursive: true }),
-              mkdir(ghidraTemp, { recursive: true }),
-            ]);
-            const baseJavaEnv = ghidraJavaEnvironment(
-              ghidraInspection?.javaHome ?? undefined,
-              this.#environment,
+            const paths = ghidraRuntimePaths(tempRoot.path);
+            const configReleaseDirectory =
+              (ghidraInspection?.status === "available"
+                ? ghidraInspection.configurationDirectoryName
+                : null) ?? "ghidra";
+            await createGhidraRuntimeDirectories(
+              paths,
               this.#hostPlatform.platform,
+              configReleaseDirectory,
+            );
+            const baseGhidraEnv = ghidraLaunchEnvironment(
+              paths,
+              ghidraInspection?.javaHome ?? undefined,
+              this.#hostPlatform.platform,
+              this.#hostPlatform.platform === "win32"
+                ? (this.#environment.ComSpec ?? "cmd.exe")
+                : "sh",
+              this.#environment,
             );
             const ghidraEnv: NodeJS.ProcessEnv = {
-              ...baseJavaEnv,
-              JDK_JAVA_OPTIONS: `-Duser.home="${ghidraHome}" -Djava.io.tmpdir="${ghidraTemp}"`,
-              HOME: ghidraHome,
-              TMPDIR: ghidraTemp,
-              XDG_CONFIG_HOME: ghidraConfig,
-              XDG_CACHE_HOME: ghidraTemp,
-              XDG_DATA_HOME: ghidraHome,
-              ...(this.#hostPlatform.platform === "win32"
-                ? {
-                    USERPROFILE: ghidraHome,
-                    APPDATA: ghidraConfig,
-                    LOCALAPPDATA: ghidraTemp,
-                    TEMP: ghidraTemp,
-                    TMP: ghidraTemp,
-                  }
-                : {}),
+              ...baseGhidraEnv,
+              JDK_JAVA_OPTIONS:
+                baseGhidraEnv.JDK_JAVA_OPTIONS ||
+                `-Duser.home="${paths.homeRoot}" -Djava.io.tmpdir="${paths.tempRoot}"`,
             };
 
             let ghidraArgs: string[] = [];

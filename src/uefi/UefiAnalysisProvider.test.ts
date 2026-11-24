@@ -22,6 +22,7 @@ import {
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { SafeOutputTree } from "../resources/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreationFailure.js";
+import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import { DirectoryArtifactReader } from "../resources/DirectoryArtifactReader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
@@ -2224,6 +2225,58 @@ it("records derived confidence for decompile_uefi_firmware in service Evidence",
     if (!result.ok) return;
     expect(result.value.confidence).toBe("derived");
   } finally {
+    await service.close();
+  }
+});
+
+it("converts completed UEFI observations to authenticated Evidence when cancelled in service", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled_service_cancel");
+  const controller = new AbortController();
+
+  const provider = new UefiAnalysisProvider();
+  const service = createUefiAnalysisService(provider);
+  let intercepted = false;
+
+  const originalClose = PrivateRuntimeRoot.prototype.close;
+  vi.spyOn(PrivateRuntimeRoot.prototype, "close").mockImplementation(
+    async function (this: PrivateRuntimeRoot) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("test cancellation after publication commit");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await service.execute(
+      "decompile_uefi_firmware",
+      {
+        path: imagePath,
+        output_directory: outDir,
+      },
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const parsed = safeParseEvidence(executed.error.partialObservation);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.value.operation).toBe("decompile_uefi_firmware");
+    expect(parsed.value.confidence).toBe("derived");
+    expect(
+      (parsed.value.normalized_result as { output_directory?: string })
+        .output_directory,
+    ).toBe(outDir);
+  } finally {
+    vi.restoreAllMocks();
     await service.close();
   }
 });
