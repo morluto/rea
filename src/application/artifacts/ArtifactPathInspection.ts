@@ -1,5 +1,7 @@
 import { stat } from "node:fs/promises";
 
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -29,15 +31,21 @@ export interface ArtifactPathInspectionDependencies {
 }
 
 /**
- * Whether a selected path names a directory, which `inspect_artifact`
- * inventories as a tree instead of opening as a session target. A path that
+ * The absolute directory a selected path names, resolved against the
+ * caller's working directory as target admission resolves a file, or
+ * undefined when it names no directory. `inspect_artifact` inventories that
+ * directory as a tree instead of opening it as a session target; a path that
  * cannot be read is left to target admission, which owns its refusal.
  */
-export const selectsArtifactDirectory = (path: string): Promise<boolean> =>
-  stat(path).then(
-    (metadata) => metadata.isDirectory(),
-    () => false,
+export const selectedArtifactDirectory = async (
+  path: string,
+): Promise<string | undefined> => {
+  const absolute = absoluteCallerPath(path);
+  return stat(absolute).then(
+    (metadata) => (metadata.isDirectory() ? absolute : undefined),
+    () => undefined,
   );
+};
 
 /**
  * Inspect the artifact at a caller-selected path, independently of any open
@@ -53,9 +61,10 @@ export const executeArtifactPathInspection = async (
   options: ExecutionOptions = {},
   retained?: RetainedResourceScope,
 ): Promise<Result<AnalysisExecution, AnalysisError>> => {
-  if (await selectsArtifactDirectory(path))
+  const directory = await selectedArtifactDirectory(path);
+  if (directory !== undefined)
     return dependencies.inspectArtifactDirectory(
-      path,
+      directory,
       parameters,
       options,
       retained,
