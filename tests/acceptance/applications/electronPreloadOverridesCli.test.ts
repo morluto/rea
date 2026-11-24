@@ -8,6 +8,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const FIRST = 'preload: "./first.js"';
 const LAST = 'preload: "./last.js"';
@@ -78,7 +79,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     let document: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
-        arguments: ["analyze-javascript-application", root, "--format", "json"],
+        arguments: [
+          "analyze-javascript-application",
+          ...COMPLETE_DETAIL,
+          root,
+          "--format",
+          "json",
+        ],
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);
@@ -225,7 +232,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     let document: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
-        arguments: ["analyze-javascript-application", root, "--format", "json"],
+        arguments: [
+          "analyze-javascript-application",
+          ...COMPLETE_DETAIL,
+          root,
+          "--format",
+          "json",
+        ],
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);

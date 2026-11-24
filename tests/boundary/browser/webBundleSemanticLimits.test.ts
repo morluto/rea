@@ -7,6 +7,7 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "retains semantic limits through capture, real workers, MCP and CLI recovery controls",
@@ -95,6 +96,7 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-web-bundle",
+        ...COMPLETE_DETAIL,
         browser.endpoint,
         "allowed-page",
         "--observation-ms",

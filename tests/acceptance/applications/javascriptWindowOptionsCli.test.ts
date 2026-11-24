@@ -6,6 +6,7 @@ import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "retains constant window preferences and inferred source provenance through CLI, MCP and fact views",
@@ -29,7 +30,13 @@ cliTest(
       "preload.js": "// Inert preload source",
     });
     const cliResponse = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--format", "json"],
+      arguments: [
+        "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
+        root,
+        "--format",
+        "json",
+      ],
     });
     expect(cliResponse.exitCode, JSON.stringify(cliResponse.json)).toBe(0);
     const cliResult = javascriptApplicationAnalysisResultSchema.parse(

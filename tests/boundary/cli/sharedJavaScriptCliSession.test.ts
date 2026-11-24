@@ -20,7 +20,10 @@ import {
 } from "../../support/cli/cliCommandSessionFrames.mjs";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
-import { completeApplicationAnalysis } from "../../support/completeDetail.js";
+import {
+  COMPLETE_DETAIL,
+  completeApplicationAnalysis,
+} from "../../support/completeDetail.js";
 
 // Inert process models exercise escalation without waiting for real I/O.
 const MOCK_SHUTDOWN_GRACE_MS = 1;
@@ -956,6 +959,7 @@ const normalized = (result: CliResult) =>
 
 const analyzeArguments = (root: string): readonly string[] => [
   "analyze-javascript-application",
+  ...COMPLETE_DETAIL,
   root,
   "--format",
   "json",

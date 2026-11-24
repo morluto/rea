@@ -188,6 +188,7 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         "--format",
         "json",

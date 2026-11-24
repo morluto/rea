@@ -7,6 +7,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "preserves SVG script references and reports skipped executable bodies",
@@ -30,6 +31,7 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         "--source-path",
         "index.html",
@@ -192,6 +194,7 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         ...["package.json", "main.js", "index.html"].flatMap((path) => [
           "--source-path",

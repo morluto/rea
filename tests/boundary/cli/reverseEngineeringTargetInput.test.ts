@@ -7,6 +7,7 @@ import { analysisErrorProjectionSchema } from "../../../src/domain/analysisError
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "reports missing and directory objdump inputs with structured reasons",
@@ -22,6 +23,7 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "inspect-with-objdump",
+          ...COMPLETE_DETAIL,
           path,
           "symbols",
           "--format",

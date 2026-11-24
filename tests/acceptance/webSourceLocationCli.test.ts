@@ -710,6 +710,7 @@ cliTest(
     await writeFile(map, fixture.sourceMap.text);
     const args = [
       "trace-web-source-location",
+      ...COMPLETE_DETAIL,
       manifest,
       "0",
       map,

@@ -17,6 +17,7 @@ import {
 } from "../../src/domain/harmony/harmonyApplication.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const expectProjectionParity = (
   graph: HarmonyApplicationProjectionResult,
@@ -144,7 +145,13 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       await writeFile(path, bytes);
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       const cliReply = await cli.run({
-        arguments: ["inspect-artifact", path, "--format", "json"],
+        arguments: [
+          "inspect-artifact",
+          ...COMPLETE_DETAIL,
+          path,
+          "--format",
+          "json",
+        ],
         environment,
       });
       expect(cliReply.exitCode, cliReply.stderr).toBe(0);

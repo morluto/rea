@@ -8,6 +8,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import type { SharedMcpCall, TestCli } from "./cliFixture.js";
+import { COMPLETE_DETAIL } from "../completeDetail.js";
 
 const execute = promisify(execFile);
 
@@ -59,6 +60,7 @@ export const analyzeJavaScriptDirectory = async (
     const response = await run({
       arguments: [
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         ...sourcePaths.flatMap((path) => ["--source-path", path]),
         "--format",
@@ -71,6 +73,7 @@ export const analyzeJavaScriptDirectory = async (
   } else {
     const call = await resolveJavaScriptApplicationMcpCall(cli, mcpCall);
     const response = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: root,
       format: "directory",
       ...(sourcePaths.length === 0 ? {} : { source_paths: sourcePaths }),

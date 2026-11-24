@@ -218,6 +218,7 @@ const analyzeEvidenceThroughStdioMcp = async (
   const response = await client.callTool({
     name: "analyze_javascript_application",
     arguments: {
+      detail: "complete",
       input_path: inputPath,
       ...(sourcePaths === undefined ? {} : { source_paths: [...sourcePaths] }),
     },

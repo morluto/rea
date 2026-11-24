@@ -10,6 +10,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type SharedMcpCall } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const cases = [
   {
@@ -47,6 +48,7 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         "--max-heap-mb",
         "128",
@@ -93,6 +95,7 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         "--semantic-precision",
         '{"primitive_candidates":1}',
@@ -272,6 +275,7 @@ cliTest(
       throw new Error("Timeout Evidence was not retained");
     const cliArguments = [
       "analyze-javascript-application",
+      ...COMPLETE_DETAIL,
       root,
       "--max-heap-mb",
       "128",
@@ -327,6 +331,7 @@ cliTest(
     const result = await cli.run({
       arguments: [
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         "--analysis-timeout-ms",
         "1",

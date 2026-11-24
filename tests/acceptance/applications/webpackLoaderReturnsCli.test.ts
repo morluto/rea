@@ -5,6 +5,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const CACHE_HIT = `
     var cached = cache[key];
@@ -47,7 +48,13 @@ cliTest.for([
       "package.json": JSON.stringify({ name: "fixture", main: "main.js" }),
     });
     const response = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--format", "json"],
+      arguments: [
+        "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
+        root,
+        "--format",
+        "json",
+      ],
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(response.exitCode).toBe(0);
