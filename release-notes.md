@@ -416,6 +416,7 @@
 * **ci:** omit development tools from failure reporting ([#14332](https://github.com/morluto/rea/issues/14332)) ([30fe9d9](https://github.com/morluto/rea/commit/30fe9d9f424447926ca0b8fb3006ddd6f95f279b))
 * **ci:** resolve test snapshot blobs in one tree walk ([#14334](https://github.com/morluto/rea/issues/14334)) ([73c1689](https://github.com/morluto/rea/commit/73c1689aefeabd29d235f8d4341d71f1d3316544))
 * **ci:** reuse installed website rendering packages ([#14337](https://github.com/morluto/rea/issues/14337)) ([1e1db9e](https://github.com/morluto/rea/commit/1e1db9e342ad13d26c27f34af8a2d7a5648387c9))
+* **ci:** skip the portable report runner for non-code changes ([#14333](https://github.com/morluto/rea/issues/14333)) ([7e16cb3](https://github.com/morluto/rea/commit/7e16cb3600489aedb28bffd3e79d9e21c75b1c7b))
 * **cli/mcp:** decouple analysis view contracts and defer tshark PATH probes ([#13316](https://github.com/morluto/rea/issues/13316)) ([787b5aa](https://github.com/morluto/rea/commit/787b5aafb94f69f3b529a13bf47235a1b5ec4295))
 * **cli/mcp:** eliminate eager JSON schema work, double projection, and O(N^2) error compaction ([#13466](https://github.com/morluto/rea/issues/13466)) ([8688eb0](https://github.com/morluto/rea/commit/8688eb0195896d3083271dd73c8a490122f64c80))
 * **cli/server/dotnet:** single-pass --token-count JSON, indexed CLI command lookup, single status parse, and direct loops ([#13631](https://github.com/morluto/rea/issues/13631)) ([2532add](https://github.com/morluto/rea/commit/2532adda8449989fc12bebef215fbcb3494ff243))
