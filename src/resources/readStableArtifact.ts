@@ -527,6 +527,15 @@ export const readStableArtifactRanges = async <T>(
           }
           return buffer;
         },
+      }).catch(async (cause: unknown) => {
+        // Format findings can reflect bytes rewritten between range reads.
+        // Keep independent physical I/O, cancellation, and limit failures primary.
+        if (
+          (cause instanceof ParseFailureError && cause.kind !== "limit") ||
+          (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+        )
+          await verifyStableArtifactRead(path, fileSystem, file, initial, size);
+        throw cause;
       });
       assertArtifactReadActive(signal);
       const hash = createHash("sha256");

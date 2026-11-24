@@ -26,6 +26,7 @@ import {
 } from "../../../src/resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 
 it("reads an empty artifact and rejects symlink, size, and cancellation boundaries", async () => {
   const root = await createTestTempDirectory("rea-stable-artifact-");
@@ -637,6 +638,40 @@ it("rejects a file changed after its ranges were decoded", async () => {
     },
   );
   await expect(reading).rejects.toMatchObject({ reason: "integrity" });
+});
+
+it("reports a file rewritten mid-decode as changed instead of its format failure", async () => {
+  const root = await createTestTempDirectory("rea-stable-ranges-rewrite-");
+  const path = join(root, "selected");
+  await writeFile(path, "original evidence");
+  const malformed = new ParseFailureError({
+    kind: "malformed",
+    format: "test",
+    detail: "rewritten index",
+  });
+  const decode = (rewrite: boolean, failure: Error) => async () => {
+    if (rewrite) await writeFile(path, "replaced evidence");
+    throw failure;
+  };
+  await expect(
+    readStableArtifactRanges(path, decode(true, malformed)),
+  ).rejects.toMatchObject({
+    reason: "integrity",
+    message: expect.stringContaining("changed during read"),
+  });
+  // An unchanged file keeps its format failure, and limits stay primary.
+  await expect(
+    readStableArtifactRanges(path, decode(false, malformed)),
+  ).rejects.toBe(malformed);
+  const limit = new ParseFailureError({
+    kind: "limit",
+    format: "test",
+    detail: "index too large",
+    limit: { name: "index-bytes", maximum: 1 },
+  });
+  await expect(
+    readStableArtifactRanges(path, decode(true, limit)),
+  ).rejects.toBe(limit);
 });
 
 it("keeps a completed range read when cancellation arrives during the final checks", async () => {

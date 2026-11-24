@@ -25,6 +25,7 @@ const fault = vi.hoisted(() => ({
   laterReadFailure: undefined as
     | { position: number; cause: unknown }
     | undefined,
+  afterRead: undefined as (() => Promise<void>) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -58,6 +59,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           const result = await read(buffer, offset, length, position);
           if (position === failure.position && result.bytesRead > 0)
             observedStart = true;
+          return result;
+        };
+      }
+      if (fault.afterRead !== undefined) {
+        const afterRead = fault.afterRead;
+        const read = handle.read.bind(handle) as (
+          ...arguments_: unknown[]
+        ) => Promise<unknown>;
+        (handle as unknown as { read: typeof read }).read = async (
+          ...arguments_
+        ) => {
+          const result = await read(...arguments_);
+          await afterRead();
           return result;
         };
       }
@@ -178,6 +192,7 @@ beforeEach(() => {
   fault.onClose = undefined;
   fault.readFailure = undefined;
   fault.laterReadFailure = undefined;
+  fault.afterRead = undefined;
 });
 
 const staticProviders = [
@@ -248,6 +263,31 @@ it("reports a NuGet package changed after hashing when its ZIP decode fails", as
     expect(fault.handles[0]?.fd).toBe(-1);
   } finally {
     enumeration.mockRestore();
+    await provider.close();
+  }
+});
+
+it("reports an Unreal pak rewritten between its footer and index reads as changed", async () => {
+  const path = await selectedImage(pakBytes);
+  fault.blockNew = false;
+  let reads = 0;
+  // The first range read is the footer; zeroing the file then makes the
+  // index read decode as malformed bytes.
+  fault.afterRead = async () => {
+    if (++reads === 1) await writeFile(path, Buffer.alloc(pakBytes.length));
+  };
+  const provider = new UnrealPakProvider();
+  try {
+    const result = await provider.inspect({ path });
+    if (result.ok) throw new Error("Expected source change");
+    expect(reads).toBeGreaterThan(1);
+    expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
+    expect(result.error).toMatchObject({
+      integrityCheck: "container-identity",
+    });
+    expect(fault.handles).toHaveLength(1);
+    expect(fault.handles[0]?.fd).toBe(-1);
+  } finally {
     await provider.close();
   }
 });
