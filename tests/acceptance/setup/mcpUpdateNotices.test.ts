@@ -3,9 +3,11 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../support/testWait.js";
 
 for (const mode of ["offline", "deferred", "eager"] as const)
   it(`delivers opt-in update notices through the compiled ${mode} MCP entry`, async () => {
@@ -45,10 +47,10 @@ for (const mode of ["offline", "deferred", "eager"] as const)
       },
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "update-notice-acceptance",
-      version: "1",
-    });
+    const client = new Client(
+      { name: "update-notice-acceptance", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const notices: unknown[] = [];
     client.setNotificationHandler("notifications/message", (message) => {
       notices.push(message.params);
@@ -67,7 +69,7 @@ for (const mode of ["offline", "deferred", "eager"] as const)
         client.callTool({ name: "list_unknowns", arguments: {} });
       const first = await call();
       if (mode !== "offline")
-        await vi.waitFor(async () =>
+        await waitFor(async () =>
           expect(await readFile(marker, "utf8")).toBe("lookup\n"),
         );
       const second = await call();
@@ -79,15 +81,19 @@ for (const mode of ["offline", "deferred", "eager"] as const)
       expect(second).toEqual(first);
       expect(third).toEqual(first);
       if (mode !== "offline")
-        await vi.waitFor(() =>
+        // The marker is written before the server observes the lookup result,
+        // so a call sent right after it can still precede the observation.
+        // Keep calling until a response carries the single notice.
+        await waitFor(async () => {
+          expect(await call()).toEqual(first);
           expect(notices).toEqual([
             {
               level: "notice",
               logger: "rea.update",
               data: expect.stringContaining("latest published 9999.0.0"),
             },
-          ]),
-        );
+          ]);
+        });
       else expect(notices).toHaveLength(0);
       if (mode === "offline")
         await expect(readFile(marker, "utf8")).rejects.toMatchObject({

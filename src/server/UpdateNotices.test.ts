@@ -6,6 +6,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
 
+import { waitFor } from "../../tests/support/testWait.js";
 import { ok, err } from "../domain/result.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
@@ -104,7 +105,7 @@ it("does not block a tool or discovery, preserves structured output and announce
   expect(first.structuredContent).toEqual({ result: 42 });
   expect(first.content).toHaveLength(1);
   release(ok("1.1.0"));
-  await vi.waitFor(() => expect(lookup).toHaveResolved());
+  await waitFor(() => expect(lookup).toHaveResolved());
   const second = await client.callTool({ name: "fixture", arguments: {} });
   expect(second.structuredContent).toEqual(first.structuredContent);
   expect(second).toEqual(first);
@@ -128,7 +129,7 @@ it("does not block a tool or discovery, preserves structured output and announce
 it("leaves errors unchanged and retains notices when the receive budget is full", async () => {
   const notices = new UpdateNotices("1.0.0", async () => ok("1.1.0"));
   notices.refresh();
-  await vi.waitFor(() => expect(notices.peek()).toBeDefined());
+  await waitFor(() => expect(notices.peek()).toBeDefined());
   const client = await connect(notices, 256);
   const failed = await client.callTool({
     name: "fixture",
@@ -160,7 +161,7 @@ it("backs off failures for 24 hours, retries on demand, and ignores malformed or
   const notices = new UpdateNotices("1.0.0", lookup, () => now);
   for (let i = 0; i < 4; i++) {
     notices.refresh();
-    await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(i + 1));
+    await waitFor(() => expect(lookup).toHaveBeenCalledTimes(i + 1));
     expect(notices.peek() === undefined).toBe(i < 3);
     notices.refresh();
     expect(lookup).toHaveBeenCalledTimes(i + 1);
@@ -180,7 +181,7 @@ it("cancels and joins pending discovery at close, suppressing late success", asy
     return ok("1.1.0");
   });
   notices.refresh();
-  await vi.waitFor(() => expect(signal).toBeDefined());
+  await waitFor(() => expect(signal).toBeDefined());
   let closed = false;
   const closing = notices.close().then(() => {
     closed = true;
@@ -215,7 +216,7 @@ it("shares one lookup and one notice across concurrent requests", async () => {
   const lookup = vi.fn(async () => ok("1.1.0"));
   const notices = new UpdateNotices("1.0.0", lookup);
   notices.refresh();
-  await vi.waitFor(() => expect(notices.peek()).toBeDefined());
+  await waitFor(() => expect(notices.peek()).toBeDefined());
   const client = await connect(notices);
   const replies = await Promise.all(
     Array.from({ length: 8 }, () =>
@@ -286,7 +287,7 @@ it("server shutdown owns pending lookups even without a remaining SDK transport"
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   notices.refresh();
-  await vi.waitFor(() => expect(signal).toBeDefined());
+  await waitFor(() => expect(signal).toBeDefined());
   await clientTransport.close();
   let closed = false;
   const closing = server.close().then(() => {
@@ -321,8 +322,8 @@ it.each(["DELETE", "replacement"])(
     };
     const announce = async (client: Client, count: number) => {
       const first = await client.callTool({ name: "fixture", arguments: {} });
-      await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(count));
-      await vi.waitFor(async () => {
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(count));
+      await waitFor(async () => {
         const next = await client.callTool({ name: "fixture", arguments: {} });
         expect(next).toEqual(first);
         expect(receivedNotices.get(client)).toHaveLength(1);
@@ -347,7 +348,7 @@ it.each(["DELETE", "replacement"])(
 it("honors the client's logging threshold and does not retry filtered notices", async () => {
   const notices = new UpdateNotices("1.0.0", async () => ok("1.1.0"));
   notices.refresh();
-  await vi.waitFor(() => expect(notices.peek()).toBeDefined());
+  await waitFor(() => expect(notices.peek()).toBeDefined());
   const client = await connect(notices);
   await client.setLoggingLevel("error");
   const first = await client.callTool({ name: "fixture", arguments: {} });
@@ -365,7 +366,7 @@ it.each(["reject", "throw", "pending"])(
   async (failure) => {
     const notices = new UpdateNotices("1.0.0", async () => ok("1.1.0"));
     notices.refresh();
-    await vi.waitFor(() => expect(notices.peek()).toBeDefined());
+    await waitFor(() => expect(notices.peek()).toBeDefined());
     const server = createFixtureServer(() => notices);
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -466,7 +467,7 @@ it("delivers a timestamped unannounced observation while a daily call revalidate
   try {
     await client.callTool({ name: "fixture", arguments: {} });
     release(ok("1.1.0"));
-    await vi.waitFor(() => expect(notices.peek()).toBeDefined());
+    await waitFor(() => expect(notices.peek()).toBeDefined());
     now += 24 * 60 * 60 * 1000;
     await client.callTool({ name: "fixture", arguments: {} });
     expect(lookup).toHaveBeenCalledTimes(2);
@@ -480,7 +481,7 @@ it("delivers a timestamped unannounced observation while a daily call revalidate
       },
     ]);
     release(ok("1.2.0"));
-    await vi.waitFor(() => expect(notices.peek()?.version).toBe("1.2.0"));
+    await waitFor(() => expect(notices.peek()?.version).toBe("1.2.0"));
     await client.callTool({ name: "fixture", arguments: {} });
     expect(receivedNotices.get(client)).toHaveLength(2);
     await client.callTool({ name: "fixture", arguments: {} });
@@ -505,7 +506,7 @@ it.each(["unavailable", "invalid-metadata", "reject", "malformed"] as const)(
       .mockResolvedValueOnce(ok("1.0.0"));
     const notices = new UpdateNotices("1.0.0", lookup, () => now);
     notices.refresh();
-    await vi.waitFor(() => expect(notices.peek()?.version).toBe("1.1.0"));
+    await waitFor(() => expect(notices.peek()?.version).toBe("1.1.0"));
     const client = await connect(notices);
     now += 24 * 60 * 60 * 1000;
     notices.refresh();
@@ -524,7 +525,7 @@ it.each(["unavailable", "invalid-metadata", "reject", "malformed"] as const)(
     expect(lookup).toHaveBeenCalledTimes(2);
     now += 24 * 60 * 60 * 1000;
     notices.refresh();
-    await vi.waitFor(() => expect(notices.peek()?.version).toBe("1.2.0"));
+    await waitFor(() => expect(notices.peek()?.version).toBe("1.2.0"));
     now += 24 * 60 * 60 * 1000;
     notices.refresh();
     await new Promise<void>((resolve) => setImmediate(resolve));
