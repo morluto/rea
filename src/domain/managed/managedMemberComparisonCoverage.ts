@@ -183,9 +183,12 @@ export type ManagedComparisonScope = ReturnType<typeof managedComparisonScope>;
 
 /** Copy the source's typed capacity facts without retaining unrelated issue inventories. */
 const resourceLimits = (
-  issues: ManagedMemberInspection["coverage"]["issues"],
-): NonNullable<ManagedMemberComparisonResult["left"]["resource_limits"]> =>
-  issues.flatMap(({ code, scope, detail, offset, limit }) =>
+  issues: ManagedMemberInspection["coverage"]["issues"] | undefined,
+): NonNullable<ManagedMemberComparisonResult["left"]["resource_limits"]> => {
+  // This list enumerates reported diagnostics, not observed layout facts.
+  // Historical evidence without a layout facet has no such diagnostic to copy.
+  if (issues === undefined) return [];
+  return issues.flatMap(({ code, scope, detail, offset, limit }) =>
     code === "resource-limit"
       ? [
           {
@@ -198,6 +201,7 @@ const resourceLimits = (
         ]
       : [],
   );
+};
 
 export const sideManifest = (
   side: ManagedMemberComparisonSide,
@@ -213,7 +217,7 @@ export const sideManifest = (
     fields_total: side.result.fields.length,
     resource_limits: [
       ...resourceLimits(side.result.coverage.issues),
-      ...resourceLimits(side.result.layout_declarations?.issues ?? []),
+      ...resourceLimits(side.result.layout_declarations?.issues),
     ],
   };
 };
@@ -277,7 +281,7 @@ const capacityLimitations = (
           ({ scope, detail }) =>
             `The ${side} managed member observation exceeded capacity at ${scope}: ${detail}. Its member collections are not examined to completion, so empty or missing members do not establish absence, addition or removal.`,
         ),
-        ...resourceLimits(result.layout_declarations?.issues ?? []).map(
+        ...resourceLimits(result.layout_declarations?.issues).map(
           ({ scope, detail }) =>
             `The ${side} layout declarations exceeded capacity at ${scope}: ${detail}. Its layout declarations are not examined to completion; member inventory coverage is reported independently.`,
         ),
