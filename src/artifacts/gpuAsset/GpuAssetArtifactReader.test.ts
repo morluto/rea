@@ -258,6 +258,20 @@ describe("declared-extent edge cases", () => {
     );
   });
 
+  it("counts images in URI-backed buffers or named by URI as external, not missing", async () => {
+    const result = await read("glb", glbFixture({ external: true }));
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "chunks/0.json",
+      "chunks/1.bin",
+      "images/0.png",
+    ]);
+    expect(result.metadata).toMatchObject({
+      counts: { images: 3, buffers: 2 },
+      external_images: 2,
+    });
+    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+  });
+
   it("keeps coverage unknown when a GLB image does not resolve", async () => {
     const bytes = glbFixture();
     const at = bytes.indexOf('"bufferView":1');

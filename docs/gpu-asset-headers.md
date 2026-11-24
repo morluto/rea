@@ -32,7 +32,10 @@ Detection reads the bytes, so the file name does not matter:
   `accessors`) and `extensionsUsed`. Regions are the JSON chunk, the BIN
   chunk and each image stored in the BIN chunk through a `bufferView`, named
   by its `mimeType` (`images/<n>.png`). An embedded image therefore gets its
-  own content hash.
+  own content hash. `external_images` counts images stored outside the GLB,
+  either named by a URI or held in a buffer that has a URI. These are not
+  regions of the file and do not make coverage unknown. An image whose
+  `bufferView` resolves to neither is not listed, and coverage is `unknown`.
 - **KTX 1.1**: endianness, the GL type and format fields, dimensions, array
   elements, faces, mip levels and key/value byte count. Regions are the
   key/value data and one region per mip level. The level region holds the

@@ -63,6 +63,11 @@ export const glbMetadataSchema = z.strictObject({
   extensions_used: z.array(z.string()),
   /** Why the JSON chunk was not read for counts, when it was not. */
   json_status: z.enum(["parsed", "invalid", "limit"]),
+  /**
+   * Images stored outside the GLB: named by a URI, or in a buffer that has a
+   * URI. They are not regions of this file.
+   */
+  external_images: offset,
   extent_check: extentCheck,
 });
 export type GlbMetadata = z.infer<typeof glbMetadataSchema>;

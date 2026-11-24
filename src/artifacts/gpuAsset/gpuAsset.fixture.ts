@@ -39,24 +39,36 @@ export const GLB_IMAGE = Buffer.concat([
   Buffer.alloc(8),
 ]);
 
-/** GLB 2.0: one VEC3 accessor, one mesh and one PNG image in the BIN chunk. */
-export const glbFixture = (): Buffer => {
+/**
+ * GLB 2.0: one VEC3 accessor, one mesh and one PNG image in the BIN chunk.
+ * `external` adds an image in a URI-backed second buffer and one named by URI.
+ */
+export const glbFixture = ({ external = false } = {}): Buffer => {
   const positions = Buffer.alloc(12);
   positions.writeFloatLE(1, 4);
   const bin = Buffer.concat([positions, GLB_IMAGE]);
   let json = Buffer.from(
     JSON.stringify({
       asset: { version: "2.0", generator: "rea fixture" },
-      buffers: [{ byteLength: bin.length }],
+      buffers: [
+        { byteLength: bin.length },
+        ...(external ? [{ uri: "textures.bin", byteLength: 64 }] : []),
+      ],
       bufferViews: [
         { buffer: 0, byteLength: 12 },
         { buffer: 0, byteOffset: 12, byteLength: GLB_IMAGE.length },
+        ...(external ? [{ buffer: 1, byteLength: 64 }] : []),
       ],
       accessors: [
         { bufferView: 0, componentType: 5126, count: 1, type: "VEC3" },
       ],
       meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
-      images: [{ bufferView: 1, mimeType: "image/png" }],
+      images: [
+        { bufferView: 1, mimeType: "image/png" },
+        ...(external
+          ? [{ bufferView: 2, mimeType: "image/png" }, { uri: "albedo.png" }]
+          : []),
+      ],
       extensionsUsed: ["KHR_materials_unlit"],
     }),
   );

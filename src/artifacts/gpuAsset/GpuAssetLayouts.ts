@@ -436,21 +436,35 @@ export const glbLayout = async (
   const images = boundedList(arrayOf(json["images"]), MAX_GLB_IMAGES);
   if (images.omitted > 0) regionsExamined = "unknown";
   let unresolvedImages = 0;
+  let externalImages = 0;
+  const buffers = arrayOf(json["buffers"]);
   if (images.omitted > 0)
     limitations.push(
       `The GLB declares ${String(images.omitted)} image(s) past the ${String(MAX_GLB_IMAGES)}-image listing allowance; their bytes stay inside the BIN chunk region.`,
     );
   images.items.forEach((image, index) => {
+    // An image named by URI is outside the GLB, not one of its regions.
+    if (recordOf(image)["bufferView"] === undefined) {
+      externalImages++;
+      return;
+    }
     const view = recordOf(
       bufferViews[indexOf(recordOf(image)["bufferView"]) ?? -1],
     );
-    // An image named by URI is outside the GLB, not one of its regions.
-    if (recordOf(image)["bufferView"] === undefined) return;
+    const bufferIndex = indexOf(view["buffer"]);
+    const buffer = bufferIndex === undefined ? undefined : buffers[bufferIndex];
+    // glTF 2.0 GLB: only buffers[0] without a uri is the BIN chunk. A buffer
+    // with a uri is external, so its images are not GLB regions either.
+    if (buffer !== undefined && recordOf(buffer)["uri"] !== undefined) {
+      externalImages++;
+      return;
+    }
     const start = indexOf(view["byteOffset"] ?? 0);
     const length = indexOf(view["byteLength"]);
     if (
       binOffset === undefined ||
-      indexOf(view["buffer"]) !== 0 ||
+      bufferIndex !== 0 ||
+      buffer === undefined ||
       start === undefined ||
       length === undefined ||
       start + length > binLength
@@ -494,6 +508,7 @@ export const glbLayout = async (
         (value): value is string => typeof value === "string",
       ),
       json_status: jsonStatus,
+      external_images: externalImages,
       extent_check: fit.extent,
     },
     regions: fit.regions,
