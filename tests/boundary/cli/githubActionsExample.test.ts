@@ -110,9 +110,10 @@ it("links to the workflow asset outside the documentation site's base", async ()
   const workflowLinks = new MarkdownIt()
     .parse(guide, {})
     .flatMap((token) => token.children ?? [])
-    .flatMap((token) =>
-      token.type === "link_open" ? [token.attrGet("href") ?? ""] : [],
-    )
+    .flatMap((token) => {
+      const href = token.type === "link_open" ? token.attrGet("href") : null;
+      return typeof href === "string" ? [href] : [];
+    })
     .filter((href) =>
       href.endsWith("examples/github-actions/rea-analysis.yml"),
     );
