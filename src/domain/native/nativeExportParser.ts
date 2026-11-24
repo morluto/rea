@@ -49,6 +49,7 @@ import {
 } from "./elfDynamicExportTables.js";
 import type { ByteSource } from "../byteSource.js";
 import { peDirectorySizeAnomaly } from "./peHeaderAnomalies.js";
+import { peImageBaseHex } from "./peAddressSpace.js";
 
 type Artifact = NativeExports["artifact"];
 
@@ -647,6 +648,7 @@ function* parsePeExportSteps(
     format: "pe" as const,
     architecture: image.architecture,
     bits: image.bits,
+    image_base: peImageBaseHex(base),
     header_anomalies: headerAnomalies,
   };
   if (directory === undefined || directory.address === 0)

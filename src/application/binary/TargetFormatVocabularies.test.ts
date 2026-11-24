@@ -11,6 +11,7 @@ import {
   createImmutableEvidenceBundle,
   parseEvidenceBundle,
 } from "../../domain/evidenceBundle.js";
+import { rawLoadAtEntry } from "../../domain/rawBinary.fixture.js";
 import type {
   BINARY_TARGET_FORMAT_KINDS,
   TargetFormat,
@@ -86,8 +87,7 @@ const TARGETS: TargetFixtures = {
     format: "raw-binary",
     architecture: "m68k",
     availableArchitectures: ["m68k"],
-    entryPoint: "0x1000",
-    entryPointSource: "0x1000",
+    rawLoad: rawLoadAtEntry("0x1000"),
   },
   "gamecube-dol": {
     ...identity,
