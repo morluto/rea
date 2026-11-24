@@ -20,6 +20,8 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
@@ -112,16 +114,20 @@ const manifestFileSizeRefusal = (
         }).fixedAllowance,
         details,
       )
-    : new AnalysisResourceConstraintError(
+    : parseLimitConstraint(
         operation,
         "file-size",
-        cause.message,
+        decodeLimit(
+          "cargo-toml",
+          cause.message,
+          { name: "max_file_bytes", maximum: maxFileBytes },
+          { cause },
+        ),
         {
-          max_file_bytes: maxFileBytes,
-          maximum_file_bytes: CARGO_MANIFEST_MAX_FILE_BYTES,
-        },
-        {
-          cause,
+          legacyMaximumKey: "max_file_bytes",
+          reportedLimitContext: {
+            maximum_file_bytes: CARGO_MANIFEST_MAX_FILE_BYTES,
+          },
           retryable: false,
           remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes, up to the ${String(CARGO_MANIFEST_MAX_FILE_BYTES)}-byte release maximum, or select a smaller manifest.`,
         },
