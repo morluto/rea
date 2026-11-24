@@ -81,6 +81,10 @@ it("admits aligned volumes of any file system and leaves unaligned ones inconclu
       Buffer.concat([Buffer.alloc(1), ffs, Buffer.alloc(15), ffs]),
     ),
   ).toBe(true);
+
+  const badChecksum = Buffer.from(ffs);
+  badChecksum[55] = 3; // corrupts header checksum while preserving structural framing
+  expect(admitUefiFlashImage(badChecksum)).toBe(true);
 });
 
 it.each([
