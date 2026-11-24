@@ -426,7 +426,7 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
         name: "quinn",
         names: ["quinn"],
         contains: "quin",
-        source_kind: "git",
+        source_kind: "git" as const,
       },
       offset: 0,
       rows: [{ index: 1, name: "quinn" }],
@@ -435,7 +435,7 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
     { selection: { indices: [] }, offset: 0, rows: [], total: 0 },
     { selection: { names: [] }, offset: 0, rows: [], total: 0 },
     {
-      selection: { name: "quinn", source_kind: "registry" },
+      selection: { name: "quinn", source_kind: "registry" as const },
       offset: 0,
       rows: [],
       total: 0,
