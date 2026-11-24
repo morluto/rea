@@ -16,7 +16,10 @@ import {
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const client = process.argv[2];
@@ -200,17 +203,8 @@ await withVerifierCleanup(async () => {
         const messages = body.messages ?? [];
         const toolMessages = messages.filter((m) => m.role === "tool");
         const serializedTools = JSON.stringify(toolMessages);
-        const call = (name, args) => ({
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: `call_rea_${requestIndex}`,
-              type: "function",
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        });
+        const call = (name, args) =>
+          toolCallMessage(`call_rea_${requestIndex}`, name, args);
         if (
           client === "pi" &&
           callRequested &&
