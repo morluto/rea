@@ -709,6 +709,7 @@
 * **artifacts:** preserve bounded partial inspection for trailing boot/OTA metadata and deduplicate UEFI/iNES probes ([#14358](https://github.com/morluto/rea/issues/14358)) ([2b9db68](https://github.com/morluto/rea/commit/2b9db683aa53d5a754b7b5146dcbca5a269a92f9))
 * **artifacts:** reuse the positional reader for iNES prefixes ([#13481](https://github.com/morluto/rea/issues/13481)) ([b6ffec4](https://github.com/morluto/rea/commit/b6ffec43adeec2d7b57ef49b894425e8b0d36d0a))
 * **artifacts:** share cached prefix reader and ELF/MZ magic ([#13663](https://github.com/morluto/rea/issues/13663)) ([baed75f](https://github.com/morluto/rea/commit/baed75fc2b3a723144d46fdfb206b50bd03c6698))
+* **binary:** share prefix-aware byte slice reads ([#14377](https://github.com/morluto/rea/issues/14377)) ([6582830](https://github.com/morluto/rea/commit/658283000a0e5973650261ed45e9c3f0a32d8e22))
 * **build:** share skill file enumeration across generators ([#14339](https://github.com/morluto/rea/issues/14339)) ([73f72c9](https://github.com/morluto/rea/commit/73f72c9cd69ad5a669dd4fc705d4b45af4297f11))
 * centralize owned finalization and configuration failures ([#14071](https://github.com/morluto/rea/issues/14071)) ([4bbaf17](https://github.com/morluto/rea/commit/4bbaf175121f101b319cd8aa0b4d47d3f40d5862))
 * **cli/server:** break remaining module-layer cycles ([#14013](https://github.com/morluto/rea/issues/14013)) ([b565f78](https://github.com/morluto/rea/commit/b565f787cb4642a277f85d1a299acb8c49d7b409))
