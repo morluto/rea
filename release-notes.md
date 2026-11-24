@@ -387,6 +387,7 @@
 * **tests:** disable Vitest fsModuleCache in nested test-runner fixtures ([#14371](https://github.com/morluto/rea/issues/14371)) ([7503364](https://github.com/morluto/rea/commit/7503364df8c4b7b90ae6b8e161becc030e6cb91e))
 * **tests:** expect [#14225](https://github.com/morluto/rea/issues/14225)'s reader reasons in the boundary tests ([#14238](https://github.com/morluto/rea/issues/14238)) ([83877c8](https://github.com/morluto/rea/commit/83877c88b97cbd2d38f204f4589902715acd0fdd))
 * **tests:** expect the path reason for a FIFO root and a symlinked ZIP ([#14242](https://github.com/morluto/rea/issues/14242)) ([0af067d](https://github.com/morluto/rea/commit/0af067d766c43a44e4d6b696b6d8d4470f18556d))
+* **tests:** give CI workflow fixtures a hermetic GitHub context ([26cb5b5](https://github.com/morluto/rea/commit/26cb5b53ceeb1b3288c430ba1b222c2537457740))
 * **tests:** narrow markdown-it attributes to strings in doc link checks ([#14217](https://github.com/morluto/rea/issues/14217)) ([e39b56f](https://github.com/morluto/rea/commit/e39b56fc5de5a8791bdf8fa85b8366de213804a9))
 * **uefi:** attribute a refused output directory to output_directory ([c01c168](https://github.com/morluto/rea/commit/c01c16833635c30375f61fe0fba1f28ddffb685f))
 * **uefi:** preserve verified source identity through descriptor finalization ([#14073](https://github.com/morluto/rea/issues/14073)) ([ce277e3](https://github.com/morluto/rea/commit/ce277e3974f565f8edb46c88465b293c170fd582))
