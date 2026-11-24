@@ -58,14 +58,18 @@ cliTest.for(cases)(
         error = parseMcpToolError(response).error;
       }
       expect(error).toMatchObject({
-        code: malformed ? "invalid_request" : "unsupported_target",
-        category: malformed ? "invalid_input" : "unsupported_target",
+        // Malformed bytes and unsupported layouts are both target refusals.
+        code: "unsupported_target",
+        category: "unsupported_target",
         retryable: false,
         details: { operation: `inspect_pe_${operation}` },
       });
       if (malformed) {
         expect(error).toMatchObject({
-          details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+          details: {
+            path,
+            format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+          },
         });
       } else {
         expect(error).toMatchObject({ details: { path } });

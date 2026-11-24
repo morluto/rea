@@ -566,16 +566,11 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_python_pyc",
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("shorter than a 16-byte CPython"),
-          },
-        ],
+        format_failure: "malformed",
+        reason: expect.stringContaining("shorter than a 16-byte CPython"),
       },
     });
     expect(result.json).not.toHaveProperty("normalized_result");

@@ -92,7 +92,10 @@ const failWithDescriptorCleanup = async (
 };
 
 it.each([
-  { cause: malformedInput("pe", "bad field"), genericCode: "invalid_request" },
+  {
+    cause: malformedInput("pe", "bad field"),
+    genericCode: "unsupported_target",
+  },
   { cause: truncatedInput("pe", "short field"), genericCode: "truncated" },
   {
     cause: unsupportedInput("pe", "unsupported image"),
@@ -159,29 +162,23 @@ it.each([
     expectPending();
     await scope.close();
     expect(descriptor.fd).toBe(-1);
+    // Malformed, truncated and unsupported bytes are all target refusals.
     expect(projectAnalysisError(selected)).toMatchObject({
-      code:
-        cause.kind === "unsupported" ? "unsupported_target" : "invalid_request",
+      code: "unsupported_target",
+      category: "unsupported_target",
       details: {
+        operation,
+        path,
+        reason: cause.message,
         ...(cause.kind === "unsupported"
-          ? { operation, path, reason: cause.message }
-          : {
-              operation,
-              issues: [
-                {
-                  path: ["path"],
-                  reason: "invalid_format",
-                  message: cause.message,
-                },
-              ],
-            }),
+          ? {}
+          : { format_failure: cause.kind, format: "pe" }),
         partial_observation: observation,
       },
     });
     expect(projectAnalysisError(generic)).toMatchObject({
       code: genericCode,
-      category:
-        genericCode === "invalid_request" ? "invalid_input" : genericCode,
+      category: genericCode,
       details: { reason: cause.kind, detail: cause.message },
     });
   },

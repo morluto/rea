@@ -2,10 +2,14 @@ import { spawn } from "node:child_process";
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { wabtFailureDialect } from "./WabtFailures.js";
+import { wabtFailureDialect, type WabtVersionProbe } from "./WabtFailures.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 
-import { WASM_RESOURCE_DEFAULTS } from "../domain/wasm/wasmArtifact.js";
+import {
+  WABT_RELEASE_LINE,
+  WABT_VERSION,
+  WASM_RESOURCE_DEFAULTS,
+} from "../domain/wasm/wasmArtifact.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 
@@ -174,12 +178,12 @@ it.each([
         ? { cancellation: { reason: callerReason } }
         : undefined,
     );
-    const probe = {
-      configuration_key: "REA_WABT_BIN_DIRECTORY" as const,
+    const probe: WabtVersionProbe = {
+      configuration_key: "REA_WABT_BIN_DIRECTORY",
       executable_path: "/tools/wasm2wat",
       tool: "wasm2wat",
-      expected_version: "1.0.42" as const,
-      accepted_releases: "WABT >=1.0.42 <1.1.0 (verified with 1.0.42)",
+      expected_version: WABT_VERSION,
+      accepted_releases: WABT_RELEASE_LINE,
     };
     const failure = wabtFailure(cause, "configuration", "/selected.wasm", {
       commandTimeoutMs: 1234,

@@ -906,7 +906,7 @@ describe("binary target I/O: ESP flash layouts", () => {
   });
 });
 
-it("classifies a FIT by its /images node and leaves a plain DTB rejected", async () => {
+it("classifies a FIT by its /images node and a plain DTB as a devicetree artifact", async () => {
   const directory = await createTestTempDirectory("rea-fit-target-");
   const itb = join(directory, "boot.itb");
   const extensionless = join(directory, "boot");
@@ -922,11 +922,8 @@ it("classifies a FIT by its /images node and leaves a plain DTB rejected", async
       value: { kind: "archive", format: "fit" },
     });
   expect(await parseBinaryTarget(dtb)).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "BinaryTargetError",
-      constraint: "file_format_rejected",
-    },
+    ok: true,
+    value: { kind: "artifact", format: "devicetree" },
   });
 });
 
