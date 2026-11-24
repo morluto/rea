@@ -57,6 +57,10 @@ const readDeclarations = (
   const methodCount = layout.table(6)?.rowCount ?? 0;
   const methodWidth = layout.tableIndexSize(6);
   const reader = new BinaryReader(bytes, true, "managed-accessors");
+  const associations = new Map<
+    string,
+    { rowOffset: number; flags: number; name: string | null }
+  >();
   const addIssue = (issue: ManagedParseIssue): void => {
     issues.push(admitManagedProjection(issue, budget));
   };
@@ -102,30 +106,41 @@ const readDeclarations = (
       let associationName: string | null = null;
       let associationFlags: number | null = null;
       if (association.kind === "valid") {
-        const target = metadataRowCursor(
-          bytes,
-          layout,
-          association.table,
-          association.row,
-        );
-        associationRowOffset = target.start;
-        associationFlags = target.u16();
-        const nameOffset = target.offset;
-        const nameIndex = target.readIndex(layout.stringIndexSize);
-        const failures: ManagedParseIssue[] = [];
-        associationName =
-          readManagedValue(() => {
-            const name = readMetadataString(bytes, layout, nameIndex);
-            if (name.length === 0)
-              throw managedFailure(
-                "invalid-row",
-                `metadata.${association.table === 23 ? "Property" : "Event"}:${association.token}`,
-                "Accessor association Name must reference a nonempty string",
-                nameOffset,
-              );
-            return name;
-          }, failures) ?? null;
-        for (const failure of failures) addIssue(failure);
+        let facts = associations.get(association.token);
+        if (facts === undefined) {
+          // Reserve the cache entry before following the heap reference. Even
+          // malformed names are a single physical-row observation.
+          budget.admitTransient(128, associationOffset);
+          const target = metadataRowCursor(
+            bytes,
+            layout,
+            association.table,
+            association.row,
+          );
+          const rowOffset = target.start;
+          const targetFlags = target.u16();
+          const nameOffset = target.offset;
+          const nameIndex = target.readIndex(layout.stringIndexSize);
+          const failures: ManagedParseIssue[] = [];
+          const name =
+            readManagedValue(() => {
+              const value = readMetadataString(bytes, layout, nameIndex);
+              if (value.length === 0)
+                throw managedFailure(
+                  "invalid-row",
+                  `metadata.${association.table === 23 ? "Property" : "Event"}:${association.token}`,
+                  "Accessor association Name must reference a nonempty string",
+                  nameOffset,
+                );
+              return value;
+            }, failures) ?? null;
+          for (const failure of failures) addIssue(failure);
+          facts = { rowOffset, flags: targetFlags, name };
+          associations.set(association.token, facts);
+        }
+        associationRowOffset = facts.rowOffset;
+        associationFlags = facts.flags;
+        associationName = facts.name;
       } else {
         addIssue({
           code: "invalid-row",

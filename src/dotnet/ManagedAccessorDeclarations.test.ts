@@ -229,3 +229,25 @@ it("keeps an unreadable associated name unknown while retaining its raw row", ()
   ).toBeGreaterThan(0);
   expect(result.accessors?.declarations[2]?.association_name).toBe("Changed");
 });
+
+it("reads a shared unterminated association name once without dropping declarations", () => {
+  const result = inspect(
+    buildManagedAccessorFixture({
+      propertyName: "x".repeat(4000),
+      unterminatedPropertyName: true,
+      semantics: Array.from({ length: 64 }, () => [2, 1, 3] as const),
+    }),
+  );
+  expect(result.coverage.state).toBe("complete");
+  expect(result.accessors?.state).toBe("partial");
+  expect(result.accessors?.declarations).toHaveLength(64);
+  expect(
+    result.accessors?.declarations.every(
+      ({ association_name, association_token }) =>
+        association_name === null && association_token === "0x17000001",
+    ),
+  ).toBe(true);
+  expect(result.accessors?.issues).toEqual([
+    expect.objectContaining({ code: "invalid-string", scope: "metadata.#Strings" }),
+  ]);
+});

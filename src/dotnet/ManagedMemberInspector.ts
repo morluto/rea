@@ -455,7 +455,7 @@ export const inspectManagedMembersBytes = (
     const coverageIssues = uniqueManagedParseIssues(issues);
     // Admit the member projection before reading #US literals so an overflow
     // in #US preserves the already-decoded members without re-decoding them.
-    const baseInspection = admitManagedProjection(
+    const baseInspection = admitManagedProjection<ManagedMemberInspection>(
       {
         ...envelope,
         metadata: {
@@ -501,13 +501,9 @@ export const inspectManagedMembersBytes = (
       },
       budget,
     );
-    const finish = (value: unknown): ManagedMemberInspection =>
+    const finish = (value: ManagedMemberInspection): ManagedMemberInspection =>
       managedMemberInspectionSchema.parse(
-        withManagedAccessorDeclarations(
-          bytes,
-          layout,
-          managedMemberInspectionSchema.parse(value),
-        ),
+        withManagedAccessorDeclarations(bytes, layout, value),
       );
     if (!readUserStrings) return finish(baseInspection);
     let userStrings: ManagedMemberInspection["user_strings"];

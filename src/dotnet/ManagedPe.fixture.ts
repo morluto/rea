@@ -1317,6 +1317,7 @@ export const buildManagedAccessorFixture = (
     readonly methodPointers?: readonly number[];
     readonly propertyName?: string;
     readonly eventName?: string;
+    readonly unterminatedPropertyName?: boolean;
   } = {},
 ): Buffer =>
   buildManagedFixtureImage({}, () => {
@@ -1330,10 +1331,10 @@ export const buildManagedAccessorFixture = (
     const methodNames = ["Read", "Write", "Attach", "Detach"].map((name) =>
       strings.add(name),
     );
-    const propertyName = strings.add(options.propertyName ?? "Value");
     const eventName = strings.add(options.eventName ?? "Changed");
     const handlerName = strings.add("EventHandler");
     const systemName = strings.add("System");
+    const propertyName = strings.add(options.propertyName ?? "Value");
     const propertySignature = blobs.add(Buffer.from([0x28, 0, 0x08]));
     const methodSignatures = [
       [0x20, 0, 0x08],
@@ -1399,10 +1400,13 @@ export const buildManagedAccessorFixture = (
     ]);
     if (options.methodPointers !== undefined)
       rows.set(5, options.methodPointers.map(u16));
+    const stringBytes = strings.toBuffer();
+    if (options.unterminatedPropertyName === true && propertyName !== 0)
+      stringBytes[stringBytes.length - 1] = 0x78;
     return metadataRoot(
       {
         tables: tablesStream(rows, 0n, 0),
-        strings: strings.toBuffer(),
+        strings: stringBytes,
         guid: guidHeap(),
         blob: blobs.toBuffer(),
       },
