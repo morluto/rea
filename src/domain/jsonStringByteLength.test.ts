@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
-import { jsonStringByteLength } from "./jsonStringByteLength.js";
+import {
+  jsonStringByteLength,
+  truncateJsonString,
+} from "./jsonStringByteLength.js";
 
 it("matches native JSON encoding for every individual UTF-16 code unit", () => {
   const mismatches: number[] = [];
@@ -54,4 +57,17 @@ it("preserves exact length and budget overflow for long path-like strings", () =
     );
     expect(jsonStringByteLength(value, 128)).toBeGreaterThan(128);
   }
+});
+
+it("truncates long strings at valid code-point boundaries within the JSON byte limit", () => {
+  expect(truncateJsonString("abc", 5)).toBe("abc");
+  expect(truncateJsonString("abcd", 5)).toBe("abc");
+  expect(truncateJsonString('a\n"b', 6)).toBe("a\n");
+  expect(truncateJsonString('a\n"b', 7)).toBe('a\n"');
+  expect(truncateJsonString("😀a", 5)).toBe("");
+  expect(truncateJsonString("😀a", 6)).toBe("😀");
+  const truncated = truncateJsonString("k".repeat(81_920), 64, " (cut)");
+  expect(jsonStringByteLength(truncated)).toBeLessThanOrEqual(64);
+  expect(truncated.endsWith(" (cut)")).toBe(true);
+  expect(truncateJsonString("abcdef", 2, " (cut)")).toBe("");
 });

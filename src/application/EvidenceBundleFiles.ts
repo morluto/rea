@@ -7,7 +7,8 @@ import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { isRecord } from "../kernel/isRecord.js";
 
-import { describeValidationFailure } from "../domain/validationFailure.js";
+import { boundedValidationFailure } from "../domain/validationFailure.js";
+import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
   safeParseImmutableEvidenceBundle,
@@ -18,7 +19,6 @@ import {
 import {
   safeParseImmutableEvidence,
   unsupportedEvidenceFormatError,
-  validationIssueOptions,
 } from "../domain/evidenceValidation.js";
 import { isUnsupportedEvidenceFormat } from "../domain/evidenceFormat.js";
 import {
@@ -214,13 +214,33 @@ const authenticateStandaloneEvidenceValue = (
     if (isUnsupportedEvidenceFormat(parsed.error))
       return err(unsupportedEvidenceFormatError(parsed.error));
     if (isRecord(value) && Object.hasOwn(value, "evidence_id")) {
-      const message = `Evidence validation failed ${describeValidationFailure(parsed.error)}`;
+      const fixedMessageBytes =
+        1024 +
+        3 *
+          jsonStringByteLength(callerPath, EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES);
+      const bounded = boundedValidationFailure(parsed.error, {
+        budgetBytes: Math.max(
+          0,
+          EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES - fixedMessageBytes,
+        ),
+        within: [],
+        descriptionCopies: 3,
+      });
+      const message = `Evidence validation failed ${bounded.description}`;
       return err(
         new EvidenceIntegrityError(message, {
           cause: parsed.error,
           userMessage: `${message}. Recreate or repair the Evidence file at ${callerPath}, then try again.`,
           diagnostics: { path: callerPath },
-          ...validationIssueOptions(parsed.error, []),
+          ...(bounded.issuePath === undefined
+            ? {}
+            : { issuePath: bounded.issuePath }),
+          ...(bounded.constraint === undefined
+            ? {}
+            : { constraint: bounded.constraint }),
+          ...(bounded.remainingIssueCount === undefined
+            ? {}
+            : { remainingIssueCount: bounded.remainingIssueCount }),
         }),
       );
     }
@@ -307,10 +327,14 @@ const validateRecordsPayloads = (
     if (!headroom.ok) return headroom;
     const parsedCapture = safeParseProcessCapture(record.normalized_result);
     if (!parsedCapture.success) {
+      const detail = boundedValidationFailure(parsedCapture.error, {
+        budgetBytes: Math.max(0, EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES - 1024),
+        descriptionCopies: 2,
+      }).description;
       return err(
         new EvidenceIntegrityError("Evidence bundle validation failed", {
           cause: parsedCapture.error,
-          userMessage: `Process capture record ${record.evidence_id} has an invalid normalized_result (${describeValidationFailure(parsedCapture.error)}). Recreate or re-export the bundle, then try again.`,
+          userMessage: `Process capture record ${record.evidence_id} has an invalid normalized_result (${detail}). Recreate or re-export the bundle, then try again.`,
         }),
       );
     }

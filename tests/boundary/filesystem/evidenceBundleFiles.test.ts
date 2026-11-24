@@ -1194,5 +1194,58 @@ describe("standalone Evidence record intake", () => {
         path: bloatedNonEvidence,
       },
     });
+
+    const longKey = "k".repeat(80 * 1024);
+    const oversizedCallerKeyPath = join(directory, "oversized-caller-key.json");
+    await writeFile(
+      oversizedCallerKeyPath,
+      JSON.stringify({
+        ...record,
+        caller_input_paths: { [longKey]: false },
+      }),
+    );
+    const callerKeyFailure = await readStandaloneEvidenceRecord(
+      oversizedCallerKeyPath,
+    );
+    if (callerKeyFailure.ok)
+      throw new Error("Expected EvidenceIntegrityError for caller_input_paths");
+    expect(callerKeyFailure.error).toMatchObject({
+      _tag: "EvidenceIntegrityError",
+      issuePath: ["caller_input_paths"],
+    });
+    const callerKeyProjected = projectAnalysisError(
+      callerKeyFailure.error,
+      "invocation",
+    );
+    const callerKeyEncoded = JSON.stringify(callerKeyProjected);
+    expect(Buffer.byteLength(callerKeyEncoded, "utf8")).toBeLessThanOrEqual(
+      65_536,
+    );
+    expect(callerKeyEncoded).not.toContain(longKey);
+
+    const oversizedStrictKeyPath = join(directory, "oversized-strict-key.json");
+    await writeFile(
+      oversizedStrictKeyPath,
+      JSON.stringify({
+        ...record,
+        provider: { ...record.provider, [longKey]: false },
+      }),
+    );
+    const strictKeyFailure = await readStandaloneEvidenceRecord(
+      oversizedStrictKeyPath,
+    );
+    if (strictKeyFailure.ok)
+      throw new Error("Expected EvidenceIntegrityError for strict provider");
+    expect(strictKeyFailure.error).toMatchObject({
+      _tag: "EvidenceIntegrityError",
+      issuePath: ["provider"],
+    });
+    const strictKeyEncoded = JSON.stringify(
+      projectAnalysisError(strictKeyFailure.error, "invocation"),
+    );
+    expect(Buffer.byteLength(strictKeyEncoded, "utf8")).toBeLessThanOrEqual(
+      65_536,
+    );
+    expect(strictKeyEncoded).not.toContain(longKey);
   });
 });

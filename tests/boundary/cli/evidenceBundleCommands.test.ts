@@ -823,6 +823,31 @@ cliTest(
       details: { operation: "write", reason: "not-file", path: dirOutPath },
     });
 
+    const longKey = "k".repeat(80 * 1024);
+    const oversizedKeyPath = join(root, "oversized-key-record.json");
+    await writeFile(
+      oversizedKeyPath,
+      JSON.stringify({
+        ...valid,
+        caller_input_paths: { [longKey]: false },
+      }),
+    );
+    const oversizedKey = await cli.run({
+      arguments: ["evidence-pack", outPath, oversizedKeyPath, "--json"],
+    });
+    expect(oversizedKey.exitCode).toBe(1);
+    expect(oversizedKey.json).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      details: {
+        issue_path: ["caller_input_paths"],
+        diagnostics: { path: oversizedKeyPath },
+      },
+    });
+    expect(Buffer.byteLength(oversizedKey.stdout, "utf8")).toBeLessThanOrEqual(
+      65_536,
+    );
+    expect(oversizedKey.stdout).not.toContain(longKey);
+
     await expect(access(outPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
