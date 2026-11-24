@@ -55,6 +55,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   requestsStandaloneDecompile,
   requiresNativeSourceAdmissionBeforeReplay,
+  snapshotNotSavedLimitation,
 } from "./binary/AnalysisSnapshotCache.js";
 import {
   snapshotBindingMismatch,
@@ -708,7 +709,13 @@ const executeAnalysisTool = async (input: {
       session,
       input.arguments,
       input.openedTarget,
-      { signal },
+      {
+        signal,
+        // The session reports when a saved one-shot answer cannot replay.
+        ...(input.saveSnapshot
+          ? { snapshotContext: "one-shot-target" as const }
+          : {}),
+      },
     );
     result = retainAnalysisResultSources(
       tool,
@@ -737,13 +744,29 @@ const executeAnalysisTool = async (input: {
       result,
     );
     if (!result.ok) return result;
+    // Mirrors the workflow snapshot record DirectAnalysis keeps afterwards.
+    const workflowReplayRefusal =
+      !input.saveSnapshot ||
+      (tool !== "trace_native_ui_action" &&
+        session.allowsSnapshotReplay(tool) &&
+        evidenceProfile !== undefined &&
+        result.value.cachePolicy !== "live")
+        ? undefined
+        : snapshotNotSavedLimitation(
+            result.value.cachePolicy === "live"
+              ? "this composed result depends on live provider answers"
+              : "this workflow is not bound to a replayable provider profile",
+          );
     const evidence = createWorkflowEvidence({
       target: input.openedTarget,
       operation: tool,
       parameters: input.evidenceParameters,
       result: result.value.result,
       upstreamProfile: evidenceProfile,
-      upstreamLimitations: result.value.limitations,
+      upstreamLimitations:
+        workflowReplayRefusal === undefined
+          ? result.value.limitations
+          : [...result.value.limitations, workflowReplayRefusal],
       ...(result.value.evidenceLinks === undefined
         ? {}
         : { upstreamEvidenceLinks: result.value.evidenceLinks }),

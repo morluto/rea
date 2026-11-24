@@ -217,8 +217,28 @@ export const oneShotSnapshotReplayRefusal = ({
       : requestsStandaloneDecompile(operation, parameters)
         ? "a standalone decompile always runs"
         : `${descriptor.provider.id} does not bind this read to the snapshot's target and profile`;
-  return `Not saved for snapshot replay: ${reason}. The snapshot records this Evidence, and repeating the call runs the provider again.`;
+  return snapshotNotSavedLimitation(reason);
 };
+
+/** The limitation a caller who asked for a snapshot gets when its answer cannot replay. */
+export const snapshotNotSavedLimitation = (reason: string): string =>
+  `Not saved for snapshot replay: ${reason}. The snapshot records this Evidence, and repeating the call runs the provider again.`;
+
+/**
+ * Why `record` would skip an execution's replay entry, or undefined when it
+ * would keep it. `record` uses the same answer, so the notice cannot drift.
+ */
+const executionReplayRefusal = (
+  execution: AnalysisExecution,
+): string | undefined =>
+  // The snapshot format does not carry reference truncation or stored-pointer
+  // classifications. Replaying either would present a capped or untyped read
+  // as the live observation.
+  execution.referencesTruncated === true ||
+  execution.referenceClassifications !== undefined ||
+  execution.referenceCoverageGaps !== undefined
+    ? "the snapshot format cannot keep this result's reference truncation or classifications"
+    : undefined;
 
 /** Limitation that marks every observation replayed from a snapshot. */
 const SNAPSHOT_REPLAY_LIMITATION =
@@ -663,15 +683,7 @@ export class AnalysisSnapshotCache {
   ): void {
     const { target, profile, operation, parameters, execution } = input;
     this.select(target, profile);
-    // The snapshot format does not carry reference truncation or stored-pointer
-    // classifications. Replaying either would present a capped or untyped read
-    // as the live observation.
-    if (
-      execution.referencesTruncated === true ||
-      execution.referenceClassifications !== undefined ||
-      execution.referenceCoverageGaps !== undefined
-    )
-      return;
+    if (executionReplayRefusal(execution) !== undefined) return;
     let sourceBinding: SnapshotReplayBinding | undefined;
     if ((execution.sourceEvidence?.length ?? 0) > 0) {
       if (execution.evidenceId === undefined || lookup === undefined) return;
@@ -717,6 +729,32 @@ export class AnalysisSnapshotCache {
             : { sourceEvidence: Object.freeze([input.evidence]) }),
         },
       );
+  }
+
+  /**
+   * Why recording this execution would keep no replay entry: its reference
+   * facts, or a full cache that holds no entry for this query yet.
+   */
+  recordingRefusal(input: {
+    readonly target: BinaryTarget;
+    readonly profile: AnalysisProfileCommitment;
+    readonly operation: AnalysisOperation;
+    readonly parameters: Readonly<Record<string, JsonValue>>;
+    readonly execution: AnalysisExecution;
+  }): string | undefined {
+    const refused = executionReplayRefusal(input.execution);
+    if (refused !== undefined) return refused;
+    if (this.#hasCapacity() || !this.matches(input.target, input.profile))
+      return undefined;
+    const queryId = analysisQueryId(
+      this.#target ?? snapshotTarget(input.target),
+      this.#binding ?? snapshotBinding(input.profile),
+      input.operation,
+      input.parameters,
+    );
+    return this.#entries.has(queryId)
+      ? undefined
+      : `the snapshot already holds its ${String(SNAPSHOT_CACHE_ENTRY_CEILING)}-entry maximum`;
   }
 
   /** Forget all target-bound entries. */

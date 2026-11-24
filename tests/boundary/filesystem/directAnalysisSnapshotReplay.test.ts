@@ -548,6 +548,44 @@ describe("one-shot documentless read snapshots", () => {
   });
 });
 
+describe("one-shot function and workflow snapshot disclosure", () => {
+  it.skipIf(process.platform === "win32")(
+    "says a live function dossier saved with --snapshot will not replay",
+    async () => {
+      const fixture = await createSnapshotReplayFixture("rea-one-shot-fn-");
+      const profile = createAnalysisProfile(
+        { ...GHIDRA_PROVIDER_IDENTITY, version: "12.1.4" },
+        { fixture: true },
+      );
+      const dependencies = fixture.dependencies(
+        fixture.createProvider({
+          profile,
+          supportedOperations: ["analyze_function"],
+          cachePolicy: "live",
+        }),
+      );
+      const run = (snapshotPath: string | undefined) =>
+        runDirectAnalysis(
+          dependencies,
+          fixture.path,
+          "analyze_function",
+          { procedure: "fixture" },
+          { snapshotPath },
+        );
+      const saved = await run(fixture.snapshotPath);
+      if (!saved.ok) throw saved.error;
+      expect(saved.value.limitations).toContainEqual(
+        expect.stringContaining("Not saved for snapshot replay"),
+      );
+      const plain = await run(undefined);
+      if (!plain.ok) throw plain.error;
+      expect(plain.value.limitations).not.toContainEqual(
+        expect.stringContaining("Not saved for snapshot replay"),
+      );
+    },
+  );
+});
+
 describe("one-shot implicit document snapshots", () => {
   it("does not make another provider's implicit document replayable", async () => {
     const fixture = await createSnapshotReplayFixture("rea-implicit-document-");

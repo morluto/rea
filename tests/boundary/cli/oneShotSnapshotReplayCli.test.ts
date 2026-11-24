@@ -40,10 +40,17 @@ describe("one-shot --snapshot replay disclosure", () => {
           },
         });
 
+      const inventoryReads = async () =>
+        (await fakeKunaCalls(kuna)).filter(
+          ({ argv }) => argv[0] === "functions",
+        ).length;
       const runs = [];
       for (let index = 0; index < 2; index++) {
+        const before = await inventoryReads();
         const result = await search("--snapshot", snapshot);
         expect(result.exitCode, result.stderr).toBe(0);
+        // Each call reads the provider's inventory again; nothing replayed.
+        expect(await inventoryReads()).toBeGreaterThan(before);
         runs.push(parseEvidence(result.json));
       }
       for (const evidence of runs)
@@ -52,8 +59,7 @@ describe("one-shot --snapshot replay disclosure", () => {
             "Not saved for snapshot replay: kuna declares this result live",
           ),
         );
-      // Both calls reached the provider; the snapshot holds no replay entry.
-      expect((await fakeKunaCalls(kuna)).length).toBeGreaterThanOrEqual(2);
+      // The snapshot holds no replay entry.
       const saved = JSON.parse(await readFile(snapshot, "utf8")) as {
         entries: unknown[];
       };
