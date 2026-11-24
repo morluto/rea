@@ -1,12 +1,15 @@
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
 import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import {
+  LC,
   lazyLoadDylibInfoCommand,
   machoImage,
   readerOf,
   segmentCommand,
+  versionMinCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
 
 const multilineBinary: MachoCommandNames = {
@@ -364,6 +367,33 @@ it("retains legacy command metadata and derives simulator platform from CPU", ()
     command_offset: 32,
     command_sha256: null,
   });
+});
+
+it("preserves an oversized minimum-version command as raw evidence", async () => {
+  const oversized = Buffer.concat([
+    versionMinCommand(LC.VERSION_MIN_MACOSX),
+    Buffer.alloc(8),
+  ]);
+  oversized.writeUInt32LE(oversized.length, 4);
+  const image = machoImage({ commands: [oversized] });
+  const projected = projectMachoBinary(
+    await readMachoCommandNames(readerOf(image), image.length, 1024, 8),
+  );
+
+  expect(projected.builds).toEqual([]);
+  expect(projected.commands).toMatchObject([
+    {
+      kind: "LC_VERSION_MIN_MACOSX",
+      fields: {
+        command_offset: 32,
+        command_sha256: createHash("sha256").update(oversized).digest("hex"),
+      },
+    },
+  ]);
+  expect(projected.commands[0]?.fields).not.toHaveProperty("version");
+  expect(projected.buildLimitations).toContain(
+    "The LC_VERSION_MIN_MACOSX payload is not decoded.",
+  );
 });
 
 it("distinguishes exact fixed command extents from unmodeled trailing bytes", async () => {

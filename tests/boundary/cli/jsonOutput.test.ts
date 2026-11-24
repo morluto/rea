@@ -1,4 +1,8 @@
-import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import {
+  cliCommandForOperation,
+  cliCommands,
+  registerCliCommand,
+} from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
@@ -9,7 +13,7 @@ import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 
 import { writeJsonOutput } from "../../../src/cli/jsonOutput.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
@@ -373,6 +377,81 @@ describe("CLI result output surface", () => {
   });
 });
 
+it.each([
+  { flags: ["--json", "--filter-output", "healthy"], expected: "false" },
+  {
+    flags: ["--json", "--filter-output", "checks[0].name", "--token-count"],
+    // The estimate for the selected `"provider"`, not the whole report.
+    expected: "5",
+  },
+  {
+    flags: ["--json", "--full-output", "--filter-output", "healthy"],
+    expected: { ok: false, error: false },
+  },
+  {
+    flags: [
+      "--json",
+      "--full-output",
+      "--filter-output",
+      "checks[0].name",
+      "--token-count",
+    ],
+    // The envelope around the selection; the whole report is over 100.
+    expected: "<60",
+  },
+  // A selection that omits the health signal, or selects nothing (an
+  // audit-wide report has no scope_checks), must not read as success.
+  {
+    flags: ["--json", "--full-output", "--filter-output", "scope_checks"],
+    expected: { ok: false },
+  },
+  {
+    flags: ["--json", "--full-output", "--filter-output", "checks"],
+    expected: { ok: false, error: { checks: [{ name: "provider" }] } },
+    selectsDetail: true,
+  },
+])(
+  "applies $flags to an unhealthy doctor report and keeps exit 1",
+  async ({ flags, expected, selectsDetail }) => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const argv = ["fixture", ...flags];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(argv),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing JSON output surface");
+    const cli = createCommandCli(output);
+    registerCliCommand(cli, "fixture", {
+      run: () =>
+        logCliCommand(silentLogger, "fixture", async () => ({
+          healthy: false,
+          checks: [{ name: "provider", ok: false, detail: "x".repeat(400) }],
+        })),
+    });
+    const previousExitCode = process.exitCode;
+    try {
+      await cli.serve(argv, { stdout: () => undefined });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+    const text = Buffer.concat(chunks).toString("utf8").trim();
+    // The selection replaces the report; its detail reaches output only when
+    // the selection includes it.
+    if (selectsDetail !== true) expect(text).not.toContain("x".repeat(400));
+    if (expected.toString().startsWith("<"))
+      expect(Number(text)).toBeLessThan(Number(String(expected).slice(1)));
+    else if (typeof expected === "string") expect(text).toBe(expected);
+    else expect(JSON.parse(text)).toMatchObject(expected);
+  },
+);
+
 describe("full-output token windows", () => {
   it("preserves token-window metadata when truncating a TOON failure", async () => {
     const chunks: Buffer[] = [];
@@ -521,6 +600,7 @@ describe("full-output token counts", () => {
         [],
         ["--full-output"],
         ["--filter-output", "missing"],
+        ["--filter-output", "raw_result"],
         ["--format", "jsonl"],
       ]) {
         const argv = ["fixture", "--json", ...flags];
@@ -541,7 +621,10 @@ describe("full-output token counts", () => {
             destination,
           );
           if (output === undefined) throw new Error("Missing output surface");
-          await output.write({ rows: ["hello", "雪😀"] }, metadata);
+          await output.write(
+            { rows: ["hello", "雪😀"], raw_result: null },
+            metadata,
+          );
           return Buffer.concat(chunks).toString("utf8");
         };
         const document = await render(false);
@@ -784,4 +867,22 @@ describe("streamed CLI filtered selections", () => {
       else expect(text).toBe(expected);
     },
   );
+});
+
+it("refreshes the operation lookup after registering another command", () => {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "existing", { run: () => undefined });
+  const commands = cliCommands(cli);
+  const lookup = () =>
+    cliCommandForOperation("fixture_late_operation", commands, "rea");
+  expect(lookup()).toBeUndefined();
+  registerCliCommand(
+    cli,
+    "fixture-late-operation",
+    { run: () => undefined },
+    {
+      operations: [{ name: "fixture_late_operation", flags: {} }],
+    },
+  );
+  expect(lookup()).toBe("rea fixture-late-operation");
 });

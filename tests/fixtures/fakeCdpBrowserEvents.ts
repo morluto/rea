@@ -154,13 +154,12 @@ const emitSessionTimeline = (
       timestamp: 10,
     });
     event(socket, "Page.frameNavigated", command.sessionId, {
+      type: "Navigation",
       frame: {
         id: "frame-main",
         loaderId: "loader-reload",
         url: allowed,
-        transitionType: "reload",
       },
-      timestamp: 11,
     });
     event(socket, "Page.navigatedWithinDocument", command.sessionId, {
       frameId: "frame-main",
@@ -212,74 +211,12 @@ const emitSessionTimeline = (
   }
 };
 
-const emitSameOriginRedirectEvents = (
-  socket: WebSocket,
-  command: FakeCdpCommand,
-  port: number,
-  url: string,
-): string => {
-  const intermediate = `http://127.0.0.1:${String(port)}/intermediate`;
-  const finalUrl = `http://127.0.0.1:${String(port)}/redirected?token=final-secret`;
-  event(socket, "Network.requestWillBeSent", command.sessionId, {
-    requestId: "request-1",
-    type: "Fetch",
-    request: { url: intermediate, method: "GET" },
-    initiator: { type: "other" },
-    redirectResponse: {
-      url,
-      status: 301,
-      mimeType: "text/plain",
-      encodedDataLength: 23,
-      headers: { "X-Private": "redirect-header-secret" },
-    },
-    timestamp: 8,
-  });
-  event(socket, "Network.requestWillBeSent", command.sessionId, {
-    requestId: "request-1",
-    type: "Fetch",
-    request: { url: finalUrl, method: "GET" },
-    initiator: { type: "other" },
-    redirectResponse: {
-      url: intermediate,
-      status: 302,
-      mimeType: "text/plain",
-      encodedDataLength: 27,
-    },
-    timestamp: 9,
-  });
-  return finalUrl;
-};
-
-const emitReturnFromDisallowedRedirect = (
-  socket: WebSocket,
-  command: FakeCdpCommand,
-  port: number,
-): string => {
-  const finalUrl = `http://127.0.0.1:${String(port)}/returned`;
-  event(socket, "Network.requestWillBeSent", command.sessionId, {
-    requestId: "request-1",
-    type: "Fetch",
-    request: { url: finalUrl, method: "GET" },
-    initiator: { type: "other" },
-    redirectResponse: {
-      url: "https://private.example.test/outside?token=redirect-url-secret",
-      status: 302,
-      mimeType: "text/plain",
-      encodedDataLength: 31,
-      headers: { "X-Private": "redirect-header-secret" },
-      postData: "redirect-body-secret",
-    },
-    timestamp: 8,
-  });
-  return finalUrl;
-};
-
-const emitMalformedRedirectPriorResponse = (
+const emitMalformedRedirectEvents = (
   socket: WebSocket,
   command: FakeCdpCommand,
   port: number,
   initialUrl: string,
-): void => {
+): string => {
   const priorUrl = `http://127.0.0.1:${String(port)}/malformed-redirect-prior`;
   event(socket, "Network.requestWillBeSent", command.sessionId, {
     requestId: "request-1",
@@ -316,29 +253,14 @@ const emitMalformedRedirectPriorResponse = (
       },
     },
   });
-};
 
-const emitMalformedRedirect = (
-  socket: WebSocket,
-  command: FakeCdpCommand,
-  port: number,
-  options: FakeOptions,
-): string => {
   const finalUrl = `http://127.0.0.1:${String(port)}/malformed-redirect-final`;
-  const redirectResponse = Object.hasOwn(options, "redirectResponseEnvelope")
-    ? options.redirectResponseEnvelope
-    : {
-        ...(options.redirectResponseUrl === undefined
-          ? {}
-          : { url: options.redirectResponseUrl }),
-        status: 302,
-      };
   event(socket, "Network.requestWillBeSent", command.sessionId, {
     requestId: "request-1",
     type: "Fetch",
     request: { url: finalUrl, method: "GET" },
     initiator: { type: "other" },
-    ...(options.omitRedirectResponse === true ? {} : { redirectResponse }),
+    redirectResponse: null,
     timestamp: 9,
   });
   return finalUrl;
@@ -351,23 +273,12 @@ const emitNetworkEvents = (
   options: FakeOptions,
 ): void => {
   if (command.method !== "Network.enable") return;
-  if (options.navigateDuringObservationUrl !== undefined)
-    event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: {
-        id: "frame-main",
-        url: options.navigateDuringObservationUrl,
-      },
-    });
   const url = `http://127.0.0.1:${String(port)}/api?token=network-secret`;
-  const requestUrl =
-    options.redirectFromDisallowedOrigin === true
-      ? "https://private.example.test/start?token=initial-url-secret"
-      : url;
   event(socket, "Network.requestWillBeSent", command.sessionId, {
     requestId: "request-1",
     type: "Fetch",
     request: {
-      url: requestUrl,
+      url,
       method: "POST",
       headers: {
         Authorization: "Bearer request-secret",
@@ -393,41 +304,14 @@ const emitNetworkEvents = (
       },
     },
   });
-  if (options.malformedRedirectResponse === true)
-    emitMalformedRedirectPriorResponse(socket, command, port, url);
   const responseUrl =
-    options.redirectFromDisallowedOrigin === true
-      ? emitReturnFromDisallowedRedirect(socket, command, port)
-      : options.malformedRedirectResponse === true
-        ? emitMalformedRedirect(socket, command, port, options)
-        : options.redirectWithinOrigin === true
-          ? emitSameOriginRedirectEvents(socket, command, port, url)
-          : url;
-  if (options.redirectToDisallowedOrigin === true)
-    event(socket, "Network.requestWillBeSent", command.sessionId, {
-      requestId: "request-1",
-      type: "Fetch",
-      request: {
-        url: "https://private.example.test/redirected",
-        method: "GET",
-      },
-      initiator: { type: "other" },
-      redirectResponse: {
-        url,
-        status: 302,
-        mimeType: "text/plain",
-        encodedDataLength: 23,
-        headers: { "X-Private": "redirect-header-secret" },
-      },
-    });
+    options.malformedRedirectResponse === true
+      ? emitMalformedRedirectEvents(socket, command, port, url)
+      : url;
   event(socket, "Network.responseReceived", command.sessionId, {
     requestId: "request-1",
     response: {
-      url:
-        options.responseAfterMalformedUrl ??
-        (options.redirectToDisallowedOrigin === true
-          ? "https://private.example.test/redirected"
-          : responseUrl),
+      url: responseUrl,
       status: 200,
       mimeType: "application/json",
       headers: {

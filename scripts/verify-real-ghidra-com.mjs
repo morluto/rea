@@ -7,12 +7,10 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -24,7 +22,12 @@ import {
   buildDosComFixture,
   buildRejectedDosComFixture,
 } from "../tests/conformance/ghidra/dos-com-fixture.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundaries.mjs";
 import {
   VerifierFixture,
@@ -96,6 +99,8 @@ const env = {
     : { JAVA_HOME: process.env.JAVA_HOME }),
 };
 
+// The CLI shares one command owner, created before the lane starts a tool.
+const commands = await createVerifierCommands();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -124,10 +129,10 @@ workspaceFixture.releaseAfter(async () => {
     "Owned Ghidra runtime survived close",
   );
   verifierRun = await completeVerifierRun(run);
-  assert.equal(verifierRun.process_lineage.status, "verified");
-  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
 await withVerifierFixture(workspaceFixture, async () => {
+  let failure;
   try {
     await client.connect(transport);
     connected = true;
@@ -524,13 +529,29 @@ await withVerifierFixture(workspaceFixture, async () => {
     };
   } catch (error) {
     if (stderr.trim()) process.stderr.write(stderr);
-    throw error;
+    failure = error;
+  } finally {
+    try {
+      await workspaceFixture.closeEarly([() => commands.close()]);
+    } catch (cause) {
+      failure =
+        failure === undefined
+          ? cause
+          : new AggregateError(
+              [failure, cause],
+              "COM verification and command cleanup both failed",
+            );
+    }
+  }
+  if (failure !== undefined) {
+    workspaceFixture.retain(
+      `COM verification failed; retained workspace: ${workspace}`,
+    );
+    throw failure;
   }
 });
 assert.ok(report);
 verifierRun = await completeVerifierRun(run);
-assert.equal(verifierRun.process_lineage.status, "verified");
-assert.deepEqual(verifierRun.process_lineage.descendants, []);
 process.stdout.write(
   JSON.stringify({
     verifier_run: verifierRun,
@@ -628,7 +649,7 @@ async function call(name, args = {}) {
   return evidence.normalized_result;
 }
 async function cli(command, address, options = []) {
-  const { stdout } = await promisify(execFile)(
+  const { stdout } = await commands.exec(
     process.execPath,
     [
       entrypoint,

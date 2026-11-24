@@ -535,9 +535,13 @@ export class WindowsOwnedProcess extends EventEmitter {
         state = pollSchema.parse(observed);
       else {
         const limited = limitedPollSchema.parse(observed);
-        // Recorded before exit is emitted, so exit listeners observe it.
-        this.#memoryLimitReached ||= limited.memoryLimitReached;
         this.#peakJobMemoryBytes = limited.peakJobMemoryBytes;
+        // Publish the first allocation refusal even if the job stays alive
+        // and the poll contains no output.
+        if (!this.#memoryLimitReached && limited.memoryLimitReached) {
+          this.#memoryLimitReached = true;
+          this.emit("memory-limit");
+        }
         state = limited;
       }
       this.#failure = undefined;

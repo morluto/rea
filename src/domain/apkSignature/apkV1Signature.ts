@@ -18,11 +18,16 @@
  */
 import { boundedList } from "../boundedList.js";
 import { BinaryReader } from "../binaryContainer.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
 import {
   ZIP_CENTRAL_HEADER,
   readZipCentralExtent,
 } from "../zip/zipCentralHeader.js";
+import {
+  ZIP_LOCAL_HEADER_BYTES,
+  ZIP_LOCAL_HEADER_SIGNATURE,
+} from "../zip/zipLocalHeader.js";
 import {
   canonicalNameHash,
   compareCanonicalNames,
@@ -47,11 +52,7 @@ export type ApkCentralDirectoryError =
       readonly offset: number;
       readonly detail: string;
     }
-  | {
-      readonly kind: "budget-exceeded";
-      readonly resource: "v1-signature-entries";
-      readonly limit: number;
-    };
+  | ParseFailureError<"limit">;
 
 /**
  * Signing-relevant `META-INF/` entries retained. A signed APK holds a manifest
@@ -264,6 +265,7 @@ export const centralDirectoryV1SignatureEntries = (
   centralDirectorySize: number,
   totalEntries: number,
   apksigRecords: number = totalEntries,
+  baseOffset = 0,
 ): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
   const end = centralDirectoryOffset + centralDirectorySize;
   if (
@@ -274,7 +276,7 @@ export const centralDirectoryV1SignatureEntries = (
   )
     return err({
       kind: "malformed-central-directory",
-      offset: centralDirectoryOffset,
+      offset: baseOffset + centralDirectoryOffset,
       detail: "declared central-directory extent is outside the file",
     });
   const reader = new BinaryReader(
@@ -308,7 +310,7 @@ export const centralDirectoryV1SignatureEntries = (
       }[kind];
       return err({
         kind: "malformed-central-directory",
-        offset,
+        offset: baseOffset + offset,
         detail,
       });
     }
@@ -321,11 +323,17 @@ export const centralDirectoryV1SignatureEntries = (
       const name = decodeZipName(rawName);
       if (isV1SignatureMetadataName(name)) {
         if (entries.length >= MAX_V1_SIGNATURE_ENTRIES)
-          return err({
-            kind: "budget-exceeded",
-            resource: "v1-signature-entries",
-            limit: MAX_V1_SIGNATURE_ENTRIES,
-          });
+          return err(
+            decodeLimit(
+              "apk-v1-central-directory",
+              `The central directory holds more than ${String(MAX_V1_SIGNATURE_ENTRIES)} META-INF v1 signing entries.`,
+              {
+                name: "max_v1_signature_entries",
+                maximum: MAX_V1_SIGNATURE_ENTRIES,
+              },
+              { offset: baseOffset + at },
+            ),
+          );
         entries.push({
           name,
           rawName,
@@ -347,7 +355,7 @@ export const centralDirectoryV1SignatureEntries = (
   if (at !== end)
     return err({
       kind: "malformed-central-directory",
-      offset: at,
+      offset: baseOffset + at,
       detail: `${String(end - at)} bytes of the declared central directory remain after ${String(totalEntries)} records`,
     });
   return ok({
@@ -395,8 +403,6 @@ export const detectV1Signature = (
   };
 };
 
-const LOCAL_SIGNATURE = 0x04034b50;
-const LOCAL_FIXED_SIZE = 30;
 const ZIP64_SENTINEL = 0xffffffff;
 const FLAG_ENCRYPTED = 0x1;
 const FLAG_DATA_DESCRIPTOR = 0x8;
@@ -428,11 +434,24 @@ export interface ApkLocalEntryData {
  * encryption flag (bit 0) does not stop the read; it is returned so the caller
  * can say so, and bytes that really are encrypted fail to decode.
  */
-export const localEntryData = (
-  bytes: Uint8Array,
+/** Validated local header extent for one v1 signature entry. */
+export interface ApkLocalEntryHeader {
+  readonly dataStart: number;
+  readonly dataEnd: number;
+  readonly declaresEncryption: boolean;
+}
+
+/**
+ * Validate a local file header (starting at byte 0 of `localHeaderAndName`)
+ * against the central-directory entry and return the file-relative byte span
+ * of its stored data.
+ */
+export const parseLocalEntryHeader = (
+  localHeaderAndName: Uint8Array,
   entry: ApkV1Entry,
   entriesEnd: number,
-): Result<ApkLocalEntryData, ApkLocalEntryError> => {
+  fileSize: number,
+): Result<ApkLocalEntryHeader, ApkLocalEntryError> => {
   if (
     entry.compressedSize === ZIP64_SENTINEL ||
     entry.uncompressedSize === ZIP64_SENTINEL ||
@@ -440,21 +459,25 @@ export const localEntryData = (
   )
     return err({ detail: "Zip64 entry sizes are not read" });
   const at = entry.localHeaderOffset;
-  const limit = Math.min(entriesEnd, bytes.length);
-  if (at + LOCAL_FIXED_SIZE > limit)
+  const limit = Math.min(entriesEnd, fileSize);
+  if (at + ZIP_LOCAL_HEADER_BYTES > limit)
     return err({
       detail: `local header at byte ${String(at)} is out of range`,
     });
   const reader = new BinaryReader(
-    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    Buffer.from(
+      localHeaderAndName.buffer,
+      localHeaderAndName.byteOffset,
+      localHeaderAndName.byteLength,
+    ),
     true,
     "zip",
   );
-  if (reader.u32(at) !== LOCAL_SIGNATURE)
+  if (reader.u32(0) !== ZIP_LOCAL_HEADER_SIGNATURE)
     return err({
       detail: `local header signature mismatch at byte ${String(at)}`,
     });
-  const flags = reader.u16(at + 6);
+  const flags = reader.u16(6);
   const descriptor = (flags & FLAG_DATA_DESCRIPTOR) !== 0;
   if (descriptor !== ((entry.flags & FLAG_DATA_DESCRIPTOR) !== 0))
     return err({
@@ -467,34 +490,59 @@ export const localEntryData = (
       ["compressed size", 18, entry.compressedSize],
       ["uncompressed size", 22, entry.uncompressedSize],
     ] as const) {
-      const local = reader.u32(at + offset);
+      const local = reader.u32(offset);
       if (local !== expected)
         return err({
           detail: `local header ${field} ${String(local)} differs from the central directory's ${String(expected)}`,
         });
     }
-  const nameLength = reader.u16(at + 26);
-  const nameStart = at + LOCAL_FIXED_SIZE;
+  const nameLength = reader.u16(26);
+  const nameStart = at + ZIP_LOCAL_HEADER_BYTES;
   if (
     nameStart + nameLength > limit ||
     // apksig refuses a local name longer in bytes before decoding either.
     nameLength > entry.rawName.length ||
     !sameZipName(
-      bytes.subarray(nameStart, nameStart + nameLength),
+      localHeaderAndName.subarray(
+        ZIP_LOCAL_HEADER_BYTES,
+        ZIP_LOCAL_HEADER_BYTES + nameLength,
+      ),
       entry.rawName,
     )
   )
     return err({
       detail: "local header name differs from the central directory's",
     });
-  const start = nameStart + nameLength + reader.u16(at + 28);
-  const end = start + entry.compressedSize;
-  if (end > limit)
+  const dataStart = nameStart + nameLength + reader.u16(28);
+  const dataEnd = dataStart + entry.compressedSize;
+  if (dataEnd > limit)
     return err({
-      detail: `entry data at byte ${String(start)} runs past the entries`,
+      detail: `entry data at byte ${String(dataStart)} runs past the entries`,
     });
   return ok({
-    data: bytes.subarray(start, end),
+    dataStart,
+    dataEnd,
     declaresEncryption: ((entry.flags | flags) & FLAG_ENCRYPTED) !== 0,
+  });
+};
+
+export const localEntryData = (
+  bytes: Uint8Array,
+  entry: ApkV1Entry,
+  entriesEnd: number,
+): Result<ApkLocalEntryData, ApkLocalEntryError> => {
+  const at = entry.localHeaderOffset;
+  const headerSlice =
+    at >= 0 && at <= bytes.length ? bytes.subarray(at) : new Uint8Array(0);
+  const header = parseLocalEntryHeader(
+    headerSlice,
+    entry,
+    entriesEnd,
+    bytes.length,
+  );
+  if (!header.ok) return header;
+  return ok({
+    data: bytes.subarray(header.value.dataStart, header.value.dataEnd),
+    declaresEncryption: header.value.declaresEncryption,
   });
 };

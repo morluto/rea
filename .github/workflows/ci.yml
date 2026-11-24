@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, "release/*"]
   schedule:
     - cron: "23 0-2,4-23 * * *"
     - cron: "23 3 * * *"
@@ -91,6 +90,8 @@ jobs:
       test_selection: ${{ steps.plan.outputs.test_selection }}
       test_mode: ${{ steps.plan.outputs.test_mode }}
       test_shards: ${{ steps.plan.outputs.test_shards }}
+      test_shard_job: ${{ steps.plan.outputs.test_shard_job }}
+      typed_lint_files: ${{ steps.plan.outputs.typed_lint_files }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -133,7 +134,11 @@ jobs:
           BASE_SHA: ${{ steps.baseline.outputs.base || github.event.pull_request.base.sha }}
           BASELINE_REASON: ${{ steps.baseline.outputs.reason }}
           HEAD_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
-          CI_FULL: ${{ inputs.source_sha != '' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+          # Release Please must satisfy the existing required CI gate on the PR merge candidate.
+          CI_FULL: >-
+            ${{ inputs.source_sha != '' || contains(github.event.pull_request.labels.*.name, 'ci:full') ||
+            (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&
+            startsWith(github.event.pull_request.head.ref, format('release-please--branches--{0}--', github.event.pull_request.base.ref))) }}
           CI_SKIP_FULL: ${{ steps.qualification.outputs.run_full == 'false' }}
         run: node scripts/ci/plan.mjs
 
@@ -173,7 +178,7 @@ jobs:
           restore-keys: rea-static-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - name: Validate workflow syntax and expressions
         if: needs.changes.outputs.workflows == 'true'
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes=
       # Code tiers run this source-only policy test in their existing shards.
       # Workflow-only changes need the guard, without preparing runtime artifacts.
       - name: Check action pins for workflow-only changes
@@ -188,6 +193,14 @@ jobs:
         run: npm run ci:static-context
       - if: needs.changes.outputs.code == 'true'
         run: npm run check:ci:fast
+      - name: Run typed lint on changed files
+        if: >-
+          needs.changes.outputs.tier == 'fast' &&
+          needs.changes.outputs.code == 'true' &&
+          needs.changes.outputs.typed_lint_files != '[]'
+        env:
+          CI_TYPED_LINT_FILES: ${{ needs.changes.outputs.typed_lint_files }}
+        run: node scripts/ci/static-check-report.mjs typed-lint-changed
       - if: needs.changes.outputs.code != 'true'
         run: npm run format:check
       - name: Save validated static task cache
@@ -329,10 +342,10 @@ jobs:
   test-shard:
     name: Test shard (${{ matrix.shard }})
     needs: [changes, build]
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.test_shard_job == 'test-shard'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
+    strategy: &portable-shard-strategy
       # Failed PRs release the remaining matrix slots; qualification retains
       # every shard's diagnostics and coverage. Passing PRs run the full suite.
       fail-fast: ${{ github.event_name == 'pull_request' && needs.changes.outputs.tier == 'fast' }}
@@ -341,7 +354,7 @@ jobs:
         # built shards, twelve full-qualification shards with coverage, or one
         # job per group of a selected PR subset.
         shard: ${{ fromJSON(needs.changes.outputs.test_shards) }}
-    steps:
+    steps: &portable-shard-steps
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -381,6 +394,15 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 7
+
+  test-shard-broad:
+    name: Test shard (${{ matrix.shard }})
+    needs: [changes, build, static]
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.test_shard_job == 'test-shard-broad'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy: *portable-shard-strategy
+    steps: *portable-shard-steps
 
   reverse-tools-quality:
     name: Reverse tools quality
@@ -499,7 +521,7 @@ jobs:
         shell: bash
         run: |
           # A new Turbo dry run can evict the entries this build just used.
-          node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json
+          node scripts/ci/portable-build-cache.mjs snapshot .cache/ci-build-plan.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache
@@ -555,10 +577,12 @@ jobs:
 
   test:
     name: Portable tests
-    needs: [changes, test-source, test-shard]
+    needs: [changes, test-source, test-shard, test-shard-broad]
     if: ${{ !cancelled() && needs.changes.outputs.tier != 'reused' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      SHARD_RESULT: ${{ needs[needs.changes.outputs.test_shard_job].result }}
     steps:
       - name: Require successful change classification
         env:
@@ -579,7 +603,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: >-
           !cancelled() && needs.changes.outputs.code == 'true' &&
-          (needs.test-shard.result == 'success' || needs.test-shard.result == 'failure' ||
+          (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure' ||
            (needs.changes.outputs.tier == 'fast' &&
             (needs.test-source.result == 'success' || needs.test-source.result == 'failure')))
         with:
@@ -591,7 +615,7 @@ jobs:
         if: >-
           !cancelled() && needs.changes.outputs.code == 'true' &&
           needs.changes.outputs.tier == 'full' &&
-          (needs.test-shard.result == 'success' || needs.test-shard.result == 'failure')
+          (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure')
         run: >-
           npm run test:ci:merge --
           --coverage.reportsDirectory=coverage
@@ -609,7 +633,7 @@ jobs:
         if: >-
           !cancelled() && needs.changes.outputs.code == 'true' &&
           needs.changes.outputs.tier == 'fast' &&
-          (needs.test-shard.result == 'success' || needs.test-shard.result == 'failure' ||
+          (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure' ||
            needs.test-source.result == 'success' || needs.test-source.result == 'failure')
         run: >-
           npm exec -- vitest --merge-reports
@@ -622,7 +646,6 @@ jobs:
       - name: Summarize slowest test files
         if: needs.changes.outputs.code == 'true' && !cancelled()
         env:
-          SHARD_RESULT: ${{ needs.test-shard.result }}
           SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full' }}
           SOURCE_RESULT: ${{ needs.test-source.result }}
           MERGE_RESULT: ${{ needs.changes.outputs.tier == 'full' && steps.merge.outcome || steps.merge-fast.outcome }}
@@ -649,7 +672,7 @@ jobs:
         if: >-
           success() &&
           needs.changes.outputs.code == 'true' &&
-          needs.test-shard.result == 'success' &&
+          env.SHARD_RESULT == 'success' &&
           (
             needs.changes.outputs.tier == 'full' ||
             (needs.changes.outputs.tier == 'fast' && needs.test-source.result == 'success')
@@ -668,7 +691,6 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           CODE_REQUIRED: ${{ needs.changes.outputs.code }}
-          SHARD_RESULT: ${{ needs.test-shard.result }}
           SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full' }}
           SOURCE_RESULT: ${{ needs.test-source.result }}
         run: |
@@ -911,6 +933,7 @@ jobs:
           tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
           tests/boundary/cli/nativeMachoEncryptionCli.test.ts
           tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
+          tests/boundary/cli/nativeBundleExecutableProvenanceCliMcp.test.ts
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
           tests/boundary/process/darwinProcessRunTokenReader.test.ts
@@ -1055,6 +1078,7 @@ jobs:
           tests/boundary/mcp/absoluteLocalPathSchema.test.ts
           tests/boundary/mcp/toolSchemaValidity.test.ts
           tests/boundary/filesystem/safeOutputTree.test.ts
+          tests/boundary/filesystem/safeOutputTreePublication.test.ts
           tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts
           tests/boundary/filesystem/setupUnavailableProvider.test.ts
@@ -1145,6 +1169,10 @@ jobs:
       - run: npm ci
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
+      # Code changes already run this verifier through the required lint lane.
+      - name: Check documented numeric limits
+        if: needs.changes.outputs.code != 'true'
+        run: node scripts/verify/rea-numeric-limits.mjs
       - run: npm run docs:check
       - name: Verify published routes, source links and local anchors
         run: npm run verify:docs:routes
@@ -1330,6 +1358,7 @@ jobs:
         packet_capture,
         signal_recording,
         test-shard,
+        test-shard-broad,
         test-source,
         sqlite-runtime,
         test,

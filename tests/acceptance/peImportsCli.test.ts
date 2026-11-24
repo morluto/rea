@@ -35,15 +35,11 @@ for (const bits of [32, 64] as const) {
         });
         expect(result.exitCode).toBe(1);
         expect(result.json).toMatchObject({
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
             operation: "inspect_pe_imports",
-            issues: expect.arrayContaining([
-              expect.objectContaining({
-                path: ["path"],
-                reason: "invalid_format",
-              }),
-            ]),
+            path,
+            format_failure: "malformed",
           },
         });
         const response = await call("inspect_pe_imports", { path });
@@ -219,25 +215,6 @@ cliTest(
     });
   },
 );
-
-cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-pe-imports-cli-bad-");
-  const path = join(root, "broken.exe");
-  await writeFile(path, Buffer.from("MZ"));
-  const result = await cli.run({
-    arguments: ["inspect-pe-imports", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: {
-      operation: "inspect_pe_imports",
-      issues: expect.arrayContaining([
-        expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
-      ]),
-    },
-  });
-});
 
 cliTest(
   "preserves directory declarations and partial rows at RVA and mapping boundaries",

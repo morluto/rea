@@ -230,12 +230,86 @@ const cases: readonly {
   },
 ];
 
-cliTest.for(cases)(
-  "preserves NIB relationship evidence through CLI and MCP: $name",
-  async (
-    { objects, links, complete, registryDiagnostic, decodeRejected },
-    { cli },
-  ) => {
+const expectArchiveRelationships = (
+  report: ReturnType<typeof interfaceBuilderAnalysisSchema.parse>,
+  archives: readonly ((typeof cases)[number] & { file: string })[],
+) => {
+  const objectsById = new Map(
+    report.graph.nodes
+      .filter(
+        ({ attributes }) =>
+          typeof attributes.interface_builder_object_id === "string",
+      )
+      .map((node) => [node.id, node]),
+  );
+  const objectLinks = report.graph.edges.flatMap((edge) => {
+    const from = objectsById.get(edge.from);
+    const to = edge.to === null ? undefined : objectsById.get(edge.to);
+    if (edge.relation !== "contains" || from === undefined || to === undefined)
+      return [];
+    const archive = from.evidence[0]?.artifact_path;
+    expect(to.evidence[0]?.artifact_path).toBe(archive);
+    return [
+      [
+        archive,
+        from.attributes.interface_builder_object_id,
+        to.attributes.interface_builder_object_id,
+      ],
+    ];
+  });
+  expect(objectLinks).toEqual(
+    archives.flatMap(({ file, links }) =>
+      links.map(([from, to]) => [`Contents/Resources/${file}`, from, to]),
+    ),
+  );
+
+  for (const {
+    file,
+    name,
+    objects,
+    decodeRejected,
+    registryDiagnostic,
+  } of archives) {
+    const path = `Contents/Resources/${file}`;
+    if (decodeRejected)
+      expect(report.limitations.join("\n"), name).toContain(
+        `${path}: NIBArchive object reference is outside the object table`,
+      );
+    const documentObjects = [...objectsById.values()].filter(
+      ({ evidence }) => evidence[0]?.artifact_path === path,
+    );
+    for (const [index, object] of objects.entries()) {
+      if (
+        decodeRejected ||
+        ![1, 4, 5, 6].includes(object.classIndex) ||
+        Array.isArray(object.values)
+      )
+        continue;
+      const node = documentObjects.find(
+        ({ attributes }) =>
+          attributes.interface_builder_object_id === String(index),
+      );
+      for (const [key, value] of Object.entries(object.values)) {
+        if (typeof value !== "object" || value === null || !("ref" in value))
+          continue;
+        expect(node?.attributes.nibValues, name).toMatchObject({
+          [key]: { objectID: String(value.ref) },
+        });
+      }
+    }
+    if (registryDiagnostic !== undefined)
+      expect(
+        report.limitations.some(
+          (line) => line.includes(path) && line.includes(registryDiagnostic),
+        ),
+        name,
+      ).toBe(true);
+  }
+};
+
+cliTest(
+  "preserves each NIB's relationship evidence through CLI and MCP",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-nib-relationships-");
     const app = join(root, "Fixture.app");
     const contents = join(app, "Contents");
@@ -250,75 +324,57 @@ cliTest.for(cases)(
       join(contents, "Info.plist"),
       build({ CFBundleExecutable: "Fixture" }),
     );
-    await writeFile(
-      join(resources, "Main.nib"),
-      encodeNibArchiveFixture({
-        classes: [
-          "NSIBObjectData",
-          "NSView",
-          "NSArray",
-          "NSCustomObject",
-          "NSButtonCell",
-          "CustomButtonCell",
-          "NSTextFieldCell",
-        ],
-        objects,
-      }),
-    );
+    const archives = cases.map((testCase, index) => ({
+      ...testCase,
+      file: testCase.decodeRejected
+        ? "00-dangling.nib"
+        : `${String(index).padStart(2, "0")}.nib`,
+    }));
+    for (const { file, objects } of archives)
+      await writeFile(
+        join(resources, file),
+        encodeNibArchiveFixture({
+          classes: [
+            "NSIBObjectData",
+            "NSView",
+            "NSArray",
+            "NSCustomObject",
+            "NSButtonCell",
+            "CustomButtonCell",
+            "NSTextFieldCell",
+          ],
+          objects,
+        }),
+      );
     const output = await cli.run({
       arguments: ["decode-interface-builder", app, "--json"],
       environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
     });
     expect(output.exitCode, output.stdout + output.stderr).toBe(0);
-    if (output.json === null)
-      throw new Error(
-        `CLI returned no JSON: ${output.stdout} ${output.stderr}`,
-      );
     const report = interfaceBuilderAnalysisSchema.parse(
       parseEvidence(output.json).normalized_result,
     );
-    if (decodeRejected) {
-      expect(report.documents).toEqual([]);
-      expect(report.graph.coverage).toContainEqual(
-        expect.objectContaining({ facet: "archive_decode", status: "partial" }),
-      );
-    } else expect(report.documents[0]?.hierarchy_complete).toBe(complete);
-    const objectId = (id: string | null) =>
-      id === null
-        ? undefined
-        : report.graph.nodes.find((node) => node.id === id)?.attributes
-            .interface_builder_object_id;
-    const objectLinks = report.graph.edges.flatMap((edge) => {
-      const from = objectId(edge.from);
-      const to = objectId(edge.to);
-      return edge.relation === "contains" &&
-        typeof from === "string" &&
-        typeof to === "string"
-        ? [[from, to]]
-        : [];
-    });
-    expect(objectLinks).toEqual(links);
-    for (const [index, object] of objects.entries()) {
-      if (
-        decodeRejected ||
-        ![1, 4, 5, 6].includes(object.classIndex) ||
-        Array.isArray(object.values)
-      )
-        continue;
-      const node = report.graph.nodes.find(
-        ({ attributes }) =>
-          attributes.interface_builder_object_id === String(index),
-      );
-      for (const [key, value] of Object.entries(object.values)) {
-        if (typeof value !== "object" || value === null || !("ref" in value))
-          continue;
-        expect(node?.attributes.nibValues).toMatchObject({
-          [key]: { objectID: String(value.ref) },
-        });
-      }
-    }
-    if (registryDiagnostic !== undefined)
-      expect(report.limitations.join("\n")).toContain(registryDiagnostic);
+    expect(
+      report.documents.map(({ relative_path, hierarchy_complete }) => [
+        relative_path,
+        hierarchy_complete,
+      ]),
+    ).toEqual(
+      archives
+        .filter(({ decodeRejected }) => !decodeRejected)
+        .map(({ file, complete }) => [`Contents/Resources/${file}`, complete]),
+    );
+    expect(report.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        reason: "one_or_more_archives_invalid",
+        examined: archives.length,
+      }),
+    );
+
+    expectArchiveRelationships(report, archives);
+
     const mcp = createTestMcp();
     onTestFinished(async () => mcp.close());
     const client = await openBundleResourcesTarget(mcp, onTestFinished, app);
@@ -332,5 +388,17 @@ cliTest.for(cases)(
         parseEvidence(result.structuredContent).normalized_result,
       ),
     ).toEqual(report);
+    const rejectedOnly = await client.callTool({
+      name: "decode_interface_builder",
+      arguments: { max_documents: 1 },
+    });
+    expect(rejectedOnly.isError, JSON.stringify(rejectedOnly)).not.toBe(true);
+    const rejected = interfaceBuilderAnalysisSchema.parse(
+      parseEvidence(rejectedOnly.structuredContent).normalized_result,
+    );
+    expect(rejected.documents).toEqual([]);
+    expect(rejected.limitations.join("\n")).toContain(
+      "Contents/Resources/00-dangling.nib: NIBArchive object reference is outside the object table",
+    );
   },
 );

@@ -6,6 +6,7 @@ import {
   artifactComparisonResultSchema,
   compareArtifacts,
 } from "./artifactComparison.js";
+import { artifactInventoryResultSchema } from "./artifactGraph.js";
 import { findChangedBehavior } from "./changedBehavior.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "./comparisonEvidenceIdentity.js";
 import {
@@ -619,4 +620,262 @@ describe("static/runtime correlation citation closure", () => {
       );
     },
   );
+});
+
+const { left: artifactLeft, right: artifactRight } =
+  ARTIFACT_COMPARISON_EXAMPLE;
+
+// The root is compared unchanged, so the comparison omits it from changes.
+const unchanged = createEvidence(
+  unknownTarget("derived-from-linked-evidence"),
+  ARTIFACT_COMPARISON_PROVIDER,
+  {
+    predicateType: "rea.artifact-comparison",
+    operation: "compare_artifacts",
+    parameters: {
+      left_evidence_ids: [artifactLeft.evidence_id],
+      right_evidence_ids: [artifactLeft.evidence_id],
+    },
+    result: compareArtifacts(artifactLeft, artifactLeft),
+    confidence: "derived",
+    authority: "analyst-inference",
+    evidenceLinks: [artifactLeft.evidence_id],
+  },
+);
+const select = (logicalPath: string) => {
+  const input = mapping(processComparison("unchanged"), "both_unchanged");
+  return {
+    ...input,
+    static_comparisons: [unchanged],
+    mappings: input.mappings.map((item) => ({
+      ...item,
+      static: {
+        comparison_evidence_id: unchanged.evidence_id,
+        selector: { kind: "artifact", logical_path: logicalPath },
+      },
+    })),
+  };
+};
+const sources = new Map([[artifactLeft.evidence_id, artifactLeft]]);
+
+describe("unreported artifact paths", () => {
+  it("keeps an unchanged path unresolved without its source inventories", () => {
+    expect(
+      artifactComparisonResultSchema.parse(unchanged.normalized_result),
+    ).toMatchObject({ status: "unchanged", changes: [] });
+    const result = correlateStaticAndRuntime(select("."));
+    expect(result).toMatchObject({
+      status: "unknown",
+      correlations: {
+        items: [
+          {
+            static: { status: "unknown", conclusion_kind: "unresolved_branch" },
+            classification: "unresolved_branch",
+          },
+        ],
+      },
+    });
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /source inventories were unavailable/u,
+    );
+    expect(
+      correlateStaticAndRuntime(select("."), {
+        sourceEvidence: (id) => sources.get(id),
+      }),
+    ).toMatchObject({
+      status: "correlated",
+      correlations: {
+        items: [
+          {
+            static: { status: "unchanged" },
+            observed_pattern: "both_unchanged",
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe("prepared unreported artifact paths", () => {
+  it("prepares each comparison's source inventories once across mappings", () => {
+    const base = select(".");
+    const patterns = ["both_unchanged", "runtime_only", "static_only"] as const;
+    const lookups: string[] = [];
+    const result = correlateStaticAndRuntime(
+      {
+        ...base,
+        mappings: patterns.map((expected_pattern) => ({
+          ...base.mappings[0],
+          hypothesis: { statement: "Unchanged root.", expected_pattern },
+        })),
+      },
+      {
+        sourceEvidence: (id) => {
+          lookups.push(id);
+          return sources.get(id);
+        },
+      },
+    );
+    expect(result.summary).toEqual({
+      hypotheses: 1,
+      contradictions: 2,
+      unresolved: 0,
+    });
+    expect(
+      result.correlations.items.map(({ static: selected }) => selected.status),
+    ).toEqual(["unchanged", "unchanged", "unchanged"]);
+    // One resolution per comparison side, not per mapping: the inventories are
+    // parsed and indexed once and reused by the later mappings.
+    expect(lookups).toEqual([
+      artifactLeft.evidence_id,
+      artifactLeft.evidence_id,
+    ]);
+  });
+
+  it("keeps a matched path unresolved without complete inventory coverage", () => {
+    const partial = createEvidence(
+      evidenceSubjectInput(artifactLeft.subject),
+      artifactLeft.provider,
+      {
+        operation: artifactLeft.operation,
+        parameters: artifactLeft.parameters,
+        result: {
+          ...artifactInventoryResultSchema.parse(
+            artifactLeft.normalized_result,
+          ),
+          coverage: { scope: "root", status: "unknown" },
+        },
+        confidence: artifactLeft.confidence,
+        authority: artifactLeft.authority,
+      },
+    );
+    const comparison = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        predicateType: "rea.artifact-comparison",
+        operation: "compare_artifacts",
+        parameters: {
+          left_evidence_ids: [partial.evidence_id],
+          right_evidence_ids: [partial.evidence_id],
+        },
+        result: compareArtifacts(partial, partial),
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: [partial.evidence_id],
+      },
+    );
+    expect(
+      artifactComparisonResultSchema.parse(comparison.normalized_result),
+    ).toMatchObject({ status: "unknown", changes: [] });
+    const input = select(".");
+    const result = correlateStaticAndRuntime(
+      {
+        ...input,
+        static_comparisons: [comparison],
+        mappings: input.mappings.map((item) => ({
+          ...item,
+          static: {
+            ...item.static,
+            comparison_evidence_id: comparison.evidence_id,
+          },
+        })),
+      },
+      {
+        sourceEvidence: (id) =>
+          id === partial.evidence_id ? partial : undefined,
+      },
+    );
+    expect(result).toMatchObject({
+      status: "unknown",
+      correlations: {
+        items: [
+          {
+            static: { status: "unknown", conclusion_kind: "unresolved_branch" },
+            classification: "unresolved_branch",
+          },
+        ],
+      },
+    });
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /without complete comparison coverage/u,
+    );
+  });
+
+  it("rejects source inventories that disagree with the comparison", () => {
+    expect(() =>
+      correlateStaticAndRuntime(select("."), {
+        sourceEvidence: () => artifactRight,
+      }),
+    ).toThrowError(
+      expect.toSatisfy(
+        (error: { _tag?: unknown; message?: unknown }) =>
+          error._tag === "EvidenceIntegrityError" &&
+          error.message ===
+            "Artifact comparison source inventories disagree with its manifests",
+      ),
+    );
+  });
+});
+
+describe("unobserved artifact paths", () => {
+  it("keeps a path neither inventory observed unknown without complete coverage", () => {
+    const partial = createEvidence(
+      evidenceSubjectInput(artifactLeft.subject),
+      artifactLeft.provider,
+      {
+        operation: artifactLeft.operation,
+        parameters: artifactLeft.parameters,
+        result: {
+          ...artifactInventoryResultSchema.parse(
+            artifactLeft.normalized_result,
+          ),
+          coverage: { scope: "root", status: "unknown" },
+        },
+        confidence: artifactLeft.confidence,
+        authority: artifactLeft.authority,
+      },
+    );
+    const comparison = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        predicateType: "rea.artifact-comparison",
+        operation: "compare_artifacts",
+        parameters: {
+          left_evidence_ids: [partial.evidence_id],
+          right_evidence_ids: [partial.evidence_id],
+        },
+        result: compareArtifacts(partial, partial),
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: [partial.evidence_id],
+      },
+    );
+    const input = select("never/reached.js");
+    const result = correlateStaticAndRuntime(
+      {
+        ...input,
+        static_comparisons: [comparison],
+        mappings: input.mappings.map((item) => ({
+          ...item,
+          static: {
+            ...item.static,
+            comparison_evidence_id: comparison.evidence_id,
+          },
+        })),
+      },
+      {
+        sourceEvidence: (id) =>
+          id === partial.evidence_id ? partial : undefined,
+      },
+    );
+    expect(result.correlations.items[0]).toMatchObject({
+      static: { status: "unknown", conclusion_kind: "unresolved_branch" },
+      classification: "unresolved_branch",
+    });
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /not observed in either inventory/u,
+    );
+  });
 });

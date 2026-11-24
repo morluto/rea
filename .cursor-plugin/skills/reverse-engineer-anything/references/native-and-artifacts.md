@@ -403,8 +403,8 @@ Roles are folder conventions, not restore-time asset selection. See
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its
-schema and optional rows from one exact ordinary table. It requires Node.js
-24.x >=24.15 or 26+ with the native `DatabaseSync.limits` API. It also consumes the
+schema and optional rows from one exact ordinary table. It needs the native
+`DatabaseSync.limits` API, so it is unavailable when REA runs on Node.js 22.x. It also consumes the
 existing sibling `-wal`; retain both original digests when citing its result.
 Default output is a compact inventory; a selected table expands only its own
 schema and samples 20 rows. Select `columns` to avoid irrelevant or large cells,
@@ -453,6 +453,14 @@ Facets also include sections, imports, candidates, glue, WAT, headers, details
 and tool profile. Text offsets count UTF-16 code units; follow `next_offset`.
 The complete source remains retained after an oversized MCP reply. No target
 execution or network acquisition is implied, and WAT is decoded representation.
+
+For exact core-module import/export differences, use `compare_wasm_interfaces`
+with two complete inspection Evidence records (or current-session retained
+references) and explicit scope. Preserve unknown types/duplicate names; static
+interface equality is not runtime compatibility. CLI accepts complete inline
+Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
+with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
+ID when the inspection returned a summary.
 
 ## Offline APK signatures
 
@@ -894,14 +902,6 @@ target. Ordinal-only, forwarded and hidden-version exports stay distinct;
 partial or unsupported coverage means the inventory is incomplete, not that
 exports are absent. Use `inspect_macho` for Mach-O. See
 [offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
-
-For exact core-module import/export differences, use `compare_wasm_interfaces`
-with two complete inspection Evidence records (or current-session retained
-references) and explicit scope. Preserve unknown types/duplicate names; static
-interface equality is not runtime compatibility. CLI accepts complete inline
-Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
-with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
-ID when the inspection returned a summary.
 
 ## Godot PCK
 

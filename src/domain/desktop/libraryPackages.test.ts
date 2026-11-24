@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { posix } from "node:path";
 
 import { err, ok } from "../result.js";
+import { desktopLibraryPolicy } from "./libraryPolicy.js";
 import {
   elfLibraryIdentityMatches,
   type ElfLibraryIdentity,
@@ -112,98 +113,108 @@ describe("parseLinkerCache", () => {
   });
 });
 
-describe("libraryClosure denied probes", () => {
-  it("continues past a denied directory to the one the linker can search", async () => {
-    // A folder with denied search is not one the linker loads from, so a later
-    // readable directory holding the soname is the object actually in use.
-    const closure = await libraryClosure(
-      {
-        path: "/app/bin/app",
-        dependencies: elf(["libcore.so"], [], ["/denied", "/native"]),
-      },
-      [],
-      {
-        ...host({}),
-        dependencies: async (path: string) =>
-          path === "/app/bin/app"
-            ? ok(elf(["libcore.so"], [], ["/denied", "/native"]))
-            : path === "/native/libcore.so"
-              ? ok(elf([]))
-              : err({
-                  kind: "unreadable" as const,
-                  identity: null,
-                  reason: "EACCES",
-                }),
-        isFile: async (path: string) =>
-          path === "/denied/libcore.so"
-            ? { kind: "unknown" as const, unreachable: true }
-            : {
-                kind: "file" as const,
-                isFile: path === "/native/libcore.so",
-              },
-      },
-      10,
-    );
-    expect(closure).toEqual({
-      requiredAliases: [],
-      libraries: [
-        {
-          soname: "libcore.so",
-          path: "/native/libcore.so",
-          ownershipPath: "/native/libcore.so",
-          resolvedPath: "/native/libcore.so",
-        },
-      ],
-      missing: [],
-      unreadable: [],
-      truncated: false,
-    });
-  });
-
-  it.each([true, false])(
-    "keeps an unprobeable candidate unresolved with path resolution %s",
-    async (resolvable) => {
-      // Nothing else provides the soname, and the denied folder may hold it, so
-      // the walk records why it could not tell rather than claiming absence.
+describe("libraryClosure probe authority", () => {
+  const soname = "libcore.so";
+  const candidate = "/volatile/libcore.so";
+  const native = "/native/libcore.so";
+  const cached = "/cache/libcore.so";
+  const unknownPath = "the library's filesystem path could not be resolved";
+  it.each([
+    {
+      scenario: "denial before another search directory",
+      denied: true,
+      resolves: false,
+      fallback: "directory",
+      selected: native,
+      reason: null,
+    },
+    {
+      scenario: "denial before a cache entry",
+      denied: true,
+      resolves: false,
+      fallback: "cache",
+      selected: cached,
+      reason: null,
+    },
+    {
+      scenario: "denial with an unreadable file",
+      denied: true,
+      resolves: true,
+      fallback: null,
+      selected: null,
+      reason: "EACCES",
+    },
+    {
+      scenario: "denial with unresolved physical identity",
+      denied: true,
+      resolves: false,
+      fallback: null,
+      selected: null,
+      reason: unknownPath,
+    },
+    {
+      scenario: "transient probe with recovered identity",
+      denied: false,
+      resolves: true,
+      fallback: "cache",
+      selected: candidate,
+      reason: null,
+    },
+    {
+      scenario: "transient probe with unresolved identity",
+      denied: false,
+      resolves: false,
+      fallback: "cache",
+      selected: null,
+      reason: unknownPath,
+    },
+  ] as const)(
+    "preserves library selection after $scenario",
+    async ({ denied, resolves, fallback, selected, reason }) => {
+      const files = host({
+        [candidate]: denied ? { identity: null, reason: "EACCES" } : elf([]),
+        [native]: elf([]),
+        [cached]: elf([]),
+      });
       const closure = await libraryClosure(
+        app(
+          elf(
+            [soname],
+            [],
+            fallback === "directory" ? ["/volatile", "/native"] : ["/volatile"],
+          ),
+        ),
+        fallback === "cache"
+          ? [{ soname, flags: ["AArch64"], path: cached }]
+          : [],
         {
-          path: "/app/bin/app",
-          dependencies: elf(["libcore.so"], [], ["/denied"]),
-        },
-        [],
-        {
-          ...host({}),
-          resolvePath: async (path: string) =>
-            path === "/app/bin/app" || resolvable
-              ? host({}).resolvePath(path)
-              : undefined,
-          dependencies: async (path: string) =>
-            path === "/app/bin/app"
-              ? ok(elf(["libcore.so"], [], ["/denied"]))
-              : err({
-                  kind: "unreadable" as const,
-                  identity: null,
-                  reason: "EACCES",
-                }),
-          isFile: async () => ({
-            kind: "unknown" as const,
-            unreachable: true,
-          }),
+          ...files,
+          resolvePath: (path) =>
+            path === candidate && !resolves
+              ? Promise.resolve(undefined)
+              : files.resolvePath(path),
+          isFile: (path) =>
+            path === candidate
+              ? Promise.resolve({ kind: "unknown", unreachable: denied })
+              : files.isFile(path),
         },
         10,
       );
       expect(closure).toEqual({
         requiredAliases: [],
-        libraries: [],
+        libraries:
+          selected === null
+            ? []
+            : [
+                {
+                  soname,
+                  path: selected,
+                  resolvedPath: selected,
+                  ownershipPath: selected,
+                },
+              ],
         missing: [],
-        unreadable: [
-          {
-            path: "/denied/libcore.so",
-            reason: resolvable
-              ? "EACCES"
-              : "the library's filesystem path could not be resolved",
-          },
-        ],
+        unreadable: reason === null ? [] : [{ path: candidate, reason }],
         truncated: false,
       });
     },
@@ -211,60 +222,6 @@ describe("libraryClosure denied probes", () => {
 });
 
 describe("libraryClosure", () => {
-  it.each([true, false])(
-    "keeps a transiently unprobed candidate ahead of the cache with path resolution %s",
-    async (resolvable) => {
-      // A search directory that failed transiently may still be the one the
-      // linker loads from, so its candidate keeps search order.
-      const closure = await libraryClosure(
-        {
-          path: "/app/bin/app",
-          dependencies: elf(["libcore.so"], [], ["/volatile"]),
-        },
-        parseLinkerCache(LINKER_CACHE),
-        {
-          ...host({}),
-          resolvePath: async (path: string) =>
-            path === "/app/bin/app" || resolvable
-              ? host({}).resolvePath(path)
-              : undefined,
-          dependencies: async (path: string) =>
-            path === "/app/bin/app"
-              ? ok(elf(["libcore.so"], [], ["/volatile"]))
-              : path === "/volatile/libcore.so"
-                ? ok(elf([]))
-                : err({
-                    kind: "unreadable" as const,
-                    identity: null,
-                    reason: "missing",
-                  }),
-          isFile: async (path: string) =>
-            path === "/volatile/libcore.so"
-              ? { kind: "unknown" as const, unreachable: false }
-              : { kind: "file" as const, isFile: true },
-        },
-        10,
-      );
-      if (resolvable)
-        expect(closure).toMatchObject({
-          libraries: [{ soname: "libcore.so", path: "/volatile/libcore.so" }],
-        });
-      else
-        expect(closure).toEqual({
-          requiredAliases: [],
-          libraries: [],
-          missing: [],
-          unreadable: [
-            {
-              path: "/volatile/libcore.so",
-              reason: "the library's filesystem path could not be resolved",
-            },
-          ],
-          truncated: false,
-        });
-    },
-  );
-
   it("walks DT_NEEDED through RPATH and the cache for the executable's machine", async () => {
     const closure = await libraryClosure(
       typora,
@@ -572,6 +529,23 @@ describe("libraryClosure search paths", () => {
     });
   });
 
+  it.each(["$LIB", "${LIB}", "$PLATFORM", "${PLATFORM}"])(
+    "leaves absolute DT_NEEDED with %s unresolved even when the literal path exists",
+    async (token) => {
+      const literal = `/opt/deps/${token}/libcore.so`;
+      const closure = await libraryClosure(
+        app(elf([literal])),
+        [],
+        host({ [literal]: elf([]) }),
+        10,
+      );
+      expect(closure.libraries).toEqual([]);
+      expect(closure.unreadable).toMatchObject([
+        { path: "/opt/app/bin/app", reason: expect.stringContaining(literal) },
+      ]);
+    },
+  );
+
   it("normalizes $ORIGIN/.. before telling the app's own folder from system libraries", async () => {
     const closure = await libraryClosure(
       {
@@ -686,31 +660,51 @@ describe("libraryPackageNames", () => {
   });
 });
 
-describe("absolute dependency lookup reuse", () => {
-  it("reports truncation before reading a new absolute dependency beyond the limit", async () => {
-    const admitted = "/native/admitted.so";
+it.each([
+  {
+    label: "selected limit",
+    policy: desktopLibraryPolicy({ libraries: 1 }),
+    count: 1,
+  },
+  { label: "default", policy: desktopLibraryPolicy(), count: 512 },
+])(
+  "stops before touching the next transitive library at the $label",
+  async ({ policy, count }) => {
+    const admitted = Array.from(
+      { length: count },
+      (_, index) => `/native/lib${index}.so`,
+    );
     const beyondLimit = "/native/over-budget.so";
-    const reads = host({ [admitted]: elf([]) });
+    const images = Object.fromEntries(
+      admitted.map((path, index) => [
+        path,
+        elf([admitted[index + 1] ?? beyondLimit]),
+      ]),
+    );
+    const reads = host(images);
     const result = await libraryClosure(
-      app(elf([admitted, beyondLimit])),
+      app(elf(admitted.slice(0, 1))),
       [],
       {
         ...reads,
         resolvePath: async (path) => {
-          if (path === beyondLimit) throw new Error("metadata read failed");
+          if (path === beyondLimit)
+            throw new Error("read a dependency beyond the selected limit");
           return reads.resolvePath(path);
         },
       },
-      1,
+      policy.libraries,
     );
-
+    expect(result.libraries.map(({ soname }) => soname)).toEqual(admitted);
     expect(result).toMatchObject({
-      libraries: [{ soname: admitted }],
+      missing: [],
       unreadable: [],
       truncated: true,
     });
-  });
+  },
+);
 
+describe("absolute dependency lookup reuse", () => {
   it("resolves each exact successful spelling once across repeated declarations", async () => {
     const paths = Array.from(
       { length: 8 },

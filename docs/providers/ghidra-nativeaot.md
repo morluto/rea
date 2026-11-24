@@ -155,10 +155,10 @@ fixtures exercise heuristic detection. Tests do not execute the resulting
 NativeAOT binaries. Fixture generation and adapter compilation are optional and
 never prerequisites of ordinary native analysis or setup.
 
-The real MCP lane runs on Linux x64 with the adapter. A historical
-Windows-host check ran manually over MCP on Windows 11 x64
-(non-elevated, Ghidra 12.1.4, JDK 21, no JAR) with the source-built win-x64
-symbols fixture. The format, RTR version and frozen strings matched the fixture
-oracle; the derived MethodTable, its base type, its interface and a virtual
-slot reaching the overridden method matched the linker map; and pseudocode was
-readable. No CI lane repeats this check.
+The real MCP lane runs on Linux x64 with the adapter. Recorded on Ghidra 12.1.4
+with JDK 21 (no longer accepted); not yet re-run on 12.2. That Windows-host
+check ran manually over MCP on Windows 11 x64 (non-elevated, no JAR) with the
+source-built win-x64 symbols fixture. The format, RTR version and frozen strings
+matched the fixture oracle; the derived MethodTable, its base type, its
+interface and a virtual slot reaching the overridden method matched the linker
+map; and pseudocode was readable. No CI lane repeats this check.

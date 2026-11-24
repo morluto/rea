@@ -5,183 +5,84 @@ import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js"
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { receiveCdpEvent } from "./CdpConnection.js";
 
-const origin = "https://example.test";
-
-const createEvents = (): CdpCaptureEvents =>
-  new CdpCaptureEvents(
+it("preserves observed WebSocket frames and tracks unknown opcode and payload facts", () => {
+  const events = new CdpCaptureEvents(
     inspectWebPageInputSchema.parse({
       cdp_endpoint: "http://127.0.0.1:9222",
-      allowed_origins: [origin],
+      allowed_origins: ["https://example.test"],
       target_id: "page",
       include_websocket_shapes: true,
     }),
-    new Set([origin]),
+    new Set(["https://example.test"]),
   );
-
-const captureFrame = (
-  opcode: unknown,
-  payloadData: unknown,
-  includeOpcode = true,
-  includePayload = true,
-) => {
-  const events = createEvents();
   events.ingest(
     receiveCdpEvent({
       method: "Network.webSocketCreated",
       params: { requestId: "socket", url: "wss://example.test/live" },
     }),
   );
-  events.ingest(
-    receiveCdpEvent({
-      method: "Network.webSocketFrameReceived",
-      params: {
-        requestId: "socket",
-        response: {
-          ...(includeOpcode ? { opcode } : {}),
-          ...(includePayload ? { payloadData } : {}),
-        },
-      },
-    }),
-  );
-  return {
-    events,
-    frame: events.webSocketConnectionsById.get("socket")?.events[0],
-  };
-};
-
-it.each([
-  {
-    label: "missing",
-    opcode: undefined,
-    payload: "",
-    hasOpcode: false,
-    hasPayload: true,
-  },
-  {
-    label: "wrong type",
-    opcode: "1",
-    payload: "text",
-    hasOpcode: true,
-    hasPayload: true,
-  },
-  {
-    label: "explicit null",
-    opcode: null,
-    payload: "",
-    hasOpcode: true,
-    hasPayload: true,
-  },
-  {
-    label: "negative",
-    opcode: -1,
-    payload: "",
-    hasOpcode: true,
-    hasPayload: true,
-  },
-  {
-    label: "fractional",
-    opcode: 1.5,
-    payload: "text",
-    hasOpcode: true,
-    hasPayload: true,
-  },
-  {
-    label: "above opcode width",
-    opcode: 16,
-    payload: "",
-    hasOpcode: true,
-    hasPayload: true,
-  },
-  {
-    label: "non-finite",
-    opcode: Number.NaN,
-    payload: "",
-    hasOpcode: true,
-    hasPayload: true,
-  },
-] as const)(
-  "keeps $label WebSocket opcode unknown",
-  ({ opcode, payload, hasOpcode, hasPayload }) => {
-    const { events, frame } = captureFrame(
-      opcode,
-      payload,
-      hasOpcode,
-      hasPayload,
-    );
-    expect(frame).toEqual({
-      direction: "received",
-      opcode: null,
-      payload_bytes: null,
-      payload_shape: null,
-    });
-    expect(events.completeness.snapshot().excluded).toContainEqual({
-      section: "websocket_frames",
-      reason: "invalid_protocol_value",
-      count: 1,
-    });
-    expect(
-      webPageInspectionSchema.shape.network.shape.websocket_connections.element.safeParse(
-        {
-          request_id: "socket",
-          url: "wss://example.test/live",
-          events: [frame],
-        },
-      ).success,
-    ).toBe(true);
-  },
-);
-
-it.each([
-  { label: "continuation", opcode: 0, payload: "", bytes: 0, format: "binary" },
-  { label: "empty text", opcode: 1, payload: "", bytes: 0, format: "text" },
-  {
-    label: "reserved four-bit opcode",
-    opcode: 15,
-    payload: "",
-    bytes: 0,
-    format: "binary",
-  },
-] as const)(
-  "preserves observed $label data",
-  ({ opcode, payload, bytes, format }) => {
-    const { events, frame } = captureFrame(opcode, payload);
-    expect(frame).toEqual({
-      direction: "received",
-      opcode,
-      payload_bytes: bytes,
-      payload_shape: { format, json_shape: null },
-    });
-    expect(events.completeness.snapshot().excluded).not.toContainEqual(
-      expect.objectContaining({
-        section: "websocket_frames",
-        reason: "invalid_protocol_value",
+  const socket = events.webSocketConnectionsById.get("socket");
+  if (socket === undefined) throw new Error("Expected the approved WebSocket");
+  // Each row states the retained opcode, size and shape after the raw fields.
+  const cases = [
+    ["continuation", { opcode: 0, payloadData: "" }, 0, 0, "binary"],
+    ["missing opcode", { payloadData: "" }, null, null, null],
+    ["string opcode", { opcode: "1", payloadData: "x" }, null, null, null],
+    ["null opcode", { opcode: null, payloadData: "" }, null, null, null],
+    ["negative opcode", { opcode: -1, payloadData: "" }, null, null, null],
+    ["fractional opcode", { opcode: 1.5, payloadData: "x" }, null, null, null],
+    ["above four bits", { opcode: 16, payloadData: "" }, null, null, null],
+    [
+      "non-finite opcode",
+      { opcode: Number.NaN, payloadData: "" },
+      null,
+      null,
+      null,
+    ],
+    ["reserved opcode", { opcode: 15, payloadData: "" }, 15, 0, "binary"],
+    ["missing payload", { opcode: 1 }, 1, null, null],
+    ["numeric payload", { opcode: 1, payloadData: 42 }, 1, null, null],
+    ["invalid base64", { opcode: 2, payloadData: "AA" }, 2, null, "binary"],
+    ["empty text", { opcode: 1, payloadData: "" }, 1, 0, "text", "sent"],
+    ["UTF-8 text", { opcode: 1, payloadData: "é" }, 1, 2, "text", "sent"],
+  ] as const;
+  let invalidCount = 0;
+  for (const [
+    index,
+    [label, response, opcode, bytes, format, direction = "received"],
+  ] of cases.entries()) {
+    events.ingest(
+      receiveCdpEvent({
+        method:
+          direction === "received"
+            ? "Network.webSocketFrameReceived"
+            : "Network.webSocketFrameSent",
+        params: { requestId: "socket", response },
       }),
     );
-  },
-);
-
-it.each([
-  {
-    label: "missing payload",
-    opcode: 1,
-    payload: undefined,
-    hasPayload: false,
-  },
-  { label: "wrong-type payload", opcode: 1, payload: 42, hasPayload: true },
-] as const)(
-  "does not fabricate an empty payload for $label",
-  ({ opcode, payload, hasPayload }) => {
-    const { events, frame } = captureFrame(opcode, payload, true, hasPayload);
-    expect(frame).toEqual({
-      direction: "received",
+    expect(socket.events, label).toHaveLength(index + 1);
+    expect(socket.events[index], label).toEqual({
+      direction,
       opcode,
-      payload_bytes: null,
-      payload_shape: null,
+      payload_bytes: bytes,
+      payload_shape: format === null ? null : { format, json_shape: null },
     });
-    expect(events.completeness.snapshot().excluded).toContainEqual({
-      section: "websocket_frames",
-      reason: "invalid_protocol_value",
-      count: 1,
-    });
-  },
-);
+    invalidCount += bytes === null ? 1 : 0;
+    expect(events.completeness.snapshot().excluded, label).toEqual(
+      invalidCount === 0
+        ? []
+        : [
+            {
+              section: "websocket_frames",
+              reason: "invalid_protocol_value",
+              count: invalidCount,
+            },
+          ],
+    );
+  }
+  expect(
+    webPageInspectionSchema.shape.network.shape.websocket_connections.element.safeParse(
+      socket,
+    ).success,
+  ).toBe(true);
+});

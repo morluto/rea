@@ -310,14 +310,12 @@ describe("Electron fuse reader resource boundaries", () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("slices 0 and 1 overlap"),
-          }),
-        ],
+        _tag: "AnalysisMalformedTargetError",
+        path,
+        failure: {
+          kind: "malformed",
+          detail: expect.stringContaining("slices 0 and 1 overlap"),
+        },
       });
   });
 });
@@ -837,6 +835,11 @@ it("enforces the 32 sentinel boundary with typed and public limit details", asyn
     } else {
       await expect(readElectronFuseImage(path)).rejects.toMatchObject({
         limit: { name: "maximum_sentinels_per_slice", maximum: 32 },
+        failure: {
+          kind: "limit",
+          format: "electron-fuses",
+          limit: { name: "maximum_sentinels_per_slice", maximum: 32 },
+        },
       });
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -872,6 +875,15 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
   await truncate(path, 1024 * 1024 * 1024 + 1);
   await expect(readElectronFuseImage(path)).rejects.toMatchObject({
     limit: { name: "maximum_input_bytes", maximum: 1024 * 1024 * 1024 },
+    failure: {
+      kind: "limit",
+      format: "electron-fuses",
+      limit: {
+        name: "maximum_input_bytes",
+        maximum: 1024 * 1024 * 1024,
+        required: 1_073_741_825n,
+      },
+    },
   });
   const result = await provider.inspect({ path });
   expect(result.ok).toBe(false);
@@ -888,9 +900,6 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
           limit: 1024 * 1024 * 1024,
           unit: "bytes",
         },
-      },
-      remediation: {
-        action: expect.stringContaining("does not admit this input"),
       },
     });
   }

@@ -33,7 +33,10 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
@@ -111,7 +114,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-      // Malformed and truncated bytes are an invalid `path`; unsupported
+      // Malformed and truncated bytes are a malformed target; unsupported
       // bytes are an unsupported target, as for every other format parser.
       const formatFailure = parseFailureAnalysisError(
         OPERATION,
@@ -133,20 +136,14 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       )
         error = primary;
       else if (primary instanceof BinaryResourceFailure)
-        error = new AnalysisResourceConstraintError(
-          OPERATION,
-          "memory",
-          primary.message,
-          {
+        error = parseLimitConstraint(OPERATION, "memory", primary, {
+          reportedLimitContext: {
             maximum_object_bytes: GPU_OBJECT_BYTES,
             maximum_report_bytes: GPU_REPORT_BYTES,
           },
-          {
-            cause,
-            retryable: false,
-            remediationAction: `${primary.message} This release has no runtime override for that GPU byte allowance. The object allowance is ${String(GPU_OBJECT_BYTES)} bytes and the report allowance is ${String(GPU_REPORT_BYTES)} bytes. Additional host memory does not raise them. Repeating the unchanged request fails the same way.`,
-          },
-        );
+          retryable: false,
+          remediationAction: `${primary.message} This release has no runtime override for that GPU parser allowance. Additional host memory does not raise it. Repeating the unchanged request fails the same way.`,
+        });
       else if (formatFailure !== undefined) error = formatFailure;
       else if (
         origin === "owned-or-classified" &&

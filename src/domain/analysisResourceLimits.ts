@@ -99,12 +99,18 @@ export const deadlineParameterLimit = (
 });
 
 /**
+ * Smallest positive delay Node schedules. Zero is not a deadline.
+ * `timerDurationMsSchema` and restart-only millisecond limits share this floor.
+ */
+export const TIMER_DURATION_MINIMUM_MS = 1;
+
+/**
  * A positive whole-millisecond duration Node can schedule exactly. Zero and
  * negative values are not a deadline.
  */
 export const timerDurationMsSchema = z
   .int()
-  .min(1)
+  .min(TIMER_DURATION_MINIMUM_MS)
   .max(MAX_NODE_TIMER_DELAY_MS);
 
 /**

@@ -1,7 +1,7 @@
 import { appendFileSync } from "node:fs";
 
 import { gitRepository, planChanges } from "./change-plan.mjs";
-import { CI_FLAGS as flags } from "./scopes.mjs";
+import { CI_FLAGS as flags, testShardJob } from "./scopes.mjs";
 
 const plan = planChanges(
   {
@@ -14,7 +14,8 @@ const plan = planChanges(
   },
   gitRepository(),
 );
-const { tier, matrix, reasons, testSelection, testShards } = plan;
+const { tier, matrix, reasons, testSelection, testShards, typedLintFiles } =
+  plan;
 const selected = Object.fromEntries(flags.map((flag) => [flag, plan[flag]]));
 if (process.env.GITHUB_OUTPUT)
   appendFileSync(
@@ -26,6 +27,12 @@ if (process.env.GITHUB_OUTPUT)
       test_selection: JSON.stringify(testSelection),
       test_mode: testSelection.mode,
       test_shards: JSON.stringify(testShards),
+      test_shard_job: testShardJob(
+        process.env.GITHUB_EVENT_NAME,
+        tier,
+        testSelection.mode,
+      ),
+      typed_lint_files: JSON.stringify(typedLintFiles),
     })
       .map(([key, value]) => `${key}=${value}\n`)
       .join(""),

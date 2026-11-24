@@ -157,9 +157,18 @@ const untracedInput = (path) =>
 // runs before dependencies are installed, so it cannot load that parser).
 const SPECIFIER =
   /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bvi\.mock\(\s*|\bnew\s+URL\(\s*)["'](\.{1,2}\/[^"']+)["']/gu;
+// A substitution-free, unescaped template used by a dynamic import has the
+// same exact path identity as a quoted specifier.
+const STATIC_IMPORT_TEMPLATE =
+  /\bimport\s*\(\s*\x60(\.{1,2}\/[^\x60\\]*)\x60\s*(?=[,)])/gu;
 // TypeScript imports name the emitted `.js`/`.mjs`; scripts are imported as is.
 const importsOf = (path, source) =>
-  [...source.matchAll(SPECIFIER)].flatMap(([, specifier]) => {
+  [
+    ...source.matchAll(SPECIFIER),
+    ...[...source.matchAll(STATIC_IMPORT_TEMPLATE)].filter(
+      ([, specifier]) => !specifier.includes("${"),
+    ),
+  ].flatMap(([, specifier]) => {
     const target = posix.normalize(posix.join(posix.dirname(path), specifier));
     return [target, target.replace(/\.(m?)js$/u, ".$1ts")];
   });
@@ -206,7 +215,9 @@ export function traceAffectedTests({ files, snapshot }) {
   }
 
   const isNamedTarget = (path) =>
-    path.startsWith("scripts/") || path.startsWith("tests/fixtures/");
+    isTest(path) ||
+    path.startsWith("scripts/") ||
+    path.startsWith("tests/fixtures/");
   // A seed and every helper that imports or names it, directly or through another.
   const throughHelpers = (seed) => {
     const reached = new Set(seed);
@@ -227,11 +238,12 @@ export function traceAffectedTests({ files, snapshot }) {
     }
     return reached;
   };
-  // Close over test-only helpers, verifiers and shared script modules, then
-  // take the tests that import a change.
+  // Include removed tests: a coverage registry may still name the old path.
+  // Changes reach tests that import any affected test-only helper.
   const affected = throughHelpers([
     ...changedModules,
     ...changedNonModuleFixtures,
+    ...files.filter(isTest),
   ]);
   for (const test of tests)
     if (imports.get(test).some((target) => affected.has(target)))

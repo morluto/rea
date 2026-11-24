@@ -13,7 +13,7 @@ const cliText =
  * where it is (maintainer decision on #11476).
  * @type {ReadonlyMap<string, string>}
  */
-export const HOST_ONLY_COMMANDS = new Map([
+const HOST_ONLY_COMMANDS = new Map([
   [
     "doctor",
     "Checks the host installation and provider readiness; no MCP operation does this.",
@@ -33,7 +33,7 @@ export const HOST_ONLY_COMMANDS = new Map([
  * options. Each entry gives the reason.
  * @type {ReadonlyMap<string, string>}
  */
-export const CLI_ONLY_FILES = new Map([
+const CLI_ONLY_FILES = new Map([
   [
     "src/application/Doctor.ts",
     "Setup and doctor run only through the CLI, so their recovery may name CLI options such as --skill=false.",

@@ -23,6 +23,8 @@ export class GpuReportCapacityFailure extends BinaryResourceFailure {
       "structure",
       GPU_REPORT_BYTES,
       "GPU facts exceed the 16 MiB retained report budget",
+      "gpu-retained-report-bytes",
+      "bytes",
     );
   }
 }

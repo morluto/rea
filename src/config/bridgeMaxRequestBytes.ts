@@ -131,7 +131,7 @@ const limitFacts = (
 export const bridgeRequestOversizeError = (
   operation: string,
   limit: BridgeMaxRequestBytes,
-  payloadBytes: number,
+  payload: number | { readonly bytesAtLeast: number },
   peer: BridgePeer,
 ): AnalysisResourceConstraintError => {
   const recovery = bridgeMaxRequestBytesRecovery(limit, peer);
@@ -143,7 +143,12 @@ export const bridgeRequestOversizeError = (
     operation,
     "transport",
     `${refusal} ${recovery}`,
-    { ...limitFacts(limit), payload_bytes: payloadBytes },
+    {
+      ...limitFacts(limit),
+      ...(typeof payload === "number"
+        ? { payload_bytes: payload }
+        : { payload_bytes_at_least: payload.bytesAtLeast }),
+    },
     {
       remediationAction: recovery,
       retryable: false,

@@ -221,7 +221,7 @@ export const applyBulk = (
     });
     if (!wasBuilt && built(draft) && options !== undefined) {
       draft.plan.body = deleteBody(options, identity);
-      retainFixed(context, draft.plan.body.fixed);
+      retainFixed(context.io, draft.plan.body.fixed);
     }
     const planned = draft.plan.response;
     if (planned !== null) {

@@ -10,6 +10,7 @@ import {
   ownedFailure,
   ownedOutput,
 } from "../support/reverseEngineeringCompositionFixtures.js";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 it.each([
   { budget: undefined, capacity: 8 },
@@ -17,7 +18,7 @@ it.each([
 ])(
   "bounds provider concurrency and aggregate capture admission at budget $budget",
   async ({ budget, capacity }) => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-reverse-capacity-"));
+    const directory = await createTestTempDirectory("rea-reverse-capacity-");
     const path = join(directory, "fixture.bin");
     await writeFile(path, "fixture");
     const input = {
@@ -102,13 +103,12 @@ it.each([
     } finally {
       release();
       await service.close();
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );
 
 it("preserves the exact caller reason when objdump admission is already aborted", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-preabort-"));
+  const directory = await createTestTempDirectory("rea-reverse-preabort-");
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const reason = Object.freeze({ requested: "stop" });
@@ -133,12 +133,11 @@ it("preserves the exact caller reason when objdump admission is already aborted"
     expect(runs).toBe(0);
   } finally {
     await service.close();
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
 it("preserves the caller reason when cancellation arrives after provider output", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-postabort-"));
+  const directory = await createTestTempDirectory("rea-reverse-postabort-");
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const reason = Object.freeze({ requested: "stop-after-output" });
@@ -159,16 +158,16 @@ it("preserves the caller reason when cancellation arrives after provider output"
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
     expect(result.error.partialObservation).toMatchObject({
-      raw_result: { stdout: "symbols" },
+      normalized_result: { stdout: "symbols" },
+      raw_result: null,
     });
   } finally {
     await service.close();
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
 it("keeps a physical digest denial primary when the caller aborts during that failure", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-digest-deny-"));
+  const directory = await createTestTempDirectory("rea-reverse-digest-deny-");
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const reason = Object.freeze({ requested: "stop-during-denial" });
@@ -201,12 +200,11 @@ it("keeps a physical digest denial primary when the caller aborts during that fa
     expect(runs).toBe(0);
   } finally {
     await service.close();
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
 it("keeps an unrelated digest ABORT_ERR as an adapter failure", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-digest-abort-"));
+  const directory = await createTestTempDirectory("rea-reverse-digest-abort-");
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const denied = Object.assign(new Error("digest aborted elsewhere"), {
@@ -230,12 +228,11 @@ it("keeps an unrelated digest ABORT_ERR as an adapter failure", async () => {
     expect(result.error.cause).toBe(denied);
   } finally {
     await service.close();
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
 it("does not report a command ABORT_ERR without the caller's abort as cancellation", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-command-abort-"));
+  const directory = await createTestTempDirectory("rea-reverse-command-abort-");
   const path = join(directory, "fixture.bin");
   await writeFile(path, "fixture");
   const failure = Object.assign(new Error("aborted by another signal"), {
@@ -256,7 +253,6 @@ it("does not report a command ABORT_ERR without the caller's abort as cancellati
     expect(result.error._tag).not.toBe("AnalysisCancelledError");
   } finally {
     await service.close();
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -289,8 +285,8 @@ it.each([
 ] as const)(
   "classifies a $code command failure with captured output $captured while the caller is aborted",
   async ({ captured, code, tag }) => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-reverse-command-abort-"),
+    const directory = await createTestTempDirectory(
+      "rea-reverse-command-abort-",
     );
     const path = join(directory, "fixture.bin");
     await writeFile(path, "fixture");
@@ -340,12 +336,12 @@ it.each([
           stderr: "partial stderr",
         });
         expect(result.error.partialObservation).toMatchObject({
-          raw_result: { stdout: "partial stdout" },
+          normalized_result: { stdout: "partial stdout" },
+          raw_result: null,
         });
       }
     } finally {
       await service.close();
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );

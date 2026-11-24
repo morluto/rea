@@ -330,11 +330,12 @@ const listReproduces = (
       readonly whole: ReadonlySet<number>;
       readonly query: ListQuery | undefined;
     };
+    readonly queried: ReadonlySet<number>;
     readonly spellings?: ClockSpellings;
   },
   record: StateRecordFacts,
 ): boolean => {
-  const { view, spellings } = check;
+  const { view, queried, spellings } = check;
   const field = context.idField(plan.type);
   const collection = collectionPathOf(record, false);
   return context.withBody(record.ordinal, (body) => {
@@ -344,13 +345,14 @@ const listReproduces = (
     const observed = new Map(
       items.map((item) => [scalarText(ownMember(item, field)) ?? "", item]),
     );
-    const computed = view.query?.record_ordinals.includes(record.ordinal)
-      ? evaluateQuery(
-          view.query.parameters,
-          singleQueryValues(record.query) ?? new Map(),
-          context.inCollection(plan.type, collection),
-        )
-      : undefined;
+    const computed =
+      view.query !== undefined && queried.has(record.ordinal)
+        ? evaluateQuery(
+            view.query.parameters,
+            singleQueryValues(record.query) ?? new Map(),
+            context.inCollection(plan.type, collection),
+          )
+        : undefined;
     const members = view.whole.has(record.ordinal)
       ? context.inCollection(plan.type, collection)
       : (computed?.page ??
@@ -409,25 +411,27 @@ export const checkListPlan = (
     whole,
   };
   let query = listQuery(context, plan, whole);
+  const queried = new Set(query?.record_ordinals);
   // A line the query explains but whose envelope or fields the state does not reproduce keeps its recorded members.
   if (query !== undefined) {
-    const failing = plan.latest.filter(
-      (record) =>
-        query!.record_ordinals.includes(record.ordinal) &&
-        !listReproduces(context, plan, { view: { ...base, query } }, record),
-    );
-    const kept = query.record_ordinals.filter(
-      (ordinal) => !failing.some((record) => record.ordinal === ordinal),
-    );
-    query = kept.length === 0 ? undefined : { ...query, record_ordinals: kept };
+    const check = { view: { ...base, query }, queried };
+    for (const record of plan.latest)
+      if (
+        queried.has(record.ordinal) &&
+        !listReproduces(context, plan, check, record)
+      )
+        queried.delete(record.ordinal);
+    query =
+      queried.size === 0
+        ? undefined
+        : { ...query, record_ordinals: [...queried] };
   }
   const view = { ...base, query };
   const all = plan.latest.every((record) => whole.has(record.ordinal));
   const spellings = new ClockSpellings(context.retain);
+  const check = { view, queried, spellings };
   if (
-    !plan.latest.every((record) =>
-      listReproduces(context, plan, { view, spellings }, record),
-    )
+    !plan.latest.every((record) => listReproduces(context, plan, check, record))
   )
     return recorded(plan, "list-differs");
   return {

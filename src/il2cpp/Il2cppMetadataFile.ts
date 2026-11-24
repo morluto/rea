@@ -655,6 +655,46 @@ function* checkMethodOwners(
   }
 }
 
+/**
+ * Native linking reads each image's methods by MethodDef row, so every method
+ * an image owns must carry a nonzero MethodDef token that no other method in
+ * that image uses. The images and tokens are both this file's own records, so
+ * a violation makes the metadata malformed whichever binary is selected.
+ * Reuse across images is allowed: each image numbers its own rows.
+ */
+function* checkMethodTokens(
+  images: Il2cppMetadataDecoded["images"],
+  types: Il2cppMetadataDecoded["types"],
+  methodTokens: Uint32Array,
+) {
+  let work = 0;
+  for (const image of images) {
+    const methodByRow = new Map<number, number>();
+    for (let offset = 0; offset < image.type_count; offset++) {
+      const type = types[image.type_start + offset]!;
+      if (work++ % 256 === 0) yield;
+      for (let index = 0; index < type.method_count; index++) {
+        if (work++ % 256 === 0) yield;
+        const method = type.method_start + index;
+        const token = methodTokens[method]!;
+        const row = token & 0xffffff;
+        if (token >>> 24 !== 0x06 || row === 0)
+          throw new Il2cppMetadataFormatFailure(
+            "invalid-method-definition-token",
+            `method ${method} in image ${image.name} has token 0x${token.toString(16)}, which is not a MethodDef row`,
+          );
+        const earlier = methodByRow.get(row);
+        if (earlier !== undefined)
+          throw new Il2cppMetadataFormatFailure(
+            "invalid-method-definition-token",
+            `methods ${earlier} and ${method} in image ${image.name} share MethodDef token 0x${token.toString(16)}`,
+          );
+        methodByRow.set(row, method);
+      }
+    }
+  }
+}
+
 /** Each type belongs to at most one image. */
 function* checkImageRanges(images: Il2cppMetadataDecoded["images"]) {
   const ranges: { start: number; end: number; index: number }[] = [];
@@ -918,6 +958,8 @@ function* readMetadataCoreSteps(
   const { types, memberRanges } = yield* readTypes(tables);
   const { methods, parameterRanges } = yield* readMethods(tables);
   yield* checkMethodOwners(types, methods);
+  if (tables.linkFacts !== undefined)
+    yield* checkMethodTokens(images, types, tables.linkFacts.methodTokens);
   const members = yield* readIl2cppMembers(tables, {
     ...memberRanges,
     parameters: parameterRanges,

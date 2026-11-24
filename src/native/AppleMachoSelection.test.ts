@@ -355,6 +355,7 @@ describe("Mach-O metadata span mapping", () => {
     unmapped.writeUInt32LE(0, 60);
     const data = mappingSegment(0x2000n, 256, 128);
     const opcodes = Buffer.from([
+      0x30, // SET_DYLIB_SPECIAL_IMM self
       0x40,
       ...Buffer.from("_local\0"),
       0x51,
@@ -691,6 +692,74 @@ describe("admitted Mach-O slices", () => {
   });
 });
 
+it.each([LC.DYLD_INFO, LC.DYLD_INFO_ONLY])(
+  "resolves nonempty weak and lazy binds from Mach-O command %i in a FAT slice",
+  (command) => {
+    const weak = Buffer.from([
+      0x40,
+      ...Buffer.from("_weak_fixture\0"),
+      0x51,
+      0x70,
+      8,
+      0x90,
+      0,
+    ]);
+    const lazy = Buffer.from([
+      0x70,
+      16,
+      0x11,
+      0x40,
+      ...Buffer.from("_lazy_fixture\0"),
+      0x90,
+      0,
+    ]);
+    const weakOffset = 400;
+    const lazyOffset = 448;
+    const dyld = Buffer.alloc(48);
+    dyld.writeUInt32LE(command);
+    dyld.writeUInt32LE(dyld.length, 4);
+    dyld.writeUInt32LE(weakOffset, 24);
+    dyld.writeUInt32LE(weak.length, 28);
+    dyld.writeUInt32LE(lazyOffset, 32);
+    dyld.writeUInt32LE(lazy.length, 36);
+    const library = "/fixture/lib-bindings.dylib";
+    const thin = mappingImage([
+      mappingSegment(0x2000n, 256, 128),
+      dyld,
+      Buffer.from(dylibCommand(LC.LOAD_DYLIB, library)),
+    ]);
+    weak.copy(thin, weakOffset);
+    lazy.copy(thin, lazyOffset);
+    const bytes = Buffer.from(fatImage([{ cpu: CPU.arm64, bytes: thin }]));
+    const slice = fatSliceRange(bytes, 0);
+    const layout = layoutFor(bytes, "arm64", slice);
+    expect(layout.fixups.binds).toEqual([
+      { stream: "weak", offset: slice.offset + weakOffset, size: weak.length },
+      { stream: "lazy", offset: slice.offset + lazyOffset, size: lazy.length },
+    ]);
+    const decoded = parsePointerFixups(
+      bytes,
+      layout.fixups,
+      layout.segments,
+      layout.baseAddress,
+    );
+    expect(decoded.issues).toEqual([]);
+    expect(decoded.decode(0x2008n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_weak_fixture",
+      binding_source: "weak",
+      library_ordinal: -3,
+      library: null,
+    });
+    expect(decoded.decode(0x2010n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_lazy_fixture",
+      binding_source: "lazy",
+      library,
+    });
+  },
+);
+
 describe("native Mach-O fixup load command boundaries", () => {
   const decode = (command: Uint8Array) =>
     decodeAppleDispatchMetadata(
@@ -853,8 +922,9 @@ it.each([0, 129])(
         ? {
             ok: false,
             error: {
-              kind: "malformed",
+              kind: "format",
               message: "FAT header declares no architectures",
+              failure: { kind: "malformed", format: "macho" },
             },
           }
         : { ok: true, value: { fileOffset: 0, selection: null } },

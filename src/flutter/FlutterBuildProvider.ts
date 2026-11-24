@@ -1394,7 +1394,6 @@ const projectStringPool = async (
   const tokenBudget =
     Math.min(poolPolicy.token_limit, section?.length ?? 0) * COLLECTION_SLACK;
   if (section !== null) {
-    let run = "";
     const consider = (text: string): void => {
       if (text.length < 5) return;
       runCount += 1;
@@ -1420,29 +1419,43 @@ const projectStringPool = async (
       }
     };
     let overflowed = false;
+    let runStart = -1;
+    let runLength = 0;
+    const flushRun = (): void => {
+      if (runStart >= 0) {
+        if (!overflowed && runLength >= 5)
+          consider(section.toString("latin1", runStart, runStart + runLength));
+        runStart = -1;
+        runLength = 0;
+      }
+      overflowed = false;
+    };
     for (let start = 0; start < section.length; start += 64 * 1024) {
       await yieldToEventLoop();
       assertArtifactReadActive(signal);
-      for (const byte of section.subarray(start, start + 64 * 1024)) {
+      const end = Math.min(section.length, start + 64 * 1024);
+      for (let index = start; index < end; index += 1) {
+        const byte = section[index]!;
         if (byte >= 0x20 && byte < 0x7f) {
           // A single unbounded run (an adversarial NUL-free section) never
           // materializes: growth stops at the cap and the entire run is
           // discarded at its delimiter, since a truncated prefix would be
           // fabricated evidence rather than an observation.
-          if (run.length < poolPolicy.run_bytes)
-            run += String.fromCharCode(byte);
-          else {
+          if (runStart < 0) {
+            runStart = index;
+            runLength = 1;
+          } else if (runLength < poolPolicy.run_bytes) {
+            runLength += 1;
+          } else {
             overflowed = true;
             limitsReached.add("run_bytes");
           }
         } else {
-          if (!overflowed) consider(run);
-          overflowed = false;
-          run = "";
+          flushRun();
         }
       }
     }
-    if (!overflowed) consider(run);
+    flushRun();
   }
   assertArtifactReadActive(signal);
   return {

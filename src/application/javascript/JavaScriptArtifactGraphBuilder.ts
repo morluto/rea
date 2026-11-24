@@ -15,7 +15,10 @@ import {
   type JavaScriptApplicationGraph,
 } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
+import {
+  javaScriptApplicationInputPresence,
+  type JavaScriptArtifactFileSet,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   HTML_INLINE_SCRIPT_LOCATION_COVERAGE_LIMIT,
@@ -171,6 +174,23 @@ function* buildJavaScriptArtifactGraphInputSteps(
   const unavailableFilesByPath = new Map(
     fileSet.unavailable_relevant_files.map((file) => [file.path, file]),
   );
+  const packagesByPath = new Map<
+    string,
+    JavaScriptArtifactAnalysis["packages"][number]
+  >();
+  for (const pkg of analysis.packages)
+    if (!packagesByPath.has(pkg.path)) packagesByPath.set(pkg.path, pkg);
+  const indexAnalyzedFiles = (
+    files: JavaScriptArtifactAnalysis["files"],
+  ): ReadonlyMap<string, JavaScriptArtifactAnalysis["files"][number]> => {
+    const byPath = new Map<
+      string,
+      JavaScriptArtifactAnalysis["files"][number]
+    >();
+    for (const entry of files)
+      if (!byPath.has(entry.file.path)) byPath.set(entry.file.path, entry);
+    return byPath;
+  };
   const context: JavaScriptArtifactGraphContext = {
     accumulator,
     snapshot,
@@ -183,12 +203,16 @@ function* buildJavaScriptArtifactGraphInputSteps(
     ),
     root,
     filesByPath: new Map(fileSet.files.map((file) => [file.path, file])),
+    analyzedFilesByPath: indexAnalyzedFiles(analysis.files),
+    packagesByPath,
     unanalyzedFiles: {
       coverage: snapshot.coverage,
       get: (path) =>
         unavailableFilesByPath.get(path) ?? fileSet.unanalyzed_files?.get(path),
       hasDirectory: (path, container) =>
         fileSet.unanalyzed_files?.hasDirectory(path, container) ?? false,
+      filePathsBelow: (path) =>
+        fileSet.unanalyzed_files?.filePathsBelow?.(path),
     },
     fileNodes: new Map(),
     assetNodes: new Map(),
@@ -208,15 +232,17 @@ function* buildJavaScriptArtifactGraphInputSteps(
   yield;
   // Raw observations remain on the file nodes. Only admitted expansions feed
   // the relationship builders, including their Electron and bundler callers.
-  const projectionContext = {
+  const projectedFiles = analysis.files.map((file) =>
+    file.application_projection_failure === undefined
+      ? file
+      : { ...file, javascript: null, semantic: null },
+  );
+  const projectionContext: JavaScriptArtifactGraphContext = {
     ...context,
+    analyzedFilesByPath: indexAnalyzedFiles(projectedFiles),
     analysis: {
       ...analysis,
-      files: analysis.files.map((file) =>
-        file.application_projection_failure === undefined
-          ? file
-          : { ...file, javascript: null, semantic: null },
-      ),
+      files: projectedFiles,
     },
   };
   const packageRoots = addJavaScriptPackageNodes(projectionContext);
@@ -348,6 +374,12 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
       );
     return partialApplicationCoverage([], nestedArchiveWasOpaque ? null : 0);
   }
+  // Structure-only keeps static and Electron facts and does not build
+  // source-module or export-binding nodes. The omitted node count is unknown
+  // without semantic analysis. Complete coverage would let a comparison treat
+  // those unchanged bindings as removed.
+  if (context.analysis.semantic_analysis === "structure-only")
+    return partialApplicationCoverage([], null);
   return completeApplicationCoverage();
 };
 
@@ -371,6 +403,18 @@ const semanticResourceLimits = (
     ...new Set(semanticResourceBounds(context).map(({ limit }) => limit)),
   ].sort();
 
+/** Complete traversal found no entries, so there was nothing to analyze. */
+const EMPTY_INPUT_LIMITATION =
+  "No JavaScript inputs were found: the complete inventory contains no files. Select the directory or .asar that holds the application sources; for a desktop installation directory, call inspect_desktop_application or audit_release_exposure.";
+
+const emptyInputLimitations = (
+  context: JavaScriptArtifactGraphContext,
+): readonly string[] =>
+  javaScriptApplicationInputPresence(context.fileSet, context.snapshot) ===
+  "empty"
+    ? [EMPTY_INPUT_LIMITATION]
+    : [];
+
 const graphLimitations = (
   context: JavaScriptArtifactGraphContext,
   coverage: "complete" | "partial" | "unknown" | "unavailable",
@@ -390,6 +434,7 @@ const graphLimitations = (
           `Caller-selected source analysis leaves ${String(context.fileSet.source_selection?.unselected_files)} inventoried files outside analysis scope. Inventory identity covers the complete artifact; relationships through unselected sources remain unknown.`,
         ]),
     ...context.snapshot.limitations,
+    ...emptyInputLimitations(context),
     ...context.snapshot.integrity_contradictions.map(
       ({ logical_path: path }) =>
         `Artifact integrity metadata contradicts observed bytes at ${path}; the observed bytes are untrusted.`,

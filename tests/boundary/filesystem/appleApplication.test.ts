@@ -20,7 +20,7 @@ import {
   requireSuccessfulProjection,
 } from "../../support/applicationSessionFixture.js";
 
-import { projectAppleApplicationEvidence } from "../../../src/application/apple/AppleApplicationService.js";
+import { projectAppleApplicationEvidence } from "../../../src/application/InventoryProjectionEvidence.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { appleApplicationProjectionResultSchema } from "../../../src/domain/apple/appleApplication.js";

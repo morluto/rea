@@ -30,6 +30,7 @@ export const createJavaScriptRuntimeReconciliationEvidence = (
       limitations: result.limitations,
       evidenceLinks: result.evidence_links,
     },
+    { immutable: true },
   );
 
 const parameters = (
