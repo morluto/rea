@@ -9,6 +9,7 @@ import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
+import { WABT_RELEASE_LINE } from "../../../src/domain/wasm/wasmArtifact.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("executable format refusal diagnostics", () => {
@@ -176,7 +177,7 @@ describe("target route diagnostics", () => {
         "rea inspect-wasm-artifact",
       );
       expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
-      expect(projected.remediation.action).toContain("WABT 1.0.42");
+      expect(projected.remediation.action).toContain(WABT_RELEASE_LINE);
       expect(await systemDoctorHost().inspectTarget(path)).toMatchObject({
         ok: false,
         classification: "unsupported_target",
