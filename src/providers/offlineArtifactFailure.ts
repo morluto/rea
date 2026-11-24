@@ -71,7 +71,7 @@ export const offlineArtifactFailureDialect = (
       (failure.boundary === "file-size" || failure.boundary === undefined)
         ? options.fileSize(failure)
         : undefined) ??
-      parseFailureAnalysisError(operation, path, failure, field) ??
+      parseFailureAnalysisError(operation, path, failure) ??
       projectOwnedArtifactInputFailure(facts, operation, path, field),
     file: {
       path,

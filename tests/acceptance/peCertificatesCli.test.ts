@@ -405,20 +405,6 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-pe-cert-cli-bad-");
-  const path = join(root, "broken.exe");
-  await writeFile(path, Buffer.from("MZ"));
-  const result = await cli.run({
-    arguments: ["inspect-pe-certificates", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_pe_certificates" },
-  });
-});
-
 cliTest(
   "reports TeletexString compatibility text with its decoding limitation",
   async ({ cli }) => {

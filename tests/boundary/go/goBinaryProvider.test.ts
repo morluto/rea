@@ -6,7 +6,7 @@ import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js"
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../../../src/domain/go/goBinary.js";
 import {
-  AnalysisInputError,
+  AnalysisMalformedTargetError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { BinaryFormatFailure } from "../../../src/domain/binaryContainer.js";
@@ -30,8 +30,9 @@ it("rejects advertised PE32 data directories outside the optional header", async
   const result = await new GoBinaryProvider().inspect({ path });
   if (result.ok) throw new Error("Truncated PE32 directories must be refused");
   expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "invalid_request",
-    details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+    code: "unsupported_target",
+    category: "unsupported_target",
+    details: { path, format_failure: "malformed" },
   });
 });
 
@@ -70,8 +71,9 @@ it.each([false, true])(
           },
         });
       else {
-        expect(result.error).toBeInstanceOf(AnalysisInputError);
-        if (!(result.error instanceof AnalysisInputError)) throw result.error;
+        expect(result.error).toBeInstanceOf(AnalysisMalformedTargetError);
+        if (!(result.error instanceof AnalysisMalformedTargetError))
+          throw result.error;
         expect(result.error.cause).toBeInstanceOf(BinaryFormatFailure);
         if (!(result.error.cause instanceof BinaryFormatFailure))
           throw result.error.cause;
@@ -82,9 +84,12 @@ it.each([false, true])(
           offset: 32,
         });
         expect(projected).toMatchObject({
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
-            issues: [{ path: ["path"], reason: "invalid_format" }],
+            format_failure: "truncated",
+            format: "macho",
+            field: "Mach-O load commands",
+            offset: 32,
           },
         });
       }

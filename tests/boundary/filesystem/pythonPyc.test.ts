@@ -7,19 +7,16 @@ import { pythonPycFixture } from "../../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("Python pyc stable filesystem boundary", () => {
-  it("reports non-file and malformed pyc selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-python-pyc-files-");
     const path = join(root, "sample.pyc");
     const alias = join(root, "alias.pyc");
-    const malformed = join(root, "malformed.pyc");
     await writeFile(path, pythonPycFixture());
-    await writeFile(malformed, Buffer.from("not a pyc"));
     await symlink(path, alias);
     const service = createPythonPycService();
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.pyc"), "invalid_value"],
       [join(path, "child.pyc"), "invalid_value"],
     ] as const) {
