@@ -1261,7 +1261,7 @@ describe("CutterBridgeClient: scenario group 7", () => {
           execution_state: "complete",
           document_generation: 2,
         },
-        raw_result: output,
+        raw_result: null,
         limitations: expect.arrayContaining([
           expect.stringContaining("decimal strings"),
         ]),

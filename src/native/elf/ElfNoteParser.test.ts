@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { withElfExtendedNumbering } from "../../../tests/fixtures/elfExtendedNumbering.js";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   decodeElfSectionNameRequest,
   decodeElfSectionNameTable,
@@ -21,7 +20,6 @@ import {
   coreSiginfoNote,
   elf32ProcessIdentityFixture,
   elfNote,
-  elfNoteByteSource,
   elfNoteFixture,
   elfNoteTablePastEnd,
   elfExtendedSectionCountFixture,
@@ -35,6 +33,7 @@ import {
   readElfBuildIds,
   readElfBuildIdsFromHandle,
 } from "./ElfNoteParser.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
@@ -42,7 +41,7 @@ const defaults = inspectElfNotesInputSchema.parse({
 
 const parse = (bytes: Buffer, input: typeof defaults = defaults) =>
   parseElfNotesFromHandle(
-    elfNoteByteSource(bytes),
+    bufferByteSource(bytes, 4096),
     {
       path: input.path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -51,6 +50,96 @@ const parse = (bytes: Buffer, input: typeof defaults = defaults) =>
     input,
     async () => {},
   );
+
+it.each(["sections", "programs"] as const)(
+  "bounds extended %s header reads and yields before completing the table",
+  async (kind) => {
+    const bytes = withElfExtendedNumbering(
+      elfNoteFixture({ ownership: "both" }),
+      kind,
+    );
+    const tableOffset = Number(
+      bytes.readBigUInt64LE(kind === "sections" ? 40 : 32),
+    );
+    const source = bufferByteSource(bytes, 64);
+    const reads: number[] = [];
+    let headerBytes = 0;
+    let firstPauseBytes: number | undefined;
+    const artifact = {
+      path: defaults.path,
+      sha256: "ab".repeat(32),
+      bytes: bytes.length,
+    };
+    const report = await parseElfNotesFromHandle(
+      {
+        ...source,
+        readRange: async (offset, length) => {
+          reads.push(length);
+          if (offset >= tableOffset) headerBytes += length;
+          return source.readRange(offset, length);
+        },
+      },
+      artifact,
+      defaults,
+      async () => {
+        firstPauseBytes ??= headerBytes;
+      },
+    );
+    expect(report.tables.map(({ kind }) => kind)).toEqual([
+      "program",
+      "section",
+    ]);
+    expect(Math.max(...reads)).toBeLessThanOrEqual(64 * 1024);
+    expect(firstPauseBytes).toBeGreaterThan(0);
+    expect(firstPauseBytes).toBeLessThan(headerBytes);
+    const cancelled = new Error("cancel extended header traversal");
+    await expect(
+      parseElfNotesFromHandle(
+        bufferByteSource(bytes),
+        artifact,
+        defaults,
+        async () => {
+          throw cancelled;
+        },
+      ),
+    ).rejects.toBe(cancelled);
+  },
+);
+
+it.each(["sections", "programs"] as const)(
+  "preserves the original note index in later %s header batches",
+  async (kind) => {
+    const original = elfNoteFixture({ ownership: "both" });
+    const control = await parse(original);
+    const bytes = withElfExtendedNumbering(original, kind);
+    const sectionZero = Number(bytes.readBigUInt64LE(40));
+    const table = Number(bytes.readBigUInt64LE(kind === "sections" ? 40 : 32));
+    const width = bytes.readUInt16LE(kind === "sections" ? 58 : 54);
+    const count =
+      kind === "sections"
+        ? Number(bytes.readBigUInt64LE(sectionZero + 32))
+        : bytes.readUInt32LE(sectionZero + 44);
+    const tableKind = kind === "sections" ? "section" : "program";
+    const sourceIndex = control.tables.find(
+      ({ kind }) => kind === tableKind,
+    )!.index;
+    const sourceHeader = table + sourceIndex * width;
+    bytes.copy(
+      bytes,
+      table + (count - 1) * width,
+      sourceHeader,
+      sourceHeader + width,
+    );
+    bytes.fill(0, sourceHeader, sourceHeader + width);
+    const report = await parse(bytes);
+    expect(report.tables).toContainEqual(
+      expect.objectContaining({ kind: tableKind, index: count - 1 }),
+    );
+    expect(report.entries.map(({ gnu }) => gnu?.build_id_hex)).toEqual(
+      control.entries.map(({ gnu }) => gnu?.build_id_hex),
+    );
+  },
+);
 
 it.each([
   { bits: 32, little: false, kind: "sections" },
@@ -212,7 +301,7 @@ it("still checks an independent PT_NOTE beside an exact compressed-note alias", 
   };
   await expect(parse(withDisjointNotes(Buffer.from([1])))).rejects.toThrow(
     expect.objectContaining({
-      reason: "format",
+      kind: "malformed",
       message: "ELF note table has trailing non-zero bytes.",
     }),
   );
@@ -247,7 +336,9 @@ it("does not allocate the declared decoded note size, but still validates stored
     expect.objectContaining({ kind: "unsupported" }),
   );
   bytes.writeBigUInt64LE(BigInt(bytes.length), noteSection + 32);
-  await expect(parse(bytes)).rejects.toThrow(ArtifactReaderFailure);
+  await expect(parse(bytes)).rejects.toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
 });
 
 it("does not decode an earlier raw section overlapping compressed storage", async () => {
@@ -570,7 +661,7 @@ it("diagnoses incomplete note framing at the entry limit", async () => {
     });
     await expect(parse(image, input)).rejects.toThrow(
       expect.objectContaining({
-        reason: "format",
+        kind: "malformed",
       }),
     );
   }
@@ -890,6 +981,7 @@ it("checks extended ELF header size using the whole file for note and build-ID r
     defaults,
     64,
     async (request) => decodeElfSectionNameRequest(request),
+    async () => {},
   );
   expect(positional.sources).toEqual(expected);
 });
@@ -972,7 +1064,13 @@ it("reuses one descriptor hash and GNU NUL scan across note headers", async () =
         max_file_bytes: payload.length + 160,
       }),
     ),
-  ).rejects.toThrow(/byte budget/u);
+  ).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      format: "elf-notes",
+      limit: { name: "note_text_bytes" },
+    },
+  });
 });
 
 it("preserves interior NULs in GNU gold alongside a bounded trailing scan", async () => {
@@ -997,7 +1095,7 @@ it("preserves interior NULs in GNU gold alongside a bounded trailing scan", asyn
 it("rejects a declared note table that extends past the file", async () => {
   const truncated = elfNoteTablePastEnd();
   await expect(parse(truncated)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
     message: expect.stringMatching(/leaves the artifact/u),
   });
   const report = await parse(Buffer.concat([truncated, Buffer.alloc(3)]));

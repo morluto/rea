@@ -11,13 +11,13 @@ import {
   applicationFeatureTraceResultSchema,
   type ApplicationFeatureTraceResult,
 } from "../javascript/javascriptFeatureTraceSchemas.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -294,15 +294,8 @@ export const projectFeatureTraceView = (
     "feature-trace",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Application feature traces support summary and feature-trace pages of paths, nodes, edges, seed_matches or native_handoffs.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Application feature traces support summary and feature-trace pages of paths, nodes, edges, seed_matches or native_handoffs.",
     );
   const parsed = checkedTrace(parent);
   if (!parsed.ok) return parsed;

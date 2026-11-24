@@ -344,7 +344,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     await this.#validateRoot();
     if (entry.kind !== "file")
       throw new ArtifactReaderFailure(
-        "format",
+        "path",
         "Only regular files can be opened",
       );
     const identity = entry.sourceIdentity;

@@ -17,10 +17,8 @@ import {
   elfDependencyFixture,
   elfHash,
 } from "./ElfDependencies.fixture.js";
-import {
-  parseElfDependenciesFromHandle,
-  type ElfDependencyByteSource,
-} from "./ElfDependencyParser.js";
+import { parseElfDependenciesFromHandle } from "./ElfDependencyParser.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 const artifactPath = "/artifacts/program";
 
@@ -1281,7 +1279,7 @@ const elf64ProgramHeader = (bytes: Buffer, type: number): number => {
 
 const readFromSource = (
   bytes: Buffer,
-  readRange?: ElfDependencyByteSource["readRange"],
+  readRange?: PrefixedByteSource["readRange"],
   onYield: () => Promise<void> = async () => {},
 ) =>
   parseElfDependenciesFromHandle(
@@ -1290,6 +1288,66 @@ const readFromSource = (
     inspectElfDependenciesInputSchema.parse({ path: artifactPath }),
     onYield,
   );
+
+it.each(["sections", "programs"] as const)(
+  "bounds extended %s header reads and yields before completing the table",
+  async (kind) => {
+    const bytes = withElfExtendedNumbering(elfDependencyFixture(), kind);
+    const tableOffset = Number(
+      bytes.readBigUInt64LE(kind === "sections" ? 40 : 32),
+    );
+    const reads: number[] = [];
+    let headerBytes = 0;
+    let firstPauseBytes: number | undefined;
+    const report = await readFromSource(
+      bytes,
+      async (offset, length) => {
+        reads.push(length);
+        if (offset >= tableOffset) headerBytes += length;
+        return bytes.subarray(offset, offset + length);
+      },
+      async () => {
+        firstPauseBytes ??= headerBytes;
+      },
+    );
+    expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+    expect(Math.max(...reads)).toBeLessThanOrEqual(64 * 1024);
+    expect(firstPauseBytes).toBeGreaterThan(0);
+    expect(firstPauseBytes).toBeLessThan(headerBytes);
+    const cancelled = new Error("cancel extended header traversal");
+    await expect(
+      readFromSource(bytes, undefined, async () => {
+        throw cancelled;
+      }),
+    ).rejects.toBe(cancelled);
+  },
+);
+
+it("resolves a dynamic string-table link by its original distant section index", async () => {
+  const original = elfDependencyFixture();
+  const bytes = withElfExtendedNumbering(original, "sections");
+  const table = Number(bytes.readBigUInt64LE(40));
+  const width = bytes.readUInt16LE(58);
+  const count = Number(bytes.readBigUInt64LE(table + 32));
+  const originalCount = original.readUInt16LE(60);
+  let symbols = -1;
+  for (let index = 0; index < originalCount; index += 1)
+    if (bytes.readUInt32LE(table + index * width + 4) === 11) symbols = index;
+  expect(symbols).toBeGreaterThan(0);
+  const symbolHeader = table + symbols * width;
+  const strings = bytes.readUInt32LE(symbolHeader + 40);
+  bytes.copy(
+    bytes,
+    table + (count - 1) * width,
+    table + strings * width,
+    table + (strings + 1) * width,
+  );
+  bytes.fill(0, table + strings * width, table + (strings + 1) * width);
+  bytes.writeUInt32LE(count - 1, symbolHeader + 40);
+  const control = await parse(original);
+  const report = await parse(bytes);
+  expect({ ...report, artifact: control.artifact }).toEqual(control);
+});
 
 it("validates a declared ELF header larger than the fixed prefix against the file", async () => {
   const original = elfDependencyFixture({

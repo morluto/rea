@@ -15,11 +15,13 @@ import {
 import type { V8CodeCacheInputBudget } from "../domain/v8/v8CodeCacheBudget.js";
 import { V8_CODE_CACHE_FORMAT } from "./V8CodeCache.errors.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   decodeLimit,
   malformedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
+import type { ByteSource, PrefixedByteSource } from "../domain/byteSource.js";
 
 const unsupported = (message: string): never => {
   throw unsupportedInput(V8_CODE_CACHE_FORMAT, message);
@@ -80,13 +82,6 @@ const isPrintable = (byte: number): boolean =>
   (byte >= 0x20 && byte <= 0x7e) || byte === 0x09;
 
 const STREAM_CHUNK_BYTES = 1024 * 1024;
-
-/** Random-access source for streaming V8 code cache inspection without buffering the whole file. */
-export interface V8CodeCacheByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
 
 interface ParsedV8Header {
   readonly header: V8CodeCache["header"];
@@ -302,30 +297,24 @@ const buildV8CodeCacheReport = (
     : LIMITATIONS,
 });
 
-/**
- * Read one V8 code cache container without executing it.
- *
- * Admission is deliberately narrow: a header layout this reader pins, the V8 code cache
- * magic high half, and payload length reaching exactly the end of the file. Everything
- * else is reported as an observation so a producer this reader has never seen still
- * yields its facts instead of a false parse.
- */
-export const parseV8CodeCache = (
-  bytes: Buffer,
-  artifact: { path: string; sha256: string; bytes: number },
-  input: V8CodeCacheInputBudget,
-): V8CodeCache => {
-  if (bytes.length !== artifact.bytes)
-    malformed("Selected artifact length disagrees with the retained bytes.");
-  const parsed = parseV8CodeCacheHeader(bytes, bytes.length);
-  const scanner = new V8CodeCachePayloadScanner(parsed.payloadOffset, input);
-  scanner.update(bytes.subarray(parsed.payloadOffset));
-  return buildV8CodeCacheReport(parsed, artifact, scanner.finish());
+const readAdmittedRange = async (
+  source: ByteSource,
+  offset: number,
+  length: number,
+): Promise<Buffer> => {
+  const bytes = await source.readRange(offset, length);
+  if (bytes.length !== length)
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `V8 code cache read at offset ${String(offset)} ended before its ${String(length)} admitted bytes.`,
+      { integrityCheck: "read-coverage" },
+    );
+  return bytes;
 };
 
 /** Stream one V8 code cache container over a bounded file handle in fixed chunks. */
 export const parseV8CodeCacheFromHandle = async (
-  source: V8CodeCacheByteSource,
+  source: PrefixedByteSource,
   artifact: { path: string; sha256: string; bytes: number },
   input: V8CodeCacheInputBudget,
 ): Promise<V8CodeCache> => {
@@ -335,7 +324,7 @@ export const parseV8CodeCacheFromHandle = async (
   const headerBytes =
     source.prefix.length >= headerNeeded
       ? source.prefix
-      : await source.readRange(0, headerNeeded);
+      : await readAdmittedRange(source, 0, headerNeeded);
   const parsed = parseV8CodeCacheHeader(headerBytes, source.size);
   const scanner = new V8CodeCachePayloadScanner(parsed.payloadOffset, input);
   let cursor = parsed.payloadOffset;
@@ -345,7 +334,7 @@ export const parseV8CodeCacheFromHandle = async (
   }
   while (cursor < source.size) {
     const length = Math.min(STREAM_CHUNK_BYTES, source.size - cursor);
-    scanner.update(await source.readRange(cursor, length));
+    scanner.update(await readAdmittedRange(source, cursor, length));
     cursor += length;
   }
   return buildV8CodeCacheReport(parsed, artifact, scanner.finish());

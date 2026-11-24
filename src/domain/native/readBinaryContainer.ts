@@ -9,19 +9,22 @@ import {
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
 } from "../apple/machoContainer.js";
-import { readUniversalMachoImageFromReader } from "../apple/machoImageSelection.js";
+import {
+  MACHO_FORMAT,
+  readUniversalMachoImageFromReader,
+} from "../apple/machoImageSelection.js";
 import {
   readElfImage,
   readElfImageCooperative,
   readElfImageFromReader,
 } from "./elfImage.js";
-import type { NativeByteSource } from "./nativeSectionDirectory.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
 import { readPeImage, readPeImageFromReader } from "./peImage.js";
 import {
   readMachoImage,
   readMachoImageFromReader,
 } from "../apple/machoImage.js";
+import type { ByteSource } from "../byteSource.js";
 
 /** Identify an ELF, PE, or thin Mach-O image and its file sections. */
 export const readBinaryContainer = (
@@ -44,7 +47,7 @@ export const readBinaryContainerCooperative = async (
 
 /** Stream ELF, PE, or thin Mach-O headers and sections over a range reader. */
 export const readBinaryContainerFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   operation: string,
   pause: ZstandardFramePause,
 ): Promise<BinaryContainer> => {
@@ -67,8 +70,17 @@ export const readBinaryContainerFromReader = async (
     const fatPrefix = readFatHeaderPrefix(prefix);
     if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
       const fat = await readUniversalMachoImageFromReader(source);
-      if (!fat.ok)
-        throw new BinaryFormatFailure("malformed", fat.error.message);
+      if (!fat.ok) {
+        const { failure } = fat.error;
+        const { kind, detail, offset } = failure;
+        throw new BinaryFormatFailure(kind, detail, {
+          format: failure.format,
+          ...(offset === undefined ? {} : { offset }),
+          ...(failure.kind === "truncated" && failure.extent !== undefined
+            ? { extent: failure.extent }
+            : {}),
+        });
+      }
       if (fat.value !== null)
         throw new BinaryFormatFailure(
           "unsupported",
@@ -92,6 +104,11 @@ const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
       const fatHeader = readFatContainerHeader(bytes, bytes.length);
       if (fatHeader.state === "malformed")
         throw new BinaryFormatFailure("malformed", fatHeader.reason);
+      if (fatHeader.state === "truncated")
+        throw new BinaryFormatFailure("truncated", fatHeader.reason, {
+          format: MACHO_FORMAT,
+          extent: fatHeader.extent,
+        });
       const identity =
         fatHeader.state === "parsed"
           ? classifyFatContainerEvidence(fatHeader, bytes)

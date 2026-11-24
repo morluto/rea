@@ -95,10 +95,10 @@ limitation and leaves `.dep-v0` presence unknown rather than reporting the
 section absent.
 
 The inline Evidence result contains the artifact path, SHA-256, byte length,
-container format, architecture, word size, and byte order. `bits` is
-`32 | 64 | null`. ELF, PE and Mach-O reports are 32 or 64. WebAssembly is
-null: the container declares no word size, null is not a number, and
-consumers must not coerce it. The summary view uses the same field. When a `.dep-v0`
+container format, architecture, word size, and byte order. `bits` is 32 or 64
+for ELF, PE and Mach-O and `null` for
+[WebAssembly](#webassembly-modules), in both complete and summary results; do
+not coerce the null to a number. When a `.dep-v0`
 section is present, `auditable_metadata` contains:
 
 - `section_name`, `.dep-v0` for ELF, PE, and WebAssembly or `__DATA,.dep-v0`
@@ -151,11 +151,9 @@ section named `.dep-v0`. For a version 1 core module, such as
 `wasm32-unknown-unknown` or `wasm32-wasip1` output, the reader walks the
 section framing without validating, instantiating, or executing the module.
 The report's `format` and `architecture` are `wasm` and its `byte_order` is
-`little`. `bits` is `null` on the `32 | 64 | null` word size: WebAssembly
-declares no container word size, and memory address types are not inspected.
-JSON output keeps that null. The shared CLI renderer does not substitute a
-number. The Evidence subject format is
-`file`, as for `inspect_wasm_artifact`.
+`little`. `bits` is `null` because WebAssembly declares no container word size;
+memory address types are not inspected, and the CLI does not substitute a
+number. The Evidence subject format is `file`, as for `inspect_wasm_artifact`.
 
 A header, section or section size that ends past the file is truncated. A
 custom-section name or name length that extends past its section, a size that
@@ -168,10 +166,16 @@ selects a universal Mach-O slice.
 
 ## Limits and failures
 
-The selected file is limited to 256 MiB. A dependency section's zlib stream is
-limited to 1 MiB compressed. Inflated JSON is limited to the smaller of 8 MiB
-and 64 times the compressed stream length. The complete report is limited to
-8 MiB. Empty sections,
+| Limit                     | Value                                         | Override                       |
+| ------------------------- | --------------------------------------------- | ------------------------------ |
+| Selected file             | 256 MiB                                       | `producer_limits.input_bytes`  |
+| Complete report           | 8 MiB                                         | `producer_limits.output_bytes` |
+| Compressed `.dep-v0` zlib | 1 MiB                                         | Fixed                          |
+| Inflated JSON             | Smaller of 8 MiB and 64 × the consumed stream | Fixed                          |
+| Distinct rustc hashes     | 64                                            | `max_rustc_hashes`             |
+| WebAssembly sections      | 65,536                                        | Fixed (`max_wasm_sections`)    |
+
+Empty sections,
 truncated streams, nonpadding bytes after a zlib stream, invalid JSON, duplicate
 object fields, unknown fields, dependency
 indices outside the package list, more than one root package, and compressed
@@ -243,15 +247,11 @@ the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
 `ppc` to `powerpc`. Unknown families such as `ppc64` remain unknown rather than
 being inferred from a related spelling.
 
-Input and complete-report admission are caller choices through `producer_limits`:
-`input_bytes` defaults to 256 MiB and `output_bytes` to 8 MiB. Both accept positive
-safe integers and apply to the next call without restarting REA. On CLI, use
-`--producer-limits '{"input_bytes":536870912,"output_bytes":16777216}'`.
-Graph expansion and compiler-path retention consume the same selected report
-allowance. The independent compressed dependency limit (1 MiB), inflated JSON
-limits (8 MiB and 64 times the consumed stream), parser nesting and transport
-budgets remain enforced; increasing report admission does not raise those.
-When PE file alignment adds padding, the reader learns the exact consumed
+`producer_limits.input_bytes` and `output_bytes` accept positive safe integers
+and apply to the next call without restarting REA, for example
+`--producer-limits '{"input_bytes":536870912,"output_bytes":16777216}'`. Graph
+expansion and compiler-path retention share the report allowance. Raising it
+does not raise the fixed limits, parser nesting or transport budgets. When PE file alignment adds padding, the reader learns the exact consumed
 stream length only after inflation completes. If inflation stops first,
 `reported_limits.maximum_bytes` gives the allocation ceiling in force, the
 smaller of 8 MiB and 64 times the stored extent. If inflation completes, the

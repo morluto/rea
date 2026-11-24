@@ -28,6 +28,15 @@ import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
 import * as configurationFiles from "./application/ClientConfigurationFiles.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 
+/** The explicit scope's checks; an audit-wide report has none. */
+const scopeChecksOf = <Check>(report: {
+  readonly scope_checks?: readonly Check[];
+}): readonly Check[] => {
+  if (report.scope_checks === undefined)
+    throw new Error("Expected an explicit-scope doctor report");
+  return report.scope_checks;
+};
+
 const readyDisplay = {
   ok: true,
   strategy: "direct",
@@ -1182,7 +1191,7 @@ test.each([
       classification === "healthy" ? found : undefined,
     );
     expect(
-      report.scope_checks.filter(
+      scopeChecksOf(report).filter(
         ({ name }) => name === "hopper-startup-timeout",
       ),
     ).toEqual(

@@ -21,11 +21,11 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { fridaSessionStatusInputSchema } from "../../domain/fridaSessionStatus.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
+import { summarizeRetainedAnalysis } from "../analysisView/AnalysisViewService.js";
 import {
   requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
+} from "../analysisView/AnalysisViewRetention.js";
 import { fridaCaptureLimitations } from "../../domain/fridaCaptureLimits.js";
 import { unknownFridaSession } from "../../domain/fridaInputErrors.js";
 import { FridaScriptLoadCancelledError } from "../../ports/frida/FridaInstrumentationPort.js";
@@ -260,13 +260,13 @@ export class FridaInstrumentationService {
     return this.#provider.status(sessionId);
   }
 
-  inspectStatus(
+  async inspectStatus(
     rawInput: unknown,
     retention: AnalysisViewRetention = {
       recordEvidence: undefined,
       evidenceById: undefined,
     },
-  ): Result<Evidence, AnalysisError> {
+  ): Promise<Result<Evidence, AnalysisError>> {
     const input = parseAnalysisInput(
       "frida_session_status",
       rawInput,
@@ -293,7 +293,9 @@ export class FridaInstrumentationService {
       },
     );
     return input.value.detail === "summary"
-      ? summarizeRetainedAnalysis(evidence, retention)
+      ? (
+          await import("../analysisView/AnalysisViewService.js")
+        ).summarizeRetainedAnalysis(evidence, retention)
       : ok(evidence);
   }
 

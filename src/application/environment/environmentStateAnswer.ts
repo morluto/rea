@@ -1,3 +1,4 @@
+import { isSuccessfulHttpStatus } from "../../domain/httpResponseStatus.js";
 import { hasRepeatedQueryArgument } from "./environmentTools.js";
 import { stateBodyJson } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import {
@@ -346,9 +347,7 @@ export const missingAnswer = (
           exchange !== undefined &&
           (isAbsence(exchange.status) ||
             (nullAbsence &&
-              exchange.status !== null &&
-              exchange.status >= 200 &&
-              exchange.status < 300 &&
+              isSuccessfulHttpStatus(exchange.status) &&
               recordedJson(exchange) === null)),
       )
       .at(-1);

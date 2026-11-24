@@ -1,4 +1,3 @@
-import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 import {
@@ -15,7 +14,10 @@ import {
   DT_SYMTAB,
   walkElfDynamicTable,
 } from "../../domain/elfDynamicEntry.js";
-import { readElfTableDeclarations } from "../../domain/elfDeclaredRanges.js";
+import {
+  elfHeaderTableBatches,
+  readElfTableDeclarations,
+} from "../../domain/elfDeclaredRanges.js";
 import {
   readElfGnuHashSymbolCountSteps,
   readElfHashSymbolCountSteps,
@@ -72,6 +74,7 @@ import {
 } from "../../domain/virtualFileMapping.js";
 import { architectureForElfMachine } from "../../domain/native/elfImage.js";
 import { Budget } from "../../domain/budget.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 const PT_LOAD = 1;
 const PT_DYNAMIC = 2;
@@ -80,6 +83,7 @@ const ET_REL = 1;
 const ET_EXEC = 2;
 const ET_DYN = 3;
 const ET_CORE = 4;
+const SHT_HASH = 5;
 const SHT_DYNSYM = 11;
 const SHT_GNU_HASH = 0x6ffffff6;
 const SHT_GNU_VERDEF = 0x6ffffffd;
@@ -586,13 +590,6 @@ const tableFromMappedVersym = (
 
 const WINDOW_READ_BYTES = 4096;
 
-/** Random-access source for streaming ELF dependency inspection without buffering the whole image. */
-export interface ElfDependencyByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
-
 type ElfDependencyStep =
   | { readonly kind: "yield" }
   | { readonly kind: "read"; readonly offset: number; readonly length: number };
@@ -894,7 +891,6 @@ const parseElfDependenciesCore = function* (
     sections.offset > BigInt(Number.MAX_SAFE_INTEGER)
   )
     return fail("ELF offset or size exceeds a safe integer.");
-  const phoff = Number(programs.offset);
   const shoff = Number(sections.offset);
   const phentsize = programs.width;
   const phnum = programs.count;
@@ -912,43 +908,50 @@ const parseElfDependenciesCore = function* (
     type_name: elfObjectTypeName(type),
   };
   if (phnum === 0) fail("ELF image has no program headers.");
-  const programHeaders = yield* readElfRange(
-    fileSize,
-    phoff,
-    phnum * phentsize,
-    "ELF program headers",
-  );
   const fileBacked: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
   let interp: Range | null = null;
   let dynamic: Range | null = null;
-  for (let index = 0; index < phnum; index += 1) {
-    const parsedProgram = readElfProgramHeader(
-      programHeaders.subarray(index * phentsize, index * phentsize + phentsize),
-      bits,
-      little,
+  for (const batch of elfHeaderTableBatches(programs)) {
+    if (batch.index !== 0) yield { kind: "yield" };
+    const programHeaders = yield* readElfRange(
+      fileSize,
+      batch.offset,
+      batch.size,
+      "ELF program headers",
     );
-    if (!parsedProgram.ok) return fail(parsedProgram.error.message);
-    const program = parsedProgram.value;
-    if (program.type === PT_INTERP) {
-      if (interp !== null) fail("Multiple PT_INTERP segments are ambiguous");
-      interp = fileRange(program.offset, program.fileSize, "PT_INTERP");
-      continue;
+    for (let index = 0; index < batch.count; index += 1) {
+      const parsedProgram = readElfProgramHeader(
+        programHeaders.subarray(
+          index * phentsize,
+          index * phentsize + phentsize,
+        ),
+        bits,
+        little,
+      );
+      if (!parsedProgram.ok) return fail(parsedProgram.error.message);
+      const program = parsedProgram.value;
+      if (program.type === PT_INTERP) {
+        if (interp !== null) fail("Multiple PT_INTERP segments are ambiguous");
+        interp = fileRange(program.offset, program.fileSize, "PT_INTERP");
+        continue;
+      }
+      if (program.type === PT_DYNAMIC) {
+        if (dynamic !== null)
+          fail("Multiple PT_DYNAMIC segments are ambiguous");
+        dynamic = fileRange(program.offset, program.fileSize, "PT_DYNAMIC");
+        continue;
+      }
+      if (program.type !== PT_LOAD) continue;
+      const admitted = admitElfLoadSegment(program, bits);
+      if (!admitted.ok) return fail(admitted.error.message);
+      const range = fileRange(program.offset, program.fileSize, "PT_LOAD");
+      if (range.bytes > 0)
+        checkElfRange(fileSize, range.offset, range.bytes, "PT_LOAD");
+      const spans = elfLoadSpans(program);
+      if (spans.fileBacked !== undefined) fileBacked.push(spans.fileBacked);
+      if (spans.zeroFill !== undefined) zeroFills.push(spans.zeroFill);
     }
-    if (program.type === PT_DYNAMIC) {
-      if (dynamic !== null) fail("Multiple PT_DYNAMIC segments are ambiguous");
-      dynamic = fileRange(program.offset, program.fileSize, "PT_DYNAMIC");
-      continue;
-    }
-    if (program.type !== PT_LOAD) continue;
-    const admitted = admitElfLoadSegment(program, bits);
-    if (!admitted.ok) return fail(admitted.error.message);
-    const range = fileRange(program.offset, program.fileSize, "PT_LOAD");
-    if (range.bytes > 0)
-      checkElfRange(fileSize, range.offset, range.bytes, "PT_LOAD");
-    const spans = elfLoadSpans(program);
-    if (spans.fileBacked !== undefined) fileBacked.push(spans.fileBacked);
-    if (spans.zeroFill !== undefined) zeroFills.push(spans.zeroFill);
   }
   let mappingIndex: FileMappingIndex | undefined;
   const mappings: IndexedElfLoadMappings = {
@@ -1022,12 +1025,11 @@ const parseElfDependenciesCore = function* (
     shnum,
     shentsize,
   );
-  const sectionsByType = keyedBy(sectionFacts, (section) => section.type);
   // A repeated section type names no single table; like a disagreeing
   // header, it leaves the dynamic-table declaration in charge.
   const sectionOfType = (type: number, label: string) => {
-    const selected = uniqueKeyed(sectionsByType, type);
-    if (selected.ok) return selected.value;
+    const selected = sectionFacts.get(type);
+    if (selected !== null) return selected;
     issues.push({
       code: "malformed_entry",
       location: hex(shoff),
@@ -1058,9 +1060,18 @@ const parseElfDependenciesCore = function* (
     );
   const strsz = unique.get(DT_STRSZ);
   const linkedStrings =
-    symbolDeclaration === undefined
+    symbolDeclaration === undefined || symbolDeclaration.link >= shnum
       ? undefined
-      : sectionFacts[symbolDeclaration.link];
+      : readSectionFacts(
+          yield* readElfRange(
+            fileSize,
+            shoff + symbolDeclaration.link * shentsize,
+            shentsize,
+            "ELF linked string-table header",
+          ),
+          bits,
+          little,
+        );
   const stringSection = linkedStrings?.type === 3 ? linkedStrings : undefined;
   const { table: dynstrSection } = agreedSection(
     stringSection,
@@ -1077,7 +1088,7 @@ const parseElfDependenciesCore = function* (
     ".gnu.version_r",
   );
   const verdefSection = sectionOf(SHT_GNU_VERDEF, DT_VERDEF, ".gnu.version_d");
-  const hashSection = sectionOf(5, DT_HASH, ".hash");
+  const hashSection = sectionOf(SHT_HASH, DT_HASH, ".hash");
   const gnuHashSection = sectionOf(SHT_GNU_HASH, DT_GNU_HASH, ".gnu.hash");
   const strtab = addresses.get(DT_STRTAB);
   const mappedStrings =
@@ -1341,7 +1352,7 @@ const parseElfDependenciesCore = function* (
 
 /** Decode PT_DYNAMIC, GNU versions, and undefined .dynsym imports positionally over a handle. */
 export const parseElfDependenciesFromHandle = async (
-  source: ElfDependencyByteSource,
+  source: PrefixedByteSource,
   artifact: Artifact,
   input: InspectElfDependenciesInput,
   onYield: () => Promise<void>,
@@ -1437,6 +1448,31 @@ const parseInterpreter = function* (
   }
 };
 
+const readSectionFacts = (
+  bytes: Buffer,
+  bits: 32 | 64,
+  little: boolean,
+): SectionFacts => {
+  const parsed = readElfSectionHeader(bytes, bits, little);
+  if (!parsed.ok) return fail(parsed.error.message);
+  const section = parsed.value;
+  if (
+    section.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
+    section.size > BigInt(Number.MAX_SAFE_INTEGER) ||
+    section.entrySize > BigInt(Number.MAX_SAFE_INTEGER)
+  )
+    fail("ELF section offset or size exceeds a safe integer.");
+  return {
+    type: section.type,
+    offset: Number(section.offset),
+    size: Number(section.size),
+    address: section.address,
+    link: section.link,
+    info: section.info,
+    entrySize: Number(section.entrySize),
+  };
+};
+
 const readSections = function* (
   fileSize: number,
   little: boolean,
@@ -1444,38 +1480,42 @@ const readSections = function* (
   shoff: number,
   shnum: number,
   shentsize: number,
-): ElfDependencySteps<SectionFacts[]> {
-  if (shnum === 0) return [];
-  const sectionHeaders = yield* readElfRange(
-    fileSize,
-    shoff,
-    shnum * shentsize,
-    "ELF section headers",
-  );
-  const found: SectionFacts[] = [];
-  for (let index = 0; index < shnum; index += 1) {
-    const parsed = readElfSectionHeader(
-      sectionHeaders.subarray(index * shentsize, index * shentsize + shentsize),
-      bits,
-      little,
+): ElfDependencySteps<Map<number, SectionFacts | null>> {
+  // Keep only consumed table kinds. A null records ambiguity without retaining
+  // every duplicate; linked strings keep their original section index.
+  const kinds = new Set([
+    SHT_HASH,
+    SHT_DYNSYM,
+    SHT_GNU_HASH,
+    SHT_GNU_VERDEF,
+    SHT_GNU_VERNEED,
+    SHT_GNU_VERSYM,
+  ]);
+  const found = new Map<number, SectionFacts | null>();
+  for (const batch of elfHeaderTableBatches({
+    offset: BigInt(shoff),
+    count: shnum,
+    width: shentsize,
+  })) {
+    if (batch.index !== 0) yield { kind: "yield" };
+    const sectionHeaders = yield* readElfRange(
+      fileSize,
+      batch.offset,
+      batch.size,
+      "ELF section headers",
     );
-    if (!parsed.ok) return fail(parsed.error.message);
-    const section = parsed.value;
-    if (
-      section.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
-      section.size > BigInt(Number.MAX_SAFE_INTEGER) ||
-      section.entrySize > BigInt(Number.MAX_SAFE_INTEGER)
-    )
-      fail("ELF section offset or size exceeds a safe integer.");
-    found.push({
-      type: section.type,
-      offset: Number(section.offset),
-      size: Number(section.size),
-      address: section.address,
-      link: section.link,
-      info: section.info,
-      entrySize: Number(section.entrySize),
-    });
+    for (let index = 0; index < batch.count; index += 1) {
+      const section = readSectionFacts(
+        sectionHeaders.subarray(
+          index * shentsize,
+          index * shentsize + shentsize,
+        ),
+        bits,
+        little,
+      );
+      if (kinds.has(section.type))
+        found.set(section.type, found.has(section.type) ? null : section);
+    }
   }
   return found;
 };

@@ -440,7 +440,7 @@ export const registerBinaryDiagnosticsCommands = (
     contract("inspect_binary_layout"),
     {
       description:
-        "Inspect binary file/linked layout without executing the selected object",
+        "Inspect ELF file/linked layout without executing the selected object; Linux x64 with caller-supplied pwntools only",
       positionals: ["path"],
       callerPaths: ["path"],
       jsonText: ["producer_limits"],

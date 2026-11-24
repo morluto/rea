@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
@@ -57,10 +58,7 @@ import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
-import {
-  analysisErrorWithCleanupFailure,
-  providerCleanupErrorFromFailures,
-} from "../domain/analysisErrorCleanup.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisInputError,
   cancelledBy,
@@ -560,134 +558,106 @@ const withTargetSession = async <
   );
   let targetSession: CdpTargetSession | undefined;
   let attachAttempted = false;
-  let outcome: Result<Output, unknown>;
-  let cleanupFailure: AnalysisError | undefined;
-  try {
-    const { target, allowedOrigins } = authorizeCdpTarget(
-      endpoint.discovery,
-      input,
-      operation,
-    );
-    // The authorization owner already derived the target origin scope.
-    const scopedInput =
-      input.allowed_origins.length > 0
-        ? input
-        : { ...input, allowed_origins: [...allowedOrigins] };
-    if (endpoint.connection === undefined) {
-      targetSession = await openCdpTargetSession(
-        endpoint.discovery,
-        target,
-        operation,
-        options.signal,
-        { commandTimeoutMs },
-        owner,
-      );
-    } else {
-      attachAttempted = true;
-      targetSession = await attachCdpTargetSession(
-        endpoint.connection,
-        target,
-        operation,
-        options.signal,
-        owner,
-      );
-    }
-    outcome = ok(
-      await work({
-        connection: targetSession.connection,
-        sessionId: targetSession.sessionId,
-        discovery: endpoint.discovery,
-        target,
-        input: scopedInput,
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-        ...(options.progress === undefined
-          ? {}
-          : { progress: options.progress }),
-      }),
-    );
-  } catch (cause: unknown) {
-    outcome = err(cause);
-  }
-  try {
-    if (targetSession !== undefined)
-      await closeCdpTargetSession(
-        targetSession,
-        CLEANUP_DOMAINS,
-        options.signal,
-        owner,
-        endpoint.reusableBrowserSocket === true,
-      );
-    if (
-      endpoint.connection !== undefined &&
-      endpoint.connection !== targetSession?.connection
-    ) {
-      if (endpoint.reusableBrowserSocket === true) {
-        // A correlated rejection confirms this attach created no session.
-        // A lost or unusable reply can leave an attachment on the socket.
-        const rejected =
-          !outcome.ok && outcome.error instanceof CdpCommandRejection;
-        if (attachAttempted && !rejected)
-          await owner.evictBrowserSocket(endpoint.connection);
-        else await owner.releaseBrowserSocket(endpoint.connection);
-      } else {
-        await owner.finish(endpoint.connection);
-      }
-    }
-  } catch (cause: unknown) {
-    cleanupFailure =
-      cause instanceof AnalysisError
-        ? cause
-        : new ProviderCleanupError(
-            "rea-cdp-browser",
-            [input.target_id],
-            { reason: errorMessage(cause) },
-            { operation, cause },
+  let attachRejected = false;
+  const finalized = await runOwned<Output>(
+    async () => {
+      try {
+        const { target, allowedOrigins } = authorizeCdpTarget(
+          endpoint.discovery,
+          input,
+          operation,
+        );
+        // The authorization owner already derived the target origin scope.
+        const scopedInput =
+          input.allowed_origins.length > 0
+            ? input
+            : { ...input, allowed_origins: [...allowedOrigins] };
+        if (endpoint.connection === undefined) {
+          targetSession = await openCdpTargetSession(
+            endpoint.discovery,
+            target,
+            operation,
+            options.signal,
+            { commandTimeoutMs },
+            owner,
           );
-  }
-
-  if (outcome.ok && options.signal?.aborted === true)
-    outcome = err(
-      partialObservation === undefined
-        ? cancelledBy(operation, options.signal)
-        : cancelledBy(operation, options.signal, {
-            partialObservation: partialObservation(outcome.value),
+        } else {
+          attachAttempted = true;
+          targetSession = await attachCdpTargetSession(
+            endpoint.connection,
+            target,
+            operation,
+            options.signal,
+            owner,
+          );
+        }
+        return ok(
+          await work({
+            connection: targetSession.connection,
+            sessionId: targetSession.sessionId,
+            discovery: endpoint.discovery,
+            target,
+            input: scopedInput,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(options.progress === undefined
+              ? {}
+              : { progress: options.progress }),
           }),
-    );
-
-  if (cleanupFailure !== undefined) {
-    if (!outcome.ok && outcome.error instanceof AnalysisError)
-      throw bindCdpTransportCleanup(
-        cleanupFailure,
-        analysisErrorWithCleanupFailure(
-          outcome.error,
-          cleanupFailure,
-          operation,
-        ),
-      );
-    if (!outcome.ok)
-      throw new AggregateError(
-        [outcome.error, cleanupFailure],
-        `CDP operation ${operation} failed and cleanup remains incomplete.`,
-        { cause: outcome.error },
-      );
-    throw bindCdpTransportCleanup(
-      cleanupFailure,
-      new ProviderCleanupError(
-        "rea-cdp-browser",
-        cleanupFailure.cleanupResources,
-        { cleanup_error: cleanupFailure.message },
-        {
-          operation,
-          cause: cleanupFailure,
-          ...(partialObservation === undefined
-            ? {}
-            : { partialObservation: partialObservation(outcome.value) }),
-        },
-      ),
-    );
-  }
-  if (!outcome.ok) throw outcome.error;
-  return outcome.value;
+        );
+      } catch (cause: unknown) {
+        attachRejected = cause instanceof CdpCommandRejection;
+        return err(providerError(cause, operation));
+      }
+    },
+    {
+      providerId: CDP_BROWSER_PROVIDER_IDENTITY.id,
+      operation,
+      signal: options.signal,
+      ...(partialObservation === undefined
+        ? { diagnostics: () => undefined }
+        : { partial: partialObservation }),
+      close: async () => {
+        try {
+          if (targetSession !== undefined)
+            await closeCdpTargetSession(
+              targetSession,
+              CLEANUP_DOMAINS,
+              options.signal,
+              owner,
+              endpoint.reusableBrowserSocket === true,
+            );
+          if (
+            endpoint.connection !== undefined &&
+            endpoint.connection !== targetSession?.connection
+          ) {
+            if (endpoint.reusableBrowserSocket === true) {
+              // A correlated rejection confirms this attach created no session.
+              // A lost or unusable reply can leave an attachment on the socket.
+              if (attachAttempted && !attachRejected)
+                await owner.evictBrowserSocket(endpoint.connection);
+              else await owner.releaseBrowserSocket(endpoint.connection);
+            } else {
+              await owner.finish(endpoint.connection);
+            }
+          }
+        } catch (cause: unknown) {
+          const failure = cause instanceof AnalysisError ? cause : undefined;
+          throw bindCdpTransportCleanup(
+            cause,
+            new ProviderCleanupError(
+              CDP_BROWSER_PROVIDER_IDENTITY.id,
+              failure?.cleanupResources ?? [input.target_id],
+              { cleanup_error: failure?.message ?? errorMessage(cause) },
+              { operation, cause },
+            ),
+          );
+        }
+      },
+    },
+  );
+  const result = finalizedResult(finalized);
+  if (!result.ok) throw result.error;
+  return result.value;
 };
 
 const selectTargets = (

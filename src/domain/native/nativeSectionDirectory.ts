@@ -40,6 +40,7 @@ import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
 } from "../compression/zstandardFrameAllowance.js";
+import { bufferByteSource, type ByteSource } from "../byteSource.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */
 export interface NativeReadRequest {
@@ -545,31 +546,6 @@ const driveFromBuffer = <T>(
   return next.value;
 };
 
-const driveElfDirectoryCooperative = async (
-  bytes: Buffer,
-  decode: CooperativeElfSectionNameDecoder,
-  maximumSourceAndDecodedNamesBytes?: number,
-): Promise<ElfSectionDirectory> => {
-  const steps = readElfSectionDirectory(
-    bytes.length,
-    maximumSourceAndDecodedNamesBytes,
-  );
-  let next = steps.next();
-  while (!next.done) {
-    const step = next.value;
-    if (
-      step.sectionNames !== undefined &&
-      step.fulfillSectionNames !== undefined
-    ) {
-      step.fulfillSectionNames(await decode(step.sectionNames));
-      next = steps.next(Buffer.alloc(0));
-      continue;
-    }
-    next = steps.next(bytes.subarray(step.offset, step.offset + step.size));
-  }
-  return next.value;
-};
-
 const projectDirectoryFrameAllowance = (
   operation: string,
   cause: unknown,
@@ -608,29 +584,18 @@ export const readElfDirectoryFromBufferCooperative = async (
   pause: ZstandardFramePause,
   operation: string,
   maximumSourceAndDecodedNamesBytes?: number,
-  decode: CooperativeElfSectionNameDecoder = (request) =>
-    decodeElfSectionNameRequestCooperative(request, pause),
-): Promise<ElfSectionDirectory> => {
-  try {
-    return await driveElfDirectoryCooperative(
-      bytes,
-      decode,
-      maximumSourceAndDecodedNamesBytes,
-    );
-  } catch (cause) {
-    return projectDirectoryFrameAllowance(operation, cause);
-  }
-};
-
-/** Random-access byte source for positional native directory inspection. */
-export interface NativeByteSource {
-  readonly size: number;
-  readonly prefix?: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
+  decode?: CooperativeElfSectionNameDecoder,
+): Promise<ElfSectionDirectory> =>
+  readElfDirectoryFromReader(
+    bufferByteSource(bytes),
+    pause,
+    operation,
+    maximumSourceAndDecodedNamesBytes,
+    decode,
+  );
 
 const driveElfDirectoryFromSource = async (
-  source: NativeByteSource,
+  source: ByteSource,
   decode: CooperativeElfSectionNameDecoder,
   maximumSourceAndDecodedNamesBytes?: number,
 ): Promise<ElfSectionDirectory> => {
@@ -666,7 +631,7 @@ const driveElfDirectoryFromSource = async (
  * the header, program/section tables, and section-name table from `source`.
  */
 export const readElfDirectoryFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   pause: ZstandardFramePause,
   operation: string,
   maximumSourceAndDecodedNamesBytes?: number,
@@ -695,7 +660,7 @@ export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
 
 /** Same declared-range check over a random-access source without buffering the full image. */
 export const assertElfDeclaredRangesFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
 ): Promise<void> => {
   const readSlice = async (offset: number, size: number): Promise<Buffer> => {
     if (size <= 0) return Buffer.alloc(0);

@@ -17,6 +17,13 @@ import { parseErlangBeamFromHandle } from "./BeamParser.js";
 import { BeamProvider } from "./BeamProvider.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
+/** The BEAM parser's own structural refusal, with its parsed facts. */
+const beamFailure = (kind: "malformed" | "truncated", detail: string) =>
+  expect.objectContaining({
+    name: "ParseFailureError",
+    failure: expect.objectContaining({ kind, format: "beam", detail }),
+  });
+
 const defaults = inspectErlangBeamInputSchema.parse({
   path: "/artifacts/app.beam",
 });
@@ -96,10 +103,9 @@ it("streams bounded Code and opaque payload reads and keeps the last Code header
 it("refuses a declared chunk extent outside the BEAM form", async () => {
   const bytes = erlangBeamChunksFixture([["Code", Buffer.alloc(20)]]);
   bytes.writeUInt32BE(100, 16);
-  await expect(parse(bytes)).rejects.toMatchObject({
-    reason: "format",
-    message: "BEAM chunk payload exceeds the form.",
-  });
+  await expect(parse(bytes)).rejects.toThrow(
+    beamFailure("malformed", "BEAM chunk payload exceeds the form."),
+  );
 });
 
 it("selects the last decoded payload of each repeated BEAM table", async () => {
@@ -308,14 +314,17 @@ it("accepts extended compact atom lengths and rejects truncated or overflowing v
 
 it("refuses truncated and non-BEAM FOR1 headers", async () => {
   await expect(parse(Buffer.from("FOR1"))).rejects.toThrow(
-    ArtifactReaderFailure,
+    beamFailure("truncated", "BEAM range 0 + 12 leaves the artifact."),
+  );
+  // A short foreign file is another format, not a truncated BEAM.
+  await expect(parse(Buffer.from("\x7fELF"))).rejects.toThrow(
+    beamFailure("malformed", "Expected a FOR1 IFF container."),
   );
   const foreign = erlangBeamChunksFixture([]);
   foreign.write("WAVE", 8);
-  await expect(parse(foreign)).rejects.toMatchObject({
-    reason: "format",
-    message: "Expected a BEAM form type.",
-  });
+  await expect(parse(foreign)).rejects.toThrow(
+    beamFailure("malformed", "Expected a BEAM form type."),
+  );
 });
 
 it("discloses bytes that trail the declared FOR1 form", async () => {
@@ -382,7 +391,7 @@ it.each([
 ])("rejects %s in legacy Atom", async (_name, payload) => {
   await expect(
     parse(erlangBeamChunksFixture([["Atom", Buffer.from(payload)]])),
-  ).rejects.toThrow(expect.objectContaining({ reason: "format" }));
+  ).rejects.toThrow(beamFailure("truncated", "BEAM atom table is truncated."));
 });
 
 it("checks aggregate table capacity after each table is framed", async () => {
@@ -429,10 +438,9 @@ it("checks aggregate table capacity after each table is framed", async () => {
     count.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1);
     await expect(
       parse(erlangBeamChunksFixture([[chunk, count]])),
-    ).rejects.toMatchObject({
-      reason: "format",
-      message: `BEAM ${label} table is truncated.`,
-    });
+    ).rejects.toThrow(
+      beamFailure("truncated", `BEAM ${label} table is truncated.`),
+    );
   }
 });
 
@@ -467,7 +475,7 @@ it.each([
     }
     // The first name would consume the second entry's required length byte.
     await expect(parse(fixture(invalidLength, 0x62), input)).rejects.toThrow(
-      expect.objectContaining({ reason: "format" }),
+      beamFailure("truncated", "BEAM atom table is truncated."),
     );
   },
 );

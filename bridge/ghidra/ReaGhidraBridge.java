@@ -2714,9 +2714,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         if (procedureSearch) {
             // Search the names exact lookup accepts, keeping one row per
-            // procedure under its primary name.
+            // procedure under its primary name. An unbuilt inventory is
+            // scanned without retaining it for one ad-hoc search.
+            List<ProcedureEntry> entries =
+                procedureInventory != null ? procedureInventory : buildProcedures();
             List<MatchedProcedure> matches = new ArrayList<>();
-            for (ProcedureEntry entry : procedures()) {
+            for (ProcedureEntry entry : entries) {
                 monitor.checkCancelled();
                 ProcedureNameMatch match = matchProcedureNames(entry, matcher);
                 if (!match.matched()) {
@@ -2727,12 +2730,26 @@ public final class ReaGhidraBridge extends HeadlessScript {
             return out -> writeMatchedProcedures(out, matches);
         }
         List<StringEntry> matches = new ArrayList<>();
-        for (StringEntry entry : strings()) {
-            monitor.checkCancelled();
-            if (!matcher.matches(entry.value())) {
-                continue;
+        if (stringInventory != null) {
+            for (StringEntry entry : stringInventory) {
+                monitor.checkCancelled();
+                if (matcher.matches(entry.value())) {
+                    matches.add(entry);
+                }
             }
-            matches.add(entry);
+        } else {
+            // A selective search must not materialize and retain the full
+            // string inventory for one ad-hoc query; scan defined data and
+            // keep only matches, in the inventory's deterministic order.
+            DataIterator dataItems = currentProgram.getListing().getDefinedData(true);
+            while (dataItems.hasNext()) {
+                monitor.checkCancelled();
+                StringEntry entry = matchedStringEntry(dataItems.next(), matcher);
+                if (entry != null) {
+                    matches.add(entry);
+                }
+            }
+            matches.sort(STRING_ORDER);
         }
         return out -> writeStringEntries(out, matches);
     }
@@ -2803,13 +2820,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (procedureInventory != null) {
             return procedureInventory;
         }
+        procedureInventory = List.copyOf(buildProcedures());
+        return procedureInventory;
+    }
+
+    private List<ProcedureEntry> buildProcedures() throws Exception {
         List<ProcedureEntry> result = new ArrayList<>();
         Set<Address> seen = new HashSet<>();
         appendFunctions(result, seen, currentProgram.getFunctionManager().getFunctions(true));
         appendFunctions(result, seen, currentProgram.getFunctionManager().getExternalFunctions());
         result.sort(PROCEDURE_ORDER);
-        procedureInventory = List.copyOf(result);
-        return procedureInventory;
+        return result;
     }
 
     private void appendFunctions(
@@ -2885,6 +2906,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return stringInventory;
     }
 
+    private static StringFacts stringFacts(Data data, StringDataInstance instance) {
+        String charset = instance.getCharsetName();
+        return new StringFacts(
+            charset == null || charset.isEmpty() ? "unknown" : charset,
+            instance.isMissingNullTerminator(),
+            Math.max(0, data.getLength())
+        );
+    }
+
     private static StringEntry stringEntry(Data data) {
         if (!data.hasStringValue()) {
             return null;
@@ -2894,13 +2924,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (value == null) {
             return null;
         }
-        String charset = instance.getCharsetName();
-        StringFacts facts = new StringFacts(
-            charset == null || charset.isEmpty() ? "unknown" : charset,
-            instance.isMissingNullTerminator(),
-            Math.max(0, data.getLength())
-        );
-        return new StringEntry(data.getAddress(), value, facts);
+        return new StringEntry(data.getAddress(), value, stringFacts(data, instance));
+    }
+
+    /** Match before allocating facts, so a selective search retains only its matches. */
+    private static StringEntry matchedStringEntry(Data data, ValueMatcher matcher) {
+        if (!data.hasStringValue()) {
+            return null;
+        }
+        StringDataInstance instance = StringDataInstance.getStringDataInstance(data);
+        String value = instance.getStringValue();
+        if (value == null || !matcher.matches(value)) {
+            return null;
+        }
+        return new StringEntry(data.getAddress(), value, stringFacts(data, instance));
     }
 
     private Map<String, Object> procedureIndex() {

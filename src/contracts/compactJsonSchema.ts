@@ -398,6 +398,90 @@ class BudgetedSchemaSerializer {
   }
 }
 
+const depthPlaceholder = (
+  node: Record<string, unknown>,
+  depth: number,
+): Record<string, unknown> | undefined => {
+  const rawType = node.type;
+  const types =
+    typeof rawType === "string"
+      ? [rawType]
+      : Array.isArray(rawType)
+        ? rawType.filter((type): type is string => typeof type === "string")
+        : [];
+  // Declared types are preserved verbatim (integer included); widening an
+  // integer to number would also be sound, dropping it would not.
+  const deep = depth > COMPACT_SCHEMA_MAX_DEPTH - 3;
+  const arrayBranch = deep
+    ? { type: "array", items: {} }
+    : { type: "array", items: jsonValueSchema() };
+  let placeholder: Record<string, unknown> | undefined;
+  if (types.length === 1)
+    placeholder = types[0] === "array" ? arrayBranch : { type: types[0] };
+  else if (types.length > 1 && !deep)
+    placeholder = {
+      anyOf: types.map((type) => (type === "array" ? arrayBranch : { type })),
+    };
+  else if (types.length === 0) {
+    // Untyped schemas accept every JSON value (properties/items alone do not
+    // imply object/array), so the only sound placeholder is unconstrained.
+    placeholder = {};
+  }
+  return placeholder !== undefined &&
+    depth + schemaDepth(placeholder) <= COMPACT_SCHEMA_MAX_DEPTH
+    ? placeholder
+    : undefined;
+};
+
+/**
+ * Replace only the sub-schemas that push past the advertised depth limit with
+ * type-preserving placeholders, instead of reducing the whole schema. The walk
+ * follows schema positions only (literal data such as `enum`, `const` and
+ * `required` stays opaque), keeps branches that already fit, and returns
+ * `undefined` when an over-depth branch sits under `not` or `oneOf`, where
+ * widening a child can make its parent reject valid values — the caller then
+ * keeps the whole-schema reduction. Every replacement widens acceptance, so
+ * canonical validation is unaffected.
+ */
+export const pruneSchemaBeyondDepth = (
+  schema: Record<string, unknown>,
+): Record<string, unknown> | undefined => {
+  let unsafe = false;
+  const prune = (
+    node: unknown,
+    depth: number,
+    unsafeContext: boolean,
+  ): unknown => {
+    if (!isSchemaObject(node)) return node;
+    if (depth + schemaDepth(node) <= COMPACT_SCHEMA_MAX_DEPTH) return node;
+    if (unsafeContext) {
+      unsafe = true;
+      return node;
+    }
+    // Only deep nodes are replaced. Shallow nodes recurse first so fitting
+    // branches and unsafe combinators below them are observed.
+    if (depth >= COMPACT_SCHEMA_MAX_DEPTH - 3) {
+      const placeholder = depthPlaceholder(node, depth);
+      if (placeholder !== undefined) return placeholder;
+    }
+    const mapped = mapSchemaChildren(node, (child, keyword) =>
+      prune(
+        child,
+        depth + (schemaChildren.has(keyword) ? 1 : 2),
+        unsafeContext || keyword === "not" || keyword === "oneOf",
+      ),
+    );
+    if (unsafe) return node;
+    if (depth + schemaDepth(mapped) <= COMPACT_SCHEMA_MAX_DEPTH) return mapped;
+    const placeholder = depthPlaceholder(node, depth);
+    if (placeholder !== undefined) return placeholder;
+    unsafe = true;
+    return node;
+  };
+  const pruned = prune(schema, 0, false);
+  return unsafe ? undefined : (pruned as Record<string, unknown>);
+};
+
 /** Stop serialization at the budget before allocating an expanded schema. */
 export const inlineWithinBudget = (
   root: Record<string, unknown>,

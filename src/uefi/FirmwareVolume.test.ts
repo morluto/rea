@@ -63,19 +63,22 @@ it("counts both accepted and rejected volume candidates toward the scan cap", ()
   });
 });
 
-it("admits a supported aligned volume after an earlier foreign and unaligned volume", async () => {
+it("admits aligned volumes of any file system and leaves unaligned ones inconclusive", async () => {
   const { admitUefiFlashImage } = await import("./UefiFormatProbe.js");
+  // A volume whose file-system GUID REA does not walk, such as an NVRAM
+  // variable store, is still a checksum-valid firmware volume.
   const foreign = buildFv({
     files: [],
     fileSystemGuid: "19111111-2222-3333-4444-555555555555",
   }).buffer;
   const ffs = buildFv({ files: [] }).buffer;
-  expect(
-    admitUefiFlashImage(Buffer.concat([foreign, Buffer.alloc(1), ffs])),
-  ).toBe(false);
+  expect(admitUefiFlashImage(foreign)).toBe(true);
+  expect(admitUefiFlashImage(Buffer.concat([Buffer.alloc(1), ffs]))).toBe(
+    false,
+  );
   expect(
     admitUefiFlashImage(
-      Buffer.concat([foreign, Buffer.alloc(1), ffs, Buffer.alloc(15), ffs]),
+      Buffer.concat([Buffer.alloc(1), ffs, Buffer.alloc(15), ffs]),
     ),
   ).toBe(true);
 });

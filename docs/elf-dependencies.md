@@ -98,7 +98,10 @@ path, SHA-256, and byte count as a partial observation. Cyclic `vn_next` /
 return no complete inventory. Extended program counts, section counts, and
 section-name indices are resolved through inactive section zero using the shared
 ELF declaration reader. Invalid escape values and tables that extend past the
-file are rejected before an inventory is returned.
+file are rejected before an inventory is returned. Header traversal uses
+64 KiB batches and yields between them for cancellation. Section lookup retains
+only the table kinds used by the inventory and follows string-table links by
+their original section indices.
 
 Each dynamic string and `PT_INTERP` path is scanned for its terminator across at
 most 65536 bytes. A scan-limit issue means the admitted extent continues beyond

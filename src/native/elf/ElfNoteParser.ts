@@ -4,11 +4,11 @@ import {
 } from "../../domain/elfStringTable.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
-import { readElfTableDeclarations } from "../../domain/elfDeclaredRanges.js";
 import {
-  ArtifactReaderFailure,
-  assertArtifactReadActive,
-} from "../../resources/index.js";
+  elfHeaderTableBatches,
+  readElfTableDeclarations,
+} from "../../domain/elfDeclaredRanges.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import type { ElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import {
   ELF_NOTE_HEADER_BYTES,
@@ -32,7 +32,12 @@ import {
   BinaryFormatFailure,
   BinaryReader,
 } from "../../domain/binaryContainer.js";
-import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+  truncatedInput,
+} from "../../domain/parseFailure.js";
 import {
   decodeElfSectionNameRequest,
   decodeElfSectionNameRequestCooperative,
@@ -45,6 +50,7 @@ import type { ZstandardFramePause } from "../../domain/compression/zstandardExac
 import { ZstandardFrameAllowanceError } from "../../domain/compression/zstandardFrameAllowance.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { decodeFdoNote, type FdoDecodeBudget } from "./ElfFdoNote.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 const PT_NOTE = 4;
 const SHT_STRTAB = 3;
@@ -77,8 +83,13 @@ interface TextBudget {
   readonly scans: Map<string, number>;
 }
 
+// The image's bytes, not the request, violate the format: a target refusal.
 const fail = (message: string): never => {
-  throw new ArtifactReaderFailure("format", message);
+  throw malformedInput("elf", message);
+};
+
+const failTruncated = (message: string): never => {
+  throw truncatedInput("elf", message);
 };
 
 const chargeText = (
@@ -642,6 +653,7 @@ type ElfNoteScanInput = Pick<
   "max_entries" | "max_file_bytes"
 >;
 type ElfNoteStep =
+  | { readonly kind: "yield" }
   | {
       readonly kind: "read" | "note-table";
       readonly offset: number;
@@ -651,7 +663,7 @@ type ElfNoteStep =
       readonly kind: "decode-section-names";
       readonly request: ElfSectionNameDecodeRequest;
     };
-type ElfNoteStepResult = Buffer | ElfCompressedSectionResult;
+type ElfNoteStepResult = Buffer | ElfCompressedSectionResult | undefined;
 type ElfNoteSteps<T> = Generator<ElfNoteStep, T, ElfNoteStepResult>;
 
 const readElfStep = function* (
@@ -673,12 +685,6 @@ const decodeSectionNamesStep = function* (
   }) as ElfCompressedSectionResult;
 };
 
-/** Random-access source for streaming ELF note inspection without buffering the whole image. */
-export interface ElfNoteByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
 type VisitElfNote = (
   note: ParsedNote,
   table: ElfNoteTable,
@@ -805,14 +811,13 @@ const parseElfNoteSteps = function* (
     hashes: new Map(),
     scans: new Map(),
   };
-  const sectionHeadersBytes =
-    shnum !== 0 ? yield* readElfStep(fileSize, shoff, shnum * shentsize) : null;
   let shstrtab: Buffer | null = null;
   const sectionNameLimitations = new Set<string>();
-  if (sectionHeadersBytes !== null && shstrndx !== 0) {
-    const namesHeaderBytes = sectionHeadersBytes.subarray(
-      shstrndx * shentsize,
-      (shstrndx + 1) * shentsize,
+  if (shnum !== 0 && shstrndx !== 0) {
+    const namesHeaderBytes = yield* readElfStep(
+      fileSize,
+      shoff + shstrndx * shentsize,
+      shentsize,
     );
     const parsedNames = readElfSectionHeader(
       namesHeaderBytes,
@@ -874,9 +879,16 @@ const parseElfNoteSteps = function* (
   const noteSections = [];
   const compressedNoteSpans: ElfNoteSpan[] = [];
   const fileEnd = BigInt(fileSize);
-  if (sectionHeadersBytes !== null) {
-    for (let index = 0; index < shnum; index += 1) {
-      const at = index * shentsize;
+  for (const batch of elfHeaderTableBatches(sections)) {
+    if (batch.index !== 0) yield { kind: "yield" };
+    const sectionHeadersBytes = yield* readElfStep(
+      fileSize,
+      batch.offset,
+      batch.size,
+    );
+    for (let item = 0; item < batch.count; item += 1) {
+      const index = batch.index + item;
+      const at = item * shentsize;
       const declaration = readElfSectionHeader(
         sectionHeadersBytes.subarray(at, at + shentsize),
         header.elfClass,
@@ -913,63 +925,67 @@ const parseElfNoteSteps = function* (
   if (phnum !== 0) {
     if (phoff < header.headerSize)
       return fail("ELF program header table overlaps the native header.");
-    const programHeadersBytes = yield* readElfStep(
-      fileSize,
-      phoff,
-      phnum * phentsize,
-    );
-    for (let index = 0; index < phnum; index += 1) {
-      const at = index * phentsize;
-      const parsedProgram = readElfProgramHeader(
-        programHeadersBytes.subarray(at, at + phentsize),
-        header.elfClass,
-        little,
-      );
-      if (!parsedProgram.ok) return fail(parsedProgram.error.message);
-      const program = parsedProgram.value;
-      if (program.type !== PT_NOTE) continue;
-      if (
-        program.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
-        program.fileSize > BigInt(Number.MAX_SAFE_INTEGER) ||
-        program.alignment > BigInt(Number.MAX_SAFE_INTEGER)
-      )
-        return fail("ELF offset or size exceeds a safe integer.");
-      const fileOffset = Number(program.offset);
-      const tableSize = Number(program.fileSize);
-      // A program header cannot make compressed bytes a raw note stream.
-      // Validate its full extent and let the section own the unsupported outcome.
-      if (
-        compressedOverlap !== undefined &&
-        compressedOverlap({ offset: fileOffset, size: tableSize }) !== "none"
-      ) {
-        requireElfRange(fileSize, fileOffset, tableSize);
-        continue;
-      }
-      const alignment = noteAlignment(Number(program.alignment));
-      const table: ElfNoteTable = {
-        kind: "program",
-        index,
-        name: null,
-        location: { offset: fileOffset, bytes: tableSize },
-        alignment,
-      };
-      tables.push(table);
-      const noteTableBytes = yield* readElfStep(
+    for (const batch of elfHeaderTableBatches(programs)) {
+      if (batch.index !== 0) yield { kind: "yield" };
+      const programHeadersBytes = yield* readElfStep(
         fileSize,
-        fileOffset,
-        tableSize,
-        "note-table",
+        batch.offset,
+        batch.size,
       );
-      for (const note of parseNoteStreamFromTable(
-        noteTableBytes,
-        fileOffset,
-        little,
-        alignment,
-        input.max_entries,
-        examined,
-        text,
-      ))
-        visitNote(note, table, header, text);
+      for (let item = 0; item < batch.count; item += 1) {
+        const index = batch.index + item;
+        const at = item * phentsize;
+        const parsedProgram = readElfProgramHeader(
+          programHeadersBytes.subarray(at, at + phentsize),
+          header.elfClass,
+          little,
+        );
+        if (!parsedProgram.ok) return fail(parsedProgram.error.message);
+        const program = parsedProgram.value;
+        if (program.type !== PT_NOTE) continue;
+        if (
+          program.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
+          program.fileSize > BigInt(Number.MAX_SAFE_INTEGER) ||
+          program.alignment > BigInt(Number.MAX_SAFE_INTEGER)
+        )
+          return fail("ELF offset or size exceeds a safe integer.");
+        const fileOffset = Number(program.offset);
+        const tableSize = Number(program.fileSize);
+        // A program header cannot make compressed bytes a raw note stream.
+        // Validate its full extent and let the section own the unsupported outcome.
+        if (
+          compressedOverlap !== undefined &&
+          compressedOverlap({ offset: fileOffset, size: tableSize }) !== "none"
+        ) {
+          requireElfRange(fileSize, fileOffset, tableSize);
+          continue;
+        }
+        const alignment = noteAlignment(Number(program.alignment));
+        const table: ElfNoteTable = {
+          kind: "program",
+          index,
+          name: null,
+          location: { offset: fileOffset, bytes: tableSize },
+          alignment,
+        };
+        tables.push(table);
+        const noteTableBytes = yield* readElfStep(
+          fileSize,
+          fileOffset,
+          tableSize,
+          "note-table",
+        );
+        for (const note of parseNoteStreamFromTable(
+          noteTableBytes,
+          fileOffset,
+          little,
+          alignment,
+          input.max_entries,
+          examined,
+          text,
+        ))
+          visitNote(note, table, header, text);
+      }
     }
   }
   for (const {
@@ -1104,6 +1120,10 @@ const decodeElfNoteSteps = <T>(bytes: Buffer, steps: ElfNoteSteps<T>): T => {
   let next = steps.next();
   while (!next.done) {
     const step = next.value;
+    if (step.kind === "yield") {
+      next = steps.next(undefined);
+      continue;
+    }
     next = steps.next(
       step.kind !== "decode-section-names"
         ? bytes.subarray(step.offset, step.offset + step.length)
@@ -1117,10 +1137,16 @@ const decodeElfNoteStepsCooperative = async <T>(
   bytes: Buffer,
   steps: ElfNoteSteps<T>,
   decode: CooperativeElfSectionNameDecoder,
+  pause: ZstandardFramePause,
 ): Promise<T> => {
   let next = steps.next();
   while (!next.done) {
     const step = next.value;
+    if (step.kind === "yield") {
+      await pause();
+      next = steps.next(undefined);
+      continue;
+    }
     next = steps.next(
       step.kind !== "decode-section-names"
         ? bytes.subarray(step.offset, step.offset + step.length)
@@ -1131,9 +1157,10 @@ const decodeElfNoteStepsCooperative = async <T>(
 };
 
 const decodeElfNoteStepsFromSource = async <T>(
-  source: ElfNoteByteSource,
+  source: PrefixedByteSource,
   steps: ElfNoteSteps<T>,
   decode: CooperativeElfSectionNameDecoder,
+  pause: ZstandardFramePause,
 ): Promise<T> => {
   // Adjacent note declarations commonly alias one table, including a
   // PT_NOTE followed by its SHT_NOTE. Retain at most one table and project
@@ -1144,6 +1171,11 @@ const decodeElfNoteStepsFromSource = async <T>(
   let next = steps.next();
   while (!next.done) {
     const step = next.value;
+    if (step.kind === "yield") {
+      await pause();
+      next = steps.next(undefined);
+      continue;
+    }
     if (step.kind === "decode-section-names") {
       next = steps.next(await decode(step.request));
       continue;
@@ -1176,7 +1208,7 @@ const decodeElfNoteStepsFromSource = async <T>(
 
 /** Decode PT_NOTE and SHT_NOTE tables positionally over a bounded file handle. */
 export const parseElfNotesFromHandle = (
-  source: ElfNoteByteSource,
+  source: PrefixedByteSource,
   artifact: ElfNotes["artifact"],
   input: InspectElfNotesInput,
   pause: ZstandardFramePause,
@@ -1185,6 +1217,7 @@ export const parseElfNotesFromHandle = (
     source,
     projectElfNoteSteps(source.size, artifact, input),
     (request) => decodeElfSectionNameRequestCooperative(request, pause),
+    pause,
   );
 
 interface ElfGnuBuildIdNotes {
@@ -1249,24 +1282,28 @@ export const readElfBuildIdsCooperative = (
   input: ElfNoteScanInput,
   maximumBuildIdBytes: number,
   decode: CooperativeElfSectionNameDecoder,
+  pause: ZstandardFramePause,
 ): Promise<ElfGnuBuildIdNotes> =>
   decodeElfNoteStepsCooperative(
     bytes,
     readElfBuildIdSteps(bytes.length, input, maximumBuildIdBytes),
     decode,
+    pause,
   );
 
 /** Read GNU build IDs positionally over a bounded file handle. */
 export const readElfBuildIdsFromHandle = (
-  source: ElfNoteByteSource,
+  source: PrefixedByteSource,
   input: ElfNoteScanInput,
   maximumBuildIdBytes: number,
   decode: CooperativeElfSectionNameDecoder,
+  pause: ZstandardFramePause,
 ): Promise<ElfGnuBuildIdNotes> =>
   decodeElfNoteStepsFromSource(
     source,
     readElfBuildIdSteps(source.size, input, maximumBuildIdBytes),
     decode,
+    pause,
   );
 
 const toEntry = (
@@ -1368,7 +1405,7 @@ const readNoteWindow = function* (
   length: number,
 ): Generator<NoteRangeRead, Buffer, Buffer> {
   const bytes = yield { kind: "read", offset, length };
-  if (bytes.length !== length) fail("ELF note range is truncated.");
+  if (bytes.length !== length) failTruncated("ELF note range is truncated.");
   return bytes;
 };
 
@@ -1470,7 +1507,8 @@ export function* readGnuPropertyWordsSteps(
     let window = new BinaryReader(Buffer.alloc(0), little, "elf-notes");
     while (cursor < size) {
       assertArtifactReadActive(signal);
-      if (size - cursor < 8) fail("ELF GNU property record is truncated.");
+      if (size - cursor < 8)
+        failTruncated("ELF GNU property record is truncated.");
       if (cursor + Math.min(12, size - cursor) > base + window.bytes.length) {
         base = cursor;
         window = new BinaryReader(
@@ -1488,7 +1526,8 @@ export function* readGnuPropertyWordsSteps(
       if (dataSize > size - cursor - 8)
         fail("ELF GNU property data extends outside the note descriptor.");
       const step = Math.ceil((8 + dataSize) / propertyAlign) * propertyAlign;
-      if (cursor + step > size) fail("ELF GNU property record is truncated.");
+      if (cursor + step > size)
+        failTruncated("ELF GNU property record is truncated.");
       if (
         type === GNU_PROPERTY_X86_FEATURE_1_AND ||
         type === GNU_PROPERTY_AARCH64_FEATURE_1_AND

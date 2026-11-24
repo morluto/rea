@@ -213,9 +213,8 @@ An unselected shared skill does not affect a client-only refresh.
 
 `doctor --skill --json` verifies the selected copies against the bundled
 instructions and references. Consumers should use `identity.skill.state`,
-`installed_version`, and `installed_tool_count` for skill readiness. The
-obsolete `installed_catalog_digest` field has been removed; current catalog
-identity remains available at `identity.catalog`.
+`installed_version`, and `installed_tool_count` for skill readiness. Catalog
+identity is available at `identity.catalog`.
 
 Setup records MCP registrations that launch the installation performing setup
 directly: its absolute JavaScript runtime and entry script, followed by `mcp`
@@ -373,7 +372,17 @@ with the default profile with `CLAUDE_CONFIG_DIR` unset. For local scope, run
 Run `rea doctor` when you need diagnosis. It reads host prerequisites and agent
 configuration without changing them. Without options, it audits every detected
 registration, the installed skill and optional analysis engines; its overall
-`healthy` value can be false while your chosen workflow works.
+`healthy` value can be false while your chosen workflow works. An audit-wide
+report lists its checks once, in `checks`, and has no `scope_checks`. A passing
+provider check in `providerInspections[].checks` has
+`classification: "healthy"` and `code: null`; only a failing one carries a
+failure class. A top-level check can pass with `classification: "unknown"`,
+such as `registration_environment:<client>` when doctor cannot establish what
+the client passes. `--filter-output` applies to an unhealthy report as to a
+healthy one, including inside the `--full-output` envelope, which still has
+`ok: false`, and the exit status is still 1:
+`rea doctor --filter-output healthy --json` prints `false`. JSON Lines output
+frames an unhealthy report whole as an error record.
 
 Doctor's `providerInspections` are host-level engine and registration checks,
 not a readiness row for every advertised MCP adapter surface. `tools/list`
@@ -598,24 +607,8 @@ selects the npm release, and managed MCP registrations bind the installation
 that performed setup. Installing newer instructions does not update a
 running server or its registration.
 
-The npm release checked on **2026-10-11** was **6.4.0**, published from
-[`a56f7bb6`](https://github.com/morluto/rea/commit/a56f7bb668ab23fec8d33f7af353ac7ed2fe1895).
-The actual registry package accepted dry-run setup plans for the 17 client IDs
-in that release, including Qwen Code, Pi and Hermes. Seven client IDs are
-included from 6.5.0 and were absent from the checked npm 6.4.0 package: `droid`,
-`dsh`, `kimi`, `qoder`, `trae`, `workbuddy` and `zcode`.
-The 6.4.0 registry check does not establish 6.5.0 publication or live DeepSeek
-API integration.
-OpenCode's plan selected
-`OPENCODE_CONFIG_DIR` even when that directory did not yet exist. These checks
-used an isolated home on macOS with Node 24; they verify planning and argument
-admission, without writing client configuration or establishing live integration
-with every client. This resolves the npm 6.3.0 setup gaps tracked in
-[#1650](https://github.com/morluto/rea/issues/1650).
-
-Main's catalog describes the current code. A source build or a subsequent
-release containing changes after this checkpoint is required for newer
-functionality. Package startup alone does not verify a provider's real
+A source build or a later release is required for functionality added to main
+after the installed release. Package startup alone does not verify a provider's real
 platform workflow.
 
 To check the published version, run `npm view rea-agents dist-tags.latest`.
@@ -745,23 +738,16 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Goose                     | `goose`                 |
 | Kilo Code                 | `kilo`                  |
 
-`droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
-`rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
-`freebuff` requires `rea-agents@6.8.0` or later. Older releases reject
-`rea setup --client freebuff` as an unsupported client.
-
-`lm_studio` requires a release after 6.8.0.
-
-`cline_vscode`, `cline_vscode_insiders`, `cline_vscodium`, `cline_cursor`,
-`cline_windsurf`, `kiro`, `mastracode`, `zed` and `amp` require a release after
-6.9.0. Earlier releases could register Cline in VS Code, Kiro, Mastra Code, Zed
-and Amp only through `rea mcp add`, and could not register Cline in VS Code
-Insiders, VSCodium, Cursor or Windsurf at all; doctor, update and uninstall did
-not see those registrations. Current releases inspect, refresh and remove them
-like any other setup client. `mcporter` also requires a release after 6.9.0;
-setup never selects it from detection, because MCPorter already imports the
-registrations setup writes for other clients. Select it with
-`--client mcporter`. `fx`, `junie`, `goose` and `kilo` also require a release after 6.9.0.
+Some clients require a minimum release.
+`droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy` and `zcode` require
+`rea-agents@6.5.0` or later. `freebuff` requires 6.8.0 or later; older releases
+reject `rea setup --client freebuff` as an unsupported client. `lm_studio`
+requires a release after 6.8.0. `cline_vscode`, `cline_vscode_insiders`,
+`cline_vscodium`, `cline_cursor`, `cline_windsurf`, `kiro`, `mastracode`, `zed`,
+`amp`, `mcporter`, `fx`, `junie`, `goose` and `kilo` require a release after
+6.9.0. Setup never selects
+`mcporter` from detection, because MCPorter already imports the registrations
+setup writes for other clients; select it with `--client mcporter`.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -871,7 +857,7 @@ search permissions (`0700`) on a directory you own before retrying.
 On supported Linux distributions, approved setup verifies Hopper's official
 `.deb`, `.rpm`, or Arch package before invoking the native package manager.
 On apt systems, Hopper's runtime dependencies are installed with
-`--no-upgrade` in their own transaction, so setup no longer names an
+`--no-upgrade` in their own transaction, so setup does not name an
 already-installed dependency as an upgrade target. apt can still upgrade a
 package that the Hopper package or the Python library repair requires at a
 newer version. Arch's `pacman -S --needed` still updates an outdated
@@ -1388,13 +1374,6 @@ verified through POSIX mode bits; Fx results distinguish requested Windows modes
 from verified POSIX modes. Controlled source tests do not establish real Windows
 client behavior.
 
-`rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
-executable position is refused before any settings change; configure remote MCP
-transport in the client's own settings. Earlier delegated registration could
-interpret a URL as remote transport for some clients while storing it as an
-executable for Amp. That inconsistent URL interpretation and package acquisition
-are removed. Launcher arguments that happen to contain URLs remain arguments.
-
 When `GHIDRA_INSTALL_DIR` is unset, doctor and the Ghidra provider also search
 `PATH` for `ghidra` or `ghidraRun`, resolve the selected launcher through its
 real path, and accept it only when that location belongs to a Ghidra tree with
@@ -1632,14 +1611,14 @@ test ! -e "$decompiler_dir/decompile" && test ! -L "$decompiler_dir/decompile" &
 rea doctor --json
 ```
 
-Recorded on Ghidra 12.1.4 (no longer accepted); not yet re-run on 12.2. On
-macOS 15.6 arm64 with Apple clang 17 and the stock bison 2.3, that build
+Verified on Ghidra 12.2 on macOS 26.3 arm64 with Apple clang 21: the build
 produced a Mach-O arm64 `ghidra_opt`, the doctor check
 `ghidra-native_decompiler` turned healthy with "reports mach-o arm64, which
 matches darwin/arm64", and `rea decompile` on an arm64 Mach-O returned
 decompiled C through the headless provider. The JDK is not needed for the make
-step, only for the Ghidra provider. If your toolchain
-rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
+step, only for the Ghidra provider. The Darwin block also sets
+`ADDITIONAL_FLAGS=-mmacosx-version-min=10.6 -w`, which Apple clang 21 accepts.
+If your toolchain rejects that deployment-target flag, retry the make with
 `ADDITIONAL_FLAGS="-w"`.
 
 ### Automatically checkpoint an owned Ghidra Program
@@ -1981,7 +1960,9 @@ preserve local paths and other analysis context.
 Run `GHIDRA_INSTALL_DIR=... npm run verify:ghidra` from a source checkout to
 compile and analyze debug and stripped host-native fixtures (ELF on Linux x64/arm64
 or Mach-O on macOS), plus a native DWARF 4 type-layout object. This lane needs a
-host C compiler in addition to Ghidra and its JDK.
+host C compiler and the host's GNU demangler native component in addition to
+Ghidra and its JDK; see
+[admitted function-analysis semantics](../providers/ghidra-provider.md#admitted-function-analysis-semantics).
 
 Run `GHIDRA_INSTALL_DIR=... npm run verify:ghidra:cross-format` to add AArch64
 ELF, x86-64 PE, and x86-64 Mach-O fixture coverage. This separate lane needs
