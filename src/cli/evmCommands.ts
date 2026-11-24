@@ -18,7 +18,6 @@ export const registerEvmCommands = (
     logger,
     evmInterfaceModule.contract,
     {
-      command: evmInterfaceModule.cliCommand,
       description:
         "Infer interface candidates from explicit local EVM bytecode",
       positionals: ["path", "encoding"],

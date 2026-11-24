@@ -178,7 +178,7 @@ the optional manual path below. It retains explicit prepare and publish phases.
 
 Automatic main proposals and manual checkpoint preparation use
 `scripts/release-proposal.mjs` with the pinned release-please dependency.
-The controller applies `patches/release-please+17.3.0.patch` only when invoked;
+The controller applies `patches/release-please+17.11.2.patch` only when invoked;
 normal dependency installation and published-package installation do not apply it.
 The patch avoids commit-file backfills, associated PR file lists and path splitting
 for a single root Node package with the default changelog, default or

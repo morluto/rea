@@ -80,67 +80,6 @@ export const schemaDepth = (value: unknown, depth = 0): number => {
 /** Strict clients commonly reject advertised schemas deeper than ten nodes. */
 export const COMPACT_SCHEMA_MAX_DEPTH = 10;
 
-/** Rewrite every schema-valued position; literal data stays opaque. */
-const rebuildSchemaPositions = (
-  node: unknown,
-  rebuild: (child: unknown) => unknown,
-): unknown => {
-  if (Array.isArray(node)) {
-    let out: unknown[] | undefined;
-    for (let i = 0; i < node.length; i++) {
-      const child = node[i];
-      const mapped = rebuild(child);
-      if (mapped !== child) {
-        if (out === undefined) out = node.slice();
-        out[i] = mapped;
-      }
-    }
-    return out ?? node;
-  }
-  if (!isSchemaObject(node)) return node;
-  return mapSchemaChildren(node, rebuild);
-};
-
-/**
- * Drop annotation prose from every subschema while preserving all validation
- * keywords. The root keeps its own description because the root-union
- * projection encodes accepted input groups there; the root's echoed literal
- * examples leave with the rest of the annotation prose.
- */
-export const stripAnnotations = (
-  schema: Record<string, unknown>,
-): Record<string, unknown> => {
-  const rebuilt = rebuildSchemaPositions(
-    schema,
-    stripChildAnnotations,
-  ) as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const key in rebuilt) {
-    if (!Object.hasOwn(rebuilt, key)) continue;
-    if (annotationKeys.has(key) && key !== "description") continue;
-    out[key] = rebuilt[key];
-  }
-  return out;
-};
-
-const stripChildAnnotations = (child: unknown): unknown => {
-  const rebuilt = rebuildSchemaPositions(child, stripChildAnnotations);
-  if (!isSchemaObject(rebuilt)) return rebuilt;
-  let kept: Record<string, unknown> | undefined;
-  for (const key in rebuilt) {
-    if (!Object.hasOwn(rebuilt, key) || !annotationKeys.has(key)) continue;
-    if (kept === undefined) {
-      kept = {};
-      for (const copyKey in rebuilt) {
-        if (Object.hasOwn(rebuilt, copyKey) && !annotationKeys.has(copyKey))
-          kept[copyKey] = rebuilt[copyKey];
-      }
-    }
-    break;
-  }
-  return kept ?? rebuilt;
-};
-
 type SchemaPosition = "schema" | "map" | "data";
 type ObjectEmitMode = "normal" | "root" | "siblings" | "root-siblings";
 
@@ -644,9 +583,7 @@ const REDUCED_ITEM_MAX_DEPTH = 3;
  * nullable union, and other unions keep the typed branches every surveyed
  * target accepts below the root.
  */
-const typedAlternatives = (
-  types: readonly string[],
-): Record<string, unknown> =>
+const typedAlternatives = (types: readonly string[]): Record<string, unknown> =>
   types.length === 1
     ? { type: types[0] }
     : { anyOf: types.map((type) => ({ type })) };

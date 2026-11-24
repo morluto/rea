@@ -265,7 +265,7 @@ const PATH_SCOPES = {
     "scripts/prepare.mjs",
     "scripts/lib/release-proposal.*",
     "scripts/lib/release-pull-request.mjs",
-    "patches/release-please+17.3.0.patch",
+    "patches/release-please+17.11.2.patch",
     "tests/boundary/filesystem/releaseProposal.test.ts",
     "scripts/rea.mjs",
     "scripts/lib/cli-process-environment.mjs",

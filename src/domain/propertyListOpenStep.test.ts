@@ -12,7 +12,6 @@ it.each([
   "{ bytes = (<ffzz0>, <0>, <a b c d>, <>); }",
   '/* header */ ("//text", "/*text*/", /* before */ value, // after\n)',
   "{ first = x second = y; third = (a, b,); }",
-  "{ (one, two) = array; { nested = key; } = object; <01ff> = data; }",
   "{} /* unterminated",
   "() ((((((((((",
 ])("preserves pinned lexical and container values for %s", (text) => {
@@ -64,12 +63,7 @@ it.each(containerRefusals)(
   },
 );
 
-it.each([
-  '{ key = "unterminated',
-  '{ key = "escape\\',
-  "{ key = <01",
-  "{ { toString = text; } = value; }",
-])(
+it.each(['{ key = "unterminated', '{ key = "escape\\', "{ key = <01"])(
   "keeps the pinned scalar decoder's diagnosis for %s before a deep suffix",
   (prefix) => {
     for (const text of [prefix, prefix + "(".repeat(130)]) {
@@ -81,6 +75,23 @@ it.each([
     }
   },
 );
+
+it("preserves compound key coercion and its first failure", () => {
+  expect(
+    decodeOpenStepPropertyList(
+      "{ (one, two) = array; { nested = key; } = object; <01ff> = data; }",
+    ),
+  ).toEqual({
+    "one,two": "array",
+    "[object Object]": "object",
+    "1,255": "data",
+  });
+  for (const suffix of ["", "(".repeat(130)]) {
+    expect(() =>
+      decodeOpenStepPropertyList("{ { toString = text; } = value; }" + suffix),
+    ).toThrow(TypeError);
+  }
+});
 
 it("retains every compound-coerced dictionary key with last assignment winning", () => {
   const value = decodeOpenStepPropertyList(

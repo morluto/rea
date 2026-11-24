@@ -8,6 +8,8 @@ const plan = planChanges(
     event: process.env.GITHUB_EVENT_NAME,
     full: process.env.CI_FULL === "true",
     skipFull: process.env.CI_SKIP_FULL === "true",
+    pushWarmOnly: process.env.CI_PUSH_WARM_ONLY === "true",
+    scheduleFast: process.env.CI_SCHEDULE_FAST === "true",
     base: process.env.BASE_SHA,
     head: process.env.HEAD_SHA,
     baselineReason: process.env.BASELINE_REASON,

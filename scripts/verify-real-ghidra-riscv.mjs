@@ -17,13 +17,14 @@ import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-ins
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import {
   buildRiscvFixture,
+  relabelRiscvFixtureLanguage,
   stripRiscvFixture,
 } from "../tests/conformance/ghidra/riscv-fixture.mjs";
 import {
-  RISCV_ILP32_ABI,
-  assertRiscvIlp32CallSites,
-  assertRiscvIlp32Caller,
-  assertRiscvIlp32Storage,
+  RISCV_ABIS,
+  assertRiscvCallSites,
+  assertRiscvCaller,
+  assertRiscvStorage,
   inspectRiscvCallSites,
 } from "../tests/conformance/ghidra/riscv-checks.mjs";
 import {
@@ -104,20 +105,29 @@ transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
 
-/** The profile a fixture's lane must commit, from independent declarations. */
-const expectedLane = (fixture) => {
-  const soft = fixture.riscv.flags === 1;
+// e_flags float-ABI bits, with RVC declared, and the policy each lane applies.
+const FLOAT_ABIS = {
+  5: { floatAbi: "double" },
+  1: { floatAbi: "soft", abi: "ilp32", policy: "ilp32-prototype-v1" },
+  3: { floatAbi: "single", abi: "ilp32f", policy: "ilp32f-prototype-v1" },
+};
+
+/** The profile a lane must commit for these flags, from independent declarations. */
+const expectedLane = (fixture, flags = fixture.riscv.flags) => {
+  const { floatAbi, policy } = FLOAT_ABIS[flags];
   const pie = fixture.riscv.type === 3;
   return {
-    lane: `elf${fixture.riscv.elfClass}-${pie ? "pie" : "exec"}-le-${soft ? "soft" : "double"}-float-generic-v1`,
-    callingConvention: soft ? "ilp32-prototype-v1" : undefined,
+    lane: `elf${fixture.riscv.elfClass}-${pie ? "pie" : "exec"}-le-${floatAbi}-float-generic-v1`,
+    callingConvention: policy,
     riscvElf: {
       elf_class: fixture.riscv.elfClass,
       byte_order: "little",
       type: pie ? 3 : 2,
-      flags: fixture.riscv.flags,
-      float_abi_double: !soft,
-      ...(soft ? { float_abi: "soft", arch: fixture.riscv.isa.arch } : {}),
+      flags,
+      float_abi_double: floatAbi === "double",
+      ...(policy === undefined
+        ? {}
+        : { float_abi: floatAbi, arch: fixture.riscv.isa.arch }),
       rvc_declared: true,
       rve_declared: false,
       tso_declared: false,
@@ -134,7 +144,189 @@ const expectedLane = (fixture) => {
 };
 
 const OUTCOME =
-  /RISC-V calling-convention outcome: [1-9]\d* functions and (\d+) function definitions use __rea_ilp32\./u;
+  /RISC-V calling-convention outcome: [1-9]\d* functions and (\d+) function definitions use (__rea_ilp32f?)\./u;
+
+/**
+ * The same C build with its C compile units labelled Rust: both policies model
+ * the C psABI, so each refuses the image and names the language. The unlabelled
+ * builds above are the controls.
+ */
+const verifyForeignLanguageRefusal = async (variant) => {
+  const built = await buildRiscvFixture(workspace, 32, {
+    variant,
+    execute: execOwned,
+  });
+  const fixture = await relabelRiscvFixtureLanguage(workspace, built, 0x1c);
+  const resolved = await parseBinaryTarget(fixture.path);
+  if (!resolved.ok) throw resolved.error;
+  assert.deepEqual(resolved.value.riscv, fixture.riscv);
+  const policy =
+    variant === "soft" ? "ilp32-prototype-v1" : "ilp32f-prototype-v1";
+  const reasons = [
+    `policy ${policy} refused this image`,
+    "in Rust (DW_AT_language 0x1c), such as ",
+  ];
+  const callTool = async (name, args = {}) => {
+    throwIfInterrupted();
+    return client.callTool(
+      { name, arguments: args },
+      { timeout: 240000, signal: commandInterruption.signal },
+    );
+  };
+  const opened = requireMcpLifecycleResult(
+    await callTool("open_binary", {
+      path: fixture.path,
+      provider_id: "ghidra",
+    }),
+    "open_binary",
+  );
+  assert.equal(opened.sha256, fixture.sha256);
+  const error = JSON.stringify(
+    requireMcpToolError(await callTool("list_procedures")),
+  );
+  for (const reason of reasons) assert.ok(error.includes(reason), error);
+  requireMcpLifecycleResult(await callTool("close_binary"), "close_binary");
+  return {
+    foreign_language: {
+      variant,
+      policy,
+      sha256: fixture.sha256,
+      relabelled: fixture.relabelled,
+    },
+  };
+};
+
+/**
+ * A single-float build whose signatures __rea_ilp32f cannot express: its
+ * headers are admitted and it opens, then the bridge refuses the policy after
+ * analysis, and the first analysis call over MCP and the CLI fail with the
+ * bridge's reason. The source bytes stay unchanged.
+ */
+const verifyUnmodelledRefusal = async () => {
+  const fixture = await buildRiscvFixture(workspace, 32, {
+    variant: "unmodelled",
+    execute: execOwned,
+  });
+  const resolved = await parseBinaryTarget(fixture.path);
+  if (!resolved.ok) throw resolved.error;
+  assert.deepEqual(resolved.value.riscv, fixture.riscv);
+  const reasons = [
+    "policy ilp32f-prototype-v1 refused this image",
+    "8 functions and 1 function-pointer type pass by-value types whose psABI storage __rea_ilp32f cannot express",
+    "rea_riscv_abi_spread (returns rea_riscv_abi_spread, rea_riscv_abi_spread)",
+    "rea_riscv_abi_half (returns _Float16, _Float16)",
+    "rea_riscv_abi_empties (returns rea_riscv_abi_empties, rea_riscv_abi_empties)",
+    "rea_riscv_abi_flexible (rea_riscv_abi_flexible, rea_riscv_abi_erased)",
+    "rea_riscv_abi_padded (rea_riscv_abi_padded, rea_riscv_abi_unnamed, float)",
+    "rea_riscv_abi_vector (rea_riscv_abi_lanes)",
+    "rea_riscv_abi_complex (complex, rea_riscv_abi_wrapped, rea_riscv_abi_aligned)",
+    "rea_riscv_abi_member (returns rea_riscv_abi_member, rea_riscv_abi_member)",
+    // Eight functions fill the eight examples; the count names the
+    // function-pointer type.
+    "; and others.",
+  ];
+  // The compiler passes the char after the empty member in bits 0-7 of a0,
+  // not where its byte lies in memory, and the float in fa0.
+  const memberCalls = await inspectRiscvCallSites(
+    fixture.path,
+    ["rea_riscv_abi_member_caller"],
+    execOwned,
+  );
+  const memberCall = memberCalls.calls.filter(
+    (call) => call.target === "rea_riscv_abi_member",
+  );
+  assert.equal(
+    memberCall.length,
+    1,
+    "Expected one call to rea_riscv_abi_member",
+  );
+  assert.equal(
+    memberCall[0].words.a0?.word,
+    0x5a,
+    "The char is not at bit 0 of a0",
+  );
+  assert.equal(
+    memberCall[0].words.fa0?.word,
+    0x3fc00000,
+    "The float is not in fa0",
+  );
+  assert.equal(
+    memberCall[0].words.a1?.word,
+    7,
+    "The int does not follow in a1",
+  );
+  const callTool = async (name, args = {}) => {
+    throwIfInterrupted();
+    return client.callTool(
+      { name, arguments: args },
+      { timeout: 240000, signal: commandInterruption.signal },
+    );
+  };
+  const opened = requireMcpLifecycleResult(
+    await callTool("open_binary", {
+      path: fixture.path,
+      provider_id: "ghidra",
+    }),
+    "open_binary",
+  );
+  assert.equal(opened.sha256, fixture.sha256);
+  const error = JSON.stringify(
+    requireMcpToolError(await callTool("list_procedures")),
+  );
+  for (const reason of reasons) assert.ok(error.includes(reason), error);
+  // An array in a structure flattens, a bit-field counts by its width, and two
+  // complex fields pass by reference, so these shapes fit.
+  assert.ok(!error.includes("rea_riscv_abi_elements"), error);
+  assert.ok(!error.includes("rea_riscv_abi_bits"), error);
+  assert.ok(!error.includes("rea_riscv_abi_complexes"), error);
+  // Clang ignores transparent_union for a float first member and for members
+  // of another size, and an integer first member keeps a0: ordinary unions.
+  assert.ok(!error.includes("rea_riscv_abi_float_first"), error);
+  assert.ok(!error.includes("rea_riscv_abi_wider"), error);
+  assert.ok(!error.includes("rea_riscv_abi_integer_first"), error);
+  requireMcpLifecycleResult(await callTool("close_binary"), "close_binary");
+  await assert.rejects(
+    execOwned(
+      process.execPath,
+      [
+        entrypoint,
+        "function",
+        fixture.path,
+        "rea_riscv_entry",
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+    ),
+    (cause) => {
+      const output = `${cause?.snapshot?.stdout?.text ?? ""}\n${cause?.snapshot?.stderr?.text ?? ""}`;
+      return (
+        Number.isInteger(cause?.code) &&
+        cause.code !== 0 &&
+        reasons.every((reason) => output.includes(reason))
+      );
+    },
+  );
+  assert.equal(
+    createHash("sha256")
+      .update(await readFile(fixture.path))
+      .digest("hex"),
+    fixture.sha256,
+  );
+  return {
+    path: fixture.path,
+    sha256: fixture.sha256,
+    riscv: fixture.riscv,
+    toolchain: fixture.toolchain,
+    sources: fixture.sources,
+    lane: expectedLane(fixture).lane,
+    refused: reasons,
+    cli: true,
+    stdio_mcp: true,
+    original_unchanged: true,
+  };
+};
 
 const reports = [];
 let failure;
@@ -163,23 +355,38 @@ try {
     );
   }
 
-  const typedSoft = await buildRiscvFixture(workspace, 32, {
-    floatAbi: "soft",
-    execute: execOwned,
-  });
-  const callSites = await inspectRiscvCallSites(typedSoft.path, execOwned);
-  assertRiscvIlp32CallSites(callSites.calls);
+  const callSites = [];
+  const typed = [];
+  for (const variant of ["soft", "single"]) {
+    const fixture = await buildRiscvFixture(workspace, 32, {
+      variant,
+      execute: execOwned,
+    });
+    const abi = FLOAT_ABIS[fixture.riscv.flags].abi;
+    const sites = await inspectRiscvCallSites(
+      fixture.path,
+      RISCV_ABIS[abi].callers,
+      execOwned,
+    );
+    assertRiscvCallSites(abi, sites.calls);
+    callSites.push({ abi, fixture: fixture.path, ...sites });
+    typed.push(fixture);
+  }
   const fixtures = [
     await buildRiscvFixture(workspace, 32, { execute: execOwned }),
     await buildRiscvFixture(workspace, 64, { execute: execOwned }),
     await buildRiscvFixture(workspace, 32, { pie: true, execute: execOwned }),
     await buildRiscvFixture(workspace, 64, { pie: true, execute: execOwned }),
-    typedSoft,
-    await stripRiscvFixture(workspace, typedSoft, execOwned),
   ];
+  for (const fixture of typed)
+    fixtures.push(
+      fixture,
+      await stripRiscvFixture(workspace, fixture, execOwned),
+    );
   for (const fixture of fixtures) {
     const bits = fixture.riscv.elfClass;
-    const soft = fixture.riscv.flags === 1;
+    const { abi: abiName } = FLOAT_ABIS[fixture.riscv.flags];
+    const abi = abiName === undefined ? undefined : RISCV_ABIS[abiName];
     const pie = fixture.riscv.type === 3;
     const stripped = fixture.stripped === true;
     const expected = expectedLane(fixture);
@@ -269,13 +476,13 @@ try {
       return `0x${(pie ? expectedBase + symbolAddress : symbolAddress).toString(16)}`;
     };
     const procedures = await call("list_procedures");
-    const names = soft
+    const names = abi
       ? [
           "rea_riscv_entry",
           "rea_riscv_probe",
           "rea_riscv_isa_probe",
-          "rea_riscv_abi_caller",
-          ...Object.keys(RISCV_ILP32_ABI),
+          ...abi.callers,
+          ...Object.keys(abi.functions),
         ]
       : [
           "rea_riscv_entry",
@@ -316,11 +523,18 @@ try {
       probe.bytes,
     );
     const isaProbe = [];
-    if (soft) {
-      // ESP32-C3's -march declares Zifencei and Zicsr; both must decode.
+    if (abi) {
+      // ESP32-C3's and H4's -march declare Zifencei and Zicsr, and H4's F;
+      // each must decode.
       for (const [offset, bytes, mnemonic] of [
         [0n, "0f100000", /^fence\.i$/iu],
         [4n, "f32200b0", /^csrr/iu],
+        ...(abiName === "ilp32f"
+          ? [
+              [8n, "530005f0", /^fmv\.w\.x$/iu],
+              [12n, "530500e0", /^fmv\.x\.w$/iu],
+            ]
+          : []),
       ]) {
         const instruction = await call("inspect_native_instruction", {
           address: `0x${(BigInt(addressFor("rea_riscv_isa_probe")) + offset).toString(16)}`,
@@ -339,8 +553,8 @@ try {
     const callees = await call("procedure_callees", {
       procedure: addressFor("rea_riscv_entry"),
     });
-    for (const name of soft
-      ? ["rea_riscv_abi_caller", "rea_riscv_isa_probe", "rea_riscv_probe"]
+    for (const name of abi
+      ? [...abi.callers, "rea_riscv_isa_probe", "rea_riscv_probe"]
       : ["rea_riscv_leaf", "rea_riscv_probe"])
       assert.ok(
         callees.some((address) => BigInt(address) === BigInt(addressFor(name))),
@@ -355,29 +569,32 @@ try {
     assert.ok(dossier.pseudocode.trim().length > 0);
     if (!stripped) {
       const floatCode = await call("procedure_pseudo_code", {
-        procedure: addressFor(soft ? "rea_riscv_abi_wide" : "rea_riscv_float"),
+        procedure: addressFor(abi ? "rea_riscv_abi_wide" : "rea_riscv_float"),
       });
       assert.ok(typeof floatCode === "string" && floatCode.trim().length > 0);
       assert.match(floatCode, /\bdouble\b/u);
     }
-    let abi;
-    if (soft) {
+    let storage;
+    if (abi) {
       const boundaries = {};
-      for (const name of Object.keys(RISCV_ILP32_ABI))
+      for (const name of Object.keys(abi.functions))
         boundaries[name] = (
           await call("inspect_native_api", { procedure: addressFor(name) })
         ).boundary;
-      assertRiscvIlp32Storage(boundaries, { stripped });
-      const caller = functionDossierSchema.parse(
-        await call("analyze_function", {
-          procedure: addressFor("rea_riscv_abi_caller"),
-          detail: "complete",
-        }),
-      );
-      assertRiscvIlp32Caller(caller.pseudocode, fixture.symbols, {
-        stripped,
-      });
-      abi = {
+      assertRiscvStorage(abiName, boundaries, { stripped });
+      for (const name of abi.callers) {
+        const caller = functionDossierSchema.parse(
+          await call("analyze_function", {
+            procedure: addressFor(name),
+            detail: "complete",
+          }),
+        );
+        assertRiscvCaller(abiName, name, caller.pseudocode, fixture.symbols, {
+          stripped,
+        });
+      }
+      storage = {
+        abi: abiName,
         storage: Object.fromEntries(
           Object.entries(boundaries).map(([name, boundary]) => [
             name,
@@ -412,13 +629,15 @@ try {
       .filter((match) => match !== null);
     assert.equal(
       outcomes.length > 0,
-      soft,
-      "ilp32 prototype outcome missing from, or unexpected in, retained Evidence",
+      abi !== undefined,
+      "Prototype outcome missing from, or unexpected in, retained Evidence",
     );
     // DWARF supplies the typed build's function definitions; stripping removes them.
-    if (soft)
-      for (const match of outcomes)
+    if (abi)
+      for (const match of outcomes) {
         assert.equal(Number(match[1]) > 0, !stripped, match[0]);
+        assert.equal(match[2], abi.prototype, match[0]);
+      }
     await call("open_binary", {
       path: fixture.path,
       provider_id: "ghidra",
@@ -506,23 +725,27 @@ try {
       // Header-mutated copies test admission; they are not new compiler claims.
       for (const [flags, outcome] of stripped
         ? []
-        : soft
+        : abiName === "ilp32"
           ? [
-              [0x3, "single-float ABI (ilp32f)"],
+              [0x3, "without f, which the single-float ABI (ilp32f)"],
               [0x80000001, "(0x80000000)"],
             ]
-          : bits === 32
-            ? [
-                [0x1, "admitted"],
-                [0x80000005, "(0x80000000)"],
-              ]
-            : [
-                [0x1, "soft-float ABI (lp64)"],
-                [0x80000005, "(0x80000000)"],
-              ]) {
+          : abiName === "ilp32f"
+            ? [[0x80000003, "(0x80000000)"]]
+            : bits === 32
+              ? [
+                  [0x1, "admitted"],
+                  [0x3, "with d: ilp32f then preserves only the low 32 bits"],
+                  [0x80000005, "(0x80000000)"],
+                ]
+              : [
+                  [0x1, "soft-float ABI (lp64)"],
+                  [0x3, "single-float ABI (lp64f)"],
+                  [0x80000005, "(0x80000000)"],
+                ]) {
         const mutatedPath = join(
           workspace,
-          `rv${bits}${soft ? "-soft" : ""}-flags-${flags.toString(16)}.elf`,
+          `rv${bits}${abi ? `-${fixture.variant}` : ""}-flags-${flags.toString(16)}.elf`,
         );
         const mutatedBytes = Buffer.from(sourceBytes);
         mutatedBytes.writeUInt32LE(flags, bits === 32 ? 36 : 48);
@@ -550,7 +773,7 @@ try {
         };
         if (outcome === "admitted") {
           // The double-float image now declares ilp32: refused before, admitted
-          // now through the soft-float lane with the image's own ISA string.
+          // now through that lane with the image's own ISA string.
           assert.equal(
             requireMcpLifecycleResult(reply, "open_binary").sha256,
             createHash("sha256").update(mutatedBytes).digest("hex"),
@@ -562,17 +785,7 @@ try {
             ),
             "close_binary",
           );
-          const want = {
-            lane: "elf32-exec-le-soft-float-generic-v1",
-            callingConvention: "ilp32-prototype-v1",
-            riscvElf: {
-              ...expected.riscvElf,
-              flags,
-              float_abi_double: false,
-              float_abi: "soft",
-              arch: fixture.riscv.isa.arch,
-            },
-          };
+          const want = expectedLane(fixture, flags);
           const cli = await execOwned(
             process.execPath,
             cliArguments,
@@ -623,10 +836,10 @@ try {
       procedures: procedures.length,
       headers,
       ...(isaProbe.length === 0 ? {} : { isa_probe: isaProbe }),
-      ...(abi === undefined
+      ...(storage === undefined
         ? {}
         : {
-            abi,
+            abi: storage,
             prototype_outcome: outcomes.map((match) => match[0]),
           }),
       cli: true,
@@ -635,14 +848,541 @@ try {
       original_unchanged: true,
     });
   }
+  reports.push(await verifyUnmodelledRefusal());
+  for (const variant of ["soft", "single"])
+    reports.push(await verifyForeignLanguageRefusal(variant));
+  // ESP-IDF's flash layout: the NOBITS .flash_rodata_dummy reserves
+  // .flash.text's addresses. Ghidra 12.2's loader puts such code in an overlay
+  // that DWARF import and default-space references never reach, unless REA
+  // prepares the memory map before analysis.
+  const esp = await buildRiscvFixture(workspace, 32, {
+    variant: "esp",
+    execute: execOwned,
+  });
+  assert.equal(esp.riscv.sectionOverlap.status, "code-reservation");
+  const resolvedEsp = await parseBinaryTarget(esp.path);
+  if (!resolvedEsp.ok) throw resolvedEsp.error;
+  assert.deepEqual(resolvedEsp.value.riscv, esp.riscv);
+  const { code, reservation } = esp.riscv.sectionOverlap;
+  const plan = { policy: "nobits-reservation-overlay-v1", code, reservation };
+  // ESP-IDF's text bounds are absolute; the reservation's label is not.
+  assert.equal(esp.linkerSymbols._text_start?.section, "ABS");
+  assert.equal(esp.linkerSymbols._text_end?.section, "ABS");
+  assert.equal(esp.linkerSymbols._etext?.section, code.index);
+  assert.equal(
+    esp.linkerSymbols._flash_rodata_dummy_start?.section,
+    reservation.index,
+  );
+  /** MCP calls on an ESP layout, collecting the limitations Ghidra reports. */
+  const layoutCaller =
+    (fixture, limitations) =>
+    async (name, args = {}) => {
+      const reply = await client.callTool(
+        { name, arguments: args },
+        { timeout: 240000, signal: commandInterruption.signal },
+      );
+      const lifecycle = ["open_binary", "close_binary"].includes(name);
+      const admitted = lifecycle
+        ? requireMcpLifecycleResult(reply, name)
+        : parseEvidence(requireMcpOutput(reply, name));
+      const validate = validators.get(name);
+      assert.ok(
+        validate(JSON.parse(mcpTextValue(reply))),
+        `${name}: ${JSON.stringify(validate.errors)}`,
+      );
+      if (lifecycle) return admitted;
+      assert.equal(admitted.subject.identity.sha256, fixture.sha256);
+      if (admitted.provider.id === "ghidra") {
+        assert.deepEqual(
+          admitted.analysis_profile.parameters.elf_load_preparation,
+          {
+            policy: "nobits-reservation-overlay-v1",
+            code: fixture.riscv.sectionOverlap.code,
+            reservation: fixture.riscv.sectionOverlap.reservation,
+          },
+        );
+        for (const limitation of admitted.limitations)
+          limitations.add(limitation);
+      }
+      return admitted.normalized_result;
+    };
+  const espLimitations = new Set();
+  const espCall = layoutCaller(esp, espLimitations);
+  await espCall("open_binary", { path: esp.path, provider_id: "ghidra" });
+  const espImage = await espCall("inspect_native_load_image");
+  const blocks = (name) =>
+    espImage.observations.mappings.filter((value) => value.block === name);
+  const [text] = blocks(code.name);
+  assert.ok(text, `${code.name} missing from the load image`);
+  assert.equal(text.address_space, espImage.observations.default_address_space);
+  assert.equal(text.overlay, false);
+  assert.equal(text.executable, true);
+  assert.equal(text.start, code.address);
+  assert.equal(text.file_offset, Number(BigInt(code.offset)));
+  const [held] = blocks(reservation.name);
+  assert.ok(held, `${reservation.name} missing from the load image`);
+  assert.equal(held.overlay, true);
+  assert.equal(held.initialized, false);
+  assert.ok(
+    !espImage.observations.mappings.some(
+      (value) => value.overlay && value.executable && value.initialized,
+    ),
+    "Initialized executable code remains in an overlay",
+  );
+  // Only the moved block maps any of the code's file bytes.
+  assert.deepEqual(
+    espImage.observations.mappings
+      .filter(
+        (value) =>
+          value.file_offset !== null &&
+          value.file_offset < text.file_offset + text.length &&
+          text.file_offset < value.file_offset + value.length,
+      )
+      .map((value) => value.block),
+    [code.name],
+  );
+  // Ghidra marks every global ELF symbol as an entry point. None remains in
+  // an overlay: flash entry points move with the code, and the reservation's
+  // label marks none.
+  const entries = espImage.observations.entry_points;
+  assert.ok(
+    entries.every((value) => /^0x[\da-f]+$/u.test(value)),
+    JSON.stringify(entries),
+  );
+  for (const name of [
+    "rea_riscv_esp_main",
+    "rea_riscv_esp_restart",
+    "rea_riscv_esp_sum",
+    "rea_riscv_esp_next",
+  ])
+    assert.ok(
+      entries.includes(esp.symbols[name]),
+      `${name} lost its entry mark`,
+    );
+  assert.ok(entries.includes(esp.linkerSymbols._text_end.address));
+  const codeEnd = BigInt(code.address) + BigInt(code.size);
+  const codeEntries = entries.filter(
+    (value) => BigInt(value) >= BigInt(code.address) && BigInt(value) < codeEnd,
+  ).length;
+  const espNames = await espCall("list_names");
+  const nameAt = (name) =>
+    espNames
+      .filter((value) => value.value === name)
+      .map((value) => value.address);
+  // Pinned absolute symbols keep their default-space addresses.
+  assert.deepEqual(nameAt("_text_start"), [code.address]);
+  assert.deepEqual(nameAt("_text_end"), [esp.linkerSymbols._text_end.address]);
+  assert.equal(
+    esp.linkerSymbols._text_end.address,
+    `0x${codeEnd.toString(16)}`,
+  );
+  // A label past the code's last byte leaves the code's overlay space too.
+  assert.deepEqual(nameAt("_etext"), [esp.linkerSymbols._text_end.address]);
+  assert.deepEqual(nameAt("_flash_rodata_dummy_start"), [
+    `${reservation.name}:${reservation.address}`,
+  ]);
+  const espProcedures = await espCall("list_procedures");
+  // Every procedure, flash code included, keeps its ELF address in the default space.
+  assert.ok(
+    espProcedures.every((value) => /^0x[\da-f]+$/u.test(value.address)),
+    JSON.stringify(espProcedures.map((value) => value.address)),
+  );
+  for (const name of [
+    "rea_riscv_esp_entry",
+    "rea_riscv_esp_main",
+    "rea_riscv_esp_restart",
+    "rea_riscv_esp_sum",
+    "rea_riscv_esp_next",
+  ])
+    assert.equal(
+      espProcedures.find((value) => value.value === name)?.address,
+      esp.symbols[name],
+      `${name} missing from the Ghidra inventory at its ELF address`,
+    );
+  // The ELF address of flash code selects the procedure itself.
+  const espMain = await espCall("procedure_pseudo_code", {
+    procedure: esp.symbols.rea_riscv_esp_main,
+  });
+  assert.match(espMain, /\brea_riscv_esp_main\s*\(void\)/u);
+  assert.match(espMain, /\brea_riscv_esp_restart\(\)/u);
+  // The no-return call ends the pseudocode before rea_riscv_esp_next's store.
+  assert.doesNotMatch(espMain, /0x5a5a|23130/u);
+  // DWARF reaches flash code: the parameter names come from the image.
+  assert.match(
+    await espCall("procedure_pseudo_code", {
+      procedure: esp.symbols.rea_riscv_esp_sum,
+    }),
+    /\brea_riscv_esp_sum\s*\(int left,\s*int right\)/u,
+  );
+  const entryCallees = await espCall("procedure_callees", {
+    procedure: esp.symbols.rea_riscv_esp_entry,
+  });
+  assert.ok(
+    entryCallees.includes(esp.symbols.rea_riscv_esp_main),
+    `IRAM entry does not call the flash procedure: ${JSON.stringify(entryCallees)}`,
+  );
+  const espMapping = await espCall("address_to_file_offset", {
+    address: esp.symbols.rea_riscv_esp_main,
+  });
+  const mainOffset =
+    BigInt(code.offset) +
+    BigInt(esp.symbols.rea_riscv_esp_main) -
+    BigInt(code.address);
+  assert.equal(BigInt(espMapping.file_offset), mainOffset);
+  // One block maps each file offset, so a file-offset selector is not ambiguous.
+  assert.match(
+    await espCall("procedure_pseudo_code", {
+      procedure: `file-offset:0x${mainOffset.toString(16)}`,
+    }),
+    /\brea_riscv_esp_main\s*\(void\)/u,
+  );
+  const espSnapshotPath = join(workspace, "rv32-esp.snapshot.json");
+  const espSaved = await espCall("close_binary", {
+    snapshot_path: espSnapshotPath,
+  });
+  assert.ok(espSaved.evidence_records > 0);
+  const espSnapshot = parseAnalysisSnapshot(
+    JSON.parse(await readFile(espSnapshotPath, "utf8")),
+  );
+  assert.equal(espSnapshot.target.identity.sha256, esp.sha256);
+  assert.deepEqual(
+    espSnapshot.binding.analysis_profile.parameters.elf_load_preparation,
+    plan,
+  );
+  const space = espImage.observations.default_address_space;
+  const outcome = `RISC-V load preparation outcome: before analysis REA moved \`${code.name}\` from overlay space \`${code.name}\` into default space \`${space}\`, with the same file bytes and offsets, and kept \`${reservation.name}\` as uninitialized overlay space \`${reservation.name}\`. Functions in the moved block: 4; entry points: ${codeEntries}; labels in the overlay: 1.`;
+  // The fixture's four flash functions move; its IRAM entry stays.
+  assert.ok(espLimitations.has(outcome), [...espLimitations].join("\n"));
+  assert.ok(
+    espSnapshot.evidence_bundle.records.some((record) =>
+      parseEvidence(record).limitations.includes(outcome),
+    ),
+    "The preparation outcome is missing from retained Evidence",
+  );
+  await espCall("open_binary", {
+    path: esp.path,
+    provider_id: "ghidra",
+    snapshot_path: espSnapshotPath,
+  });
+  assert.deepEqual(await espCall("list_procedures"), espProcedures);
+  await espCall("close_binary");
+  assert.ok(
+    [...espLimitations].some((value) =>
+      value.startsWith(
+        "RISC-V ELF load layout: NOBITS section `.flash_rodata_dummy` reserves the addresses of executable section `.flash.text`",
+      ),
+    ),
+  );
+  const espCli = parseEvidence(
+    JSON.parse(
+      (
+        await execOwned(
+          process.execPath,
+          [
+            entrypoint,
+            "function",
+            esp.path,
+            "rea_riscv_esp_main",
+            "--provider",
+            "ghidra",
+            "--json",
+          ],
+          { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+        )
+      ).stdout,
+    ),
+  );
+  assert.equal(
+    espCli.normalized_result.procedure.address,
+    esp.symbols.rea_riscv_esp_main,
+  );
+  assert.doesNotMatch(espCli.normalized_result.pseudocode, /0x5a5a|23130/u);
+  assert.deepEqual(
+    espCli.analysis_profile.parameters.elf_load_preparation,
+    plan,
+  );
+  // A reservation smaller than the code is not the verified shape.
+  const shrunkPath = join(workspace, "rv32-esp-short-reservation.elf");
+  const shrunk = Buffer.from(await readFile(esp.path));
+  shrunk.writeUInt32LE(
+    Number(BigInt(code.size)) - 2,
+    shrunk.readUInt32LE(32) + reservation.index * 40 + 20,
+  );
+  await writeFile(shrunkPath, shrunk);
+  const refusal = `\`${reservation.name}\` (NOBITS, ${reservation.address}, 0x${(
+    BigInt(code.size) - 2n
+  ).toString(16)} bytes) share addresses`;
+  const refused = requireMcpToolError(
+    await client.callTool(
+      {
+        name: "open_binary",
+        arguments: { path: shrunkPath, provider_id: "ghidra" },
+      },
+      { timeout: 240000, signal: commandInterruption.signal },
+    ),
+  );
+  assert.ok(JSON.stringify(refused).includes(refusal), JSON.stringify(refused));
+  await assert.rejects(
+    execOwned(
+      process.execPath,
+      [
+        entrypoint,
+        "function",
+        shrunkPath,
+        "rea_riscv_esp_main",
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+    ),
+    (cause) =>
+      Number.isInteger(cause?.code) &&
+      cause.code !== 0 &&
+      `${cause?.snapshot?.stdout?.text ?? ""}\n${cause?.snapshot?.stderr?.text ?? ""}`.includes(
+        refusal,
+      ),
+  );
+  // The pre-analysis script refuses a code block whose file mapping is not the
+  // committed one; REA's admission would never commit this plan. Ghidra then
+  // skips auto-analysis of the program REA discards.
+  const javaRefusal = join(workspace, "java-refusal");
+  await mkdir(join(javaRefusal, "tmp"), { recursive: true });
+  const headless = await execOwned(
+    join(installation.installDir, "support", "analyzeHeadless"),
+    [
+      javaRefusal,
+      "refusal",
+      "-import",
+      esp.path,
+      "-processor",
+      "RISCV:LE:32:default",
+      "-cspec",
+      "gcc",
+      "-scriptPath",
+      fileURLToPath(new URL("../bridge/ghidra/", import.meta.url)),
+      "-preScript",
+      "ReaGhidraPrepareElfLoad.java",
+      plan.policy,
+      code.address,
+      code.size,
+      `0x${(BigInt(code.offset) + 1n).toString(16)}`,
+      reservation.address,
+      reservation.size,
+      "-deleteProject",
+    ],
+    {
+      env: { ...env, TMPDIR: join(javaRefusal, "tmp") },
+      timeout: 300000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  assert.ok(
+    `${headless.stdout}\n${headless.stderr}`.includes(
+      `REA ELF load preparation refused: Ghidra has 0 initialized executable blocks for the committed executable section ${code.address} (${code.size} bytes at file offset 0x${(BigInt(code.offset) + 1n).toString(16)})`,
+    ),
+    headless.stdout,
+  );
+  assert.ok(
+    !`${headless.stdout}\n${headless.stderr}`.includes("ANALYZING"),
+    headless.stdout,
+  );
+  assert.equal(
+    createHash("sha256")
+      .update(await readFile(esp.path))
+      .digest("hex"),
+    esp.sha256,
+  );
+
+  // A reservation named like the default space still moves into an overlay
+  // space, named as Ghidra's memory map names overlay blocks.
+  const named = await buildRiscvFixture(workspace, 32, {
+    variant: "esp-reservation-named-ram",
+    execute: execOwned,
+  });
+  assert.equal(named.riscv.sectionOverlap.status, "code-reservation");
+  assert.equal(named.riscv.sectionOverlap.reservation.name, "ram");
+  const namedProject = join(workspace, "java-named-ram");
+  await mkdir(join(namedProject, "tmp"), { recursive: true });
+  const namedRun = await execOwned(
+    join(installation.installDir, "support", "analyzeHeadless"),
+    [
+      namedProject,
+      "named",
+      "-import",
+      named.path,
+      "-processor",
+      "RISCV:LE:32:default",
+      "-cspec",
+      "gcc",
+      "-noanalysis",
+      "-scriptPath",
+      fileURLToPath(new URL("../bridge/ghidra/", import.meta.url)),
+      "-preScript",
+      "ReaGhidraPrepareElfLoad.java",
+      plan.policy,
+      named.riscv.sectionOverlap.code.address,
+      named.riscv.sectionOverlap.code.size,
+      named.riscv.sectionOverlap.code.offset,
+      named.riscv.sectionOverlap.reservation.address,
+      named.riscv.sectionOverlap.reservation.size,
+      "-deleteProject",
+    ],
+    {
+      env: { ...env, TMPDIR: join(namedProject, "tmp") },
+      timeout: 300000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  const namedReport = /REA ELF load preparation: (\{.*\})/u.exec(
+    namedRun.stdout,
+  );
+  assert.ok(namedReport !== null, namedRun.stdout);
+  const namedOutcome = JSON.parse(namedReport[1]);
+  assert.equal(namedOutcome.outcome, "moved", namedReport[1]);
+  assert.equal(namedOutcome.reservation.name, "ram");
+  assert.equal(namedOutcome.reservation.space_after, "ram.1");
+
+  // Sections named like the temporary blocks, the reservation among them, do
+  // not refuse the image, and the move still takes place.
+  const edge = await buildRiscvFixture(workspace, 32, {
+    variant: "esp-edge-names",
+    execute: execOwned,
+  });
+  assert.equal(edge.riscv.sectionOverlap.status, "code-reservation");
+  assert.equal(edge.riscv.sectionOverlap.reservation.name, ".flash.text.rea");
+  const edgeLimitations = new Set();
+  const edgeCall = layoutCaller(edge, edgeLimitations);
+  await edgeCall("open_binary", { path: edge.path, provider_id: "ghidra" });
+  const edgeImage = await edgeCall("inspect_native_load_image");
+  assert.ok(
+    edgeImage.observations.mappings.some(
+      (value) => value.block === ".flash.text.rea.1" && value.overlay === false,
+    ),
+    JSON.stringify(edgeImage.observations.mappings),
+  );
+  const [edgeText] = edgeImage.observations.mappings.filter(
+    (value) => value.block === edge.riscv.sectionOverlap.code.name,
+  );
+  assert.equal(
+    edgeText?.overlay,
+    false,
+    JSON.stringify(edgeImage.observations.mappings),
+  );
+  await edgeCall("close_binary");
+  assert.ok(
+    [...edgeLimitations].some((value) =>
+      value.startsWith(
+        "RISC-V load preparation outcome: before analysis REA moved",
+      ),
+    ),
+    [...edgeLimitations].join("\n"),
+  );
+
+  // With the reservation first, Ghidra already loads the code in the default
+  // space, and the preparation changes nothing.
+  const first = await buildRiscvFixture(workspace, 32, {
+    variant: "esp-reservation-first",
+    execute: execOwned,
+  });
+  assert.equal(first.riscv.sectionOverlap.status, "code-reservation");
+  assert.ok(
+    first.riscv.sectionOverlap.reservation.index <
+      first.riscv.sectionOverlap.code.index,
+  );
+  const firstLimitations = new Set();
+  const firstCall = layoutCaller(first, firstLimitations);
+  await firstCall("open_binary", { path: first.path, provider_id: "ghidra" });
+  const firstImage = await firstCall("inspect_native_load_image");
+  const [firstText] = firstImage.observations.mappings.filter(
+    (value) => value.block === code.name,
+  );
+  assert.equal(firstText?.overlay, false);
+  assert.equal(firstText.start, first.riscv.sectionOverlap.code.address);
+  const firstProcedures = await firstCall("list_procedures");
+  for (const name of ["rea_riscv_esp_main", "rea_riscv_esp_sum"])
+    assert.equal(
+      firstProcedures.find((value) => value.value === name)?.address,
+      first.symbols[name],
+    );
+  await firstCall("close_binary");
+  assert.ok(
+    firstLimitations.has(
+      `RISC-V load preparation outcome: Ghidra loaded \`${code.name}\` in default space \`${firstImage.observations.default_address_space}\`, so REA changed nothing.`,
+    ),
+    [...firstLimitations].join("\n"),
+  );
+  assert.ok(
+    ![...firstLimitations].some((value) => /REA (?:moves|moved)/u.test(value)),
+  );
+
+  // A double-float lane reads no ISA declaration, but REA still refuses an
+  // image whose section table it cannot read.
+  const [double32] = fixtures;
+  const double32Bytes = await readFile(double32.path);
+  const truncatedPath = join(workspace, "rv32-truncated-section-table.elf");
+  await writeFile(
+    truncatedPath,
+    double32Bytes.subarray(0, double32Bytes.readUInt32LE(32) + 2 * 40),
+  );
+  const truncated = requireMcpToolError(
+    await client.callTool(
+      {
+        name: "open_binary",
+        arguments: { path: truncatedPath, provider_id: "ghidra" },
+      },
+      { timeout: 240000, signal: commandInterruption.signal },
+    ),
+  );
+  assert.ok(
+    JSON.stringify(truncated).includes("truncated ELF section header table"),
+    JSON.stringify(truncated),
+  );
   reports.push({
-    call_sites: {
-      fixture: typedSoft.path,
-      command: callSites.command,
-      version: callSites.version,
-      calls: callSites.calls.map((value) => value.target),
+    esp_layout: {
+      path: esp.path,
+      sha256: esp.sha256,
+      riscv: esp.riscv,
+      toolchain: esp.toolchain,
+      sources: esp.sources,
+      preparation: outcome,
+      procedures: espProcedures.length,
+      entry_points: entries.length,
+      snapshot_replay: true,
+      refused_short_reservation: true,
+      refused_by_preparation_script: true,
+      refusal_skips_analysis: true,
+      reservation_named_ram: {
+        path: named.path,
+        sha256: named.sha256,
+        space_after: namedOutcome.reservation.space_after,
+      },
+      edge_names: {
+        path: edge.path,
+        sha256: edge.sha256,
+      },
+      reservation_first: {
+        path: first.path,
+        sha256: first.sha256,
+        riscv: first.riscv,
+        procedures: firstProcedures.length,
+      },
+      refused_truncated_section_table: true,
+      cli: true,
+      stdio_mcp: true,
+      original_unchanged: true,
     },
   });
+  for (const sites of callSites)
+    reports.push({
+      call_sites: {
+        abi: sites.abi,
+        fixture: sites.fixture,
+        command: sites.command,
+        version: sites.version,
+        calls: sites.calls.map((value) => `${value.caller}:${value.target}`),
+      },
+    });
 } catch (cause) {
   failure = cause;
 }

@@ -79,10 +79,8 @@ it("retains transitive provenance without treating dependencies as native observ
     nativeFunctionMatchingSchema.parse(result.value.evidence.normalized_result)
       .summary.matched,
   ).toBe(1);
-  const missing = await matchNativeFunctions(
-    { left, right },
-    undefined,
-    (id) => (id === dependency.evidence_id ? dependency : undefined),
+  const missing = await matchNativeFunctions({ left, right }, undefined, (id) =>
+    id === dependency.evidence_id ? dependency : undefined,
   );
   if (missing.ok) throw new Error("Missing ancestor accepted");
   expect(missing.error).toMatchObject({
@@ -209,7 +207,11 @@ it.each(["", "ram:"])(
         analysisProfile: profile,
         relationshipCoverage: complete
           ? { status: "complete" }
-          : { status: "unknown", reason: "Missing direct call coverage" },
+          : {
+              status: "unknown",
+              reason: "Missing direct call coverage",
+              limited_directions: ["callers", "callees"],
+            },
       });
     const left = observe("1", "list_procedures", [
       { address: `${space}0x10`, value: "old_behavior" },

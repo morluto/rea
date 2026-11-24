@@ -1,11 +1,10 @@
-import { parseEvidence } from "../../domain/evidence.js";
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { NativeInitializersService } from "./NativeInitializersService.js";
 import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProviders.js";
 import type { NativeInitializers } from "../../domain/native/nativeInitializers.js";
 import { ok } from "../../domain/result.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -179,23 +178,12 @@ it("rejects a slot offset outside the artifact", async () => {
 });
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late native initializer cancellation" };
-  const service = new NativeInitializersService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late native initializer cancellation",
+    (inspect) => new NativeInitializersService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_native_initializers",
     normalized_result: report,
   });

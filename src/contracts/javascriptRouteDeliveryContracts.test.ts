@@ -41,7 +41,8 @@ describe.each(cases)("%s delivery contract", (name, base) => {
         [{}, true],
         [{ detail: "complete" }, true],
         [{ detail: "summary", view }, true],
-        [{ detail: "summary" }, name === "analyze_javascript_application"],
+        // Without a view, both deliver the summary of the retained analysis.
+        [{ detail: "summary" }, true],
         [{ view }, false],
         [{ detail: "complete", view }, false],
         [{ detail: "summary", view: { ...view, kind: "other" } }, false],
