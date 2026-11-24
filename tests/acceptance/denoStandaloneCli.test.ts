@@ -131,7 +131,7 @@ cliTest(
     expect(malformed.json).toMatchObject({
       code: "unsupported_target",
       category: "unsupported_target",
-      details: { reason: "malformed" },
+      details: { path, failure_kind: "malformed" },
     });
   },
 );

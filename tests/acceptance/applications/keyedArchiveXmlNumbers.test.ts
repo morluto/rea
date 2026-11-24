@@ -162,8 +162,8 @@ cliTest(
       expect(output.json).toMatchObject({
         code: "unsupported_target",
         details: {
-          reason: "malformed",
-          detail: expect.stringContaining(reason),
+          failure_kind: "malformed",
+          reason: expect.stringContaining(reason),
         },
       });
       expect((await call("open_binary", { path })).isError).not.toBe(true);
@@ -175,8 +175,8 @@ cliTest(
         error: {
           code: "unsupported_target",
           details: {
-            reason: "malformed",
-            detail: expect.stringContaining(reason),
+            failure_kind: "malformed",
+            reason: expect.stringContaining(reason),
           },
         },
       });

@@ -12,7 +12,7 @@ import {
   ArtifactResourceScope,
   DirectoryArtifactReader,
   DirectoryArtifactEntryAccessDenied,
-  translateArtifactFailure,
+  translateArtifactOperationFailure,
   artifactParseFailure,
   malformedArtifact,
 } from "../../resources/index.js";
@@ -226,7 +226,7 @@ export const inspectBundleKeyedArchive = (input: BundleKeyedArchiveInput) => {
     });
     if (released.kind === "failed") {
       if (outcome.kind === "failed" && outcome.cause instanceof AnalysisError) {
-        const cleanup = translateArtifactFailure(
+        const cleanup = translateArtifactOperationFailure(
           "inspect_keyed_archive",
           resources.cleanupFailure({ kind: "completed" }, [released]),
         );

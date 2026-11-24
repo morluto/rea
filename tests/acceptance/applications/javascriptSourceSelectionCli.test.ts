@@ -389,7 +389,7 @@ cliTest(
     expect(response.exitCode).toBe(1);
     expect(response.json).toMatchObject({
       code: "unsupported_target",
-      details: { reason: "unsupported" },
+      details: { path: archive, failure_kind: "unsupported" },
     });
   },
 );

@@ -12,6 +12,8 @@ import {
   type ArtifactResourceScope,
   completedStableArtifact,
   readStableArtifact,
+  artifactOperationReason,
+  artifactReaderTargetFailure,
 } from "../../resources/index.js";
 import {
   AnalysisError,
@@ -190,13 +192,22 @@ const webArtifactPrimaryError = (
     ? selectedFileError({ cause, origin }, context)
     : undefined;
   if (selection !== undefined) return selection;
+  const target =
+    origin === "owned-or-classified"
+      ? artifactReaderTargetFailure(
+          context.operation,
+          context.targetPath,
+          cause,
+        )
+      : undefined;
+  if (target !== undefined) return target;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
   )
     return new ArtifactOperationError(
       context.operation,
-      cause.reason,
+      artifactOperationReason(cause),
       cause.details,
       cause.reason === "limit" && context.limitRecovery !== undefined
         ? `${cause.message} ${context.limitRecovery}`
@@ -231,20 +242,12 @@ const webArtifactPrimaryError = (
       ? cause.failure
       : undefined;
   if (malformed !== undefined)
-    return context.callerSelected
-      ? new AnalysisTargetFailureError(
-          context.operation,
-          context.targetPath,
-          malformed,
-          { cause },
-        )
-      : new ArtifactOperationError(
-          context.operation,
-          "malformed",
-          undefined,
-          `${context.targetPath}: ${malformed.detail}`,
-          { cause, parseFailure: malformed },
-        );
+    return new AnalysisTargetFailureError(
+      context.operation,
+      context.targetPath,
+      malformed,
+      { cause },
+    );
   const invalid = cause instanceof z.ZodError ? cause : undefined;
   if (invalid !== undefined)
     return new AnalysisInputError(context.operation, { cause }, [

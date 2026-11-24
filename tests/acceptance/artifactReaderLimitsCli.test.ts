@@ -142,7 +142,7 @@ test("rejects malformed directory dimensions before suggesting a budget increase
     code: "unsupported_target",
     retryable: false,
     details: {
-      reason: "truncated",
+      path,
       failure_kind: "truncated",
     },
   });

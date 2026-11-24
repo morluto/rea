@@ -141,7 +141,13 @@ it("retains malformed successful hdiutil inventory output as a typed producer pa
   if (!(failure instanceof Error))
     throw new Error("Expected inventory failure");
   expect(
-    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+    projectAnalysisError(
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        failure,
+      ),
+    ),
   ).toMatchObject({
     details: { reason: "io", detail: failure.message },
   });

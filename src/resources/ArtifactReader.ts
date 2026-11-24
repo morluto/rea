@@ -27,7 +27,7 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { LimitRef } from "../domain/parseFailure.js";
-import type { MalformedTargetFailure } from "../domain/targetFailure.js";
+import type { FormatTargetFailure } from "../domain/targetFailure.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
@@ -50,10 +50,10 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** For an `integrity` failure, the check that failed, when the reader names it. */
   readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
   /**
-   * For a `malformed` or `truncated` failure, the format owner's parsed facts.
-   * Set by {@link artifactParseFailure} from the owner's `ParseFailureError`.
+   * For a `malformed`, `truncated` or `unsupported` failure, the format
+   * owner's facts. Set by {@link artifactFormatFailure}.
    */
-  readonly parseFailure?: MalformedTargetFailure | undefined;
+  readonly parseFailure?: FormatTargetFailure | undefined;
 }
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
@@ -283,7 +283,9 @@ export type CleanupFailedRead = ArtifactReaderFailure & {
 };
 
 /** Why an artifact reader failed. */
-export type ArtifactReaderFailureReason = ArtifactOperationError["reason"];
+export type ArtifactReaderFailureReason =
+  | ArtifactOperationError["reason"]
+  | FormatTargetFailure["kind"];
 
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
@@ -300,7 +302,7 @@ export class ArtifactReaderFailure extends Error {
   readonly parserLimit: LimitRef | undefined;
   readonly fixedAllowance: ArtifactFixedLimit | undefined;
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
-  readonly parseFailure: MalformedTargetFailure | undefined;
+  readonly parseFailure: FormatTargetFailure | undefined;
 
   /** An `integrity` failure names the check that failed. */
   constructor(
@@ -354,7 +356,9 @@ export class ArtifactReaderFailure extends Error {
     this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
     this.parseFailure =
-      reason === "malformed" || reason === "truncated"
+      reason === "malformed" ||
+      reason === "truncated" ||
+      reason === "unsupported"
         ? options?.parseFailure
         : undefined;
   }
@@ -519,7 +523,7 @@ export interface ArtifactTruncationSite extends ArtifactFormatSite {
  * reinterpret the message.
  */
 export const artifactFormatFailure = (
-  failure: MalformedTargetFailure,
+  failure: FormatTargetFailure,
   options: Omit<ArtifactReaderFailureOptions, "parseFailure"> = {},
 ): ArtifactReaderFailure =>
   new ArtifactReaderFailure(failure.kind, failure.detail, {
@@ -540,6 +544,31 @@ export const malformedArtifact = (
 ): ArtifactReaderFailure =>
   artifactFormatFailure(
     { kind: "malformed", format, detail, ...located(offset, field) },
+    options,
+  );
+
+/**
+ * The bytes use a form outside what this reader of `format` decodes.
+ * `undecodedContent` says the input holds the content in that form.
+ */
+export const unsupportedArtifact = (
+  format: string,
+  detail: string,
+  {
+    offset,
+    field,
+    undecodedContent = false,
+    ...options
+  }: ArtifactFormatSite & { readonly undecodedContent?: boolean } = {},
+): ArtifactReaderFailure =>
+  artifactFormatFailure(
+    {
+      kind: "unsupported",
+      format,
+      detail,
+      undecodedContent,
+      ...located(offset, field),
+    },
     options,
   );
 

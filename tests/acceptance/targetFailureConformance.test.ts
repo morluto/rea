@@ -19,7 +19,7 @@ const fileIdentity = (path: string, bytes: Buffer) => ({
 // One generated suite for every registered reader: each case runs through
 // the CLI and the MCP adapter, and both must report the kind's contract and
 // the owner's facts.
-for (const { operation, cases } of await loadTargetFailureReaders()) {
+for (const { operation, session, cases } of await loadTargetFailureReaders()) {
   const command = operation.replaceAll("_", "-");
   for (const testCase of cases) {
     cliTest(
@@ -52,7 +52,14 @@ for (const { operation, cases } of await loadTargetFailureReaders()) {
         expect(result.json).not.toHaveProperty("details.format_failure");
 
         const call = await cli.sharedMcpCall!();
-        const response = await call(operation, { path, ...testCase.mcp });
+        if (session === true) {
+          const opened = await call("open_binary", { path });
+          expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+        }
+        const response = await call(operation, {
+          ...(session === true ? {} : { path }),
+          ...testCase.mcp,
+        });
         // A target failure is a tool result with structured content, never a
         // JSON-RPC error or a thrown handler failure flattened to text.
         expect(response.isError).toBe(true);

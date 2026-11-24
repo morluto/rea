@@ -21,7 +21,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisTargetFailureError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -80,15 +79,11 @@ export const projectOwnedArtifactInputFailure = (
     !(cause instanceof ArtifactReaderFailure)
   )
     return undefined;
-  if (cause.reason === "unsupported")
-    return new AnalysisUnsupportedTargetError(operation, path, cause.message, {
-      cause,
-    });
-  // A parser's malformed or truncated bytes keep the format owner's parsed
-  // facts and are a target refusal; the request that selected the file is not
-  // at fault. The reader records those facts only for its own malformed or
-  // truncated reason, so a cancelled read whose opaque abort reason happens to
-  // be a parser failure stays a cancellation.
+  // A format owner's malformed, truncated or unsupported bytes keep its facts
+  // and are a target refusal; the request that selected the file is not at
+  // fault. The reader records those facts only for its own target reason, so
+  // a cancelled read whose opaque abort reason happens to be a parser failure
+  // stays a cancellation.
   if (cause.parseFailure !== undefined)
     return new AnalysisTargetFailureError(operation, path, cause.parseFailure, {
       cause,

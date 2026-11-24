@@ -531,7 +531,11 @@ it.each(["ENOENT", "ENOTDIR"] as const)(
           });
           expect(
             projectAnalysisError(
-              translateArtifactFailure("extract_artifact", cause),
+              translateArtifactFailure(
+                "extract_artifact",
+                "/selected/artifact",
+                cause,
+              ),
             ),
           ).toMatchObject({
             category: "integrity_mismatch",

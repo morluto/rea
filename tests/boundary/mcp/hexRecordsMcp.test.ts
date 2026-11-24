@@ -87,7 +87,8 @@ it("retains and extracts a high-address S28 region and projects a reserved-recor
       code: "unsupported_target",
       details: {
         operation: "inspect_artifact",
-        reason: "malformed",
+        path: invalidPath,
+        reason: expect.stringContaining("line 2: reserved record type S4"),
         failure_kind: "malformed",
       },
     });

@@ -169,8 +169,10 @@ it.each(["compact"] as const)(
         code: "unsupported_target",
         details: {
           operation: "inspect_artifact",
-          reason: "malformed",
-          detail: expect.stringContaining("magic"),
+          path,
+          failure_kind: "malformed",
+          format: "node-sea",
+          reason: expect.stringContaining("magic"),
         },
       });
       expect((await call("close_binary", {})).isError).not.toBe(true);
