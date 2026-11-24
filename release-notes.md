@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **rizin:** record which tool and version answered execute_rizin_command ([#7487](https://github.com/morluto/rea/issues/7487))
 * **ghidra:** RISC-V images with this layout, such as ESP-IDF ESP32-C6, H2 and H21 builds, report flash code at its ELF address (0x42...) instead of .flash.text:0x42..., and their analysis profiles change. RISC-V images with any other section overlap that involves executable code are now refused with the overlapping sections named. These include ESP-IDF v5.5.2 ESP32-C5 and C61 builds, whose second reservation, .ext_ram.dummy, also covers .flash.text. See docs/ghidra-riscv.md.
 * **delivery:** for these seven tools, an omitted detail on a result above 32 KiB now returns the retained summary instead of complete Evidence. Pass detail: "complete" to keep the previous shape.
 * **deps:** MCP callers that need every volume, file and section inline must pass detail: "complete" to inspect_uefi_firmware.
@@ -61,6 +62,7 @@
 * **javascript:** inventory Expo Router require.context route keys ([#10624](https://github.com/morluto/rea/issues/10624)) ([7b6e816](https://github.com/morluto/rea/commit/7b6e816b0b61d24d1a3b79106481f29db676ea65))
 * **native:** report the stored RVA of PE exports ([bf8448c](https://github.com/morluto/rea/commit/bf8448cdfc90c4c077f03b877cf09ea150509092))
 * **native:** retain Apple bundle executable provenance ([b8995f8](https://github.com/morluto/rea/commit/b8995f81489dda3e7f8be61317f366b7fabd97c7))
+* **rizin:** record which tool and version answered execute_rizin_command ([#7487](https://github.com/morluto/rea/issues/7487)) ([721b25e](https://github.com/morluto/rea/commit/721b25e20db85b19b3a5cb24ea5f65177b6d917b))
 * **setup:** discover project-scoped MCP registrations in doctor and … ([#7283](https://github.com/morluto/rea/issues/7283)) ([63c50ec](https://github.com/morluto/rea/commit/63c50ecfc0a849d3298c44b1ce06e2e759f1303c))
 * **tools:** add optional limit and offset paging to find_xrefs_to_name ([#13858](https://github.com/morluto/rea/issues/13858)) ([1d4fadc](https://github.com/morluto/rea/commit/1d4fadceb2720b2db9a2a0674e95385117238d81))
 * **tools:** add optional max_depth and max_nodes bounds to get_call_graph and trace_call_path ([#13828](https://github.com/morluto/rea/issues/13828)) ([d0560b1](https://github.com/morluto/rea/commit/d0560b1b88c3257b802b80ef4c36719c9734b996))
