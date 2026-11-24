@@ -250,6 +250,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
       this.#coverageStatus = "complete";
       this.#limitations = [...parsed.value.limitations];
     } else {
+      if (parsed.error.kind === "limit") throw parseFailure(parsed.error);
       this.#payload = payload.value;
       this.#coverageStatus = "unknown";
       this.#limitations = [

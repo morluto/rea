@@ -1041,15 +1041,15 @@ const readVendorRamdiskTable = (
   const used = new Set<string>();
   const empty: number[] = [];
   let longer = false;
+  let firstOverrunIndex: number | null = null;
   for (let index = 0; index < input.entryCount; index += 1) {
     const base = index * input.entrySize;
     const size = u32(table, base);
     const offset = u32(table, base + 4);
     const ramdiskType = u32(table, base + 8);
-    if (offset > input.sectionSize || size > input.sectionSize - offset)
-      formatError(
-        `vendor ramdisk table entry ${index} overruns the vendor ramdisk section`,
-      );
+    if (offset > input.sectionSize || size > input.sectionSize - offset) {
+      if (firstOverrunIndex === null) firstOverrunIndex = index;
+    }
     // An empty fragment carries no bytes to expose, like other zero-sized
     // components; omit it rather than rejecting the image.
     if (size === 0) {
@@ -1103,6 +1103,10 @@ const readVendorRamdiskTable = (
         { field: "vendor_ramdisk_table_overlap" },
       );
   }
+  if (firstOverrunIndex !== null)
+    formatError(
+      `vendor ramdisk table entry ${firstOverrunIndex} overruns the vendor ramdisk section`,
+    );
   const limitations: string[] = [];
   if (longer)
     limitations.push(
@@ -1210,27 +1214,27 @@ const readAvbFooter = (input: {
         : `${trailing} trailing bytes follow the boot image and were not decoded as an AVB footer.`,
     ]);
   }
-  const originalImageSize = u64be(tail, 12, "AVB original image size");
   const vbmetaOffset = u64be(tail, 20, "AVB vbmeta offset");
   const vbmetaSize = u64be(tail, 28, "AVB vbmeta size");
-  if (originalImageSize < input.dataEnd)
-    formatError(
-      `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
-    );
-  if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
-    avbOverlapError(
-      `AVB original image size ${originalImageSize} overlaps the footer`,
-    );
   rejectVbmetaOverlap(
     { offset: vbmetaOffset, size: vbmetaSize },
     input.fileSize,
     input.headerOccupied,
     input.components,
   );
+  const originalImageSize = u64be(tail, 12, "AVB original image size");
+  if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
+    avbOverlapError(
+      `AVB original image size ${originalImageSize} overlaps the footer`,
+    );
   // vbmeta is appended after the original image, including any padding
   // within that image. Existing component checks name specific collisions.
   if (vbmetaSize > 0 && vbmetaOffset < originalImageSize)
     avbOverlapError("AVB vbmeta overlaps the original boot image");
+  if (originalImageSize < input.dataEnd)
+    formatError(
+      `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
+    );
   return {
     present: true,
     footerSize: AVB_FOOTER_SIZE,

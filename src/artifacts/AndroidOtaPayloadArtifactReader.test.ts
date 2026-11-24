@@ -223,3 +223,35 @@ it("retains payload header and partitions when optional trailing payloadSignatur
     snapshot.occurrences.find((row) => row.logical_path === "boot.img"),
   ).toMatchObject({ hash_status: "verified" });
 });
+
+it("refuses trailing payloadSignature blobs that exceed the fixed signature count limit", async () => {
+  const writer = new BinaryWriter();
+  for (let index = 0; index < 65; index += 1)
+    writer.tag(1, WireType.LengthDelimited).bytes(new Uint8Array([index]));
+  const path = await writeCarrier(
+    "too-many-trailing-sigs.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+      payloadSignature: Buffer.from(writer.finish()),
+    }),
+  );
+  const reader = new AndroidOtaPayloadArtifactReader(path);
+  try {
+    await expect(async () => {
+      for await (const _entry of reader.entries()) {
+        // Expect refusal during preparation before yielding entries.
+      }
+    }).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      message: expect.stringContaining("signature count"),
+    });
+  } finally {
+    await reader.close();
+  }
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /signature count exceeds the fixed 64-signature ceiling/u,
+  );
+});

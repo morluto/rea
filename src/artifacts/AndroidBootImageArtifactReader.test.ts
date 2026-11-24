@@ -465,3 +465,44 @@ it("retains header metadata and other components when vendor ramdisk table parsi
   expect(stored.get("dtb")?.equals(dtb)).toBe(true);
   expect(stored.get("bootconfig")?.equals(bootconfig)).toBe(true);
 });
+
+it("refuses an AVB footer whose vbmeta overlaps the boot header even when original_image_size is also invalid", async () => {
+  const image = buildBootImage({
+    version: 0,
+    kernel: Buffer.from("kernel-bytes"),
+    ramdisk: Buffer.alloc(0),
+  });
+  const badFooter = Buffer.alloc(64);
+  badFooter.write("AVBf", 0, "ascii");
+  badFooter.writeUInt32BE(1, 4);
+  // Both faults present: original_image_size < dataEnd AND vbmeta overlaps header at offset 0.
+  badFooter.writeBigUInt64BE(16n, 12);
+  badFooter.writeBigUInt64BE(0n, 20);
+  badFooter.writeBigUInt64BE(16n, 28);
+  const path = await writeCarrier(
+    "bad-avb-footer-overlap.img",
+    Buffer.concat([image, badFooter]),
+  );
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /AVB vbmeta overlaps the boot image header/u,
+  );
+});
+
+it("refuses a vendor ramdisk table with overlapping entries even when an entry also overruns the section", async () => {
+  const vendor = buildVendorBootImage({
+    version: 4,
+    ramdisks: [
+      { name: "one", type: 1, bytes: Buffer.from("aaa") },
+      { name: "two", type: 1, bytes: Buffer.from("bbbbb") },
+    ],
+  });
+  const corrupted = Buffer.from(vendor);
+  const entrySize = corrupted.readUInt32LE(2120);
+  // Entry 0 overruns vendorRamdiskSize AND entry 1 overlaps entry 0 at offset 0.
+  corrupted.writeUInt32LE(0x10_0000, 8192);
+  corrupted.writeUInt32LE(0, 8192 + entrySize + 4);
+  const path = await writeCarrier("vendor-overrun-and-overlap.img", corrupted);
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /overlaps entry/u,
+  );
+});
