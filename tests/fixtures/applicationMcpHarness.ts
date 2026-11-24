@@ -13,6 +13,7 @@ import {
   type McpClientIdentity,
   type TestMcp,
 } from "../support/mcp/mcpFixture.js";
+import type { TestDelivery } from "../support/completeEvidenceByDefault.js";
 
 /** Owned MCP SDK session shared by application workflow scenarios. */
 export interface ApplicationMcpHarness {
@@ -29,6 +30,8 @@ export async function createApplicationMcpHarness(
     readonly clientIdentity?: McpClientIdentity;
     readonly schemaValidator?: Parameters<TestMcp["connect"]>[2];
     readonly registerCleanup?: (close: ApplicationMcpHarness["close"]) => void;
+    /** "budgeted" leaves an omitted detail to the agent result budget. */
+    readonly testDelivery?: TestDelivery;
   } = {},
 ): Promise<ApplicationMcpHarness> {
   const session =
@@ -78,6 +81,7 @@ export async function createApplicationMcpHarness(
         version: "1",
       },
       options.schemaValidator,
+      options.testDelivery,
     );
     return { client, session, close };
   } catch (cause) {

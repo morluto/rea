@@ -14,10 +14,11 @@ export const AGENT_RESULT_BUDGET_SETTING =
 
 /**
  * Documented estimate for JSON tool results, used only to label budgets and
- * sizes in tokens. Real tokenizers vary with content; digests and
- * identifiers tokenize denser than prose.
+ * sizes in tokens. Real tokenizers vary with content; digests, addresses and
+ * identifiers tokenize denser than prose. Three bytes per token follows the
+ * Claude Code observation behind the default budget.
  */
-export const ESTIMATED_JSON_BYTES_PER_TOKEN = 4;
+export const ESTIMATED_JSON_BYTES_PER_TOKEN = 3;
 
 /** Launch seed for the agent result budget, for one-shot CLI callers too. */
 export const AGENT_RESULT_BUDGET_ENVIRONMENT = "REA_AGENT_RESULT_BUDGET_BYTES";
@@ -66,16 +67,33 @@ export const estimatedJsonTokens = (bytes: number): number =>
   Math.ceil(bytes / ESTIMATED_JSON_BYTES_PER_TOKEN);
 
 /**
- * Exact UTF-8 JSON bytes of a complete result when it exceeds the budget, or
- * undefined when it fits. A fitting result stops measuring at the budget.
+ * The one decision for an omitted `detail`: the exact UTF-8 JSON bytes of
+ * complete Evidence when it is to be delivered as its retained summary, or
+ * undefined to deliver it complete. An explicit `detail` decides for itself.
+ * Evidence is summarized only when it exceeds the budget, the caller can
+ * reach the retained record, and the caller can page the summary; an
+ * invalid launch seed (no budget) leaves delivery unbudgeted. A fitting
+ * result stops measuring at the budget.
  */
-export const agentBudgetOverflowBytes = (
-  value: JsonValue,
-  budget: AgentResultBudget,
-): number | undefined =>
-  jsonValueByteLength(value, budget.bytes) <= budget.bytes
+export const budgetedSummaryBytes = (input: {
+  readonly detail: unknown;
+  readonly evidence: JsonValue;
+  readonly budget: AgentResultBudget | undefined;
+  readonly retained: boolean;
+  readonly pageable: boolean;
+}): number | undefined => {
+  const { budget, evidence } = input;
+  if (
+    input.detail !== undefined ||
+    budget === undefined ||
+    !input.retained ||
+    !input.pageable
+  )
+    return undefined;
+  return jsonValueByteLength(evidence, budget.bytes) <= budget.bytes
     ? undefined
-    : jsonValueByteLength(value);
+    : jsonValueByteLength(evidence);
+};
 
 /** Where the complete Evidence that a summary replaced can be read. */
 export type AgentBudgetRecovery =

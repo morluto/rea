@@ -17,21 +17,20 @@ import {
   artifactInventorySummaryViewResultSchema,
 } from "../../../src/domain/analysisView/analysisViewResult.js";
 
-const expectBlobAdmissionFailure = (
+const expectOuterPeWithSeaLimitation = (
   reply: Parameters<typeof parseMcpToolError>[0],
+  pattern: RegExp,
 ) => {
-  expect(parseMcpToolError(reply).error).toMatchObject({
-    code: "truncated",
-    retryable: true,
-    details: {
-      reader_limit: {
-        parameter: "artifact_limits.node_sea.blob_bytes",
-        effective_value: 1,
-        unit: "bytes",
-        can_increase: true,
-      },
-    },
-  });
+  expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+  const evidence = parseEvidence(reply.structuredContent);
+  const summary = artifactInventorySummaryViewResultSchema.parse(
+    evidence.normalized_result,
+  );
+  expect(summary.summary.manifest.root_format).toBe("pe");
+  expect(evidence.limitations).toContainEqual(
+    expect.stringMatching(/Node SEA recognition remains unknown/iu),
+  );
+  expect(evidence.limitations).toContainEqual(expect.stringMatching(pattern));
 };
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
@@ -62,11 +61,11 @@ it.each(["compact"] as const)(
       const opened = await call("open_binary", { path });
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
       const lowerPolicy = { node_sea: { blob_bytes: 1 } };
-      const refused = await call("inspect_artifact", {
+      const limited = await call("inspect_artifact", {
         detail: "summary",
         artifact_limits: lowerPolicy,
       });
-      expectBlobAdmissionFailure(refused);
+      expectOuterPeWithSeaLimitation(limited, /blob_bytes|1 bytes/iu);
       const assetRefusal = await call("inspect_artifact", {
         detail: "summary",
         artifact_limits: { node_sea: { asset_count: 1 } },
@@ -151,7 +150,10 @@ it.each(["compact"] as const)(
         detail: "summary",
         artifact_limits: lowerPolicy,
       });
-      expectBlobAdmissionFailure(loweredAfterRetention);
+      expectOuterPeWithSeaLimitation(
+        loweredAfterRetention,
+        /blob_bytes|1 bytes/iu,
+      );
       const extracted = await call("extract_artifact", {});
       expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
       const result = artifactExtractionResultSchema.parse(
@@ -164,15 +166,8 @@ it.each(["compact"] as const)(
       expect((await call("close_binary", {})).isError).not.toBe(true);
       await writeFile(path, nodeSeaPe({ blob: Buffer.alloc(16) }));
       expect((await call("open_binary", { path })).isError).not.toBe(true);
-      const invalid = await call("inspect_artifact", {});
-      expect(parseMcpToolError(invalid).error).toMatchObject({
-        code: "artifact_operation_failed",
-        details: {
-          operation: "inspect_artifact",
-          reason: "format",
-          detail: expect.stringContaining("magic"),
-        },
-      });
+      const invalid = await call("inspect_artifact", { detail: "summary" });
+      expectOuterPeWithSeaLimitation(invalid, /magic/iu);
       expect((await call("close_binary", {})).isError).not.toBe(true);
     } finally {
       if (outputRoot !== undefined)

@@ -101,6 +101,26 @@ accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
 index of `binary_path`; its refusal reports the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 
+### Static reader read allowance
+
+`inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
+`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_binary_hardening` and
+`inspect_native_exports` bound the bytes they read, not the file size.
+`max_file_bytes` (CLI `--max-file-bytes`) counts each positional read of
+headers, directory tables and the ranges they reference. Defaults are 64 MiB
+(256 MiB for exports), with a floor of 64 bytes and a maximum of 512 MiB. The
+one streaming pass that hashes the file for its identity is not counted.
+
+An exhausted allowance is a `capacity` refusal. `details.limit` has
+`control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
+value, the bounds, the default and `applies_at: "next_call"`, and
+`details.reported_limits.required_read_bytes` holds the reads needed so far.
+Raise `max_file_bytes` and retry; `update_analysis_settings` does not change it.
+The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
+PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
+exports. A file above it is a `file-size` refusal naming that fixed allowance,
+which `max_file_bytes` does not raise.
+
 ### Producer limits
 
 Operations with an owned producer accept an optional
@@ -129,11 +149,12 @@ rejected.
 | `inspect_binary_layout`, `inspect_recorded_crash` (pwntools) | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
 | `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
 | `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+| `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
 
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
 Packet and signal results report the effective values as `limits`, where an
-inherited OS ceiling can appear as `0`. When pwntools or Rust work exhausts a
+inherited OS ceiling can appear as `0`. When pwntools, Rust or pcap work exhausts a
 budget, `details.limit` carries `control_kind: "parameter"`,
 `parameter: "producer_limits.<field>"`, `minimum: 1` and
 `applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
@@ -278,13 +299,20 @@ same effective setting so readiness changes along with repair and reset.
 ## Agent result budget
 
 `delivery.agent_result_budget_bytes` is a delivery budget, not an admission
-limit. It defaults to 49,152 compact JSON bytes, about 12,000 tokens at the
-documented estimate of 4 bytes per token (an estimate, not a tokenizer
-measurement). It applies to tools with a `detail` selector when the caller
-omits `detail`, on MCP and the CLI. Its launch seed,
-`REA_AGENT_RESULT_BUDGET_BYTES`, also sets it for one-shot CLI invocations;
-an invalid seed leaves delivery unbudgeted (complete, as before) rather than
-falling back to the default, and settings inspection reports it. The stdio frame limit,
+limit. It defaults to 32,768 compact JSON bytes. Claude Code moves MCP
+results above 25,000 tokens out of context, and dense JSON (addresses,
+digests, identifiers) measured about 2.9 bytes per token there, so the
+default is about 11,000 tokens: under half the cap, with room for the
+delivery facts. Token figures in delivery facts use an estimate of 3 bytes
+per token, not a tokenizer measurement. The budget applies to tools with a
+`detail` selector when the caller omits `detail`, on MCP and the CLI; it is
+the only size that chooses between complete and summary delivery. An MCP
+session summarizes only when it retains Evidence and advertises
+`inspect_analysis_view`, which pages the summary; otherwise it delivers the
+complete Evidence. Its launch seed, `REA_AGENT_RESULT_BUDGET_BYTES`, also
+sets it for one-shot CLI invocations; an invalid seed leaves delivery
+unbudgeted (complete, as before) rather than falling back to the default,
+and settings inspection reports it. The stdio frame limit,
 `REA_MCP_MAX_RESPONSE_BYTES`, stays a separate transport safety net.
 
 When complete Evidence fits, it is delivered inline as before. When it does
@@ -302,8 +330,8 @@ not, the work is never refused or truncated:
   `{kind: "evidence-json", offset, limit}` pages the exact JSON text of the
   retained record in UTF-16 code units. Joining every page in offset order
   reproduces it exactly, and no page splits a surrogate pair. With `limit`
-  omitted a page holds at most 32,768 bytes of escaped UTF-8 text, inside the
-  default budget for any characters; an explicit `limit` counts code units,
+  omitted a page holds at most 24,576 bytes of escaped UTF-8 text, so with
+  its view Evidence it fits the default budget for any characters; an explicit `limit` counts code units,
   up to 1,048,576. The producer's own views (`managed-members`, `inventory`
   and so on) select facts more cheaply.
 - The CLI with `--evidence_output` prints

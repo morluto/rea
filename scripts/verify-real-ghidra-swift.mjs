@@ -65,10 +65,6 @@ const rootFixture = await VerifierFixture.open({
   private: false,
 });
 const root = rootFixture.path;
-const retainWorkspace = (message, options) => {
-  rootFixture.retain(message);
-  return new Error(message, options);
-};
 const client = completeEvidenceClient(
   new Client({ name: "ghidra-swift-verifier", version: "1" }),
 );
@@ -245,7 +241,7 @@ await withVerifierFixture(rootFixture, async () => {
     cleanupFailure = cause;
   }
   if (cleanupFailure !== undefined || primaryFailure !== undefined)
-    throw retainWorkspace(
+    throw rootFixture.retainedError(
       `Swift verification failed; retained diagnostic workspace: ${root}`,
       {
         cause:
@@ -261,7 +257,7 @@ await withVerifierFixture(rootFixture, async () => {
     );
   const interrupted = commandInterruption.reason();
   if (interrupted !== undefined)
-    throw retainWorkspace(
+    throw rootFixture.retainedError(
       `Swift verification interrupted; retained diagnostic workspace: ${root}`,
       { cause: interrupted },
     );

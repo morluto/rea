@@ -1,17 +1,22 @@
 import { z } from "zod";
 import type { Evidence } from "../evidence.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
+import { DEFAULT_AGENT_RESULT_BUDGET_BYTES } from "../analysisResourceLimits.js";
 import { err, ok } from "../result.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+
+/** Room for the view Evidence around a page: identity, source and coverage. */
+const EVIDENCE_JSON_PAGE_ENVELOPE_BYTES = 8_192;
 
 /**
  * Default page size when `limit` is omitted, in UTF-8 bytes of the page as an
  * escaped JSON string. With the view Evidence around it the page stays inside
  * the default agent result budget whatever characters it holds.
  */
-export const DEFAULT_EVIDENCE_JSON_PAGE_BYTES = 32_768;
+export const DEFAULT_EVIDENCE_JSON_PAGE_BYTES =
+  DEFAULT_AGENT_RESULT_BUDGET_BYTES - EVIDENCE_JSON_PAGE_ENVELOPE_BYTES;
 
 /**
  * Largest page. Escaping one code unit as `\uXXXX` takes six bytes, so a full
@@ -36,7 +41,7 @@ export const evidenceJsonViewRequestSchema = z.strictObject({
     .max(MAXIMUM_EVIDENCE_JSON_PAGE_CODE_UNITS)
     .optional()
     .describe(
-      "UTF-16 code units in this page. Omit for a page of at most 32768 escaped UTF-8 bytes. A surrogate pair is never split: a page that would end inside one ends before it, or after it when the pair alone exceeds the limit.",
+      `UTF-16 code units in this page. Omit for a page of at most ${String(DEFAULT_EVIDENCE_JSON_PAGE_BYTES)} escaped UTF-8 bytes. A surrogate pair is never split: a page that would end inside one ends before it, or after it when the pair alone exceeds the limit.`,
     ),
 });
 

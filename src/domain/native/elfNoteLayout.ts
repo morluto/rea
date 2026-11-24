@@ -16,9 +16,8 @@ export const elfNoteSectionStorage = (section: {
       : "uncompressed";
 
 /** ELF note padding follows binutils: only a declared alignment of 8 uses 8. */
-export const elfNoteAlignment = (
-  declared: number | bigint,
-): ElfNoteAlignment => (declared === 8 || declared === 8n ? 8 : 4);
+export const elfNoteAlignment = (declared: number | bigint): ElfNoteAlignment =>
+  declared === 8 || declared === 8n ? 8 : 4;
 
 const LE_NOTE_READERS = new WeakMap<Uint8Array, BinaryReader>();
 const BE_NOTE_READERS = new WeakMap<Uint8Array, BinaryReader>();

@@ -38,6 +38,7 @@ import {
   withDescriptorCloseFailure,
 } from "../../fixtures/descriptorCloseFailure.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 
 vi.mock(import("node:zlib"), { spy: true });
@@ -83,26 +84,11 @@ describe("ELF debug-link stable filesystem boundary", () => {
     await symlink(path, alias);
     const service = createElfDebugLinkService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_elf_debug_link",
-          issues: [
-            {
-              path: ["path"],
-              reason,
-              message: expect.any(String),
-            },
-          ],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_elf_debug_link", {
+        root,
+        alias,
+        path,
+      });
     } finally {
       await service.close();
     }

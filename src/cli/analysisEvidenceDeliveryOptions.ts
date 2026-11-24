@@ -8,7 +8,7 @@ export const analysisEvidenceDeliveryOptions = {
     .enum(["complete", "summary"])
     .optional()
     .describe(
-      "Omit for complete Evidence when it fits the agent result budget (49152 compact JSON bytes, about 12k tokens) and its summary otherwise; complete always delivers everything; summary needs --evidence_output",
+      "Omit for complete Evidence when it fits the agent result budget (32768 compact JSON bytes by default, about 11k tokens) and its summary otherwise; complete always delivers everything; summary needs --evidence_output",
     ),
   evidence_output: localPathStringSchema
     .optional()

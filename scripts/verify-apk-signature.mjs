@@ -28,8 +28,10 @@ import {
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { mcpTextValue, requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { completeEvidenceCliArguments } from "./lib/complete-evidence.mjs";
-import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 const environment = Object.fromEntries(

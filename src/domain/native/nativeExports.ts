@@ -5,6 +5,7 @@ import { isUtf8 } from "node:buffer";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
 import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 /** ELF strings declare bytes rather than an encoding; Latin-1 is only a lossless display fallback. */
 export const decodeElfExportName = (bytes: Buffer) => {
@@ -26,6 +27,8 @@ const MAX_PE_EXPORT_ORDINAL = 0xffffffff + 0xfffffffe;
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES = 536870912;
+/** Default allowance for the bytes the export reader reads. */
+export const DEFAULT_NATIVE_EXPORTS_READ_BYTES = 268435456;
 /** Fixed bound on reported export rows, so one library cannot flood a reply. */
 export const MAX_NATIVE_EXPORT_ROWS = 262144;
 
@@ -39,8 +42,10 @@ export const inspectNativeExportsInputSchema = z.strictObject({
     .int()
     .min(64)
     .max(MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES)
-    .default(268435456)
-    .describe("Maximum stable artifact bytes to read (default 256 MiB)"),
+    .default(DEFAULT_NATIVE_EXPORTS_READ_BYTES)
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, tables and the ranges they reference (default 256 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
 });
 export type InspectNativeExportsInput = z.infer<
   typeof inspectNativeExportsInputSchema
@@ -131,6 +136,7 @@ export const peNativeExportsSchema = z.strictObject({
   format: z.literal("pe"),
   architecture: z.string().min(1),
   bits: z.union([z.literal(32), z.literal(64)]),
+  image_base: peImageBaseSchema,
   /** Null when the image declares no export directory. */
   export_directory: z
     .strictObject({

@@ -179,6 +179,11 @@ export const documentationSections = [
         route: "/pe-load-config",
       },
       {
+        text: "PE x64 exception-directory function ranges",
+        source: "guides/native/pe-unwind-ranges.md",
+        route: "/pe-unwind-ranges",
+      },
+      {
         text: "Match native functions across builds",
         source: "native-function-matching.md",
         route: "/native-function-matching",
@@ -514,6 +519,16 @@ export const documentationSections = [
         route: "/wxapkg",
       },
       {
+        text: "ISO 9660 disc images",
+        source: "guides/firmware/iso9660-images.md",
+        route: "/iso9660-images",
+      },
+      {
+        text: "tar and gzip-compressed tar archives",
+        source: "tar-archives.md",
+        route: "/tar-archives",
+      },
+      {
         text: "GPU asset headers: DDS, GLB, KTX and KTX2",
         source: "gpu-asset-headers.md",
         route: "/gpu-asset-headers",
@@ -657,6 +672,11 @@ export const documentationSections = [
         text: "MCP runtime contracts",
         source: "reference/mcp-contracts.md",
         route: "/mcp-contracts",
+      },
+      {
+        text: "Directory identity",
+        source: "reference/directory-identity.md",
+        route: "/directory-identity",
       },
       {
         text: "Reconstruction obligation ledgers",

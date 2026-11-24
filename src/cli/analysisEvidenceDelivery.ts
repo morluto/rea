@@ -24,7 +24,7 @@ import {
 } from "./analysisEvidenceDeliveryOptions.js";
 import {
   agentBudgetDelivery,
-  agentBudgetOverflowBytes,
+  budgetedSummaryBytes,
   currentAgentResultBudget,
   type AgentBudgetDelivery,
   type AgentBudgetRecovery,
@@ -238,13 +238,19 @@ const budgetDelivery = (
   complete: Evidence,
   input: CliEvidencePublication,
 ): ((recovery: AgentBudgetRecovery) => AgentBudgetDelivery) | undefined => {
-  if (input.detail !== undefined) return undefined;
   const budget = currentAgentResultBudget(
     cliPublicationInvocation().agentBudgetSeed,
   );
-  if (budget === undefined) return undefined;
-  const completeBytes = agentBudgetOverflowBytes(complete, budget);
-  return completeBytes === undefined
+  // The one-shot CLI can always publish and page the complete record: with
+  // --evidence_output through the bundle, without it by a rerun.
+  const completeBytes = budgetedSummaryBytes({
+    detail: input.detail,
+    evidence: complete,
+    budget,
+    retained: true,
+    pageable: true,
+  });
+  return completeBytes === undefined || budget === undefined
     ? undefined
     : (recovery) =>
         agentBudgetDelivery({

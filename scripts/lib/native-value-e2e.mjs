@@ -23,8 +23,10 @@ import { verifyGhidraBoundaries } from "./real-ghidra-boundaries.mjs";
 import { verifyLegacyValueScopeSnapshot } from "./ghidra-value-scope-snapshot-e2e.mjs";
 import { verifyGhidraProjectIdentity } from "./real-ghidra-project-identity.mjs";
 import { verifyGhidraSocketBoundary } from "./real-ghidra-socket-boundary.mjs";
-import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
-import { completeEvidenceClient } from "./complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({

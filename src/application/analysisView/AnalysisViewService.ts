@@ -26,7 +26,7 @@ import {
 import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import {
   createEvidence,
-  evidenceFileTarget,
+  evidenceLocalTarget,
   evidenceSubjectDisplay,
   evidenceSubjectInput,
   evidenceSubjectTarget,
@@ -494,7 +494,7 @@ const createAnalysisViewEvidence = (
 const viewArtifact = (
   evidence: Evidence,
 ): { readonly path: string; readonly sha256: string } | null => {
-  const target = evidenceFileTarget(evidence);
+  const target = evidenceLocalTarget(evidence);
   const display = evidenceSubjectDisplay(evidence);
   return target === undefined || display === undefined
     ? null

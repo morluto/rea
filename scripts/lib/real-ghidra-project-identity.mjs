@@ -15,8 +15,10 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { requireMcpToolError } from "./mcp-verifier-results.mjs";
-import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
-import { completeEvidenceClient } from "./complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 const exec = promisify(execFile);
 

@@ -31,8 +31,10 @@ import {
   fixtureCommand,
   requireLaneToolchain,
 } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
-import { completeEvidenceCliArguments } from "./lib/complete-evidence.mjs";
-import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (process.argv.length !== 2)
@@ -64,11 +66,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -380,7 +377,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `PPC64 command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -397,12 +394,12 @@ if (
   completed.process_lineage.status !== "verified" ||
   completed.process_lineage.descendants.length !== 0
 )
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure },
   );
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `PPC64 verification failed; retained workspace: ${workspace}`,
     {
       cause: primaryFailure,

@@ -21,8 +21,10 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
-import { completeEvidenceCliArguments } from "./lib/complete-evidence.mjs";
-import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const { values } = parseArgs({
   options: {

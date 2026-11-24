@@ -105,10 +105,6 @@ const workspace = await VerifierFixture.open({
   throw cause;
 });
 const directory = workspace.path;
-const retainWorkspace = (message, options) => {
-  workspace.retain(message);
-  return new Error(message, options);
-};
 const hostFatArchitecture = process.arch === "arm64" ? "arm64" : "x86_64";
 const source = fileURLToPath(
   new URL("../tests/conformance/c/fixture.c", import.meta.url),
@@ -560,7 +556,7 @@ try {
   commandCleanupFailure = cause;
 }
 if (commandCleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspace.retainedError(
     `Hopper FAT command cleanup failed; retained diagnostic workspace: ${directory}`,
     {
       cause:
@@ -576,7 +572,7 @@ const completedVerifierRun = await completeVerifierRun(verifierRun);
 try {
   assertVerifierCleanupComplete(completedVerifierRun.process_lineage);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspace.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${directory}`,
     {
       cause:
@@ -590,7 +586,7 @@ try {
   );
 }
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspace.retainedError(
     `Hopper FAT verification failed; retained workspace: ${directory}`,
     { cause: primaryFailure },
   );

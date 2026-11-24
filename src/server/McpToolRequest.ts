@@ -37,8 +37,13 @@ export class McpToolRequest {
    * The `detail` this request's tool call spelled before schema defaults,
    * captured at canonical validation. An omitted `detail` leaves delivery to
    * the agent result budget; without a capture nothing is known about it.
+   * `pageable` records whether the session advertises the view tool that
+   * pages a summary, without which the budget never replaces Evidence.
    */
-  deliverySelection?: { readonly detail: unknown };
+  deliverySelection?: {
+    readonly detail: unknown;
+    readonly pageable: boolean;
+  };
   #handlerStarted = false;
   #finishHandler: () => void = () => undefined;
   readonly #handlerDone = new Promise<void>((resolve) => {

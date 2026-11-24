@@ -18,8 +18,10 @@ import {
 } from "./lib/verifier-run.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
-import { completeEvidenceCliArguments } from "./lib/complete-evidence.mjs";
-import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 if (process.argv.length !== 2 || process.platform !== "linux")
   throw new Error("Run this ELF verifier on Linux without arguments.");

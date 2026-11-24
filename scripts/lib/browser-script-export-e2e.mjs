@@ -16,8 +16,10 @@ import {
 } from "./browser-script-export-assertions.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
-import { completeEvidenceToolArguments } from "./complete-evidence.mjs";
-import { completeEvidenceClient } from "./complete-evidence.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "./complete-evidence.mjs";
 
 /** Verify capture → export → existing analysis through real CLI and stdio MCP. */
 export async function verifyBrowserScriptExport(

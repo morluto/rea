@@ -45,7 +45,7 @@ const deliver = (
   ledger: EvidenceLedger,
 ) => {
   const request = new McpToolRequest(1, contract.name);
-  request.deliverySelection = { detail: undefined };
+  request.deliverySelection = { detail: undefined, pageable: true };
   return runMcpToolRequest(request, () =>
     delivery.toEvidenceToolResult(
       evidence,

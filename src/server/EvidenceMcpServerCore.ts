@@ -46,11 +46,13 @@ import {
 } from "../contracts/mcpSchemaPresentation.js";
 import { ErrorEvidenceTransport } from "./ErrorEvidenceTransport.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { RETAINED_SUMMARY_VIEW_TOOL } from "./retainedSummaryDelivery.js";
 
 /** Capture caller selections and issues at the canonical SDK validation boundary. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   tool: string,
   schema: Schema,
+  pageable: boolean,
 ): Schema => {
   const standard = schema["~standard"];
   // Zod issues feed field-level diagnostics; the delivery selection is
@@ -75,6 +77,7 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
           if (result.issues === undefined && context?.tool === tool)
             context.deliverySelection = {
               detail: isRecord(value) ? value.detail : undefined,
+              pageable,
             };
           return result;
         };
@@ -376,6 +379,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                 inputSchema: captureInputValidation(
                   name,
                   presented.inputSchema as StandardSchemaWithJSON,
+                  this.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
                 ),
               }),
           ...(outputSchema === undefined ? {} : { outputSchema }),

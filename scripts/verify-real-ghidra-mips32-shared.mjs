@@ -27,8 +27,10 @@ import {
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
-import { completeEvidenceCliArguments } from "./lib/complete-evidence.mjs";
-import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane for plain MIPS32 PIC shared libraries (ET_DYN).
 // No tool acquisition, no dynamic loading and no target execution.
@@ -62,11 +64,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -371,7 +368,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS32 shared command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -391,7 +388,7 @@ try {
   lineageFailure = cause;
 }
 if (lineageFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -404,13 +401,13 @@ if (lineageFailure !== undefined)
     },
   );
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS32 shared-library verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );
 const interrupted = commandInterruption.reason();
 if (interrupted !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS32 shared-library verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );

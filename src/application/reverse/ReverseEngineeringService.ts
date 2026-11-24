@@ -11,6 +11,7 @@ import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
 } from "../../process/ProcessInspectionCancellation.js";
+import type { ProcessInspectionFailure } from "../../process/ProcessInspectionCleanup.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionFailure,
@@ -39,6 +40,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
+  type AnalysisCapturedOutput,
   type AnalysisCleanupObservation,
   type AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
@@ -53,6 +55,7 @@ import {
   DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
   reverseCommandOutputLimit,
   objdumpInputSchema,
+  type ProviderToolIdentification,
   rizinInputSchema,
   type RizinInput,
 } from "../../domain/reverseEngineering.js";
@@ -63,7 +66,11 @@ import type {
   ReverseEngineeringCommandUnavailable,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
-import { execFileOutputFailure } from "../../process/ExecFileOutput.js";
+import {
+  execFileOutputFailure,
+  capturedInvalidUtf8,
+  execFileFailureCapturedOutput,
+} from "../../process/ExecFileOutput.js";
 import {
   describeLaunchFailure,
   launcherFailureOf,
@@ -83,6 +90,16 @@ import {
 } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
+import { utf8HeadExcerpt } from "../../domain/utf8HeadExcerpt.js";
+import {
+  lookupExecutable,
+  searchesDiffer,
+  searchMovesPast,
+} from "../../process/ExecutableLookup.js";
+import {
+  fileDeadline,
+  type FileStepOutcome,
+} from "../../process/FileDeadline.js";
 import { RuntimeControlUnavailableError } from "../../domain/runtimeControlUnavailableError.js";
 import { WindowsNativeAuthorityUnavailableError } from "../../windows/WindowsNativeLoader.js";
 import {
@@ -132,10 +149,27 @@ const MAX_ACTIVE_CAPTURE_BYTES =
 export interface ReverseEngineeringServiceOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly commands: ReverseEngineeringCommandPort;
-  readonly runOwned?: typeof runOwnedCommand;
+  /** Defaults to the host's PATH lookup and owned process execution. */
+  readonly processes?: ReverseEngineeringProcesses;
   readonly digest?: typeof digestFile;
   readonly stat?: (path: string) => Promise<Stats>;
 }
+
+/**
+ * The process boundary: where a provider command resolves and the owned
+ * process primitive that runs it. Both are replaced together, so a faked
+ * process never consults the host PATH; fakes run under the service's own
+ * output capture, as host commands do.
+ */
+export interface ReverseEngineeringProcesses {
+  readonly lookup: typeof lookupExecutable;
+  readonly runOwned: typeof runOwnedCommand;
+}
+
+const HOST_PROCESSES: ReverseEngineeringProcesses = {
+  lookup: lookupExecutable,
+  runOwned: runOwnedCommand,
+};
 
 interface ReverseEngineeringCommandRunner {
   (
@@ -229,12 +263,13 @@ const reverseCommandUnavailable = (
 export class ReverseEngineeringService {
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #commands: ReverseEngineeringCommandPort;
+  readonly #lookup: typeof lookupExecutable;
   readonly #run: ReverseEngineeringCommandRunner;
   readonly #digest: typeof digestFile;
   readonly #stat: (path: string) => Promise<Stats>;
   readonly #inspectionResources = new ArtifactResourceScope();
   readonly #pendingCleanup = new Map<
-    ProviderProcessSupervisor,
+    RetainedCleanupOwner,
     {
       readonly observation: AnalysisCleanupObservation;
       /** Confirmed by a later verified stop; retry failures read it. */
@@ -259,15 +294,15 @@ export class ReverseEngineeringService {
   constructor(options: ReverseEngineeringServiceOptions) {
     this.#environment = { ...(options.environment ?? process.env) };
     this.#commands = options.commands;
-    this.#run = runOwnedCommandOutput(
-      options.runOwned ?? runOwnedCommand,
-      (owner, cleanup) =>
-        this.#pendingCleanup.set(owner, {
-          observation: cleanup,
-          release:
-            this.#pendingCleanup.get(owner)?.release ??
-            new AnalysisCleanupRelease(),
-        }),
+    const processes = options.processes ?? HOST_PROCESSES;
+    this.#lookup = processes.lookup;
+    this.#run = runOwnedCommandOutput(processes.runOwned, (owner, cleanup) =>
+      this.#pendingCleanup.set(owner, {
+        observation: cleanup,
+        release:
+          this.#pendingCleanup.get(owner)?.release ??
+          new AnalysisCleanupRelease(),
+      }),
     );
     this.#digest = options.digest ?? digestFile;
     this.#stat = options.stat ?? statPath;
@@ -602,6 +637,8 @@ export class ReverseEngineeringService {
     } = request;
     const { executable: command, arguments: args } = profile;
     const { provider, setting } = profile.repair;
+    const hash = (file: string): Promise<string> =>
+      this.#digest(file, { signal, timeoutMs, stat: this.#stat });
     if (signal?.aborted) return err(cancelledBy(operation, signal));
     const cleanup = await this.retryCleanup(operation);
     if (!cleanup.ok) return cleanup;
@@ -609,13 +646,7 @@ export class ReverseEngineeringService {
       path === undefined ? undefined : absoluteCallerPath(path);
     let digest: string | undefined;
     try {
-      if (absolutePath !== undefined)
-        digest = await this.#digest(
-          absolutePath,
-          signal,
-          this.#stat,
-          timeoutMs,
-        );
+      if (absolutePath !== undefined) digest = await hash(absolutePath);
     } catch (cause) {
       const code = commandFailureCode(cause);
       if (preflightCancelled(signal, cause, code))
@@ -683,6 +714,30 @@ export class ReverseEngineeringService {
         ),
       );
     }
+    const environment = {
+      ...this.#environment,
+      ...profile.environmentOverrides,
+    };
+    const identified = await this.#identifyProvider(
+      operation,
+      profile,
+      environment,
+      signal,
+      timeoutMs,
+      outputBudgetBytes,
+      hash,
+    );
+    // An error before Evidence exists keeps the executable the caller
+    // selected and the target it already resolved and hashed.
+    const selection = {
+      provider_executable: command,
+      ...(absolutePath === undefined || digest === undefined
+        ? {}
+        : { artifact_path: absolutePath, artifact_sha256: digest }),
+    };
+    if (!identified.ok)
+      return err(identified.error.retainDiagnostics(selection));
+    const identification = identified.value;
     let stdout = "";
     let stderr = "";
     let stdoutBytes = 0;
@@ -697,15 +752,12 @@ export class ReverseEngineeringService {
     let completionStatus: "complete" | "rejected" | "unknown" = "complete";
     let outputLimitReached = false;
     let failure: AnalysisError | undefined;
-    let cleanupOwner: ProviderProcessSupervisor | undefined;
+    let cleanupOwner: RetainedCleanupOwner | undefined;
     let earlyFailure: AnalysisError | undefined;
     const dispatch = ++this.#dispatched;
     try {
-      const output = await this.#run(command, args, {
-        env: {
-          ...this.#environment,
-          ...profile.environmentOverrides,
-        },
+      const output = await this.#run(identification.executable, args, {
+        env: environment,
         signal,
         timeout: timeoutMs,
         maxBuffer: outputBudgetBytes,
@@ -720,31 +772,22 @@ export class ReverseEngineeringService {
     } catch (cause) {
       const ownedCause =
         cause instanceof OwnedOutputFailure ? cause.cause : cause;
-      const inspection = processInspectionFailure(ownedCause);
+      const preparation = ownershipPreparationFailure(cause);
+      const inspection = preparation?.inspection;
       if (
-        inspection !== undefined &&
-        !(inspection instanceof DarwinProcessOwnershipInspectionError)
-      ) {
-        const cancellation = processInspectionCancellationError(
-          ownedCause,
+        preparation !== undefined &&
+        !(
+          preparation.inspection instanceof
+          DarwinProcessOwnershipInspectionError
+        )
+      )
+        earlyFailure = ownershipPreparationError(
+          preparation,
+          undefined,
           operation,
+          timeoutMs,
+          profile.repair,
         );
-        earlyFailure =
-          ownedCause instanceof OwnedCommandFailure &&
-          ownedCause.reason === "timeout"
-            ? new AnalysisTimeoutError(operation, timeoutMs, {
-                cause: ownedCause,
-                ...reverseCommandTimeoutGuidance(provider, timeoutMs),
-              })
-            : inspection instanceof ProcessOwnershipInspectionCancelled ||
-                (inspection instanceof ProcessOwnershipIdentityBatchFailure &&
-                  inspection.origin === "cancelled")
-              ? cancellation
-              : new ProviderAdapterError("process-ownership", operation, {
-                  cause: inspection,
-                  diagnostics: { stage: "ownership_preparation" },
-                });
-      }
       cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
       if (
@@ -857,48 +900,17 @@ export class ReverseEngineeringService {
           },
         );
       }
-      const darwinFailure =
-        inspection instanceof DarwinProcessOwnershipInspectionError
-          ? inspection
-          : undefined;
-      if (earlyFailure === undefined && darwinFailure !== undefined) {
-        if (code === "ETIMEDOUT") {
-          earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
-            cause,
-            ...reverseCommandTimeoutGuidance(provider, timeoutMs),
-          });
-        } else if (darwinFailure.cancellation !== undefined) {
-          earlyFailure = cancelledBy(
-            operation,
-            carriedReason(darwinFailure.cancellation?.reason),
-          );
-        } else {
-          earlyFailure = new AnalysisCapabilityUnavailableError(
-            "process-ownership",
-            "prepare_owned_process",
-            `Darwin process ownership inspection could not be prepared: ${darwinFailure.message}`,
-            {
-              cause,
-              userMessage: darwinFailure.message,
-              remediationAction: `${DARWIN_PROCESS_OWNERSHIP_REMEDIATION} ${setting} does not need to change.`,
-              diagnostics: {
-                boundary: "process-ownership",
-                stage: "ownership_preparation",
-                ...(darwinFailure.compilerOutcome === undefined
-                  ? {}
-                  : {
-                      compiler_outcome: jsonValueSchema.parse(
-                        darwinFailure.compilerOutcome,
-                      ),
-                    }),
-              },
-              ...(darwinFailure.capturedOutput === undefined
-                ? {}
-                : { capturedOutput: darwinFailure.capturedOutput }),
-            },
-          );
-        }
-      }
+      if (
+        earlyFailure === undefined &&
+        preparation?.inspection instanceof DarwinProcessOwnershipInspectionError
+      )
+        earlyFailure = ownershipPreparationError(
+          preparation,
+          code,
+          operation,
+          timeoutMs,
+          profile.repair,
+        );
       if (inspection !== undefined && earlyFailure !== undefined)
         earlyFailure = retainProcessInspectionCleanup(
           inspection,
@@ -1029,6 +1041,7 @@ export class ReverseEngineeringService {
               ? capture.code
               : null,
           signal: capture.signal,
+          ...capturedInvalidUtf8(capture),
         };
         if (commandCancelled(signal, cause, code))
           failure = cancelledBy(
@@ -1086,13 +1099,23 @@ export class ReverseEngineeringService {
           exitCode = null;
           completionStatus = "unknown";
         }
-        if (cause instanceof OwnedOutputFailure) {
-          stdoutInvalidUtf8 = cause.stdoutInvalidUtf8;
-          stderrInvalidUtf8 = cause.stderrInvalidUtf8;
-        }
+        stdoutInvalidUtf8 = capture.stdoutInvalidUtf8 === true;
+        stderrInvalidUtf8 = capture.stderrInvalidUtf8 === true;
       }
     }
     if (earlyFailure !== undefined) {
+      // Without command output there is no Evidence to carry the selection
+      // and what the lookup, hash and probe observed, so the failure keeps
+      // them.
+      earlyFailure.retainDiagnostics(
+        identification.observed
+          ? {
+              provider: identification.identity,
+              ...selection,
+              ...identification.parameters,
+            }
+          : selection,
+      );
       if (
         earlyFailure instanceof AnalysisCapabilityUnavailableError &&
         earlyFailure.diagnostics?.boundary === "provider-launch" &&
@@ -1110,20 +1133,18 @@ export class ReverseEngineeringService {
     if (failure !== undefined && cleanupOwner !== undefined)
       failure = this.#registerCleanupFailure(failure, cleanupOwner);
     let digestAfter: string | null = null;
+    let digestAfterTimedOut = false;
     if (absolutePath === undefined) {
       digestAfter = null;
     } else if (cleanupIncomplete) {
       if (!cleanupOnlyFailure) completionStatus = "unknown";
     } else {
       try {
-        digestAfter = await this.#digest(
-          absolutePath,
-          signal,
-          this.#stat,
-          timeoutMs,
-        );
-      } catch {
-        // Preserve the provider's collected observations if the artifact vanished or became unreadable.
+        digestAfter = await hash(absolutePath);
+      } catch (cause) {
+        // Preserve the provider's collected observations if the artifact vanished,
+        // became unreadable or its hash reached the deadline.
+        digestAfterTimedOut = commandFailureCode(cause) === "ETIMEDOUT";
       }
     }
     if (signal?.aborted && failure === undefined) {
@@ -1136,6 +1157,7 @@ export class ReverseEngineeringService {
           stderr_bytes: stderrBytes,
           exit_code: typeof exitCode === "number" ? exitCode : null,
           signal: signalName,
+          ...capturedInvalidUtf8({ stdoutInvalidUtf8, stderrInvalidUtf8 }),
         },
       });
       exitCode = null;
@@ -1177,11 +1199,7 @@ export class ReverseEngineeringService {
     const limitations = [
       // A pathless command reports no artifact; its provider says what the
       // response does not establish.
-      ...(absolutePath === undefined
-        ? []
-        : [
-            "The executable implementation, version and supported formats are unknown because no reliable identity probe was performed.",
-          ]),
+      ...(absolutePath === undefined ? [] : identification.limitations),
       ...(profile.limitations ?? []),
       "A non-zero process exit is preserved as an observed command result.",
       ...(rejection === undefined ? [] : [rejection.limitation]),
@@ -1234,7 +1252,9 @@ export class ReverseEngineeringService {
               ? "The post-run artifact digest was not captured because owned provider cleanup was incomplete at observation time; artifact changes during the command remain unquantified."
               : signal?.aborted
                 ? "The post-run artifact digest is unknown because cancellation interrupted the digest."
-                : "The post-run artifact digest is unknown because the artifact could not be read after the provider call.",
+                : digestAfterTimedOut
+                  ? postRunArtifactDigestDeadline(provider, timeoutMs)
+                  : POST_RUN_ARTIFACT_UNREADABLE,
           ]
         : []),
     ];
@@ -1242,7 +1262,7 @@ export class ReverseEngineeringService {
       absolutePath === undefined || digest === undefined
         ? unknownTarget("not-observed")
         : { path: absolutePath, sha256: digest, format: "unknown" },
-      profile.identity,
+      identification.identity,
       {
         predicateType: "rea.reverse-engineering.command-observation",
         operation,
@@ -1259,6 +1279,7 @@ export class ReverseEngineeringService {
               }
             : parameters),
           provider_executable: command,
+          ...identification.parameters,
           command_arguments: [...args],
         },
         result,
@@ -1284,15 +1305,534 @@ export class ReverseEngineeringService {
       : err(failure.retainPartialObservation(evidence));
   }
 
+  /**
+   * Resolve, hash and identify the selected executable, then run that same
+   * path. Every call probes, in its environment and under its deadline: a
+   * launcher keeps its path and digest while the tool it runs can change. A
+   * tool that cannot be identified still runs; only cancellation, the call's
+   * deadline and a probe whose process cleanup remains incomplete stop the
+   * command.
+   */
+  async #identifyProvider(
+    operation: ReverseEngineeringOperation,
+    profile: ReverseEngineeringProviderCommand,
+    environment: NodeJS.ProcessEnv,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
+    outputBudgetBytes: number,
+    hash: (file: string) => Promise<string>,
+  ): Promise<Result<ProviderIdentification, AnalysisError>> {
+    const probe = profile.versionProbe;
+    // Without an identifying banner, a probed provider's name is assumed.
+    const unidentified = (
+      reason: string,
+      executable = profile.executable,
+      // What the lookup, hash and probe observed; absent when the lookup
+      // found no executable.
+      observed?: Readonly<Record<string, JsonValue>>,
+    ): ProviderIdentification => ({
+      executable,
+      identity: profile.identity,
+      limitations: [
+        `The executable implementation, version and supported formats are unknown because ${reason}.`,
+        ...(observed?.provider_executable_sha256 === undefined
+          ? []
+          : [EXECUTABLE_OBSERVATION_TIMING]),
+        ...(probe === undefined ? [] : [probe.assumedIdentity]),
+      ],
+      parameters:
+        probe === undefined
+          ? {}
+          : { ...observed, provider_identity: "assumed" },
+      observed: observed !== undefined,
+    });
+    if (probe === undefined)
+      return ok(unidentified("no reliable identity probe was performed"));
+    const lookup = await this.#lookup(
+      profile.executable,
+      () => process.cwd(),
+      environment.PATH,
+      { signal, timeoutMs },
+    );
+    if (lookup.status === "interrupted") {
+      // The path being checked names the PATH location that stalled.
+      const diagnostics = {
+        phase: "executable_lookup",
+        executable_lookup_candidate: lookup.candidate,
+      };
+      return err(
+        lookup.by === "cancellation"
+          ? cancelledBy(operation, carriedReason(signal?.reason), {
+              diagnostics,
+            })
+          : new AnalysisTimeoutError(operation, timeoutMs, {
+              diagnostics,
+              ...reverseCommandTimeoutGuidance(
+                profile.repair.provider,
+                timeoutMs,
+              ),
+            }),
+      );
+    }
+    // The command runs the path the host refused to inspect, so a launch
+    // failure keeps where access must be granted.
+    if (lookup.status === "denied")
+      return ok(
+        unidentified(
+          `the executable could not be inspected (${lookup.code})`,
+          lookup.path,
+          { provider_executable_path: lookup.path },
+        ),
+      );
+    // The command launch reports an executable that cannot be selected. It
+    // runs as the caller spelled it, which can launch where the absolute
+    // spelling of an explicit selection is too long to inspect, and Evidence
+    // or a launch failure keeps where the lookup looked and where it stopped.
+    if (lookup.status !== "found") {
+      const missing = lookup.status === "missing" ? lookup : undefined;
+      const stopped = missing?.stoppedAt;
+      const denied = missing?.deniedAt;
+      const cwdCode =
+        lookup.status === "no-working-directory"
+          ? commandFailureCode(lookup.cause)
+          : undefined;
+      const observed = {
+        ...(lookup.status === "no-working-directory"
+          ? {
+              executable_lookup_outcome: lookup.status,
+              ...(cwdCode === undefined
+                ? {}
+                : { executable_lookup_code: String(cwdCode) }),
+            }
+          : {}),
+        ...(missing?.selectedPath === undefined
+          ? {}
+          : { provider_executable_path: missing.selectedPath }),
+        // Where a launch by name fails with EACCES and access must be granted.
+        ...(denied === undefined
+          ? {}
+          : {
+              executable_lookup_denied_candidate: denied.candidate,
+              executable_lookup_denied_reason: denied.reason,
+            }),
+        ...(stopped === undefined
+          ? {}
+          : {
+              executable_lookup_candidate: stopped.candidate,
+              ...(stopped.code === undefined
+                ? {}
+                : { executable_lookup_code: stopped.code }),
+            }),
+      };
+      return ok(
+        unidentified(
+          lookup.status === "no-working-directory"
+            ? "the executable could not be located: its lookup needed the working directory, which could not be read"
+            : stopped === undefined
+              ? denied === undefined
+                ? "the executable could not be located"
+                : `the executable could not be located; a launch by name is denied (EACCES) at ${denied.candidate}, ${denied.reason === "permission" ? "which lacks execute permission or is under a directory that cannot be searched" : "which is not a regular file"}`
+              : `the executable lookup stopped at ${stopped.candidate}${stopped.code === undefined ? "" : ` (${stopped.code})`}, where at least one native search stops, so the host's own search decides what runs`,
+          profile.executable,
+          Object.keys(observed).length === 0 ? undefined : observed,
+        ),
+      );
+    }
+    let sha256: string;
+    try {
+      sha256 = await hash(lookup.path);
+    } catch (cause) {
+      const code = commandFailureCode(cause);
+      // A hash that ends the call keeps the path the lookup found.
+      const diagnostics = {
+        phase: "executable_digest",
+        provider_executable_path: lookup.path,
+      };
+      if (preflightCancelled(signal, cause, code))
+        return err(
+          cancelledBy(
+            operation,
+            carriedReason(callerCancellationCause(signal, cause)),
+            { diagnostics },
+          ),
+        );
+      // Hashing past the deadline ends the call, as the lookup's deadline does.
+      if (code === "ETIMEDOUT")
+        return err(
+          new AnalysisTimeoutError(operation, timeoutMs, {
+            cause,
+            diagnostics,
+            ...reverseCommandTimeoutGuidance(
+              profile.repair.provider,
+              timeoutMs,
+            ),
+          }),
+        );
+      // The command still runs the path found, rather than searching PATH
+      // again, where another executable could answer.
+      return ok(
+        unidentified(
+          `the executable could not be read${code === undefined ? "" : ` (${String(code)})`}`,
+          lookup.path,
+          { provider_executable_path: lookup.path },
+        ),
+      );
+    }
+    const parameters = {
+      provider_executable_path: lookup.path,
+      provider_executable_sha256: sha256,
+    };
+    const outcome = await this.#runVersionProbe(
+      operation,
+      profile.identity.id,
+      profile.repair,
+      lookup.path,
+      probe,
+      environment,
+      signal,
+      timeoutMs,
+      outputBudgetBytes,
+    );
+    // A probe that ends the call keeps the path and digest it ran from.
+    if (!outcome.ok) return err(outcome.error.retainDiagnostics(parameters));
+    const completed = outcome.value;
+    // A spawned PATH search moves past a file that fails to start this way,
+    // so the command runs as selected and the host decides what runs, keeping
+    // that file as a candidate rather than as what ran. An explicitly selected
+    // path has no later candidate, so the command runs that path and keeps what
+    // the lookup and hash observed.
+    if (completed.status === "not-started")
+      return ok(
+        lookup.selectedPath === undefined
+          ? unidentified(
+              `${lookup.path}, which the lookup found, did not start (${completed.code}), as when a script's interpreter is missing or not executable; the command runs \`${profile.executable}\` as selected, so the host decides what runs`,
+              profile.executable,
+              {
+                executable_lookup_candidate: lookup.path,
+                executable_lookup_code: completed.code,
+                executable_lookup_candidate_sha256: sha256,
+              },
+            )
+          : unidentified(
+              `${lookup.path} did not start (${completed.code}), as when a script's interpreter is missing or not executable`,
+              lookup.path,
+              parameters,
+            ),
+      );
+    if (completed.status !== "read" && completed.status !== "unrecognized")
+      return ok(
+        unidentified(
+          `its version probe (${probe.arguments.join(" ")}) ${VERSION_PROBE_FAILURE_REASONS[completed.status]}`,
+          lookup.path,
+          { ...parameters, provider_version_probe: completed.diagnostics },
+        ),
+      );
+    const banner = `its ${probe.arguments.join(" ")} banner`;
+    const bannerParameters = {
+      ...parameters,
+      provider_version_banner: completed.banner,
+      provider_version_banner_truncated: completed.bannerTruncated,
+    };
+    if (completed.status === "unrecognized")
+      return ok(
+        unidentified(`${banner} did not identify the tool`, lookup.path, {
+          ...bannerParameters,
+          provider_version_probe: completed.diagnostics,
+        }),
+      );
+    const { identification } = completed;
+    return ok({
+      executable: lookup.path,
+      identity: identification.identity,
+      limitations: [
+        `The executable version comes from ${banner}; supported formats remain unknown.`,
+        EXECUTABLE_OBSERVATION_TIMING,
+        ...identification.limitations,
+      ],
+      parameters: { ...bannerParameters, provider_identity: "banner" },
+      observed: true,
+    });
+  }
+
+  /**
+   * Run one version probe under the call's deadline and cancellation. Its
+   * output stays separate from the command's but runs, before the command,
+   * within the output bytes the call reserved; a failed probe keeps bounded
+   * diagnostics.
+   */
+  async #runVersionProbe(
+    operation: ReverseEngineeringOperation,
+    providerId: string,
+    repair: ReverseEngineeringCommandRepair,
+    executable: string,
+    probe: NonNullable<ReverseEngineeringProviderCommand["versionProbe"]>,
+    environment: NodeJS.ProcessEnv,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
+    outputBudgetBytes: number,
+  ): Promise<Result<VersionProbeOutcome, AnalysisError>> {
+    try {
+      const output = await this.#run(executable, probe.arguments, {
+        env: environment,
+        signal,
+        timeout: timeoutMs,
+        maxBuffer: outputBudgetBytes,
+      });
+      // Replacement characters could read as a version, and a banner accepted
+      // beside undecodable stderr would drop the probe's diagnostics, so output
+      // that is not valid UTF-8 on either stream identifies nothing.
+      if (
+        output.stdoutInvalidUtf8 === true ||
+        output.stderrInvalidUtf8 === true
+      )
+        return ok({
+          status: "undecodable",
+          diagnostics: versionProbeDiagnostics(0, output),
+        });
+      // The budget and the record cover the first line as printed; only
+      // identification reads it without surrounding whitespace.
+      const line = output.stdout.split(/\r?\n/u, 1)[0] ?? "";
+      const banner = utf8HeadExcerpt(line, VERSION_PROBE_TEXT_BYTES);
+      // A cut banner identifies nothing: the cut could fall inside its
+      // version, whether the record's budget or the call's output allowance
+      // cut it. An uncut banner is identified from the line itself.
+      const identification =
+        banner.truncated || output.outputTruncated === true
+          ? undefined
+          : probe.identify(line.trim());
+      return ok(
+        identification === undefined
+          ? {
+              status: "unrecognized",
+              banner: banner.text,
+              bannerTruncated: banner.truncated,
+              diagnostics: versionProbeDiagnostics(0, output),
+            }
+          : {
+              status: "read",
+              identification,
+              banner: banner.text,
+              bannerTruncated: banner.truncated,
+            },
+      );
+    } catch (cause) {
+      const capture = execFileOutputFailure(cause);
+      const code = capture?.code ?? commandFailureCode(cause);
+      const cleanupOwner =
+        cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
+      // Ownership preparation that failed or stopped ends the call as it would
+      // for the command, and its cleanup joins the same retained scope. Host
+      // capacity is classified by the shared launch owner first, so a transient
+      // EAGAIN, EMFILE, ENFILE or ENOMEM stays a retryable resource constraint.
+      const preparation = ownershipPreparationFailure(cause);
+      const capacity = preparationHostCapacityFailure(
+        cause instanceof OwnedOutputFailure ? cause.cause : cause,
+      );
+      const preparationFailure =
+        preparation === undefined
+          ? undefined
+          : capacity === undefined
+            ? ownershipPreparationError(
+                preparation,
+                code,
+                operation,
+                timeoutMs,
+                repair,
+              )
+            : classifyLaunchFailure(capacity, {
+                providerId,
+                operation,
+                command: executable,
+                selection: repair.setting,
+                details: { cause, ...ownedCleanupOptions(cause) },
+              });
+      if (preparation !== undefined && preparationFailure !== undefined)
+        return err(
+          this.#registerCleanupFailure(
+            retainProcessInspectionCleanup(
+              preparation.inspection,
+              preparationFailure,
+              this.#inspectionResources,
+              operation,
+            ),
+            cleanupOwner,
+          ),
+        );
+      const probeOutput = {
+        diagnostics: {
+          phase: "version_probe",
+          arguments: [...probe.arguments],
+        },
+        ...(capture === undefined
+          ? {}
+          : { capturedOutput: execFileFailureCapturedOutput(capture) }),
+        ...ownedCleanupOptions(cause),
+      };
+      if (commandCancelled(signal, cause, code ?? undefined))
+        return err(
+          this.#registerCleanupFailure(
+            cancelledBy(
+              operation,
+              carriedReason(callerCancellationCause(signal, cause)),
+              probeOutput,
+            ),
+            cleanupOwner,
+          ),
+        );
+      // Incomplete cleanup ends the call; a deadline that also ended the
+      // probe stays the failure, with the cleanup attached, as for the command.
+      if (cause instanceof OwnedOutputFailure && cause.cleanup !== undefined)
+        return err(
+          this.#registerCleanupFailure(
+            code === "ETIMEDOUT"
+              ? new AnalysisTimeoutError(operation, timeoutMs, {
+                  cause,
+                  ...probeOutput,
+                  ...reverseCommandTimeoutGuidance(repair.provider, timeoutMs),
+                })
+              : new AnalysisOutputError(
+                  operation,
+                  "The provider version probe's process cleanup remains incomplete.",
+                  { cause, ...probeOutput },
+                ),
+            cleanupOwner,
+          ),
+        );
+      // The file did not start, with an error a native PATH search moves
+      // past, as when a script's interpreter is missing or not executable,
+      // or one at which native searches differ. ETIMEDOUT stays the probe's
+      // deadline, which both runners report with that code.
+      if (
+        typeof code === "string" &&
+        (searchMovesPast(code) || searchesDiffer(code))
+      )
+        return ok({ status: "not-started", code });
+      // Both runners report the call's deadline as ETIMEDOUT, even when the
+      // stop signal also ended the process.
+      return ok({
+        status: code === "ETIMEDOUT" ? "timed-out" : "failed",
+        diagnostics: versionProbeDiagnostics(code, capture),
+      });
+    }
+  }
+
   #registerCleanupFailure(
     failure: AnalysisError,
-    cleanupOwner: ProviderProcessSupervisor | undefined,
+    cleanupOwner: RetainedCleanupOwner | undefined,
   ): AnalysisError {
     if (cleanupOwner !== undefined && failure.cleanupIncomplete)
       this.#pendingCleanup.get(cleanupOwner)?.release.bind(failure);
     return failure;
   }
 }
+
+/** The executable to run and the identity, limitations and provenance it records. */
+interface ProviderIdentification {
+  readonly executable: string;
+  readonly identity: Evidence["provider"];
+  readonly limitations: readonly string[];
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  /** The lookup found the executable; the parameters hold what it, the hash and any probe observed. */
+  readonly observed: boolean;
+}
+
+/** One version probe's outcome. */
+type VersionProbeOutcome =
+  | {
+      readonly status: "read";
+      readonly identification: ProviderToolIdentification;
+      /** The first stdout line, trimmed and bounded. */
+      readonly banner: string;
+      readonly bannerTruncated: boolean;
+    }
+  | {
+      /** A banner that identified no tool, kept with the probe's diagnostics. */
+      readonly status: "unrecognized";
+      readonly banner: string;
+      readonly bannerTruncated: boolean;
+      readonly diagnostics: Readonly<Record<string, JsonValue>>;
+    }
+  | {
+      readonly status: "failed" | "timed-out" | "undecodable";
+      readonly diagnostics: Readonly<Record<string, JsonValue>>;
+    }
+  /** The host did not start the file, with an error its PATH search moves past. */
+  | { readonly status: "not-started"; readonly code: string };
+
+/** Observations read before the command cannot bind the tool that ran. */
+export const EXECUTABLE_OBSERVATION_TIMING =
+  "The executable's SHA-256, and any -v banner, were read before the command launched, so they do not prove the bytes or the version that ran.";
+
+/** Why a probe that read no usable banner leaves the version unknown. */
+export const VERSION_PROBE_FAILURE_REASONS = {
+  failed: "did not complete successfully",
+  "timed-out": "reached the command deadline",
+  undecodable: "printed output that is not valid UTF-8",
+} as const satisfies Record<
+  Exclude<
+    VersionProbeOutcome["status"],
+    "read" | "unrecognized" | "not-started"
+  >,
+  string
+>;
+
+// A banner is one line. This UTF-8 byte budget bounds the recorded banner and
+// each stream of a failed probe's diagnostics, cutting only between code points.
+const VERSION_PROBE_TEXT_BYTES = 2_048;
+
+/** Bounded exit facts and output of a probe that printed no usable banner. */
+const versionProbeDiagnostics = (
+  code: string | number | null | undefined,
+  output:
+    | {
+        readonly stdout: string;
+        readonly stderr: string;
+        readonly signal?: string | null;
+        readonly killed?: boolean;
+        readonly outputTruncated?: boolean;
+        readonly collectionFailure?: boolean;
+        readonly stdoutInvalidUtf8?: boolean;
+        readonly stderrInvalidUtf8?: boolean;
+      }
+    | undefined,
+): Readonly<Record<string, JsonValue>> => {
+  const stdout = utf8HeadExcerpt(
+    output?.stdout ?? "",
+    VERSION_PROBE_TEXT_BYTES,
+  );
+  const stderr = utf8HeadExcerpt(
+    output?.stderr ?? "",
+    VERSION_PROBE_TEXT_BYTES,
+  );
+  return {
+    // An exit status of output that was not fully collected is not reported.
+    exit_code:
+      output?.collectionFailure !== true && typeof code === "number"
+        ? code
+        : null,
+    signal: output?.signal ?? null,
+    error_code: typeof code === "string" ? code : null,
+    stdout: stdout.text,
+    stderr: stderr.text,
+    output_truncated:
+      output?.outputTruncated === true || stdout.truncated || stderr.truncated,
+    // As for the command: output that was not fully collected, or a probe that
+    // was killed, signalled or left no exit code, did not observably complete.
+    completion_status:
+      output?.collectionFailure !== true &&
+      output?.killed !== true &&
+      (output?.signal ?? null) === null &&
+      typeof code === "number"
+        ? "complete"
+        : "unknown",
+    // Invalid UTF-8 is decoded as replacement characters; these mark it.
+    stdout_invalid_utf8: output?.stdoutInvalidUtf8 === true,
+    stderr_invalid_utf8: output?.stderrInvalidUtf8 === true,
+  };
+};
+
+/** What retries an incomplete cleanup: a command's process or a preparation's helper. */
+type RetainedCleanupOwner = Pick<ProviderProcessSupervisor, "stop">;
 
 interface OwnedOutputFailureOptions {
   readonly stdout: string;
@@ -1307,7 +1847,7 @@ interface OwnedOutputFailureOptions {
   readonly capabilityError?: AnalysisCapabilityUnavailableError;
   readonly collectionFailure?: boolean;
   readonly cleanup?: AnalysisCleanupObservation;
-  readonly cleanupOwner?: ProviderProcessSupervisor;
+  readonly cleanupOwner?: RetainedCleanupOwner;
   readonly cause?: unknown;
   readonly launchFailure?: boolean;
 }
@@ -1325,7 +1865,7 @@ class OwnedOutputFailure extends Error {
   readonly capabilityError: AnalysisCapabilityUnavailableError | undefined;
   readonly collectionFailure: boolean;
   readonly cleanup: AnalysisCleanupObservation | undefined;
-  readonly cleanupOwner: ProviderProcessSupervisor | undefined;
+  readonly cleanupOwner: RetainedCleanupOwner | undefined;
   readonly launchFailure: boolean;
 
   constructor(options: OwnedOutputFailureOptions) {
@@ -1353,7 +1893,7 @@ const runOwnedCommandOutput =
   (
     runOwned: typeof runOwnedCommand,
     onCleanupOwner: (
-      owner: ProviderProcessSupervisor,
+      owner: RetainedCleanupOwner,
       cleanup: AnalysisCleanupObservation,
     ) => void,
   ): ReverseEngineeringCommandRunner =>
@@ -1473,6 +2013,103 @@ const runtimeControlPreparationError = (
   return windowsNativeSpawnControlError(cause);
 };
 
+/** An owned run that ownership preparation ended, as its owner parsed it. */
+interface OwnershipPreparationFailure {
+  readonly inspection: ProcessInspectionFailure;
+  /** What the runner threw. */
+  readonly cause: Error;
+  /** The owned primitive's failure under the service's capture. */
+  readonly ownedCause: Error;
+}
+
+/** The preparation failure a run ended with, if ownership preparation ended it. */
+const ownershipPreparationFailure = (
+  cause: unknown,
+): OwnershipPreparationFailure | undefined => {
+  const ownedCause = cause instanceof OwnedOutputFailure ? cause.cause : cause;
+  const inspection = processInspectionFailure(ownedCause);
+  return inspection === undefined ||
+    !(cause instanceof Error) ||
+    !(ownedCause instanceof Error)
+    ? undefined
+    : { inspection, cause, ownedCause };
+};
+
+/**
+ * The failure an ownership preparation leaves when it fails or stops. The
+ * command and its version probe share it, so a preparation failure ends the
+ * call the same way at either. `code` is the failure code the runner reported;
+ * Darwin preparation that a deadline interrupted stays a timeout.
+ */
+const ownershipPreparationError = (
+  { inspection, cause, ownedCause }: OwnershipPreparationFailure,
+  code: string | number | null | undefined,
+  operation: ReverseEngineeringOperation,
+  timeoutMs: number,
+  repair: ReverseEngineeringCommandRepair,
+): AnalysisError | undefined => {
+  const { provider, setting } = repair;
+  if (!(inspection instanceof DarwinProcessOwnershipInspectionError)) {
+    const cancellation = processInspectionCancellationError(
+      ownedCause,
+      operation,
+    );
+    return ownedCause instanceof OwnedCommandFailure &&
+      ownedCause.reason === "timeout"
+      ? new AnalysisTimeoutError(operation, timeoutMs, {
+          cause: ownedCause,
+          ...reverseCommandTimeoutGuidance(provider, timeoutMs),
+        })
+      : inspection instanceof ProcessOwnershipInspectionCancelled ||
+          (inspection instanceof ProcessOwnershipIdentityBatchFailure &&
+            inspection.origin === "cancelled")
+        ? cancellation
+        : new ProviderAdapterError("process-ownership", operation, {
+            cause: inspection,
+            diagnostics: { stage: "ownership_preparation" },
+          });
+  }
+  // A deadline that interrupted preparation keeps what the helper's compiler
+  // printed, as a failed preparation does.
+  if (code === "ETIMEDOUT")
+    return new AnalysisTimeoutError(operation, timeoutMs, {
+      cause,
+      ...reverseCommandTimeoutGuidance(provider, timeoutMs),
+      ...(inspection.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: inspection.capturedOutput }),
+    });
+  if (inspection.cancellation !== undefined)
+    return cancelledBy(
+      operation,
+      carriedReason(inspection.cancellation?.reason),
+    );
+  return new AnalysisCapabilityUnavailableError(
+    "process-ownership",
+    "prepare_owned_process",
+    `Darwin process ownership inspection could not be prepared: ${inspection.message}`,
+    {
+      cause,
+      userMessage: inspection.message,
+      remediationAction: `${DARWIN_PROCESS_OWNERSHIP_REMEDIATION} ${setting} does not need to change.`,
+      diagnostics: {
+        boundary: "process-ownership",
+        stage: "ownership_preparation",
+        ...(inspection.compilerOutcome === undefined
+          ? {}
+          : {
+              compiler_outcome: jsonValueSchema.parse(
+                inspection.compilerOutcome,
+              ),
+            }),
+      },
+      ...(inspection.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: inspection.capturedOutput }),
+    },
+  );
+};
+
 /**
  * The deadline failure names `command_timeout_ms` and binds it as the
  * per-call control; each adapter names the option that sets it.
@@ -1485,69 +2122,101 @@ const reverseCommandTimeoutGuidance = (provider: string, timeoutMs: number) =>
     phase: `${provider} command deadline`,
     unchanged: `No restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes).`,
     detail:
-      " It covers target preflight and the one-shot command (deadlineExpired); it is not a Ghidra or Hopper startup deadline or a debugger session deadline.",
+      " It covers target preflight, executable identification and the one-shot command (deadlineExpired); it is not a Ghidra or Hopper startup deadline or a debugger session deadline.",
   });
 
+/**
+ * The limitation for a post-run hash that reached the call's deadline, for
+ * example at a read or close that a stalled mount holds. The command's output
+ * is unaffected; only the artifact comparison is missing.
+ */
+export const postRunArtifactDigestDeadline = (
+  provider: string,
+  timeoutMs: number,
+): string =>
+  `The post-run artifact digest is unknown because hashing the artifact after the provider call reached the ${String(timeoutMs)} ms command_timeout_ms deadline (ETIMEDOUT), for example at a read or close that a stalled mount holds; artifact changes during the command remain unquantified. ${reverseCommandTimeoutGuidance(provider, timeoutMs).remediationAction}`;
+
+/** The limitation for a post-run hash that read the artifact and failed. */
+export const POST_RUN_ARTIFACT_UNREADABLE =
+  "The post-run artifact digest is unknown because the artifact could not be read after the provider call.";
+
+/** Optional bounds and file access for one hash. */
+export interface FileDigestBounds {
+  readonly signal?: AbortSignal | undefined;
+  /** Milliseconds for the whole hash. */
+  readonly timeoutMs?: number | undefined;
+  readonly stat?: (path: string) => Promise<Stats>;
+  readonly open?: (path: string) => ReturnType<typeof createReadStream>;
+}
+
+/**
+ * Hash a regular file within one deadline. The hash completes once its stream
+ * has closed, so a close that a stalled mount holds reaches the deadline as a
+ * stalled open or read does. Destroying a stream cancels none of these, so a
+ * hash that stops waiting destroys its stream, whose close keeps running until
+ * the mount answers.
+ */
 export const digestFile = async (
   path: string,
-  signal?: AbortSignal,
-  stat: (path: string) => Promise<Stats> = statPath,
-  timeoutMs: number = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
-  open: (
-    path: string,
-  ) => ReturnType<typeof createReadStream> = createReadStream,
+  bounds: FileDigestBounds = {},
 ): Promise<string> => {
-  const startedAt = performance.now();
-  const info = await statWithDeadline(path, signal, stat, timeoutMs);
-  if (!info.isFile())
-    throw Object.assign(new Error("Artifact digest requires a regular file"), {
-      code: "EINVAL",
-    });
-  const remainingMs = Math.max(
-    0,
-    Math.ceil(timeoutMs - (performance.now() - startedAt)),
-  );
-  if (remainingMs === 0)
-    throw Object.assign(new Error("Artifact digest timed out"), {
-      code: "ETIMEDOUT",
-    });
-  return new Promise<string>((resolveDigest, rejectDigest) => {
-    const hash = createHash("sha256");
-    const stream = open(path);
-    const timer = setTimeout(
-      () =>
-        stream.destroy(
-          Object.assign(new Error("Artifact digest timed out"), {
-            code: "ETIMEDOUT",
-          }),
-        ),
-      remainingMs,
-    );
-    const abort = (): void => {
-      stream.destroy(
-        cancelledBy("artifact_digest", carriedReason(signal?.reason)),
+  const {
+    signal,
+    timeoutMs = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+    stat = statPath,
+    open = createReadStream,
+  } = bounds;
+  const deadline = fileDeadline(signal, timeoutMs);
+  try {
+    const info = digestStep(await deadline.run(() => stat(path)), signal);
+    if (!info.isFile())
+      throw Object.assign(
+        new Error("Artifact digest requires a regular file"),
+        { code: "EINVAL" },
       );
-    };
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-    };
-    if (signal?.aborted) {
-      cleanup();
-      stream.destroy();
-      rejectDigest(cancelledBy("artifact_digest", signal));
-      return;
-    }
-    signal?.addEventListener("abort", abort, { once: true });
+    let stream: ReturnType<typeof open> | undefined;
+    const read = await deadline.run(() => readDigest((stream = open(path))));
+    if (read.status === "interrupted") stream?.destroy();
+    return digestStep(read, signal);
+  } finally {
+    deadline.release();
+  }
+};
+
+/** The SHA-256 of a stream, once it has closed after its end. */
+const readDigest = (
+  stream: ReturnType<typeof createReadStream>,
+): Promise<string> =>
+  new Promise<string>((resolveDigest, rejectDigest) => {
+    const hash = createHash("sha256");
+    let digest: string | undefined;
     stream.on("data", (chunk: Buffer | string) => hash.update(chunk));
-    stream.once("error", (cause: Error) => {
-      cleanup();
-      rejectDigest(cause);
-    });
     stream.once("end", () => {
-      cleanup();
-      resolveDigest(hash.digest("hex"));
+      digest = hash.digest("hex");
     });
+    stream.once("error", rejectDigest);
+    stream.once("close", () => {
+      if (digest !== undefined) resolveDigest(digest);
+      else
+        rejectDigest(
+          Object.assign(new Error("Artifact stream closed before its end"), {
+            code: "ERR_STREAM_PREMATURE_CLOSE",
+          }),
+        );
+    });
+  });
+
+/** The value of one hash step, or the error its failure or interruption reports. */
+const digestStep = <Value>(
+  outcome: FileStepOutcome<Value>,
+  signal: AbortSignal | undefined,
+): Value => {
+  if (outcome.status === "fulfilled") return outcome.value;
+  if (outcome.status === "rejected") throw outcome.cause;
+  if (outcome.by === "cancellation")
+    throw cancelledBy("artifact_digest", carriedReason(signal?.reason));
+  throw Object.assign(new Error("Artifact digest timed out"), {
+    code: "ETIMEDOUT",
   });
 };
 
@@ -1605,55 +2274,4 @@ const commandFailureCode = (cause: unknown): string | number | undefined => {
   return typeof code === "string" || typeof code === "number"
     ? code
     : undefined;
-};
-
-const statWithDeadline = (
-  path: string,
-  signal: AbortSignal | undefined,
-  stat: (path: string) => Promise<Stats>,
-  timeoutMs: number,
-): Promise<Stats> => {
-  if (signal?.aborted)
-    return Promise.reject(cancelledBy("artifact_digest", signal));
-  return new Promise<Stats>((resolveStat, rejectStat) => {
-    let settled = false;
-    const finish = (outcome: Result<Stats, unknown>): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-      if (outcome.ok) resolveStat(outcome.value);
-      else rejectStat(outcome.error);
-    };
-    const abort = (): void =>
-      finish(
-        err(cancelledBy("artifact_digest", carriedReason(signal?.reason))),
-      );
-    const timer = setTimeout(
-      () =>
-        finish(
-          err(
-            Object.assign(new Error("Artifact stat timed out"), {
-              code: "ETIMEDOUT",
-            }),
-          ),
-        ),
-      timeoutMs,
-    );
-    signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted) {
-      abort();
-      return;
-    }
-    // Promise handlers stay attached after timeout/cancellation so a delayed
-    // stat rejection is observed and cannot become an unhandled rejection.
-    try {
-      void stat(path).then(
-        (info) => finish(ok(info)),
-        (cause: unknown) => finish(err(cause)),
-      );
-    } catch (cause) {
-      finish(err(cause));
-    }
-  });
 };

@@ -52,7 +52,8 @@ CodeDirectory flags stay with that tool.
 
 The report states presence of build-time features, not exploitability.
 
-The default read budget is 64 MiB (`max_file_bytes`, ceiling 512 MiB). A changed
+The default [read allowance](reference/limits-and-recovery.md#static-reader-read-allowance) is 64 MiB of reads (`max_file_bytes`, ceiling 512 MiB);
+files up to 512 MiB are admitted whatever their size. A changed
 file is refused. A malformed header, a Mach-O segment or encryption command that
 fails admission, or a program, section, or segment payload declared outside the
 file returns no partial report; in a universal Mach-O, one bad slice leaves the

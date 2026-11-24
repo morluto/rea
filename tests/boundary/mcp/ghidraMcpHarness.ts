@@ -1,4 +1,5 @@
 import { ok as javaProbeOk, ok } from "../../../src/domain/result.js";
+import type { TestDelivery } from "../../support/completeEvidenceByDefault.js";
 import {
   verifiedGhidraApplicationProperties,
   verifiedGhidraJavaObservation,
@@ -40,6 +41,8 @@ export const connectGhidraMcp = async (
     readonly attestDosTargetSnapshot?: ReturnType<GhidraProviderClientFactory>["attestDosTargetSnapshot"];
     readonly close?: ReturnType<GhidraProviderClientFactory>["close"];
     readonly delivery?: ToolResultDelivery;
+    /** "budgeted" leaves an omitted detail to the agent result budget. */
+    readonly testDelivery?: TestDelivery;
     readonly environment?: Readonly<NodeJS.ProcessEnv>;
     readonly schemaValidator?: ReturnType<typeof createMcpSchemaValidation>;
   } = {},
@@ -84,6 +87,9 @@ export const connectGhidraMcp = async (
     ...(fixture.schemaValidator === undefined
       ? {}
       : { schemaValidator: fixture.schemaValidator }),
+    ...(fixture.testDelivery === undefined
+      ? {}
+      : { testDelivery: fixture.testDelivery }),
     serverOptions: {
       logger: silentLogger,
       environment: {

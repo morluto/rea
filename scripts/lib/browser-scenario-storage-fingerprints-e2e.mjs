@@ -12,8 +12,10 @@ import {
   scenarioProfiles,
 } from "./browser-scenario-verifier.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
-import { completeEvidenceToolArguments } from "./complete-evidence.mjs";
-import { completeEvidenceClient } from "./complete-evidence.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "./complete-evidence.mjs";
 
 const secretVariable = "REA_BROWSER_FINGERPRINT_VERIFIER_SECRET";
 const secret = "rea-storage-fingerprint-private";

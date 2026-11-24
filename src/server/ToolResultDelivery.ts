@@ -41,7 +41,7 @@ import { summarizeOverBudgetEvidence } from "../application/analysisView/Analysi
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
 import {
   agentBudgetDelivery,
-  agentBudgetOverflowBytes,
+  budgetedSummaryBytes,
   currentAgentResultBudget,
   type AgentBudgetDelivery,
 } from "../domain/agentResultBudget.js";
@@ -311,7 +311,7 @@ export class ToolResultDelivery {
     contract: ToolContract,
     recorded: Result<unknown, AnalysisError> | undefined,
     viewSource?: JsonValue | (() => JsonValue | undefined),
-    /** Retains a budget summary as `detail: "summary"` would; none, no budget. */
+    /** Retains a budgeted summary as `detail: "summary"` would; none, no budget. */
     recordSummary?: EvidenceWriter["recordEvidence"],
   ): CallToolResult {
     if (recorded !== undefined && !recorded.ok)
@@ -668,12 +668,16 @@ const overBudgetSummary = (
   // request complete delivery with detail complete.
   if (!AGENT_BUDGET_OPERATION_NAMES.has(contract.name)) return undefined;
   const selection = currentMcpToolRequest()?.deliverySelection;
-  if (selection === undefined || selection.detail !== undefined)
-    return undefined;
+  if (selection === undefined) return undefined;
   const budget = currentAgentResultBudget(agentBudgetSeed);
-  if (budget === undefined) return undefined;
-  const completeBytes = agentBudgetOverflowBytes(evidence, budget);
-  if (completeBytes === undefined) return undefined;
+  const completeBytes = budgetedSummaryBytes({
+    detail: selection.detail,
+    evidence,
+    budget,
+    retained: recordSummary !== undefined,
+    pageable: selection.pageable,
+  });
+  if (completeBytes === undefined || budget === undefined) return undefined;
   const summary = summarizeOverBudgetEvidence(evidence);
   if (!summary.ok || !contract.outputSchema.safeParse(summary.value).success)
     return undefined;

@@ -274,11 +274,6 @@ type ApplicationBinding<Input = unknown> =
       readonly admission: "application";
     });
 
-/**
- * Run a provider-backed workflow on the analysis that admission grants for
- * the call. When `detail` selects delivery (`detail: "delivery"`), it never
- * reaches the workflow and a summary retains the complete Evidence.
- */
 /** Whether a contract input declares the delivery `detail` selector. */
 type HasDeliveryDetail<Input> = string extends keyof Input
   ? false
@@ -288,10 +283,16 @@ type HasDeliveryDetail<Input> = string extends keyof Input
       : false
     : false;
 
+/**
+ * Run a provider-backed workflow on the analysis that admission grants for
+ * the call. When `detail` selects delivery (`detail: "delivery"`), it never
+ * reaches the workflow and a summary retains the complete Evidence.
+ */
 type AnalysisBinding<Input> = {
   readonly admission: "sdk";
   readonly completionProgress?: AnalysisWorkflowOptions["completionProgress"];
 } & ExclusiveBinding<"analyze"> &
+  // A declared detail selects delivery; an index signature declares no field.
   (HasDeliveryDetail<Input> extends true
     ? {
         readonly detail: "delivery";
