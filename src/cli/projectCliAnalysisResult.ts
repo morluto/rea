@@ -243,17 +243,29 @@ const cliTargetFailureRemediation = (
   const mcp = renderTargetFailureRecovery(facts, MCP_TARGET_FAILURE_SPELLING);
   if (!remediation.action.startsWith(mcp)) return undefined;
   const cliName = context.cliName ?? "rea";
+  const mappedOperation = (operation: string): string | undefined =>
+    cliCommandForOperation(
+      operation,
+      context.commands,
+      cliName,
+      context.recordedCommands,
+    );
   const spelling: TargetFailureSpelling = {
-    operation: (operation) =>
-      cliCommandForOperation(
-        operation,
-        context.commands,
-        cliName,
-        context.recordedCommands,
-      ) ?? operation,
+    operation: (operation) => mappedOperation(operation) ?? operation,
     provider: (providerId) => `--provider ${providerId}`,
   };
-  const cli = renderTargetFailureRecovery(facts, spelling);
+  const cliOperations = facts.alternatives?.operations?.filter(
+    (operation) => mappedOperation(operation) !== undefined,
+  );
+  const cliProviders = facts.alternatives?.providers;
+  const cliFacts: TargetFailureRecoveryFacts = {
+    ...facts,
+    alternatives: {
+      ...(cliOperations === undefined ? {} : { operations: cliOperations }),
+      ...(cliProviders === undefined ? {} : { providers: cliProviders }),
+    },
+  };
+  const cli = renderTargetFailureRecovery(cliFacts, spelling);
   return cli === mcp
     ? undefined
     : {

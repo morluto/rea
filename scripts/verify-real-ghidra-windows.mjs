@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { processMayExist } from "./lib/verifier-cleanup.mjs";
 import { windowsGhidraFixtureOptions } from "./lib/ghidra-windows-fixture-options.mjs";
 
 import { access, readFile } from "node:fs/promises";
@@ -439,7 +440,7 @@ async function assertCleanup(runtime) {
   }
   if (
     typeof runtime.process_id === "number" &&
-    processExists(runtime.process_id)
+    processMayExist(runtime.process_id)
   )
     throw new Error(
       `Windows Ghidra cleanup left process ${String(runtime.process_id)}`,
@@ -452,18 +453,5 @@ async function exists(path) {
     return true;
   } catch {
     return false;
-  }
-}
-
-function processExists(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (cause) {
-    return !(
-      cause instanceof Error &&
-      "code" in cause &&
-      cause.code === "ESRCH"
-    );
   }
 }

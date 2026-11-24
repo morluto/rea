@@ -403,6 +403,8 @@ await withVerifierFixture(fixture, async () => {
       operation: "inspect_native_dispatch_metadata",
       path: target.value.path,
       reason,
+      failure_kind: "malformed",
+      format: "native-binary",
     });
     await withArtifactMcp(path, async (client) => {
       const failure = requireMcpToolError(

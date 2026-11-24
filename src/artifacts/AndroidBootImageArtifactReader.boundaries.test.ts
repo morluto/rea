@@ -75,6 +75,13 @@ it.each(["invalid", "cancelled"] as const)(
             throw new ArtifactReaderFailure(
               "malformed",
               "injected preparation failure",
+              {
+                parseFailure: {
+                  kind: "malformed",
+                  format: "android-boot-image",
+                  detail: "injected preparation failure",
+                },
+              },
             );
           controller.abort(new Error("cancel final preparation validation"));
         }

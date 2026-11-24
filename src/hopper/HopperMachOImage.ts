@@ -3,8 +3,12 @@ import {
   RegularFileCancelled,
   RegularFileCleanupFailure,
 } from "../filesystem/OwnedRegularFile.js";
-import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
+import {
+  NonRegularFileReadError,
+  RegularFileOperationCancelled,
+} from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { z } from "zod";
 
@@ -25,6 +29,7 @@ import {
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   findOverlappingFatSlices,
+  inspectFatSliceBounds,
   readFatSliceDeclarations,
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
@@ -110,7 +115,12 @@ export const resolveHopperMachOImage = async (
   try {
     opened = await (
       options.fileSystem ?? defaultHopperMachOImageResolutionFileSystem
-    ).open(target.path, "r");
+    ).open(
+      target.path,
+      constants.O_RDONLY |
+        (constants.O_NONBLOCK ?? 0) |
+        (constants.O_NOCTTY ?? 0),
+    );
   } catch (cause: unknown) {
     // Keep the OS error so a read-permission denial reports access_denied.
     return invalid(
@@ -275,6 +285,12 @@ const inspectHopperMachOImage = async (
         cause === undefined ? undefined : { cause },
       ),
     );
+  const stats = await file.stat();
+  if (!stats.isFile())
+    return invalid(
+      `Selected input must be a regular file: ${target.path}`,
+      new NonRegularFileReadError(target.path, stats.isDirectory()),
+    );
   const read = (offset: number, length: number): Promise<Buffer> =>
     readFileHandleRange(file, offset, length, () => {
       if (signal?.aborted) throw cancelledBy("open_binary", signal);
@@ -329,7 +345,7 @@ const inspectHopperMachOImage = async (
       "Mach-O source header changed before Hopper image preparation",
     );
   const { wide, littleEndian, count, tableEnd } = fatPrefix;
-  const size = (await file.stat()).size;
+  const size = stats.size;
   if (count === 0 || count > 128 || tableEnd > size)
     return invalid(
       "FAT architecture table is truncated or exceeds the supported 128 entries",
@@ -354,31 +370,15 @@ const inspectHopperMachOImage = async (
     return invalid("Hopper cannot select the admitted Mach-O architecture");
   const architecture = target.architecture;
   // Target admission chose the slice; reading another one would analyze bytes
-  // the session's Evidence does not name.
+  // the session's Evidence does not name. Check container-level bounds and
+  // overlaps across the table, then validate only the selected slice's
+  // alignment, reserved word, and thin Mach-O header identity.
   const admitted = target.universalSlice;
   const matches: FatSliceDeclaration[] = [];
   for (const slice of parsed.slices) {
     if (signal?.aborted) return err(cancelledBy("open_binary", signal));
-    const rangeError = validateFatSlice(slice, size, tableEnd);
-    if (rangeError !== null) return invalid(rangeError);
-    if (slice.reserved !== null && slice.reserved !== 0)
-      return invalid(
-        `FAT64 architecture ${slice.index} has a nonzero reserved field`,
-      );
-    if (slice.size < 12)
-      return invalid(
-        `FAT architecture ${slice.index} has a truncated Mach-O header`,
-      );
-    const embedded = await read(slice.offset, 12);
-    if (embedded.length !== 12)
-      return invalid(`FAT architecture ${slice.index} became truncated`);
-    const identity = readMachoHeaderPrefixFacts(embedded).identity;
-    if (identity === null)
-      return invalid(
-        `FAT architecture ${slice.index} does not contain a Mach-O image`,
-      );
-    const identityError = validateFatSliceIdentity(slice, identity);
-    if (identityError !== null) return invalid(identityError);
+    const boundsIssue = inspectFatSliceBounds(slice, size, tableEnd);
+    if (boundsIssue !== null) return invalid(boundsIssue.reason);
     if (slice.offset === admitted.offset && slice.size === admitted.size)
       matches.push(slice);
   }
@@ -393,6 +393,26 @@ const inspectHopperMachOImage = async (
     return invalid(
       `The admitted slice at file offset ${String(admitted.offset)} is not ${architecture}; open the stable source again`,
     );
+  const rangeError = validateFatSlice(selected, size, tableEnd);
+  if (rangeError !== null) return invalid(rangeError);
+  if (selected.reserved !== null && selected.reserved !== 0)
+    return invalid(
+      `FAT64 architecture ${selected.index} has a nonzero reserved field`,
+    );
+  if (selected.size < 12)
+    return invalid(
+      `FAT architecture ${selected.index} has a truncated Mach-O header`,
+    );
+  const embedded = await read(selected.offset, 12);
+  if (embedded.length !== 12)
+    return invalid(`FAT architecture ${selected.index} became truncated`);
+  const identity = readMachoHeaderPrefixFacts(embedded).identity;
+  if (identity === null)
+    return invalid(
+      `FAT architecture ${selected.index} does not contain a Mach-O image`,
+    );
+  const identityError = validateFatSliceIdentity(selected, identity);
+  if (identityError !== null) return invalid(identityError);
   return ok({
     method: wide ? "fat64_thin_slice" : "fat32_thin_slice",
     architecture_count: count,

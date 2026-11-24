@@ -119,19 +119,25 @@ cliTest(
           await call(selection.operation, selection.input),
         );
         for (const error of [response.json, mcp.error])
-          expect(error).toMatchObject({
-            code:
-              reason === "malformed"
-                ? "unsupported_target"
-                : "artifact_operation_failed",
-            details: {
-              operation: selection.operation,
-              reason,
-              detail: expect.stringContaining(
-                reason === "malformed" ? fixture.sourcePath : "../outside.js",
-              ),
-            },
-          });
+          expect(error).toMatchObject(
+            reason === "malformed"
+              ? {
+                  code: "unsupported_target",
+                  details: {
+                    operation: selection.operation,
+                    path: fixture.sourcePath,
+                    failure_kind: "malformed",
+                  },
+                }
+              : {
+                  code: "artifact_operation_failed",
+                  details: {
+                    operation: selection.operation,
+                    reason,
+                    detail: expect.stringContaining("../outside.js"),
+                  },
+                },
+          );
       }
     }
 

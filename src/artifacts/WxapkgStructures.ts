@@ -111,7 +111,7 @@ export const readWxapkgHeader = async (
 const wxapkgIndexLayoutFailure = (
   failure: WxapkgIndexLayoutFailure,
 ): ArtifactReaderFailure =>
-  wxapkgFormatFailure(
+  wxapkgTruncatedFailure(
     failure._tag === "DataRegionExceedsFile"
       ? "declared data region exceeds the file"
       : "declared member table exceeds the file",
@@ -137,7 +137,7 @@ export const readWxapkgFileTable = async (
     if (indexLayout.tableBytes > readBytes) readBytes = indexLayout.tableBytes;
   }
   if (tableStart === undefined)
-    throw wxapkgFormatFailure("declared member table exceeds the file");
+    throw wxapkgTruncatedFailure("declared member table exceeds the file");
   if (readBytes > MAX_TABLE_BYTES)
     throw artifactFixedLimitFailure(
       {

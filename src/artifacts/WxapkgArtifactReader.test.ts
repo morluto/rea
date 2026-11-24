@@ -226,7 +226,7 @@ describe("WxapkgArtifactReader malformed inputs", () => {
       buildWxapkg([{ path: "evil.bin", data: "x", size: 1 << 20 }]),
       async (reader) => {
         await expect(list(reader)).rejects.toMatchObject({
-          reason: "malformed",
+          reason: "truncated",
         });
       },
     );
@@ -308,7 +308,7 @@ describe("WxapkgArtifactReader data region", () => {
       }),
       async (reader) => {
         await expect(list(reader)).rejects.toMatchObject({
-          reason: "malformed",
+          reason: "truncated",
         });
       },
     );
@@ -426,7 +426,7 @@ describe("WxapkgArtifactReader damaged packages", () => {
   it("rejects a truncated package before the declared table ends", async () => {
     const bytes = buildWxapkg(members);
     await withReader(bytes.subarray(0, 30), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "truncated" });
     });
   });
 

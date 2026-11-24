@@ -123,6 +123,15 @@ class NativeDmgCommandFailure extends ArtifactReaderFailure {
       // Only hdiutil verify classifies a DMG failure as integrity.
       integrityCheck:
         failure.reason === "integrity" ? "image-checksum" : undefined,
+      parseFailure:
+        failure.reason === "unsupported"
+          ? {
+              kind: "unsupported",
+              format: "dmg",
+              detail: message,
+              undecodedContent: false,
+            }
+          : undefined,
     });
     this.processNotStarted = options?.processNotStarted ?? false;
     this.verifyDiagnostic = failure.verifyDiagnostic;

@@ -533,7 +533,7 @@ it
   .runIf(!unsupportedHost)
   .each([
     "success",
-    "format",
+    "malformed",
     "unavailable",
     "unsupported",
     "output-limit",
@@ -589,7 +589,7 @@ it
               ? "broken-json"
               : JSON.stringify(
                   [
-                    "format",
+                    "malformed",
                     "unavailable",
                     "unsupported",
                     "output-limit",
@@ -636,7 +636,7 @@ it
         ok: false,
         error: {
           _tag:
-            scenario === "format" || scenario === "literal-replacement"
+            scenario === "malformed" || scenario === "literal-replacement"
               ? "AnalysisTargetFailureError"
               : scenario === "unavailable"
                 ? "ProviderSelectionError"

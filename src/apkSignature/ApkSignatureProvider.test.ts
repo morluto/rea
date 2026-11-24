@@ -408,10 +408,18 @@ const registerSignatureInputAdmissionCases = () => {
     expect(
       tagOf(new ArtifactReaderFailure("path", "Expected a regular file")),
     ).toBe("AnalysisInputError");
-    for (const reason of ["io", "unavailable", "malformed"] as const)
-      expect(tagOf(new ArtifactReaderFailure(reason, "reader failed"))).toBe(
-        "ProviderAdapterError",
-      );
+    for (const cause of [
+      new ArtifactReaderFailure("io", "reader failed"),
+      new ArtifactReaderFailure("unavailable", "reader failed"),
+      new ArtifactReaderFailure("malformed", "reader failed", {
+        parseFailure: {
+          kind: "malformed",
+          format: "apk",
+          detail: "reader failed",
+        },
+      }),
+    ])
+      expect(tagOf(cause)).toBe("ProviderAdapterError");
     expect(tagOf(new RangeError("boom"))).toBe("ProviderAdapterError");
   });
 

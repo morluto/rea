@@ -65,10 +65,9 @@ for (const { operation, session, cases } of await loadTargetFailureReaders()) {
           ...(session === true ? {} : { path }),
           ...testCase.mcp,
         });
-        // A target failure is a tool result with structured content, never a
-        // JSON-RPC error or a thrown handler failure flattened to text.
+        // A target failure is a tool result whose JSON error text carries the
+        // structured failure, never a JSON-RPC error or flattened exception.
         expect(response.isError).toBe(true);
-        expect(response.structuredContent).toMatchObject({ error: expected });
         const { error } = parseMcpToolError(response);
         expect(error).toMatchObject(expected);
         expect(error).not.toHaveProperty("recovery");

@@ -22,6 +22,7 @@ import {
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { ArtifactContainerIntegrityPair } from "../domain/artifactIntegrity.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** An entry whose bytes are one range of the carrier. */
@@ -39,6 +40,7 @@ export interface PositionalArtifactEntries<
   /** The coverage the preparation established, including complete coverage. */
   readonly coverage: ArtifactReaderTraversal;
   readonly formatMetadata?: Metadata;
+  readonly containerIntegrity?: ArtifactContainerIntegrityPair;
 }
 
 /**
@@ -63,6 +65,7 @@ export abstract class PositionalArtifactReader<
         readonly entries: ReadonlyMap<string, Entry>;
         readonly coverage: ArtifactReaderTraversal;
         readonly formatMetadata: Metadata | undefined;
+        readonly containerIntegrity: ArtifactContainerIntegrityPair | undefined;
       }
     | undefined;
 
@@ -98,6 +101,11 @@ export abstract class PositionalArtifactReader<
   /** Metadata from the same validated preparation that established entries and coverage. */
   protected get preparedFormatMetadata(): Metadata | undefined {
     return this.#prepared?.formatMetadata;
+  }
+
+  containerIntegrity(): ArtifactContainerIntegrityPair | undefined {
+    const integrity = this.#prepared?.containerIntegrity;
+    return integrity === undefined ? undefined : { ...integrity };
   }
 
   async prepareContainer(
@@ -229,6 +237,7 @@ export abstract class PositionalArtifactReader<
       entries,
       coverage: prepared.coverage,
       formatMetadata: prepared.formatMetadata,
+      containerIntegrity: prepared.containerIntegrity,
     };
   }
 

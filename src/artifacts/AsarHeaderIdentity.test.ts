@@ -1,11 +1,13 @@
 import { writeFile } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
+import * as asarHeader from "../resources/AsarHeader.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
+import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
 it.each(["close", "cancel"] as const)(
   "does not complete an ASAR inventory after %s while paused",
@@ -100,3 +102,31 @@ async function collectEntries(reader: AsarArtifactReader) {
   for await (const entry of reader.entries()) entries.push(entry);
   return entries;
 }
+
+it("reuses admitted ASAR header extents from root classification without duplicating admitAsarHeader", async () => {
+  const root = await createTestTempDirectory("rea-asar-admitted-extents-");
+  const path = join(root, "app.asar");
+  const content = Buffer.from("hello-asar");
+  await writeFile(
+    path,
+    Buffer.concat([
+      asarHeaderBytes(
+        JSON.stringify({
+          files: { "a.txt": { size: content.length, offset: "0" } },
+        }),
+      ),
+      content,
+    ]),
+  );
+  const admitSpy = vi.spyOn(asarHeader, "admitAsarHeader");
+  try {
+    const snapshot = await scanCanonicalArtifactInventory(path);
+    expect(snapshot.manifest.root_format).toBe("asar");
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "a.txt"),
+    ).toBeDefined();
+    expect(admitSpy).not.toHaveBeenCalled();
+  } finally {
+    admitSpy.mockRestore();
+  }
+});

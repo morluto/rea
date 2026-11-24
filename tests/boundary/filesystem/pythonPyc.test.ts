@@ -5,6 +5,7 @@ import { createPythonPycService } from "../../../src/composition/pythonPyc.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { pythonPycFixture } from "../../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("Python pyc stable filesystem boundary", () => {
   it("reports non-file and missing selections as caller input errors", async () => {
@@ -14,26 +15,12 @@ describe("Python pyc stable filesystem boundary", () => {
     await writeFile(path, pythonPycFixture());
     await symlink(path, alias);
     const service = createPythonPycService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [join(root, "missing.pyc"), "invalid_value"],
-      [join(path, "child.pyc"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_python_pyc",
-        issues: [
-          {
-            path: ["path"],
-            reason,
-            message: expect.any(String),
-          },
-        ],
-      });
-    }
+    await expectFileSelectionErrors(
+      service,
+      "inspect_python_pyc",
+      { root, alias, path },
+      ".pyc",
+    );
   });
 
   it("reports each selected pyc limit and reopens the same artifact successfully", async () => {

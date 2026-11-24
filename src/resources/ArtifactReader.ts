@@ -317,21 +317,43 @@ export class ArtifactReaderFailure extends Error {
     },
     details?: ArtifactIntegrityDetails,
   );
+  /** A target failure carries the format owner's structured facts. */
   constructor(
-    reason: Exclude<ArtifactReaderFailureReason, "integrity">,
+    reason: FormatTargetFailure["kind"],
+    message: string,
+    options: ArtifactReaderFailureOptions & {
+      readonly parseFailure: FormatTargetFailure;
+    },
+    details?: ArtifactIntegrityDetails,
+  );
+  constructor(
+    reason: Exclude<
+      ArtifactReaderFailureReason,
+      "integrity" | FormatTargetFailure["kind"]
+    >,
     message: string,
     options?: ArtifactReaderFailureOptions,
     details?: ArtifactIntegrityDetails,
   );
+  /** Non-target rebuilds that may include `integrity` carry `integrityCheck` explicitly. */
+  constructor(
+    reason: Exclude<ArtifactReaderFailureReason, FormatTargetFailure["kind"]>,
+    message: string,
+    options: ArtifactReaderFailureOptions & {
+      readonly integrityCheck: ArtifactIntegrityCheck | undefined;
+    },
+    details?: ArtifactIntegrityDetails,
+  );
   /**
-   * A rebuild whose reason is not a literal carries the check explicitly, as
-   * {@link primaryFacts} does, so a rewrapped integrity failure keeps it.
+   * A rebuild whose reason is not a literal carries the check and format facts
+   * explicitly, as {@link primaryFacts} does, so a rewrapped failure keeps them.
    */
   constructor(
     reason: ArtifactReaderFailureReason,
     message: string,
     options: ArtifactReaderFailureOptions & {
       readonly integrityCheck: ArtifactIntegrityCheck | undefined;
+      readonly parseFailure: FormatTargetFailure | undefined;
     },
     details?: ArtifactIntegrityDetails,
   );
@@ -380,8 +402,10 @@ export class ArtifactReaderFailure extends Error {
     | "readerLimit"
     | "parserLimit"
     | "fixedAllowance"
-    | "parseFailure"
-  > & { readonly integrityCheck: ArtifactIntegrityCheck | undefined } {
+  > & {
+    readonly integrityCheck: ArtifactIntegrityCheck | undefined;
+    readonly parseFailure: FormatTargetFailure | undefined;
+  } {
     return {
       ...(this.userMessage === undefined
         ? {}
@@ -400,9 +424,7 @@ export class ArtifactReaderFailure extends Error {
       ...(this.fixedAllowance === undefined
         ? {}
         : { fixedAllowance: this.fixedAllowance }),
-      ...(this.parseFailure === undefined
-        ? {}
-        : { parseFailure: this.parseFailure }),
+      parseFailure: this.parseFailure,
       integrityCheck: this.integrityCheck,
     };
   }

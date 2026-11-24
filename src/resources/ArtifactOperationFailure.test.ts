@@ -569,12 +569,25 @@ it("keeps only a path-kind reader refusal a selection error", () => {
       issues: [{ path: ["path"], reason: "invalid_format" }],
     },
   });
-  const bytes = new ArtifactReaderFailure("malformed", "Corrupt member table");
+  const bytes = new ArtifactReaderFailure("malformed", "Corrupt member table", {
+    parseFailure: {
+      kind: "malformed",
+      format: "zip",
+      detail: "Corrupt member table",
+    },
+  });
   expect(
     projectOwnedArtifactInputFailure(
       artifactFilePrimaryFacts(bytes),
       operation,
       path,
     ),
-  ).toBeUndefined();
+  ).toMatchObject({
+    _tag: "AnalysisTargetFailureError",
+    failure: {
+      kind: "malformed",
+      format: "zip",
+      detail: "Corrupt member table",
+    },
+  });
 });

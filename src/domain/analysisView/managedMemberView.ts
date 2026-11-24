@@ -1,4 +1,7 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import {
@@ -418,15 +421,8 @@ export const projectManagedMemberView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "managed-members")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Managed member inspection supports summary and managed-members views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Managed member inspection supports summary and managed-members views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof managedMembersViewRequestSchema>
