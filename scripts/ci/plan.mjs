@@ -1,7 +1,7 @@
 import { appendFileSync } from "node:fs";
 
 import { gitRepository, planChanges } from "./change-plan.mjs";
-import { CI_FLAGS as flags } from "./scopes.mjs";
+import { CI_FLAGS as flags, testShardJob } from "./scopes.mjs";
 
 const plan = planChanges(
   {
@@ -27,6 +27,11 @@ if (process.env.GITHUB_OUTPUT)
       test_selection: JSON.stringify(testSelection),
       test_mode: testSelection.mode,
       test_shards: JSON.stringify(testShards),
+      test_shard_job: testShardJob(
+        process.env.GITHUB_EVENT_NAME,
+        tier,
+        testSelection.mode,
+      ),
       typed_lint_files: JSON.stringify(typedLintFiles),
     })
       .map(([key, value]) => `${key}=${value}\n`)
