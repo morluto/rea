@@ -4,6 +4,7 @@ import {
   type EvidenceSubjectInput,
 } from "../../domain/evidence.js";
 import type { AnalysisExecution } from "../../ports/AnalysisProvider.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /**
  * How a session delivers the limitations its provider session shares across
@@ -75,5 +76,34 @@ export const deliverSessionLimitations = (
       sessionLimitationReference(context, sessionLimitations.length),
     ],
     sourceEvidence: [...(execution.sourceEvidence ?? []), context],
+  };
+};
+
+const isSessionLimitationContext = (source: Evidence): boolean =>
+  source.operation === "health" &&
+  isRecord(source.parameters) &&
+  source.parameters.facet === SESSION_LIMITATIONS_FACET.facet;
+
+/**
+ * Restore the full text of session limitations that a result references, from
+ * the context record it links. Writers whose output outlives the session, such
+ * as a decompile_all directory, use this so their files stay self-describing.
+ */
+export const inlineLinkedSessionLimitations = (
+  execution: AnalysisExecution,
+): AnalysisExecution => {
+  const contexts = new Map<string, readonly string[]>();
+  for (const source of execution.sourceEvidence ?? [])
+    if (isSessionLimitationContext(source))
+      contexts.set(
+        sessionLimitationReference(source, source.limitations.length),
+        source.limitations,
+      );
+  if (contexts.size === 0) return execution;
+  return {
+    ...execution,
+    limitations: execution.limitations.flatMap(
+      (entry) => contexts.get(entry) ?? [entry],
+    ),
   };
 };
