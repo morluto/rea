@@ -586,6 +586,50 @@ describe("one-shot function and workflow snapshot disclosure", () => {
   );
 });
 
+describe("one-shot composed snapshot disclosure", () => {
+  it.skipIf(process.platform === "win32")(
+    "words a composed notice for recomposition, and decompile-all as unwritten",
+    async () => {
+      const fixture = await createSnapshotReplayFixture("rea-one-shot-flow-");
+      const dependencies = fixture.dependencies(
+        fixture.createProvider({ cachePolicy: "live" }),
+      );
+      const overview = await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "binary_overview",
+        {},
+        { snapshotPath: fixture.snapshotPath },
+      );
+      if (!overview.ok) throw overview.error;
+      const notices = overview.value.limitations.filter((text) =>
+        text.startsWith("Not saved"),
+      );
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain("as a composed answer");
+      expect(notices[0]).toContain("source reads");
+
+      const all = await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "decompile_all",
+        {
+          output_directory: join(dirname(fixture.snapshotPath), "export"),
+          layout: "address",
+          resume: false,
+        },
+        { snapshotPath: join(dirname(fixture.snapshotPath), "unwritten.json") },
+      );
+      if (!all.ok) throw all.error;
+      expect(all.value.limitations).toContainEqual(
+        expect.stringContaining(
+          "decompile_all does not write analysis snapshots",
+        ),
+      );
+    },
+  );
+});
+
 describe("one-shot implicit document snapshots", () => {
   it("does not make another provider's implicit document replayable", async () => {
     const fixture = await createSnapshotReplayFixture("rea-implicit-document-");

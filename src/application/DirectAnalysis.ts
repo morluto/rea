@@ -55,7 +55,6 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   requestsStandaloneDecompile,
   requiresNativeSourceAdmissionBeforeReplay,
-  snapshotNotSavedLimitation,
 } from "./binary/AnalysisSnapshotCache.js";
 import {
   snapshotBindingMismatch,
@@ -585,11 +584,7 @@ const runAnalysis = async (
           return err(recorded.error.retainPartialObservation(evidence));
       }
     }
-    if (
-      tool !== "trace_native_ui_action" &&
-      tool !== "decompile_all" &&
-      snapshotPath !== undefined
-    ) {
+    if (!SNAPSHOT_UNWRITTEN_TOOLS.has(tool) && snapshotPath !== undefined) {
       const snapshot = session.exportAnalysisSnapshot();
       if (!snapshot.ok)
         return err(snapshot.error.retainPartialObservation(evidence));
@@ -679,6 +674,19 @@ const retainFinalCancellation = (
     ? analysisErrorWithCancellation(failure, cancelledBy(tool, signal))
     : failure;
 
+/** Composed commands whose one-shot call never writes the snapshot file. */
+const SNAPSHOT_UNWRITTEN_TOOLS: ReadonlySet<string> = new Set([
+  "decompile_all",
+  "trace_native_ui_action",
+]);
+
+/**
+ * A composed answer is rebuilt, not re-observed: its source reads that the
+ * snapshot holds can still replay without starting the provider.
+ */
+const workflowSnapshotNotSavedLimitation = (reason: string): string =>
+  `Not saved for snapshot replay as a composed answer: ${reason}. The snapshot records this Evidence and the source reads it can replay; repeating the call composes the answer again, starting the provider only for reads the snapshot lacks.`;
+
 const executeAnalysisTool = async (input: {
   readonly session: BinarySession;
   readonly openedTarget: BinaryTarget;
@@ -745,18 +753,19 @@ const executeAnalysisTool = async (input: {
     );
     if (!result.ok) return result;
     // Mirrors the workflow snapshot record DirectAnalysis keeps afterwards.
-    const workflowReplayRefusal =
-      !input.saveSnapshot ||
-      (tool !== "trace_native_ui_action" &&
-        session.allowsSnapshotReplay(tool) &&
-        evidenceProfile !== undefined &&
-        result.value.cachePolicy !== "live")
-        ? undefined
-        : snapshotNotSavedLimitation(
-            result.value.cachePolicy === "live"
-              ? "this composed result depends on live provider answers"
-              : "this workflow is not bound to a replayable provider profile",
-          );
+    const workflowReplayRefusal = !input.saveSnapshot
+      ? undefined
+      : SNAPSHOT_UNWRITTEN_TOOLS.has(tool)
+        ? `Not saved: ${tool} does not write analysis snapshots, so --snapshot recorded nothing for this call.`
+        : session.allowsSnapshotReplay(tool) &&
+            evidenceProfile !== undefined &&
+            result.value.cachePolicy !== "live"
+          ? undefined
+          : workflowSnapshotNotSavedLimitation(
+              result.value.cachePolicy === "live"
+                ? "it depends on live provider answers"
+                : "it is not bound to a replayable provider profile",
+            );
     const evidence = createWorkflowEvidence({
       target: input.openedTarget,
       operation: tool,
