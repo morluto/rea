@@ -323,6 +323,7 @@ export class PwntoolsDecoder<
         ok: z.literal(false),
         reason: z.enum([
           "format",
+          "truncated",
           "unsupported",
           "unsupported-target",
           "unavailable",
@@ -595,6 +596,18 @@ export class PwntoolsDecoder<
               capturedOutput,
               remediationAction: `Review reported limits and available host memory; allocation failure alone does not prove exhaustion. ${pwntoolsBudgetRecovery(producerLimits)}`,
             },
+          );
+        // The worker's ELF owner measured the end inside a declared header.
+        if (reply.reason === "truncated")
+          throw new AnalysisTargetFailureError(
+            OPERATION,
+            input.path,
+            {
+              kind: "truncated",
+              format: this.profile.targetFormat,
+              detail: reply.message,
+            },
+            { capturedOutput },
           );
         // The worker's ELF owner rejected the selected file's bytes.
         if (reply.reason === "format")
