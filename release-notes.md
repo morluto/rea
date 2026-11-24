@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **pwntools:** for a request-sourced pwntools input ceiling, details.limit is now a control_kind "parameter" limit instead of a setting limit carrying setting, source, update_mode and scope fields.
 * **uefi:** MCP callers that need every published file inline must pass detail: "complete" to extract_uefi_firmware.
 * **uefi:** MCP callers that need every volume, file and section inline must pass detail: "complete" to inspect_uefi_firmware.
 
@@ -268,6 +269,7 @@
 * **process:** retain synchronous command launch failures ([#13350](https://github.com/morluto/rea/issues/13350)) ([3a36311](https://github.com/morluto/rea/commit/3a3631100480109a7d2ef8b9ac8ff1f58df5904e))
 * **process:** verify nested worker exit after parent cleanup ([#13242](https://github.com/morluto/rea/issues/13242)) ([75a75a1](https://github.com/morluto/rea/commit/75a75a1bd14eeec233650623e8b839bdf26b793d))
 * **pwntools:** release each PLT emulator so CET binaries keep their PLT map ([#13213](https://github.com/morluto/rea/issues/13213)) ([6357f77](https://github.com/morluto/rea/commit/6357f775a01f623b96603cf6237951a5c57a0a93))
+* **pwntools:** report a per-call input ceiling as its producer_limits parameter ([#14208](https://github.com/morluto/rea/issues/14208)) ([fc795dd](https://github.com/morluto/rea/commit/fc795dd260cb28799f4a247ba61a31e9d7aab4cb))
 * **pyinstaller:** distinguish declared-size overruns from limits ([#13648](https://github.com/morluto/rea/issues/13648)) ([ae3a225](https://github.com/morluto/rea/commit/ae3a225f79c1dfd672ef728c104d2d26cd7cbddc))
 * **python:** validate marshal coverage and consolidate pyc tests ([#14036](https://github.com/morluto/rea/issues/14036)) ([4ff98b8](https://github.com/morluto/rea/commit/4ff98b84fb5a3b231910ac816575bcf798017126))
 * **reference:** preserve file cleanup when directory enumeration fails ([#14081](https://github.com/morluto/rea/issues/14081)) ([26ce3d1](https://github.com/morluto/rea/commit/26ce3d1325e8905be5754fd3c6a65685ce118186))
