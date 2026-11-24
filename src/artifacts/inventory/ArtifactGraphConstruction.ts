@@ -639,8 +639,13 @@ export const classifyArtifactHeader = (
   evidence: ArtifactClassificationEvidence,
   fileSize: number,
 ): Pick<ArtifactNode, "format" | "architecture"> => {
-  const { prefix, suffix, mzWindowsHeaderSignature, mzWindowsHeaderRecord } =
-    evidence;
+  const {
+    prefix,
+    suffix,
+    iso9660Descriptor,
+    mzWindowsHeaderSignature,
+    mzWindowsHeaderRecord,
+  } = evidence;
   const only = (format: ArtifactNode["format"]) => ({
     format,
     architecture: null,
@@ -648,10 +653,10 @@ export const classifyArtifactHeader = (
   // A refused claim falls through: a header-only iNES region, for example,
   // has the signature but not the declared cartridge extent, so it stays a
   // file instead of becoming another container. A claim that needs more
-  // bytes falls through too: the scan holds a bounded prefix and the trailer,
-  // so it cannot locate an ESP flash partition table, and a flash dump is
-  // classified by its first image.
-  const input = { prefix, fileSize, suffix };
+  // bytes falls through too: the scan holds a bounded prefix, the trailer and
+  // the ISO 9660 descriptor signature, so it cannot locate an ESP flash
+  // partition table, and a flash dump is classified by its first image.
+  const input = { prefix, fileSize, suffix, iso9660Descriptor };
   for (
     let recognition = recognizeArtifactFormat(input);
     recognition !== undefined;

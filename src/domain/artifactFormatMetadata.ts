@@ -41,6 +41,8 @@ import {
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
   auditdLogMetadataSchema,
+  iso9660EntryMetadataSchema,
+  iso9660MetadataSchema,
   ntfsMftMetadataSchema,
 } from "./formatMetadata/androidAndSystemMetadata.js";
 import {
@@ -90,6 +92,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   fitImageMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  iso9660MetadataSchema,
+  iso9660EntryMetadataSchema,
   ddsMetadataSchema,
   glbMetadataSchema,
   ktxMetadataSchema,
@@ -236,6 +240,14 @@ const declarationsByKind: {
   "android-boot-image-entry": {
     notCompared:
       "role and index restate the entry's path, compression is observed from its bytes, and load addresses, names and board IDs come from the image header or vendor ramdisk table, which the image's content comparison covers.",
+  },
+  iso9660: {
+    notCompared:
+      "Its fields come from the image's own volume descriptors, which content comparison covers.",
+  },
+  "iso9660-entry": {
+    notCompared:
+      "index, extent location and extent layout are layout; identifier restates the entry's path with its stored version suffix, and flags and dates come from directory records, which the image's content comparison covers.",
   },
   "android-ota-payload": {
     notCompared:

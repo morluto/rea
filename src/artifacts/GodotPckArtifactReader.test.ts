@@ -7,7 +7,7 @@ import {
   pckU64,
   type GodotPckMember,
 } from "../../tests/fixtures/godotPck.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { once } from "node:events";
@@ -304,6 +304,24 @@ describe("GodotPckArtifactReader", () => {
         reason: "unavailable",
       });
     });
+  });
+
+  it("reports a changed carrier before refusing an encrypted member", async () => {
+    const path = await writePck(
+      buildGodotPck(3, [{ path: "secret.gd", data: "x", flags: 1 }]),
+    );
+    const reader = new GodotPckArtifactReader(path);
+    try {
+      const [entry] = await list(reader);
+      if (entry === undefined) throw new Error("expected one entry");
+      await appendFile(path, "changed");
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        reason: "integrity",
+        integrityCheck: "container-identity",
+      });
+    } finally {
+      await reader.close();
+    }
   });
 
   it.each([
