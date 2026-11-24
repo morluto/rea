@@ -1,0 +1,269 @@
+{
+  "qlog_format": "JSON",
+  "qlog_version": "0.3",
+  "traces": [
+    {
+      "common_fields": {
+        "ODCID": "01020304"
+      },
+      "events": [
+        {
+          "data": {
+            "cwnd": 12800,
+            "bytes_in_flight": 1200
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "type": "initial",
+            "packet_number": 7
+          },
+          "name": "recovery:packet_lost",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 12800,
+            "bytes_in_flight": 1200
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 0,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "type": "handshake",
+            "packet_number": 7
+          },
+          "name": "recovery:packet_lost",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 0,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "type": "0RTT",
+            "packet_number": 7
+          },
+          "name": "recovery:packet_lost",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 0,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "type": "1RTT",
+            "packet_number": 8
+          },
+          "name": "recovery:packet_lost",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 0,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        }
+      ],
+      "vantage_point": {
+        "name": "aioquic",
+        "type": "client"
+      }
+    },
+    {
+      "common_fields": {
+        "ODCID": "01020304"
+      },
+      "events": [
+        {
+          "data": {
+            "cwnd": 12800,
+            "bytes_in_flight": 1200
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "type": "initial",
+            "packet_number": 7
+          },
+          "name": "recovery:packet_lost",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 12800,
+            "bytes_in_flight": 1200
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 0,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "type": "handshake",
+            "packet_number": 7
+          },
+          "name": "recovery:packet_lost",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 0,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "type": "1RTT",
+            "packet_number": 7
+          },
+          "name": "recovery:packet_lost",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 1200,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        },
+        {
+          "data": {
+            "cwnd": 6400,
+            "bytes_in_flight": 0,
+            "ssthresh": 6400
+          },
+          "name": "recovery:metrics_updated",
+          "time": 1700000000250.0
+        }
+      ],
+      "vantage_point": {
+        "name": "aioquic",
+        "type": "server"
+      }
+    }
+  ]
+}

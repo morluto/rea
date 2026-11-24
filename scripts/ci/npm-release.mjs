@@ -2,46 +2,16 @@ import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout } from "node:timers/promises";
-import { z } from "zod";
 import { prerelease, valid } from "semver";
 import { releaseNpmTag } from "../release-npm-tag.mjs";
-import { verifyPublishedPackageIntegrity } from "./verified-package.mjs";
+import {
+  readQualifiedNpmRelease,
+  requireMatchingNpmRelease,
+} from "./npm-release-state.mjs";
 
-/** Parse one npm metadata snapshot; errors and malformed records are never absence. */
+/** Read-only callers derive the channel through the canonical SemVer owner. */
 export async function readNpmRelease(version, request = fetch) {
-  const tag = releaseNpmTag(version);
-  const response = await request("https://registry.npmjs.org/rea-agents", {
-    headers: {
-      Accept: "application/vnd.npm.install-v1+json",
-      "Cache-Control": "no-cache",
-    },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (response.status === 404) return { status: "absent" };
-  if (!response.ok)
-    throw new Error(`npm registry lookup failed: HTTP ${response.status}`);
-  const metadata = z
-    .object({
-      name: z.literal("rea-agents"),
-      versions: z.record(z.string(), z.unknown()),
-      "dist-tags": z.record(z.string(), z.string()),
-    })
-    .parse(await response.json());
-  if (!Object.hasOwn(metadata.versions, version)) return { status: "absent" };
-  const published = z
-    .object({
-      name: z.literal("rea-agents"),
-      version: z.literal(version),
-      dist: z.object({ integrity: z.string().min(1) }),
-    })
-    .parse(metadata.versions[version]);
-  return {
-    status: "published",
-    integrity: published.dist.integrity,
-    tag,
-    taggedVersion: metadata["dist-tags"][tag] ?? null,
-    stableVersion: metadata["dist-tags"].latest ?? null,
-  };
+  return readQualifiedNpmRelease(version, releaseNpmTag(version), request);
 }
 
 /** REA update follows stable latest even when the candidate is published on next. */
@@ -60,57 +30,39 @@ export function stableUpdateVersion(version, published) {
   return stable;
 }
 
-/** Validate content before accepting a previously published or newly visible version. */
-export async function requireMatchingNpmRelease(tarball, version, published) {
-  if (published.status !== "published")
-    throw new Error(`rea-agents@${version} is not published`);
-  await verifyPublishedPackageIntegrity(tarball, published.integrity);
-  if (published.taggedVersion !== version)
-    throw new Error(
-      `Expected npm ${published.tag} to select ${version}, observed ${published.taggedVersion ?? "missing"}; refusing to change an existing dist-tag`,
-    );
-}
-
 /** Retry only confirmed absence during the existing registry propagation window. */
 export async function waitForNpmRelease(
   version,
   lookup = readNpmRelease,
   pause = setTimeout,
 ) {
-  const attempts = 120;
+  const windowMinutes = 75;
+  const intervalMs = 30_000;
+  const attempts = (windowMinutes * 60_000) / intervalMs + 1;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const published = await lookup(version);
     if (published.status === "published") return published;
-    if (attempt < attempts) await pause(15_000);
+    if (attempt < attempts) await pause(intervalMs);
   }
   throw new Error(
-    `rea-agents@${version} was not visible on npm after 120 attempts over 30 minutes`,
+    `rea-agents@${version} was not visible on npm after ${attempts} attempts over ${windowMinutes} minutes. Re-run the failed verification after the version becomes visible.`,
   );
 }
 
 async function main() {
   const [operation, tarball, version, ...extra] = process.argv.slice(2);
   if (
-    !["inspect", "verify"].includes(operation) ||
+    operation !== "verify" ||
     tarball === undefined ||
     version === undefined ||
     extra.length
   )
     throw new Error(
-      "Usage: node scripts/ci/npm-release.mjs inspect|verify <qualified-tarball> <version>",
+      "Usage: node scripts/ci/npm-release.mjs verify <qualified-tarball> <version>",
     );
-  const published =
-    operation === "inspect"
-      ? await readNpmRelease(version)
-      : await waitForNpmRelease(version);
-  if (published.status === "published")
-    await requireMatchingNpmRelease(tarball, version, published);
-  if (operation === "inspect") {
-    await appendFile(
-      z.string().min(1).parse(process.env.GITHUB_OUTPUT),
-      `published=${published.status === "published"}\n`,
-    );
-  } else if (process.env.GITHUB_STEP_SUMMARY !== undefined) {
+  const published = await waitForNpmRelease(version);
+  await requireMatchingNpmRelease(tarball, version, published);
+  if (process.env.GITHUB_STEP_SUMMARY !== undefined) {
     await appendFile(
       process.env.GITHUB_STEP_SUMMARY,
       `npm: rea-agents@${version} is published, matches the qualified tarball, and is selected by ${published.tag}.\n`,

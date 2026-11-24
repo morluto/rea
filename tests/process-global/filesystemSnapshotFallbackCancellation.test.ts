@@ -54,11 +54,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { parseProcessScenario } from "../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../src/domain/process/processScenario.js";
 import {
   hashFile,
   snapshotRoots,
+  ProcessCaptureSnapshotFailure,
 } from "../../src/process/capture/FilesystemSnapshot.js";
+import { ProcessCaptureReadFailure } from "../../src/process/capture/ProcessCaptureRead.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 afterEach(() => {
@@ -92,14 +94,48 @@ it.each(["hash", "snapshot"] as const)(
       operation === "hash"
         ? hashFile(path, expected, 1_000, controller.signal)
         : snapshotRoots(
-            parseProcessScenario({
+            processScenarioSchema.parse({
               executable: process.execPath,
               working_directory: directory,
               filesystem_observation_paths: [path],
             }),
             controller.signal,
           );
-    await expect(result).rejects.toBe(reason);
+    const failure: unknown = await result.catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "ProcessCaptureError",
+      reason: "cancelled",
+      userCategory: "cancelled",
+    });
+    if (operation === "hash") {
+      expect(failure).toBeInstanceOf(ProcessCaptureReadFailure);
+      const read = failure as ProcessCaptureReadFailure;
+      expect(read.cause).toBe(reason);
+      expect(read.userCategory).toBe("cancelled");
+      expect(read.outcome).toMatchObject({
+        kind: "failed",
+        cause: {
+          _tag: "ProcessCaptureError",
+          reason: "cancelled",
+          cause: reason,
+        },
+      });
+      expect(read.cleanupLeases).toEqual([]);
+      expect(read.cleanupIncomplete).toBe(false);
+    } else {
+      expect(failure).toBeInstanceOf(ProcessCaptureSnapshotFailure);
+      const snapshot = failure as ProcessCaptureSnapshotFailure;
+      expect(snapshot.cause).toBe(reason);
+      expect(snapshot.userCategory).toBe("cancelled");
+      expect(snapshot.snapshot).toMatchObject({
+        files: [],
+        completeRoots: [],
+        truncated: true,
+        coverage: { enumeration_truncated: true },
+      });
+      expect(snapshot.cleanupLeases).toEqual([]);
+      expect(snapshot.cleanupIncomplete).toBe(false);
+    }
     expect(controller.signal.aborted).toBe(true);
     expect(observation.handles).toHaveLength(1);
     await expect(observation.handles[0]?.stat()).rejects.toMatchObject({

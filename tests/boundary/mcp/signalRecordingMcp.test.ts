@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -7,6 +9,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 
 it.each(["decode_signal_recording", "inspect_signal_decoders"])(
   "advertises valid target-free schemas and missing-tool diagnostics: %s",
@@ -18,11 +21,12 @@ it.each(["decode_signal_recording", "inspect_signal_decoders"])(
     const tool = (await harness.client.listTools()).tools.find(
       (tool) => tool.name === name,
     );
-    if (tool?.outputSchema === undefined)
-      throw new Error("Signal tool missing");
+    if (tool === undefined) throw new Error("Signal tool missing");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const inputSchema: Record<string, unknown> = tool.inputSchema;
-    const outputSchema: Record<string, unknown> = tool.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      tool.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const input =
@@ -63,7 +67,7 @@ it.each(["cancelled", "cleanup"])(
       decoders: "uart",
     };
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Completed decoder fixture", version: "1" },
       {
         operation: "decode_signal_recording",
@@ -117,9 +121,7 @@ it.each(["cancelled", "cleanup"])(
       arguments: {},
     });
     expect(bundle.isError).not.toBe(true);
-    expect(JSON.stringify(bundle.structuredContent)).toContain(
-      evidence.evidence_id,
-    );
+    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(evidence);
     expect(harness.session.evidenceById(evidence.evidence_id)).toEqual(
       evidence,
     );

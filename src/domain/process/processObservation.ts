@@ -36,8 +36,8 @@ export const processObservationLocationSchema = z.strictObject({
     "process_samples",
     "filesystem_checkpoints",
   ]),
-  index: z.number().int().nonnegative(),
-  capture_order: z.number().int().nonnegative(),
+  index: z.int().nonnegative(),
+  capture_order: z.int().nonnegative(),
 });
 export type ProcessObservationLocation = z.infer<
   typeof processObservationLocationSchema
@@ -53,16 +53,6 @@ export interface ProcessObservation {
   readonly subject_id: string | null;
   readonly location: ProcessObservationLocation;
   readonly payload: JsonValue;
-}
-
-/** Input used by live producers to construct the same observation shape. */
-export interface ProcessObservationInput {
-  readonly source: ProcessObservationSource;
-  readonly source_sequence: number;
-  readonly captured_at_ms: number | null;
-  readonly subject_id: string | null;
-  readonly location: ProcessObservationLocation;
-  readonly payload: unknown;
 }
 
 /** Remove only explicitly declared top-level volatile fields before matching. */
@@ -81,20 +71,6 @@ export const comparableProcessObservationPayload = (
     Object.entries(value).filter(([name]) => !ignoredFields.includes(name)),
   );
 };
-
-/** Construct a validated observation from one live producer record. */
-export const createProcessObservation = (
-  input: ProcessObservationInput,
-): ProcessObservation => ({
-  event_id: `obs.${input.location.collection}.${String(input.location.index)}`,
-  source: input.source,
-  source_sequence: input.source_sequence,
-  capture_order: input.location.capture_order,
-  captured_at_ms: input.captured_at_ms,
-  subject_id: input.subject_id,
-  location: input.location,
-  payload: jsonValueSchema.parse(input.payload),
-});
 
 type ProjectedRecord = Omit<
   ProcessObservation,
@@ -195,12 +171,14 @@ export const projectProcessObservation = (
 ): ProcessObservation | null => {
   const projected = projectedRecord(capture, location);
   if (projected === null) return null;
-  return createProcessObservation({
+  return {
+    event_id: `obs.${location.collection}.${String(location.index)}`,
     source: projected.source,
     source_sequence: location.index,
+    capture_order: location.capture_order,
     captured_at_ms: projected.captured_at_ms,
     subject_id: projected.subject_id,
     location,
     payload: projected.payload,
-  });
+  };
 };

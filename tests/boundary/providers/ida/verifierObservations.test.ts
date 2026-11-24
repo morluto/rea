@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { z } from "zod";
 import {
   jsonValueSchema,
@@ -13,7 +14,45 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../../src/process/OwnedCommand.js";
+import type { ProviderProcessSupervisor } from "../../../../src/process/ProviderProcess.js";
 import { createIdaTarget } from "../../../fixtures/idaMcp.js";
+
+let sharedTargetRoot = "";
+let sharedCompileCache = "";
+let sharedTarget: Awaited<ReturnType<typeof createIdaTarget>>["target"];
+const unresolvedCleanupOwners: ProviderProcessSupervisor[] = [];
+let unownedUnconfirmedCleanups = 0;
+
+beforeAll(async () => {
+  const created = await createIdaTarget();
+  sharedTargetRoot = created.root;
+  sharedTarget = created.target;
+  sharedCompileCache = join(sharedTargetRoot, "node-compile");
+});
+
+afterAll(async () => {
+  const remainingFailures: string[] = [];
+  for (const owner of unresolvedCleanupOwners.splice(0)) {
+    const result = await owner.stop();
+    if (result.status === "incomplete" || result.status === "not-owned") {
+      remainingFailures.push(result.status);
+    } else {
+      owner.dispose();
+    }
+  }
+  if (
+    sharedTargetRoot !== "" &&
+    unownedUnconfirmedCleanups === 0 &&
+    remainingFailures.length === 0
+  ) {
+    await rm(sharedTargetRoot, { recursive: true, force: true });
+  }
+  if (remainingFailures.length > 0) {
+    throw new Error(
+      `Retained IDA verifier shared root (${sharedTargetRoot}); unresolved process cleanup: ${remainingFailures.join(", ")}`,
+    );
+  }
+});
 
 const requestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -109,7 +148,8 @@ const observation = (
 };
 
 const fixture = async (empty: readonly string[], omitMore: boolean) => {
-  const { root, target } = await createIdaTarget();
+  const root = await mkdtemp(join(tmpdir(), "rea-ida-verifier-"));
+  const target = sharedTarget;
   const server = createServer(async (request, response) => {
     try {
       let body = "";
@@ -241,18 +281,60 @@ it.each([
           env: {
             REA_IDA_MCP_CONFIG: upstream.config,
             NODE_OPTIONS: "--max-old-space-size=1024",
+            ...(process.env.NODE_V8_COVERAGE === undefined &&
+            sharedCompileCache !== ""
+              ? { NODE_COMPILE_CACHE: sharedCompileCache }
+              : {}),
           },
         },
         { timeoutMs: 90000, diagnosticBytes: 16384, acceptNonZeroExit: true },
       );
       cleanupConfirmed = true;
       const report = z
-        .object({ passed: z.boolean(), unverified: z.array(z.string()) })
+        .object({
+          passed: z.boolean(),
+          unverified: z.array(z.string()),
+          failure: z
+            .object({ phase: z.string(), message: z.string() })
+            .optional(),
+          failed_cli: z.object({ stdout: z.string() }).optional(),
+        })
         .parse(JSON.parse(await readFile(reportPath, "utf8")));
       expect(report.passed, result.stdout.text + result.stderr.text).toBe(
         passed,
       );
       expect(result.exitCode).toBe(passed ? 0 : 1);
+      if (empty.includes("list_funcs"))
+        expect(report.failure).toEqual({
+          phase: "production MCP list_procedures",
+          message: "list_procedures omitted the resolved procedure.",
+        });
+      else if (oracles && empty.includes("find_regex"))
+        expect(report.failure).toEqual({
+          phase: "production MCP list_strings",
+          message: "list_strings omitted the expected literal.",
+        });
+      else if (oracles && empty.includes("xrefs_to"))
+        expect(report.failure).toEqual({
+          phase: "production MCP xrefs",
+          message: "xrefs omitted the expected source address.",
+        });
+      else if (omitMore) {
+        expect(report.failure?.phase).toBe("production CLI function analysis");
+        expect(JSON.parse(report.failed_cli!.stdout)).toMatchObject({
+          code: "unreadable_output",
+          details: {
+            partial_observation: {
+              normalized_result: {
+                target_binding: {
+                  reason:
+                    "Native IDA callees omitted an explicit truncation marker.",
+                },
+              },
+            },
+          },
+        });
+      } else expect(report.failure).toBeUndefined();
       if (!oracles)
         expect(report.unverified).toEqual([
           "String inventory/search correctness: no independent expected literal supplied.",
@@ -260,12 +342,20 @@ it.each([
         ]);
       else expect(report.unverified).toEqual([]);
     } catch (cause) {
-      if (cause instanceof OwnedCommandFailure && cause.cleanupFailure === null)
-        cleanupConfirmed = true;
+      if (cause instanceof OwnedCommandFailure) {
+        if (cause.cleanupFailure === null) {
+          cleanupConfirmed = true;
+        } else if (cause.cleanupOwner !== undefined) {
+          unresolvedCleanupOwners.push(cause.cleanupOwner);
+        } else {
+          unownedUnconfirmedCleanups += 1;
+        }
+      } else if (!cleanupConfirmed) {
+        unownedUnconfirmedCleanups += 1;
+      }
       throw cause;
     } finally {
       await upstream.close(cleanupConfirmed);
     }
   },
-  120000,
 );

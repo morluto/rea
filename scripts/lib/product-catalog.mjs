@@ -7,11 +7,13 @@ import { providerCatalog, toolFamilyCatalog } from "./catalog-builders.mjs";
 /** Project current runtime contracts into deterministic, machine-readable facts. */
 export const createProductCatalog = async (root) => {
   const sources = await loadSources(root);
-  const cli = createCliInventory(sources.cli.createCli());
+  const cli = createCliInventory(
+    sources.cliRegistry.cliCommands(sources.cli.createCli()),
+  );
   assertSameNames(
     "Primary CLI inventory",
     cli.primary,
-    sources.cliCommandNames.CLI_COMMAND_NAMES,
+    sources.catalogIdentity.CLI_COMMAND_NAMES,
   );
   const tools = toolFamilyCatalog(sources);
   const providers = providerCatalog(sources);
@@ -43,7 +45,7 @@ export const createProductCatalog = async (root) => {
       aliases: cli.aliases,
     },
     runtime_catalog: {
-      counts: sources.catalogIdentity.CATALOG_IDENTITY.counts,
+      counts: sources.catalogIdentity.DEFAULT_CATALOG_IDENTITY.counts,
       digests: {
         // Full runtime schema digests belong to server identity, not this facts projection.
         providers_sha256: digest(providers),

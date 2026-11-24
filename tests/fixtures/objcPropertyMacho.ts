@@ -5,10 +5,17 @@
  */
 export const machoWithPropertyAttributes = (
   attributes: string,
-  { firstName = "first", secondNameOffset = 0x640 } = {},
+  {
+    firstName = "first",
+    secondNameOffset,
+  }: { firstName?: string; secondNameOffset?: number } = {},
 ): Buffer => {
   const bytes = Buffer.alloc(4096);
   const base = 0x100000000n;
+  const firstNameData = Buffer.from(`${firstName}\0`);
+  const attributeData = Buffer.from(`${attributes}\0`);
+  const attributeOffset = 0x600 + firstNameData.length;
+  const secondNameDataOffset = attributeOffset + attributeData.length;
   const u32 = (at: number, value: number) => bytes.writeUInt32LE(value, at);
   const pointer = (at: number, offset: number) =>
     bytes.writeBigUInt64LE(base + BigInt(offset), at);
@@ -41,11 +48,11 @@ export const machoWithPropertyAttributes = (
   u32(0x500, 16);
   u32(0x504, 2);
   pointer(0x508, 0x600);
-  pointer(0x510, 0x620);
-  pointer(0x518, secondNameOffset);
-  pointer(0x520, 0x620);
-  bytes.write(`${firstName}\0`, 0x600);
-  bytes.write(`${attributes}\0`, 0x620);
-  bytes.write("second\0", 0x640);
+  pointer(0x510, attributeOffset);
+  pointer(0x518, secondNameOffset ?? secondNameDataOffset);
+  pointer(0x520, attributeOffset);
+  firstNameData.copy(bytes, 0x600);
+  attributeData.copy(bytes, attributeOffset);
+  bytes.write("second\0", secondNameDataOffset);
   return bytes;
 };

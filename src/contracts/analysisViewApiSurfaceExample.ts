@@ -4,7 +4,7 @@ export const API_SURFACE_EXAMPLE = {
     source: {
       kind: "retained-evidence",
       evidence_id:
-        "ev_90073e9478eada1e2cc351b523e6ba9231c9b4bc9708773567b880094db9d4c7",
+        "ev_fe685b2acd1668cdea7b576a829ff13b9b62c363b7e3477434b8671a6a80a22c",
     },
     view: {
       kind: "api-surface",
@@ -14,12 +14,12 @@ export const API_SURFACE_EXAMPLE = {
   },
   output: {
     parent_evidence_id:
-      "ev_90073e9478eada1e2cc351b523e6ba9231c9b4bc9708773567b880094db9d4c7",
+      "ev_fe685b2acd1668cdea7b576a829ff13b9b62c363b7e3477434b8671a6a80a22c",
     parent_operation: "inspect_web_network_capture",
     parent_digest:
-      "90073e9478eada1e2cc351b523e6ba9231c9b4bc9708773567b880094db9d4c7",
+      "fe685b2acd1668cdea7b576a829ff13b9b62c363b7e3477434b8671a6a80a22c",
     view_digest:
-      "c9494341920dc4cff6ecc6d8ed2c5e3abf15976642c253248e220d45f290ca7b",
+      "3e520ba71863fba686ca10a78389e16de0bb9bd59eb6b4eb08f9ba9a91e9c349",
     artifact: {
       path: "/fixtures/api-surface.har",
       sha256:
@@ -34,7 +34,7 @@ export const API_SURFACE_EXAMPLE = {
     },
     limitations: [
       "Grouping does not establish handler identity, URL-space schemas or causality.",
-      "HAR text is producer-decoded Unicode. Original body bytes remain unknown unless content explicitly uses valid base64; declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+      "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3/12.3.1 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
     ],
     unknowns: [],
     records: {

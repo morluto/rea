@@ -1,16 +1,12 @@
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "./contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "./contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./domain/analysisErrorProjectionSchema.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "./domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { isRecord } from "./kernel/isRecord.js";
 
 type CliFailureIdentity = Pick<
   AnalysisErrorProjection,
@@ -19,6 +15,13 @@ type CliFailureIdentity = Pick<
 interface CliOperationFailure {
   readonly payload: unknown;
   readonly identity?: CliFailureIdentity;
+  /**
+   * The command completed and returned its whole report, whose verdict is a
+   * failure (an unhealthy doctor report). Output controls select from it as
+   * from any result; only the exit status and full-output envelope record the
+   * failure.
+   */
+  readonly completedReport?: true;
 }
 const loggedFailures = new WeakMap<object, CliOperationFailure | undefined>();
 
@@ -75,7 +78,8 @@ const inferCliOperationFailure = (
 ): CliOperationFailure | undefined => {
   const projection = projectCliOperationFailure(value);
   if (projection !== undefined) return canonicalFailure(projection);
-  if (isRecord(value) && value.healthy === false) return { payload: value };
+  if (isRecord(value) && value.healthy === false)
+    return { payload: value, completedReport: true };
   return undefined;
 };
 
@@ -90,6 +94,13 @@ export const cliOperationFailurePayload = (
   return failure?.payload;
 };
 
+/** Whether a failed outcome is a completed report rather than an error payload. */
+export const isCliCompletedFailureReport = (value: unknown): boolean => {
+  if (cliOperationFailurePayload(value) === undefined || !isRecord(value))
+    return false;
+  return loggedFailures.get(value)?.completedReport === true;
+};
+
 /** Identify caller-visible CLI outcomes that mean the requested operation failed. */
 export const isCliOperationFailure = (value: unknown): boolean =>
   cliOperationFailurePayload(value) !== undefined;
@@ -99,6 +110,19 @@ export const cliOperationFailureIdentity = (
   value: unknown,
 ): CliFailureIdentity | undefined =>
   isRecord(value) ? loggedFailures.get(value)?.identity : undefined;
+
+/** Keep failure classification and recovery identity when a CLI wrapper projects an error record. */
+export const rebindLoggedCliFailure = (
+  previous: unknown,
+  next: unknown,
+): void => {
+  if (previous === next || !isRecord(previous) || !isRecord(next)) return;
+  if (!loggedFailures.has(previous)) return;
+  loggedFailures.set(
+    next,
+    inferCliOperationFailure(next) ?? loggedFailures.get(previous),
+  );
+};
 
 /** Log one CLI command with duration and a stable success or failure status. */
 export const logCliCommand = async <Value>(
@@ -125,10 +149,10 @@ export const logCliCommand = async <Value>(
       },
       failed ? "CLI command failed" : "CLI command completed",
     );
-    if (failed) process.exitCode = 1;
+    if (failed) process.exitCode ||= 1;
     return value;
   } catch (cause: unknown) {
-    process.exitCode = 1;
+    process.exitCode ||= 1;
     logger.error(
       {
         command,
@@ -138,7 +162,6 @@ export const logCliCommand = async <Value>(
       "CLI command failed",
     );
     if (cause instanceof AnalysisError) {
-      process.exitCode = 1;
       const projection = projectAnalysisError(cause);
       loggedFailures.set(projection, canonicalFailure(projection));
       return projection;

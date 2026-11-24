@@ -1,3 +1,5 @@
+import { reconstructionUnknownHeads } from "./reconstructionUnknowns.js";
+import type { ReconstructionCoverageScope } from "./reconstructionCoverageScope.js";
 import type {
   ReconstructionClosureResult,
   ReconstructionCoverageData,
@@ -42,6 +44,7 @@ type Boundary = ReconstructionCoverageData["boundaries"][number];
 type ClosureReason = ReconstructionClosureResult["reasons"][number];
 export interface ReconstructionEvaluationContext extends ParsedReconstructionCoverage {
   readonly boundary: Boundary;
+  readonly scope: ReconstructionCoverageScope;
   readonly nowEpochMs: number;
   readonly nowInstant: OffsetDateTimeInstant;
   readonly reasons: ClosureReason[];
@@ -51,26 +54,28 @@ export interface ReconstructionEvaluationContext extends ParsedReconstructionCov
 export const evaluateReconstructionSurfaces = (
   context: ReconstructionEvaluationContext,
 ): void => {
-  for (const surfaceId of context.boundary.required_surface_ids) {
+  for (const surfaceId of context.scope.surfaceIds) {
     const surface = context.surfaces.get(surfaceId);
     if (surface === undefined) {
-      addReason(
-        context,
-        "surface-missing",
-        surfaceId,
-        "Required surface is absent from the authoritative inventory.",
-      );
+      const dependents = context.scope.missingDependencies.get(surfaceId);
+      if (dependents === undefined)
+        addReason(
+          context,
+          "surface-missing",
+          surfaceId,
+          "Required surface is absent from the authoritative inventory.",
+        );
+      else
+        for (const dependentId of dependents)
+          addReason(
+            context,
+            "dependency-surface-missing",
+            dependentId,
+            `Declared dependency surface is absent: ${surfaceId}`,
+          );
       continue;
     }
     addEvidence(context, surface.evidence_ids);
-    for (const dependencyId of surface.dependency_surface_ids)
-      if (!context.surfaces.has(dependencyId))
-        addReason(
-          context,
-          "dependency-surface-missing",
-          surfaceId,
-          `Declared dependency surface is absent: ${dependencyId}`,
-        );
     evaluateOwner(context, surfaceId);
   }
 };
@@ -152,7 +157,7 @@ export const evaluateReconstructionClaims = (
   context: ReconstructionEvaluationContext,
 ): void => {
   const indexes = createVerifierIndexes(context);
-  for (const claimId of context.boundary.required_claim_ids) {
+  for (const claimId of context.scope.claimIds) {
     const claim = context.claims.get(claimId);
     if (claim === undefined) {
       addReason(
@@ -189,6 +194,7 @@ export const evaluateReconstructionClaims = (
 };
 
 interface VerifierIndexes {
+  readonly claimSurfaceIds: ReconstructionCoverageScope["claimSurfaceIds"];
   readonly contractsByClaim: ReadonlyMap<
     string,
     readonly ReconstructionVerifierContract[]
@@ -226,6 +232,7 @@ const createVerifierIndexes = (
     }
 
   return {
+    claimSurfaceIds: context.scope.claimSurfaceIds,
     contractsByClaim,
     latestResultsByVerifier: latestVerifierObservationsByVerifier(
       coverage.verifier_results,
@@ -342,7 +349,10 @@ const verifierResultMatchesContract = (
   result: ReconstructionCoverageData["verifier_results"][number],
   indexes: VerifierIndexes,
 ): boolean => {
-  const expectedArtifactDigests = claim.surface_ids.flatMap((surfaceId) => {
+  const requiredSurfaceIds = [
+    ...(indexes.claimSurfaceIds.get(claim.claim_id) ?? []),
+  ];
+  const expectedArtifactDigests = requiredSurfaceIds.flatMap((surfaceId) => {
     const surface = indexes.surfaces.get(surfaceId);
     const artifact =
       surface === undefined
@@ -350,60 +360,71 @@ const verifierResultMatchesContract = (
         : indexes.artifacts.get(surface.artifact_id);
     return artifact === undefined ? [] : [artifact.artifact_sha256];
   });
-  const expectedOwnerDigests = claim.surface_ids.flatMap((surfaceId) =>
+  const expectedOwnerDigests = requiredSurfaceIds.flatMap((surfaceId) =>
     (indexes.ownersBySurface.get(surfaceId) ?? []).flatMap(({ ownership }) =>
       ownership.disposition === "implemented" ? [ownership.owner_sha256] : [],
     ),
   );
+  if (
+    result.contract_sha256 !== contract.contract_sha256 ||
+    result.normalization_sha256 !== contract.normalization_sha256 ||
+    result.repeats < contract.minimum_repeats ||
+    claim.required_authority !== contract.authority
+  )
+    return false;
+  const contractClaimIds = new Set(contract.claim_ids);
+  const contractDimensions = new Set(contract.dimensions);
+  const coveredDimensions = new Set(result.covered_dimensions);
+  const resultArtifactDigests = new Set(result.artifact_sha256s);
+  const resultOwnerDigests = new Set(result.owner_sha256s);
   return (
-    result.contract_sha256 === contract.contract_sha256 &&
-    result.normalization_sha256 === contract.normalization_sha256 &&
     result.covered_claim_ids.includes(claim.claim_id) &&
-    result.covered_claim_ids.every((item) =>
-      contract.claim_ids.includes(item),
+    result.covered_claim_ids.every((item) => contractClaimIds.has(item)) &&
+    claim.required_dimensions.every(
+      (item) => contractDimensions.has(item) && coveredDimensions.has(item),
     ) &&
-    claim.required_dimensions.every((item) =>
-      contract.dimensions.includes(item),
-    ) &&
-    claim.required_dimensions.every((item) =>
-      result.covered_dimensions.includes(item),
-    ) &&
-    result.covered_dimensions.every((item) =>
-      contract.dimensions.includes(item),
-    ) &&
+    result.covered_dimensions.every((item) => contractDimensions.has(item)) &&
     result.artifact_sha256s.every((item) =>
       indexes.artifactDigests.has(item),
     ) &&
-    expectedArtifactDigests.every((item) =>
-      result.artifact_sha256s.includes(item),
-    ) &&
+    expectedArtifactDigests.every((item) => resultArtifactDigests.has(item)) &&
     result.owner_sha256s.every((item) => indexes.ownerDigests.has(item)) &&
-    expectedOwnerDigests.every((item) => result.owner_sha256s.includes(item)) &&
-    result.repeats >= contract.minimum_repeats &&
-    claim.required_authority === contract.authority
+    expectedOwnerDigests.every((item) => resultOwnerDigests.has(item))
   );
 };
 
 export const evaluateReconstructionCoverageRisks = (
   context: ReconstructionEvaluationContext,
 ): void => {
-  for (const unknownId of context.coverage.residual_unknown_ids)
-    if (!context.boundary.allowed_unknown_ids.includes(unknownId))
+  const unknownHeads = reconstructionUnknownHeads(
+    context.coverage.evidence_bundle.unknowns,
+  );
+  const allowedUnknownIds = new Set(context.boundary.allowed_unknown_ids);
+  for (const unknownId of new Set(context.coverage.residual_unknown_ids)) {
+    const unknown = unknownHeads.get(unknownId);
+    if (unknown?.status === "resolved") continue;
+    if (!allowedUnknownIds.has(unknownId)) {
+      if (unknown !== undefined)
+        addEvidence(context, [
+          ...unknown.supporting_evidence_ids,
+          ...unknown.contradicting_evidence_ids,
+          ...unknown.mutation_evidence_ids,
+        ]);
       addReason(
         context,
         "active-unknown",
         unknownId,
         "Active residual unknown is not permitted by the completion boundary.",
       );
+    }
+  }
   for (const contradiction of context.coverage.contradictions)
     if (
       contradiction.status === "active" &&
       (contradiction.surface_ids.some((id) =>
-        context.boundary.required_surface_ids.includes(id),
+        context.scope.surfaceIds.has(id),
       ) ||
-        contradiction.claim_ids.some((id) =>
-          context.boundary.required_claim_ids.includes(id),
-        ))
+        contradiction.claim_ids.some((id) => context.scope.claimIds.has(id)))
     ) {
       addEvidence(context, contradiction.evidence_ids);
       addReason(
@@ -418,7 +439,7 @@ export const evaluateReconstructionCoverageRisks = (
 export const evaluateReconstructionPackageProofs = (
   context: ReconstructionEvaluationContext,
 ): void => {
-  const requiredArtifactDigests = context.boundary.required_surface_ids.flatMap(
+  const requiredArtifactDigests = [...context.scope.surfaceIds].flatMap(
     (surfaceId) => {
       const surface = context.surfaces.get(surfaceId);
       const artifact =
@@ -428,44 +449,54 @@ export const evaluateReconstructionPackageProofs = (
       return artifact === undefined ? [] : [artifact.artifact_sha256];
     },
   );
+  const proofsByKind = new Map<
+    string,
+    ReconstructionCoverageData["package_proofs"][number][]
+  >();
+  for (const proof of context.coverage.package_proofs) {
+    const bucket = proofsByKind.get(proof.kind);
+    if (bucket === undefined) proofsByKind.set(proof.kind, [proof]);
+    else bucket.push(proof);
+  }
   for (const kind of context.boundary.required_package_proof_kinds) {
-    const proofs = context.coverage.package_proofs.filter(
-      (proof) => proof.kind === kind,
-    );
+    const proofs = proofsByKind.get(kind) ?? [];
     const applicable = (
       proof: ReconstructionCoverageData["package_proofs"][number],
-    ): boolean =>
-      requiredArtifactDigests.every((digest) =>
-        proof.artifact_sha256s.includes(digest),
-      ) && packageProofHasComparableEvidence(proof, context.evidenceById);
-    const passing = proofs.find(
-      (proof) => proof.status === "pass" && applicable(proof),
+    ): boolean => {
+      const proofDigests = new Set(proof.artifact_sha256s);
+      return (
+        requiredArtifactDigests.every((digest) => proofDigests.has(digest)) &&
+        packageProofHasComparableEvidence(proof, context.evidenceById)
+      );
+    };
+    const applicableProofs = proofs.filter(applicable);
+    addEvidence(
+      context,
+      applicableProofs.flatMap((proof) => proof.evidence_ids),
     );
-    if (passing !== undefined) {
-      addEvidence(context, passing.evidence_ids);
-      continue;
-    }
-    const failing = proofs.find(
-      (proof) => proof.status === "fail" && applicable(proof),
-    );
-    if (failing !== undefined) {
-      addEvidence(context, failing.evidence_ids);
+    if (applicableProofs.some((proof) => proof.status === "fail")) {
       addReason(
         context,
         "package-proof-failed",
         kind,
-        "Required package or integration proof failed.",
+        "Required package or integration proof failed; all applicable outcomes are retained.",
       );
+    } else if (
+      applicableProofs.length > 0 &&
+      applicableProofs.every((proof) => proof.status === "pass")
+    ) {
+      continue;
     } else if (proofs.length > 0) {
-      addEvidence(
-        context,
-        proofs.flatMap(({ evidence_ids }) => evidence_ids),
-      );
+      if (applicableProofs.length === 0)
+        addEvidence(
+          context,
+          proofs.flatMap((proof) => proof.evidence_ids),
+        );
       addReason(
         context,
         "package-proof-unknown",
         kind,
-        "Required package or integration proof has no qualifying passing Evidence.",
+        "Required package or integration proof has unresolved or unqualified outcomes.",
       );
     } else
       addReason(

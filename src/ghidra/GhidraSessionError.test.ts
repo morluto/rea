@@ -7,6 +7,70 @@ import {
   bindGhidraSessionFailure,
 } from "./GhidraSessionError.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
+import { createGhidraDiagnostics } from "./GhidraDiagnostics.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
+
+it.each(["decompile_failed", "future_remote_failure"])(
+  "retains complete session diagnostics for non-input remote code %s",
+  (remoteCode) => {
+    const factory = bindGhidraSessionFailure((scope) =>
+      createGhidraDiagnostics({
+        scope,
+        targetPath: "/selected/target",
+        targetSha256: "a".repeat(64),
+        transport: "unix-socket",
+        providerVersion: "12.1.4",
+        profileDigest: "b".repeat(64),
+        runtimeRoot: "/owned/runtime",
+        snapshot: {
+          stdout: { text: "engine diagnostic", bytes: 17, observedBytes: 17 },
+          stderr: { text: "", bytes: 0, observedBytes: 0 },
+          exitCode: null,
+          signal: null,
+        },
+        previous: {},
+      }),
+    );
+    const failure = factory("remote", "Engine failed", undefined, {
+      remoteCode,
+    });
+    expect(failure.diagnostics).toMatchObject({
+      stdout: { text: "engine diagnostic" },
+      remote_code: remoteCode,
+    });
+    expect(failure.diagnostics).not.toHaveProperty("diagnostic_scope");
+  },
+);
+
+it("scopes a byte-search cursor mismatch to the request", () => {
+  const factory = bindGhidraSessionFailure((scope) =>
+    createGhidraDiagnostics({
+      scope,
+      targetPath: "/selected/target",
+      targetSha256: "a".repeat(64),
+      transport: "unix-socket",
+      providerVersion: "12.1.4",
+      profileDigest: "b".repeat(64),
+      runtimeRoot: "/owned/runtime",
+      snapshot: {
+        stdout: { text: "engine diagnostic", bytes: 17, observedBytes: 17 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: null,
+        signal: null,
+      },
+      previous: {},
+    }),
+  );
+  const failure = factory("remote", "cursor mismatch", undefined, {
+    remoteCode: "byte_search_cursor_mismatch",
+  });
+  expect(failure.diagnostics).toMatchObject({
+    diagnostic_scope: "request",
+    remote_code: "byte_search_cursor_mismatch",
+  });
+  expect(failure.diagnostics).not.toHaveProperty("stdout");
+  expect(failure.diagnostics).not.toHaveProperty("stderr");
+});
 
 it("reports truncated cyclic causes in serializable diagnostics", () => {
   const cause = new Error("cyclic launcher failure");
@@ -19,48 +83,17 @@ it("reports truncated cyclic causes in serializable diagnostics", () => {
     cause,
   ).diagnostics;
 
-  expect(JSON.stringify(diagnostics)).toContain('"cause_truncated":true');
+  const serialized = JSON.parse(JSON.stringify(diagnostics)) as {
+    failure_cause: unknown;
+  };
+  let nested = serialized.failure_cause;
+  while (typeof nested === "object" && nested !== null && "cause" in nested)
+    nested = nested.cause;
+  expect(nested).toMatchObject({ cause_truncated: true });
 });
 
-it("keeps bounded compiler and nested launcher outcomes in diagnostics", () => {
-  const compiler = new DarwinProcessOwnershipInspectionError(
-    "macOS process ownership helper compilation failed via xcrun (compiler result: 7)",
-    {
-      cause: Object.assign(new Error("compiler exited"), { code: 7 }),
-      compilerOutcome: {
-        outcome: "exited",
-        code: 7,
-        signal: null,
-        stderr: "SDK mismatch",
-        stderrBytes: 12,
-        stderrTruncated: false,
-        outputTruncated: false,
-        killed: false,
-      },
-    },
-  );
-  const launch = new GhidraLaunchError("Ghidra headless launch failed", {
-    cause: compiler,
-  });
+it("keeps a nested launcher errno in diagnostics", () => {
   const projectFailure = bindGhidraSessionFailure(() => ({}));
-
-  expect(
-    projectFailure("start", "Ghidra launcher failed", launch).diagnostics,
-  ).toMatchObject({
-    failure_cause: {
-      name: "GhidraLaunchError",
-      cause: {
-        name: "DarwinProcessOwnershipInspectionError",
-        compiler_outcome: {
-          outcome: "exited",
-          code: 7,
-          stderr: "SDK mismatch",
-        },
-        cause: { code: 7 },
-      },
-    },
-  });
-
   const spawnFailure = Object.assign(
     new Error("spawn analyzeHeadless ENOENT"),
     { code: "ENOENT" },
@@ -79,19 +112,21 @@ it("keeps bounded compiler and nested launcher outcomes in diagnostics", () => {
   });
 });
 
-it("bounds compiler stderr after explicit redaction at UTF-8 boundaries", () => {
+it("bounds nested compiler stderr after explicit redaction at the UTF-8 boundary", () => {
   const sensitiveValue = "caller-selected-secret";
-  const projectFailure = bindGhidraSessionFailure(
-    () => ({}),
-    (value) => value.replaceAll(sensitiveValue, "replacement".repeat(100)),
-  );
-  const stderr = `${"é".repeat(3900)}${sensitiveValue}`;
+  const replacement = "[REDACTED]".repeat(100);
+  const beginning = " SDK mismatch ";
+  const body =
+    beginning + "x".repeat(8191 - replacement.length - beginning.length);
+  const stderr = sensitiveValue + body + "éunretained";
+
   const compiler = new DarwinProcessOwnershipInspectionError(
     "compiler failed",
     {
+      cause: Object.assign(new Error("compiler exited"), { code: 7 }),
       compilerOutcome: {
         outcome: "exited",
-        code: 1,
+        code: 7,
         signal: null,
         stderr,
         stderrBytes: Buffer.byteLength(stderr, "utf8"),
@@ -101,23 +136,31 @@ it("bounds compiler stderr after explicit redaction at UTF-8 boundaries", () => 
       },
     },
   );
-  const failureCause = projectFailure(
-    "start",
-    "Ghidra launcher failed",
-    compiler,
-  ).diagnostics.failure_cause as {
-    readonly compiler_outcome: {
-      readonly stderr: string;
-      readonly stderrTruncated: boolean;
-    };
-  };
-
+  const launch = new GhidraLaunchError("Ghidra headless launch failed", {
+    cause: compiler,
+  });
+  const project = bindGhidraSessionFailure(
+    () => ({}),
+    (value) => value.replaceAll(sensitiveValue, replacement),
+  );
   expect(
-    Buffer.byteLength(failureCause.compiler_outcome.stderr, "utf8"),
-  ).toBeLessThanOrEqual(8 * 1024);
-  expect(failureCause.compiler_outcome.stderrTruncated).toBe(true);
-  expect(failureCause.compiler_outcome.stderr).not.toContain(sensitiveValue);
-  expect(failureCause.compiler_outcome.stderr).not.toContain("\uFFFD");
+    project("start", "Ghidra launcher failed", launch).diagnostics,
+  ).toMatchObject({
+    failure_cause: {
+      name: "GhidraLaunchError",
+      cause: {
+        name: "DarwinProcessOwnershipInspectionError",
+        cause: { code: 7 },
+        compiler_outcome: {
+          outcome: "exited",
+          code: 7,
+          stderr: replacement + body,
+          stderrBytes: Buffer.byteLength(stderr, "utf8"),
+          stderrTruncated: true,
+        },
+      },
+    },
+  });
 });
 
 it.each([null, undefined, new Error("original cause")])(
@@ -163,7 +206,7 @@ it.each([null, undefined, new Error("original cause")])(
       },
     });
     expect(refreshed.cleanupFailure).toBe(cleanup);
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     expect(refreshed.cleanupFailure?.cleanupIncomplete).toBe(false);
     expect(
       Object.hasOwn(
@@ -191,7 +234,7 @@ it("preserves the compiler root cleanup dependency through launch and session pr
     launch,
   );
   expect(session.cleanupFailure).toBe(cleanup);
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(session.cleanupFailure?.cleanupIncomplete).toBe(false);
 });
 

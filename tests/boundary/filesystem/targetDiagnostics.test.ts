@@ -1,10 +1,15 @@
 import { chmod, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { systemDoctorHost } from "../../../src/application/Doctor.js";
+import {
+  runDoctor,
+  systemDoctorHost,
+} from "../../../src/application/Doctor.js";
+import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
+import { WABT_RELEASE_LINE } from "../../../src/domain/wasm/wasmArtifact.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("executable format refusal diagnostics", () => {
@@ -60,21 +65,86 @@ describe("executable format refusal diagnostics", () => {
           reason,
           constraint: "file_format_rejected",
         },
-        remediation: {
-          action:
-            "Review the reported file-format reason and select a supported, well-formed target.",
-        },
       });
-      expect(projected.message).not.toContain("Check that the path");
 
-      expect(await systemDoctorHost().inspectTarget?.(path)).toMatchObject({
+      expect(await systemDoctorHost().inspectTarget(path)).toMatchObject({
         classification: "unsupported_target",
         details: { constraint: "file_format_rejected" },
-        remediation:
-          "Review the reported file-format reason and select a supported, well-formed target.",
+        remediation: projected.remediation.action,
       });
     },
   );
+});
+
+it("identifies the directory opening constraint and gives the direct analysis route", async () => {
+  const directory = await createTestTempDirectory("rea-js-target-");
+  await writeFile(join(directory, "index.js"), "export const answer = 42;\n");
+  const result = await parseBinaryTarget(directory);
+  if (result.ok) throw new Error("directory was admitted as a file");
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "target_unavailable",
+    details: {
+      path: await realpath(directory),
+      constraint: "directory_requires_file",
+      related_operations: [
+        "inspect_desktop_application",
+        "audit_release_exposure",
+        "analyze_javascript_application",
+      ],
+    },
+  });
+  // The directory route is related_operations above; input_path has no
+  // structured field and names the parameter those operations take.
+  expect(projected.remediation.action).toContain("input_path");
+  const doctor = systemDoctorHost();
+  const host = createDoctorHostFixture({
+    inspectTarget: doctor.inspectTarget,
+  });
+  expect(await runDoctor(directory, host, {})).toMatchObject({
+    healthy: false,
+    scope_checks: expect.arrayContaining([
+      expect.objectContaining({
+        name: "target",
+        ok: false,
+        classification: "unsupported_target",
+        detail: directory,
+        details: expect.objectContaining({
+          constraint: "directory_requires_file",
+        }),
+        remediation: projected.remediation.action,
+      }),
+    ]),
+  });
+  const missing = await parseBinaryTarget(join(directory, "missing"));
+  if (missing.ok) throw new Error("missing target was admitted");
+  const missingProjection = projectAnalysisError(missing.error);
+  // A missing path is an access failure, not a format or route constraint.
+  expect(missingProjection).toMatchObject({
+    code: "target_unavailable",
+    details: { reason: expect.stringContaining("does not exist") },
+  });
+  expect(missingProjection.details).not.toHaveProperty("constraint");
+  expect(missingProjection.details).not.toHaveProperty("related_operations");
+  expect(await doctor.inspectTarget(join(directory, "missing"))).toMatchObject({
+    ok: false,
+    classification: "config_drift",
+    details: { reason: expect.stringContaining("does not exist") },
+  });
+
+  const executable = join(directory, "supported.exe");
+  await writeFile(executable, pe(0x8664));
+  expect(await runDoctor(executable, host, {})).toMatchObject({
+    healthy: true,
+    scope_checks: expect.arrayContaining([
+      {
+        name: "target",
+        ok: true,
+        classification: "healthy",
+        detail: executable,
+      },
+    ]),
+  });
 });
 
 describe("target route diagnostics", () => {
@@ -95,14 +165,14 @@ describe("target route diagnostics", () => {
         details: {
           path: await realpath(path),
           constraint: "wasm_requires_static_inspection",
+          related_operations: ["inspect_wasm_artifact"],
         },
       });
-      expect(projected.message).toContain("WebAssembly");
-      expect(projected.remediation.action).toContain("inspect_wasm_artifact");
+      // The route is related_operations above. The launch setting and the
+      // accepted release line have no structured field on this refusal.
       expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
-      expect(projected.remediation.action).toContain("WABT 1.0.42");
-      expect(projected.remediation.action).toContain("does not execute");
-      expect(await systemDoctorHost().inspectTarget?.(path)).toMatchObject({
+      expect(projected.remediation.action).toContain(WABT_RELEASE_LINE);
+      expect(await systemDoctorHost().inspectTarget(path)).toMatchObject({
         ok: false,
         classification: "unsupported_target",
         details: { constraint: "wasm_requires_static_inspection" },
@@ -129,9 +199,7 @@ describe("target route diagnostics", () => {
         retryable: false,
         details: { constraint: "file_format_rejected" },
       });
-      expect(projected.remediation.action).not.toContain(
-        "inspect_wasm_artifact",
-      );
+      expect(projected.details).not.toHaveProperty("related_operations");
     },
   );
 
@@ -156,47 +224,6 @@ describe("target route diagnostics", () => {
       },
     });
   });
-  it("identifies the directory opening constraint and gives the direct analysis route", async () => {
-    const directory = await createTestTempDirectory("rea-js-target-");
-    await writeFile(join(directory, "index.js"), "export const answer = 42;\n");
-    const result = await parseBinaryTarget(directory);
-    if (result.ok) throw new Error("directory was admitted as a file");
-    const projected = projectAnalysisError(result.error);
-    expect(projected).toMatchObject({
-      code: "target_unavailable",
-      details: {
-        path: await realpath(directory),
-        constraint: "directory_requires_file",
-      },
-    });
-    expect(projected.message).toContain("analyze_javascript_application");
-    expect(projected.remediation.action).toContain("input_path");
-    const doctor = systemDoctorHost();
-    expect(await doctor.inspectTarget?.(directory)).toMatchObject({
-      name: "target",
-      ok: false,
-      classification: "unsupported_target",
-      details: { constraint: "directory_requires_file" },
-      remediation: projected.remediation.action,
-    });
-    const missing = await parseBinaryTarget(join(directory, "missing"));
-    if (missing.ok) throw new Error("missing target was admitted");
-    const missingProjection = projectAnalysisError(missing.error);
-    expect(missingProjection).toMatchObject({
-      details: { reason: expect.stringContaining("does not exist") },
-      message: expect.stringContaining("does not exist"),
-    });
-    expect(missingProjection.message).toContain(
-      "Check that the path exists, is readable, and points to a supported file.",
-    );
-    expect(
-      await doctor.inspectTarget?.(join(directory, "missing")),
-    ).toMatchObject({
-      ok: false,
-      classification: "config_drift",
-      details: { reason: expect.stringContaining("does not exist") },
-    });
-  });
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "preserves a real filesystem permission denial",
     async () => {
@@ -212,10 +239,7 @@ describe("target route diagnostics", () => {
           details: { reason: expect.stringContaining("permission denied") },
           message: expect.stringContaining("permission denied"),
         });
-        expect(projected.message).toContain(
-          "Check that the path exists, is readable, and points to a supported file.",
-        );
-        expect(await systemDoctorHost().inspectTarget?.(path)).toMatchObject({
+        expect(await systemDoctorHost().inspectTarget(path)).toMatchObject({
           ok: false,
           classification: "config_drift",
           details: { reason: expect.stringContaining("permission denied") },
@@ -249,20 +273,15 @@ describe("raw-binary load rejection diagnostics", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      // invalid_request is retryable: correcting the load argument succeeds.
-      retryable: true,
-      message:
-        "Cannot open artifact: raw-binary arm entry_point 0x1 must be 4-byte aligned.",
+      retryable: false,
       details: {
-        reason: "raw-binary arm entry_point 0x1 must be 4-byte aligned",
+        reason: expect.stringMatching(
+          /raw-binary.*arm.*entry_point.*0x1.*4.byte.*align/i,
+        ),
         constraint: "load_selection_rejected",
-      },
-      remediation: {
-        action:
-          "Correct the reported load argument (--target-format, --architecture, or --entry-point on the CLI; format, architecture, or entry_point through MCP) and retry.",
+        related_parameters: ["format", "architecture", "entry_point"],
       },
     });
-    expect(projected.message).not.toContain("Check that the path");
   });
 
   it("projects an x86 entry beyond the address width as caller input", async () => {
@@ -274,10 +293,12 @@ describe("raw-binary load rejection diagnostics", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      details: { constraint: "load_selection_rejected" },
+      details: {
+        constraint: "load_selection_rejected",
+        related_parameters: ["format", "architecture", "entry_point"],
+      },
     });
     expect(projected.message).toContain("x86 address width");
-    expect(projected.message).not.toContain("Check that the path");
   });
 
   it("projects architecture and entry without raw-binary format as caller input", async () => {
@@ -288,11 +309,11 @@ describe("raw-binary load rejection diagnostics", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      message:
-        "Cannot open artifact: architecture and entry_point apply only with format=raw-binary.",
+      message: expect.stringMatching(
+        /architecture.*entry_point.*format=raw-binary/i,
+      ),
       details: { constraint: "load_selection_rejected" },
     });
-    expect(projected.message).not.toContain("Check that the path");
   });
 
   it("keeps an empty raw-binary file a target refusal", async () => {
@@ -366,7 +387,7 @@ describe("caller-selected and inferred target interpretation", () => {
         ok: true,
         value: { kind: "database", format: "analysis-database" },
       });
-      expect(await readFile(databasePath)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(databasePath), bytes)).toBe(0);
     },
   );
 

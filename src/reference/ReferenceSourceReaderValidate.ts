@@ -7,13 +7,13 @@ import {
   cancelled,
   failure,
   filesystemFailureDetail,
-  rootFilesystemFailure,
 } from "./ReferenceSourceReaderErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import type {
   ReferenceSourceFailureCode,
   ReferenceSourceResult,
 } from "./ReferenceSourceReaderTypes.js";
+import { rootFilesystemFailure } from "./ReferenceSourceFailureBuilders.js";
 
 export const bigLstat = (path: string): Promise<BigIntStats> =>
   lstat(path, { bigint: true });
@@ -31,24 +31,33 @@ export const isAborted = (signal?: AbortSignal): boolean =>
 export const noFollowOpenSupported = (): boolean =>
   Number.isSafeInteger(constants.O_NOFOLLOW) && constants.O_NOFOLLOW !== 0;
 
-export const validateDirectory = async (
-  root: string,
-  rootIdentity: BigIntStats,
-  path: string,
-  signal?: AbortSignal,
-): Promise<
+/** A directory's identity admission: its metadata, or why it was refused. */
+export type DirectoryValidation =
   | { readonly ok: true; readonly stats: BigIntStats }
   | {
       readonly ok: false;
       readonly code: ReferenceSourceFailureCode;
       readonly message: string;
-    }
-> => {
+      readonly localDiagnostic?: string;
+    };
+
+export const validateDirectory = async (
+  root: string,
+  rootIdentity: BigIntStats,
+  path: string,
+  signal?: AbortSignal,
+): Promise<DirectoryValidation> => {
+  if (isAborted(signal))
+    return {
+      ok: false,
+      code: "cancelled",
+      message: "Reference source traversal cancelled",
+    };
   try {
     const rootNow = await bigLstat(root);
     if (!sameFile(rootIdentity, rootNow))
       return { ok: false, code: "changed", message: "Reference root changed" };
-    const stats = await bigLstat(path);
+    const stats = path === root ? rootNow : await bigLstat(path);
     if (stats.isSymbolicLink())
       return {
         ok: false,
@@ -70,21 +79,15 @@ export const validateDirectory = async (
       };
     return { ok: true, stats };
   } catch (cause: unknown) {
-    if (isAborted(signal))
-      return {
-        ok: false,
-        code: "cancelled",
-        message: "Reference source traversal cancelled",
-      };
-    const message = filesystemFailureDetail(
+    const detail = filesystemFailureDetail(
       cause,
       "Directory identity could not be verified",
     );
-    if (message === undefined) throw cause;
+    if (detail === undefined) throw cause;
     return {
       ok: false,
       code: "io",
-      message,
+      ...detail,
     };
   }
 };
@@ -98,7 +101,7 @@ export const prepareRoot = async (
     readonly rootIdentity: BigIntStats;
   }>
 > => {
-  if (isAborted(signal)) return err(cancelled());
+  if (isAborted(signal)) return err(cancelled(signal));
   try {
     const metadata = await bigLstat(root);
     if (metadata.isSymbolicLink() || !metadata.isDirectory())
@@ -109,7 +112,7 @@ export const prepareRoot = async (
         ),
       );
     const canonicalRoot = await realpath(root);
-    if (isAborted(signal)) return err(cancelled());
+    if (isAborted(signal)) return err(cancelled(signal));
     const canonicalMetadata = await bigLstat(canonicalRoot);
     if (!sameFile(metadata, canonicalMetadata))
       return err(
@@ -120,12 +123,17 @@ export const prepareRoot = async (
       );
     return ok({ canonicalRoot, rootIdentity: canonicalMetadata });
   } catch (cause: unknown) {
-    if (isAborted(signal)) return err(cancelled());
     const rootFailure = rootFilesystemFailure(
       cause,
       "Reference source root could not be resolved",
     );
     if (rootFailure === undefined) throw cause;
-    return err(failure(rootFailure.code, `${rootFailure.message}: ${root}`));
+    return err({
+      ...failure(rootFailure.code, `${rootFailure.message}: ${root}`),
+      ...(rootFailure.remediationAction === undefined
+        ? {}
+        : { remediationAction: rootFailure.remediationAction }),
+      cause,
+    });
   }
 };

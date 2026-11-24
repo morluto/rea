@@ -1,24 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { executableFormatHintSchema } from "./dosCom.js";
 import {
   admitRawBinary,
   parseRawBinaryEntryPoint,
   rawBinarySelectionError,
-  validateRawBinaryLength,
 } from "./rawBinary.js";
 
-describe("headerless format hints", () => {
-  it("admits dos-com and raw-binary names only", () => {
-    expect(executableFormatHintSchema.safeParse("dos-com").success).toBe(true);
-    expect(executableFormatHintSchema.safeParse("raw-binary").success).toBe(
-      true,
-    );
-    expect(executableFormatHintSchema.safeParse("raw").success).toBe(false);
-  });
-});
-
-describe("raw-binary entry addresses", () => {
+describe("headerless entry points", () => {
   it("canonicalizes equivalent hex spellings without dropping the source", () => {
     const parsed = parseRawBinaryEntryPoint("0x08000000");
     expect(parsed).toEqual({
@@ -33,7 +21,10 @@ describe("raw-binary entry addresses", () => {
   it.each(["8000000", "0x", "0xgg", "0X8000000", ""])(
     "rejects malformed entry %s",
     (value) => {
-      expect(parseRawBinaryEntryPoint(value).ok).toBe(false);
+      expect(parseRawBinaryEntryPoint(value)).toEqual({
+        ok: false,
+        error: "entry_point must be a hexadecimal address of the form 0x…",
+      });
     },
   );
 });
@@ -94,7 +85,6 @@ describe("raw-binary admission", () => {
     });
   });
   it("rejects an empty file as a target refusal while naming the extent", () => {
-    expect(validateRawBinaryLength(0).ok).toBe(false);
     const result = admitRawBinary({
       architecture: "x86",
       entryPoint: "0x1000",
@@ -114,7 +104,6 @@ describe("raw-binary admission", () => {
       entryPoint: "0xfffffffc",
       fileBytes: 8,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected overflow rejection");
     expect(result.error.reason).toContain("arm address width");
     expect(result.error.constraint).toBe("load_selection_rejected");
@@ -137,7 +126,11 @@ describe("raw-binary admission", () => {
         ).toEqual({
           ok: false,
           error: {
-            reason: `raw-binary ${architecture} entry_point ${entryPoint} must be 4-byte aligned`,
+            reason: `raw-binary ${architecture} entry_point ${entryPoint} must be 4-byte aligned${
+              architecture === "arm" && entryPoint !== "0x8000002"
+                ? "; an odd address can be a Thumb function pointer with bit 0 set, but raw-binary arm decodes ARM state only, so a Thumb entry is unsupported and the entry was not adjusted"
+                : ""
+            }`,
             constraint: "load_selection_rejected",
           },
         });
@@ -154,7 +147,6 @@ describe("raw-binary admission", () => {
     ["mismatched family name", { architecture: "68000", entryPoint: "0x1000" }],
   ])("classifies a %s as caller input", (_name, selection) => {
     const result = admitRawBinary({ ...selection, fileBytes: 4 });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected caller-input rejection");
     expect(result.error.constraint).toBe("load_selection_rejected");
   });

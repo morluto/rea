@@ -2,18 +2,17 @@ import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import { CdpConnection } from "./CdpConnection.js";
-import { optionalCdpCommand } from "./CdpOptionalCommand.js";
+import type { Result } from "../domain/result.js";
+import {
+  optionalCdpCommand,
+  type CdpOptionalCommandGap,
+} from "./CdpOptionalCommand.js";
 import {
   captureStorageFingerprints,
   type CapturedCache,
   type CapturedStorageItems,
 } from "./CdpCaptureStorageFingerprints.js";
-import {
-  numberValue,
-  recordValue,
-  recordsValue,
-  cdpStringValue,
-} from "./CdpCaptureValues.js";
+import { recordsValue, cdpStringValue } from "./CdpCaptureValues.js";
 
 /** Capture redacted storage metadata for an authorized page and its origin. */
 export const captureStorage = async (
@@ -30,13 +29,11 @@ export const captureStorage = async (
   readonly keysExclusion: BrowserExclusionReason | undefined;
 }> => {
   const origin = new URL(pageUrl).origin;
-  const quota = recordValue(
-    await optionalCdpCommand(
-      context,
-      "Storage.getUsageAndQuota",
-      { origin },
-      limitations,
-    ),
+  const quota = await optionalCdpCommand(
+    context,
+    "Storage.getUsageAndQuota",
+    { origin },
+    limitations,
   );
   const local = context.input.include_storage_keys
     ? await storageItems(context, origin, true, limitations)
@@ -44,7 +41,7 @@ export const captureStorage = async (
   const session = context.input.include_storage_keys
     ? await storageItems(context, origin, false, limitations)
     : emptyStorageItems;
-  const indexedRaw = context.input.include_storage_keys
+  const indexedReply = context.input.include_storage_keys
     ? await optionalCdpCommand(
         context,
         "IndexedDB.requestDatabaseNames",
@@ -52,9 +49,11 @@ export const captureStorage = async (
         limitations,
       )
     : undefined;
-  const indexedValues = recordValue(indexedRaw)?.databaseNames;
-  const indexed = stringArray(indexedValues);
-  const cacheRaw = context.input.include_storage_keys
+  const indexedValues = indexedReply?.ok
+    ? indexedReply.value.databaseNames
+    : undefined;
+  const indexed = stringArray(indexedValues ?? []);
+  const cacheReply = context.input.include_storage_keys
     ? await optionalCdpCommand(
         context,
         "CacheStorage.requestCacheNames",
@@ -62,8 +61,8 @@ export const captureStorage = async (
         limitations,
       )
     : undefined;
-  const cacheField = recordValue(cacheRaw)?.caches;
-  const caches = capturedCaches(recordsValue(cacheField));
+  const cacheValues = cacheReply?.ok ? cacheReply.value.caches : undefined;
+  const caches = capturedCaches(recordsValue(cacheValues ?? []));
   const fingerprints = context.input.include_storage_fingerprints
     ? await captureStorageFingerprints({
         context,
@@ -76,20 +75,20 @@ export const captureStorage = async (
         limitations,
       })
     : { items: [], complete: false };
+  // A malformed or partly unusable name list is an incomplete enumeration
+  // rather than an empty one.
   const structuredStorageComplete =
-    indexedRaw !== undefined &&
-    Array.isArray(indexedValues) &&
+    indexedValues !== undefined &&
     indexed.length === indexedValues.length &&
-    // Like IndexedDB names, a missing, non-array or partly unusable cache
-    // list is an incomplete enumeration rather than an empty one.
-    Array.isArray(cacheField) &&
-    caches.length === cacheField.length;
+    cacheValues !== undefined &&
+    caches.length === cacheValues.length &&
+    caches.every(({ id }) => id !== undefined);
   const keysExclusion = !context.input.include_storage_keys
     ? undefined
     : local.exclusion === "provider_unavailable" ||
         session.exclusion === "provider_unavailable" ||
-        indexedRaw === undefined ||
-        cacheRaw === undefined
+        commandUnavailable(indexedReply) ||
+        commandUnavailable(cacheReply)
       ? "provider_unavailable"
       : !local.complete || !session.complete || !structuredStorageComplete
         ? "invalid_protocol_value"
@@ -98,8 +97,8 @@ export const captureStorage = async (
     keysExclusion,
     value: {
       origin,
-      usage_bytes: numberValue(quota?.usage) ?? null,
-      quota_bytes: numberValue(quota?.quota) ?? null,
+      usage_bytes: quota.ok ? quota.value.usage : null,
+      quota_bytes: quota.ok ? quota.value.quota : null,
       local_storage_keys: local.items.map(({ key }) => key),
       session_storage_keys: session.items.map(({ key }) => key),
       indexed_db_names: [...indexed],
@@ -127,7 +126,7 @@ const capturedCaches = (
   values.flatMap((cache) => {
     const name = cdpStringValue(cache.cacheName);
     const id = cdpStringValue(cache.cacheId);
-    return name === undefined || id === undefined ? [] : [{ name, id }];
+    return name === undefined ? [] : [{ name, id }];
   });
 
 const storageItems = async (
@@ -136,33 +135,43 @@ const storageItems = async (
   isLocalStorage: boolean,
   limitations: string[],
 ): Promise<StorageItemsCapture> => {
-  const raw = await optionalCdpCommand(
+  const reply = await optionalCdpCommand(
     context,
     "DOMStorage.getDOMStorageItems",
     { storageId: { securityOrigin: origin, isLocalStorage } },
     limitations,
   );
-  const entries = recordValue(raw)?.entries;
-  if (raw === undefined || !Array.isArray(entries))
+  if (!reply.ok)
     return {
       items: [],
       complete: false,
-      exclusion:
-        raw === undefined ? "provider_unavailable" : "invalid_protocol_value",
+      exclusion: commandUnavailable(reply)
+        ? "provider_unavailable"
+        : "invalid_protocol_value",
     };
+  const { entries } = reply.value;
   const items = entries.flatMap((entry) => {
     if (!Array.isArray(entry)) return [];
     const key = cdpStringValue(entry[0]);
     const value = cdpStringValue(entry[1]);
-    return key === undefined || value === undefined ? [] : [{ key, value }];
+    return key === undefined ? [] : [{ key, value }];
   });
-  return { items, complete: items.length === entries.length };
+  return {
+    items,
+    complete:
+      items.length === entries.length &&
+      items.every(({ value }) => value !== undefined),
+  };
 };
 
-const stringArray = (value: unknown): readonly string[] =>
-  Array.isArray(value)
-    ? value.flatMap((item) => {
-        const text = cdpStringValue(item);
-        return text === undefined ? [] : [text];
-      })
-    : [];
+const stringArray = (values: readonly unknown[]): readonly string[] =>
+  values.flatMap((item) => {
+    const text = cdpStringValue(item);
+    return text === undefined ? [] : [text];
+  });
+
+const commandUnavailable = (
+  reply: Result<unknown, CdpOptionalCommandGap> | undefined,
+): boolean =>
+  reply === undefined ||
+  (!reply.ok && reply.error._tag === "CdpCommandUnavailable");

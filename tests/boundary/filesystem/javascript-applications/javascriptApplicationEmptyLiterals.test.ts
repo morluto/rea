@@ -40,7 +40,6 @@ it("retains empty literal evidence across the application boundary surfaces", as
     "new WebSocket('');",
     "navigator.serviceWorker.register('');",
     "new Worker('');",
-    "const x = require('');",
     "import y from ''; y();",
     "import('');",
     "localStorage.getItem('');",
@@ -50,13 +49,18 @@ it("retains empty literal evidence across the application boundary surfaces", as
     "win.loadURL('');",
     "app.get('', handler);",
     "process.on('', () => 1);",
+  ];
+  const commonJsSources = [
+    "const x = require('');",
     "const { EventEmitter } = require('events'); new EventEmitter().on('', () => 1);",
     "const { spawn } = require('child_process'); spawn('/bin/x').on('', () => 1);",
     "const { ipcMain } = require('electron'); ipcMain.handle('', () => 1);",
     "const { ipcRenderer } = require('electron'); ipcRenderer.invoke('');",
     "const { contextBridge } = require('electron'); contextBridge.exposeInMainWorld('', {});",
   ];
-  const output = await analyzeSource(sources.join("\n"));
+  const output = await analyzeSource(sources.join("\n"), {
+    "commonjs.cjs": commonJsSources.join("\n"),
+  });
   expect(output.graph.nodes).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ kind: "endpoint" }),
@@ -93,19 +97,51 @@ it("keeps bridge entry paths stable through worker validation and API seed match
       nested: { write: nested },
     });
   `);
-  const semanticPathIds = new Set(
-    (output.semantic_graph?.nodes ?? [])
-      .map(({ properties }) => properties.path_id)
-      .filter((pathId): pathId is string => typeof pathId === "string"),
+  const semanticProperties = (output.semantic_graph?.nodes ?? []).map(
+    ({ properties }) => properties,
   );
-  const applicationPathIds = new Set(
-    output.graph.nodes.flatMap(({ observations }) =>
-      observations
-        .map(({ properties }) => properties.path_id)
+  const applicationProperties = output.graph.nodes.flatMap(({ observations }) =>
+    observations.map(({ properties }) => properties),
+  );
+  const pathIds = (properties: typeof semanticProperties) =>
+    new Set(
+      properties
+        .map(({ path_id }) => path_id)
         .filter((pathId): pathId is string => typeof pathId === "string"),
-    ),
+    );
+  expect(pathIds(semanticProperties)).toEqual(pathIds(applicationProperties));
+  const semanticPaths = semanticProperties.filter(
+    ({ step_kind }) => step_kind === "terminal",
   );
-  expect(semanticPathIds).toEqual(applicationPathIds);
+  const applicationPaths = applicationProperties.filter(
+    ({ step_kind }) => step_kind === "terminal",
+  );
+  const expectedPaths = [
+    expect.objectContaining({
+      path_id: expect.any(String),
+      loader_authority: "candidate",
+      entry_path: ["desktop", "nested.write"],
+      channel: "literal",
+    }),
+    expect.objectContaining({
+      path_id: expect.any(String),
+      loader_authority: "candidate",
+      entry_path: ["desktop", "nested", "write"],
+      channel: "nested",
+    }),
+  ];
+  expect(semanticPaths).toEqual(expect.arrayContaining(expectedPaths));
+  expect(applicationPaths).toEqual(expect.arrayContaining(expectedPaths));
+  const pathIdentities = (paths: typeof semanticPaths) =>
+    new Set(
+      paths.map(({ path_id, entry_path, channel }) =>
+        JSON.stringify([path_id, entry_path, channel]),
+      ),
+    );
+  expect(new Set(semanticPaths.map(({ path_id }) => path_id)).size).toBe(2);
+  expect(pathIdentities(applicationPaths)).toEqual(
+    pathIdentities(semanticPaths),
+  );
 
   const matches = findApplicationFeatureSeeds(
     output.graph.nodes,
