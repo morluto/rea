@@ -457,6 +457,7 @@
 * **browser:** single-pass CaptureJson parser and zero-allocation Playwright trace skipping ([#13427](https://github.com/morluto/rea/issues/13427)) ([275b574](https://github.com/morluto/rea/commit/275b5740f6c7b52db6556bd555d6e5acc2302982))
 * **browser:** wake the bundle worker on observed events ([#13225](https://github.com/morluto/rea/issues/13225)) ([60e0998](https://github.com/morluto/rea/commit/60e099848d3a78860cf8982b28ce88e3a469d52f))
 * **captures/io:** stream artifact hashes and preserve bounded export reads ([#13755](https://github.com/morluto/rea/issues/13755)) ([16c827a](https://github.com/morluto/rea/commit/16c827a25f0e29098d9625292580a6ee19656faa))
+* **ci:** check out only timing reporter inputs ([#14378](https://github.com/morluto/rea/issues/14378)) ([79efc75](https://github.com/morluto/rea/commit/79efc75a11dffc857792b6dfb12ac4f24d4412a8))
 * **ci:** defer failure artifacts until main comparison is possible ([#14379](https://github.com/morluto/rea/issues/14379)) ([f145aca](https://github.com/morluto/rea/commit/f145aca28fca368669f1f1af11cb62e248ce58eb))
 * **ci:** limit push and qualification classifier checkouts to scripts ([#14341](https://github.com/morluto/rea/issues/14341)) ([62b5d27](https://github.com/morluto/rea/commit/62b5d27638ab12dbc756b4d4252e38a311573f34))
 * **ci:** narrow pull request classifier checkouts to traced inputs ([#14376](https://github.com/morluto/rea/issues/14376)) ([5ef6cd8](https://github.com/morluto/rea/commit/5ef6cd89b5b8cc192683c2e97762bb4c4422fb21))
