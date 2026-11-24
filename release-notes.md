@@ -1333,6 +1333,7 @@
 ### Continuous Integration
 
 * **apple:** run the bundle executable provenance regression on macOS ([5d136df](https://github.com/morluto/rea/commit/5d136df3ce720385a7cb33137bf77962733c08aa))
+* compare frozen selections with observed test failures ([#14301](https://github.com/morluto/rea/issues/14301)) ([54f6fd4](https://github.com/morluto/rea/commit/54f6fd4f907caef76127c7e377ef181c0b5a4a82))
 * **limits:** enforce numeric inventory drift on documentation changes ([#12881](https://github.com/morluto/rea/issues/12881)) ([aaf151f](https://github.com/morluto/rea/commit/aaf151f5d6cca927823ac605699e587dfca2c043))
 * measure portable runner time for recorded selection predictions ([#14304](https://github.com/morluto/rea/issues/14304)) ([24f35b4](https://github.com/morluto/rea/commit/24f35b401867904e23869698d3490a1894916fe1))
 * record affected-test predictions above the live cutoff ([#14300](https://github.com/morluto/rea/issues/14300)) ([e6bf4af](https://github.com/morluto/rea/commit/e6bf4af1c913dd1b3d04c632298c6db045f1e95f))
