@@ -8,6 +8,7 @@ import { completedOperationEvidence } from "../application/binary/SessionEvidenc
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
+  RETAINED_SUMMARY_VIEW_TOOL,
   retainedSummaryDelivery,
   withoutDeliveryDetail,
 } from "./retainedSummaryDelivery.js";
@@ -160,8 +161,11 @@ export const createProviderOperationToolHandler =
               server.delivery.toCallToolResult(evidence, contract),
             );
           const projected =
-            delivery?.projectEvidence(resolved, evidence.value) ??
-            ok(evidence.value);
+            delivery?.projectEvidence(
+              resolved,
+              evidence.value,
+              server.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
+            ) ?? ok(evidence.value);
           if (!projected.ok)
             return progress.complete(
               server.delivery.toCallToolResult(projected, contract),
