@@ -837,6 +837,29 @@ const storesReference = (effect: MemberWrite): boolean =>
       source.requiredSources !== undefined,
   ) === true;
 
+// Member writes are only appended, so each one is classified once.
+const referenceStores = new WeakMap<
+  readonly MemberWrite[],
+  { readonly stores: MemberWrite[]; classified: number }
+>();
+
+/** The recorded member writes that may store a reference, in record order. */
+const bindingReferenceStores = (
+  binding: JavaScriptSemanticBindingState,
+): readonly MemberWrite[] => {
+  const writes = binding.memberWrites;
+  let index = referenceStores.get(writes);
+  if (index === undefined) {
+    index = { stores: [], classified: 0 };
+    referenceStores.set(writes, index);
+  }
+  for (; index.classified < writes.length; index.classified += 1) {
+    const effect = writes[index.classified]!;
+    if (storesReference(effect)) index.stores.push(effect);
+  }
+  return index.stores;
+};
+
 /**
  * The receiver paths whose stored values an escape of `binding`'s object at
  * `path` exposes: `path` itself when a reference store targets it or a
@@ -847,9 +870,8 @@ export const semanticEscapedStorePaths = (
   path: JavaScriptSemanticPropertyPath,
 ): readonly JavaScriptSemanticPropertyPath[] => {
   const paths = new Map<string, JavaScriptSemanticPropertyPath>();
-  for (const effect of binding.memberWrites)
-    if (!storesReference(effect)) continue;
-    else if (effect.path.length <= path.length) {
+  for (const effect of bindingReferenceStores(binding))
+    if (effect.path.length <= path.length) {
       if (semanticEffectPathMatches(effect.path, path))
         paths.set(JSON.stringify(path), path);
     } else if (
@@ -865,9 +887,8 @@ export const semanticBindingStoresAtOrBelow = (
   binding: JavaScriptSemanticBindingState,
   path: JavaScriptSemanticPropertyPath,
 ): boolean =>
-  binding.memberWrites.some(
+  bindingReferenceStores(binding).some(
     (effect) =>
-      storesReference(effect) &&
       effect.path.length >= path.length &&
       (path.length === 0 || semanticEffectPathMatches(path, effect.path)),
   );
@@ -880,12 +901,11 @@ export function* semanticStoredSourcesReaching(
   binding: JavaScriptSemanticBindingState,
   path: JavaScriptSemanticPropertyPath,
 ): Generator<NonNullable<AmbientEffect["assignedSources"]>[number]> {
-  for (const effect of binding.memberWrites)
+  for (const effect of bindingReferenceStores(binding))
     if (
-      storesReference(effect) &&
-      (path.length === 0 ||
-        semanticEffectPathMatches(effect.path, path) ||
-        semanticEffectPathMatches(path, effect.path))
+      path.length === 0 ||
+      semanticEffectPathMatches(effect.path, path) ||
+      semanticEffectPathMatches(path, effect.path)
     )
       yield* effect.assignedSources ?? [];
 }
