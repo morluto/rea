@@ -406,6 +406,61 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
       },
     ],
   });
+
+  for (const { selection, offset, rows, total } of [
+    {
+      selection: {},
+      offset: 1,
+      rows: [{ index: 1, name: "quinn" }],
+      total: 2,
+    },
+    {
+      selection: { indices: [1, 90, 0, 1] },
+      offset: 1,
+      rows: [{ index: 1, name: "quinn" }],
+      total: 2,
+    },
+    {
+      selection: {
+        indices: [1, 90, 0, 1],
+        name: "quinn",
+        names: ["quinn"],
+        contains: "quin",
+        source_kind: "git",
+      },
+      offset: 0,
+      rows: [{ index: 1, name: "quinn" }],
+      total: 1,
+    },
+    { selection: { indices: [] }, offset: 0, rows: [], total: 0 },
+    { selection: { names: [] }, offset: 0, rows: [], total: 0 },
+    {
+      selection: { name: "quinn", source_kind: "registry" },
+      offset: 0,
+      rows: [],
+      total: 0,
+    },
+  ]) {
+    const page = projectAnalysisView(collected, {
+      kind: "rust",
+      collection: "inferred_crates",
+      fields: ["name"],
+      ...selection,
+      offset,
+      limit: 1,
+    });
+    if (!page.ok) throw page.error;
+    expect(page.value).toMatchObject({
+      page: { collection: "inferred_crates", rows },
+      source_coverage: { inferred_crates: "partial" },
+      coverage: {
+        total,
+        examined: rows.length,
+        next_offset: null,
+        exhausted: true,
+      },
+    });
+  }
 });
 
 it.each(["packages", "edges"] as const)(

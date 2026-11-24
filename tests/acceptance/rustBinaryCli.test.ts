@@ -736,7 +736,6 @@ cliTest(
 
     await client.ping();
   },
-  60000,
 );
 
 cliTest(
@@ -878,7 +877,6 @@ cliTest(
 
     await client.ping();
   },
-  60000,
 );
 
 cliTest(

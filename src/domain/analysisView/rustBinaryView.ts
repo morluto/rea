@@ -283,37 +283,51 @@ export const projectRustBinaryView = (
     const exactName = view.name;
     const needle = view.contains;
     const sourceKind = view.source_kind;
-    const selected = selectViewRows(
-      inferredCrates.items,
-      view,
-      (row, index) =>
-        (indices?.has(index) ?? true) &&
-        (exactName === undefined || row.name === exactName) &&
-        (names?.has(row.name) ?? true) &&
-        (needle === undefined || row.name.includes(needle)) &&
-        (sourceKind === undefined || row.source_kind === sourceKind),
-      (row, index) => ({
-        index,
-        ...((fields?.has("name") ?? true) && { name: row.name }),
-        ...((fields?.has("version") ?? true) && { version: row.version }),
-        ...((fields?.has("source_kind") ?? true) && {
-          source_kind: row.source_kind,
-        }),
-        ...((fields?.has("registry_index") ?? true) && {
-          registry_index: row.registry_index,
-        }),
-        ...((fields?.has("checkout_id") ?? true) && {
-          checkout_id: row.checkout_id,
-        }),
-        ...((fields?.has("revision") ?? true) && { revision: row.revision }),
-        ...((fields?.has("first_file_offset") ?? true) && {
-          first_file_offset: row.first_file_offset,
-        }),
-        ...((fields?.has("reference_count") ?? true) && {
-          reference_count: row.reference_count,
-        }),
+    const matchCrate =
+      exactName === undefined &&
+      names === undefined &&
+      needle === undefined &&
+      sourceKind === undefined
+        ? undefined
+        : (row: (typeof inferredCrates.items)[number]) =>
+            (exactName === undefined || row.name === exactName) &&
+            (names?.has(row.name) ?? true) &&
+            (needle === undefined || row.name.includes(needle)) &&
+            (sourceKind === undefined || row.source_kind === sourceKind);
+    const projectCrate = (
+      row: (typeof inferredCrates.items)[number],
+      index: number,
+    ) => ({
+      index,
+      ...((fields?.has("name") ?? true) && { name: row.name }),
+      ...((fields?.has("version") ?? true) && { version: row.version }),
+      ...((fields?.has("source_kind") ?? true) && {
+        source_kind: row.source_kind,
       }),
-    );
+      ...((fields?.has("registry_index") ?? true) && {
+        registry_index: row.registry_index,
+      }),
+      ...((fields?.has("checkout_id") ?? true) && {
+        checkout_id: row.checkout_id,
+      }),
+      ...((fields?.has("revision") ?? true) && { revision: row.revision }),
+      ...((fields?.has("first_file_offset") ?? true) && {
+        first_file_offset: row.first_file_offset,
+      }),
+      ...((fields?.has("reference_count") ?? true) && {
+        reference_count: row.reference_count,
+      }),
+    });
+    const selected =
+      indices !== undefined
+        ? selectIndexedViewRows(
+            inferredCrates.items,
+            indices,
+            view,
+            matchCrate,
+            projectCrate,
+          )
+        : selectViewRows(inferredCrates.items, view, matchCrate, projectCrate);
     return ok({
       kind: "rust" as const,
       view,
