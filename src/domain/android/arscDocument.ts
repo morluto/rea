@@ -13,7 +13,9 @@ import type {
 } from "../firmware/regionDecoder.js";
 import {
   escapeAttr,
+  escapedAttrByteLength,
   escapeXml,
+  FORBIDDEN_XML,
   hexRef,
   renderTypedValue,
   StringPool,
@@ -42,9 +44,15 @@ const SPEC_PUBLIC = 0x40000000;
 const NO_ENTRY = 0xffffffff;
 
 const RES_VALUE_BYTES = 8;
-const PACKAGE_HEADER_BYTES = 288;
+/** ResTable_package headers before the Android O typeIdOffset tail field. */
+const PACKAGE_HEADER_MIN_BYTES = 284;
+const PACKAGE_HEADER_ID_OFFSET_BYTES = 288;
 const TYPE_SPEC_HEADER_BYTES = 16;
 const TYPE_HEADER_MIN_BYTES = 24;
+
+const TYPE_FLAG_SPARSE = 0x01;
+const TYPE_FLAG_OFFSET16 = 0x02;
+const TYPE_FLAG_COMPACT = 0x08;
 
 const ARSC_MAX_FILE_BYTES = 64 * 1024 * 1024;
 const ARSC_MAX_PACKAGES = 256;
@@ -74,36 +82,93 @@ const formatFailure = (message: string): Result<never, RegionDecodeFailure> =>
 const limitFailure = (message: string): Result<never, RegionDecodeFailure> =>
   err({ kind: "limit", message, boundary: "capacity" });
 
-/** Package name lives in a fixed 128-slot UTF-16 array terminated by NUL. */
-const readPackageName = (reader: BinaryReader, base: number): string => {
+/**
+ * Package name lives in a fixed 128-slot UTF-16 array terminated by NUL.
+ * Unpaired surrogates fail decoding instead of leaking U+FFFD into XML.
+ */
+const readPackageName = (
+  reader: BinaryReader,
+  base: number,
+): string | undefined => {
   const units: number[] = [];
   for (let i = 0; i < 128; i++) {
     const unit = reader.u16(base + 12 + i * 2);
     if (unit === 0) break;
     units.push(unit);
   }
-  return new TextDecoder("utf-16le", { ignoreBOM: true }).decode(
-    new Uint16Array(units).buffer as ArrayBuffer,
-  );
-};
-
-/** Base-3 packed locale letter triplet used by AOSP ResTable_config. */
-const unpackLanguage = (packed: number): string =>
-  String.fromCharCode(
-    0x61 + ((packed >> 7) & 0x1f) - 1,
-    0x61 + ((packed >> 2) & 0x1f) - 1,
-    0x61 + (packed & 0x3) - 1,
-  );
-
-const readLocaleField = (hi: number, lo: number): string | undefined => {
-  if (hi === 0 && lo === 0) return undefined;
-  if ((hi & 0x80) !== 0) return unpackLanguage((hi << 8) | lo);
-  return String.fromCharCode(hi, lo);
+  try {
+    return new TextDecoder("utf-16le", {
+      ignoreBOM: true,
+      fatal: true,
+    }).decode(new Uint16Array(units).buffer as ArrayBuffer);
+  } catch {
+    return undefined;
+  }
 };
 
 /**
+ * Packed 5-bit letter/digit triplets used by AOSP ResTable_config: the first
+ * character sits in the lowest five bits and each character is `base`-offset
+ * ('a' for language letters, '0' for region digits).
+ */
+const unpackLocale = (packed: number, base: number): string =>
+  String.fromCharCode(
+    base + (packed & 0x1f),
+    base + ((packed >> 5) & 0x1f),
+    base + ((packed >> 10) & 0x1f),
+  );
+
+const readLocaleField = (
+  hi: number,
+  lo: number,
+  packedBase: number,
+): string | undefined => {
+  if (hi === 0 && lo === 0) return undefined;
+  if ((hi & 0x80) !== 0) return unpackLocale((hi << 8) | lo, packedBase);
+  return String.fromCharCode(hi, lo);
+};
+
+const ORIENTATIONS = ["", "port", "land", "square"] as const;
+const SCREEN_LAYOUT_SIZES = ["", "small", "normal", "large", "xlarge"] as const;
+const UI_MODES = [
+  "",
+  "",
+  "",
+  "",
+  "",
+  "car",
+  "desk",
+  "television",
+  "appliance",
+  "watch",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "vrheadset",
+] as const;
+const TOUCHSCREENS = ["", "", "", "notouch", "finger"] as const;
+const KEYBOARDS = ["", "keysexposed", "keyshidden", "keyssoft"] as const;
+const NAVIGATIONS = [
+  "",
+  "",
+  "",
+  "",
+  "nonav",
+  "dpad",
+  "trackball",
+  "wheel",
+] as const;
+
+const lookup = (table: readonly string[], index: number): string =>
+  table[index] ?? `unknown${index}`;
+
+/**
  * Render the ResTable_config qualifier suffix for a type chunk. Only fields
- * inside the declared config size are read; unknown encodings are omitted.
+ * inside the declared config size are read. Undecoded encodings and fields
+ * that live past the layout we interpret stay explicit instead of collapsing
+ * into `default`.
  */
 const renderConfig = (
   reader: BinaryReader,
@@ -121,18 +186,31 @@ const renderConfig = (
     const language = readLocaleField(
       reader.bytes[base + 8]!,
       reader.bytes[base + 9]!,
+      0x61,
     );
     const region = readLocaleField(
       reader.bytes[base + 10]!,
       reader.bytes[base + 11]!,
+      0x30,
     );
     if (language !== undefined)
       parts.push(region === undefined ? language : `${language}-r${region}`);
+    else if (region !== undefined) parts.push(`r${region}`);
   }
   if (size >= 16) {
+    const orientation = reader.bytes[base + 12]!;
+    const touchscreen = reader.bytes[base + 13]!;
     const density = reader.u16(base + 14);
-    if (density !== 0 && density !== 0xffff) parts.push(`${density}dpi`);
+    if (orientation !== 0) parts.push(lookup(ORIENTATIONS, orientation));
+    if (touchscreen !== 0) parts.push(lookup(TOUCHSCREENS, touchscreen));
     if (density === 0xffff) parts.push("nodpi");
+    else if (density !== 0) parts.push(`${density}dpi`);
+  }
+  if (size >= 20) {
+    const keyboard = reader.bytes[base + 16]!;
+    const navigation = reader.bytes[base + 17]!;
+    if (keyboard !== 0) parts.push(lookup(KEYBOARDS, keyboard));
+    if (navigation !== 0) parts.push(lookup(NAVIGATIONS, navigation));
   }
   if (size >= 24) {
     const width = reader.u16(base + 20);
@@ -142,8 +220,24 @@ const renderConfig = (
   }
   if (size >= 28) {
     const sdk = reader.u16(base + 24);
-    if (sdk !== 0) parts.push(`v${sdk}`);
+    const minor = reader.u16(base + 26);
+    if (sdk !== 0) parts.push(minor !== 0 ? `v${sdk}.${minor}` : `v${sdk}`);
   }
+  if (size >= 32) {
+    const layout = reader.bytes[base + 28]!;
+    const uiMode = reader.bytes[base + 29]!;
+    const smallestWidth = reader.u16(base + 30);
+    if ((layout & 0x0f) !== 0)
+      parts.push(lookup(SCREEN_LAYOUT_SIZES, layout & 0x0f));
+    if ((layout & 0xc0) === 0x40) parts.push("long");
+    else if ((layout & 0xc0) === 0x80) parts.push("notlong");
+    if ((uiMode & 0x20) !== 0) parts.push("night");
+    if ((uiMode & 0x0f) !== 0) parts.push(lookup(UI_MODES, uiMode & 0x0f));
+    if (smallestWidth !== 0) parts.push(`sw${smallestWidth}dp`);
+  }
+  // Fields past the interpreted layout are reported instead of silently
+  // folded into a default-looking label.
+  if (size > 36) parts.push(`fields${size}`);
   return parts.length === 0 ? "default" : parts.join("-");
 };
 
@@ -242,6 +336,30 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
         : limitFailure(
             `projected output exceeds the ${ARSC_MAX_OUTPUT_BYTES}-byte bound`,
           );
+    /**
+     * Emit a line assembled from static fragments and escaped attribute
+     * values, charging the exact encoded size before materializing it.
+     * Static fragments are ASCII-only by construction.
+     */
+    const emitXml = (
+      parts: readonly (string | { attr: string })[],
+    ): Result<never, RegionDecodeFailure> | undefined => {
+      let bytes = 0;
+      for (const part of parts)
+        bytes +=
+          typeof part === "string"
+            ? part.length
+            : escapedAttrByteLength(part.attr);
+      if (!outputBudget.tryCharge(bytes))
+        return limitFailure(
+          `projected output exceeds the ${ARSC_MAX_OUTPUT_BYTES}-byte bound`,
+        );
+      let text = "";
+      for (const part of parts)
+        text += typeof part === "string" ? part : escapeAttr(part.attr);
+      out.push(encoder.encode(text));
+      return undefined;
+    };
 
     let packageCount = 0;
     let typeCount = 0;
@@ -265,6 +383,7 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           `type chunk header ${header.headerSize} is below the fixed 24 bytes`,
         );
       const typeId = reader.bytes[base + 8]!;
+      const flags = reader.bytes[base + 9]!;
       const count = reader.u32(base + 12);
       const entriesStart = reader.u32(base + 16);
       const configSize = reader.u32(base + 20);
@@ -272,11 +391,23 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
         return formatFailure(
           `type config ${configSize} exceeds the chunk header ${header.headerSize}`,
         );
+      const sparse = (flags & TYPE_FLAG_SPARSE) !== 0;
+      const offset16 = (flags & TYPE_FLAG_OFFSET16) !== 0;
+      const compact = (flags & TYPE_FLAG_COMPACT) !== 0;
+      if (sparse && offset16)
+        return formatFailure(
+          `type ${typeId} combines the sparse and offset16 layouts`,
+        );
+      if (sparse && compact)
+        return formatFailure(
+          `type ${typeId} combines the sparse and compact layouts`,
+        );
       if (entriesStart < header.headerSize || entriesStart > header.size)
         return formatFailure(
           `type entries start ${entriesStart} lies outside the chunk`,
         );
-      if (base + header.headerSize + count * 4 > base + header.size)
+      const slotBytes = offset16 ? 2 : 4;
+      if (base + header.headerSize + count * slotBytes > base + header.size)
         return formatFailure(
           `type ${typeId} declares ${count} entry offsets past the chunk end`,
         );
@@ -290,19 +421,86 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           `type ${typeId} has no name in the package type pool`,
         );
       const config = renderConfig(reader, base + 20, configSize);
-      const failing = emitOrLimit(
-        `    <type id="${hexRef(typeId + typeIdOffset)}" name="${escapeAttr(typeName)}" config="${escapeAttr(config)}">\n`,
-      );
+      const failing = emitXml([
+        `    <type id="${hexRef(typeId + typeIdOffset)}" name="`,
+        { attr: typeName },
+        `" config="`,
+        { attr: config },
+        `">\n`,
+      ]);
       if (failing !== undefined) return failing;
       const entriesBase = base + entriesStart;
-      for (let index = 0; index < count; index++) {
-        const rel = reader.u32(base + header.headerSize + index * 4);
+      // Sparse slots pair a u16 entry index with a u16 offset in 4-byte
+      // units; offset16 slots are plain u16 offsets in 4-byte units.
+      const slotAt = (i: number): { index: number; rel: number } => {
+        const at = base + header.headerSize + i * slotBytes;
+        if (sparse) {
+          const slot = reader.u32(at);
+          return { index: slot >>> 16, rel: (slot & 0xffff) * 4 };
+        }
+        if (offset16) {
+          const slot = reader.u16(at);
+          return {
+            index: i,
+            rel: slot === 0xffff ? NO_ENTRY : slot * 4,
+          };
+        }
+        return { index: i, rel: reader.u32(at) };
+      };
+      for (let i = 0; i < count; i++) {
+        const { index, rel } = slotAt(i);
         if (rel === NO_ENTRY) continue;
+        const entryBase = entriesBase + rel;
+        if (compact) {
+          // Compact entries are fixed 8-byte records: the upper byte of the
+          // flag field carries the data type and no Res_value follows.
+          if (rel + 8 > header.size - entriesStart)
+            return formatFailure(
+              `compact entry ${index} of type ${typeId} lies outside the entry block`,
+            );
+          const keyIndex = reader.u16(entryBase);
+          const valueType = reader.bytes[entryBase + 3]!;
+          const valueData = reader.u32(entryBase + 4);
+          const name = keyStrings.get(keyIndex);
+          if (name === undefined || name === null)
+            return formatFailure(
+              `entry ${index} of type ${typeId} has no key in the package key pool`,
+            );
+          const id =
+            (packageId << 24) | ((typeId + typeIdOffset) << 16) | index;
+          const rendered = globalPool
+            ? renderTypedValue(valueType, valueData, globalPool)
+            : undefined;
+          const parts: (string | { attr: string })[] = [
+            `      <entry id="${hexRef(id)}" name="`,
+            { attr: name },
+            '"',
+          ];
+          if ((specFlags?.[index] ?? 0) & SPEC_PUBLIC)
+            parts.push(' public="true"');
+          if (rendered === undefined) {
+            unrenderedValues += 1;
+            parts.push(
+              ` value="${hexRef(valueData)}"`,
+              ` type="0x${byteToHex(valueType)}"`,
+            );
+          } else {
+            parts.push(' value="', { attr: rendered }, '"');
+          }
+          parts.push("/>\n");
+          entryCount += 1;
+          if (entryCount > ARSC_MAX_ENTRIES)
+            return limitFailure(
+              `table projects more than the ${ARSC_MAX_ENTRIES}-entry bound`,
+            );
+          const inner = emitXml(parts);
+          if (inner !== undefined) return inner;
+          continue;
+        }
         if (rel + 8 > header.size - entriesStart)
           return formatFailure(
             `entry ${index} of type ${typeId} lies outside the entry block`,
           );
-        const entryBase = entriesBase + rel;
         const entrySize = reader.u16(entryBase);
         if (entryBase + entrySize > base + header.size)
           return formatFailure(
@@ -320,39 +518,48 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
             `entry ${index} of type ${typeId} has no key in the package key pool`,
           );
         const id = (packageId << 24) | ((typeId + typeIdOffset) << 16) | index;
-        const attrs = [`id="${hexRef(id)}"`, `name="${escapeAttr(name)}"`];
+        const parts: (string | { attr: string })[] = [
+          `      <entry id="${hexRef(id)}" name="`,
+          { attr: name },
+          '"',
+        ];
         if ((specFlags?.[index] ?? 0) & SPEC_PUBLIC)
-          attrs.push('public="true"');
+          parts.push(' public="true"');
         entryCount += 1;
         if (entryCount > ARSC_MAX_ENTRIES)
           return limitFailure(
             `table projects more than the ${ARSC_MAX_ENTRIES}-entry bound`,
           );
         if ((entryFlags & ENTRY_COMPLEX) === 0) {
-          const valueSize = reader.u16(entryBase + 8);
-          if (
-            valueSize < RES_VALUE_BYTES ||
-            entryBase + 8 + valueSize > base + header.size
-          )
+          // The Res_value record sits after the variable-size entry header.
+          const valueAt = entryBase + entrySize;
+          if (valueAt + RES_VALUE_BYTES > base + header.size)
             return formatFailure(
               `entry ${index} of type ${typeId} carries a truncated value`,
             );
-          const valueType = reader.bytes[entryBase + 11]!;
-          const valueData = reader.u32(entryBase + 12);
+          if (
+            reader.u16(valueAt) !== RES_VALUE_BYTES ||
+            reader.bytes[valueAt + 2] !== 0
+          )
+            return formatFailure(
+              `entry ${index} of type ${typeId} carries an invalid Res_value header`,
+            );
+          const valueType = reader.bytes[valueAt + 3]!;
+          const valueData = reader.u32(valueAt + 4);
           const rendered = globalPool
             ? renderTypedValue(valueType, valueData, globalPool)
             : undefined;
           if (rendered === undefined) {
             unrenderedValues += 1;
-            attrs.push(
-              `value="${hexRef(valueData)}"`,
-              `type="0x${byteToHex(valueType)}"`,
+            parts.push(
+              ` value="${hexRef(valueData)}"`,
+              ` type="0x${byteToHex(valueType)}"`,
             );
           } else {
-            attrs.push(`value="${escapeAttr(rendered)}"`);
+            parts.push(' value="', { attr: rendered }, '"');
           }
-          const line = `      <entry ${attrs.join(" ")}/>\n`;
-          const inner = emitOrLimit(line);
+          parts.push("/>\n");
+          const inner = emitXml(parts);
           if (inner !== undefined) return inner;
           continue;
         }
@@ -366,8 +573,9 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           return formatFailure(
             `complex entry ${index} of type ${typeId} declares ${mapCount} items past the chunk end`,
           );
-        if (parent !== 0) attrs.push(`parent="${hexRef(parent)}"`);
-        const open = emitOrLimit(`      <entry ${attrs.join(" ")}>\n`);
+        if (parent !== 0) parts.push(` parent="${hexRef(parent)}"`);
+        parts.push(">\n");
+        const open = emitXml(parts);
         if (open !== undefined) return open;
         for (let m = 0; m < mapCount; m++) {
           const mapBase = entryBase + entrySize + m * 12;
@@ -377,17 +585,20 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           const rendered = globalPool
             ? renderTypedValue(valueType, valueData, globalPool)
             : undefined;
-          const itemAttrs = [`name="@${hexRef(mapName)}"`];
+          const itemParts: (string | { attr: string })[] = [
+            `        <item name="@${hexRef(mapName)}"`,
+          ];
           if (rendered === undefined) {
             unrenderedValues += 1;
-            itemAttrs.push(
-              `value="${hexRef(valueData)}"`,
-              `type="0x${byteToHex(valueType)}"`,
+            itemParts.push(
+              ` value="${hexRef(valueData)}"`,
+              ` type="0x${byteToHex(valueType)}"`,
             );
           } else {
-            itemAttrs.push(`value="${escapeAttr(rendered)}"`);
+            itemParts.push(' value="', { attr: rendered }, '"');
           }
-          const item = emitOrLimit(`        <item ${itemAttrs.join(" ")}/>\n`);
+          itemParts.push("/>\n");
+          const item = emitXml(itemParts);
           if (item !== undefined) return item;
         }
         const close = emitOrLimit("      </entry>\n");
@@ -414,28 +625,35 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
         const pool = StringPool.parse(reader, cursor, h, documentEnd, {
           maxStrings: ARSC_MAX_STRINGS,
           maxStringBytes: ARSC_MAX_STRING_BYTES,
+          requireXmlChars: true,
         });
         if (!pool.ok) return pool;
         globalPool = pool.value;
       } else if (h.type === CHUNK_PACKAGE) {
-        if (h.headerSize < PACKAGE_HEADER_BYTES)
+        if (h.headerSize < PACKAGE_HEADER_MIN_BYTES)
           return formatFailure(
-            `package header ${h.headerSize} is below the fixed ${PACKAGE_HEADER_BYTES} bytes`,
+            `package header ${h.headerSize} is below the fixed ${PACKAGE_HEADER_MIN_BYTES} bytes`,
           );
         if (globalPool === undefined)
           return formatFailure("a package precedes the global string pool");
-        if (
-          !emit(
-            `  <package id="${hexRef(reader.u32(cursor + 8))}" name="${escapeAttr(readPackageName(reader, cursor))}">\n`,
-          )
-        )
-          return limitFailure(
-            `projected output exceeds the ${ARSC_MAX_OUTPUT_BYTES}-byte bound`,
+        const packageName = readPackageName(reader, cursor);
+        if (packageName === undefined || FORBIDDEN_XML.test(packageName))
+          return formatFailure(
+            "package name contains characters XML cannot represent",
           );
+        const packageEmitted = emitXml([
+          `  <package id="${hexRef(reader.u32(cursor + 8))}" name="`,
+          { attr: packageName },
+          `">\n`,
+        ]);
+        if (packageEmitted !== undefined) return packageEmitted;
         const packageEnd = cursor + h.size;
         const typeStringsAt = reader.u32(cursor + 268);
         const keyStringsAt = reader.u32(cursor + 276);
-        const typeIdOffset = reader.u32(cursor + 284);
+        const typeIdOffset =
+          h.headerSize >= PACKAGE_HEADER_ID_OFFSET_BYTES
+            ? reader.u32(cursor + 284)
+            : 0;
         const packageId = reader.u32(cursor + 8);
         if (packageId > 0xff)
           return formatFailure(
@@ -461,6 +679,7 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           {
             maxStrings: ARSC_MAX_STRINGS,
             maxStringBytes: ARSC_MAX_STRING_BYTES,
+            requireXmlChars: true,
           },
         );
         if (!typeStrings.ok) return typeStrings;
@@ -472,6 +691,7 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           {
             maxStrings: ARSC_MAX_STRINGS,
             maxStringBytes: ARSC_MAX_STRING_BYTES,
+            requireXmlChars: true,
           },
         );
         if (!keyStrings.ok) return keyStrings;
@@ -492,6 +712,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
               );
             const specId = reader.bytes[inner + 8]!;
             const specCount = reader.u32(inner + 12);
+            if (specCount > ARSC_MAX_ENTRIES)
+              return limitFailure(
+                `type spec ${specId} declares ${specCount} flags above the ${ARSC_MAX_ENTRIES} bound`,
+              );
             if (s.headerSize + specCount * 4 > s.size)
               return formatFailure(
                 `type spec ${specId} declares ${specCount} flags past the chunk end`,
@@ -529,6 +753,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
         const closePackage = emitOrLimit("  </package>\n");
         if (closePackage !== undefined) return closePackage;
         packageCount += 1;
+        if (packageCount > ARSC_MAX_PACKAGES)
+          return limitFailure(
+            `table walks more than the ${ARSC_MAX_PACKAGES}-package bound`,
+          );
       } else {
         return formatFailure(
           `unexpected chunk 0x${h.type.toString(16)} at ${cursor} in the table`,
@@ -543,6 +771,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
     if (packageCount !== declaredPackages)
       limitations.push(
         `table declares ${declaredPackages} packages; ${packageCount} were walked`,
+      );
+    if (documentEnd < bytes.length)
+      limitations.push(
+        `${bytes.length - documentEnd} trailing bytes past the declared table size were not examined`,
       );
     if (skippedChunks !== 0)
       limitations.push(

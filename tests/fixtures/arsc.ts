@@ -36,6 +36,8 @@ export interface ArscType {
   };
   /** SPEC_PUBLIC flags per entry index. */
   readonly public?: readonly number[];
+  /** Entry layout flag for the type chunk (defaults to dense u32). */
+  readonly layout?: "sparse" | "offset16" | "compact";
 }
 
 export interface ArscOptions {
@@ -50,6 +52,8 @@ export interface ArscOptions {
   readonly truncate?: number;
   /** Extra chunks appended after the package body. */
   readonly tailChunks?: readonly Buffer[];
+  /** Package header size; 284 drops the Android O typeIdOffset tail. */
+  readonly packageHeaderSize?: number;
 }
 
 const stringPoolChunk = (
@@ -122,7 +126,7 @@ export const buildArsc = (options: ArscOptions = {}): Buffer => {
   const allKeys = types.flatMap((t) => t.entries.map((e) => e.name));
   const { chunk: keyPool, index: keyIndex } = stringPoolChunk(allKeys);
 
-  const packageHeaderSize = 288;
+  const packageHeaderSize = options.packageHeaderSize ?? 288;
   const typePoolAt = packageHeaderSize;
   const keyPoolAt = packageHeaderSize + typePool.length;
 
@@ -141,13 +145,37 @@ export const buildArsc = (options: ArscOptions = {}): Buffer => {
 
     const cfg = configBytes(t.config);
     const typeHeaderSize = 20 + cfg.length;
-    const entriesStart = typeHeaderSize + t.entries.length * 4;
+    const typeFlags =
+      t.layout === "sparse"
+        ? 1
+        : t.layout === "offset16"
+          ? 2
+          : t.layout === "compact"
+            ? 8
+            : 0;
+    const slotBytes = t.layout === "offset16" ? 2 : 4;
+    const entriesStart = typeHeaderSize + t.entries.length * slotBytes;
     let entryCursor = 0;
     const offsets: Buffer[] = [];
     const entryBytes: Buffer[] = [];
-    for (const e of t.entries) {
-      offsets.push(u32(entryCursor));
+    for (let i = 0; i < t.entries.length; i++) {
+      const e = t.entries[i]!;
+      if (t.layout === "sparse")
+        offsets.push(u32((i << 16) | (entryCursor >>> 2)));
+      else if (t.layout === "offset16") offsets.push(u16(entryCursor >>> 2));
+      else offsets.push(u32(entryCursor));
       const key = keyIndex.get(e.name) ?? 0;
+      if (t.layout === "compact") {
+        const [dtype, data] = e.typed ?? [0x10, 0];
+        const blob = Buffer.concat([
+          u16(key),
+          Buffer.from([0, dtype]),
+          u32(data >>> 0),
+        ]);
+        entryBytes.push(blob);
+        entryCursor += blob.length;
+        continue;
+      }
       if (e.items) {
         const maps = e.items.map(([name, dtype, data]) =>
           Buffer.concat([
@@ -183,7 +211,7 @@ export const buildArsc = (options: ArscOptions = {}): Buffer => {
       entryCursor += blob.length;
     }
     const typeBody = Buffer.concat([
-      Buffer.from([typeId, 0]),
+      Buffer.from([typeId, typeFlags]),
       u16(0),
       u32(t.entries.length),
       u32(entriesStart),
@@ -211,7 +239,7 @@ export const buildArsc = (options: ArscOptions = {}): Buffer => {
     u32(typeNames.length),
     u32(keyPoolAt),
     u32(allKeys.length),
-    u32(0),
+    ...(packageHeaderSize >= 288 ? [u32(0)] : []),
   ]);
   const packageChunk = Buffer.concat([
     u16(0x0200),

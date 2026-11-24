@@ -30,7 +30,8 @@ const CHUNK_CDATA = 0x0104;
 const STRING_POOL_UTF8 = 0x00000100;
 export const NO_INDEX = 0xffffffff;
 /** XML 1.0 forbids these characters anywhere in the projected text. */
-const FORBIDDEN_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/;
+export const FORBIDDEN_XML =
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/;
 /**
  * Element names, attribute names and declared prefixes must be XML NCNames;
  * a colon can never appear because prefixes are tracked separately.
@@ -78,7 +79,7 @@ const RADIX_MULTS = [1 / (1 << 23), 1 / (1 << 15), 1 / (1 << 7), 1];
 const DIMENSION_UNITS = ["px", "dip", "sp", "pt", "in", "mm"];
 const FRACTION_UNITS = ["%", "%p"];
 
-interface ChunkHeader {
+export interface ChunkHeader {
   readonly type: number;
   readonly headerSize: number;
   readonly size: number;
@@ -112,7 +113,7 @@ const limitFailure = (message: string): Result<never, RegionDecodeFailure> =>
 
 const NO_PREFIX = "";
 
-class StringPool {
+export class StringPool {
   readonly utf8: boolean;
   readonly styleCount: number;
   readonly #strings: string[];
@@ -321,14 +322,14 @@ const readUtf8String = (
   return decoded;
 };
 
-const escapeXml = (text: string): string =>
+export const escapeXml = (text: string): string =>
   text
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("\r", "&#13;");
 
-const escapeAttr = (text: string): string =>
+export const escapeAttr = (text: string): string =>
   escapeXml(text)
     .replaceAll('"', "&quot;")
     .replaceAll("\t", "&#9;")
@@ -350,7 +351,7 @@ const escapedTextByteLength = (text: string): number => {
 };
 
 /** UTF-8 byte length of escapeAttr(text), without materializing it. */
-const escapedAttrByteLength = (text: string): number => {
+export const escapedAttrByteLength = (text: string): number => {
   let bytes = 0;
   for (const ch of text) {
     if (ch === "&") bytes += 5;
@@ -365,7 +366,7 @@ const escapedAttrByteLength = (text: string): number => {
   return bytes;
 };
 
-const hexRef = (data: number): string =>
+export const hexRef = (data: number): string =>
   `0x${(data >>> 0).toString(16).padStart(8, "0")}`;
 
 const complexToFloat = (data: number): number => {
@@ -374,7 +375,7 @@ const complexToFloat = (data: number): number => {
   return signed * (RADIX_MULTS[(data >> 4) & 0x3] ?? 0);
 };
 
-const renderTypedValue = (
+export const renderTypedValue = (
   type: number,
   data: number,
   pool: StringPool,
