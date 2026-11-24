@@ -50,9 +50,11 @@ import {
 } from "../domain/analysisErrorCore.js";
 import {
   il2cppMetadataSchema,
+  il2cppNativeIndexLimit,
   type Il2cppMetadata,
   type Il2cppMetadataProviderInput,
 } from "../domain/il2cpp/il2cppMetadata.js";
+import { ELF_VIRTUAL_POINTER_INDEX_LIMIT } from "../domain/native/elfPointerRelocations.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -120,6 +122,18 @@ const failureForPrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
+  if (
+    cause instanceof Il2cppBinaryFormatFailure &&
+    isParseLimit(cause, IL2CPP_BINARY_FORMAT) &&
+    cause.failure.limit.name === ELF_VIRTUAL_POINTER_INDEX_LIMIT
+  ) {
+    const selected = cause.failure.limit.maximum;
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      retryable: false,
+      limit: il2cppNativeIndexLimit(selected),
+      remediationAction: `The ELF pointer index allowance is max_native_index_bytes = ${String(selected)} bytes. Pass a larger max_native_index_bytes (up to ${String(Number.MAX_SAFE_INTEGER)}) on the next ${OPERATION} call with the same binary_path; no restart is required. Host memory and the binary file allowance are independent. Repeating the unchanged request fails the same way.`,
+    });
+  }
   if (
     cause instanceof Il2cppBinaryFormatFailure &&
     isParseLimit(cause, IL2CPP_BINARY_FORMAT)
@@ -598,6 +612,9 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               {
                 ...admission,
                 genericInstances: input.generic_instances === true,
+                ...(input.max_native_index_bytes === undefined
+                  ? {}
+                  : { maxNativeIndexBytes: input.max_native_index_bytes }),
               },
               async () => {
                 await this.yieldControl();
