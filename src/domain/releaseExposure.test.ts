@@ -61,42 +61,171 @@ const reportFor = (
   ownerFacts: ReleaseExposureOwnerFacts = owners(),
 ) => assembleReleaseExposureReport(scanned, ownerFacts);
 
+/** A reported check's status, or `inapplicable` when the check was omitted. */
 const statusOf = (
   report: ReturnType<typeof reportFor>,
   id: ReleaseExposureCheckId,
-) => report.checks.find((check) => check.id === id)?.status;
+) =>
+  report.coverage.inapplicable_checks.includes(id)
+    ? "inapplicable"
+    : report.checks.find((check) => check.id === id)?.status;
+
+const ALL_CHECKS: readonly ReleaseExposureCheckId[] = [
+  "javascript.source_map_sources",
+  "javascript.source_maps",
+  "electron.run_as_node",
+  "electron.asar_integrity",
+  "electron.only_load_from_asar",
+  "electron.node_cli_inspect",
+  "packaging.extractable_payload",
+  "native.debug_companions",
+  "native.pdb_path",
+  "go.build_paths",
+  "rust.dependency_metadata",
+  "text.credential_markers",
+  "native.hardening",
+  "macho.hardened_runtime",
+  "android.manifest",
+];
+
+const executable = (
+  format: "pe" | "mach-o",
+  overrides: Partial<ReleaseExposureScan> = {},
+) =>
+  scan({
+    target: {
+      selected_path: "/work/app.bin",
+      kind: "executable",
+      format,
+      sha256: SHA,
+    },
+    subject: { path: "/work/app.bin", sha256: SHA, format },
+    native_images: [{ path: "/work/app.bin", format, sha256: SHA }],
+    pdb: { examined: format === "pe" ? 1 : 0, paths: [], failed: 0 },
+    text_members: { scanned: 0, skipped: 0 },
+    ...overrides,
+  });
 
 describe("release exposure checks", () => {
-  it("keeps the fixed check order and the security limitation", () => {
-    const report = reportFor();
-    expect(report.checks.map((check) => check.id)).toEqual([
+  it("splits the fixed check table between rows and inapplicable checks, in order", () => {
+    const report = reportFor(
+      scan({
+        native_images: [{ path: "/work/app/bin", format: "elf" }],
+        pdb: { examined: 1, paths: [], failed: 0 },
+      }),
+      owners({
+        electron_family: "unknown",
+        go_images: [{ kind: "absent" }],
+        rust_images: [{ kind: "absent" }],
+      }),
+    );
+    expect(report.checks.map((check) => check.id)).toEqual(
+      ALL_CHECKS.filter((id) => id !== "macho.hardened_runtime"),
+    );
+    expect(report.coverage.inapplicable_checks).toEqual([
+      "macho.hardened_runtime",
+    ]);
+    expect(report.limitations[0]).toMatch(
+      /static analysis.*does not establish.*secure/u,
+    );
+    expect(report.summary.no_exposure_observed_in_assessed_checks).toBe(true);
+    expect(report.summary.by_status.not_assessed).toBe(2);
+    expect(report.summary.highest_exposed_severity).toBeNull();
+    expect(statusOf(report, "native.hardening")).toBe("not_assessed");
+    expect(statusOf(report, "android.manifest")).toBe("not_assessed");
+  });
+});
+
+describe("release exposure format applicability", () => {
+  it("omits checks that cannot apply to a single PE and names them in coverage", () => {
+    const report = reportFor(
+      executable("pe", {
+        pdb: { examined: 1, paths: ["C:\\build\\app.pdb"], failed: 0 },
+      }),
+      owners({
+        electron_family: "not_a_directory",
+        go_images: [{ kind: "absent" }],
+        rust_images: [{ kind: "absent" }],
+      }),
+    );
+    expect(report.coverage.inapplicable_checks).toEqual([
       "javascript.source_map_sources",
       "javascript.source_maps",
       "electron.run_as_node",
       "electron.asar_integrity",
       "electron.only_load_from_asar",
       "electron.node_cli_inspect",
-      "packaging.extractable_payload",
-      "native.debug_companions",
-      "native.pdb_path",
-      "go.build_paths",
-      "rust.dependency_metadata",
       "text.credential_markers",
-      "native.hardening",
       "macho.hardened_runtime",
       "android.manifest",
     ]);
-    expect(report.limitations[0]).toMatch(
-      /static analysis.*does not establish.*secure/u,
+    expect(statusOf(report, "native.pdb_path")).toBe("exposed");
+    expect(statusOf(report, "native.hardening")).toBe("not_assessed");
+    expect(report.summary.by_status).toEqual({
+      exposed: 1,
+      not_observed: 2,
+      unknown: 2,
+      not_assessed: 1,
+    });
+    expect(
+      report.checks.flatMap((check) =>
+        check.next_probe === null ? [] : [check.next_probe],
+      ),
+    ).toEqual([
+      "inspect_artifact",
+      "inspect_go_binary",
+      "inspect_rust_binary",
+      "inspect_binary_hardening",
+    ]);
+  });
+
+  it("keeps the Mach-O check on a Mach-O executable and omits the PE one", () => {
+    const report = reportFor(
+      executable("mach-o"),
+      owners({ electron_family: "not_a_directory" }),
     );
-    expect(report.summary.no_exposure_observed_in_assessed_checks).toBe(true);
-    expect(report.summary.by_status.not_assessed).toBe(3);
-    expect(report.summary.highest_exposed_severity).toBeNull();
+    expect(statusOf(report, "macho.hardened_runtime")).toBe("not_assessed");
+    expect(statusOf(report, "native.pdb_path")).toBe("inapplicable");
+    expect(statusOf(report, "android.manifest")).toBe("inapplicable");
+  });
+
+  it("keeps JavaScript checks on an executable that embeds a package", () => {
+    const report = reportFor(
+      executable("pe", {
+        extractable: {
+          formats: ["node-sea"],
+          readable_members: 0,
+          unreadable_members: 0,
+          samples: [],
+        },
+      }),
+      owners({ electron_family: "not_a_directory" }),
+    );
+    expect(statusOf(report, "javascript.source_map_sources")).toBe(
+      "not_observed",
+    );
+    expect(statusOf(report, "javascript.source_maps")).toBe("not_observed");
+  });
+
+  it("keeps format-gated checks on a directory whose native images may be unread", () => {
+    const report = reportFor(
+      scan({
+        omitted: [
+          {
+            subject: "native images",
+            count: 1,
+            reason: "later native images were dropped",
+          },
+        ],
+      }),
+    );
     expect(statusOf(report, "native.hardening")).toBe("not_assessed");
     expect(statusOf(report, "macho.hardened_runtime")).toBe("not_assessed");
     expect(statusOf(report, "android.manifest")).toBe("not_assessed");
   });
+});
 
+describe("release exposure check outcomes", () => {
   it("grades shipped source maps separately from embedded sources", () => {
     const embedded = reportFor(
       scan({
@@ -236,7 +365,7 @@ describe("release exposure fuse and package checks", () => {
         ],
       }),
     );
-    expect(statusOf(plain, "electron.run_as_node")).toBe("not_applicable");
+    expect(statusOf(plain, "electron.run_as_node")).toBe("inapplicable");
 
     const bundle = reportFor(
       scan(),
@@ -267,10 +396,8 @@ describe("release exposure fuse and package checks", () => {
         ],
       }),
     );
-    expect(statusOf(nativeApp, "electron.run_as_node")).toBe("not_applicable");
-    expect(statusOf(nativeApp, "electron.asar_integrity")).toBe(
-      "not_applicable",
-    );
+    expect(statusOf(nativeApp, "electron.run_as_node")).toBe("inapplicable");
+    expect(statusOf(nativeApp, "electron.asar_integrity")).toBe("inapplicable");
   });
 });
 
@@ -641,8 +768,8 @@ describe("release exposure native and text checks", () => {
         rust_images: [{ kind: "unsupported" }],
       }),
     );
-    expect(statusOf(other, "go.build_paths")).toBe("not_applicable");
-    expect(statusOf(other, "rust.dependency_metadata")).toBe("not_applicable");
+    expect(statusOf(other, "go.build_paths")).toBe("inapplicable");
+    expect(statusOf(other, "rust.dependency_metadata")).toBe("inapplicable");
   });
 });
 
@@ -660,7 +787,7 @@ describe("release exposure gate and undecided checks", () => {
       }),
     );
     expect(report.summary.by_status.unknown).toBeGreaterThan(0);
-    expect(report.summary.by_status.not_assessed).toBe(3);
+    expect(report.summary.by_status.not_assessed).toBe(1);
     expect(exposureMeetsFailOn(report, "low")).toBe(false);
     expect(report.summary.no_exposure_observed_in_assessed_checks).toBe(true);
   });
@@ -669,7 +796,7 @@ describe("release exposure gate and undecided checks", () => {
     const report = reportFor(
       scan({ text_members: { scanned: 0, skipped: 0 } }),
     );
-    expect(statusOf(report, "text.credential_markers")).toBe("not_applicable");
+    expect(statusOf(report, "text.credential_markers")).toBe("inapplicable");
     const scanned = reportFor();
     expect(statusOf(scanned, "text.credential_markers")).toBe("not_observed");
     const skipped = reportFor(
@@ -705,9 +832,10 @@ describe("release exposure gate and undecided checks", () => {
   });
 
   it("names the real @electron/fuses option on every fuse remediation", () => {
-    const fuses = reportFor().checks.filter((check) =>
-      check.id.startsWith("electron."),
-    );
+    const fuses = reportFor(
+      scan(),
+      owners({ electron_family: "unknown" }),
+    ).checks.filter((check) => check.id.startsWith("electron."));
     expect(fuses).toHaveLength(4);
     for (const check of fuses) {
       expect(check.remediation).toContain("FuseV1Options.");
