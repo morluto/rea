@@ -1,8 +1,7 @@
 import { z } from "zod";
 
-import type { ConfigurationError } from "../domain/configurationErrors.js";
-import type { Result } from "../domain/result.js";
-import { parseOptionalMcpSetting } from "./optionalMcpSetting.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { err, ok, type Result } from "../domain/result.js";
 
 const profileConstraint =
   'REA_MCP_INPUT_SCHEMA_PROFILE accepts only "compact", the default. The "full" input profile was removed: remove the setting from the client registration, or set it to "compact". Canonical server-side validation still checks every call.';
@@ -20,10 +19,19 @@ export type McpInputSchemaProfile = z.infer<typeof mcpInputSchemaProfileSchema>;
 /** Parse the advertised input schema presentation selection. */
 export const parseMcpInputSchemaProfile = (
   value: string | undefined,
-): Result<McpInputSchemaProfile | undefined, ConfigurationError> =>
-  parseOptionalMcpSetting(
-    value,
-    mcpInputSchemaProfileSchema,
-    "REA_MCP_INPUT_SCHEMA_PROFILE",
-    profileConstraint,
-  );
+): Result<McpInputSchemaProfile | undefined, ConfigurationError> => {
+  if (value === undefined) return ok(undefined);
+  const parsed = mcpInputSchemaProfileSchema.safeParse(value);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(
+        new ConfigurationError(profileConstraint, {
+          settings: [
+            {
+              setting: "REA_MCP_INPUT_SCHEMA_PROFILE",
+              constraint: profileConstraint,
+            },
+          ],
+        }),
+      );
+};
