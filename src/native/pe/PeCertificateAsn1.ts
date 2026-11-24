@@ -688,6 +688,19 @@ const signedAttributeFailure = (
   throw new PeCertificateAsn1Failure(message, null, false, defect);
 };
 
+// A malformed OID inside signedAttrs is a signed-attribute defect. A fixed
+// decoder allowance still surfaces as its own failure.
+const signedAttributeOid = (node: Asn1BerNode | undefined): string | null => {
+  if (node?.tag !== 0x06) return null;
+  try {
+    return decodeOid(node.content);
+  } catch (cause: unknown) {
+    if (cause instanceof PeCertificateAsn1Failure && cause.exhausted === null)
+      return null;
+    throw cause;
+  }
+};
+
 // signedAttrs is a SET OF Attribute. An element that is not
 // SEQUENCE { OBJECT IDENTIFIER, SET } is malformed DER even when its type is
 // optional, and Windows CryptMsg refuses that SignerInfo too. The values of
@@ -696,7 +709,7 @@ const requireSignedAttributes = (node: Asn1BerNode): void => {
   const found = new Map<string, Asn1BerNode>();
   for (const attribute of node.children) {
     const [oid, values] = attribute.tag === 0x30 ? attribute.children : [];
-    const type = oid?.tag === 0x06 ? decodeOid(oid.content) : null;
+    const type = signedAttributeOid(oid);
     if (
       type === null ||
       values?.tag !== 0x31 ||
@@ -722,7 +735,12 @@ const requireSignedAttributes = (node: Asn1BerNode): void => {
         { reason: "missing", attribute: type },
         `SignerInfo signedAttrs lacks a ${label} attribute.`,
       );
-    if (values.children.length !== 1 || values.children[0]?.tag !== tag)
+    const value = values.children[0];
+    if (
+      values.children.length !== 1 ||
+      value?.tag !== tag ||
+      (tag === 0x06 && signedAttributeOid(value) === null)
+    )
       return signedAttributeFailure(
         { reason: "invalid-value", attribute: type },
         `SignerInfo ${label} attribute does not hold one ${typeName} value.`,

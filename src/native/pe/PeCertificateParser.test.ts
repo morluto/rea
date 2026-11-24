@@ -654,6 +654,14 @@ it("requires content-type and message-digest signed attributes", () => {
       [derSeq(attributeType(3), derSet(digest)), messageDigest],
       { reason: "invalid-value", attribute: CONTENT_TYPE },
     ],
+    // A content-type value must be a whole OBJECT IDENTIFIER: empty, and
+    // ending inside a continued arc.
+    ...[Buffer.alloc(0), Buffer.from([0x81])].map(
+      (oid): [Buffer[], PeSignedAttributeDefect] => [
+        [derSeq(attributeType(3), derSet(der(0x06, oid))), messageDigest],
+        { reason: "invalid-value", attribute: CONTENT_TYPE },
+      ],
+    ),
     // An optional attribute must still be SEQUENCE { OID, SET }. Windows
     // CryptMsg also refuses the SignerInfo for each of these three.
     [
@@ -662,6 +670,14 @@ it("requires content-type and message-digest signed attributes", () => {
     ],
     [
       [contentType, messageDigest, derSeq(derInt(5), derSet())],
+      { reason: "malformed", attribute: null },
+    ],
+    [
+      [
+        contentType,
+        messageDigest,
+        derSeq(der(0x06, Buffer.alloc(0)), derSet()),
+      ],
       { reason: "malformed", attribute: null },
     ],
     [
