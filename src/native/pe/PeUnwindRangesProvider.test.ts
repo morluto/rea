@@ -183,6 +183,33 @@ describe("x64 PE exception directory", () => {
 });
 
 describe("x64 PE exception directory refusals and absence", () => {
+  it("finds a chain parent listed after its fragment in an unsorted table", async () => {
+    const value = await report({
+      entries: [
+        { begin: 0x1100, end: 0x1180, unwind: 0x2100 },
+        { begin: 0x1000, end: 0x1080, unwind: 0x2000 },
+      ],
+      blobs: [
+        { rva: 0x2000, bytes: unwindInfo(0, 0) },
+        {
+          rva: 0x2100,
+          bytes: unwindInfo(0x4, 0, {
+            begin: 0x1000,
+            end: 0x1080,
+            unwind: 0x2000,
+          }),
+        },
+      ],
+    });
+    expect(value.entries[0]).toMatchObject({
+      kind: "chained",
+      parent: { begin_rva: "0x1000", index: 1 },
+      primary_index: 1,
+      issues: [],
+    });
+    expect(value.entries[1]!.issues).toEqual(["unsorted"]);
+  });
+
   it("reports an absent directory and an unsupported entry format", async () => {
     const absent = await report({ entries: [], directoryRva: 0 });
     expect(absent.exception_directory.status).toBe("absent");
@@ -210,6 +237,10 @@ describe("x64 PE exception directory refusals and absence", () => {
     [
       "a declared size with a zero RVA",
       { entries: [primary], directoryRva: 0 },
+    ],
+    [
+      "a directory whose trailing bytes leave the last section",
+      { entries: [], directoryRva: 0x3ff4, directorySize: 13 },
     ],
     [
       "a file cut inside the directory",

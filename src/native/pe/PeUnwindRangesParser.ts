@@ -159,7 +159,8 @@ const decodeUnwind = async (
     table.issues[index]! |= issueBit("unwind_unmapped");
   };
   if ((rva & RUNTIME_FUNCTION_INDIRECT) !== 0) {
-    const target = rva & ~RUNTIME_FUNCTION_INDIRECT;
+    // `>>> 0` keeps RVAs at or above 0x80000000 unsigned.
+    const target = (rva & ~RUNTIME_FUNCTION_INDIRECT) >>> 0;
     const offset = fileOffset(target, ENTRY_BYTES);
     const bytes = offset === undefined ? null : await read(offset, ENTRY_BYTES);
     if (bytes === null) return unmapped();
@@ -197,58 +198,86 @@ const decodeUnwind = async (
   setParent(parent);
 };
 
-/** Index of the entry whose begin RVA equals `begin` in a sorted table, or -1. */
-const indexOfBegin = (table: Table, begin: number): number => {
+/**
+ * Entry indices ordered by begin RVA, then index. A sorted table is its own
+ * order; an unsorted one is sorted once, so every parent lookup is a search.
+ */
+const beginOrder = (table: Table, sorted: boolean): Uint32Array => {
+  const order = new Uint32Array(table.count);
+  for (let index = 0; index < table.count; index++) order[index] = index;
+  if (!sorted)
+    order.sort(
+      (left, right) => table.begin[left]! - table.begin[right]! || left - right,
+    );
+  return order;
+};
+
+/** Lowest index of an entry whose begin RVA equals `begin`, or -1. */
+const indexOfBegin = (
+  table: Table,
+  order: Uint32Array,
+  begin: number,
+): number => {
   let low = 0;
-  let high = table.count - 1;
-  while (low <= high) {
+  let high = table.count;
+  while (low < high) {
     const middle = (low + high) >>> 1;
-    const value = table.begin[middle]!;
-    if (value === begin) return middle;
-    if (value < begin) low = middle + 1;
-    else high = middle - 1;
+    if (table.begin[order[middle]!]! < begin) low = middle + 1;
+    else high = middle;
   }
-  return -1;
+  return low < table.count && table.begin[order[low]!] === begin
+    ? order[low]!
+    : -1;
 };
 
-/** Follow each chain to the primary entry it extends, within the depth bound. */
-const resolveChains = (table: Table, sorted: boolean): void => {
+/** Follow one chain to the primary entry it extends, within the depth bound. */
+const resolveChain = (table: Table, index: number): void => {
+  let current = index;
+  let depth = 0;
+  while (table.kind[current] === KIND_CHAINED) {
+    const next = table.parentIndex[current]!;
+    if (next < 0) {
+      table.issues[index]! |= issueBit("chain_parent_missing");
+      return;
+    }
+    if (++depth > MAX_PE_UNWIND_CHAIN_DEPTH) {
+      table.issues[index]! |= issueBit("chain_cycle");
+      return;
+    }
+    current = next;
+  }
+  if (table.kind[current] === KIND_PRIMARY) table.primary[index] = current;
+};
+
+/** Link every chained entry to its parent and primary entry; yields to cancellation. */
+const resolveChains = async (
+  table: Table,
+  sorted: boolean,
+  signal: AbortSignal | undefined,
+): Promise<void> => {
+  const order = beginOrder(table, sorted);
   for (let index = 0; index < table.count; index++) {
+    if (index % YIELD_EVERY === 0 && index > 0) {
+      await setImmediate();
+      assertArtifactReadActive(signal);
+    }
     if (table.hasParent[index] === 1)
-      table.parentIndex[index] = sorted
-        ? indexOfBegin(table, table.parentBegin[index]!)
-        : linearIndexOfBegin(table, table.parentBegin[index]!);
+      table.parentIndex[index] = indexOfBegin(
+        table,
+        order,
+        table.parentBegin[index]!,
+      );
   }
   for (let index = 0; index < table.count; index++) {
+    if (index % YIELD_EVERY === 0 && index > 0) {
+      await setImmediate();
+      assertArtifactReadActive(signal);
+    }
     const kind = table.kind[index]!;
-    if (kind === KIND_PRIMARY) {
-      table.primary[index] = index;
-      continue;
-    }
-    if (kind !== KIND_CHAINED) continue;
-    let current = index;
-    let depth = 0;
-    while (table.kind[current] === KIND_CHAINED) {
-      const next = table.parentIndex[current]!;
-      if (next < 0) {
-        table.issues[index]! |= issueBit("chain_parent_missing");
-        current = -1;
-        break;
-      }
-      if (++depth > MAX_PE_UNWIND_CHAIN_DEPTH) {
-        table.issues[index]! |= issueBit("chain_cycle");
-        current = -1;
-        break;
-      }
-      current = next;
-    }
-    if (current >= 0 && table.kind[current] === KIND_PRIMARY)
-      table.primary[index] = current;
+    if (kind === KIND_PRIMARY) table.primary[index] = index;
+    else if (kind === KIND_CHAINED) resolveChain(table, index);
   }
 };
-
-const linearIndexOfBegin = (table: Table, begin: number): number =>
-  table.begin.indexOf(begin);
 
 const flagNames = (flags: number): PeUnwindEntry["unwind_flags"] =>
   flags < 0
@@ -435,9 +464,10 @@ export const parsePeUnwindRangesFromHandle = async (
     image.zero_fills,
   );
   const tableBytes = count * ENTRY_BYTES;
+  // The whole declared directory, trailing bytes included, must be file-backed.
   const directoryOffset = lookup.tryOffset(
     base + BigInt(directory.address),
-    Math.max(tableBytes, 1),
+    directory.size,
   );
   if (directoryOffset === undefined)
     throw new BinaryFormatFailure(
@@ -458,7 +488,7 @@ export const parsePeUnwindRangesFromHandle = async (
   };
   const sorted = await decodeEntries(context, bytes, signal);
   assertArtifactReadActive(signal);
-  resolveChains(table, sorted);
+  await resolveChains(table, sorted, signal);
   const { primary, chained, unknown, withIssues, total, entries } =
     countAndPage(table, input);
   const end = input.offset + entries.length;
