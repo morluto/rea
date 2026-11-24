@@ -717,3 +717,45 @@ describe("ZIP listing coverage from the central directory", () => {
     }
   });
 });
+
+describe("ZIP listing coverage of APK signing block alignment padding", () => {
+  it.each([
+    ["all-zero padding to a 4 KiB boundary", 0, "complete"],
+    ["a non-zero byte in the padding", 1, "unknown"],
+  ] as const)(
+    "accounts for %s before an APK signing block only when it is zero",
+    async (_case, marker, status) => {
+      const pad = Buffer.alloc(4096 - A_ENTRY_BYTES);
+      pad[pad.length - 1] = marker;
+      const { coverage } = await list(
+        zip([member("a.txt")], {
+          gap: Buffer.concat([pad, apkSigningBlock()]),
+        }),
+      );
+      expect(coverage).toEqual([
+        status === "complete"
+          ? complete
+          : unaccounted(pad.length, 1, A_ENTRY_BYTES),
+      ]);
+    },
+  );
+
+  it.each([
+    ["a signing block off the 4 KiB boundary", 4095 - A_ENTRY_BYTES, ""],
+    ["a zero run with no signing block after it", 4096 - A_ENTRY_BYTES, "none"],
+  ] as const)(
+    "keeps zero bytes before %s unaccounted",
+    async (_case, padding, block) => {
+      const pad = Buffer.alloc(padding);
+      const { coverage } = await list(
+        zip([member("a.txt")], {
+          gap: Buffer.concat([
+            pad,
+            block === "none" ? Buffer.alloc(0) : apkSigningBlock(),
+          ]),
+        }),
+      );
+      expect(coverage).toEqual([unaccounted(pad.length, 1, A_ENTRY_BYTES)]);
+    },
+  );
+});
