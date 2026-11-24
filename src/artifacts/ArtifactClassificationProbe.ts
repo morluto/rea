@@ -7,9 +7,9 @@ import {
   readFatContainerHeader,
   readFatContainerTable,
   readMachoHeaderPrefixFacts,
+  type FatContainerHeader,
   type FatContainerTable,
   type MachoHeaderPrefixFacts,
-  type FatSliceHeaderEvidence,
 } from "../domain/apple/machoContainer.js";
 import {
   hasDosMzMagic,
@@ -38,7 +38,10 @@ export interface ArtifactClassificationEvidence {
   /** The last bytes of the stream, when the producer observed its end. */
   readonly suffix?: Buffer;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
-  readonly fatSliceHeaders?: FatSliceHeaderEvidence;
+  /** The FAT header decided once for the finished stream size. */
+  readonly fatHeader: FatContainerHeader;
+  /** Thin headers observed at slice offsets; empty unless `fatHeader` parsed. */
+  readonly fatSliceHeadersByOffset: ReadonlyMap<number, MachoHeaderPrefixFacts>;
   readonly mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence;
   readonly mzWindowsHeaderRecord?: MzWindowsHeaderRecordEvidence;
 }
@@ -86,6 +89,9 @@ const observeFatSliceHeaders = (input: {
   }
 };
 
+const NO_FAT_SLICE_HEADERS: ReadonlyMap<number, MachoHeaderPrefixFacts> =
+  new Map();
+
 const finishClassificationEvidence = (
   prefix: Buffer,
   suffix: Buffer | undefined,
@@ -114,15 +120,15 @@ const finishClassificationEvidence = (
       );
     }
   }
-  const fatSliceHeaders =
-    finalHeader.state === "parsed"
-      ? { header: finalHeader, sliceHeadersByOffset }
-      : undefined;
   return {
     prefix,
     ...(suffix === undefined ? {} : { suffix }),
     asarHeader: finishAsar(archiveBytes),
-    ...(fatSliceHeaders === undefined ? {} : { fatSliceHeaders }),
+    fatHeader: finalHeader,
+    fatSliceHeadersByOffset:
+      finalHeader.state === "parsed"
+        ? sliceHeadersByOffset
+        : NO_FAT_SLICE_HEADERS,
     ...(mzWindowsHeaderSignature === undefined
       ? {}
       : { mzWindowsHeaderSignature }),
