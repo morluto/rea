@@ -2277,6 +2277,7 @@ const nativeDesktopReport = () => ({
   candidates: [],
   components: [],
   next_probes: [],
+  deferred_probes: [],
   coverage: {
     status: "complete-within-scan",
     entries_examined: 1,

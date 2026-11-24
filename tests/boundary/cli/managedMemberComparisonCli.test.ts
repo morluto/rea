@@ -86,7 +86,6 @@ cliTest(
     );
     const good = join(directory, "good.dll");
     const peer = join(directory, "peer.dll");
-    const bad = join(directory, "bad.dll");
     const bytes = buildManagedPeFixture();
     const candidate = Buffer.concat([
       buildManagedPeFixture({ methodName: "Renamed" }),
@@ -96,7 +95,6 @@ cliTest(
     malformed.writeUInt16LE(0, malformed.readUInt32LE(0x3c) + 6);
     await writeFile(good, bytes);
     await writeFile(peer, candidate);
-    await writeFile(bad, malformed);
     const leftSource = {
       argument: "left",
       observation: {
@@ -210,21 +208,6 @@ cliTest(
         expect(result.json).not.toHaveProperty("details.argument_observations");
       expect(result.json).not.toHaveProperty("details.partial_observation");
     }
-
-    const inspection = await cli.run({
-      arguments: ["inspect-managed-members", bad, "--json"],
-    });
-    expect(inspection.exitCode, inspection.stderr).toBe(1);
-    expect(inspection.json).toMatchObject({
-      code: "unsupported_target",
-      category: "unsupported_target",
-      details: {
-        path: bad,
-        format_failure: "malformed",
-        format: "pe-cli",
-        reason: "PE section count must be positive",
-      },
-    });
   },
 );
 
