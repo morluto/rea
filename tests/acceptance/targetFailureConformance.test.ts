@@ -53,10 +53,10 @@ for (const { operation, cases } of await loadTargetFailureReaders()) {
 
         const call = await cli.sharedMcpCall!();
         const response = await call(operation, { path, ...testCase.mcp });
-        // A target failure is a tool result with structured content, never a
-        // JSON-RPC error or a thrown handler failure flattened to text.
+        // A target failure is an isError tool result carrying the projected
+        // diagnostic as JSON text, never a JSON-RPC error. The transport
+        // removes the private structured carrier before sending errors.
         expect(response.isError).toBe(true);
-        expect(response.structuredContent).toMatchObject({ error: expected });
         const { error } = parseMcpToolError(response);
         expect(error).toMatchObject(expected);
         expect(error).not.toHaveProperty("recovery");
