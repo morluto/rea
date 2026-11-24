@@ -82,4 +82,5 @@ jobs:
             .cache/ci-failures/
           include-hidden-files: true
           if-no-files-found: warn
+          overwrite: true
           retention-days: 14
