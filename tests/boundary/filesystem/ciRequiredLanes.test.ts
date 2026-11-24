@@ -410,6 +410,7 @@ it("exports every canonical scope with read authority for admission and keeps te
   expect(checkout?.with).toEqual({
     ref: "${{ github.event.repository.default_branch }}",
     "persist-credentials": false,
+    "sparse-checkout": ".github/actions/npm-cache\nscripts/ci\n",
   });
   const report = timings.jobs.report.steps.find((step) =>
     step.run?.includes("scripts/ci/job-timings-batch.mjs"),
