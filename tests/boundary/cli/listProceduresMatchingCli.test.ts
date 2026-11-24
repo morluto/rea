@@ -133,6 +133,13 @@ describe("list-procedures feeds match-native-functions", () => {
       const rightComplete = parseEvidence(
         bundle.records.find((record) => record.evidence_id === parentId),
       );
+      // Independently of matching: the bundled inventory kept the fixture rows.
+      expect(rightComplete.normalized_result).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ address: "0x2000", value: "main" }),
+          expect.objectContaining({ address: "0x2100", value: "new_name" }),
+        ]),
+      );
       const {
         matched: pairs,
         only_left,
@@ -144,7 +151,9 @@ describe("list-procedures feeds match-native-functions", () => {
       expect(pairs + only_right).toBe(rows(rightComplete));
     },
   );
+});
 
+describe("match-native-functions inventory refusal", () => {
   cliTest(
     "names the inventory producer when a search result is selected",
     async ({ cli }) => {
