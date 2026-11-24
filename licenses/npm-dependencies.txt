@@ -3185,11 +3185,11 @@ linkify-it@6.1.0 | development | MIT
   Package: https://www.npmjs.com/package/linkify-it/v/6.1.0
   Archive: https://registry.npmjs.org/linkify-it/-/linkify-it-6.1.0.tgz
   Integrity: sha512-wJ/TwpSDTLepCrQoYWYIExIKg5Zchex2Nn5yk2mFnB+6PtdkHtyLx742md9csRjjOnGkKIS/RrbY7l8D6gT9Vw==
-lint-staged@17.6.0 | development | MIT
+lint-staged@17.6.1 | development | MIT
   Lockfile path: node_modules/lint-staged
-  Package: https://www.npmjs.com/package/lint-staged/v/17.6.0
-  Archive: https://registry.npmjs.org/lint-staged/-/lint-staged-17.6.0.tgz
-  Integrity: sha512-nOhBfYkZEwkFtNzD5pK9s9LkcWoxJ+whLzEnhqi9nl7zTB5n7tg8+9iYgMGx2Wm3VlLu8cbNj0RACzY+nWi5iQ==
+  Package: https://www.npmjs.com/package/lint-staged/v/17.6.1
+  Archive: https://registry.npmjs.org/lint-staged/-/lint-staged-17.6.1.tgz
+  Integrity: sha512-3MXgVN7BERDR/6CXZs2fDHGc+r0+hlvGAa9wqMlVbIS6RVRuaPOnb5SnN6wMXulwfEy9DXVkMVUN/8cUlpPDnw==
 yaml@2.9.1 | development, optional | ISC
   Lockfile path: node_modules/lint-staged/node_modules/yaml
   Package: https://www.npmjs.com/package/yaml/v/2.9.1
@@ -4105,11 +4105,11 @@ stream-json@3.7.0 | runtime | BSD-3-Clause
   Package: https://www.npmjs.com/package/stream-json/v/3.7.0
   Archive: https://registry.npmjs.org/stream-json/-/stream-json-3.7.0.tgz
   Integrity: sha512-rCSBdcBP/bPk6T8QFcxAj1MSzAuc5i49cYW6IE7sYObNEPccBJIUiL6fU9c9BWt40aJK0siVynLX7lWaW8alXw==
-string-argv@0.3.2 | development | MIT
+string-argv@0.4.0 | development | MIT
   Lockfile path: node_modules/string-argv
-  Package: https://www.npmjs.com/package/string-argv/v/0.3.2
-  Archive: https://registry.npmjs.org/string-argv/-/string-argv-0.3.2.tgz
-  Integrity: sha512-aqD2Q0144Z+/RqG52NeHEkZauTAUWJO8c6yTftGJKO3Tja5tUgIfmIl6kExvhtxSDP7fXB6DvzkfMpCd/F3G+Q==
+  Package: https://www.npmjs.com/package/string-argv/v/0.4.0
+  Archive: https://registry.npmjs.org/string-argv/-/string-argv-0.4.0.tgz
+  Integrity: sha512-UOtaksJ3SK3KLHba2i9I27fvuZNfBlImDP5wKsCOxCDMRDNxlipCe8rmnUAaDpqlQ93upnA0SzF2pjWhttozSA==
 string_decoder@1.3.0 | runtime | MIT
   Lockfile path: node_modules/string_decoder
   Package: https://www.npmjs.com/package/string_decoder/v/1.3.0
