@@ -372,7 +372,12 @@ with the default profile with `CLAUDE_CONFIG_DIR` unset. For local scope, run
 Run `rea doctor` when you need diagnosis. It reads host prerequisites and agent
 configuration without changing them. Without options, it audits every detected
 registration, the installed skill and optional analysis engines; its overall
-`healthy` value can be false while your chosen workflow works.
+`healthy` value can be false while your chosen workflow works. An audit-wide
+report lists its checks once, in `checks`, and has no `scope_checks`. Each check
+has `classification: "healthy"` when it passes, and a failure class only when
+`ok` is false. Output controls such as `--filter-output` and `--token-limit`
+apply to an unhealthy report as to a healthy one, and the exit status is still
+1, so `rea doctor --filter-output healthy --json` prints `false`.
 
 Doctor's `providerInspections` are host-level engine and registration checks,
 not a readiness row for every advertised MCP adapter surface. `tools/list`

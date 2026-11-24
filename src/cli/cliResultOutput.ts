@@ -8,6 +8,7 @@ import type { ParsedCliOutputArguments } from "./cliOutput.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
+  isCliCompletedFailureReport,
 } from "../cliLogging.js";
 import {
   AnalysisInputError,
@@ -231,9 +232,13 @@ export const createCliResultOutput = (
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
+    // A completed report with a failed verdict stays a result for
+    // --filter-output; the JSONL and full-output envelopes still mark it failed.
     const operationFailure = metadata.failure
       ? value
-      : format === "jsonl" || options.fullOutput || filterPaths !== undefined
+      : format === "jsonl" ||
+          options.fullOutput ||
+          (filterPaths !== undefined && !isCliCompletedFailureReport(value))
         ? cliOperationFailurePayload(value)
         : undefined;
     // These presentations own complete documents. A terminal notice must not

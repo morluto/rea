@@ -377,6 +377,48 @@ describe("CLI result output surface", () => {
   });
 });
 
+it.each([
+  { flags: ["--filter-output", "healthy"], expected: "false" },
+  {
+    flags: ["--filter-output", "checks[0].name", "--token-count"],
+    // The estimate for the selected `"provider"`, not the whole report.
+    expected: "5",
+  },
+])(
+  "applies $flags to an unhealthy doctor report and keeps exit 1",
+  async ({ flags, expected }) => {
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const argv = ["fixture", "--json", ...flags];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(argv),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing JSON output surface");
+    const cli = createCommandCli(output);
+    registerCliCommand(cli, "fixture", {
+      run: () =>
+        logCliCommand(silentLogger, "fixture", async () => ({
+          healthy: false,
+          checks: [{ name: "provider", ok: false, detail: "x".repeat(400) }],
+        })),
+    });
+    const previousExitCode = process.exitCode;
+    try {
+      await cli.serve(argv, { stdout: () => undefined });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+    expect(Buffer.concat(chunks).toString("utf8").trim()).toBe(expected);
+  },
+);
+
 describe("full-output token windows", () => {
   it("preserves token-window metadata when truncating a TOON failure", async () => {
     const chunks: Buffer[] = [];
