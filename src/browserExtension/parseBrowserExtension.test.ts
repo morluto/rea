@@ -1,8 +1,9 @@
 import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
+import { ParseFailureError } from "../domain/parseFailure.js";
 import {
-  BrowserExtensionParseError,
+  BROWSER_EXTENSION_FORMAT,
   parseBrowserExtension,
 } from "./parseBrowserExtension.js";
 
@@ -270,7 +271,7 @@ describe("parseBrowserExtension", () => {
     await expect(inspect(nested)).rejects.toThrow(/no root manifest.json/);
     await expect(
       inspect(Buffer.from("not-a-package"), "/tmp/notes.txt"),
-    ).rejects.toBeInstanceOf(BrowserExtensionParseError);
+    ).rejects.toBeInstanceOf(ParseFailureError);
     const zip = storedZip("manifest.json", manifest({ manifest_version: 3 }));
     await expect(
       parseBrowserExtension(
@@ -279,9 +280,11 @@ describe("parseBrowserExtension", () => {
         { ...input, max_entries: 0 },
       ),
     ).rejects.toMatchObject({
-      code: "limit",
-      resource: "capacity",
-      limit: "max_entries",
+      failure: {
+        kind: "limit",
+        format: BROWSER_EXTENSION_FORMAT,
+        limit: { name: "max_entries", maximum: 0, required: 1 },
+      },
     });
   });
 
@@ -314,7 +317,9 @@ describe("parseBrowserExtension", () => {
         },
         { ...input, path: "/work/manifest.json", max_manifest_bytes: 8 },
       ),
-    ).rejects.toMatchObject({ code: "limit", limit: "max_manifest_bytes" });
+    ).rejects.toMatchObject({
+      failure: { kind: "limit", limit: { name: "max_manifest_bytes" } },
+    });
     const keys = Array.from(
       { length: 65 },
       (_, index) => `__MSG_k${String(index)}__`,
@@ -327,7 +332,9 @@ describe("parseBrowserExtension", () => {
         ),
         "/work/manifest.json",
       ),
-    ).rejects.toMatchObject({ code: "limit", limit: "fixed" });
+    ).rejects.toMatchObject({
+      failure: { kind: "limit", limit: { name: "fixed:message_keys" } },
+    });
     const policy = "script-src 'self' ".padEnd(9000, "a");
     const report = await inspect(
       storedZip(
@@ -354,7 +361,7 @@ describe("parseBrowserExtension message placeholders", () => {
         [key]: { default_title: 42 },
       });
       await expect(inspect(raw, "/work/manifest.json")).rejects.toMatchObject({
-        code: "format",
+        failure: { kind: "malformed" },
         message: `${key}.default_title is not a string.`,
       });
     },
@@ -378,10 +385,10 @@ describe("parseBrowserExtension message placeholders", () => {
         expect((await result).manifest.message_keys).toEqual(keys);
       else
         await expect(result).rejects.toMatchObject({
-          code: "limit",
-          resource: "capacity",
-          limit: "fixed",
-          limits: { max_items: 64, observed_items: 65 },
+          failure: {
+            kind: "limit",
+            limit: { name: "fixed:message_keys", maximum: 64, required: 65 },
+          },
         });
     },
   );

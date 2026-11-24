@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   Uint8ArrayReader,
   Uint8ArrayWriter,
@@ -9,6 +7,15 @@ import {
 } from "@zip.js/zip.js";
 
 import { zipArchiveFaultKind } from "../resources/index.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 
 import {
   browserExtensionSchema,
@@ -17,7 +24,6 @@ import {
   type InspectBrowserExtensionInput,
 } from "../domain/browserExtension/browserExtension.js";
 
-const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const MESSAGE_KEY = /__MSG_([A-Za-z0-9_@]+)__/gu;
 const KNOWN_KEYS = new Set([
   "manifest_version",
@@ -44,26 +50,14 @@ const KNOWN_KEYS = new Set([
   "externally_connectable",
 ]);
 
-/** Which caller or projection bound a limit failure refers to. */
-export type BrowserExtensionLimit =
+/** Parse-failure format name shared by the parser and its provider. */
+export const BROWSER_EXTENSION_FORMAT = "browser-extension";
+
+/** Caller budgets a parse limit can name; any other limit name is fixed. */
+export type BrowserExtensionBudget =
   | "max_entries"
   | "max_manifest_bytes"
-  | "max_file_bytes"
-  | "fixed";
-
-/** A package or manifest failed a format or budget boundary before a report existed. */
-export class BrowserExtensionParseError extends Error {
-  constructor(
-    readonly code: "format" | "limit",
-    readonly resource: "file-size" | "capacity" | null,
-    message: string,
-    readonly limits?: Readonly<Record<string, number>>,
-    readonly limit: BrowserExtensionLimit = "fixed",
-  ) {
-    super(message);
-    this.name = "BrowserExtensionParseError";
-  }
-}
+  | "max_file_bytes";
 
 interface ArtifactIdentity {
   readonly path: string;
@@ -71,12 +65,8 @@ interface ArtifactIdentity {
   readonly bytes: number;
 }
 
-const sha256 = (bytes: Uint8Array): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const abortIfNeeded = (signal: AbortSignal | undefined): void => {
-  if (signal?.aborted)
-    throw new DOMException("The operation was aborted.", "AbortError");
+  signal?.throwIfAborted();
 };
 
 const u32 = (bytes: Uint8Array, offset: number): number =>
@@ -99,32 +89,41 @@ const isCrx = (bytes: Uint8Array): boolean =>
   bytes[2] === 0x32 &&
   bytes[3] === 0x34;
 
-const formatError = (message: string): BrowserExtensionParseError =>
-  new BrowserExtensionParseError("format", null, message);
+const formatError = (message: string): ParseFailureError<"malformed"> =>
+  malformedInput(BROWSER_EXTENSION_FORMAT, message);
 
+/** A caller budget or fixed projection bound stopped the parse. */
 const limitError = (
-  resource: "file-size" | "capacity",
   message: string,
-  limits: Readonly<Record<string, number>>,
-  limit: BrowserExtensionParseError["limit"] = resource === "file-size"
-    ? "max_manifest_bytes"
-    : "fixed",
-): BrowserExtensionParseError =>
-  new BrowserExtensionParseError("limit", resource, message, limits, limit);
+  name: BrowserExtensionBudget | `fixed:${string}`,
+  maximum: number,
+  required?: number,
+): ParseFailureError<"limit"> =>
+  decodeLimit(BROWSER_EXTENSION_FORMAT, message, {
+    name,
+    maximum,
+    ...(required === undefined ? {} : { required }),
+  });
 
-const zipParseError = (cause: unknown): unknown => {
-  if (
-    cause instanceof BrowserExtensionParseError ||
-    (cause instanceof DOMException && cause.name === "AbortError")
-  )
+const zipParseError = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+): unknown => {
+  if (cause instanceof ParseFailureError || isAbortOf(cause, signal))
     return cause;
   const kind = zipArchiveFaultKind(cause);
   if (kind === undefined || !(cause instanceof Error)) return cause;
-  return formatError(
-    kind === "format"
-      ? `ZIP archive is malformed: ${cause.message}`
-      : `ZIP archive uses an unsupported feature: ${cause.message}`,
-  );
+  return kind === "format"
+    ? malformedInput(
+        BROWSER_EXTENSION_FORMAT,
+        `ZIP archive is malformed: ${cause.message}`,
+        { cause },
+      )
+    : unsupportedInput(
+        BROWSER_EXTENSION_FORMAT,
+        `ZIP archive uses an unsupported feature: ${cause.message}`,
+        { cause, undecodedContent: true },
+      );
 };
 
 const stringField = (
@@ -143,9 +142,12 @@ const stringArray = (value: unknown, label: string): string[] => {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw formatError(`${label} is not an array.`);
   if (value.length > 10000)
-    throw limitError("capacity", `${label} exceeds 10000 entries.`, {
-      max_items: 10000,
-    });
+    throw limitError(
+      `${label} exceeds 10000 entries.`,
+      "fixed:manifest_array_items",
+      10000,
+      value.length,
+    );
   return value.map((item, index) => {
     if (typeof item !== "string")
       throw formatError(`${label}[${String(index)}] is not a string.`);
@@ -172,12 +174,10 @@ const messageKeysInManifest = (manifest: Record<string, unknown>): string[] => {
         keys.add(key);
         if (keys.size > MAX_BROWSER_EXTENSION_MESSAGE_KEYS)
           throw limitError(
-            "capacity",
             `message keys exceeds ${String(MAX_BROWSER_EXTENSION_MESSAGE_KEYS)} entries.`,
-            {
-              max_items: MAX_BROWSER_EXTENSION_MESSAGE_KEYS,
-              observed_items: keys.size,
-            },
+            "fixed:message_keys",
+            MAX_BROWSER_EXTENSION_MESSAGE_KEYS,
+            keys.size,
           );
       }
       continue;
@@ -199,10 +199,10 @@ const boundedList = (
 ): string[] => {
   if (values.length > max)
     throw limitError(
-      "capacity",
       `${label} exceeds ${String(max)} entries.`,
-      { max_items: max, observed_items: values.length },
-      "fixed",
+      "fixed:manifest_list_items",
+      max,
+      values.length,
     );
   return [...values];
 };
@@ -296,10 +296,10 @@ const readManifestEntry = async (
       observed += 1;
       if (observed > input.max_entries)
         throw limitError(
-          "capacity",
           `ZIP central directory exceeded ${String(input.max_entries)} entries.`,
-          { max_entries: input.max_entries, observed_entries: observed },
           "max_entries",
+          input.max_entries,
+          observed,
         );
       entries.push(entry);
     }
@@ -328,13 +328,10 @@ const readManifestEntry = async (
       throw formatError("manifest.json is encrypted and was not read.");
     if (selected.uncompressedSize > input.max_manifest_bytes)
       throw limitError(
-        "file-size",
         `manifest.json declares ${String(selected.uncompressedSize)} uncompressed bytes.`,
-        {
-          max_manifest_bytes: input.max_manifest_bytes,
-          declared_bytes: selected.uncompressedSize,
-        },
         "max_manifest_bytes",
+        input.max_manifest_bytes,
+        selected.uncompressedSize,
       );
     const bytes = await selected.getData(new Uint8ArrayWriter(), {
       ...(signal === undefined ? {} : { signal }),
@@ -343,17 +340,14 @@ const readManifestEntry = async (
     abortIfNeeded(signal);
     if (bytes.length > input.max_manifest_bytes)
       throw limitError(
-        "file-size",
         `manifest.json expanded to ${String(bytes.length)} bytes.`,
-        {
-          max_manifest_bytes: input.max_manifest_bytes,
-          observed_bytes: bytes.length,
-        },
         "max_manifest_bytes",
+        input.max_manifest_bytes,
+        bytes.length,
       );
     return { path: "manifest.json", bytes };
   } catch (cause) {
-    throw zipParseError(cause);
+    throw zipParseError(cause, signal);
   } finally {
     await reader.close();
   }
@@ -381,9 +375,12 @@ const contentScripts = (value: unknown) => {
   if (!Array.isArray(value))
     throw formatError("content_scripts is not an array.");
   if (value.length > 1000)
-    throw limitError("capacity", "content_scripts exceeds 1000 entries.", {
-      max_items: 1000,
-    });
+    throw limitError(
+      "content_scripts exceeds 1000 entries.",
+      "fixed:content_scripts",
+      1000,
+      value.length,
+    );
   return value.map((item, index) => {
     const label = `content_scripts[${String(index)}]`;
     const record = objectField(item, label);
@@ -468,9 +465,10 @@ const webAccessibleResources = (value: unknown) => {
     };
   if (value.length > 1000)
     throw limitError(
-      "capacity",
       "web_accessible_resources exceeds 1000 entries.",
-      { max_items: 1000 },
+      "fixed:web_accessible_resources",
+      1000,
+      value.length,
     );
   return {
     kind: "entries" as const,
@@ -544,7 +542,7 @@ const projectManifest = (
 ): BrowserExtensionReport["manifest"] => {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(textDecoder.decode(bytes)) as unknown;
+    parsed = JSON.parse(decodeStrictUtf8(bytes, "strip-signature")) as unknown;
   } catch (cause) {
     throw formatError(
       cause instanceof Error
@@ -573,7 +571,7 @@ const projectManifest = (
   );
   return {
     path,
-    sha256: sha256(bytes),
+    sha256: sha256Hex(bytes),
     bytes: bytes.length,
     manifest_version: manifestVersion,
     name,
@@ -691,13 +689,10 @@ export const parseBrowserExtension = async (
       );
     if (bytes.length > input.max_manifest_bytes)
       throw limitError(
-        "file-size",
         `manifest.json contains ${String(bytes.length)} bytes.`,
-        {
-          max_manifest_bytes: input.max_manifest_bytes,
-          observed_bytes: bytes.length,
-        },
         "max_manifest_bytes",
+        input.max_manifest_bytes,
+        bytes.length,
       );
   }
   const manifest = projectManifest(manifestBytes.bytes, manifestBytes.path);

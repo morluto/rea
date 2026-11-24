@@ -159,7 +159,40 @@ describe("BrowserExtensionProvider", () => {
       });
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error._tag).toBe("AnalysisInputError");
+      expect(result.error._tag).toBe("AnalysisMalformedTargetError");
+    } finally {
+      await provider.close();
+    }
+  });
+
+  it("reports a caller cancellation before reading as cancelled", async () => {
+    const root = await createTestTempDirectory("rea-browser-extension-abort-");
+    const path = join(root, "manifest.json");
+    await writeFile(path, JSON.stringify({ manifest_version: 3 }));
+    const controller = new AbortController();
+    const reason = new Error("caller stopped");
+    controller.abort(reason);
+    const provider = new BrowserExtensionProvider();
+    try {
+      const result = await provider.inspect(
+        {
+          path,
+          max_file_bytes: 67108864,
+          max_manifest_bytes: 2097152,
+          max_entries: 20,
+        },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      const service = await new BrowserExtensionService(provider).inspect(
+        { path },
+        { signal: controller.signal },
+      );
+      expect(service.ok).toBe(false);
+      if (service.ok) return;
+      expect(service.error._tag).toBe("AnalysisCancelledError");
     } finally {
       await provider.close();
     }

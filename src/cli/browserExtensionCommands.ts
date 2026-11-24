@@ -15,14 +15,19 @@ export const registerBrowserExtensionCommands = (
   registerContractCommand(
     cli,
     logger,
-    contractNamed(BROWSER_EXTENSION_TOOL_CONTRACTS, "inspect_browser_extension"),
+    contractNamed(
+      BROWSER_EXTENSION_TOOL_CONTRACTS,
+      "inspect_browser_extension",
+    ),
     {
       description:
         "Inspect a CRX, XPI, ZIP, or unpacked manifest.json without loading the extension",
       positionals: ["path"],
       callerPaths: ["path"],
       evidenceDelivery: true,
-      fields: { path: { description: "Local CRX, XPI, ZIP, or manifest.json" } },
+      fields: {
+        path: { description: "Local CRX, XPI, ZIP, or manifest.json" },
+      },
     },
     deliverWithService(createBrowserExtensionService, "rea-browser-extension"),
   );

@@ -4,9 +4,9 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { BrowserExtensionPort } from "../../ports/browserExtension/BrowserExtensionPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
@@ -32,10 +32,7 @@ export class BrowserExtensionService {
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "inspect_browser_extension";
     const signal = options?.signal;
-    if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted === true) return err(cancelledBy(operation, signal));
     const input = inspectBrowserExtensionInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
