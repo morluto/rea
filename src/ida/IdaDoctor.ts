@@ -47,28 +47,33 @@ export const inspectIdaRegistration = async (
     registrationEnvironment:
       valid && path !== undefined ? { REA_IDA_MCP_CONFIG: path } : {},
     checks: [
-      {
-        name: "registration",
-        ok: valid,
-        code: valid
-          ? null
-          : path === undefined
-            ? "not_configured"
-            : "invalid_configuration",
-        detail: valid
-          ? "IDA MCP registration is valid. Upstream availability, compatibility, and target binding are checked when analysis starts; no IDA process was launched."
-          : parsed !== undefined && !parsed.ok
-            ? parsed.error.message
-            : "IDA MCP registration is not configured.",
-        // An invalid registration carries the repair runtime readiness reports.
-        remediation: valid
-          ? null
-          : parsed !== undefined && !parsed.ok
-            ? projectAnalysisError(parsed.error).remediation.action
-            : "Set REA_IDA_MCP_CONFIG to your upstream IDA MCP registration JSON; see docs/providers/ida-provider.md.",
-        classification:
-          path === undefined ? "missing_analysis_engine" : "config_drift",
-      },
+      valid
+        ? {
+            name: "registration",
+            ok: true,
+            code: null,
+            detail:
+              "IDA MCP registration is valid. Upstream availability, compatibility, and target binding are checked when analysis starts; no IDA process was launched.",
+            remediation: null,
+            classification: "healthy",
+          }
+        : {
+            name: "registration",
+            ok: false,
+            code:
+              path === undefined ? "not_configured" : "invalid_configuration",
+            detail:
+              parsed !== undefined && !parsed.ok
+                ? parsed.error.message
+                : "IDA MCP registration is not configured.",
+            // An invalid registration carries the repair runtime readiness reports.
+            remediation:
+              parsed !== undefined && !parsed.ok
+                ? projectAnalysisError(parsed.error).remediation.action
+                : "Set REA_IDA_MCP_CONFIG to your upstream IDA MCP registration JSON; see docs/providers/ida-provider.md.",
+            classification:
+              path === undefined ? "missing_analysis_engine" : "config_drift",
+          },
       ...workspaceChecks,
     ],
   };
@@ -88,7 +93,7 @@ const privateWorkspaceChecks = (
             code: null,
             detail: `Private workspace authority is available (${admission.workspace.proof}) under ${admission.workspace.root ?? "the system temporary directory"}.`,
             remediation: null,
-            classification: "unsupported_host",
+            classification: "healthy",
           },
         ];
   const { refusal } = admission;

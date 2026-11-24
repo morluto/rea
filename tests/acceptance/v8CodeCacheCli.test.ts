@@ -36,7 +36,7 @@ cliTest(
         arguments: [
           "inspect-v8-code-cache",
           headerBytes === 32 ? name : path,
-          "--minStringBytes",
+          "--min-string-bytes",
           "8",
           "--json",
         ],

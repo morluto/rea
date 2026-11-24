@@ -9,19 +9,16 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("Apple IPS stable filesystem boundary", () => {
-  it("reports non-file and malformed IPS selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-apple-ips-files-");
     const path = join(root, "report.ips");
     const alias = join(root, "alias.ips");
-    const malformed = join(root, "malformed.ips");
     await writeFile(path, appleIpsBytes());
-    await writeFile(malformed, Buffer.from("not an ips report"));
     await symlink(path, alias);
     const service = createAppleIpsService();
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.ips"), "invalid_value"],
       [join(path, "child.ips"), "invalid_value"],
     ] as const) {
@@ -94,14 +91,8 @@ describe("Apple IPS stable filesystem boundary", () => {
     const invalid = await service.inspect({ path: corrupt });
     if (invalid.ok) throw new Error("Expected invalid UTF-8 failure");
     expect(invalid.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      issues: [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining("UTF-8"),
-        },
-      ],
+      _tag: "AnalysisMalformedTargetError",
+      failure: { detail: expect.stringContaining("UTF-8") },
     });
 
     const complete = await service.inspect({ path: report });

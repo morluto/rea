@@ -3,6 +3,7 @@ import { digestCanonicalValue } from "../canonicalDigest.js";
 import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
+  succeeded,
   changesState,
   isObject,
   isParam,
@@ -113,9 +114,6 @@ const responseDigests = (
     return digest;
   };
 };
-
-const succeeded = (record: StateRecordFacts): boolean =>
-  record.status !== null && record.status >= 200 && record.status < 300;
 
 /** A call that may have changed state without a 2xx answer saying what it did: redirected or unanswered. */
 const unresolved = (record: StateRecordFacts): boolean =>

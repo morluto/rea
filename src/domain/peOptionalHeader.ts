@@ -3,6 +3,32 @@ import { err, ok, type Result } from "./result.js";
 
 export const PE_SIZE_OF_HEADERS_OFFSET = 60;
 
+/**
+ * The Windows loader reads at most 16 data directories at their fixed
+ * offsets; a larger NumberOfRvaAndSizes does not declare more of them.
+ */
+export const PE_MAX_DATA_DIRECTORIES = 16;
+
+/**
+ * The PE32+ optional header with all 16 directories. The loader reads its
+ * fields at fixed offsets; SizeOfOptionalHeader only locates the section
+ * table, so a reader takes at least these bytes when the file holds them.
+ */
+const PE_LOADER_OPTIONAL_HEADER_BYTES = 112 + PE_MAX_DATA_DIRECTORIES * 8;
+
+/** Bytes to read at the optional header so fixed fields do not depend on SizeOfOptionalHeader. */
+export const peOptionalHeaderReadBytes = (
+  sizeOfOptionalHeader: number,
+  available: number,
+): number =>
+  Math.max(
+    0,
+    Math.min(
+      available,
+      Math.max(sizeOfOptionalHeader, PE_LOADER_OPTIONAL_HEADER_BYTES),
+    ),
+  );
+
 /** Raw data-directory words; entry 4 names file bytes, while resource entry 2 names an RVA. */
 export interface PeDataDirectory {
   readonly address: number;
@@ -38,7 +64,10 @@ export interface PeOptionalHeaderStructure extends Omit<
   "dllCharacteristics"
 > {
   readonly dllCharacteristics: number;
+  /** Directories the loader reads: NumberOfRvaAndSizes, capped at 16. */
   readonly directoryCount: number;
+  /** NumberOfRvaAndSizes as stored. */
+  readonly declaredDirectoryCount: number;
   readonly dataDirectories: readonly PeDataDirectory[];
 }
 
@@ -150,7 +179,10 @@ export const readPeOptionalHeaderDirectory = (
   if (bytes.byteLength < fixed.directoryOffset)
     return { state: "count-unavailable" };
   const reader = optionalHeaderReader(bytes);
-  const count = reader.u32(fixed.directoryCountOffset);
+  const count = Math.min(
+    reader.u32(fixed.directoryCountOffset),
+    PE_MAX_DATA_DIRECTORIES,
+  );
   if (index >= count) return { state: "absent", count };
   const offset = fixed.directoryOffset + index * 8;
   if (offset > bytes.byteLength - 8) return { state: "truncated", count };
@@ -161,7 +193,11 @@ export const readPeOptionalHeaderDirectory = (
   };
 };
 
-/** Decode the complete declared table without admitting a machine or directory address. */
+/**
+ * Decode the directories the loader reads, at most 16, without admitting a
+ * machine or directory address. Bytes past SizeOfOptionalHeader belong to
+ * the same fixed layout when the caller supplies them.
+ */
 export const readPeOptionalHeaderStructure = (
   bytes: Uint8Array,
 ): Result<PeOptionalHeaderStructure, PeOptionalHeaderFailure> => {
@@ -175,7 +211,11 @@ export const readPeOptionalHeaderStructure = (
       reason: "truncated-fixed-fields",
       message: "truncated PE optional header",
     });
-  const directoryCount = reader.u32(fixed.directoryCountOffset);
+  const declaredDirectoryCount = reader.u32(fixed.directoryCountOffset);
+  const directoryCount = Math.min(
+    declaredDirectoryCount,
+    PE_MAX_DATA_DIRECTORIES,
+  );
   if (
     directoryCount > Math.floor((bytes.byteLength - fixed.directoryOffset) / 8)
   )
@@ -195,5 +235,11 @@ export const readPeOptionalHeaderStructure = (
       reason: "truncated-fixed-fields",
       message: "truncated PE optional header",
     });
-  return ok({ ...fixed, dllCharacteristics, directoryCount, dataDirectories });
+  return ok({
+    ...fixed,
+    dllCharacteristics,
+    directoryCount,
+    declaredDirectoryCount,
+    dataDirectories,
+  });
 };

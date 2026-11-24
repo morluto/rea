@@ -2,7 +2,11 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { schemaDepth } from "./compactJsonSchema.js";
-import { compactAdvertisedOutputSchema } from "./compactOutputSchema.js";
+import {
+  compactAdvertisedOutputSchema,
+  listedOutputJsonSchema,
+  presentAdvertisedOutputSchema,
+} from "./compactOutputSchema.js";
 import { COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES } from "./mcpSchemaPresentation.js";
 import { advertisedOutputJsonSchema } from "./toolSchemaMetadata.js";
 import { toolContract } from "./toolContracts.js";
@@ -172,6 +176,81 @@ describe("compact advertised output schema", () => {
     const validate = new Ajv2020({ strict: false }).compile(schema);
     expect(validate(["anything"])).toBe(true);
     expect(validate({ also: "anything" })).toBe(true);
+  });
+});
+
+describe("listed output schema", () => {
+  it("stamps type object on a typeless object-shaped union before compaction", () => {
+    const union = {
+      oneOf: [
+        {
+          type: "object",
+          properties: { status: { const: "matches" } },
+          required: ["status"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: { status: { const: "empty" } },
+          required: ["status"],
+          additionalProperties: false,
+        },
+      ],
+    };
+    const listed = listedOutputJsonSchema(union);
+    expect(listed).toEqual({ type: "object", ...union });
+    expect(listedOutputJsonSchema(listed)).toBe(listed);
+    expect(
+      listedOutputJsonSchema({ type: "array", items: { type: "string" } }),
+    ).toEqual({ type: "array", items: { type: "string" } });
+
+    const branch = {
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 40 }, (_, index) => [
+          `field_${index}`,
+          { type: "string", description: `field ${index} `.repeat(30) },
+        ]),
+      ),
+      additionalProperties: false,
+    };
+    const wide = { oneOf: [branch, branch] };
+    const compacted = presentAdvertisedOutputSchema(
+      listedOutputJsonSchema(wide),
+      { budgetBytes: 256 },
+    );
+    const unstamped = presentAdvertisedOutputSchema(wide, { budgetBytes: 256 });
+    expect(compacted.type).toBe("object");
+    expect(unstamped).toEqual({
+      type: ["null", "boolean", "object", "array", "number", "string"],
+      items: {},
+    });
+  });
+
+  it("stamps a typeless $ref union of objects the way SDK 2.4.0 lists it", () => {
+    const schema = {
+      oneOf: [{ $ref: "#/$defs/matches" }, { $ref: "#/$defs/empty" }],
+      $defs: {
+        matches: {
+          type: "object",
+          properties: { status: { const: "matches" } },
+        },
+        empty: { type: "object", properties: { status: { const: "empty" } } },
+      },
+    };
+    expect(listedOutputJsonSchema(schema)).toEqual({
+      type: "object",
+      ...schema,
+    });
+    expect(
+      listedOutputJsonSchema({
+        oneOf: [{ $ref: "#/$defs/value" }],
+        $defs: { value: { type: "string" } },
+      }),
+    ).toEqual({
+      oneOf: [{ $ref: "#/$defs/value" }],
+      $defs: { value: { type: "string" } },
+    });
   });
 });
 

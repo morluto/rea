@@ -150,7 +150,7 @@ export const classifyDylibReadFailure = (
   mapArtifactFileFailure(cause, (primary) => {
     if (primary instanceof NonRegularFileReadError)
       return new ArtifactReaderFailure(
-        "format",
+        "path",
         `Dyld input is not a regular file: ${primary.path}`,
         { cause: primary },
       );

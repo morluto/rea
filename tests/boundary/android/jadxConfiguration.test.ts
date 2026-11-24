@@ -21,6 +21,8 @@ import {
   validateJadxConfiguration,
 } from "../../../src/android/JadxConfiguration.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   LinuxOwnedProcessPrerequisiteError,
   systemProcessOwnershipHost,
@@ -432,6 +434,22 @@ const createFakeJdk = async (
   await chmod(java, 0o700);
   return javaHome;
 };
+
+test("keeps the JAR repair on an unconfigured analysis error", async () => {
+  const failure = await resolveJadxConfigurationInputs(
+    {},
+    "inspect_android_package",
+    HOST_PLATFORM,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+  const projected = projectAnalysisError(failure as AnalysisError);
+  // The observation and the repair stay separate fields.
+  expect(projected.message).toContain("REA_JADX_MCP_JAR is not set.");
+  expect(projected.remediation.action).toContain(
+    "set REA_JADX_MCP_JAR to its absolute path",
+  );
+  expect(projected.remediation.action).not.toBe("REA_JADX_MCP_JAR is not set.");
+});
 
 it("tags unavailable diagnostics with the boundary failure kind", async () => {
   const availability = await inspectJadxAvailability({});

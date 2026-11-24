@@ -152,7 +152,7 @@
     "build:termux:run": "npm run compile:termux && npm run artifacts:skills",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "lint": "node scripts/ci/static-check-report.mjs lint && npm run verify:module-boundaries && node scripts/verify/rea-numeric-limits.mjs",
+    "lint": "node scripts/ci/static-check-report.mjs lint && npm run verify:module-boundaries && node scripts/verify/rea-numeric-limits.mjs && node scripts/verify/fixed-ceilings.mjs",
     "lint:details": "oxlint && npm run verify:module-boundaries",
     "lint:fix": "oxlint --fix && npm run verify:module-boundaries",
     "knip": "knip --cache",
@@ -412,7 +412,7 @@
     "stream-chain": "4.2.6",
     "stream-json": "3.7.0",
     "tokenx": "1.3.0",
-    "write-file-atomic": "7.0.0",
+    "write-file-atomic": "8.0.0",
     "ws": "8.21.0",
     "yaml": "2.9.0",
     "zod": "4.6.6"
