@@ -13,10 +13,13 @@ const PROBE_CANDIDATE_BUDGET = 64;
 const VOLUME_ALIGNMENT_BYTES = 16;
 
 /**
- * Admit one volume whose header passes the full header plausibility checks
- * (checksum, block-map terminator, mapped extent) and declares the FFS2
- * or FFS3 file system. Rejected signature hits stay inconclusive so plain
- * bytes containing `_FVH` cannot claim the format.
+ * Admit one aligned volume whose header passes the structural framing checks
+ * (header length, block-map terminator, mapped extent). Checksum mismatches
+ * are preserved as downstream `fv-checksum-mismatch` findings rather than
+ * rejecting the image pre-lane. A volume with an unsupported file-system GUID,
+ * such as an NVRAM variable store, is still a firmware volume: inventory
+ * retains it without FFS entries. Rejected signature hits stay inconclusive so
+ * plain bytes containing `_FVH` cannot claim the format.
  */
 export function admitUefiFlashImage(
   buffer: Buffer,
@@ -27,10 +30,7 @@ export function admitUefiFlashImage(
     signatureEnd,
   });
   return scan.volumes.some(
-    ({ header }) =>
-      header.checksumValid &&
-      header.absoluteBase % VOLUME_ALIGNMENT_BYTES === 0 &&
-      header.fileSystem !== "unsupported",
+    ({ header }) => header.absoluteBase % VOLUME_ALIGNMENT_BYTES === 0,
   );
 }
 

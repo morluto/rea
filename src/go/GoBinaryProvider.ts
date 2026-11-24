@@ -81,7 +81,8 @@ const failureFor = (
   cause: unknown,
   path: string,
   budgets: GoAnalysisBudgets,
-  snapshot?: { readonly sha256: string; readonly bytes: number },
+  snapshot: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: GoBinary | undefined,
 ): AnalysisError => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -152,6 +153,7 @@ const failureFor = (
         }),
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,
@@ -295,13 +297,14 @@ export class GoBinaryProvider implements GoBinaryPort {
     input: Omit<InspectGoBinaryInput, "detail">,
     options?: ExecutionOptions,
   ): Promise<Result<GoBinary, AnalysisError>> {
+    let completed: GoBinary | undefined;
     let snapshot:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     const budgets = goAnalysisBudgets(input);
     try {
       return await this.#resources.run(async () => {
-        const parsedData = await withStableArtifactHandle(
+        const parsedData = await withStableArtifactHandle<GoBinary>(
           input.path,
           budgets.max_input_bytes,
           {
@@ -310,6 +313,9 @@ export class GoBinaryProvider implements GoBinaryPort {
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
             onIdentity: (observed) => {
               snapshot = observed;
+            },
+            onVerifiedResult: (report) => {
+              completed = report;
             },
           },
           async (handle) => {
@@ -384,7 +390,7 @@ export class GoBinaryProvider implements GoBinaryPort {
         return ok(parsedData);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path, budgets, snapshot));
+      return err(failureFor(cause, input.path, budgets, snapshot, completed));
     }
   }
 }

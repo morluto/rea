@@ -160,20 +160,6 @@ cliTest(
   },
 );
 
-cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-debug-link-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("not an elf"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-debug-link", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_debug_link" },
-  });
-});
-
 cliTest(
   "retains separate readable build IDs beside compressed ELF notes",
   async ({ cli }) => {

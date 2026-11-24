@@ -91,10 +91,6 @@ const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-nativeaot-proof-",
 });
 const workspace = workspaceFixture.path;
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const packageRoot = process.env.REA_NATIVEAOT_PROOF_PACKAGE_ROOT;
@@ -420,7 +416,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     cleanupFailure = cause;
   }
   if (cleanupFailure !== undefined || primaryFailure !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `NativeAOT verification failed; retained diagnostic workspace: ${workspace}`,
       {
         cause:
@@ -436,7 +432,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     );
   const interrupted = commandInterruption.reason();
   if (interrupted !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `NativeAOT verification interrupted; retained diagnostic workspace: ${workspace}`,
       { cause: interrupted },
     );

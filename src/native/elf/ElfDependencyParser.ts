@@ -74,6 +74,7 @@ import {
 } from "../../domain/virtualFileMapping.js";
 import { architectureForElfMachine } from "../../domain/native/elfImage.js";
 import { Budget } from "../../domain/budget.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 const PT_LOAD = 1;
 const PT_DYNAMIC = 2;
@@ -587,13 +588,6 @@ const tableFromMappedVersym = (
 };
 
 const WINDOW_READ_BYTES = 4096;
-
-/** Random-access source for streaming ELF dependency inspection without buffering the whole image. */
-export interface ElfDependencyByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
 
 type ElfDependencyStep =
   | { readonly kind: "yield" }
@@ -1349,7 +1343,7 @@ const parseElfDependenciesCore = function* (
 
 /** Decode PT_DYNAMIC, GNU versions, and undefined .dynsym imports positionally over a handle. */
 export const parseElfDependenciesFromHandle = async (
-  source: ElfDependencyByteSource,
+  source: PrefixedByteSource,
   artifact: Artifact,
   input: InspectElfDependenciesInput,
   onYield: () => Promise<void>,

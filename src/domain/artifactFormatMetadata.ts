@@ -15,6 +15,8 @@ import {
   unityFsMetadataSchema,
   wxapkgEntryMetadataSchema,
   wxapkgMetadataSchema,
+  tarMetadataSchema,
+  tarEntryMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
   dfuSeElementMetadataSchema,
@@ -40,6 +42,13 @@ import {
   androidOtaPayloadMetadataSchema,
   ntfsMftMetadataSchema,
 } from "./formatMetadata/androidAndSystemMetadata.js";
+import {
+  ddsMetadataSchema,
+  glbMetadataSchema,
+  gpuAssetRegionMetadataSchema,
+  ktx2MetadataSchema,
+  ktxMetadataSchema,
+} from "./formatMetadata/gpuAssetMetadata.js";
 
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
@@ -48,6 +57,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   unityFsEntryMetadataSchema,
   wxapkgMetadataSchema,
   wxapkgEntryMetadataSchema,
+  tarMetadataSchema,
+  tarEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,
@@ -77,6 +88,11 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   fitImageMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  ddsMetadataSchema,
+  glbMetadataSchema,
+  ktxMetadataSchema,
+  ktx2MetadataSchema,
+  gpuAssetRegionMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -134,6 +150,22 @@ const declarationsByKind: {
   "wxapkg-entry": {
     notCompared:
       "index is layout. source_path keeps the declared name, including a producer root prefix the occurrence path strips.",
+  },
+  tar: {
+    notCompared:
+      "Its fields come from the archive's own bytes, which content comparison covers.",
+  },
+  /**
+   * What a header declares about a member beyond its bytes: its type, its
+   * permission bits and its link target. Offsets are layout; owners and
+   * times vary between otherwise equal builds.
+   */
+  "tar-entry": {
+    declaration: (metadata) => ({
+      typeflag: metadata.typeflag,
+      mode: metadata.mode,
+      link_name: metadata.link_name,
+    }),
   },
   pyinstaller: {
     notCompared:
@@ -272,6 +304,26 @@ const declarationsByKind: {
       readonly: metadata.readonly,
       unknown_flags: metadata.unknown_flags,
     }),
+  },
+  dds: {
+    notCompared:
+      "Its header facts come from the texture's own bytes, which content comparison covers.",
+  },
+  glb: {
+    notCompared:
+      "Its header, chunk and JSON facts come from the model's own bytes, which content comparison covers.",
+  },
+  ktx: {
+    notCompared:
+      "Its header facts come from the texture's own bytes, which content comparison covers.",
+  },
+  ktx2: {
+    notCompared:
+      "Its header and index facts come from the texture's own bytes, which content comparison covers.",
+  },
+  "gpu-asset-region": {
+    notCompared:
+      "role and index restate the region's path; its stored bytes are compared by content.",
   },
   fit: {
     notCompared:

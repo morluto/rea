@@ -93,6 +93,83 @@ page runs a fresh discovery on that device.
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
+`inspect_elf_notes` and `inspect_elf_debug_link` refuse a file above
+`max_file_bytes`, a decoded section-name table above it, or more notes than
+`max_entries` with `details.limit` naming that field
+(`control_kind: "parameter"`), its effective value, default and range. `inspect_il2cpp_metadata`
+accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
+index of `binary_path`; its refusal reports the same kind of limit. See
+[IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
+
+### Static reader read allowance
+
+`inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
+`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_binary_hardening` and
+`inspect_native_exports` bound the bytes they read, not the file size.
+`max_file_bytes` (CLI `--max-file-bytes`) counts each positional read of
+headers, directory tables and the ranges they reference. Defaults are 64 MiB
+(256 MiB for exports), with a floor of 64 bytes and a maximum of 512 MiB. The
+one streaming pass that hashes the file for its identity is not counted.
+
+An exhausted allowance is a `capacity` refusal. `details.limit` has
+`control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
+value, the bounds, the default and `applies_at: "next_call"`, and
+`details.reported_limits.required_read_bytes` holds the reads needed so far.
+Raise `max_file_bytes` and retry; `update_analysis_settings` does not change it.
+The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
+PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
+exports. A file above it is a `file-size` refusal naming that fixed allowance,
+which `max_file_bytes` does not raise.
+
+### Producer limits
+
+Operations with an owned producer accept an optional
+`producer_limits` object (CLI `--producer-limits`, as JSON text). Each field is
+a positive safe integer that overrides one default for this call only; omitted
+fields keep their defaults, and no restart is needed. Tighter inherited OS
+limits still apply, and these fields do not raise parser, protocol or transport
+limits. Each operation accepts only the fields it enforces; any other key is
+rejected.
+
+| Field                 | Bounds                                                                                                                               |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `input_bytes`         | The selected input copied for the producer                                                                                           |
+| `output_bytes`        | Retained producer output: combined stdout and stderr where no `diagnostic_bytes` is offered; the reply file for pwntools and EVM     |
+| `diagnostic_bytes`    | Retained process diagnostics; for pwntools, stdout and stderr combined. A stdout overflow is raised here, not through `output_bytes` |
+| `command_timeout_ms`  | Wall-clock deadline for each owned command                                                                                           |
+| `address_space_bytes` | The producer's address-space ceiling                                                                                                 |
+| `file_bytes`          | The largest file the producer may write                                                                                              |
+| `cpu_seconds`         | The producer's CPU time                                                                                                              |
+
+| Operations                                                   | Fields and defaults                                                                                                                                                                           |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inspect_packet_capture`, `decode_signal_recording`          | `input_bytes` 32 MiB, `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                    |
+| `inspect_packet_fields`                                      | No `input_bytes`; `output_bytes` 32 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                       |
+| `inspect_signal_decoders`                                    | No `input_bytes`; `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                        |
+| `inspect_binary_layout`, `inspect_recorded_crash` (pwntools) | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
+| `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
+| `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+| `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
+
+The pwntools and EVM operations take their wall-clock deadline from a separate
+argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
+Packet and signal results report the effective values as `limits`, where an
+inherited OS ceiling can appear as `0`. When pwntools, Rust or pcap work exhausts a
+budget, `details.limit` carries `control_kind: "parameter"`,
+`parameter: "producer_limits.<field>"`, `minimum: 1` and
+`applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
+the other producers name the field to raise in their remediation. A pwntools
+input refused by the runtime, launch or built-in `pwntools.max_input_bytes`
+ceiling keeps that setting's limit instead. If the caller set the ceiling
+through `producer_limits.input_bytes`, the parameter limit is used, and its
+`default_value` is the ceiling that applies when the field is omitted. When
+omitting it would fail configuration, no default exists and the setting limit
+is reported. A pwntools memory allocation failure carries no
+`details.limit`, whether it comes as a structured reply or as the bridge's
+reserved exit: an allocation failure does not prove that
+`producer_limits.address_space_bytes` was exhausted. Its message states the
+selected allowance, and its remediation names the producer limits to review.
+
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those
 stages exist. Desktop state views and emitted AgentEnv Python share one policy;
@@ -161,14 +238,11 @@ or `next_invocation` for a one-shot invocation. Both carry `effective_value`,
 `unit`, `minimum`, `maximum` and `default_value`. `update_analysis_settings`
 changes neither. A limit without `control_kind` is a registered setting.
 
-This output is breaking. Results and errors no longer carry the previous
-restart boolean or a single effect field, and there is no compatibility alias.
 Read `update_mode` to see whether the setter can change the active value, and
 `pending_restart` to see whether a configured value is waiting. A configuration
 error for a Windows ChangeTime setting carries `update_mode` on
 `details.settings`. Its rejected value does not establish an accepted pending
-configuration, so `pending_restart` is omitted. The removed field names
-are listed in the changelog.
+configuration, so `pending_restart` is omitted.
 
 An inspected setting whose launch value is invalid and which has no runtime
 override likewise omits `pending_restart`: it has no accepted configured value
@@ -237,6 +311,23 @@ and raising a provider deadline cannot make the client wait longer.
 
 The failure names the limit and the effective value. Say this release has no
 runtime override, and name what does not raise it. Do not invent a setting.
+
+Every fixed ceiling a refusal declares (`fixedAllowanceOptions`,
+`fixedProducerInputAllowance`, `artifactFixedLimitFailure` or an inline
+`fixedAllowance`) is listed in
+[`fixed-ceiling-registry.json`](https://github.com/morluto/rea/blob/main/scripts/verify/fixed-ceiling-registry.json)
+under its file and allowance, with its class and reason: `format`,
+`protocol`, `representation`, `derived` (grows with the admitted input or
+another control), `forwarding` (relays a ceiling declared elsewhere), or
+`pending` with the issue that tracks giving it a control.
+`npm run lint` runs `scripts/verify/fixed-ceilings.mjs`, which fails on an
+unregistered declaration and on a stale entry. A resource or admission limit
+is not a fixed ceiling: give it a setting or per-call parameter and report
+`details.limit`. The same script counts refusals whose only recovery is an
+authored `remediationAction`, with no `limit`, `fixedAllowance` or
+`measuredExhaustion`, against `scripts/verify/untyped-budget-refusal-baseline.json`;
+that count may only shrink, and `--shrink-baselines` lowers it
+([#14234](https://github.com/morluto/rea/issues/14234)).
 
 JSON values stop at `MAX_JSON_DEPTH` (1000) in
 [`jsonValue.ts`](https://github.com/morluto/rea/blob/main/src/domain/jsonValue.ts):

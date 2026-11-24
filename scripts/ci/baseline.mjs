@@ -5,6 +5,7 @@ import { normalizeWorkflowRun } from "./workflow-run.mjs";
 const repository = process.env.CI_REPOSITORY;
 const branch = process.env.CI_DEFAULT_BRANCH;
 const head = process.env.HEAD_SHA;
+const baselineEvent = process.env.CI_BASELINE_EVENT || "push";
 const shaPattern = /^[0-9a-f]{40}$/i;
 
 function ancestor(base) {
@@ -29,7 +30,13 @@ function write(base, reason) {
   console.log(JSON.stringify(output));
 }
 
-if (!repository || !branch || !head || !shaPattern.test(head)) {
+if (
+  !repository ||
+  !branch ||
+  !head ||
+  !shaPattern.test(head) ||
+  !["push", "schedule"].includes(baselineEvent)
+) {
   write("", "Repository, default branch, or checked-out head is invalid");
 } else {
   try {
@@ -43,7 +50,7 @@ if (!repository || !branch || !head || !shaPattern.test(head)) {
         "-f",
         `branch=${branch}`,
         "-f",
-        "event=push",
+        `event=${baselineEvent}`,
         "-f",
         "status=success",
         "-F",
@@ -56,7 +63,7 @@ if (!repository || !branch || !head || !shaPattern.test(head)) {
       throw new Error("GitHub returned no workflow run list");
     const base = runs.find(
       (run) =>
-        run?.event === "push" &&
+        run?.event === baselineEvent &&
         run.status === "completed" &&
         run.conclusion === "success" &&
         normalizeWorkflowRun(run).workflowPath?.file ===
@@ -72,7 +79,7 @@ if (!repository || !branch || !head || !shaPattern.test(head)) {
     else
       write(
         "",
-        "No trusted successful CI push baseline is an ancestor of this head",
+        `No trusted successful CI ${baselineEvent} baseline is an ancestor of this head`,
       );
   } catch {
     write("", "Could not read a successful CI push baseline from GitHub");

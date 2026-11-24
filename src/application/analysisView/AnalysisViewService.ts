@@ -12,11 +12,9 @@ import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analy
 import { ANALYSIS_VIEW_PROVIDER } from "../../domain/investigationProviders.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
-import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
-  AnalysisCapabilityUnavailableError,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -28,7 +26,7 @@ import {
 import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import {
   createEvidence,
-  evidenceFileTarget,
+  evidenceLocalTarget,
   evidenceSubjectDisplay,
   evidenceSubjectInput,
   evidenceSubjectTarget,
@@ -52,6 +50,10 @@ import {
   readEvidenceFileSource,
   type EvidenceFileReadOptions,
 } from "./evidenceFileSource.js";
+import {
+  requireAnalysisViewRetention,
+  type AnalysisViewRetention,
+} from "./AnalysisViewRetention.js";
 
 /** A parsed request whose source can be projected without filesystem access. */
 export interface ReadyAnalysisViewInput {
@@ -257,44 +259,6 @@ const projectResolvedAnalysisView = (
   );
   if (!identity.ok) return identity;
   return ok(createAnalysisViewEvidence(input, presentation, projected.value));
-};
-
-/** Session Evidence ownership required to deliver a view instead of a complete record. */
-export interface AnalysisViewRetention {
-  readonly evidenceById: EvidenceLookup | undefined;
-  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
-}
-
-/** Fail before analysis when selected delivery cannot keep its complete source. */
-export const requireAnalysisViewRetention = (
-  operation: string,
-  retention: AnalysisViewRetention,
-): Result<
-  {
-    readonly evidenceById: EvidenceLookup;
-    readonly recordEvidence: EvidenceWriter["recordEvidence"];
-  },
-  AnalysisError
-> => {
-  if (
-    retention.recordEvidence === undefined ||
-    retention.evidenceById === undefined
-  )
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        ANALYSIS_VIEW_PROVIDER.id,
-        operation,
-        "summary detail requires a server session that retains Evidence for later views",
-        {
-          userMessage:
-            "This server does not retain Evidence. Select detail complete to receive the complete analysis inline.",
-        },
-      ),
-    );
-  return ok({
-    evidenceById: retention.evidenceById,
-    recordEvidence: retention.recordEvidence,
-  });
 };
 
 /**
@@ -506,7 +470,7 @@ const createAnalysisViewEvidence = (
 const viewArtifact = (
   evidence: Evidence,
 ): { readonly path: string; readonly sha256: string } | null => {
-  const target = evidenceFileTarget(evidence);
+  const target = evidenceLocalTarget(evidence);
   const display = evidenceSubjectDisplay(evidence);
   return target === undefined || display === undefined
     ? null

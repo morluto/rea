@@ -772,7 +772,9 @@ it("refuses pointer workspace growth before inserting the next virtual destinati
         failure: expect.objectContaining({
           kind: "limit",
           format: "elf-pointer-relocations",
-          limit: { name: "native-index-capacity", maximum: 4096 },
+          // The caller selected this allowance, so it names it separately
+          // from the loader's fixed capacities.
+          limit: { name: "virtual-pointer-index-bytes", maximum: 4096 },
         }),
         unit: "bytes",
         message: expect.stringContaining("4096 estimated representation bytes"),

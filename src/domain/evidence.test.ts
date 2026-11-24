@@ -1,4 +1,5 @@
 import { displayedEvidenceSubject } from "../../tests/fixtures/evidenceSubject.js";
+import { rawLoadAtEntry } from "./rawBinary.fixture.js";
 import { unknownTarget } from "./targetIdentity.js";
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
@@ -27,8 +28,9 @@ import {
 } from "./jsonValue.js";
 import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
-import { createEvidenceBundle } from "./evidenceBundle.js";
+import { createEvidenceBundle, parseEvidenceBundle } from "./evidenceBundle.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
+import { relationshipCoverageSchema } from "./relationshipCoverage.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -49,8 +51,7 @@ describe("subject target identity", () => {
     format: "raw-binary",
     architecture: "arm",
     availableArchitectures: ["arm"],
-    entryPoint,
-    entryPointSource: "caller",
+    rawLoad: rawLoadAtEntry(entryPoint),
   });
   const observe = (target: BinaryTarget) =>
     createEvidence(target, PROVIDER, {
@@ -279,6 +280,53 @@ it("requires explicit coverage in serialized Evidence while producers encode omi
   delete oldEnvelope.relationship_coverage;
   expect(evidenceSchema.safeParse(oldEnvelope).success).toBe(false);
   expect(() => parseEvidence(oldEnvelope)).toThrow();
+});
+
+it("preserves saved format-2 Evidence and bundles whose unknown/partial coverage omits limited_directions", () => {
+  const unknownCoverage = {
+    status: "unknown" as const,
+    reason:
+      "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
+  };
+  const partialCoverage = {
+    status: "partial" as const,
+    limitations: ["Upstream callees capped results at 500."],
+  };
+  expect(relationshipCoverageSchema.safeParse(unknownCoverage).success).toBe(
+    false,
+  );
+  expect(relationshipCoverageSchema.safeParse(partialCoverage).success).toBe(
+    false,
+  );
+
+  const unknownRecord = createEvidence(TARGET, PROVIDER, {
+    operation: "procedure_callees",
+    parameters: { procedure: "0x1000" },
+    result: ["0x2000"],
+    relationshipCoverage: unknownCoverage,
+  });
+  const partialRecord = createEvidence(TARGET, PROVIDER, {
+    operation: "procedure_callees",
+    parameters: { procedure: "0x1010" },
+    result: ["0x2010"],
+    relationshipCoverage: partialCoverage,
+  });
+
+  const reloadedUnknown = parseEvidence(
+    JSON.parse(JSON.stringify(unknownRecord)),
+  );
+  expect(reloadedUnknown).toEqual(unknownRecord);
+  expect(reloadedUnknown.evidence_id).toBe(unknownRecord.evidence_id);
+
+  const bundle = createEvidenceBundle([unknownRecord, partialRecord]);
+  const reloadedBundle = parseEvidenceBundle(
+    JSON.parse(JSON.stringify(bundle)),
+  );
+  expect(reloadedBundle).toEqual(bundle);
+  expect(reloadedBundle.records.map((record) => record.evidence_id)).toEqual([
+    unknownRecord.evidence_id,
+    partialRecord.evidence_id,
+  ]);
 });
 
 it("projects known provider fields and preserves open JSON payloads", () => {

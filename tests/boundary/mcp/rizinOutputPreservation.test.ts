@@ -99,7 +99,7 @@ test.each(
       output_truncated: false,
     };
     expect(evidence.normalized_result).toMatchObject(expected);
-    expect(evidence.raw_result).toMatchObject(expected);
+    expect(evidence.raw_result).toBeNull();
   },
 );
 
@@ -114,6 +114,6 @@ test.each([7, 8])(
       completion_status: truncated ? "unknown" : "complete",
     };
     expect(evidence.normalized_result).toMatchObject(expected);
-    expect(evidence.raw_result).toMatchObject(expected);
+    expect(evidence.raw_result).toBeNull();
   },
 );

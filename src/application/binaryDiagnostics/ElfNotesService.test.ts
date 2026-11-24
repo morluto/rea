@@ -1,13 +1,10 @@
-import { parseEvidence } from "../../domain/evidence.js";
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { ElfNotesService } from "./ElfNotesService.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
 import { createHash } from "node:crypto";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import {
-  elfNoteByteSource,
-  elfNoteFixture,
-} from "../../native/elf/ElfNotes.fixture.js";
+import { elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import { parseElfNotesFromHandle } from "../../native/elf/ElfNoteParser.js";
 import { ok } from "../../domain/result.js";
 import {
@@ -15,12 +12,13 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const identity = ELF_NOTES_PROVIDER;
 const path = "/artifacts/app";
 const bytes = elfNoteFixture({ ownership: "none" });
 const report = await parseElfNotesFromHandle(
-  elfNoteByteSource(bytes),
+  bufferByteSource(bytes, 4096),
   {
     path,
     sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -110,23 +108,12 @@ it("retains an examined empty table and rejects an uncounted table", async () =>
 });
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late ElfNotes cancellation" };
-  const service = new ElfNotesService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late ElfNotes cancellation",
+    (inspect) => new ElfNotesService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_elf_notes",
     normalized_result: report,
   });

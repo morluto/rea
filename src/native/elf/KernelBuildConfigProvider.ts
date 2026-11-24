@@ -17,6 +17,7 @@ import {
   MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES,
   MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES,
   type InspectKernelBuildConfigInput,
+  type KernelBuildConfig,
 } from "../../domain/native/kernelBuildConfig.js";
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { err, ok } from "../../domain/result.js";
@@ -50,12 +51,13 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
     input: InspectKernelBuildConfigInput,
     options?: ExecutionOptions,
   ) {
+    let completed: KernelBuildConfig | undefined;
     let identity:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const report = await withStableArtifactHandle(
+        const report = await withStableArtifactHandle<KernelBuildConfig>(
           input.path,
           input.max_file_bytes,
           {
@@ -64,6 +66,9 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
             onIdentity: (observed) => {
               identity = observed;
+            },
+            onVerifiedResult: (report) => {
+              completed = report;
             },
           },
           (handle) =>
@@ -85,7 +90,7 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(kernelBuildConfigFailure(cause, input, identity));
+      return err(kernelBuildConfigFailure(cause, input, identity, completed));
     }
   }
 }
@@ -147,6 +152,7 @@ const kernelBuildConfigFailure = (
   cause: unknown,
   input: InspectKernelBuildConfigInput,
   identity: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: KernelBuildConfig | undefined,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -206,6 +212,7 @@ const kernelBuildConfigFailure = (
       },
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

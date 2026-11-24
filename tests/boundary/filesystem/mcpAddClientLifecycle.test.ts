@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import { registerMcpClientsOnHost } from "../../fixtures/mcpRegistration.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import {
@@ -149,9 +150,11 @@ it.each([
     expect(uninstall.items).toContainEqual(
       expect.objectContaining({ name: client, status: "removed" }),
     );
-    const remaining = parseClientConfiguration(
-      await readFile(row.configPath, "utf8"),
-      row.format,
+    const remaining = expectResultValue(
+      parseClientConfiguration(
+        await readFile(row.configPath, "utf8"),
+        row.format,
+      ),
     );
     expect(remaining.servers).not.toHaveProperty("rea");
     if (row.privateProfile !== undefined && platform !== "win32")
@@ -187,7 +190,9 @@ it("registers Amp in settings.jsonc when that is Amp's only settings file", asyn
   );
   const text = await readFile(jsonc, "utf8");
   expect(text).toContain("// keep");
-  expect(parseClientConfiguration(text, "amp").servers).toHaveProperty("rea");
+  expect(
+    expectResultValue(parseClientConfiguration(text, "amp")).servers,
+  ).toHaveProperty("rea");
 
   // With both files present, which one Amp reads is unknown.
   await writeFile(join(directory, "settings.json"), "{}\n");

@@ -101,9 +101,12 @@ its address when selecting the containing function. `search_procedures` matches
 the same names, in leaf or qualified spelling: the function appears once with
 its primary name as `value`, and `matched_aliases` lists the qualified names of
 the secondary symbols that matched.
-For Ghidra case-insensitive literal searches of procedures or strings,
-`raw_result` contains bridge candidates before REA applies Unicode-aware
-matching. Use `normalized_result` for matches; a raw candidate need not match.
+For Ghidra case-insensitive literal searches of procedures or strings, use
+`normalized_result` for matches. REA applies Unicode-aware matching to the
+bridge's candidates. When that removes a candidate or a matched secondary
+name, `raw_result` contains the bridge candidates, which need not match, and
+`limitations` says so. When it removes nothing, the candidates are the matches
+and `raw_result` is `null`; that is not missing evidence.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 
@@ -1634,12 +1637,11 @@ projection; these estimates are not a hard process-memory bound. Keyed-archive
 object identities always come from their original `$objects` table indices.
 Authored `objectID`, `object-id`, `archiveUID` and `id` fields remain ordinary
 object data and do not change inventory, reference, connector or hierarchy
-identity. This changes keyed-archive graph IDs that previously used authored
-`objectID` or `object-id` values: `interface_builder_object_id` and linked node
-IDs now use the decimal table UID, while the authored values remain in attributes.
-For example, an authored `objectID: "2"` on table entry 1 now identifies object
-`"1"`; its graph node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs
-and native NIBArchive IDs keep their existing source-specific meaning.
+identity: `interface_builder_object_id` and linked node IDs use the decimal
+table UID, and the authored values remain in attributes. For example, an
+authored `objectID: "2"` on table entry 1 identifies object `"1"`; its graph
+node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs and native
+NIBArchive IDs keep their source-specific meaning.
 Connector endpoints require encoded UID references to archived objects; strings
 and dictionaries that merely resemble resolved reference stubs do not establish
 identity. Inline hierarchy dictionaries have no table identity and count as
@@ -1730,7 +1732,29 @@ missing match does not establish absence from uninitialized or excluded memory.
 See [Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
-Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;
+### Name and import selectors
+
+`find_xrefs_to_name`, `xrefs`, `procedure_callers` and incoming
+`procedure_references` resolve one name the same way on every provider. An
+exact observed name wins. Otherwise a provider-reported import matches by its
+imported name or library-qualified name, so `VirtualAlloc` and
+`kernel32.dll::VirtualAlloc` both select Ghidra's `KERNEL32.DLL::VirtualAlloc`
+(the library compares without case). `find_xrefs_to_name` then tries the
+provider's procedure lookup and reports the provider's spelling as
+`resolved_name`. Hopper reports imported names without their library, so a
+library-qualified name stays unresolved there and lists the bare-name rows as
+`candidates`; REA does not select one.
+
+`procedure_callers` and incoming `procedure_references` also answer a symbol or
+address outside every procedure, such as an imported name, an import
+address-table slot or a data label. The result lists the provider's recorded
+references to that address, each with its containing procedure, and identifies
+the target without a body. Providers may disagree about which reference sites
+belong to a function: on one MSVC x64 DLL, Ghidra and Hopper reported the same
+18 references to `VirtualAlloc`, and Hopper placed one more of them inside a
+procedure.
+
+Name lookup reports distinct candidate addresses as an input ambiguity;
 inventory order cannot select one silently. Duplicate rows at one address remain
 a singular match, and a missing name remains an unresolved observation.
 

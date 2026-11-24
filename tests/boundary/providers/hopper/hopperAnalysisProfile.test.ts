@@ -18,6 +18,7 @@ import {
   resolveHopperAnalysisProfile,
 } from "../../../../src/hopper/HopperAnalysisProfile.js";
 import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderMetadata.js";
+import { rawLoadAtEntry } from "../../../../src/domain/rawBinary.fixture.js";
 import { hopperProducerIdentity } from "../../../../src/hopper/HopperBridgeSources.js";
 import { packagedSourcesDigest } from "../../../../src/filesystem/ProducerIdentity.js";
 import { PRODUCT_IDENTITY } from "../../../../src/identity.js";
@@ -53,8 +54,7 @@ describe("Hopper analysis profiles", () => {
         format: "raw-binary",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x8000000",
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x8000000"),
       }),
     ).toMatchObject({
       ok: false,
@@ -183,34 +183,35 @@ describe("Hopper analysis profiles", () => {
   });
 });
 
-it.each([
-  { admitted: "thin", replacement: "elf" },
-  { admitted: "thin", replacement: "fat32" },
-  { admitted: "fat32", replacement: "thin" },
-] as const)(
-  "refuses a replacement of kind $replacement for an admitted $admitted Mach-O with loader overrides",
-  async ({ admitted, replacement }) => {
+it.each(["thin", "fat32"] as const)(
+  "derives macho_container %s from admitted target metadata with loader overrides without re-opening target.path",
+  async (admitted) => {
     const root = await createTestTempDirectory("rea-hopper-profile-magic-");
     const path = join(root, "selected.macho");
     const launcherPath = join(root, "hopper");
     const arm64 = 0x0100000c;
     const thin = thinMach(0xfeedfacf, arm64);
     thin.writeUInt32BE(2, 12); // MH_EXECUTE
-    const inputs = { thin, fat32: fat([arm64]), elf: elf(2, 1, 183) };
+    const inputs = { thin, fat32: fat([arm64]) };
     await writeFile(path, inputs[admitted]);
     await writeFile(launcherPath, "Hopper fixture");
     const selected = await parseBinaryTarget(path, {
       hostArchitecture: "arm64",
     });
     if (!selected.ok) throw selected.error;
+    // Remove the target file after admission to prove override resolution does not re-open it.
+    await rm(path);
     const options = {
       launcherPath,
       loaderArgsOverride: ["-l", "Custom Loader"],
       provider: HOPPER_PROVIDER_IDENTITY,
       resourceScope: inspectionResources.owner,
     };
-    const control = await resolveHopperAnalysisProfile(selected.value, options);
-    expect(control).toMatchObject({
+    const resolved = await resolveHopperAnalysisProfile(
+      selected.value,
+      options,
+    );
+    expect(resolved).toMatchObject({
       ok: true,
       value: {
         profile: {
@@ -222,17 +223,6 @@ it.each([
             },
           },
         },
-      },
-    });
-
-    await writeFile(path, inputs[replacement]);
-    await expect(
-      resolveHopperAnalysisProfile(selected.value, options),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: {
-        _tag: "BinaryTargetError",
-        message: expect.stringContaining("admitted Mach-O format"),
       },
     });
   },

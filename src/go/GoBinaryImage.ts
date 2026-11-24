@@ -13,12 +13,8 @@ import {
   isZeroFilledSpan,
   type BinaryContainer,
 } from "../domain/binaryContainer.js";
-import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
-import {
-  readBinaryContainer,
-  readBinaryContainerFromReader,
-} from "../domain/native/readBinaryContainer.js";
+import { readBinaryContainerFromReader } from "../domain/native/readBinaryContainer.js";
 import {
   goAnalysisBudgets,
   type GoAnalysisBudgets,
@@ -30,10 +26,8 @@ import {
   goBuildInfoSearch,
   type GoBuildInfoSearchRange,
 } from "./GoBuildInfoSearch.js";
-import {
-  recoverGoStringLiterals,
-  recoverGoStringLiteralsFromReader,
-} from "./GoStringLiterals.js";
+import { recoverGoStringLiteralsFromReader } from "./GoStringLiterals.js";
+import type { ByteSource } from "../domain/byteSource.js";
 
 const SEARCH_CHUNK_BYTES = 64 * 1024;
 const MAGIC = Buffer.from("ff20476f206275696c64696e663a", "hex");
@@ -63,20 +57,9 @@ export interface ReadGoBinaryImageOptions {
   readonly budgets?: Partial<GoAnalysisBudgets>;
 }
 
-/** Inspect bounded executable bytes using native mappings, without loading or executing code. */
-export const readGoBinaryImage = (
-  bytes: Buffer,
-  options?: ReadGoBinaryImageOptions,
-): GoBinaryImage =>
-  finishGoBinaryImage(
-    bytes,
-    options,
-    readBinaryContainer(bytes, "inspect_go_binary"),
-  );
-
 /** Stream Go build-info and optional string-literal inspection over a bounded FileHandle. */
 export const readGoBinaryImageFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   options: ReadGoBinaryImageOptions | undefined,
   pause: ZstandardFramePause,
 ): Promise<GoBinaryImage> => {
@@ -108,36 +91,6 @@ export const readGoBinaryImageFromHandle = async (
     step = steps.next(
       await readExactSlice(source, offset, length, container.format, label),
     );
-  }
-  return step.value;
-};
-
-const finishGoBinaryImage = (
-  bytes: Buffer,
-  options: ReadGoBinaryImageOptions | undefined,
-  container: BinaryContainer,
-): GoBinaryImage => {
-  const budgets = goAnalysisBudgets(options?.budgets);
-  const stringLiterals =
-    options?.includeStringLiterals === true
-      ? recoverGoStringLiterals(bytes, container, budgets, options.checkActive)
-      : undefined;
-  const reader = new BinaryReader(
-    bytes,
-    container.byte_order === "little",
-    container.format,
-  );
-  const steps = scanGoBuildInfo(
-    bytes.length,
-    container,
-    budgets,
-    stringLiterals,
-    options?.checkActive,
-  );
-  let step = steps.next();
-  while (!step.done) {
-    const { offset, length, label } = step.value;
-    step = steps.next(reader.range(offset, length, label));
   }
   return step.value;
 };
@@ -429,7 +382,7 @@ const assertAggregateContentLimit = (
 };
 
 const readExactSlice = async (
-  source: NativeByteSource,
+  source: ByteSource,
   offset: number,
   size: number,
   format: BinaryContainer["format"],
