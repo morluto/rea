@@ -133,6 +133,38 @@ describe("Ghidra doctor integration", async () => {
     });
   });
 
+  it("classifies every passing provider check healthy and keeps failure classes for failures", async () => {
+    const passing = await runDoctor(undefined, doctorHost(await inspection()));
+    const checks = passing.providerInspections?.[0]?.checks ?? [];
+    expect(checks.map(({ name }) => name)).toEqual(
+      expect.arrayContaining(["configuration", "platform", "architecture"]),
+    );
+    expect(
+      checks.map(({ ok, classification, code }) => ({
+        ok,
+        classification,
+        code,
+      })),
+    ).toEqual(
+      checks.map(() => ({ ok: true, classification: "healthy", code: null })),
+    );
+
+    const unsupported = await runDoctor(
+      undefined,
+      doctorHost(
+        await inspection({ installDir: INSTALL, architecture: "arm" }),
+      ),
+    );
+    expect(
+      unsupported.providerInspections?.[0]?.checks.find(
+        ({ name }) => name === "architecture",
+      ),
+    ).toMatchObject({ ok: false, classification: "unsupported_host" });
+    expect(
+      unsupported.checks.find(({ name }) => name === "ghidra-architecture"),
+    ).toMatchObject({ ok: false, classification: "unsupported_host" });
+  });
+
   it.each([
     [
       "bad installation",
@@ -526,6 +558,7 @@ describe("Windows Ghidra temporary directory check", () => {
       expect.objectContaining({
         name: "temp_directory",
         ok: true,
+        classification: "healthy",
         detail: expect.stringContaining(
           "does not test writes by Ghidra's child JVM",
         ),

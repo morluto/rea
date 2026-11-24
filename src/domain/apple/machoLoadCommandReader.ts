@@ -170,7 +170,11 @@ export const readMachoContainer = async (
         size,
       );
     }
-    if (header.state === "not-fat") return { kind: "not-mach-o" };
+    // MachoReadIssue has no truncated status, so a FAT table past the file's
+    // end keeps this reader's earlier not-Mach-O answer rather than being
+    // reported as malformed.
+    if (header.state === "not-fat" || header.state === "truncated")
+      return { kind: "not-mach-o" };
     if (header.state === "needs-data")
       return {
         kind: "issue",

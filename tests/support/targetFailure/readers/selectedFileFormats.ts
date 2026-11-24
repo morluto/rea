@@ -39,11 +39,32 @@ const overlappingUniversalMacho = (): Buffer => {
   return bytes;
 };
 
+/** A universal Mach-O cut off inside its FAT table: 20 of its 48 table bytes. */
+const truncatedUniversalMacho = (): Buffer => {
+  const slice = (type: number, subtype: number) => ({
+    cpu: { type, subtype },
+    bytes: machoImage({ cpu: { type, subtype }, wide: true }),
+  });
+  return Buffer.from(
+    fatImage([slice(0x01000007, 3), slice(0x0100000c, 0)]),
+  ).subarray(0, 20);
+};
+
 /** A PE image whose first WIN_CERTIFICATE declares less than its own header. */
 const shortCertificateHeader = (): Buffer => {
   const bytes = peCertificateFixture();
   bytes.writeUInt32LE(4, bytes.readUInt32LE(0x98 + 96 + 4 * 8));
   return bytes;
+};
+
+const truncatedSlices: TargetFailureCase = {
+  name: "macho-fat-table-cut-off",
+  kind: "truncated",
+  bytes: truncatedUniversalMacho,
+  facts: { format: "macho", available_bytes: 20, required_bytes: 48 },
+  cli: ["--architecture", "arm64"],
+  mcp: { architecture: "arm64" },
+  identity: true,
 };
 
 const managedCase: TargetFailureCase = {
@@ -89,9 +110,12 @@ export default targetFailureReaders([
     "inspect_native_initializers",
   ].map((operation) => ({
     operation,
-    cases: [truncatedElfHeader, overlappingSlices],
+    cases: [truncatedElfHeader, overlappingSlices, truncatedSlices],
   })),
-  { operation: "inspect_dwarf_units", cases: [overlappingSlices] },
+  {
+    operation: "inspect_dwarf_units",
+    cases: [overlappingSlices, truncatedSlices],
+  },
   {
     operation: "inspect_apple_ips",
     cases: [

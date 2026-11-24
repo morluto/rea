@@ -6,6 +6,7 @@ import {
 } from "./virtualFileMapping.js";
 import type { PeDataDirectory } from "./peOptionalHeader.js";
 import { decodeLimit, ParseFailureError } from "./parseFailure.js";
+import type { TruncatedExtent } from "./targetFailure.js";
 
 /** Return whether the leading bytes begin with the 4-byte ELF magic (`\x7fELF`). */
 export const hasElfMagic = (bytes: Uint8Array): boolean =>
@@ -31,6 +32,8 @@ interface BinaryFormatFailureFacts {
   readonly format?: string;
   readonly offset?: number;
   readonly field?: string;
+  /** The measured end and needed length of a truncated structure. */
+  readonly extent?: TruncatedExtent;
 }
 
 /** Distinguish corrupt recognized binaries from containers outside parser coverage. */
@@ -42,11 +45,18 @@ export class BinaryFormatFailure extends ParseFailureError<
     message: string,
     facts: BinaryFormatFailureFacts = {},
   ) {
-    const { undecodedContent = false, format = "native-binary", ...at } = facts;
+    const {
+      undecodedContent = false,
+      format = "native-binary",
+      extent,
+      ...at
+    } = facts;
     super(
       kind === "unsupported"
         ? { kind, format, detail: message, undecodedContent, ...at }
-        : { kind, format, detail: message, ...at },
+        : kind === "truncated" && extent !== undefined
+          ? { kind, format, detail: message, ...at, extent }
+          : { kind, format, detail: message, ...at },
     );
     this.name = "BinaryFormatFailure";
   }
