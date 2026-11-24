@@ -1475,7 +1475,10 @@ that dominate the time and the Program reuse choices below; in existing-project
 mode it omits that import and analyzer advice.
 REA parses the supplied configuration environment and
 passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
-without exposing partial analysis. This deadline is separate from MCP transport
+without exposing partial analysis. After a startup runs out its deadline, later
+queries in the same session return that failure immediately instead of importing
+again, until the effective deadline changes or `close_binary` and `open_binary`
+start a new session. This deadline is separate from MCP transport
 initialization and the client's deadline for that individual tool call. A client
 can time out earlier even when Ghidra would complete within its startup deadline.
 See [Ghidra first-query deadlines and recovery](../reference/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)

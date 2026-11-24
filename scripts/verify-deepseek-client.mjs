@@ -10,6 +10,7 @@ import { pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -419,15 +420,6 @@ await withVerifierCleanup(async () => {
       fixtureFailure: fixture?.failure,
       verifier: completed,
     };
-    const publishReceipt = () =>
-      withVerifierCleanup(
-        () =>
-          writeFile(
-            join(lab, "receipt.json"),
-            JSON.stringify(receipt, null, 2),
-          ),
-        [() => console.log(JSON.stringify(receipt))],
-      );
     await withVerifierCleanup(() => {
       if (!receipt.passed) return;
       try {
@@ -436,7 +428,7 @@ await withVerifierCleanup(async () => {
         receipt.passed = false;
         throw cause;
       }
-    }, [publishReceipt]);
+    }, [() => publishClientReceipt(lab, receipt)]);
   },
   () => {
     const reason = commands.finish();
