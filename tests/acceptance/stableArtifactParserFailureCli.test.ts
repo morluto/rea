@@ -130,33 +130,37 @@ const nativeUniversalCommands = [
 // universal Mach-O container read before slice selection. The selected file's
 // bytes are at fault, so each is a malformed or truncated target at that
 // file's path; a truncated one carries the measured and needed lengths.
-for (const {
-  command,
-  bytes,
-  failure = "malformed",
-  format,
-  extra = [],
-  identity,
-} of [
+interface FormatOwnerRow {
+  readonly command: string;
+  readonly bytes: () => Buffer;
+  readonly failure: "malformed" | "truncated";
+  readonly format: { readonly format: string } & Record<string, unknown>;
+  readonly extra: readonly string[];
+  readonly identity: boolean;
+}
+
+for (const { command, bytes, failure, format, extra, identity } of [
   ...[
     "inspect-managed-artifact",
     "inspect-managed-members",
     "inspect-managed-native-boundaries",
-  ].map((command) => ({
+  ].map((command): FormatOwnerRow => ({
     command,
     bytes: managedSectionPastEof,
+    failure: "malformed",
     format: { format: "pe-cli", field: "pe.section-data" },
-    extra: [] as string[],
+    extra: [],
     identity: false,
   })),
-  ...nativeUniversalCommands.map((command) => ({
+  ...nativeUniversalCommands.map((command): FormatOwnerRow => ({
     command,
     bytes: overlappingUniversalMacho,
+    failure: "malformed",
     format: { format: "macho", reason: "Mach-O slices 0 and 1 overlap." },
     extra: ["--architecture", "arm64"],
     identity: true,
   })),
-  ...nativeUniversalCommands.map((command) => ({
+  ...nativeUniversalCommands.map((command): FormatOwnerRow => ({
     command,
     bytes: truncatedUniversalMacho,
     failure: "truncated",
