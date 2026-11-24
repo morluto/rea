@@ -1340,6 +1340,7 @@
 * publish the portable build cache only for selected consumers ([#14307](https://github.com/morluto/rea/issues/14307)) ([2b818e0](https://github.com/morluto/rea/commit/2b818e0dbf6df8583cd36307b29406fc0d047f55))
 * record affected-test predictions above the live cutoff ([#14300](https://github.com/morluto/rea/issues/14300)) ([e6bf4af](https://github.com/morluto/rea/commit/e6bf4af1c913dd1b3d04c632298c6db045f1e95f))
 * **release:** preserve unpublished versions and verify npm before tagging ([#12770](https://github.com/morluto/rea/issues/12770)) ([ad2b34c](https://github.com/morluto/rea/commit/ad2b34ca9b30769ec8ff8ef26025a38a9a32c589))
+* run the verified actionlint release binary ([#14309](https://github.com/morluto/rea/issues/14309)) ([21facfd](https://github.com/morluto/rea/commit/21facfdeac604d6afcb7ce4495388c2d8afaae63))
 * validate workflow anchors with actionlint 1.7.12 ([#14298](https://github.com/morluto/rea/issues/14298)) ([f919526](https://github.com/morluto/rea/commit/f9195263d0ae23df996d28f4a7bf848067d936fa))
 * wait for static checks before broad PR test shards ([#14299](https://github.com/morluto/rea/issues/14299)) ([b8dd2c4](https://github.com/morluto/rea/commit/b8dd2c47d46419b0d82d03c1de2f261b7ffe3f73))
 
