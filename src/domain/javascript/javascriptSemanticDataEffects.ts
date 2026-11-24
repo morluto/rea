@@ -75,31 +75,56 @@ export const collectJavaScriptSemanticDataEffects = (
     callableStack: [],
     ancestors: [],
   };
-  const configuration = collectConfigurations(program, context);
+  // Candidates that depend on no other collector share one traversal.
+  const configurations = collectConfigurations(context);
+  const candidateRequests = collectRequests(context);
+  const boundaries = collectBoundaries(context);
+  traverseWithContext(
+    program,
+    context,
+    configurations.visit,
+    candidateRequests.visit,
+    boundaries.visit,
+  );
+  const configuration = configurations.output;
   // A fetch or WebSocket the host refuses to construct sends nothing.
-  const requests = collectRequests(program, context).filter(
+  const requests = candidateRequests.output.filter(
     ({ node, operation }) =>
       !hostRefusesJavaScriptRequest(node, operation.method),
+  );
+  // Defaults and response consumers read the completed candidates above.
+  const defaults = collectDefaults(context, configuration);
+  const responseConsumers = collectResponseConsumers(context, requests);
+  traverseWithContext(
+    program,
+    context,
+    defaults.visit,
+    responseConsumers.visit,
   );
   return {
     configurationOperations: [
       ...configuration.map(({ operation }) => operation),
-      ...collectDefaults(program, context, configuration),
+      ...defaults.output,
     ],
     requestOperations: [
       ...requests.map(({ operation }) => operation),
-      ...collectResponseConsumers(program, context, requests),
+      ...responseConsumers.output,
     ],
-    boundaryOperations: collectBoundaries(program, context),
+    boundaryOperations: boundaries.output,
   };
 };
 
+/** One collector's findings and the visitor that gathers them in source order. */
+interface DataEffectCollector<Item> {
+  readonly output: Item[];
+  readonly visit: (node: t.Node) => void;
+}
+
 const collectConfigurations = (
-  program: t.Program,
   context: TraversalContext,
-): ConfigurationCandidate[] => {
+): DataEffectCollector<ConfigurationCandidate> => {
   const output: ConfigurationCandidate[] = [];
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     const details = configurationDetails(node, context);
     if (details === null) return;
     const operation: JavaScriptSemanticConfigurationOperation = {
@@ -117,8 +142,8 @@ const collectConfigurations = (
       resolution: details.resolution,
     };
     output.push({ node, operation });
-  });
-  return output;
+  };
+  return { output, visit };
 };
 
 const configurationDetails = (
@@ -209,15 +234,14 @@ const isArrayIndexKey = (key: string): boolean => {
 };
 
 const collectDefaults = (
-  program: t.Program,
   context: TraversalContext,
   configurations: readonly ConfigurationCandidate[],
-): JavaScriptSemanticConfigurationOperation[] => {
+): DataEffectCollector<JavaScriptSemanticConfigurationOperation> => {
   const output: JavaScriptSemanticConfigurationOperation[] = [];
   const configurationsByNode = new Map(
     configurations.map((candidate) => [candidate.node, candidate]),
   );
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     if (
       !t.isLogicalExpression(node) ||
       (node.operator !== "??" && node.operator !== "||")
@@ -248,8 +272,8 @@ const collectDefaults = (
         : {}),
       resolution: value.status === "literal" ? "complete" : "partial",
     });
-  });
-  return output;
+  };
+  return { output, visit };
 };
 
 /**
@@ -320,11 +344,10 @@ const rejectsHttpMethodLiteral = (
 };
 
 const collectRequests = (
-  program: t.Program,
   context: TraversalContext,
-): RequestCandidate[] => {
+): DataEffectCollector<RequestCandidate> => {
   const output: RequestCandidate[] = [];
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     if (
       !t.isCallExpression(node) &&
       !t.isOptionalCallExpression(node) &&
@@ -388,8 +411,8 @@ const collectRequests = (
         resolution: endpoint === null ? "partial" : "complete",
       },
     });
-  });
-  return output;
+  };
+  return { output, visit };
 };
 
 /**
@@ -448,10 +471,9 @@ const settlesToResponse = (
 };
 
 const collectResponseConsumers = (
-  program: t.Program,
   context: TraversalContext,
   requests: readonly RequestCandidate[],
-): JavaScriptSemanticRequestOperation[] => {
+): DataEffectCollector<JavaScriptSemanticRequestOperation> => {
   const requestsByBinding = new Map<string, RequestCandidate[]>();
   for (const request of requests) {
     const bindingIds = [
@@ -469,7 +491,7 @@ const collectResponseConsumers = (
     }
   }
   const output: JavaScriptSemanticRequestOperation[] = [];
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const member = memberCallee(node);
     if (member === null || !t.isIdentifier(member.object)) return;
@@ -531,16 +553,15 @@ const collectResponseConsumers = (
       fields: [],
       resolution: !soleWrite || otherKinds ? "partial" : "complete",
     });
-  });
-  return output;
+  };
+  return { output, visit };
 };
 
 const collectBoundaries = (
-  program: t.Program,
   context: TraversalContext,
-): JavaScriptSemanticBoundaryOperation[] => {
+): DataEffectCollector<JavaScriptSemanticBoundaryOperation> => {
   const output: JavaScriptSemanticBoundaryOperation[] = [];
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const details = boundaryDetails(node, context.state);
     if (details === null) return;
@@ -554,8 +575,8 @@ const collectBoundaries = (
       resultBindingId: outerAssignedBinding(node, context),
       resolution: details.resolution,
     });
-  });
-  return output;
+  };
+  return { output, visit };
 };
 
 const boundaryDetails = (
