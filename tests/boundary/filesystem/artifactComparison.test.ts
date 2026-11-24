@@ -1280,4 +1280,77 @@ describe("legacy directory root digest scheme compatibility", () => {
       ],
     });
   });
+
+  it("reports NFC-to-NFD filename renames across legacy and fresh directory inventories", async () => {
+    const root = await createTestTempDirectory(
+      "rea-legacy-dir-normalization-rename-",
+    );
+    const nfcDir = join(root, "nfc");
+    const nfdDir = join(root, "nfd");
+    const nfc = "\u00e9.txt";
+    const nfd = "e\u0301.txt";
+    await Promise.all([mkdir(nfcDir), mkdir(nfdDir)]);
+    await Promise.all([
+      writeFile(join(nfcDir, nfc), "same bytes"),
+      writeFile(join(nfdDir, nfd), "same bytes"),
+    ]);
+
+    const [freshNfc, freshNfd] = await Promise.all([
+      observe(nfcDir),
+      observe(nfdDir),
+    ]);
+    const legacyNfc = toLegacyDirectoryInventoryEvidence(nfcDir, freshNfc);
+    const legacyNfd = toLegacyDirectoryInventoryEvidence(nfdDir, freshNfd);
+
+    // Ensure the host filesystem preserved the NFD spelling in `source_path`.
+    expect(
+      parseArtifactInventoryEvidence(freshNfd).inventory.occurrences.find(
+        ({ logical_path }) => logical_path === nfc,
+      ),
+    ).toMatchObject({ logical_path: nfc, source_path: nfd });
+
+    // Legacy NFC vs fresh NFD (and reverse) must report the filename change, not unchanged.
+    for (const [left, right] of [
+      [legacyNfc, freshNfd],
+      [freshNfd, legacyNfc],
+      [legacyNfd, freshNfc],
+      [freshNfc, legacyNfd],
+    ] as const)
+      expect(compareArtifacts(left, right)).toMatchObject({
+        status: "changed",
+        summary: { unchanged: 1, changed: 1, unknown: 0 },
+        changes: [
+          expect.objectContaining({
+            logical_path: nfc,
+            classification: "changed",
+            dimensions: ["metadata"],
+          }),
+        ],
+      });
+
+    // Identical NFD names across legacy and fresh remain unchanged.
+    expect(compareArtifacts(legacyNfd, freshNfd)).toMatchObject({
+      status: "unchanged",
+      summary: { unchanged: 2, changed: 0, unknown: 0 },
+      changes: [],
+    });
+
+    // Fresh NFC vs fresh NFD reports both the root tree digest change and the member spelling change.
+    expect(compareArtifacts(freshNfc, freshNfd)).toMatchObject({
+      status: "changed",
+      summary: { unchanged: 0, changed: 2, unknown: 0 },
+      changes: [
+        expect.objectContaining({
+          logical_path: ".",
+          classification: "changed",
+          dimensions: ["content"],
+        }),
+        expect.objectContaining({
+          logical_path: nfc,
+          classification: "changed",
+          dimensions: ["metadata"],
+        }),
+      ],
+    });
+  });
 });

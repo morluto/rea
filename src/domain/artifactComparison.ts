@@ -360,6 +360,9 @@ const compareOccurrences = (
     right.nodes.map((item) => [item.artifact_id, item]),
   );
   const comparableRootDigest = hasComparableRootDigest(left, right);
+  const compareDirectorySourceNames =
+    left.manifest.root_format === "directory" &&
+    right.manifest.root_format === "directory";
   const partialRootDigest =
     hasPartialRootDigest(left) || hasPartialRootDigest(right);
   const leftRelationsFor = relationsForOccurrence(left);
@@ -395,7 +398,10 @@ const compareOccurrences = (
     }
     const leftOccurrence = leftMatches[0];
     const rightOccurrence = rightMatches[0];
-    const metadata = occurrenceMetadata({ leftOccurrence, rightOccurrence });
+    const metadata = occurrenceMetadata(
+      { leftOccurrence, rightOccurrence },
+      { compareDirectorySourceNames },
+    );
     if (leftOccurrence !== undefined && rightOccurrence !== undefined) {
       if (metadata.asarPacking === "unknown") hasUnknownAsarPacking = true;
       if (metadata.formatDeclaration === "unknown")
@@ -590,6 +596,8 @@ interface OccurrenceMetadata {
   readonly asarPacking: FactComparison;
   /** Every occurrence records `encrypted`, so a pair's comparison is known. */
   readonly encryption: Exclude<FactComparison, "unknown">;
+  /** Stored directory entry path, preserving non-NFC spellings normalized in `logical_path`. */
+  readonly directorySourcePath: Exclude<FactComparison, "unknown">;
   /** Absent when neither occurrence records a compared declaration. */
   readonly formatDeclaration: FactComparison | "absent";
   /** Unknown when either side could not read a compared field. */
@@ -599,6 +607,7 @@ interface OccurrenceMetadata {
 /** A declaration that differs even when content is unavailable. */
 const declarationChanged = (metadata: OccurrenceMetadata): boolean =>
   metadata.asarPacking === "changed" ||
+  metadata.directorySourcePath === "changed" ||
   metadata.formatDeclaration === "changed";
 
 /** A declared fact that differs: a declaration or the encryption. */
@@ -709,13 +718,41 @@ const compareFormatDeclarations = (
   };
 };
 
+/** Compare exact stored directory names without leaking format-specific archive aliases. */
+const compareDirectorySourcePath = (
+  left: ArtifactOccurrence | undefined,
+  right: ArtifactOccurrence | undefined,
+  compareDirectorySourceNames: boolean,
+): Exclude<FactComparison, "unknown"> => {
+  if (
+    !compareDirectorySourceNames ||
+    left === undefined ||
+    right === undefined ||
+    left.logical_path === "." ||
+    right.logical_path === "."
+  )
+    return "unchanged";
+  return (left.source_path ?? left.logical_path) ===
+    (right.source_path ?? right.logical_path)
+    ? "unchanged"
+    : "changed";
+};
+
 /** Interpret each pair's declarations once, preserving historical omission. */
-const occurrenceMetadata = (input: OccurrencePair): OccurrenceMetadata => {
+const occurrenceMetadata = (
+  input: OccurrencePair,
+  options: { readonly compareDirectorySourceNames: boolean },
+): OccurrenceMetadata => {
   const left = input.leftOccurrence;
   const right = input.rightOccurrence;
   return {
     asarPacking: compareAsarPacking(left?.unpacked, right?.unpacked),
     encryption: left?.encrypted === right?.encrypted ? "unchanged" : "changed",
+    directorySourcePath: compareDirectorySourcePath(
+      left,
+      right,
+      options.compareDirectorySourceNames,
+    ),
     ...compareFormatDeclarations(
       formatMetadataDeclaration(left?.format_metadata),
       formatMetadataDeclaration(right?.format_metadata),
@@ -784,6 +821,8 @@ const classifyLinkTargets = (
   if (left.link_target.hex !== right.link_target.hex)
     dimensions.push("content");
   if (left.executable !== right.executable) dimensions.push("executable");
+  if (input.metadata.directorySourcePath === "changed")
+    dimensions.push("metadata");
   return {
     handled: true,
     change:
