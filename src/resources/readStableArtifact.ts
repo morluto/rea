@@ -1,4 +1,3 @@
-import { invariantViolation } from "../domain/internalInvariant.js";
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
