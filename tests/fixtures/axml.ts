@@ -22,8 +22,18 @@ export interface AxmlAttribute {
 }
 
 export type AxmlEvent =
-  | { readonly kind: "startNs"; readonly prefix: string; readonly uri: string }
-  | { readonly kind: "endNs"; readonly prefix: string; readonly uri: string }
+  | {
+      readonly kind: "startNs";
+      readonly prefix: string;
+      readonly uri: string;
+      readonly comment?: string;
+    }
+  | {
+      readonly kind: "endNs";
+      readonly prefix: string;
+      readonly uri: string;
+      readonly comment?: string;
+    }
   | {
       readonly kind: "start";
       readonly name: string;
@@ -126,6 +136,7 @@ export const buildAxml = (
     if (event.kind === "startNs" || event.kind === "endNs") {
       pool.add(event.prefix);
       pool.add(event.uri);
+      if (event.comment !== undefined) pool.add(event.comment);
     } else if (event.kind === "start" || event.kind === "end") {
       if (event.ns !== undefined) pool.add(event.ns);
       pool.add(event.name);
@@ -153,6 +164,8 @@ export const buildAxml = (
   });
   const headerSize = 28;
   const stringsStart = headerSize + pool.strings.length * 4;
+  // aapt pads the string data region to a 4-byte boundary.
+  const pad = Buffer.alloc((4 - (cursor % 4)) % 4);
   const poolBody = Buffer.concat([
     u32(pool.strings.length),
     u32(0),
@@ -161,6 +174,7 @@ export const buildAxml = (
     u32(0),
     ...offsets.map(u32),
     ...stringBytes,
+    pad,
   ]);
   const poolChunk = chunk(0x0001, headerSize, poolBody);
 
@@ -174,26 +188,36 @@ export const buildAxml = (
       body,
     ]);
 
+  // End-element records in real AXML repeat the open element's namespace
+  // index; when an event leaves `ns` unset it inherits the matching open
+  // element's namespace.
+  const openElements: { name: string; ns: string | undefined }[] = [];
   const eventChunks = events.map((event) => {
     if (event.kind === "startNs")
       return node(
         0x0100,
         Buffer.concat([u32(pool.add(event.prefix)), u32(pool.add(event.uri))]),
+        event.comment === undefined ? NO_INDEX : pool.add(event.comment),
       );
     if (event.kind === "endNs")
       return node(
         0x0101,
         Buffer.concat([u32(pool.add(event.prefix)), u32(pool.add(event.uri))]),
+        event.comment === undefined ? NO_INDEX : pool.add(event.comment),
       );
-    if (event.kind === "end")
+    if (event.kind === "end") {
+      const top = openElements.at(-1);
+      const ns = event.ns ?? (top?.name === event.name ? top.ns : undefined);
+      if (top?.name === event.name) openElements.pop();
       return node(
         0x0103,
         Buffer.concat([
-          u32(event.ns === undefined ? NO_INDEX : pool.add(event.ns)),
+          u32(ns === undefined ? NO_INDEX : pool.add(ns)),
           u32(pool.add(event.name)),
         ]),
         event.comment === undefined ? NO_INDEX : pool.add(event.comment),
       );
+    }
     if (event.kind === "cdata") {
       const dataIndex = pool.add(event.text);
       // ResXMLTree_cdataExt: data index + Res_value{size=8,res0=0,type=string,data}.
@@ -233,6 +257,7 @@ export const buildAxml = (
       u16(0),
       ...records,
     ]);
+    openElements.push({ name: event.name, ns: event.ns });
     // The node header is fixed at 16 bytes; the attribute ext is body.
     const size = 16 + ext.length;
     return Buffer.concat([

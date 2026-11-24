@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { text } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
@@ -106,6 +107,45 @@ describe("axml decoder limits", () => {
         reason: "limit",
         boundary: "capacity",
       });
+    });
+  });
+
+  it("fails closed when retained UTF-16 strings exceed the byte bound", async () => {
+    // 129 distinct 65,500-unit CJK strings total ~8.45M code units, which
+    // would pass a code-unit reading of the bound, but occupy ~16.9 MB as
+    // retained UTF-16 and must trip the byte ceiling.
+    const value = (i: number) => "一".repeat(65490) + String(i);
+    const attrs = Array.from({ length: 129 }, (_, i) => ({
+      name: `a${i}`,
+      value: value(i),
+    }));
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "e", attrs },
+      { kind: "end", name: "e" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "capacity",
+      });
+    });
+  });
+
+  it("accepts retained UTF-16 strings just below the byte bound", async () => {
+    // 127 strings of the same shape occupy ~16.6 MB as UTF-16, under the
+    // 16 MiB ceiling, so the document decodes normally.
+    const value = (i: number) => "一".repeat(65490) + String(i);
+    const attrs = Array.from({ length: 127 }, (_, i) => ({
+      name: `a${i}`,
+      value: value(i),
+    }));
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "e", attrs },
+      { kind: "end", name: "e" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const entries = await list(reader);
+      expect(entries.length).toBe(1);
     });
   });
 
@@ -233,8 +273,253 @@ describe("axml malformed extents", () => {
       });
       expect(entries.length).toBe(1);
       expect(coverage?.limitations.join(" ")).toContain(
-        "beyond the string pool were ignored",
+        "beyond the string pool; they were ignored",
       );
+    });
+  });
+});
+
+describe("axml projection fidelity regressions", () => {
+  it("rejects an end element whose namespace differs from the open element", async () => {
+    // The end record reuses the name index but names a different namespace.
+    const bytes = buildAxml([
+      { kind: "startNs", prefix: "p", uri: "urn:a" },
+      { kind: "start", name: "e", ns: "urn:a" },
+      { kind: "end", name: "e" },
+      { kind: "endNs", prefix: "p", uri: "urn:a" },
+    ]);
+    // Pool layout: prefix, uri, name; the end-element chunk is the third
+    // node record. Find it by walking declared chunk sizes.
+    let cursor = 8 + bytes.readUInt32LE(12);
+    cursor += bytes.readUInt32LE(cursor + 4); // start-ns
+    cursor += bytes.readUInt32LE(cursor + 4); // start-element
+    // End-element node: namespace index at +16, name index at +20.
+    bytes.writeUInt32LE(0xffffffff, cursor + 16);
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("rejects names that are not XML NCNames", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "not a name" },
+      { kind: "end", name: "not a name" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("rejects a document ending with an open namespace scope", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "startNs", prefix: "p", uri: "urn:a" },
+      { kind: "start", name: "root" },
+      { kind: "end", name: "root" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("rejects an end-namespace prefix outside the string pool", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "startNs", prefix: "", uri: "urn:a" },
+      { kind: "start", name: "root" },
+      { kind: "end", name: "root" },
+      { kind: "endNs", prefix: "", uri: "urn:a" },
+    ];
+    const bytes = buildAxml(events);
+    // The end-ns chunk is last; its prefix index sits at +16.
+    const last = bytes.length - 24;
+    bytes.writeUInt32LE(0x7fff0000, last + 16);
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("rejects bindings of reserved prefixes and URIs", async () => {
+    for (const [prefix, uri] of [
+      ["xml", "urn:other"],
+      ["xmlns", "urn:a"],
+      ["p", "http://www.w3.org/2000/xmlns/"],
+      ["p", "http://www.w3.org/XML/1998/namespace"],
+    ] as const) {
+      const events: readonly AxmlEvent[] = [
+        { kind: "startNs", prefix, uri },
+        { kind: "start", name: "root" },
+        { kind: "end", name: "root" },
+        { kind: "endNs", prefix, uri },
+      ];
+      await withReader(buildAxml(events), async (reader) => {
+        await expect(list(reader), `${prefix}=${uri}`).rejects.toMatchObject({
+          reason: "format",
+        });
+      });
+    }
+  });
+
+  it("rejects a duplicate attribute after resource-map inference", async () => {
+    const ANDROID = "http://schemas.android.com/apk/res/android";
+    const events: readonly AxmlEvent[] = [
+      { kind: "startNs", prefix: "android", uri: ANDROID },
+      {
+        kind: "start",
+        name: "e",
+        attrs: [
+          // Unqualified name mapped into the Android namespace, then an
+          // explicitly namespaced twin: both project as android:name.
+          { name: "name", value: "a" },
+          { name: "name", ns: ANDROID, value: "b" },
+        ],
+      },
+      { kind: "end", name: "e" },
+      { kind: "endNs", prefix: "android", uri: ANDROID },
+    ];
+    await withReader(
+      buildAxml(events, { resourceIds: { name: 0x01010003 } }),
+      async (reader) => {
+        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      },
+    );
+  });
+
+  it("resets the default namespace on a no-namespace child", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "startNs", prefix: "", uri: "urn:x" },
+      { kind: "start", name: "root", ns: "urn:x" },
+      { kind: "start", name: "bare" },
+      { kind: "end", name: "bare" },
+      { kind: "end", name: "root" },
+      { kind: "endNs", prefix: "", uri: "urn:x" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      expect(xml).toContain('<bare xmlns=""/>');
+    });
+  });
+
+  it("re-emits a namespace binding on a sibling outside the first scope", async () => {
+    // The declaration lands mid-document: it is emitted on `first`, whose
+    // scope cannot cover its sibling, so `second` needs it again.
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "root" },
+      { kind: "startNs", prefix: "p", uri: "urn:a" },
+      { kind: "start", name: "first", ns: "urn:a" },
+      { kind: "end", name: "first" },
+      { kind: "start", name: "second", ns: "urn:a" },
+      { kind: "end", name: "second" },
+      { kind: "endNs", prefix: "p", uri: "urn:a" },
+      { kind: "end", name: "root" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      expect(xml).toContain('<p:first xmlns:p="urn:a"');
+      expect(xml).toContain('<p:second xmlns:p="urn:a"');
+    });
+  });
+
+  it("collapses expanded 4-bit color channels", async () => {
+    const events: readonly AxmlEvent[] = [
+      {
+        kind: "start",
+        name: "e",
+        attrs: [
+          // Expanded storage: each output nibble is the high half of a byte.
+          { name: "a4", typed: [0x1e, 0xff00aa88] },
+          { name: "r4", typed: [0x1f, 0x0000aa88] },
+        ],
+      },
+      { kind: "end", name: "e" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      expect(xml).toContain('a4="#f0a8"');
+      expect(xml).toContain('r4="#0a8"');
+    });
+  });
+
+  it("keeps the type code on reserved typed values", async () => {
+    const events: readonly AxmlEvent[] = [
+      {
+        kind: "start",
+        name: "e",
+        attrs: [{ name: "mystery", typed: [0x09, 0x11223344] }],
+      },
+      { kind: "end", name: "e" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      expect(xml).toContain('mystery="(type 0x09)0x11223344"');
+    });
+  });
+
+  it("rejects an attribute record with a malformed value header", async () => {
+    const bytes = buildAxml([
+      {
+        kind: "start",
+        name: "e",
+        attrs: [{ name: "a", value: "v" }],
+      },
+      { kind: "end", name: "e" },
+    ]);
+    // Attribute record Res_value.size sits at chunk base + 16 + 20 + 12.
+    let cursor = 8 + bytes.readUInt32LE(12);
+    bytes.writeUInt16LE(6, cursor + 16 + 20 + 12);
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("rejects malformed string bytes instead of inserting U+FFFD", async () => {
+    const events: readonly AxmlEvent[] = [
+      {
+        kind: "start",
+        name: "e",
+        attrs: [{ name: "a", value: "ok" }],
+      },
+      { kind: "end", name: "e" },
+    ];
+    const bytes = buildAxml(events, { utf8: true });
+    // Corrupt one byte inside the "ok" string data: the last pool entry.
+    const poolBase = 8;
+    const stringsStart = poolBase + bytes.readUInt32LE(poolBase + 28 - 8);
+    const count = bytes.readUInt32LE(poolBase + 8);
+    const last = bytes.readUInt32LE(poolBase + 28 + (count - 1) * 4);
+    bytes[stringsStart + last + 3] = 0xff;
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("emits comments attached to namespace records", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "startNs", prefix: "p", uri: "urn:a", comment: "ns-note" },
+      { kind: "start", name: "root" },
+      { kind: "end", name: "root" },
+      { kind: "endNs", prefix: "p", uri: "urn:a", comment: "ns-tail" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      expect(xml).toContain("<!--ns-note-->");
+      expect(xml).toContain("<!--ns-tail-->");
+    });
+  });
+
+  it("marks unexamined carrier tails as unknown coverage", async () => {
+    const bytes = Buffer.concat([
+      buildAxml(AXML_MANIFEST_EVENTS),
+      Buffer.from([1, 2, 3, 4]),
+    ]);
+    await withReader(bytes, async (reader) => {
+      let coverage:
+        | { status: string; limitations: readonly string[] }
+        | undefined;
+      await list(reader, {
+        onCoverage: (c) => {
+          coverage = c;
+        },
+      });
+      expect(coverage?.status).toBe("unknown");
     });
   });
 });
