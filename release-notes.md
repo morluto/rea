@@ -666,6 +666,7 @@
 * **domain/pe:** unify Asn1BerFailure and PeBinaryFailure onto shared owners ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
 * **domain:** compose cleanup dependencies through analysisErrorCleanup helpers ([#14064](https://github.com/morluto/rea/issues/14064)) ([65ee0e8](https://github.com/morluto/rea/commit/65ee0e80abc12b582a8d3158878bf444e2397e8a))
 * **domain:** one ByteSource representation for streaming parsers ([#14044](https://github.com/morluto/rea/issues/14044)) ([a324181](https://github.com/morluto/rea/commit/a324181cccd428618f1bb839121789720fb1395d))
+* **domain:** share record and graph parsing across input paths ([#14321](https://github.com/morluto/rea/issues/14321)) ([2add88a](https://github.com/morluto/rea/commit/2add88a014e1bb16b53584615ea142067f55f916))
 * **domain:** split artifactFormatMetadata into domain modules ([#13655](https://github.com/morluto/rea/issues/13655)) ([8497f8c](https://github.com/morluto/rea/commit/8497f8c05a0a8184089f958419735329287bb9a0))
 * **domain:** split artifactFormatMetadata.ts into domain-grouped schema modules ([8497f8c](https://github.com/morluto/rea/commit/8497f8c05a0a8184089f958419735329287bb9a0))
 * **dwarf:** prune superseded whole-buffer locateDwarfSections wrapper ([#13993](https://github.com/morluto/rea/issues/13993)) ([27eef47](https://github.com/morluto/rea/commit/27eef4712206affa51850b1254d05d59eefbdd19))
