@@ -672,6 +672,7 @@
 * **artifacts:** migrate Bun and Deno readers to PositionalArtifactReader ([#13702](https://github.com/morluto/rea/issues/13702)) ([ee3d062](https://github.com/morluto/rea/commit/ee3d0620f0f0fbcff54c09ca47aa9e39b01a049a))
 * **artifacts:** migrate NtfsMft, Fit, and UImage onto PositionalArtifactReader ([af2dba0](https://github.com/morluto/rea/commit/af2dba0859f8b3f1c88b6b150c9d66139092c87c))
 * **artifacts:** migrate NtfsMft, Fit, UImage onto PositionalArtifactReader ([#13650](https://github.com/morluto/rea/issues/13650)) ([af2dba0](https://github.com/morluto/rea/commit/af2dba0859f8b3f1c88b6b150c9d66139092c87c))
+* **artifacts:** preserve bounded partial inspection for trailing boot/OTA metadata and deduplicate UEFI/iNES probes ([#14358](https://github.com/morluto/rea/issues/14358)) ([2b9db68](https://github.com/morluto/rea/commit/2b9db683aa53d5a754b7b5146dcbca5a269a92f9))
 * **artifacts:** reuse the positional reader for iNES prefixes ([#13481](https://github.com/morluto/rea/issues/13481)) ([b6ffec4](https://github.com/morluto/rea/commit/b6ffec43adeec2d7b57ef49b894425e8b0d36d0a))
 * **artifacts:** share cached prefix reader and ELF/MZ magic ([#13663](https://github.com/morluto/rea/issues/13663)) ([baed75f](https://github.com/morluto/rea/commit/baed75fc2b3a723144d46fdfb206b50bd03c6698))
 * **build:** share skill file enumeration across generators ([#14339](https://github.com/morluto/rea/issues/14339)) ([73f72c9](https://github.com/morluto/rea/commit/73f72c9cd69ad5a669dd4fc705d4b45af4297f11))
