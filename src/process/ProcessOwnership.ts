@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
+  ProcessTableInspectionError,
   readNativeProcessIdentityMap,
   readProcessOwnershipFacts,
   reobserveUnavailableTokenFacts,
@@ -291,6 +292,18 @@ export interface ProcessCleanupFailure {
   readonly signaled?: boolean;
   readonly failures?: readonly ProcessOwnershipValidationFailure[];
   readonly unverified?: readonly OwnershipSweepUnverifiedProcess[];
+  readonly inspection?: ProcessInspectionDiagnostic;
+}
+
+/** Facts from the owner of a failed process-table command, without its environment. */
+export interface ProcessInspectionDiagnostic {
+  readonly capability: "process_table";
+  readonly command: string;
+  readonly arguments: readonly string[];
+  readonly system_code: string | number | null;
+  readonly syscall: string | null;
+  readonly reason: string;
+  readonly remediation_action: string;
 }
 
 /** Token-verified liveness result used by post-root-exit settlement. */
@@ -426,6 +439,9 @@ const cleanupOwnedProcessGroupAttempt = async (
     return {
       cleaned: false,
       reason: `process table could not be inspected: ${processTable.reason}`,
+      ...(processTable.inspection === undefined
+        ? {}
+        : { inspection: processTable.inspection }),
     };
   const plan = await createOwnedCleanupPlan(
     ownership,
@@ -572,6 +588,9 @@ export const verifyNoTokenOwnedProcesses = async (
     return {
       cleaned: false,
       reason: `process table could not be inspected: ${processTable.reason}`,
+      ...(processTable.inspection === undefined
+        ? {}
+        : { inspection: processTable.inspection }),
     };
   const scan = await scanTokenOwnedProcesses(
     processTable.processes,
@@ -603,7 +622,11 @@ const readLiveProcessTable = async (
       readonly available: true;
       readonly processes: readonly ProcessTableEntry[];
     }
-  | { readonly available: false; readonly reason: string }
+  | {
+      readonly available: false;
+      readonly reason: string;
+      readonly inspection?: ProcessInspectionDiagnostic;
+    }
 > => {
   try {
     return {
@@ -612,7 +635,13 @@ const readLiveProcessTable = async (
     };
   } catch (cause: unknown) {
     rethrowProcessInspectionFailure(cause);
-    return { available: false, reason: errorMessage(cause) };
+    return {
+      available: false,
+      reason: errorMessage(cause),
+      ...(cause instanceof ProcessTableInspectionError
+        ? { inspection: cause.inspection }
+        : {}),
+    };
   }
 };
 
@@ -1019,7 +1048,13 @@ const settleLauncherExit = async (
         classified.kind === "escaped" ? classified.groupIds : [],
     };
   }
-  return { cleaned: false, reason };
+  return {
+    cleaned: false,
+    reason,
+    ...(!refreshed.available && refreshed.inspection !== undefined
+      ? { inspection: refreshed.inspection }
+      : {}),
+  };
 };
 
 const createOwnedCleanupPlan = async (
@@ -1322,6 +1357,9 @@ const revalidateOwnedProcessGroup = async (
       return {
         cleaned: false,
         reason: `process ownership could not be revalidated: ${errorMessage(cause)}`,
+        ...(cause instanceof ProcessTableInspectionError
+          ? { inspection: cause.inspection }
+          : {}),
       };
     }
     const { failures, validatedMembers } = await processOwnershipFailures(

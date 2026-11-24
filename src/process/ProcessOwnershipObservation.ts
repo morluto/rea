@@ -62,6 +62,7 @@ import type {
   ProcessOwnershipBaseline,
   ProcessRunTokenObservation,
   ProcessTableEntry,
+  ProcessInspectionDiagnostic,
 } from "./ProcessOwnership.js";
 import type { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -75,6 +76,35 @@ const rethrowInspectionFailure = (cause: unknown): void => {
     throw cause;
   rethrowProcessOwnershipInspectionFailure(cause);
 };
+
+/** The native inspector owns command identity and error classification. */
+export class ProcessTableInspectionError extends Error {
+  readonly _tag = "ProcessTableInspectionError";
+  readonly inspection: ProcessInspectionDiagnostic;
+
+  constructor(command: string, arguments_: readonly string[], cause: unknown) {
+    const reason = errorMessage(cause);
+    super(`${command} process-table inspection failed: ${reason}`, { cause });
+    this.name = "ProcessTableInspectionError";
+    const code =
+      cause instanceof Error && "code" in cause ? cause.code : undefined;
+    const syscall =
+      cause instanceof Error && "syscall" in cause ? cause.syscall : undefined;
+    this.inspection = {
+      capability: "process_table",
+      command,
+      arguments: [...arguments_],
+      system_code:
+        typeof code === "string" ||
+        (typeof code === "number" && Number.isSafeInteger(code))
+          ? code
+          : null,
+      syscall: typeof syscall === "string" ? syscall : null,
+      reason,
+      remediation_action: `Ensure ${command} is available and the host context permits it to execute and read the process table. Review the reported retained resources; cleanup remains unverified until the owning runtime confirms release.`,
+    };
+  }
+}
 
 /** Observe multiple groups from one process snapshot and one token batch. */
 export const observeOwnedProcessGroups = async (
@@ -1578,10 +1608,20 @@ export const createSystemProcessOwnershipHost = (
    * Execution failures keep their identity; the message names the `ps` that
    * ran (`spawn /usr/bin/ps ENOENT`, or bare `ps` for the PATH fallback).
    */
-  const listProcesses = async (signal?: AbortSignal) =>
-    platform === "win32"
-      ? []
-      : await listProcessesWith(await selectPs(), signal);
+  const listProcesses = async (signal?: AbortSignal) => {
+    if (platform === "win32") return [];
+    const ps = await selectPs();
+    try {
+      return await listProcessesWith(ps, signal);
+    } catch (cause: unknown) {
+      rethrowInspectionFailure(cause);
+      throw new ProcessTableInspectionError(
+        ps.command,
+        PROCESS_INVENTORY_PS_ARGUMENTS,
+        cause,
+      );
+    }
+  };
   const safeListProcesses = async (signal?: AbortSignal) => {
     const ps = await selectPs();
     try {

@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { CliInstance } from "./types.js";
+import type { CliJavaScriptAnalysisHost } from "./javascriptApplicationAnalysis.js";
 
 /** What a command registrar receives. */
 export interface CliRegistrationContext {
@@ -11,6 +12,8 @@ export interface CliRegistrationContext {
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly savedDefaults: ReadonlySet<string> | undefined;
   readonly fridaInstrumentation: FridaInstrumentationPort | undefined;
+  /** Invocation-scoped JavaScript worker owner; absent when hosts stay reusable. */
+  readonly javascriptAnalysis: CliJavaScriptAnalysisHost | undefined;
 }
 
 /** Context for registrars that run direct or provider analysis. */
