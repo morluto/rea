@@ -613,10 +613,12 @@ it("binds provider build reuse to the current run while keeping standalone dispa
   expect(buildSteps[stage]?.run).toContain(
     "node scripts/ci/portable-build-cache.mjs snapshot .cache/ci-build-plan.json",
   );
-  expect(buildSteps[stage]?.if).toBeUndefined();
+  expect(buildSteps[stage]?.if).toBe(
+    "needs.changes.outputs.build_cache == 'true'",
+  );
   expect(buildSteps[stage]?.shell).toBe("bash");
   expect(buildSteps[stage]?.["continue-on-error"]).not.toBe(true);
-  expect(buildSteps[upload]?.if).toBeUndefined();
+  expect(buildSteps[upload]?.if).toBe(buildSteps[stage]?.if);
   expect(buildSteps[upload]?.with).toMatchObject({
     path: ".cache/ci-build-cache/",
     "if-no-files-found": "error",
@@ -637,19 +639,44 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "go_binary",
     "ghidra_bridge",
   ];
-  const buildTerms = z
-    .string()
-    .parse(jobs.build?.if)
-    .split("||")
-    .map((term) => term.trim());
-  // Provider workflow edits select their lane without code=true. The build
-  // producer must still run, without selecting the portable test shards.
-  expect(new Set(buildTerms)).toEqual(
-    new Set(
-      ["code", ...consumers].map(
-        (scope) => `needs.changes.outputs.${scope} == 'true'`,
-      ),
-    ),
+  const { build_cache: cacheOutput } = z
+    .object({ build_cache: z.string() })
+    .parse(jobs.changes?.outputs);
+  const downloadStep = z.object({
+    uses: z.string().optional(),
+    with: z.object({ name: z.string().optional() }).optional(),
+  });
+  const cacheConsumers = z
+    .array(
+      z.object({
+        if: z.string().optional(),
+        with: z
+          .object({ build_cache_artifact: z.string().optional() })
+          .optional(),
+        steps: z.array(downloadStep).optional(),
+      }),
+    )
+    .parse(Object.values(jobs))
+    .filter(
+      (job) =>
+        job.with?.build_cache_artifact === "rea-build-cache" ||
+        job.steps?.some(
+          (step) =>
+            step.uses?.startsWith("actions/download-artifact@") &&
+            step.with?.name === "rea-build-cache",
+        ),
+    );
+  const cacheConditions = cacheConsumers.map((job) =>
+    z.string().parse(job.if).replace("needs.changes.", "steps.plan."),
+  );
+  expect(cacheOutput.startsWith("${{ ") && cacheOutput.endsWith(" }}")).toBe(
+    true,
+  );
+  expect(new Set(cacheOutput.slice(4, -3).split(/\s*\|\|\s*/u))).toEqual(
+    new Set(cacheConditions),
+  );
+  expect(jobs.build?.if).toBe(
+    "needs.changes.outputs.code == 'true' || needs.changes.outputs.build_cache == 'true'",
   );
   for (const name of ["test-shard", "test-shard-broad"])
     expect(jobs[name]?.if).toBe(
