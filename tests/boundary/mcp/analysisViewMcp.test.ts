@@ -311,14 +311,18 @@ it("directs unsupported parent views to the original Evidence", async () => {
     expect(error).toMatchObject({
       code: "unsupported_target",
       retryable: false,
+      retry: "none",
       details: {
         operation: "inspect_analysis_view",
+        failure_kind: "unsupported",
+        format: "evidence",
+        related_operations: ["get_evidence_bundle", "export_evidence_bundle"],
         reason: expect.stringContaining(
           'Parent Evidence operation "inspect_recorded_crash"',
         ),
       },
     });
-    expect(error.remediation.action).toContain("original complete Evidence");
+    expect(error.details?.reason).toContain("complete Evidence directly");
     expect(error.remediation.action).toContain("get_evidence_bundle");
     expect(error.remediation.action).toContain("export_evidence_bundle");
     expect(error.remediation.action).not.toContain("target format");
@@ -1823,9 +1827,17 @@ it("extracts an environment state identically from retained, portable and file M
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
   const hiddenError = parseMcpToolError(refused).error;
-  expect(hiddenError.code).toBe("unsupported_target");
-  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
-  expect(hiddenError.remediation.action).toContain("capture or summary view");
+  expect(hiddenError).toMatchObject({
+    code: "unsupported_target",
+    retry: "none",
+    details: {
+      failure_kind: "unsupported",
+      format: "evidence",
+      field: "sensitive_value_count",
+      reason: expect.stringContaining("sensitivity declarations"),
+    },
+  });
+  expect(hiddenError.details?.reason).toContain("capture or summary view");
   expect(hiddenError.remediation.action).not.toContain("target format");
   expect(JSON.stringify(refused)).not.toContain("probe folder");
   await client.ping();
@@ -2082,9 +2094,17 @@ it("projects an environment manifest identically from retained, portable and fil
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
   const hiddenError = parseMcpToolError(refused).error;
-  expect(hiddenError.code).toBe("unsupported_target");
-  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
-  expect(hiddenError.remediation.action).toContain("capture or summary view");
+  expect(hiddenError).toMatchObject({
+    code: "unsupported_target",
+    retry: "none",
+    details: {
+      failure_kind: "unsupported",
+      format: "evidence",
+      field: "sensitive_value_count",
+      reason: expect.stringContaining("sensitivity declarations"),
+    },
+  });
+  expect(hiddenError.details?.reason).toContain("capture or summary view");
   expect(hiddenError.remediation.action).not.toContain("target format");
   expect(JSON.stringify(refused)).toContain("sensitive_values_unretained");
   expect(JSON.stringify(refused)).not.toContain("/api/folders");

@@ -154,9 +154,16 @@ cliTest(
     });
     expect(notDirectory.exitCode).toBe(1);
     expect(notDirectory.json).toMatchObject({
-      code: "unsupported_target",
-      category: "unsupported_target",
-      details: { operation: "inspect_desktop_application", path: file },
+      code: "invalid_request",
+      category: "invalid_input",
+      retry: "after_change",
+      details: {
+        operation: "inspect_desktop_application",
+        path: file,
+        failure_kind: "selection",
+        format: "desktop-application",
+        reason: expect.stringContaining("local installation directory"),
+      },
     });
     const missingPath = join(root, "missing-directory");
     const missing = await cli.run({
