@@ -195,6 +195,24 @@ describe("x64 PE exception directory service failures", () => {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(tooSmall.error).toMatchObject({
+        resource: "capacity",
+        limit: { parameter: "max_file_bytes" },
+      });
+      const paddedPath = join(
+        await createTestTempDirectory("rea-pe-unwind-padded-"),
+        "padded.exe",
+      );
+      const padded = Buffer.concat([
+        peUnwindImage(CHAINED_IMAGE),
+        Buffer.alloc(131_072),
+      ]);
+      await writeFile(paddedPath, padded);
+      const fitsReadBudget = await service.inspect({
+        path: paddedPath,
+        max_file_bytes: 80_000,
+      });
+      expect(fitsReadBudget.ok).toBe(true);
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

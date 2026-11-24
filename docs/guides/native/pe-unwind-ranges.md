@@ -62,5 +62,4 @@ findings that the table does not support.
 A directory that is not backed by file bytes, a zero RVA with a nonzero size,
 or a file cut inside the table is refused as a malformed target, without
 partial success. A table with more than 2,097,152 entries exceeds the fixed
-decoding allowance. The input read budget is `max_file_bytes` (default 64 MiB,
-at most 512 MiB).
+decoding allowance. The default [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance) is 64 MiB of reads (`max_file_bytes`, ceiling 512 MiB), whatever the file size.
