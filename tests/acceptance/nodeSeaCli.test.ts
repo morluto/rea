@@ -338,7 +338,7 @@ cliTest(
     });
     expect(result.exitCode).not.toBe(0);
     expect(result.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       retryable: true,
       details: {
         reason: "limit",

@@ -482,7 +482,7 @@ Each category says which selected file is at fault:
 
 - **unsupported**: an `unsupported_target` refusal whose `details.path` is
   `binary_path`. The binary's form is outside coverage.
-- **malformed**: an `unsupported_target` refusal with `details.format_failure`
+- **malformed**: an `unsupported_target` refusal with `details.failure_kind`
   `malformed` or `truncated`, whose `details.path` is `binary_path`. The
   binary's own bytes are damaged. A damaged universal Mach-O container,
   including a slice that ends inside its header or disagrees with its FAT
@@ -561,7 +561,7 @@ A version other than 24, 27, 29, 31 or 39 fails as an unsupported target with
 
 Damaged metadata is refused as a malformed target: an `unsupported_target`
 refusal whose `details.path` is the metadata file, `details.format` is
-`il2cpp-metadata`, `details.format_failure` is `truncated` for
+`il2cpp-metadata`, `details.failure_kind` is `truncated` for
 `truncated-header` and `malformed` otherwise, and `details.reason` names one
 reason. The request is not at fault, so no input recovery is offered:
 

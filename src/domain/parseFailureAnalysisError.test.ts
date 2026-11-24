@@ -56,7 +56,7 @@ it.each([
         operation: "inspect_example",
         path: "/tmp/sample.bin",
         reason: cause.message,
-        format_failure: cause.failure.kind,
+        failure_kind: cause.failure.kind,
         format: "elf",
       },
     });
@@ -82,7 +82,7 @@ it("keeps the parser's structure and offset on a malformed target", () => {
   if (!(error instanceof AnalysisTargetFailureError))
     throw new Error("Expected a malformed target");
   expect(projectAnalysisError(error).details).toMatchObject({
-    format_failure: "truncated",
+    failure_kind: "truncated",
     format: "gguf",
     offset: 64,
     field: "tensor data",

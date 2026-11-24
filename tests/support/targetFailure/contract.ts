@@ -1,4 +1,7 @@
-import type { TargetFailureKind } from "../../../src/domain/targetFailure.js";
+import type {
+  TargetFailureKind,
+  TargetFailureRetry,
+} from "../../../src/domain/targetFailure.js";
 
 /**
  * The public target-failure contract, spelled out independently of the
@@ -9,60 +12,58 @@ export const TARGET_FAILURE_CONTRACT = {
   selection: {
     code: "invalid_request",
     category: "invalid_input",
-    retryable: false,
+    retry: "after_change",
   },
-  unrecognised: {
+  unrecognized: {
     code: "unsupported_target",
     category: "unsupported_target",
-    retryable: false,
+    retry: "none",
   },
   unsupported: {
     code: "unsupported_target",
     category: "unsupported_target",
-    retryable: false,
+    retry: "none",
   },
   malformed: {
     code: "unsupported_target",
     category: "unsupported_target",
-    retryable: false,
+    retry: "none",
   },
   truncated: {
     code: "unsupported_target",
     category: "unsupported_target",
-    retryable: false,
+    retry: "none",
   },
   integrity: {
-    code: "artifact_operation_failed",
+    code: "target_integrity_mismatch",
     category: "integrity_mismatch",
-    retryable: false,
+    retry: "none",
   },
   conflict: {
-    code: "invalid_request",
+    code: "input_conflict",
     category: "invalid_input",
-    retryable: false,
+    retry: "after_change",
   },
   changed: {
     code: "artifact_changed",
     category: "integrity_mismatch",
-    retryable: true,
+    retry: "backoff",
   },
-  access: { code: "access_denied", category: "unavailable", retryable: false },
+  access: {
+    code: "access_denied",
+    category: "unavailable",
+    retry: "after_change",
+  },
   io: {
-    code: "artifact_operation_failed",
+    code: "host_io_failed",
     category: "execution_failure",
-    retryable: false,
-  },
-  cancelled: { code: "cancelled", category: "cancelled", retryable: true },
-  resource: {
-    code: "resource_constraint",
-    category: "resource_constraint",
-    retryable: false,
+    retry: "none",
   },
 } as const satisfies Record<
   TargetFailureKind,
   {
     readonly code: string;
     readonly category: string;
-    readonly retryable: boolean;
+    readonly retry: TargetFailureRetry;
   }
 >;

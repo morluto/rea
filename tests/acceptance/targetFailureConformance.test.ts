@@ -35,9 +35,6 @@ for (const { operation, cases } of await loadTargetFailureReaders()) {
             operation,
             path,
             failure_kind: testCase.kind,
-            ...(testCase.kind === "malformed" || testCase.kind === "truncated"
-              ? { format_failure: testCase.kind }
-              : {}),
             ...testCase.facts,
             ...(testCase.identity
               ? { partial_observation: fileIdentity(path, bytes) }
@@ -52,11 +49,15 @@ for (const { operation, cases } of await loadTargetFailureReaders()) {
         expect(result.json).toMatchObject(expected);
         expect(result.json).not.toHaveProperty("recovery");
         expect(result.json).not.toHaveProperty("details.issues");
+        expect(result.json).not.toHaveProperty("details.format_failure");
 
         const call = await cli.sharedMcpCall!();
-        const { error } = parseMcpToolError(
-          await call(operation, { path, ...testCase.mcp }),
-        );
+        const response = await call(operation, { path, ...testCase.mcp });
+        // A target failure is a tool result with structured content, never a
+        // JSON-RPC error or a thrown handler failure flattened to text.
+        expect(response.isError).toBe(true);
+        expect(response.structuredContent).toMatchObject({ error: expected });
+        const { error } = parseMcpToolError(response);
         expect(error).toMatchObject(expected);
         expect(error).not.toHaveProperty("recovery");
         // A refusal never alters the caller's selected file.

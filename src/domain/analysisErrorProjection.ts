@@ -29,8 +29,9 @@ import {
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
 import {
-  TARGET_FAILURE_PROJECTIONS,
   targetFailureDetails,
+  targetFailureRetry,
+  type TargetFailureRetry,
 } from "./targetFailure.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
@@ -563,10 +564,11 @@ const projectError = (
     category: analysisErrorCategory(error),
     message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
-      // A target failure's retryability is its kind's, from the one table.
+      // `retryable` keeps its contract meaning: the unchanged request may
+      // succeed. For a target failure that is exactly a `backoff` hint.
       (error instanceof AnalysisTargetFailureError &&
         code !== "cleanup_incomplete" &&
-        TARGET_FAILURE_PROJECTIONS[error.failure.kind].retryable) ||
+        targetFailureRetry(error.failure) === "backoff") ||
       (!(error instanceof AnalysisTargetFailureError) &&
         RETRYABLE_CODES.has(code) &&
         error.ownPresentation()?.retryable !== false) ||
@@ -587,6 +589,10 @@ const projectError = (
           ? `${remediation}${retentionGuidance}${publicationRemediation}`
           : `${remediation}${retentionGuidance} ${cleanupRetryRemediation(cleanupRetry)}${publicationRemediation}`,
     },
+    ...(error instanceof AnalysisTargetFailureError &&
+    code !== "cleanup_incomplete"
+      ? { retry: targetFailureRetry(error.failure) }
+      : {}),
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
   };
@@ -987,7 +993,10 @@ export interface AnalysisErrorProjection extends Readonly<
     | "artifact_integrity_mismatch"
     | "artifact_operation_failed"
     | "evidence_integrity_mismatch"
-    | "truncated"
+    | "partial"
+    | "target_integrity_mismatch"
+    | "input_conflict"
+    | "host_io_failed"
     | "process_capture_failed"
     | "cleanup_incomplete"
     | "revision_conflict"
@@ -999,7 +1008,7 @@ export interface AnalysisErrorProjection extends Readonly<
     | "unsupported_provider"
     | "unsupported_target"
     | "integrity_mismatch"
-    | "truncated"
+    | "partial"
     | "cancelled"
     | "timeout"
     | "resource_constraint"
@@ -1007,6 +1016,8 @@ export interface AnalysisErrorProjection extends Readonly<
     | "execution_failure";
   readonly message: string;
   readonly retryable: boolean;
+  /** A target failure's retry hint, derived from its kind. */
+  readonly retry?: TargetFailureRetry;
   readonly remediation: Readonly<{
     action: string;
   }>;

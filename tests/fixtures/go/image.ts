@@ -468,7 +468,7 @@ export const createGoBinaryDiagnosticFixtures = () => {
       code: "unsupported_target" as const,
       details: {
         operation: "inspect_go_binary",
-        format_failure: "malformed",
+        failure_kind: "malformed",
       },
     })),
   ];
