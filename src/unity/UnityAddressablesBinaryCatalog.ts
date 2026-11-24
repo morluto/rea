@@ -8,6 +8,7 @@ import {
   beforeStoredText,
 } from "./UnityAddressablesShared.js";
 import {
+  UNITY_ADDRESSABLES_BINARY_HEADER_BYTES,
   UNITY_ADDRESSABLES_BINARY_VERSIONS,
   type UnityAddressablesKey,
   type UnityAddressablesLocation,
@@ -24,7 +25,6 @@ const NONE = 0xffffffff;
 const UNICODE = 0x80000000;
 const DYNAMIC = 0x40000000;
 const OFFSET_MASK = 0x3fffffff;
-const HEADER_BYTES = 32;
 const LOCATION_BYTES = 28;
 const BUNDLE_OPTIONS_BYTES = 20;
 
@@ -296,7 +296,7 @@ export function* readBinaryCatalogSteps(
   options: UnityAddressablesReadOptions,
 ): UnityAddressablesSteps {
   const reader = new BinaryReader(bytes, options);
-  reader.need(0, HEADER_BYTES, "header");
+  reader.need(0, UNITY_ADDRESSABLES_BINARY_HEADER_BYTES, "header");
   const version = littleEndian(bytes).u32(4) | 0;
   if (
     !(UNITY_ADDRESSABLES_BINARY_VERSIONS as readonly number[]).includes(version)

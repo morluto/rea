@@ -4,6 +4,10 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import {
+  binaryCatalog,
+  sampleCatalog,
+} from "../../../fixtures/unity/addressables.js";
 import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -97,6 +101,14 @@ it.each([
     create: writeBytes("board.dtb", devicetreeBlob),
     format: "devicetree",
     operation: "inspect_devicetree",
+  },
+  {
+    name: "a binary Unity Addressables catalog",
+    create: writeBytes("catalog.bin", () =>
+      binaryCatalog(sampleCatalog(), { version: 3 }),
+    ),
+    format: "unity-addressables-catalog",
+    operation: "inspect_unity_addressables",
   },
   {
     // An NVRAM variable store declares a file-system GUID REA does not walk.

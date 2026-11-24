@@ -17,6 +17,13 @@ Binary header version 1 (the optional `ENABLE_BINARY_CATALOG` define in
 Addressables 1.21 and 1.22) is refused as unsupported. The decoder is chosen
 from file content, not the file name.
 
+The shared artifact recognizer claims a binary catalog with header version 2
+or 3 by its magic and version, so `inspect_artifact` names
+`inspect_unity_addressables` as the next probe and binary target resolution
+classifies the file as an artifact rather than an unsupported binary. JSON
+catalogs are not recognized from their bytes; select them with this tool
+directly.
+
 Each location reports its primary key, internal id (a bundle path such as
 `{UnityEngine.AddressableAssets.Addressables.RuntimePath}/StandaloneOSX/core_assets_all_<hash>.bundle`
 or an asset path), provider id, resource type, dependencies as location indices

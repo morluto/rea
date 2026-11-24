@@ -1,13 +1,32 @@
 import { z } from "zod";
 import { constants as bufferConstants } from "node:buffer";
+import { BinaryReader } from "../binaryContainer.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+
+/** Format name carried by every catalog parse failure and recognized artifact. */
+export const UNITY_ADDRESSABLES_FORMAT = "unity-addressables-catalog";
 
 /** Little-endian int32 at offset zero of every binary content catalog. */
 export const UNITY_ADDRESSABLES_BINARY_MAGIC = 0x0de38942;
 
 /** Binary catalog versions with a layout checked against a built sample. */
 export const UNITY_ADDRESSABLES_BINARY_VERSIONS = [2, 3] as const;
+
+/** Magic, version and six section offsets precede every binary catalog body. */
+export const UNITY_ADDRESSABLES_BINARY_HEADER_BYTES = 32;
+
+/** A complete binary catalog header with the magic and a decoded version. */
+export const hasUnityAddressablesBinaryHeader = (prefix: Buffer): boolean => {
+  if (prefix.length < UNITY_ADDRESSABLES_BINARY_HEADER_BYTES) return false;
+  const header = new BinaryReader(prefix, true, UNITY_ADDRESSABLES_FORMAT);
+  return (
+    header.i32(0) === UNITY_ADDRESSABLES_BINARY_MAGIC &&
+    (UNITY_ADDRESSABLES_BINARY_VERSIONS as readonly number[]).includes(
+      header.i32(4),
+    )
+  );
+};
 
 const count = z.number().int().nonnegative();
 const rowIndex = count;

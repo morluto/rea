@@ -1,6 +1,8 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
-import type { UnityAddressables } from "../domain/unity/unityAddressables.js";
-import { UNITY_ADDRESSABLES_FORMAT } from "./UnityAddressablesFormat.js";
+import {
+  UNITY_ADDRESSABLES_FORMAT,
+  type UnityAddressables,
+} from "../domain/unity/unityAddressables.js";
 
 const readers = new WeakMap<Buffer, BinaryReader>();
 

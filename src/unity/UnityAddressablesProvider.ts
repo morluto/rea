@@ -43,6 +43,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
+  UNITY_ADDRESSABLES_FORMAT,
   UNITY_ADDRESSABLES_BUDGET_DEFAULTS,
   UNITY_ADDRESSABLES_BUDGET_MAXIMA,
   unityAddressablesBudgets,
@@ -53,7 +54,6 @@ import {
 } from "../domain/unity/unityAddressables.js";
 import { createUnityAddressablesAdmission } from "./UnityAddressablesAdmission.js";
 import { readUnityAddressablesCatalogSteps } from "./UnityAddressablesCatalog.js";
-import { UNITY_ADDRESSABLES_FORMAT } from "./UnityAddressablesFormat.js";
 import type { UnityAddressablesRowCounts } from "./UnityAddressablesShared.js";
 
 /** Bundled format reader identity; the catalog format version is a separate observed fact. */

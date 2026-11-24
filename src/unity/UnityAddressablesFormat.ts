@@ -1,7 +1,5 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
-
-/** Format name carried by every catalog parse failure. */
-export const UNITY_ADDRESSABLES_FORMAT = "unity-addressables-catalog";
+import { UNITY_ADDRESSABLES_FORMAT } from "../domain/unity/unityAddressables.js";
 
 /** Stable machine-readable reason for each rejected catalog. */
 export const UNITY_ADDRESSABLES_FAILURE_REASONS = {
