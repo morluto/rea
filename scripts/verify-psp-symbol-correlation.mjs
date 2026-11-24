@@ -2,10 +2,10 @@
 // Source-only checks for caller-selected, read-only PSP symbol comparison.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import {
   correlatePspSymbols,
   parsePspSymbols,
@@ -192,7 +192,11 @@ assert.throws(
   /hex address/u,
 );
 // Exercise the documented command boundary, not just exported functions.
-const scratch = await mkdtemp(join(tmpdir(), "rea-psp-symbol-check-"));
+const fixture = await VerifierFixture.open({
+  prefix: "rea-psp-symbol-check-",
+  private: false,
+});
+const scratch = fixture.path;
 try {
   const symbolsPath = join(scratch, "source.sym");
   const rawInventoryPath = join(scratch, "functions.json");
@@ -365,7 +369,7 @@ try {
     }
   }
 } finally {
-  await rm(scratch, { recursive: true, force: true });
+  await fixture.release();
 }
 console.log(
   "PSP_SYMBOL_CORRELATION_SOURCE_PASS: formats, address spaces, bounded output, UTF-8, CLI and identity refusals",
