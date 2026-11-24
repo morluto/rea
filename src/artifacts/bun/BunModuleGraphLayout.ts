@@ -977,7 +977,14 @@ const readExact = async (
       position + offset,
     );
     abortIfNeeded(signal);
-    if (read.bytesRead === 0) throw bunTruncatedFailure("trailer is truncated");
+    // Every caller checked the range against the measured file size, so a
+    // short read means the file changed underneath the read.
+    if (read.bytesRead === 0)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Bun standalone carrier ended before its measured extent",
+        { integrityCheck: "read-coverage" },
+      );
     offset += read.bytesRead;
   }
   return bytes;
