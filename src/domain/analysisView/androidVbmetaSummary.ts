@@ -24,26 +24,32 @@ export const androidVbmetaSummaryMetadataSchema = androidVbmetaMetadataSchema
     unknown_count: uint32,
   });
 
-const countNamed = (
-  descriptors: AndroidVbmetaMetadata["descriptors"],
-  tagName: AndroidVbmetaMetadata["descriptors"][number]["tag_name"],
-): number =>
-  descriptors.filter((descriptor) => descriptor.tag_name === tagName).length;
-
 /** Compact root facts for a vbmeta image's summary view. */
 export const summarizeAndroidVbmeta = (
   metadata: AndroidVbmetaMetadata,
 ): z.infer<typeof androidVbmetaSummaryMetadataSchema> => {
   const { descriptors, ...rest } = metadata;
+  const counts = {
+    PROPERTY: 0,
+    HASHTREE: 0,
+    HASH: 0,
+    KERNEL_CMDLINE: 0,
+    CHAIN_PARTITION: 0,
+    UNKNOWN: 0,
+  } satisfies Record<
+    AndroidVbmetaMetadata["descriptors"][number]["tag_name"],
+    number
+  >;
+  for (const descriptor of descriptors) counts[descriptor.tag_name] += 1;
   return {
     ...rest,
     kind: "android-vbmeta-summary",
     descriptor_count: descriptors.length,
-    property_count: countNamed(descriptors, "PROPERTY"),
-    hashtree_count: countNamed(descriptors, "HASHTREE"),
-    hash_count: countNamed(descriptors, "HASH"),
-    kernel_cmdline_count: countNamed(descriptors, "KERNEL_CMDLINE"),
-    chain_partition_count: countNamed(descriptors, "CHAIN_PARTITION"),
-    unknown_count: countNamed(descriptors, "UNKNOWN"),
+    property_count: counts.PROPERTY,
+    hashtree_count: counts.HASHTREE,
+    hash_count: counts.HASH,
+    kernel_cmdline_count: counts.KERNEL_CMDLINE,
+    chain_partition_count: counts.CHAIN_PARTITION,
+    unknown_count: counts.UNKNOWN,
   };
 };

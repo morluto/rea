@@ -217,11 +217,23 @@ const requireFileSize = (fileSize: number): void => {
     malformed("file size is not a safe nonnegative integer", "file_size");
 };
 
+// One big-endian reader per buffer, reused by every field read from it.
+const readers = new WeakMap<Buffer, BinaryReader>();
+
+const readerFor = (bytes: Buffer): BinaryReader => {
+  let reader = readers.get(bytes);
+  if (reader === undefined) {
+    reader = new BinaryReader(bytes, false, FORMAT);
+    readers.set(bytes, reader);
+  }
+  return reader;
+};
+
 const u32 = (bytes: Buffer, offset: number): number =>
-  new BinaryReader(bytes, false, FORMAT).u32(offset);
+  readerFor(bytes).u32(offset);
 
 const u64 = (bytes: Buffer, offset: number): bigint =>
-  new BinaryReader(bytes, false, FORMAT).word(offset, 64);
+  readerFor(bytes).word(offset, 64);
 
 /**
  * Apply an admission budget to a size the structure already accepted, so an
