@@ -535,6 +535,7 @@ const createContractBindingHandler = (
       recordEvidence,
       withAdmittedAnalysis,
       binding.viewSource,
+      retention,
     )(contract);
   return createRetainedSummaryToolHandler(
     server,
