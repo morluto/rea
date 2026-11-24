@@ -11,6 +11,7 @@ import {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
+import type { DirectoryRootDigest } from "../../domain/directoryTreeDigest.js";
 import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
   artifactEdgeId,
@@ -151,6 +152,9 @@ export const createOccurrence = (
     ...(entry.formatMetadata === undefined
       ? {}
       : { format_metadata: { ...entry.formatMetadata } }),
+    ...(entry.linkTarget === undefined
+      ? {}
+      : { link_target: { ...entry.linkTarget } }),
   };
 };
 
@@ -224,10 +228,17 @@ export const createRootNode = (input: {
       } & ArtifactClassificationEvidence)
     | null;
   readonly occurrences: readonly MutableOccurrence[];
+  /** A directory root's tree digest, which names it when complete. */
+  readonly treeDigest?: DirectoryRootDigest | undefined;
 }): ArtifactNode =>
   createArtifactNode({
     sha256:
       input.digest?.sha256 ??
+      (input.treeDigest?.status === "complete"
+        ? input.treeDigest.sha256
+        : undefined) ??
+      // A partial walk has no tree identity. This listing commitment keeps
+      // the graph addressable, and the inventory reports the digest partial.
       digestCanonicalValue(
         {
           kind: "directory-root",

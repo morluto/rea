@@ -924,6 +924,7 @@ export const createGhidraProviderClient = (input: {
         (policyReason === undefined
           ? undefined
           : new ProviderAdapterError("ghidra", operation, {
+              userMessage: policyReason,
               diagnostics: { reason: policyReason },
             }));
       if (extensionFailure === undefined && info.analysis_seeds !== undefined)

@@ -669,6 +669,11 @@ export const documentationSections = [
         route: "/mcp-contracts",
       },
       {
+        text: "Directory identity",
+        source: "reference/directory-identity.md",
+        route: "/directory-identity",
+      },
+      {
         text: "Reconstruction obligation ledgers",
         source: "reference/reconstruction-obligation-ledgers.md",
         route: "/reconstruction-obligation-ledgers",

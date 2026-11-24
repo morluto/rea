@@ -680,7 +680,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
   );
   for (const name of ["test-shard", "test-shard-broad"])
     expect(jobs[name]?.if).toBe(
-      `needs.changes.outputs.code == 'true' && needs.changes.outputs.test_shard_job == '${name}'`,
+      `needs.changes.outputs.code == 'true' && needs.changes.outputs.tier != 'warm' && needs.changes.outputs.test_shard_job == '${name}'`,
     );
   expect(jobs["test-shard-broad"]?.steps).toEqual(jobs["test-shard"]?.steps);
   expect(jobs["test-shard-broad"]?.strategy).toEqual(
@@ -835,7 +835,8 @@ it("keeps fast feedback separate from complete qualification and release proof",
       ),
     );
   expect(ci.on.schedule).toEqual([
-    { cron: "23 0-2,4-23 * * *" },
+    { cron: "23 1,5,7,11,13,17,19,23 * * *" },
+    { cron: "23 9,15,21 * * *" },
     { cron: "23 3 * * *" },
   ]);
   expect(ci.concurrency.group).toContain("'qualification' || 'feedback'");
@@ -1014,7 +1015,7 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
 it("runs a selected PR subset in planner-owned groups and still gates it", async () => {
   const { jobs } = await workflow();
   expect(jobs.test?.if).toBe(
-    "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}",
+    "${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.code == 'true' && needs.changes.outputs.tier != 'warm')) }}",
   );
   // The planner owns every shard list, including one job per selected group.
   expect(jobs["test-shard"]?.strategy).toMatchObject({
