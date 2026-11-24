@@ -440,9 +440,9 @@ describe("axml attribute namespaces", () => {
     ];
     await withReader(buildAxml(events), async (reader) => {
       const xml = await text(await reader.open((await list(reader))[0]!));
-      expect(xml).toContain("<!-- generated -->");
-      expect(xml).toContain("<!-- inner -->");
-      expect(xml).toContain("<!-- tail -->");
+      expect(xml).toContain("<!--generated-->");
+      expect(xml).toContain("<!--inner-->");
+      expect(xml).toContain("<!--tail-->");
     });
   });
 });

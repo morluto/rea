@@ -30,7 +30,9 @@ const axmlRegions: RegionDecoding<AxmlDocumentImage> = {
       },
     ],
     coverage: {
-      status: image.terminated ? "complete" : "unknown",
+      // Uninterpreted chunks or unexamined carrier tails cannot claim
+      // complete coverage even when the document itself terminated cleanly.
+      status: image.terminated && !image.unexamined ? "complete" : "unknown",
       limitations: image.limitations,
     },
   }),
