@@ -513,6 +513,11 @@ export const documentationSections = [
         source: "wxapkg.md",
         route: "/wxapkg",
       },
+      {
+        text: "tar and gzip-compressed tar archives",
+        source: "tar-archives.md",
+        route: "/tar-archives",
+      },
     ],
   },
   {

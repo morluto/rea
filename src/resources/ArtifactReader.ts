@@ -241,6 +241,7 @@ export interface ArtifactReader {
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
+    | "tar"
     | "uimage"
     | "android-boot-image"
     | "android-ota-payload"
