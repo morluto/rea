@@ -164,7 +164,12 @@ export const runOneShotCli = async (
 
   // Loaded only now: the documents above answer without the command catalog.
   const { loadCliRuntime } = await import("./cliLoader.js");
-  const runtime = await loadCliRuntime(global, environment, savedDefaults);
+  const runtime = await loadCliRuntime(
+    global,
+    environment,
+    savedDefaults,
+    { finalizeJavaScriptAnalysis: true },
+  );
   host.ownCliResources(runtime.closeCliResources);
   const { createCliResultOutput, cliOutputCancellationStatus } =
     await import("./cli/cliResultOutput.js");

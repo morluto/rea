@@ -9,6 +9,7 @@ import {
   type CliCommandModules,
 } from "./cli/cliCommandRegistrations.js";
 import type { CliResultOutput } from "./cli/cliResultOutput.js";
+import type { CliJavaScriptAnalysisHost } from "./cli/javascriptApplicationAnalysis.js";
 import { createCliShell } from "./cli/cliShell.js";
 import type { CliInstance } from "./cli/types.js";
 import { createDirectAnalysis } from "./composition/directAnalysis.js";
@@ -147,12 +148,14 @@ export const createCli = (
   resultOutput?: CliResultOutput,
   fridaInstrumentation?: FridaInstrumentationPort,
   savedDefaults?: ReadonlySet<string>,
+  javascriptAnalysis?: CliJavaScriptAnalysisHost,
 ): CliInstance =>
   createCliShell({
     selectedEnvironment,
     resultOutput,
     fridaInstrumentation,
     savedDefaults,
+    javascriptAnalysis,
     createAnalysis: createDirectAnalysis,
     registrations: CLI_REGISTRATION_ORDER.map((id) => ({
       registration: CLI_COMMAND_REGISTRATIONS[id],

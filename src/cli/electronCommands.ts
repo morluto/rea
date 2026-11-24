@@ -25,6 +25,7 @@ import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProvide
 import {
   javaScriptApplicationCliProjection,
   runJavaScriptApplicationCommand,
+  type CliJavaScriptAnalysisHost,
 } from "./javascriptApplicationAnalysis.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
@@ -39,6 +40,7 @@ export const registerElectronCommands = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
   options: {
+    readonly javascriptAnalysis?: CliJavaScriptAnalysisHost | undefined;
     readonly createActiveProvider?: (
       environment: Readonly<Record<string, string | undefined>>,
     ) => ElectronActiveObservationPort;
@@ -47,7 +49,12 @@ export const registerElectronCommands = (
   registerElectronObservationCommands(cli, logger, environment);
   registerElectronFuseCommand(cli, logger);
   registerElectronActiveCommand(cli, logger, environment, options);
-  registerJavaScriptApplicationCommand(cli, logger, environment);
+  registerJavaScriptApplicationCommand(
+    cli,
+    logger,
+    environment,
+    options.javascriptAnalysis,
+  );
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
 
@@ -280,6 +287,7 @@ const registerJavaScriptApplicationCommand = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
+  javascriptAnalysis?: CliJavaScriptAnalysisHost,
 ): void => {
   registerContractCommand(
     cli as CliInstance,
@@ -294,7 +302,7 @@ const registerJavaScriptApplicationCommand = (
       evidenceDelivery: true,
       viewDelivery: { invalidJson: "view must be valid JSON" },
     },
-    runJavaScriptApplicationCommand(environment),
+    runJavaScriptApplicationCommand(environment, javascriptAnalysis),
   );
 };
 

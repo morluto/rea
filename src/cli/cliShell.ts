@@ -1,6 +1,7 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
+import type { CliJavaScriptAnalysisHost } from "./javascriptApplicationAnalysis.js";
 import { parseCliGlobalArguments } from "../cliBuiltinArguments.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { parseLogLevel } from "../config/processStart.js";
@@ -39,6 +40,8 @@ export interface CliShellOptions {
   ) => DirectAnalysis;
   readonly resultOutput?: CliResultOutput | undefined;
   readonly fridaInstrumentation?: FridaInstrumentationPort | undefined;
+  /** Invocation-scoped JavaScript worker owner, when this invocation finalizes it. */
+  readonly javascriptAnalysis?: CliJavaScriptAnalysisHost | undefined;
 }
 
 /** Run each registrar, creating analysis once for those that declare it. */
@@ -91,6 +94,7 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
       environment,
       savedDefaults: options.savedDefaults,
       fridaInstrumentation: options.fridaInstrumentation,
+      javascriptAnalysis: options.javascriptAnalysis,
     },
     options,
   );

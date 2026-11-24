@@ -61,6 +61,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import type { ProcessInspectionDiagnostic } from "../../process/ProcessOwnership.js";
 import { ok, err, type Result } from "../../domain/result.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import {
@@ -752,6 +753,7 @@ export class JavaScriptAnalysisWorker {
           this.#lastFailure,
           cause.cleanupResources,
           cause.processId,
+          cause.inspection,
         );
         cause.bindCleanupFailure(error);
         throw error;
@@ -1432,6 +1434,7 @@ export class JavaScriptAnalysisWorker {
         this.#lastFailure,
         cause.cleanupResources,
         cause.processId,
+        cause.inspection,
       );
       cause.bindCleanupFailure(error);
       return error;
@@ -1511,6 +1514,7 @@ export class JavaScriptAnalysisWorker {
     ],
     processId: number | null = this.#runtime.supervisor?.launch.process.pid ??
       null,
+    inspection?: ProcessInspectionDiagnostic,
   ): ProviderCleanupError {
     return new ProviderCleanupError(
       PROVIDER,
@@ -1518,6 +1522,14 @@ export class JavaScriptAnalysisWorker {
       {
         reason,
         worker_pid: processId,
+        ...(inspection === undefined
+          ? {}
+          : {
+              inspection: {
+                ...inspection,
+                arguments: [...inspection.arguments],
+              },
+            }),
         ...(original === undefined
           ? {}
           : {
@@ -1534,6 +1546,9 @@ export class JavaScriptAnalysisWorker {
       },
       {
         operation: OPERATION,
+        ...(inspection === undefined
+          ? {}
+          : { remediationAction: inspection.remediation_action }),
         ...(original === undefined ? {} : { cleanupPrimary: original }),
         cause: new Error(
           reason,
@@ -1548,7 +1563,13 @@ export class JavaScriptAnalysisWorker {
     const stopped = await this.#runtime.stop();
     if (stopped.status === "incomplete") {
       this.#resetState();
-      const error = this.#cleanupError(stopped.reason, original);
+      const error = this.#cleanupError(
+        stopped.reason,
+        original,
+        undefined,
+        undefined,
+        stopped.cleanupResult?.inspection,
+      );
       this.#runtime.bindCleanupFailure(error);
       return error;
     }

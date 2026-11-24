@@ -24,6 +24,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.logger,
         context.analysis.runDirectAnalysis,
         context.environment,
+        context.javascriptAnalysis,
       ),
   ),
   reverseEngineering: plain(
@@ -325,6 +326,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.cli,
         context.logger,
         context.environment,
+        { javascriptAnalysis: context.javascriptAnalysis },
       ),
   ),
   javaScriptRuntimeObservation: plain(

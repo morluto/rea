@@ -8,7 +8,7 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { completeProviderEvidence } from "../application/ProviderOperationExecution.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -18,6 +18,10 @@ import { javaScriptSourcePathsSchema } from "../domain/javascript/javascriptSour
 import { parseCliJsonInput } from "./cliJsonInput.js";
 import { writeCliProgressLine } from "./cliProgress.js";
 import { ownCliProcessResource } from "./cliResources.js";
+import type { AnalysisCallerLifetime } from "../domain/analysisErrorBase.js";
+import { bindArtifactFileCleanup } from "../resources/index.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
 const OPERATION = "analyze_javascript_application";
 
@@ -57,13 +61,15 @@ export const cliJavaScriptSourcePaths = async (
 };
 
 /**
- * One parked JavaScript worker for one CLI host. A healthy worker stays
- * parked between that host's commands. Independent hosts do not share it.
+ * JavaScript resources for one CLI host. Reusable hosts park healthy workers;
+ * invocation hosts finalize them before returning analysis. Hosts do not share scopes.
  */
 export class CliJavaScriptAnalysisHost {
   #retainedScope: ArtifactResourceScope | undefined;
-  /** One shutdown shared by the exit callback and the dispatch `finally`. */
+  /** Concurrent callers share one shutdown attempt; failed close stays retryable. */
   #closing: Promise<void> | undefined;
+
+  constructor(readonly callerLifetime: AnalysisCallerLifetime = "continuing") {}
 
   scope(): ArtifactResourceScope {
     this.#retainedScope ??= new ArtifactResourceScope();
@@ -123,7 +129,7 @@ export const runCliJavaScriptApplicationAnalysis = async (
     { minimumIntervalMs: 0 },
   );
   const resources = host.scope();
-  const result = await analyzeJavaScriptApplication(input, resources, {
+  let result = await analyzeJavaScriptApplication(input, resources, {
     sourceAnalysis: javascriptSourceAnalysis,
     environment,
     progress,
@@ -143,19 +149,37 @@ export const runCliJavaScriptApplicationAnalysis = async (
       { reason: cleanup.reason },
       { cause, operation: "analyze_javascript_application" },
     );
+    bindArtifactFileCleanup(cause, failure);
     const completed = result.ok
       ? completeProviderEvidence(result.value, signal)
       : result;
     if (completed.ok) failure.retainPartialObservation(completed.value);
-    return cliError(
-      completed.ok
+    result = {
+      ok: false,
+      error: completed.ok
         ? failure
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             completed.error,
             failure,
             "analyze_javascript_application",
           ),
+    };
+  }
+  if (host.callerLifetime === "invocation") {
+    const finalized = await finishAnalysisCommand(
+      async () => result,
+      host,
+      JAVASCRIPT_APPLICATION_PROVIDER.id,
+      OPERATION,
+      signal ?? new AbortController().signal,
     );
+    return delivery === undefined
+      ? projectCliAnalysisResult(finalized)
+      : publishCliAnalysisEvidence(finalized, {
+          ...delivery,
+          operation: OPERATION,
+          signal: signal ?? new AbortController().signal,
+        });
   }
   const completed = result.ok
     ? completeProviderEvidence(result.value, signal)
@@ -231,7 +255,10 @@ export const javaScriptApplicationCliProjection = (target: string) =>
  * delivering Evidence as the caller selected.
  */
 export const runJavaScriptApplicationCommand =
-  (environment: Readonly<Record<string, string | undefined>>) =>
+  (
+    environment: Readonly<Record<string, string | undefined>>,
+    host: CliJavaScriptAnalysisHost = processJavaScriptAnalysis,
+  ) =>
   async (
     input: object & { readonly source_paths?: readonly string[] | undefined },
     {
@@ -258,5 +285,6 @@ export const runJavaScriptApplicationCommand =
       environment,
       signal,
       delivery,
+      host,
     );
   };

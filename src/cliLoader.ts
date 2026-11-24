@@ -76,16 +76,33 @@ export const loadCliRuntime = async (
   global: CliGlobalArguments | undefined,
   environment: NodeJS.ProcessEnv,
   savedDefaults: ReadonlySet<string> | undefined,
+  options: { readonly finalizeJavaScriptAnalysis?: boolean } = {},
 ): Promise<CliRuntime> => {
   const ids = selectCliRegistrations(
     global,
     RECORDED_CLI_COMMAND_REGISTRATIONS,
   );
+  // Load the JavaScript worker owner only for invocations that can run its
+  // registrars; other commands keep their recorded module graph.
+  const javascriptAnalysis =
+    options.finalizeJavaScriptAnalysis === true &&
+    (ids === undefined ||
+      ids.includes("coreAnalysis") ||
+      ids.includes("electron"))
+      ? new (await import("./cli/javascriptApplicationAnalysis.js"))
+          .CliJavaScriptAnalysisHost("invocation")
+      : undefined;
   if (ids === undefined) {
     const { createCli, closeCliResources } = await import("./cli.js");
     return {
       createCli: (resultOutput) =>
-        createCli(environment, resultOutput, undefined, savedDefaults),
+        createCli(
+          environment,
+          resultOutput,
+          undefined,
+          savedDefaults,
+          javascriptAnalysis,
+        ),
       closeCliResources,
     };
   }
@@ -105,6 +122,7 @@ export const loadCliRuntime = async (
         selectedEnvironment: environment,
         savedDefaults,
         resultOutput,
+        javascriptAnalysis,
         registrations: selected.map((registration, index) => ({
           registration,
           module: modules[index],

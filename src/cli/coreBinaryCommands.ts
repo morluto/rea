@@ -16,6 +16,7 @@ import type { CliInstance } from "./types.js";
 import {
   javaScriptApplicationCliProjection,
   runJavaScriptApplicationCommand,
+  type CliJavaScriptAnalysisHost,
 } from "./javascriptApplicationAnalysis.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
@@ -45,9 +46,16 @@ export const registerCoreBinaryCommands = (
   logger: Logger,
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
   environment: Readonly<Record<string, string | undefined>>,
+  javascriptAnalysis?: CliJavaScriptAnalysisHost,
 ): void => {
   const run = runDirectOnTarget(runDirectAnalysis, logger);
-  registerOverviewCommands(cli, logger, runDirectAnalysis, environment);
+  registerOverviewCommands(
+    cli,
+    logger,
+    runDirectAnalysis,
+    environment,
+    javascriptAnalysis,
+  );
   registerDecompileCommand(cli, logger, run);
   registerDecompileDirectoryCommand(cli, logger, run);
   registerSearchCommand(cli, logger, run);
@@ -186,6 +194,7 @@ const registerOverviewCommands = (
   logger: Logger,
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
   environment: Readonly<Record<string, string | undefined>>,
+  javascriptAnalysis?: CliJavaScriptAnalysisHost,
 ): void => {
   const description = "Get an overview of an app";
   const target = "App, program, or analysis database path";
@@ -200,7 +209,7 @@ const registerOverviewCommands = (
         viewDelivery: { invalidJson: "view must be valid JSON" },
       },
       // Route JavaScript targets exactly like analyze-javascript-application.
-      runJavaScriptApplicationCommand(environment),
+      runJavaScriptApplicationCommand(environment, javascriptAnalysis),
       {
         takes: async ({ path }) =>
           typeof path === "string" && isJavaScriptApplicationPath(path),
