@@ -122,7 +122,7 @@ it.each([-1, Number.NaN, "oversized"] as const)(
           return handle;
         },
       }),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({ reason: "io" });
   },
 );
 
@@ -661,7 +661,7 @@ describe("streamStableArtifact async chunks and custom chunkBytes", () => {
           retainBytes: () => 0,
           onChunk: async () => {},
         }),
-      ).rejects.toMatchObject({ reason: "format" });
+      ).rejects.toMatchObject({ name: "InternalInvariantError" });
     },
   );
 
