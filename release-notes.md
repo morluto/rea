@@ -68,6 +68,7 @@
 * **artifacts:** preserve DMG verification cancellation at the deadline ([#13616](https://github.com/morluto/rea/issues/13616)) ([f18de40](https://github.com/morluto/rea/commit/f18de40af62ab25948fa8c94e4ecaa61a52353aa))
 * **artifacts:** publish Node SEA metadata only after carrier validation ([#13411](https://github.com/morluto/rea/issues/13411)) ([120980c](https://github.com/morluto/rea/commit/120980cac0bc674584b8480187768cfd70972c08))
 * **artifacts:** report supported NES container layouts accurately ([#13499](https://github.com/morluto/rea/issues/13499)) ([321387c](https://github.com/morluto/rea/commit/321387c4319f5df167e488a827e38f3bed77eb36))
+* **artifacts:** route native images to static readers and name their architecture ([#14189](https://github.com/morluto/rea/issues/14189)) ([8ed8195](https://github.com/morluto/rea/commit/8ed819573bb3a4c8ef7a373f896c52554dd8acdf))
 * **artifacts:** share the examined-entry allowance across readers ([#13479](https://github.com/morluto/rea/issues/13479)) ([9560457](https://github.com/morluto/rea/commit/95604571965e9d1aec00a78665b4be64496eb094))
 * **artifacts:** verify owned carriers before retrying package reads ([#13343](https://github.com/morluto/rea/issues/13343)) ([d35e142](https://github.com/morluto/rea/commit/d35e1427097919e94f926e67b8068dafa6c02f6b))
 * **asar:** preserve lazy listing configuration errors ([#12854](https://github.com/morluto/rea/issues/12854)) ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
