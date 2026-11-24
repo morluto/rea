@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { createCatalogIdentity } from "../dist/contracts/catalog/catalogIdentity.js";
@@ -10,7 +11,6 @@ import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../dist/contracts/toolContracts.js";
-import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
@@ -268,64 +268,20 @@ await withVerifierCleanup(async () => {
       2,
     );
     await writeFile(configPath, original);
-    for (const args of [
-      ["setup", "--client", "claude_code", "--dry-run"],
-      ["setup", "--client", "claude_code", "--yes"],
-      ["doctor", "--client", "claude_code", "--skill"],
-    ]) {
-      const result = await commands.exec(
-        process.execPath,
-        [join(runtimeRoot, "scripts/rea.mjs"), ...args, "--json"],
-        { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-      );
-      await writeFile(
-        join(
-          lab,
-          `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`,
-        ),
-        result.stdout,
-      );
-      const parsed = JSON.parse(result.stdout);
-      if (args[0] === "doctor") assert.equal(parsed.healthy, true);
-      else {
-        assert.equal(
-          parsed.status,
-          args.includes("--dry-run") ? "planned" : "ready",
-        );
-        if (args.includes("--dry-run")) {
-          assert(parsed.plannedActions.some((a) => a.target === configPath));
-          assert(
-            parsed.plannedActions.some((a) => a.target === skillDirectory),
-          );
-          assert(
-            parsed.plannedActions.every(
-              (a) =>
-                a.target === configPath ||
-                (isAbsolute(a.target) &&
-                  isPathWithinRoot(skillDirectory, a.target)),
-            ),
-          );
-        }
-      }
-    }
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const configured = await readFile(configPath, "utf8");
-    assert.equal(JSON.parse(configured).theme, "light");
-    const repeated = await commands.exec(
-      process.execPath,
-      [
-        join(runtimeRoot, "scripts/rea.mjs"),
-        "setup",
-        "--client",
-        "claude_code",
-        "--yes",
-        "--json",
-      ],
-      { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-    );
-    assert.deepEqual(JSON.parse(repeated.stdout).appliedActions, []);
-    assert.equal(await readFile(configPath, "utf8"), configured);
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
+    await verifyClientSetup({
+      client: "claude_code",
+      commands,
+      runtimeRoot,
+      environment,
+      workspace,
+      lab,
+      configPath,
+      original,
+      skillDirectory,
+      checkConfigured: (configured) => {
+        assert.equal(JSON.parse(configured).theme, "light");
+      },
+    });
     const installedSkill = await readFile(
       join(skillDirectory, "SKILL.md"),
       "utf8",

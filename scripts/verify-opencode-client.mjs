@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
@@ -239,66 +240,22 @@ await withVerifierCleanup(async () => {
         2,
       );
     await writeFile(configPath, original);
-    for (const args of [
-      ["setup", "--client", "opencode", "--dry-run"],
-      ["setup", "--client", "opencode", "--yes"],
-      ["doctor", "--client", "opencode", "--skill"],
-    ]) {
-      const result = await commands.exec(
-        process.execPath,
-        [join(runtimeRoot, "scripts/rea.mjs"), ...args, "--json"],
-        { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-      );
-      await writeFile(
-        join(
-          lab,
-          `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`,
-        ),
-        result.stdout,
-      );
-      const parsed = JSON.parse(result.stdout);
-      if (args[0] === "doctor") assert.equal(parsed.healthy, true);
-      else {
-        assert.equal(
-          parsed.status,
-          args.includes("--dry-run") ? "planned" : "ready",
-        );
-        if (args.includes("--dry-run")) {
-          assert(parsed.plannedActions.some((a) => a.target === configPath));
-          assert(
-            parsed.plannedActions.some((a) => a.target === skillDirectory),
-          );
-          assert(
-            parsed.plannedActions.every(
-              (a) =>
-                a.target === configPath ||
-                (isAbsolute(a.target) &&
-                  isPathWithinRoot(skillDirectory, a.target)),
-            ),
-          );
-        }
-      }
-    }
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const configured = await readFile(configPath, "utf8");
-    assert(configured.includes("unrelated-server"));
-    if (configFormat === "jsonc")
-      assert(configured.includes("// Keep caller configuration."));
-    const repeated = await commands.exec(
-      process.execPath,
-      [
-        join(runtimeRoot, "scripts/rea.mjs"),
-        "setup",
-        "--client",
-        "opencode",
-        "--yes",
-        "--json",
-      ],
-      { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-    );
-    assert.deepEqual(JSON.parse(repeated.stdout).appliedActions, []);
-    assert.equal(await readFile(configPath, "utf8"), configured);
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
+    await verifyClientSetup({
+      client: "opencode",
+      commands,
+      runtimeRoot,
+      environment,
+      workspace,
+      lab,
+      configPath,
+      original,
+      skillDirectory,
+      checkConfigured: (configured) => {
+        assert(configured.includes("unrelated-server"));
+        if (configFormat === "jsonc")
+          assert(configured.includes("// Keep caller configuration."));
+      },
+    });
     const installedSkill = await readFile(
       join(skillDirectory, "SKILL.md"),
       "utf8",
