@@ -98,7 +98,7 @@ describe("onboarding documentation product facts", () => {
         for (const child of token.children ?? []) {
           const href =
             child.type === "link_open" ? child.attrGet("href") : null;
-          if (href?.startsWith("#"))
+          if (typeof href === "string" && href.startsWith("#"))
             fragments.push(decodeURIComponent(href.slice(1)));
         }
       }
