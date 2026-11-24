@@ -514,9 +514,8 @@
   },
   "src/pcap/PcapCommand.ts": {
     "\"The packet-tool output capture allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
+      "class": "protocol",
+      "reason": "Bounds only capinfos and tshark version and summary probes, whose replies are short fixed-format text; each tshark JSON pass reports producer_limits.output_bytes instead."
     }
   },
   "src/pcap/PcapOutput.ts": {
@@ -525,22 +524,10 @@
       "issue": 14237,
       "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
     },
-    "\"The tshark JSON decoding allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
-    },
     "\"The tshark JSON expansion allowance\"": {
       "class": "pending",
       "issue": 14237,
-      "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
-    }
-  },
-  "src/pcap/PcapSnapshot.ts": {
-    "\"the owned capture snapshot allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
+      "reason": "The decoded-JSON work across both tshark passes bounds the in-process parse; raising it needs a streaming decoder or a heap-aware control, so it stays fixed until then."
     }
   },
   "src/process/ArtifactAnalysisResources.ts": {
