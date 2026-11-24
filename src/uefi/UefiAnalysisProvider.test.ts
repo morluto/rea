@@ -10466,3 +10466,144 @@ it("strictly verifies caller-configured producer_limits are forwarded to Ghidra 
     spy.mockRestore();
   }
 });
+
+it("preserves agreed manifest phase and metadata when payload digests conflict, matching filter_phase dxe", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-digest-conflict-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const modName = "AgreedDxeModule.efi";
+  await writeFile(join(inDir, modName), createMinimalPeBuffer(0x8664, 1, 256));
+
+  const manifest = {
+    modules: [
+      {
+        name: "AgreedDxeModule",
+        guid: "11111111-2222-3333-4444-555555555555",
+        phase: "dxe",
+        payload_file: modName,
+        payload_sha256:
+          "0000000000000000000000000000000000000000000000000000000000000001",
+      },
+      {
+        name: "AgreedDxeModule",
+        guid: "11111111-2222-3333-4444-555555555555",
+        phase: "dxe",
+        payload_file: modName,
+        payload_sha256:
+          "0000000000000000000000000000000000000000000000000000000000000002",
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.name).toBe("AgreedDxeModule");
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.modules[0]?.guid).toBe(
+      "11111111-2222-3333-4444-555555555555",
+    );
+    expect(
+      result.limitations.some(
+        (l) =>
+          l.includes("contains conflicting metadata for payload") &&
+          l.includes("conflicting fields left unresolved"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((l) =>
+        l.includes("manifest row metadata ignored"),
+      ),
+    ).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds single-module Ghidra input staging with producer_limits.input_bytes and reports KiB budget naming producer_limits", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-single-input-bound-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const modBuffer = createMinimalPeBuffer(0x8664, 1, 1024);
+  await writeFile(join(inDir, "BigModule.efi"), modBuffer);
+
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+
+  let ghidraExecuted = false;
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command) => {
+      if (command.includes("analyzeHeadless")) {
+        ghidraExecuted = true;
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  try {
+    const provider = new UefiAnalysisProvider({
+      environment: {
+        PATH: process.env.PATH,
+        GHIDRA_INSTALL_DIR: mockGhidraDir,
+      },
+      ghidraInstallationHost: ghidraProfileInstallationHost,
+    });
+    try {
+      const executed = expectOk(
+        await provider.execute(
+          decompileRequest(inDir, outDir, {
+            include_disassembly: false,
+            producer_limits: {
+              input_bytes: 512,
+            },
+          }),
+        ),
+      );
+      const result = executed.value.result as UefiDecompileResult;
+      expect(result.coverage).toBe("partial");
+      expect(ghidraExecuted).toBe(false);
+      expect(result.modules[0]?.c_generator).toBe("scaffold");
+      expect(
+        result.limitations.some((l) =>
+          l.includes(
+            "Decompilation input staging truncated after reaching 512 B aggregate staging budget (raise producer_limits.input_bytes).",
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      await provider.close();
+    }
+  } finally {
+    spy.mockRestore();
+  }
+});

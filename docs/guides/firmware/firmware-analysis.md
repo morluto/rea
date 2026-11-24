@@ -189,6 +189,11 @@ across all initialization phases (SEC, PEI, DXE, SMM, APP, MISC):
 
 ```sh
 rea decompile-uefi-firmware /path/to/flash.bin /path/to/new-decompiled-tree --json
+
+# Or with custom producer limits:
+rea decompile-uefi-firmware /path/to/flash.bin /path/to/new-decompiled-tree \
+  --producer-limits '{"output_bytes": 8388608, "file_bytes": 134217728, "input_bytes": 268435456}' \
+  --json
 ```
 
 Or from MCP:
@@ -201,7 +206,12 @@ Or from MCP:
     "output_directory": "/path/to/new-decompiled-tree",
     "max_modules": 500,
     "include_disassembly": true,
-    "filter_phase": "all"
+    "filter_phase": "all",
+    "producer_limits": {
+      "input_bytes": 134217728,
+      "output_bytes": 4194304,
+      "file_bytes": 67108864
+    }
   }
 }
 ```
@@ -222,8 +232,8 @@ The tool accepts two input formats:
 
 - **Headless Ghidra C Decompilation**: When an authorized Ghidra installation is detected (`ghidraRun` on
   `PATH` or via `GHIDRA_INSTALL_DIR`), REA runs headless Ghidra with the embedded `ReaDecompileToC.java`
-  script (`DecompInterface`) to produce recovered C source code. C output is bounded at 4 MiB per module
-  and a 64 MiB aggregate staging budget.
+  script (`DecompInterface`) to produce recovered C source code. C output defaults to 4 MiB per module
+  (`producer_limits.output_bytes`) and a 64 MiB aggregate staging budget (`producer_limits.file_bytes`).
 - **Phase-Correct Scaffolding Fallback**: When Ghidra is absent or decompilation exceeds budget, REA
   generates typed C entry point scaffolding adhering to PI and UEFI specifications:
   - `PEIM`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_PEI_FILE_HANDLE, const EFI_PEI_SERVICES **)`
@@ -233,7 +243,22 @@ The tool accepts two input formats:
   - `mm-standalone`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_HANDLE, EFI_MM_SYSTEM_TABLE *)`
   - `DXE` driver, `SMM`, and `APP`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_HANDLE, EFI_SYSTEM_TABLE *)`
 - **Disassembly**: When `include_disassembly` is enabled (default `true`), instructions are disassembled
-  using system `llvm-objdump` (or `objdump`) bounded at 2 MiB per module and 64 MiB total.
+  using system `llvm-objdump` (or `objdump`) bounded by `producer_limits.output_bytes` per module (default 4 MiB)
+  and `producer_limits.file_bytes` aggregate (default 64 MiB).
+
+#### Resource Controls (`producer_limits`)
+
+Caller-configurable resource budgets control raw input staging, decompiled C generation, and disassembly output:
+
+| Field          | Default               | Description & Scope                                                                                                                                                    |
+| -------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input_bytes`  | `134217728` (128 MiB) | Total staging budget for raw executable module payloads before Ghidra decompilation and publication. Bounds both single-module staging and multi-module batch staging. |
+| `output_bytes` | `4194304` (4 MiB)     | Per-module limit for decompiled C output and per-module disassembly output (`llvm-objdump` / `objdump`).                                                               |
+| `file_bytes`   | `67108864` (64 MiB)   | Aggregate output budget for all decompiled C files and disassembly files staged across the operation.                                                                  |
+
+- **Scope & Lifecycle**: Per-call resource controls; applies on the next call without server restart.
+- **CLI JSON Form**: Pass via `--producer-limits '{"input_bytes": ..., "output_bytes": ..., "file_bytes": ...}'`.
+- **Graceful Degradation**: When a budget is reached, REA marks `coverage` as `"partial"`, records an actionable limitation naming the relevant `producer_limits` field to raise, and preserves work by falling back to entry point scaffolding or truncated annotations without failing the overall extraction.
 
 #### Output Organization and Evidence
 

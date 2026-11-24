@@ -1527,15 +1527,33 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       return ellipsisExcerpt(line, 120);
     };
 
+    const formatByteAllowance = (bytes: number): string => {
+      if (bytes % (1024 * 1024) === 0) {
+        return `${bytes / (1024 * 1024)} MiB`;
+      }
+      if (bytes % 1024 === 0) {
+        return `${bytes / 1024} KiB`;
+      }
+      if (bytes >= 1024 * 1024) {
+        const mib = bytes / (1024 * 1024);
+        return `${Number(mib.toFixed(2))} MiB`;
+      }
+      if (bytes >= 1024) {
+        const kib = bytes / 1024;
+        return `${Number(kib.toFixed(2))} KiB`;
+      }
+      return `${bytes} B`;
+    };
+
     const formatDecompileBudgetLimit = (
       moduleName: string,
       limitBytes: number,
       retainedRecoveredCode = false,
     ): string => {
-      const limitLabel =
-        limitBytes < MAX_DECOMPILE_MODULE_BYTES
-          ? `${Math.round(MAX_DECOMPILE_TOTAL_BYTES / (1024 * 1024))} MiB aggregate staging budget`
-          : `${Math.round(MAX_DECOMPILE_MODULE_BYTES / (1024 * 1024))} MiB per-module limit`;
+      const isAggregate = limitBytes < MAX_DECOMPILE_MODULE_BYTES;
+      const limitLabel = isAggregate
+        ? `${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes)`
+        : `${formatByteAllowance(MAX_DECOMPILE_MODULE_BYTES)} per-module limit (raise producer_limits.output_bytes)`;
       return retainedRecoveredCode
         ? `Decompiled C output for ${moduleName} stopped after reaching ${limitLabel}; retained recovered functions.`
         : `Decompiled C output for ${moduleName} stopped after reaching ${limitLabel}; recovered with reconstructed entry scaffolding.`;
@@ -1732,26 +1750,35 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     );
                   }
                 }
-                await writeFile(singleEfiPath, b ?? Buffer.alloc(0));
-                successfullyStagedInputs.add(1);
-                ghidraArgs = [
-                  tempRoot.path,
-                  "UefiDecomp_1",
-                  "-import",
-                  singleEfiPath,
-                  "-scriptPath",
-                  bridgeDir,
-                  "-postScript",
-                  scriptPath,
-                  singleOutC,
-                  String(MAX_DECOMPILE_MODULE_BYTES),
-                  String(MAX_DECOMPILE_TOTAL_BYTES),
-                  "-deleteProject",
-                ];
-                ghidraBatchOutcomeMap.set(1, {
-                  cPath: singleOutC,
-                  outcomePath: `${singleOutC}.outcome.json`,
-                });
+                const contentBytes = b ?? Buffer.alloc(0);
+                if (contentBytes.byteLength > MAX_RAW_PAYLOAD_TOTAL_BYTES) {
+                  isCoveragePartial = true;
+                  const rawLimitMsg = `Decompilation input staging truncated after reaching ${formatByteAllowance(MAX_RAW_PAYLOAD_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.input_bytes).`;
+                  if (!effectiveLimitations.includes(rawLimitMsg)) {
+                    effectiveLimitations.push(rawLimitMsg);
+                  }
+                } else {
+                  await writeFile(singleEfiPath, contentBytes);
+                  successfullyStagedInputs.add(1);
+                  ghidraArgs = [
+                    tempRoot.path,
+                    "UefiDecomp_1",
+                    "-import",
+                    singleEfiPath,
+                    "-scriptPath",
+                    bridgeDir,
+                    "-postScript",
+                    scriptPath,
+                    singleOutC,
+                    String(MAX_DECOMPILE_MODULE_BYTES),
+                    String(MAX_DECOMPILE_TOTAL_BYTES),
+                    "-deleteProject",
+                  ];
+                  ghidraBatchOutcomeMap.set(1, {
+                    cPath: singleOutC,
+                    outcomePath: `${singleOutC}.outcome.json`,
+                  });
+                }
               }
             } else {
               await Promise.all([
@@ -1805,17 +1832,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   MAX_RAW_PAYLOAD_TOTAL_BYTES
                 ) {
                   isCoveragePartial = true;
-                  const rawBudgetMiB = Math.round(
-                    MAX_RAW_PAYLOAD_TOTAL_BYTES / (1024 * 1024),
-                  );
-                  if (
-                    !effectiveLimitations.includes(
-                      `Batch decompilation input staging truncated after reaching ${rawBudgetMiB} MiB aggregate staging budget.`,
-                    )
-                  ) {
-                    effectiveLimitations.push(
-                      `Batch decompilation input staging truncated after reaching ${rawBudgetMiB} MiB aggregate staging budget.`,
-                    );
+                  const rawLimitMsg = `Batch decompilation input staging truncated after reaching ${formatByteAllowance(MAX_RAW_PAYLOAD_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.input_bytes).`;
+                  if (!effectiveLimitations.includes(rawLimitMsg)) {
+                    effectiveLimitations.push(rawLimitMsg);
                   }
                   continue;
                 }
@@ -2106,17 +2125,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           payloadSha256 = sha256Hex(modBytes);
         } else {
           isCoveragePartial = true;
-          const rawBudgetMiB = Math.round(
-            MAX_RAW_PAYLOAD_TOTAL_BYTES / (1024 * 1024),
-          );
-          if (
-            !effectiveLimitations.includes(
-              `Raw executable payload staging truncated after reaching ${rawBudgetMiB} MiB aggregate staging budget.`,
-            )
-          ) {
-            effectiveLimitations.push(
-              `Raw executable payload staging truncated after reaching ${rawBudgetMiB} MiB aggregate staging budget.`,
-            );
+          const rawLimitMsg = `Raw executable payload staging truncated after reaching ${formatByteAllowance(MAX_RAW_PAYLOAD_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.input_bytes).`;
+          if (!effectiveLimitations.includes(rawLimitMsg)) {
+            effectiveLimitations.push(rawLimitMsg);
           }
         }
 
@@ -2205,17 +2216,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             if (remainingAsmBytes <= 0) {
               disassemblyStatus = "omitted";
               isCoveragePartial = true;
-              const asmBudgetMiB = Math.round(
-                MAX_DISASSEMBLY_TOTAL_BYTES / (1024 * 1024),
-              );
-              if (
-                !effectiveLimitations.includes(
-                  `Disassembly output truncated after reaching ${asmBudgetMiB} MiB aggregate staging budget.`,
-                )
-              ) {
-                effectiveLimitations.push(
-                  `Disassembly output truncated after reaching ${asmBudgetMiB} MiB aggregate staging budget.`,
-                );
+              const asmTruncatedMsg = `Disassembly output truncated after reaching ${formatByteAllowance(MAX_DISASSEMBLY_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`;
+              if (!effectiveLimitations.includes(asmTruncatedMsg)) {
+                effectiveLimitations.push(asmTruncatedMsg);
               }
             } else {
               const DISASSEMBLER_SHUTDOWN_GRACE_MS = 5_000;
@@ -2337,14 +2340,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   } else {
                     disassemblyStatus = "omitted";
                     isCoveragePartial = true;
-                    if (
-                      !effectiveLimitations.includes(
-                        "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
-                      )
-                    ) {
-                      effectiveLimitations.push(
-                        "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
-                      );
+                    const asmTruncatedMsg = `Disassembly output truncated after reaching ${formatByteAllowance(MAX_DISASSEMBLY_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`;
+                    if (!effectiveLimitations.includes(asmTruncatedMsg)) {
+                      effectiveLimitations.push(asmTruncatedMsg);
                     }
                   }
                 } else {
@@ -2355,18 +2353,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     disassemblyStatus = "omitted";
                     isCoveragePartial = true;
                     if (maxAsmBuffer < remainingAsmBytes) {
-                      const perModLimit = `Disassembly output for ${safeLimitationModName} exceeded 2 MiB module budget; omitted disassembly.`;
+                      const perModLimit = `Disassembly output for ${safeLimitationModName} exceeded ${formatByteAllowance(MAX_DISASSEMBLY_MODULE_BYTES)} module budget (raise producer_limits.output_bytes); omitted disassembly.`;
                       if (!effectiveLimitations.includes(perModLimit)) {
                         effectiveLimitations.push(perModLimit);
                       }
-                    } else if (
-                      !effectiveLimitations.includes(
-                        "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
-                      )
-                    ) {
-                      effectiveLimitations.push(
-                        "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
-                      );
+                    } else {
+                      const asmTruncatedMsg = `Disassembly output truncated after reaching ${formatByteAllowance(MAX_DISASSEMBLY_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`;
+                      if (!effectiveLimitations.includes(asmTruncatedMsg)) {
+                        effectiveLimitations.push(asmTruncatedMsg);
+                      }
                     }
                   } else {
                     disassemblyStatus = "failed";
@@ -2505,17 +2500,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 reservedScaffoldBytes;
               if (cStat.size > remainingCBytes) {
                 isCoveragePartial = true;
-                const decompileBudgetMiB = Math.round(
-                  MAX_DECOMPILE_TOTAL_BYTES / (1024 * 1024),
-                );
-                if (
-                  !effectiveLimitations.includes(
-                    `Decompiled C output truncated after reaching ${decompileBudgetMiB} MiB aggregate staging budget.`,
-                  )
-                ) {
-                  effectiveLimitations.push(
-                    `Decompiled C output truncated after reaching ${decompileBudgetMiB} MiB aggregate staging budget.`,
-                  );
+                const decompileTruncatedMsg = `Decompiled C output truncated after reaching ${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`;
+                if (!effectiveLimitations.includes(decompileTruncatedMsg)) {
+                  effectiveLimitations.push(decompileTruncatedMsg);
                 }
               } else if (cStat.size > MAX_DECOMPILE_MODULE_BYTES) {
                 isCoveragePartial = true;
@@ -2577,12 +2564,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   }
                 } else if (
                   !effectiveLimitations.includes(
-                    "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                    `Decompiled C output truncated after reaching ${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`,
                   )
                 ) {
                   isCoveragePartial = true;
                   effectiveLimitations.push(
-                    "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                    `Decompiled C output truncated after reaching ${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`,
                   );
                 }
               }
@@ -2609,10 +2596,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
           let finalHeaderBytes: Buffer;
           let finalCBytes: Buffer;
-          const OMIT_HEADER_COMMENT =
-            "/* UEFI Module Header omitted: reached 64 MiB aggregate staging budget */\n";
-          const OMIT_C_COMMENT =
-            "/* Decompiled C output omitted: reached 64 MiB aggregate staging budget */\n";
+          const OMIT_HEADER_COMMENT = `/* UEFI Module Header omitted: reached ${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes) */\n`;
+          const OMIT_C_COMMENT = `/* Decompiled C output omitted: reached ${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes) */\n`;
           const omitHeaderBytesLen = Buffer.byteLength(
             OMIT_HEADER_COMMENT,
             "utf8",
@@ -2632,11 +2617,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               isCoveragePartial = true;
               if (
                 !effectiveLimitations.includes(
-                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  `Decompiled C output truncated after reaching ${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`,
                 )
               ) {
                 effectiveLimitations.push(
-                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  `Decompiled C output truncated after reaching ${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`,
                 );
               }
               if (
@@ -2682,11 +2667,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               isCoveragePartial = true;
               if (
                 !effectiveLimitations.includes(
-                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  `Decompiled C output truncated after reaching ${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`,
                 )
               ) {
                 effectiveLimitations.push(
-                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  `Decompiled C output truncated after reaching ${formatByteAllowance(MAX_DECOMPILE_TOTAL_BYTES)} aggregate staging budget (raise producer_limits.file_bytes).`,
                 );
               }
               if (
@@ -4469,7 +4454,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         dirHash.update(compositeKey([cand.identityRelPath, fileSha256]) + "\n");
 
         if (
-          cand.fromManifest?.payloadSha256 !== undefined &&
+          typeof cand.fromManifest?.payloadSha256 === "string" &&
           cand.fromManifest.payloadSha256 !== fileSha256
         ) {
           isCoveragePartial = true;
