@@ -10,6 +10,7 @@ import {
   build,
   processEvidence,
   proofEvidence,
+  readyProcessLedgerRequest,
   request,
   reviewedObligation,
 } from "./ReconstructionObligationLedger.fixture.js";
@@ -285,6 +286,51 @@ describe("reconstruction obligation retired claim proof", () => {
         ledger.obligations[0]?.diagnostics.map(({ code }) => code),
       ).toEqual(codes);
       expect(ledger.reports.missing_verifier_obligation_ids).toEqual([]);
+      expect(ledger.status).toBe(ledgerStatus);
+    },
+  );
+
+  it.each([
+    ["failing", "fail", "failed", ["not-applicable", "verifier-failed"]],
+    ["passing", "pass", "open", ["not-applicable"]],
+  ] as const)(
+    "still checks a %s verifier supplied for a retired claim",
+    (_, verifierStatus, ledgerStatus, codes) => {
+      const ready = readyProcessLedgerRequest();
+      const binding = ready.manifest?.bindings[0];
+      const capture = ready.evidence_bundle.records[0];
+      if (
+        binding === undefined ||
+        binding.verifier === null ||
+        capture === undefined
+      )
+        throw new Error("Expected a bound process obligation");
+      const ledger = build({
+        ...ready,
+        reviewed_obligations: [
+          retired(binding.obligation_id, capture.evidence_id, "not-applicable"),
+        ],
+        manifest: {
+          bindings: [
+            {
+              ...binding,
+              verifier: { ...binding.verifier, status: verifierStatus },
+            },
+          ],
+          contradictions: [],
+        },
+      });
+
+      // A verifier result that was supplied and failed stays visible on a
+      // retired claim and fails the ledger; a passing one leaves it open.
+      expect(ledger.obligations[0]).toMatchObject({
+        origin: "generated",
+        required: true,
+        status: "out-of-scope",
+      });
+      expect(
+        ledger.obligations[0]?.diagnostics.map(({ code }) => code),
+      ).toEqual(codes);
       expect(ledger.status).toBe(ledgerStatus);
     },
   );
