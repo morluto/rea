@@ -28,6 +28,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPartialObservation.js";
 import {
   findOverlappingFatSlices,
+  inspectFatSliceBounds,
   readFatSliceDeclarations,
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
@@ -375,11 +376,6 @@ function fatLayout(prefix: Buffer): Result<FatLayout | null, string> {
   const table = prefix.subarray(8, tableEnd);
   const parsed = readFatSliceDeclarations(table, { count, wide, littleEndian });
   if (parsed.status !== "parsed") return err(parsed.reason);
-  for (const slice of parsed.slices)
-    if (slice.reserved !== null && slice.reserved !== 0)
-      return err(
-        `FAT64 architecture ${slice.index} has a nonzero reserved field`,
-      );
   return ok({ slices: parsed.slices, tableEnd });
 }
 
@@ -412,7 +408,7 @@ async function readSourceSnapshot(file: FileHandle, signal?: AbortSignal) {
     signal,
     cancellationFailure: (reason) => new RegularFileOperationCancelled(reason),
   })) {
-    const bytes = Buffer.from(chunk);
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     hash.update(bytes);
     if (size < prefix.length)
       bytes.copy(prefix, size, 0, Math.min(bytes.length, prefix.length - size));
@@ -452,36 +448,49 @@ function originalOffset(
     return err(
       "Hopper did not expose the loaded Mach-O header needed to identify its FAT slice",
     );
-  const matches = [];
-  if (findOverlappingFatSlices(layout.value.slices) !== null)
-    return err("Original FAT slices overlap");
+  // Check whole-container bounds and overlaps across all slices, then validate
+  // alignment, FAT64 reserved word, and thin header identity only on the
+  // selected slice matching Hopper's loaded image.
+  const matches: FatSliceDeclaration[] = [];
   for (const slice of layout.value.slices) {
-    const reason = validateFatSlice(slice, size, layout.value.tableEnd);
-    if (reason !== null) return err(reason);
-    const embedded = headers.get(slice.index);
-    if (slice.size < 12 || embedded === undefined)
-      return err(
-        `FAT architecture ${slice.index} has a truncated Mach-O header`,
-      );
-    const embeddedIdentity = readMachoHeaderPrefixFacts(embedded).identity;
-    if (embeddedIdentity === null)
-      return err(
-        `FAT architecture ${slice.index} does not contain a Mach-O image`,
-      );
-    const identityError = validateFatSliceIdentity(slice, embeddedIdentity);
-    if (identityError !== null) return err(identityError);
+    const boundsIssue = inspectFatSliceBounds(
+      slice,
+      size,
+      layout.value.tableEnd,
+    );
+    if (boundsIssue !== null) return err(boundsIssue.reason);
     if (
       slice.cpuType === loadedIdentity.cpuType &&
       slice.cpuSubtype === loadedIdentity.cpuSubtype
     )
       matches.push(slice);
   }
+  if (findOverlappingFatSlices(layout.value.slices) !== null)
+    return err("Original FAT slices overlap");
   const selected = matches.length === 1 ? matches[0] : undefined;
   if (selected === undefined)
     return err(
       `Original FAT slice matching Hopper's loaded header is ${matches.length === 0 ? "missing" : "ambiguous"}`,
     );
-  if (headers.get(selected.index)?.equals(header) !== true)
+  const reason = validateFatSlice(selected, size, layout.value.tableEnd);
+  if (reason !== null) return err(reason);
+  if (selected.reserved !== null && selected.reserved !== 0)
+    return err(
+      `FAT64 architecture ${selected.index} has a nonzero reserved field`,
+    );
+  const embedded = headers.get(selected.index);
+  if (selected.size < 12 || embedded === undefined)
+    return err(
+      `FAT architecture ${selected.index} has a truncated Mach-O header`,
+    );
+  const embeddedIdentity = readMachoHeaderPrefixFacts(embedded).identity;
+  if (embeddedIdentity === null)
+    return err(
+      `FAT architecture ${selected.index} does not contain a Mach-O image`,
+    );
+  const identityError = validateFatSliceIdentity(selected, embeddedIdentity);
+  if (identityError !== null) return err(identityError);
+  if (!embedded.equals(header))
     return err(
       "Original FAT slice header disagrees with Hopper's loaded header",
     );

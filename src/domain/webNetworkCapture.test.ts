@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import {
   freezeJsonSnapshot,
   immutableJsonSnapshotMember,
+  isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 import {
   safeParseOwnedWebNetworkCapture,
@@ -112,6 +113,10 @@ it("retains schema normalization when an owned source contains a hidden reported
   const parsed = safeParseOwnedWebNetworkCapture(sealed);
   if (!parsed.success) throw parsed.error;
   expect(parsed.data).not.toBe(sealed);
+  expect(isImmutableJsonSnapshot(parsed.data)).toBe(true);
+  expect(Object.isFrozen(parsed.data.container.reported)).toBe(true);
+  const repeated = safeParseOwnedWebNetworkCapture(sealed);
+  expect(repeated.success && repeated.data).toBe(parsed.data);
   expect(parsed.data).toEqual(webNetworkCaptureSchema.parse(sealed));
   expect(
     Object.hasOwn(parsed.data.container.reported as object, "hidden"),

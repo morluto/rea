@@ -14,7 +14,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1261,7 +1261,7 @@ describe("CutterBridgeClient: scenario group 7", () => {
           execution_state: "complete",
           document_generation: 2,
         },
-        raw_result: output,
+        raw_result: null,
         limitations: expect.arrayContaining([
           expect.stringContaining("decimal strings"),
         ]),
@@ -1419,10 +1419,17 @@ describe("CutterBridgeClient: conservative platform checks", () => {
         "CutterBridge",
       ),
     });
+    // Neither client receives a home override, so the account home applies.
+    const accountBridgeDirectory = join(
+      userInfo().homedir,
+      ".cache",
+      "rea",
+      "cutter-bridge",
+    );
     await expect(
       new CutterBridgeClient({}, { platform: "darwin" }).listSessions(),
     ).resolves.toMatchObject({
-      bridge_directory: join(homedir(), ".cache", "rea", "cutter-bridge"),
+      bridge_directory: accountBridgeDirectory,
     });
     await expect(
       new CutterBridgeClient(
@@ -1430,7 +1437,7 @@ describe("CutterBridgeClient: conservative platform checks", () => {
         { platform: "darwin" },
       ).listSessions(),
     ).resolves.toMatchObject({
-      bridge_directory: join(homedir(), ".cache", "rea", "cutter-bridge"),
+      bridge_directory: accountBridgeDirectory,
     });
   });
 });

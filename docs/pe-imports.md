@@ -23,7 +23,15 @@ preserve that exact selection:
 
 ## Observations
 
-The inline Evidence result contains the artifact path, SHA-256, and byte length.
+The inline Evidence result contains the artifact path, SHA-256, byte length and
+the optional-header `image_base`. Each function row gives its import address
+table slot as `iat_rva` and as `iat_va` (`image_base` plus `iat_rva`). `iat_va`
+is relative to the `ImageBase` the file declares, which is where a provider
+loads the image unless its database was rebased. Pass `iat_va` to `xrefs` and
+other provider tools for a database at the file's base. For a rebased database,
+such as an IDA database moved before REA attached, add `iat_rva` to the base
+that provider reports for the image instead; REA does not observe that base
+from the file.
 `import_directory` and `delay_import_directory` report the data directory RVA
 and size, or `null` when a directory is absent or zero. Their `locations` are
 the file spans actually read for the descriptor array and its terminator. When
@@ -33,9 +41,10 @@ Evidence file-offset range.
 If the first descriptor cannot be examined, the directory declaration remains
 present with no consumed `locations`, and coverage is partial. Descriptors,
 thunks and NUL-terminated names stay within PE's 32-bit RVA space, including
-PE32+ images. Descriptor walks also stay inside each data directory's declared
-byte size; an unterminated or partially covered final slot is reported as a
-malformed entry, while earlier valid rows survive.
+PE32+ images. Like the Windows loader, descriptor walks continue to the null
+descriptor past a short declared directory `Size`; that `Size` is reported in
+`header_anomalies`. See
+[PE header admission](guides/native/binary-diagnostics.md#pe-header-admission).
 
 `machine` retains the original unsigned COFF value. `architecture` decodes
 known machines, including ReadyToRun OS overrides when a CLI directory is
@@ -68,7 +77,8 @@ the image never imported APIs through another table or overlay.
 
 ## Limits and failures
 
-The selected file is limited to 64 MiB by default (512 MiB maximum). At most
+The reader reads at most 64 MiB by default (`max_file_bytes`, 512 MiB maximum;
+see [read allowance](reference/limits-and-recovery.md#static-reader-read-allowance)), whatever the file size. At most
 256 import and delay-load descriptors are examined by default (4096 maximum),
 and at most 8192 functions across every table (262144 maximum). Malformed PE
 headers and exhausted DLL or function budgets fail without partial success.
@@ -77,8 +87,8 @@ with no runtime override; `max_file_bytes`, `max_dlls` and `max_functions` do
 not raise it. Resource failures report the exhausted allowance as `limit`
 (`dlls`, `functions` or `retained_text`) with matching recovery.
 
-Unreadable DLL names, hint/name entries, thunks, or descriptor slots outside
-the declared directory size are reported as partial coverage with `issues`. A
+Unreadable DLL names, hint/name entries, thunks, or descriptors are reported as
+partial coverage with `issues`. A
 descriptor whose required table RVA is zero (a
 standard `FirstThunk`, or a delay-load import address or name table) is
 reported as `malformed_entry` with no functions, never as a complete empty

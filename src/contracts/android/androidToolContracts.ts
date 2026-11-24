@@ -7,15 +7,15 @@ import {
   androidJniInspectionInputSchema,
 } from "../../domain/android/androidAnalysis.js";
 import {
-  androidPackageSummaryViewResultSchema,
-  androidManifestViewResultSchema,
-  androidComponentsViewResultSchema,
-  androidComponentSummaryViewResultSchema,
   androidClassSummaryViewResultSchema,
-  androidMethodSummaryViewResultSchema,
-  androidJniSummaryViewResultSchema,
+  androidComponentSummaryViewResultSchema,
+  androidComponentsViewResultSchema,
   androidJniPageViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+  androidJniSummaryViewResultSchema,
+  androidManifestViewResultSchema,
+  androidMethodSummaryViewResultSchema,
+  androidPackageSummaryViewResultSchema,
+} from "../../domain/analysisView/summarySchemas/androidSummarySchemas.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, toolEffects } from "../toolEffects.js";
@@ -123,7 +123,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Search complete top-level decompiler class-name rows in an explicit local APK by case-sensitive substring. Empty query inventories all rows. Repeated names remain repeated and appear in duplicate_names; the provider accepts only class names for lookup, so these rows do not identify which same-name class node a later lookup selects. Retains artifact and engine identity; no APK execution.",
+      "Search top-level decompiler class-name rows in an explicit local APK by case-sensitive substring. Empty query matches every row. Use limit and offset to page through matches. Duplicate counts describe the returned rows; the provider accepts only class names for lookup, so these rows do not identify which same-name class node a later lookup selects. Retains artifact and engine identity; no APK execution.",
     kind: "android-provider",
     inputSchema: androidInputSchemas.search_android_classes,
     outputSchema: evidenceResultOf(androidResultSchemas.search_android_classes),

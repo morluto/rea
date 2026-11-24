@@ -9,6 +9,11 @@ export const documentationSections = [
         route: "/installation",
       },
       {
+        text: "Supported targets and requirements",
+        source: "reference/supported-targets.md",
+        route: "/supported-targets",
+      },
+      {
         text: "Client configuration and troubleshooting",
         source: "getting-started/client-configuration.md",
         route: "/client-configuration",
@@ -507,6 +512,11 @@ export const documentationSections = [
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",
+      },
+      {
+        text: "GPU asset headers: DDS, GLB, KTX and KTX2",
+        source: "gpu-asset-headers.md",
+        route: "/gpu-asset-headers",
       },
     ],
   },

@@ -664,26 +664,31 @@ it("preserves encrypted-member and malformed-compression observations", async ()
 
   const corruptPath = join(root, "corrupt-compression.zip");
   const corruptWriter = new ZipWriter(new Uint8ArrayWriter());
-  await corruptWriter.add("data.txt", new TextReader("evidence\n"));
+  await corruptWriter.add("data.txt", new TextReader("evidence\n".repeat(64)), {
+    compressionMethod: 8,
+  });
   await writeFile(corruptPath, await corruptWriter.close());
   const bytes = await readFile(corruptPath);
   const localFileHeaderSignature = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
   const localHeader = bytes.indexOf(localFileHeaderSignature);
   if (localHeader < 0) throw new Error("Expected a ZIP local-file header");
+  expect(bytes.readUInt16LE(localHeader + 8)).toBe(8);
   const dataOffset =
     localHeader +
     30 +
     bytes.readUInt16LE(localHeader + 26) +
     bytes.readUInt16LE(localHeader + 28);
-  const firstByte = bytes[dataOffset];
-  if (firstByte === undefined) throw new Error("Expected ZIP member bytes");
-  bytes[dataOffset] = firstByte ^ 1;
+  // DEFLATE reserves block type 3. Flipping only the final-block bit can
+  // still produce valid compressed data and test the CRC instead.
+  bytes[dataOffset] = 0xff;
   await writeFile(corruptPath, bytes);
 
   await expectInventoryFailure(
     corruptPath,
     "format",
-    "ZIP archive is malformed: Invalid compressed data",
+    // With CRC verification enabled, the native inflater can report the
+    // checksum fault before surfacing the compressed-data fault.
+    /^ZIP archive is malformed: Invalid (?:compressed data|CRC32)$/u,
   );
 });
 
@@ -729,13 +734,17 @@ it.each([0x04034b50, 0x06064b50])(
   },
 );
 
-it("reports an unsupported ZIP compression method as unavailable", async () => {
+it("reports a member with an unsupported compression method as unavailable and keeps its siblings", async () => {
   const root = await createTestTempDirectory("rea-zip-method-");
   const path = join(root, "lzma.zip");
   const writer = new ZipWriter(new Uint8ArrayWriter());
   await writer.add("data.txt", new TextReader("member bytes"), { level: 0 });
+  await writer.add("readme.txt", new TextReader("sibling bytes"), {
+    level: 0,
+  });
   const bytes = Buffer.from(await writer.close());
-  // Declare LZMA (14) in both headers; REA reads only stored and Deflate data.
+  // Declare LZMA (14) in the first member's headers; REA reads only stored,
+  // Deflate and Zstandard data. unzip and bsdtar still list both members.
   const localHeader = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
   const centralHeader = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
   if (localHeader < 0 || centralHeader < 0)
@@ -744,18 +753,41 @@ it("reports an unsupported ZIP compression method as unavailable", async () => {
   bytes.writeUInt16LE(14, centralHeader + 10);
   await writeFile(path, bytes);
 
-  await expectInventoryFailure(
-    path,
-    "unavailable",
-    "ZIP archive uses an unsupported feature: Compression method not supported",
+  const inventory = await inventoryArtifact(path);
+  const limitation =
+    "ZIP member compression method 14 is unsupported; no content hash or child artifact was produced.";
+  expect(inventory.occurrences).toContainEqual(
+    expect.objectContaining({
+      logical_path: "data.txt",
+      artifact_id: null,
+      hash_status: "unavailable",
+      limitations: [limitation],
+    }),
   );
+  expect(inventory.occurrences).toContainEqual(
+    expect.objectContaining({
+      logical_path: "readme.txt",
+      hash_status: "verified",
+    }),
+  );
+  expect(inventory.nodes).toContainEqual(
+    expect.objectContaining({
+      sha256: createHash("sha256").update("sibling bytes").digest("hex"),
+    }),
+  );
+  // The central directory lists every entry; only one member's content is
+  // unreadable, so entry coverage stays complete, as for an encrypted member.
+  expect(inventory.coverage).toEqual({
+    scope: "container-entries",
+    status: "complete",
+  });
 });
 
 /** Inventory one archive through the provider and expect a typed failure. */
 const expectInventoryFailure = async (
   path: string,
   reason: string,
-  detail: string,
+  detail: string | RegExp,
 ): Promise<void> => {
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw target.error;
@@ -764,7 +796,12 @@ const expectInventoryFailure = async (
   );
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "ArtifactOperationError", reason, detail },
+    error: {
+      _tag: "ArtifactOperationError",
+      reason,
+      detail:
+        typeof detail === "string" ? detail : expect.stringMatching(detail),
+    },
   });
 };
 

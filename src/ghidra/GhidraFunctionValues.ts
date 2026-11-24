@@ -2,6 +2,8 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
 import { addressDistance } from "../domain/native/addressCoordinate.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
+import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
+import { unavailableNativeFactSchema } from "../domain/native/nativeFactAvailability.js";
 import { z } from "zod";
 import {
   ghidraNativeApiBoundary,
@@ -36,11 +38,7 @@ import {
   swiftLargeStringLiteralOmissionSchema,
 } from "../domain/native/swiftStringLiteral.js";
 import { functionBodyEntryAgrees } from "../domain/native/functionBody.js";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonValue,
-} from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   relationshipCoverageSchema,
@@ -116,7 +114,7 @@ export const parseGhidraFunctionInput = (
   const parsed = inputSchemas[operation].safeParse(value);
   return parsed.success
     ? ok(
-        jsonObjectSchema.parse(
+        ownedJsonObjectSchema.parse(
           Object.fromEntries(
             Object.entries(parsed.data).filter(
               ([, value]) => value !== undefined,
@@ -150,9 +148,21 @@ const referenceEdge = z
     kind: referenceKind,
   })
   .strict();
+/**
+ * The target of incoming references selected by an explicit address outside
+ * every function, such as an import address-table slot: its primary symbol
+ * when one exists, and no function classification or body.
+ */
+const nonFunctionTarget = z.strictObject({
+  address: nativeAddressObservationSchema,
+  name: z.string().min(1),
+  symbol: nativeSymbolMetadataSchema.nullable(),
+  classification: z.null(),
+  body: unavailableNativeFactSchema,
+});
 const procedureReferences = z
   .object({
-    procedure: procedureIdentity,
+    procedure: z.union([procedureIdentity, nonFunctionTarget]),
     direction: z.enum(["incoming", "outgoing"]),
     references: z.array(referenceEdge),
     reference_kinds_available: z.boolean(),
@@ -425,7 +435,9 @@ export const parseGhidraFunctionResult = (
   const parsed = resultSchemas[operation].safeParse(observation.value);
   return parsed.success
     ? ok({
-        value: jsonValueSchema.parse(parsed.data),
+        // `observation.value` comes from an admitted JsonValue and `resultSchemas[operation]`
+        // outputs fresh plain objects/arrays whose fields are all JSON-safe.
+        value: parsed.data as JsonValue,
         limitations: observation.limitations,
         ...(observation.cache_policy === undefined
           ? {}

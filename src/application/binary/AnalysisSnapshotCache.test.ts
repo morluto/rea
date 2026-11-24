@@ -18,12 +18,15 @@ import {
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   createEvidenceBundle,
+  createImmutableEvidenceBundle,
   evidenceBundleForTarget,
 } from "../../domain/evidenceBundle.js";
 import { ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
+  createAnalysisSnapshotEntry,
   createAnalysisSnapshotWorkflowEntry,
+  immutableAnalysisSnapshot,
   parseAnalysisSnapshot,
   serializeAnalysisSnapshot,
   snapshotEvidenceForQuery,
@@ -1653,4 +1656,103 @@ it("binds native value-trace absence semantics without changing other workflows"
   expect(workflowAnalysisProfile(profile, "xrefs")).toEqual(
     workflowAnalysisProfile(profile),
   );
+});
+
+it("detaches sealed bundle and staged entry payloads on export", () => {
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const parameters = { address: "0x1000", document: "fixture" };
+  const result = { nested: [{ text: "ret" }], name: "main" };
+  const rawResult = { raw: ["source"] };
+  const evidence = createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+    operation: "procedure_info",
+    parameters,
+    result,
+    rawResult,
+    analysisProfile: profile,
+  });
+  const sealedBundle = createImmutableEvidenceBundle([evidence]);
+  const sealedSnapshot = immutableAnalysisSnapshot({
+    target: snapshotTarget(target),
+    binding: snapshotBinding(profile),
+    entries: [
+      createAnalysisSnapshotEntry({
+        target: snapshotTarget(target),
+        binding: snapshotBinding(profile),
+        operation: "procedure_info",
+        parameters,
+        execution: snapshotExecution(
+          createAnalysisExecution(result, ANALYSIS_SNAPSHOT_PROVIDER, {
+            subject: target,
+            analysisProfile: profile,
+            rawResult,
+          }),
+        ),
+      }),
+    ],
+    workflow_entries: [],
+    evidence_bundle: sealedBundle,
+  });
+  const cache = new AnalysisSnapshotCache();
+  cache.stage(sealedSnapshot);
+  const exported = cache.export(target, profile, sealedBundle);
+  if (!exported.ok) throw exported.error;
+  const entry = exported.value.entries[0]!;
+  const record = exported.value.evidence_bundle.records[0]!;
+  for (const payload of [
+    entry.parameters,
+    entry.execution.result,
+    entry.execution.raw_result,
+    record.parameters,
+    record.normalized_result,
+    record.raw_result,
+  ]) {
+    expect(Object.isFrozen(payload)).toBe(false);
+    Reflect.set(payload as Record<string, unknown>, "mutated", true);
+    expect((payload as Record<string, unknown>).mutated).toBe(true);
+  }
+  expect(Object.isFrozen(sealedBundle.records[0]?.normalized_result)).toBe(
+    true,
+  );
+  expect(sealedBundle.records[0]?.normalized_result).toEqual(result);
+});
+
+describe("snapshot recording refusals", () => {
+  const recording = (address: string, extra: object = {}) => ({
+    target: structuredClone(ANALYSIS_SNAPSHOT_TARGET),
+    profile: structuredClone(ANALYSIS_SNAPSHOT_PROFILE),
+    operation: "xrefs" as const,
+    parameters: { address, document: "fixture" },
+    execution: {
+      ...createAnalysisExecution([], ANALYSIS_SNAPSHOT_PROVIDER, {
+        subject: ANALYSIS_SNAPSHOT_TARGET,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      }),
+      ...extra,
+    },
+  });
+
+  it("names a reference truncation the record would drop", () => {
+    const cache = new AnalysisSnapshotCache();
+    const truncated = recording("0x1000", { referencesTruncated: true });
+    expect(cache.recordingRefusal(truncated)).toContain("reference truncation");
+    cache.record(truncated);
+    expect(cache.entries()).toEqual([]);
+    const plain = recording("0x1000");
+    expect(cache.recordingRefusal(plain)).toBeUndefined();
+    cache.record(plain);
+    expect(cache.entries()).toHaveLength(1);
+  });
+
+  it("names a full cache only for a query it does not already hold", () => {
+    const cache = new AnalysisSnapshotCache();
+    for (let index = 0; index < 10_000; index++)
+      cache.record(recording(`0x${(0x1000 + index).toString(16)}`));
+    expect(cache.entries()).toHaveLength(10_000);
+    expect(cache.recordingRefusal(recording("0x1000"))).toBeUndefined();
+    const extra = recording("0x900000");
+    expect(cache.recordingRefusal(extra)).toContain("10000-entry maximum");
+    cache.record(extra);
+    expect(cache.entries()).toHaveLength(10_000);
+  });
 });

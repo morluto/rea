@@ -1,4 +1,5 @@
 import { displayedEvidenceSubject } from "../../tests/fixtures/evidenceSubject.js";
+import { rawLoadAtEntry } from "./rawBinary.fixture.js";
 import { unknownTarget } from "./targetIdentity.js";
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
@@ -49,8 +50,7 @@ describe("subject target identity", () => {
     format: "raw-binary",
     architecture: "arm",
     availableArchitectures: ["arm"],
-    entryPoint,
-    entryPointSource: "caller",
+    rawLoad: rawLoadAtEntry(entryPoint),
   });
   const observe = (target: BinaryTarget) =>
     createEvidence(target, PROVIDER, {
@@ -1118,4 +1118,27 @@ it("validates a debugger session subject's launch file with the file subject dec
       .identity,
     "an unobserved launch target stays an explicit unknown",
   ).toEqual({ ...session, target: unknownTarget("not-observed") });
+});
+
+it("still validates profile provider agreement when reusing an immutable snapshot result", () => {
+  const result = freezeJsonSnapshot({ ok: true });
+  const created = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result,
+    analysisProfile: PROFILE,
+  });
+  expect(created.normalized_result).toBe(result);
+  expect(() =>
+    createEvidence(
+      TARGET,
+      { ...PROVIDER, id: "other" },
+      {
+        operation: "health",
+        parameters: {},
+        result,
+        analysisProfile: PROFILE,
+      },
+    ),
+  ).toThrow(/profile provider/u);
 });

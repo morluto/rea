@@ -1,30 +1,17 @@
-import { ArtifactPreparation } from "./ArtifactPreparation.js";
-import { Readable, Transform } from "node:stream";
 import { crc32 } from "node:zlib";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { setImmediate } from "node:timers/promises";
 
 import type {
   UImageEntryMetadata,
   UImageMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/firmwareMetadata.js";
+import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
-  assertArtifactReadActive,
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  assertProducedEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactTraversalOptions,
-  ArtifactResourceScope,
-  ArtifactFileSource,
-} from "../resources/index.js";
-import {
-  ArtifactStreamLifecycle,
-  ownArtifactStream,
-  type ArtifactMemberLifecycle,
-} from "./OwnedArtifactStream.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+  PositionalArtifactReader,
+  type PositionalArtifactEntries,
+  type PositionalArtifactEntry,
+} from "./PositionalArtifactReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   hasUImageSizeTable,
@@ -39,125 +26,39 @@ import {
 
 const PAYLOAD_PATH = "payload.bin";
 const READ_CHUNK_BYTES = 64 * 1024;
-type UImageEntry = ArtifactEntry & {
-  readonly byteOffset: number;
-  readonly declaredSize: number;
+type UImageEntry = PositionalArtifactEntry & {
   readonly formatMetadata: UImageEntryMetadata;
 };
 
 /** Read a U-Boot legacy uImage without running, decompressing, or altering it. */
-export class UImageArtifactReader implements ArtifactReader {
-  readonly format = "uimage" as const;
-  readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, UImageEntry>();
-  readonly #lifecycle = new ArtifactStreamLifecycle("uImage");
-  readonly #source: ArtifactFileSource;
-  readonly #preparation = new ArtifactPreparation();
-  #header: UImageMetadata | undefined;
+export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadata> {
+  override readonly format = "uimage" as const;
+  readonly #integrity: ArtifactIntegrityPolicyName;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
-    this.#source = new ArtifactFileSource(path, "U-Boot uImage", admitted);
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    integrity: ArtifactIntegrityPolicyName = "fail",
+  ) {
+    super(path, "uImage", admitted, "U-Boot uImage");
+    this.#integrity = integrity;
   }
 
   formatMetadata(): UImageMetadata | undefined {
-    return this.#header === undefined ? undefined : { ...this.#header };
+    const header = this.preparedFormatMetadata;
+    return header === undefined ? undefined : { ...header };
   }
 
-  async prepareContainer(
-    expectedSha256: string,
+  protected override entryEndedEarly(
+    entry: PositionalArtifactEntry,
+  ): ArtifactReaderFailure {
+    return formatFailure(`member ended early: ${entry.path}`);
+  }
+
+  protected override async prepareEntries(
     signal?: AbortSignal,
-  ): Promise<void> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      await this.#source.bindSha256(expectedSha256, signal);
-    });
-  }
-
-  async *entries(
-    signal?: AbortSignal,
-    options?: ArtifactTraversalOptions,
-  ): AsyncIterable<ArtifactEntry> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      await this.#preparation.run(
-        signal,
-        () => this.#prepare(signal),
-        () => this.#assertOpen(signal),
-      );
-      await this.#source.read(signal);
-    });
-    this.#assertOpen(signal);
-    options?.onCoverage?.({
-      status: "complete",
-      limitations:
-        this.#header !== undefined && hasUImageSizeTable(this.#header.type)
-          ? [
-              "Multi-image sub-images are split from the stored size table; the payload entry retains the full stored bytes.",
-            ]
-          : [],
-    });
-    let index = 0;
-    for (const entry of this.#entries.values()) {
-      if (index % 256 === 0) await setImmediate();
-      index += 1;
-      this.#assertOpen(signal);
-      yield copyArtifactEntry(entry);
-    }
-    this.#assertOpen(signal);
-  }
-
-  async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    return this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      const stored = this.#entries.get(entry.adapterKey);
-      assertProducedEntry(
-        entry,
-        stored,
-        "uImage entry does not match its owning inventory",
-      );
-      const { handle } = await this.#source.read(signal);
-      this.#assertOpen(signal);
-      const lifecycle = this.#lifecycle.member(signal);
-      const { signal: streamSignal, cancellationFailure } = lifecycle;
-      const source =
-        stored.declaredSize === 0
-          ? Readable.from([])
-          : readFileHandleChunks(handle, {
-              start: stored.byteOffset,
-              end: stored.byteOffset + stored.declaredSize - 1,
-              signal: streamSignal,
-              cancellationFailure,
-            });
-      const output = this.#memberStream(stored, lifecycle);
-      ownArtifactStream(source, output, {
-        scope: this.#scope,
-        signal: streamSignal,
-        cancellationFailure,
-        label: "uImage",
-      });
-      return output;
-    });
-  }
-
-  async close(): Promise<void> {
-    this.#lifecycle.close();
-    await this.#scope.close();
-    await this.#source.close();
-    this.#entries.clear();
-  }
-
-  provenance(): readonly [] {
-    return [];
-  }
-
-  #assertOpen(signal?: AbortSignal): void {
-    assertArtifactReadActive(signal);
-    if (this.#lifecycle.closed)
-      throw new ArtifactReaderFailure("unavailable", "uImage reader closed");
-  }
-
-  async #prepare(signal?: AbortSignal): Promise<void> {
-    const { handle, initial } = await this.#source.read(signal);
+  ): Promise<PositionalArtifactEntries<UImageMetadata>> {
+    const { handle, initial } = await this.verifyCarrier(signal);
     const headerBytes = await readArtifactFileBytes(
       handle,
       0,
@@ -177,6 +78,7 @@ export class UImageArtifactReader implements ArtifactReader {
     let dataCrc32 = 0;
     let read = 0;
     let subImages: readonly UImageSubImage[] = [];
+    let sizeTableLimitation: string | undefined;
     if (hasUImageSizeTable(header.type)) {
       const tablePrefix = await readArtifactFileBytes(
         handle,
@@ -186,13 +88,21 @@ export class UImageArtifactReader implements ArtifactReader {
         signal,
       );
       const parsed = parseMultiImageTable(tablePrefix, header.payloadSize);
-      if (!parsed.ok) throw parseFailure(parsed.error);
-      subImages = parsed.value;
+      if (parsed.ok) {
+        subImages = parsed.value;
+      } else if (
+        this.#integrity === "fail" ||
+        parsed.error._tag === "UImageCapacityFailure"
+      ) {
+        throw parseFailure(parsed.error);
+      } else {
+        sizeTableLimitation = `Multi-image/script size table could not be parsed (${parsed.error.message}); only the full stored payload.bin is exposed.`;
+      }
       dataCrc32 = crc32(tablePrefix);
       read = tablePrefix.length;
     }
     while (read < header.payloadSize) {
-      this.#assertOpen(signal);
+      this.assertOpen(signal);
       const chunk = await readArtifactFileBytes(
         handle,
         UIMAGE_HEADER_SIZE + read,
@@ -203,49 +113,35 @@ export class UImageArtifactReader implements ArtifactReader {
       dataCrc32 = crc32(chunk, dataCrc32);
       read += chunk.length;
     }
-    if (dataCrc32 !== header.dataCrc32)
-      throw formatFailure(
-        `uImage data CRC32 mismatch: declared 0x${header.dataCrc32.toString(16)}, computed 0x${dataCrc32.toString(16)}`,
+    const crcVerified = dataCrc32 === header.dataCrc32;
+    const entries: UImageEntry[] = [
+      entryFor("payload", 0, {
+        byteOffset: UIMAGE_HEADER_SIZE,
+        declaredSize: header.payloadSize,
+      }),
+      ...subImages.map((sub) => entryFor("sub-image", sub.index, sub)),
+    ];
+    const limitations: string[] = [];
+    if (sizeTableLimitation !== undefined) {
+      limitations.push(sizeTableLimitation);
+    } else if (hasUImageSizeTable(header.type)) {
+      limitations.push(
+        "Multi-image sub-images are split from the stored size table; the payload entry retains the full stored bytes.",
       );
-    this.#header = toMetadata(header, subImages.length);
-    const payload = entryFor("payload", 0, {
-      byteOffset: UIMAGE_HEADER_SIZE,
-      declaredSize: header.payloadSize,
-    });
-    this.#entries.set(payload.adapterKey, payload);
-    for (const sub of subImages) {
-      const entry = entryFor("sub-image", sub.index, sub);
-      this.#entries.set(entry.adapterKey, entry);
     }
-  }
-
-  #memberStream(
-    entry: UImageEntry,
-    lifecycle: ArtifactMemberLifecycle,
-  ): Transform {
-    let bytes = 0;
-    const check = async (): Promise<void> => {
-      if (bytes !== entry.declaredSize)
-        throw formatFailure(`member ended early: ${entry.path}`);
-      await lifecycle.verify((signal) => this.#source.read(signal));
+    return {
+      entries,
+      coverage: {
+        status: sizeTableLimitation === undefined ? "complete" : "unknown",
+        limitations,
+      },
+      formatMetadata: toMetadata(header, subImages.length, crcVerified),
+      containerIntegrity: {
+        algorithm: "crc32",
+        declared_crc32: crcHex(header.dataCrc32),
+        observed_crc32: crcHex(dataCrc32),
+      },
     };
-    return new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        bytes += chunk.length;
-        callback(null, chunk);
-      },
-      flush(callback) {
-        void check().then(
-          () => callback(),
-          (cause: unknown) =>
-            callback(
-              cause instanceof Error
-                ? cause
-                : new Error("uImage read failed", { cause }),
-            ),
-        );
-      },
-    });
   }
 }
 
@@ -294,9 +190,13 @@ const entryFor = (
   };
 };
 
+const crcHex = (value: number): string =>
+  (value >>> 0).toString(16).padStart(8, "0");
+
 const toMetadata = (
   facts: UImageHeaderFields,
   subImageCount: number,
+  crcVerified: boolean,
 ): UImageMetadata => ({
   kind: "uimage",
   magic: facts.magic,
@@ -307,7 +207,7 @@ const toMetadata = (
   entry_point: facts.entryPoint,
   header_crc32: facts.headerCrc32,
   data_crc32: facts.dataCrc32,
-  crc_verified: true,
+  crc_verified: crcVerified,
   os: facts.os,
   os_name: facts.osName,
   arch: facts.arch,

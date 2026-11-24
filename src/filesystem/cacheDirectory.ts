@@ -1,27 +1,51 @@
 import { isAbsolute, posix, win32 } from "node:path";
+import {
+  homeDirectoryFromEnvironment,
+  selectedHomeDirectorySettings,
+} from "../config/homeDirectory.js";
 import { absoluteCallerPath, appendCallerPath } from "./callerPath.js";
+
+const selectedXdgCacheRoot = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): string | undefined => {
+  if (platform === "darwin") return undefined;
+  const xdg = environment.XDG_CACHE_HOME;
+  return xdg !== undefined && isAbsolute(xdg) ? xdg : undefined;
+};
+
+/** Settings consulted when selecting the default cache location. */
+export const reaCacheLocationSettings = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): readonly string[] => [
+  ...(platform === "darwin" ? [] : ["XDG_CACHE_HOME"]),
+  ...(selectedXdgCacheRoot(environment, platform) === undefined
+    ? selectedHomeDirectorySettings(platform, environment)
+    : []),
+];
 
 /** Per-user cache directory that REA owns for Kuna on this host. */
 export const defaultKunaCacheDirectory = (
-  home: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-): string => reaCacheDirectory(home, environment, platform, "kuna");
+  home?: string,
+): string => reaCacheDirectory(environment, platform, "kuna", home);
 
 /** A per-user cache directory REA owns on this host: `rea/<name>` under the platform's cache root. */
 export const reaCacheDirectory = (
-  home: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
   name: string,
+  home?: string,
 ): string => {
-  if (platform === "darwin")
-    return appendCallerPath(home, `Library/Caches/rea/${name}`, platform);
-  const xdg = environment.XDG_CACHE_HOME;
   const root =
-    xdg !== undefined && isAbsolute(xdg)
-      ? xdg
-      : appendCallerPath(home, ".cache", platform);
+    selectedXdgCacheRoot(environment, platform) ??
+    appendCallerPath(
+      home ?? homeDirectoryFromEnvironment(environment, platform),
+      platform === "darwin" ? "Library/Caches" : ".cache",
+      platform,
+    );
   return appendCallerPath(root, `rea/${name}`, platform);
 };
 

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -27,7 +29,9 @@ export const inspectPeLoadConfigInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
   max_callbacks: z
     .number()
     .int()
@@ -327,6 +331,12 @@ export const tlsAlignment = (characteristics: number): number | null =>
 const tlsSchema = z
   .strictObject({
     directory: directorySchema,
+    /**
+     * File span of the IMAGE_TLS_DIRECTORY read at the RVA; it exceeds
+     * `directory` when the declared Size is short. Evidence saved before this
+     * field existed omits it.
+     */
+    structure_location: range.optional(),
     start_address_of_raw_data: hexVa,
     end_address_of_raw_data: hexVa,
     raw_data_size: uint,
@@ -397,9 +407,12 @@ export const peLoadConfigSchema = z.strictObject({
   machine: uint,
   bits: z.union([z.literal(32), z.literal(64)]),
   architecture: z.string().min(1),
+  image_base: peImageBaseSchema,
   tls: tlsSchema,
   load_config: loadConfigSchema,
   examined_callbacks: uint,
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 export type PeLoadConfig = z.infer<typeof peLoadConfigSchema>;

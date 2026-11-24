@@ -6,6 +6,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Getting started
 
 - [Installation and setup](getting-started/installation.md)
+- [Supported targets and requirements](reference/supported-targets.md)
 - [Client configuration and troubleshooting](getting-started/client-configuration.md)
 - [CLI and Evidence](getting-started/cli.md)
 - [Guided MCP prompts and completion](getting-started/mcp-prompts.md)
@@ -130,6 +131,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
+- [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
 
 ## WebAssembly
 

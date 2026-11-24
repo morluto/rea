@@ -504,6 +504,7 @@ describe("headless IDA procedure lookup failures", () => {
   it.each([
     ["Not found", "main\nsecond line"],
     ["Not a function", "0x1000"],
+    ["Not found", "main\nsecond line"],
   ] as const)(
     "attributes %s for %s according to the selector origin",
     async (upstream, procedure) => {
@@ -516,15 +517,22 @@ describe("headless IDA procedure lookup failures", () => {
         if (caller.ok) throw new Error("Expected invalid caller input");
         if (!(caller.error instanceof AnalysisInputError)) throw caller.error;
 
-        expect(projectAnalysisError(caller.error)).toMatchObject({
+        const projected = projectAnalysisError(caller.error);
+        expect(projected).not.toHaveProperty("recovery");
+        expect(projected.remediation.action).toContain(
+          "--kind procedures --mode regex --provider ida",
+        );
+        expect(projected).toMatchObject({
           code: "invalid_request",
           category: "invalid_input",
           retryable: false,
           details: {
             operation,
+            related_operations: ["list_procedures", "search_procedures"],
             issues: [
               {
-                path: [],
+                path: ["procedure"],
+                observed: { procedure },
                 reason: "invalid_value",
                 message: `IDA could not resolve procedure ${JSON.stringify(procedure)}: ${upstream}.`,
               },
@@ -562,7 +570,9 @@ describe("headless IDA procedure lookup failures", () => {
       }
     },
   );
+});
 
+describe("headless IDA invalid lookup replies", () => {
   it.each([
     ["an upstream exception text", lookup("main", null, "Database is closed")],
     ["a function with an error", lookup("main", knownFunction, "Not found")],

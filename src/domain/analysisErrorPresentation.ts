@@ -1,10 +1,12 @@
 import { describeResidualUnknownGraphConstraint } from "./residualUnknownGraphError.js";
+import { WABT_RELEASE_LINE } from "./wasm/wasmArtifact.js";
 import { knownArgumentMistakeRemediation } from "./inputArgumentGuidance.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisMalformedTargetError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
@@ -60,7 +62,10 @@ export const MCP_TRANSPORT_EVIDENCE_EXPORT =
   "Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable.";
 
 /** Next step when one MCP frame cannot carry a complete retained session bundle. */
-export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, then read selected complete records with detail: records and an exact evidence_id, or inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, selecting a limit and following page.next_offset; then read selected complete records with detail: records and an exact evidence_id, or inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+
+/** Next step when one MCP frame cannot carry the selected metadata rows. */
+export const MCP_TRANSPORT_EVIDENCE_SUMMARY = `Request fewer metadata rows with get_evidence_bundle detail: summary, the same filters and offset, and a smaller limit; follow page.next_offset after each successful page. A single metadata row larger than one response still needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
 
 /** Next step when one MCP frame cannot carry a selected page of complete records. */
 export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_evidence_bundle detail: records, a smaller limit or an exact evidence_id filter; inspect compatible records in pages through inspect_analysis_view. A single record larger than one response needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
@@ -128,6 +133,8 @@ export const analysisErrorRemediationAction = (
       error.remediationAction ??
       "Select a target supported by this operation or choose an operation supporting the reported target format."
     );
+  if (error instanceof AnalysisMalformedTargetError)
+    return `The selected target's ${error.failure.format} bytes are ${error.failure.kind} where ${error.operation} reads them; the request arguments are not at fault, so changing them will not help. Choose another operation or provider for this target, or select a complete, well-formed copy of it.`;
   if (error instanceof AnalysisResourceConstraintError) {
     if (error.remediationAction !== undefined) return error.remediationAction;
     const refusal = analysisErrorRefusal(error);
@@ -176,7 +183,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
   )
-    return `For a JavaScript/Electron application directory, call analyze_javascript_application with input_path. For binary analysis, select its executable file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+    return `For a desktop installation or native build directory, call inspect_desktop_application or audit_release_exposure with the directory; for a JavaScript/Electron application directory, call analyze_javascript_application with input_path. To analyze one program, select its file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "bundle_type_unsupported"
@@ -206,7 +213,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "load_selection_rejected"
   )
-    return "Correct the reported load argument (format, architecture, or entry_point) and retry.";
+    return "Correct the reported load argument (format, architecture, architecture_variant, entry_point, base_address, or vector_table_address) and retry.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "file_format_rejected"
@@ -216,7 +223,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "wasm_requires_static_inspection"
   )
-    return `For static inspection, call inspect_wasm_artifact with ${JSON.stringify({ path: error.path })}. This separate lane requires caller-supplied WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY; check its availability in binary_session. REA does not execute WASM or install tools, and the header alone does not establish that the complete module is valid.`;
+    return `For static inspection, call inspect_wasm_artifact with ${JSON.stringify({ path: error.path })}. This separate lane requires caller-supplied ${WABT_RELEASE_LINE} via absolute REA_WABT_BIN_DIRECTORY; check its availability in binary_session. REA does not execute WASM or install tools, and the header alone does not establish that the complete module is valid.`;
   if (
     error instanceof AnalysisAccessDeniedError ||
     (error instanceof BinaryTargetError && error.systemCode !== undefined)
@@ -411,6 +418,7 @@ export const composedCallerGuidance = (sources: {
 const outcomeUserMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisSnapshotMismatchError) return error.message;
   if (error instanceof AnalysisUnsupportedTargetError) return error.message;
+  if (error instanceof AnalysisMalformedTargetError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
   if (error instanceof AnalysisAccessDeniedError)
     return "Host filesystem permissions denied read access to the selected path.";
@@ -474,7 +482,7 @@ const outcomeUserMessage = (error: AnalysisError): string => {
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
-      ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application.`
+      ? `This operation opens a file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}); this target is another directory. Directory-capable operations are inspect_desktop_application, audit_release_exposure, and analyze_javascript_application for JavaScript/Electron applications.`
       : error.constraint === undefined
         ? `${error.message}. Check that the path exists, is readable, and points to a supported file.`
         : `${error.message}.`;
@@ -598,7 +606,13 @@ const presentedRelatedInputs = (
 ): AnalysisRelatedInputs | undefined => {
   if (error instanceof BinaryTargetError) {
     if (error.constraint === "directory_requires_file")
-      return { operations: ["analyze_javascript_application"] };
+      return {
+        operations: [
+          "inspect_desktop_application",
+          "audit_release_exposure",
+          "analyze_javascript_application",
+        ],
+      };
     if (error.remediationAction !== undefined) return undefined;
     if (
       (error.constraint === "bundle_executable_undeclared" ||
@@ -607,7 +621,16 @@ const presentedRelatedInputs = (
     )
       return { operations: ["inspect_plist"] };
     if (error.constraint === "load_selection_rejected")
-      return { parameters: ["format", "architecture", "entry_point"] };
+      return {
+        parameters: [
+          "format",
+          "architecture",
+          "architecture_variant",
+          "entry_point",
+          "base_address",
+          "vector_table_address",
+        ],
+      };
     if (error.constraint === "wasm_requires_static_inspection")
       return { operations: ["inspect_wasm_artifact"] };
   }
@@ -689,6 +712,7 @@ const KNOWN_ERROR_TAGS = {
   AnalysisOutputError: true,
   AnalysisCapabilityUnavailableError: true,
   AnalysisUnsupportedTargetError: true,
+  AnalysisMalformedTargetError: true,
   AnalysisCancelledError: true,
   AnalysisTimeoutError: true,
   AnalysisResourceConstraintError: true,

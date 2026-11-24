@@ -3,6 +3,7 @@
   "doctor: no contract doctor",
   "uninstall: no contract uninstall",
   "update: no contract update",
+  "config: no contract config",
   "capabilities: no contract capabilities",
   "providers: no contract providers",
   "import-reference-source: no contract import_reference_source",

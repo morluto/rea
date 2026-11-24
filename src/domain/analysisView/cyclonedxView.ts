@@ -429,6 +429,22 @@ const projectSizedDocument = (
   );
   const binaryRef = `sha256:${report.artifact.sha256}`;
   const componentRefs = components.map((component) => component["bom-ref"]);
+  // Use the recorded producer's identity. On collision, the tool-only
+  // prefix keeps the observed file, package, and dependency references intact.
+  let tool: CycloneDxDocument["components"][number] | undefined;
+  const provider = parent.provider;
+  if (provider !== undefined) {
+    const preferredRef = `${provider.id}@${provider.version ?? "unknown"}`;
+    tool = {
+      type: "application",
+      "bom-ref":
+        preferredRef === binaryRef || componentRefs.includes(preferredRef)
+          ? `tool:${preferredRef}`
+          : preferredRef,
+      name: provider.name,
+      ...(provider.version === null ? {} : { version: provider.version }),
+    };
+  }
   const sliceProperties = selectedSliceProperties(report);
   const draft = {
     bomFormat: "CycloneDX" as const,
@@ -443,24 +459,7 @@ const projectSizedDocument = (
         hashes: [{ alg: "SHA-256" as const, content: report.artifact.sha256 }],
         ...(sliceProperties.length > 0 ? { properties: sliceProperties } : {}),
       },
-      // The parent's recorded provider produced these facts; this view only
-      // re-projects them, so the projecting build is not the tool.
-      ...(parent.provider === undefined
-        ? {}
-        : {
-            tools: {
-              components: [
-                {
-                  type: "application" as const,
-                  "bom-ref": `${parent.provider.id}@${parent.provider.version ?? "unknown"}`,
-                  name: parent.provider.name,
-                  ...(parent.provider.version === null
-                    ? {}
-                    : { version: parent.provider.version }),
-                },
-              ],
-            },
-          }),
+      ...(tool === undefined ? {} : { tools: { components: [tool] } }),
     },
     components,
     ...(subjectRef === undefined

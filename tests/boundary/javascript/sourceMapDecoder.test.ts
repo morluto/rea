@@ -394,13 +394,14 @@ it.each([false, true])(
 
 it.each([
   {
-    failure: "external section",
+    failure: "external section with an embedded fallback",
     text: JSON.stringify({
       version: 3,
       sections: [
         {
           offset: { line: 0, column: 0 },
           url: "https://app.test/external.map",
+          map: JSON.parse(fixture.sourceMap.text) as unknown,
         },
       ],
     }),
@@ -408,6 +409,30 @@ it.each([
       _tag: "AnalysisCapabilityUnavailableError",
       reason: "unsupported_source_map_profile",
       userMessage: expect.stringContaining("https://app.test/external.map"),
+    },
+  },
+  {
+    failure: "malformed section URL with an embedded fallback",
+    text: JSON.stringify({
+      version: 3,
+      sections: [
+        {
+          offset: { line: 0, column: 0 },
+          url: 12,
+          map: JSON.parse(fixture.sourceMap.text) as unknown,
+        },
+      ],
+    }),
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          reason: "invalid_format",
+          message: expect.stringMatching(
+            /section URL.*must be a string.*\[0\]/iu,
+          ),
+        },
+      ],
     },
   },
   {

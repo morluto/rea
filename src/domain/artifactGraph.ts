@@ -1,5 +1,6 @@
 import { completeOrUnknownCoverageSchema } from "./coverage.js";
 import {
+  artifactCrc32PairSchema,
   artifactDfuCrc32PairSchema,
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
@@ -72,6 +73,10 @@ export const ARTIFACT_FORMAT_IDS = [
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "dds",
+  "glb",
+  "ktx",
+  "ktx2",
   "uimage",
   "android-boot-image",
   "android-ota-payload",
@@ -103,6 +108,10 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-flash-image",
   "fit",
   "ntfs-mft",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "unknown",
 ] as const;
 
@@ -117,6 +126,10 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "dds",
+  "glb",
+  "ktx",
+  "ktx2",
   "uimage",
   "android-boot-image",
   "android-ota-payload",
@@ -134,6 +147,10 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "pe",
   "dos-mz",
   "plist",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "directory",
   "file",
   "unknown",
@@ -214,6 +231,7 @@ export const integrityContradictionSchema = z.union([
   integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
+  integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
 ]);
 
 /**
