@@ -270,6 +270,97 @@ export const amdFixture = (
   ]);
 };
 /**
+ * MessagePack with `Map` keys kept as written: PAL `.registers` maps use
+ * unsigned register-offset keys, which plain objects cannot express.
+ */
+export const msgpackWithIntegerKeys = (value: unknown): Buffer => {
+  const header = (fix: number, wide: number, count: number) => {
+    if (count < 16) return Buffer.from([fix | count]);
+    const head = Buffer.alloc(3);
+    head[0] = wide;
+    head.writeUInt16BE(count, 1);
+    return head;
+  };
+  if (value instanceof Map)
+    return Buffer.concat([
+      header(0x80, 0xde, value.size),
+      ...[...value].flatMap(([key, item]) => [
+        msgpackWithIntegerKeys(key),
+        msgpackWithIntegerKeys(item),
+      ]),
+    ]);
+  if (Array.isArray(value))
+    return Buffer.concat([
+      header(0x90, 0xdc, value.length),
+      ...value.map(msgpackWithIntegerKeys),
+    ]);
+  if (value !== null && typeof value === "object")
+    return msgpackWithIntegerKeys(new Map(Object.entries(value)));
+  return Buffer.from(encode(value, { useBigInt64: true }));
+};
+/** Producer-shaped `amdpal.pipelines` metadata (LLVM AMDGPUUsage, AMDPAL). */
+export const amdPalMetadataFixture = (): Buffer =>
+  msgpackWithIntegerKeys({
+    "amdpal.version": [3, 0],
+    "amdpal.pipelines": [
+      {
+        ".name": "triangle",
+        ".type": "VsPs",
+        ".api": "Vulkan",
+        ".internal_pipeline_hash": [0x0123456789abcdefn, 0xfedcba9876543210n],
+        ".shaders": {
+          ".vertex": {
+            ".api_shader_hash": [1, 0],
+            ".hardware_mapping": [".vs"],
+          },
+          ".pixel": {
+            ".api_shader_hash": [2, 0],
+            ".hardware_mapping": [".ps"],
+          },
+        },
+        ".hardware_stages": {
+          ".vs": {
+            ".entry_point": "_amdgpu_vs_main",
+            ".entry_point_symbol": "main_vs",
+            ".sgpr_count": 20,
+            ".vgpr_count": 12,
+            ".wavefront_size": 32,
+            ".scratch_memory_size": 0,
+          },
+          ".ps": {
+            ".entry_point": "_amdgpu_ps_main",
+            ".sgpr_count": 10,
+            ".vgpr_count": 6,
+            ".lds_size": 256,
+          },
+        },
+        // SPI_SHADER_PGM_RSRC1_PS and _VS register offsets with raw values.
+        ".registers": new Map([
+          [0x2c0a, 0x002c0041],
+          [0x2c4a, 0x002c0083],
+        ]),
+      },
+    ],
+  });
+/**
+ * A minimal AMDGPU ELF64 code object for gfx1030 (EF_AMDGPU_MACH 0x36) with
+ * the given EI_OSABI and an optional NT_AMDGPU_METADATA note.
+ */
+export const amdAbiFixture = (
+  osAbi: number,
+  metadata: Buffer | null,
+): Buffer => {
+  const bytes = elfFixture(
+    224,
+    metadata === null
+      ? []
+      : [{ name: ".note", type: 7, bytes: amdDescriptorNoteFixture(metadata) }],
+  );
+  bytes[7] = osAbi;
+  bytes.writeUInt32LE(0x36, 48);
+  return bytes;
+};
+/**
  * One final LZ4 literal sequence, the block form CUDA's 0x2000 profile stores.
  * A single sequence is valid LZ4: separate sequences need an intervening match.
  */
