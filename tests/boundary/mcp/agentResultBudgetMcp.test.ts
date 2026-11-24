@@ -362,15 +362,13 @@ it("writes nothing for CLI overflow without --evidence_output and names both rer
   expect(parseEvidence(output.summary).operation).toBe("inspect_analysis_view");
   expect(output.evidence_bundle).toBeUndefined();
   expect(output.delivery).toMatchObject({ retained: "not-retained" });
+  // Only the arguments to add: caller inputs, which can carry access
+  // credentials such as a browser socket ID, are never echoed.
   expect(output.delivery.rerun).toEqual({
-    complete: ["rea", ...argv, "--detail", "complete"],
-    retained: [
-      "rea",
-      ...argv,
-      "--evidence_output",
-      EVIDENCE_OUTPUT_PLACEHOLDER,
-    ],
+    complete: ["--detail", "complete"],
+    retained: ["--evidence_output", EVIDENCE_OUTPUT_PLACEHOLDER],
   });
+  expect(JSON.stringify(output.delivery)).not.toContain(input.path);
   expect(output.delivery.note).toContain("--detail complete");
   expect(output.delivery.note).toContain("--evidence_output");
   for (const directory of [home, temporary, cache])

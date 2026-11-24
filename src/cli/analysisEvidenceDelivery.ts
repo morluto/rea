@@ -191,12 +191,7 @@ export const publishCliAnalysisEvidence = async (
       ? complete
       : {
           summary,
-          delivery: deliveryJson(
-            overBudget({
-              kind: "not-retained",
-              argv: cliPublicationInvocation().argv,
-            }),
-          ),
+          delivery: deliveryJson(overBudget({ kind: "not-retained" })),
         };
   }
   const outputPath = absoluteCallerPath(evidenceOutput);

@@ -16,11 +16,6 @@ const publication = new AsyncLocalStorage<PublicationContext>();
 export interface CliPublicationInvocation {
   /** REA_AGENT_RESULT_BUDGET_BYTES from the environment this invocation captured. */
   readonly agentBudgetSeed?: string | undefined;
-  /**
-   * The command words and arguments as given, for exact rerun commands;
-   * omitted when the invocation declares sensitive values.
-   */
-  readonly argv?: readonly string[] | undefined;
 }
 
 /** Keep publication state in the invocation that owns delivery and formatting. */

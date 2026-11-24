@@ -309,7 +309,6 @@ cliTest(
       const result = await run({
         arguments: [
           "inspect-python-pyc",
-          ...COMPLETE_DETAIL,
           "/rea-missing/module.pyc",
           ...flags,
           "--json",

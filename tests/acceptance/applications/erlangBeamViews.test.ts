@@ -332,7 +332,6 @@ cliTest(
       const result = await run({
         arguments: [
           "inspect-erlang-beam",
-          ...COMPLETE_DETAIL,
           "/rea-missing/app.beam",
           ...flags,
           "--json",

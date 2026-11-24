@@ -350,7 +350,6 @@ cliTest(
         fields: ["name", "version", "dependencies", "features"],
       };
       const direct = await call("inspect_rust_binary", {
-        detail: "complete",
         path,
         view: selection,
       });
@@ -398,7 +397,6 @@ cliTest(
       const delivered = await cli.run({
         arguments: [
           "inspect-rust-binary",
-          ...COMPLETE_DETAIL,
           path,
           "--view",
           JSON.stringify(selection),
@@ -626,13 +624,7 @@ cliTest(
       [...COMPLETE_DETAIL, "--view", '{"collection":"packages"}'],
     ]) {
       const refused = await cli.run({
-        arguments: [
-          "inspect-rust-binary",
-          ...COMPLETE_DETAIL,
-          missing,
-          ...args,
-          "--json",
-        ],
+        arguments: ["inspect-rust-binary", missing, ...args, "--json"],
       });
       expect(refused.exitCode).toBe(1);
       expect(refused.json).toMatchObject({ code: "invalid_request" });

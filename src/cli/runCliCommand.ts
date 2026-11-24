@@ -150,8 +150,6 @@ export const runCliCommand = async (
         }),
       {
         agentBudgetSeed: environment.variables[AGENT_RESULT_BUDGET_ENVIRONMENT],
-        // A rerun command would repeat a declared sensitive value.
-        ...(sensitive.length === 0 ? { argv: global.arguments } : {}),
       },
     );
     if (output.error !== undefined) exit(options, 1);

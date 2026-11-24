@@ -6,6 +6,7 @@ import {
   desktopCandidateSchema,
   desktopComponentSchema,
   desktopProbeSchema,
+  desktopDeferredProbeSchema,
   desktopFamilySchema,
   desktopCoverageSchema,
   type DesktopApplication,
@@ -139,6 +140,8 @@ export const desktopSummarySchema = z.strictObject({
       example: desktopProbeSchema,
     }),
   ),
+  /** Probes counted rather than listed: one bounded group per operation and reason. */
+  deferred_probes: z.array(desktopDeferredProbeSchema),
 });
 
 type DesktopCollection = z.infer<typeof desktopViewRequestSchema>["collection"];
@@ -276,6 +279,7 @@ export const projectDesktopApplicationView = (
         candidates: report.candidates.map(summarizeBasis),
         components: report.components.map(summarizeBasis),
         next_probe_groups: [...groups.values()],
+        deferred_probes: report.deferred_probes,
       },
       coverage: completeWithinViewCoverage(report.files.length),
     });

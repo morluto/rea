@@ -81,11 +81,7 @@ export const agentBudgetOverflowBytes = (
 export type AgentBudgetRecovery =
   | { readonly kind: "session" }
   | { readonly kind: "evidence-file"; readonly path: string | undefined }
-  | {
-      readonly kind: "not-retained";
-      /** The invocation's command and arguments, when they can be repeated. */
-      readonly argv?: readonly string[] | undefined;
-    };
+  | { readonly kind: "not-retained" };
 
 /**
  * Delivery facts for a result replaced by its summary. They describe the
@@ -113,9 +109,9 @@ export interface AgentBudgetDelivery {
     };
   };
   /**
-   * For an invocation that retained nothing: the exact commands that rerun
-   * it with complete Evidence inline, or with it saved to a new bundle, as
-   * argv arrays. Without the invocation's argv, the arguments to add.
+   * For an invocation that retained nothing: the exact arguments to add to
+   * the same command, for complete Evidence inline or saved to a new bundle.
+   * Caller inputs are never echoed, since they can carry access credentials.
    */
   readonly rerun?: {
     readonly complete: readonly string[];
@@ -127,14 +123,9 @@ export interface AgentBudgetDelivery {
 /** Placeholder for the caller's choice of a new bundle path. */
 export const EVIDENCE_OUTPUT_PLACEHOLDER = "<new-bundle-path>";
 
-const rerunCommands = (
-  argv: readonly string[] | undefined,
-): NonNullable<AgentBudgetDelivery["rerun"]> => {
-  const base = argv === undefined ? [] : ["rea", ...argv];
-  return {
-    complete: [...base, "--detail", "complete"],
-    retained: [...base, "--evidence_output", EVIDENCE_OUTPUT_PLACEHOLDER],
-  };
+const RERUN_ARGUMENTS: NonNullable<AgentBudgetDelivery["rerun"]> = {
+  complete: ["--detail", "complete"],
+  retained: ["--evidence_output", EVIDENCE_OUTPUT_PLACEHOLDER],
 };
 
 const pageSource = (
@@ -157,7 +148,7 @@ const recoveryNote = (recovery: AgentBudgetRecovery): string => {
     return `It is retained in this session: next pages its exact JSON through inspect_analysis_view (follow coverage.next_offset); the producer's own views select facts more cheaply. Pass detail complete for all of it inline, or raise ${AGENT_RESULT_BUDGET_SETTING} with update_analysis_settings.`;
   if (recovery.kind === "evidence-file")
     return "It is in the --evidence_output bundle: rea inspect-analysis-view with next.arguments pages its exact JSON. Pass --detail complete for all of it inline.";
-  return `This invocation selected no --evidence_output, so it was not retained and nothing was written: rerun.complete adds --detail complete for all of it inline, and rerun.retained adds --evidence_output ${EVIDENCE_OUTPUT_PLACEHOLDER} to save it for inspect-analysis-view.`;
+  return `This invocation selected no --evidence_output, so it was not retained and nothing was written: rerun the same command with rerun.complete (--detail complete) for all of it inline, or with rerun.retained (--evidence_output ${EVIDENCE_OUTPUT_PLACEHOLDER}) to save it for inspect-analysis-view.`;
 };
 
 /**
@@ -195,9 +186,7 @@ export const agentBudgetDelivery = (input: {
             },
           },
         }),
-    ...(recovery.kind === "not-retained"
-      ? { rerun: rerunCommands(recovery.argv) }
-      : {}),
+    ...(recovery.kind === "not-retained" ? { rerun: RERUN_ARGUMENTS } : {}),
     note: `Complete ${input.operation} Evidence ${evidenceId} is ${String(completeBytes)} bytes (about ${String(estimatedJsonTokens(completeBytes))} tokens, estimated at ${String(ESTIMATED_JSON_BYTES_PER_TOKEN)} bytes per token), over the agent result budget of ${String(budget.bytes)} bytes (${AGENT_RESULT_BUDGET_SETTING}, source ${budget.source}), so its summary was delivered. Nothing was truncated. ${recoveryNote(recovery)}`,
   };
 };
