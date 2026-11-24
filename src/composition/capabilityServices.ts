@@ -792,6 +792,14 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       const { createManagedBinarySession } = await import("./binary.js");
       return createManagedBinarySession();
     },
+    createArtifactPathInspection: async () => {
+      const { createArtifactPathInspection } = await import("./binary.js");
+      return createArtifactPathInspection(
+        context.providerEnvironment,
+        context.platform,
+        context.settings,
+      );
+    },
     close: () => scope.close(),
   };
 };

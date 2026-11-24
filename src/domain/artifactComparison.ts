@@ -517,6 +517,8 @@ const classifyPath = (input: ClassifyPathInput): ArtifactChange | null => {
   if (presence !== null) return presence;
   const declaration = classifyDeclarationRecord(input, base);
   if (declaration.handled) return declaration.change;
+  const link = classifyLinkTargets(input, base);
+  if (link.handled) return link.change;
   const availability = classifyAvailability(input, base);
   if (availability !== null) {
     const known = occurrenceDifferences(input);
@@ -747,6 +749,37 @@ const classifyDeclarationRecord = (
   return {
     handled: true,
     change: { ...base, classification: "changed", dimensions },
+  };
+};
+
+/**
+ * Symlinks have no content node; a reader that recorded both stored targets
+ * compares them, and neither link is followed. A link whose target either
+ * side did not record stays unavailable.
+ */
+const classifyLinkTargets = (
+  input: ClassifyPathInput,
+  base: ReturnType<typeof buildArtifactChangeBase>,
+): { readonly handled: boolean; readonly change: ArtifactChange | null } => {
+  const left = input.leftOccurrence;
+  const right = input.rightOccurrence;
+  if (
+    left?.entry_kind !== "symlink" ||
+    right?.entry_kind !== "symlink" ||
+    left.link_target === undefined ||
+    right.link_target === undefined
+  )
+    return { handled: false, change: null };
+  const dimensions: ArtifactChange["dimensions"] = [];
+  if (left.link_target.hex !== right.link_target.hex)
+    dimensions.push("content");
+  if (left.executable !== right.executable) dimensions.push("executable");
+  return {
+    handled: true,
+    change:
+      dimensions.length === 0
+        ? null
+        : { ...base, classification: "changed", dimensions },
   };
 };
 

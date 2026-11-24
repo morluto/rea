@@ -14,6 +14,8 @@ import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { nulFreeStringSchema } from "./localPath.js";
 import {
   binaryTargetIdentity,
+  directoryTargetIdentitySchema,
+  type DirectoryTargetIdentity,
   fileTargetSelectionSchema,
   nonFileTargetIdentitySchema,
   sessionTargetIdentitySchema,
@@ -93,6 +95,12 @@ const fileSubjectSchema = z.strictObject({
   name: z.string().min(1),
   local_path: nulFreeStringSchema,
 });
+/** A directory named by its complete root digest, with the same display facts as a file. */
+const directorySubjectSchema = z.strictObject({
+  identity: directoryTargetIdentitySchema,
+  name: z.string().min(1),
+  local_path: nulFreeStringSchema,
+});
 /** A debugger session whose launch file is validated like a file subject. */
 const sessionSubjectIdentitySchema = sessionTargetIdentitySchema.extend({
   target: z.discriminatedUnion("kind", [
@@ -100,7 +108,7 @@ const sessionSubjectIdentitySchema = sessionTargetIdentitySchema.extend({
     unknownTargetIdentitySchema,
   ]),
 });
-/** A subject that names no file (a URL, process, session, or unknown target) has no file display facts. */
+/** A subject that names no local path (a URL, process, session, or unknown target) has no display facts. */
 const nonFileSubjectSchema = z.strictObject({
   identity: z.discriminatedUnion("kind", [
     nonFileTargetIdentitySchema,
@@ -109,7 +117,11 @@ const nonFileSubjectSchema = z.strictObject({
   name: z.null(),
   local_path: z.null(),
 });
-const subjectSchema = z.union([fileSubjectSchema, nonFileSubjectSchema]);
+const subjectSchema = z.union([
+  fileSubjectSchema,
+  directorySubjectSchema,
+  nonFileSubjectSchema,
+]);
 /** The Evidence subject, for persistence formats that embed one. */
 export const evidenceSubjectSchema = subjectSchema;
 /** Source location attached to an evidence observation. */
@@ -259,6 +271,7 @@ export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 /** Candidate local artifact identity validated by the Evidence subject schema. */
 export interface EvidenceSubjectTarget {
   readonly path: string;
+  /** The file's SHA-256, or a directory's complete tree digest. */
   readonly sha256: string;
   readonly format: z.infer<typeof subjectIdentitySchema>["format"];
   readonly architecture?: BinaryArchitecture;
@@ -269,63 +282,102 @@ export interface EvidenceSubjectTarget {
    * naming its open target's bytes to that target's selection.
    */
   readonly selection?: FileTargetSelection | null;
+  /**
+   * Present only for a directory named by its complete tree digest: the
+   * digest's algorithm and version. `sha256` is then that digest and
+   * `format` is `directory`. Absent, the target is a file.
+   */
+  readonly tree?: DirectoryTreeAlgorithm;
   /** Preserve an existing Evidence subject's display name when deriving observations. */
   readonly name?: string;
 }
 
-/** What a producer names as an Evidence subject: a file target, or a non-file identity such as a URL or an explicit unknown. */
+/** The tree digest algorithm a directory subject names. */
+export type DirectoryTreeAlgorithm = Pick<
+  DirectoryTargetIdentity,
+  "algorithm" | "version"
+>;
+
+/** What a producer names as an Evidence subject: a file or directory target, or an identity without a local path such as a URL or an explicit unknown. */
 export type EvidenceSubjectInput =
   | EvidenceSubjectTarget
   | BinaryTarget
   | NonFileTargetIdentity;
 
 type FileEvidenceSubject = z.infer<typeof fileSubjectSchema>;
+type DirectoryEvidenceSubject = z.infer<typeof directorySubjectSchema>;
 
-/** Whether a subject names a file; only a file subject has display facts. */
+/** Whether a subject names a file. */
 const isFileSubject = (
   subject: Evidence["subject"] | undefined,
 ): subject is FileEvidenceSubject => subject?.identity.kind === "file";
 
-/** Preserve the complete file subject when deriving a new Evidence observation. */
+/** Whether a subject names a local file or directory; only those have display facts. */
+const isLocalSubject = (
+  subject: Evidence["subject"] | undefined,
+): subject is FileEvidenceSubject | DirectoryEvidenceSubject =>
+  subject?.identity.kind === "file" || subject?.identity.kind === "directory";
+
+/** Preserve the complete file or directory subject when deriving a new Evidence observation. */
 export const evidenceSubjectTarget = (
   subject: Evidence["subject"] | undefined,
-): EvidenceSubjectTarget | undefined =>
-  !isFileSubject(subject)
-    ? undefined
-    : {
-        path: subject.local_path,
-        sha256: subject.identity.sha256,
-        format: subject.identity.format,
-        name: subject.name,
-        ...(subject.identity.architecture === null
-          ? {}
-          : { architecture: subject.identity.architecture }),
-        ...(subject.identity.selection === null
-          ? {}
-          : { selection: subject.identity.selection }),
-      };
+): EvidenceSubjectTarget | undefined => {
+  if (!isLocalSubject(subject)) return undefined;
+  const { identity } = subject;
+  if (identity.kind === "directory")
+    return {
+      path: subject.local_path,
+      sha256: identity.sha256,
+      format: "directory",
+      tree: { algorithm: identity.algorithm, version: identity.version },
+      name: subject.name,
+    };
+  return {
+    path: subject.local_path,
+    sha256: identity.sha256,
+    format: identity.format,
+    name: subject.name,
+    ...(identity.architecture === null
+      ? {}
+      : { architecture: identity.architecture }),
+    ...(identity.selection === null ? {} : { selection: identity.selection }),
+  };
+};
 
-/** Name the same subject in a derived observation: the file target, or the same non-file identity. */
+/** Name the same subject in a derived observation: the file or directory target, or the same identity without a local path. */
 export const evidenceSubjectInput = (
   subject: Evidence["subject"],
 ): EvidenceSubjectInput =>
-  isFileSubject(subject)
-    ? (evidenceSubjectTarget(subject) as EvidenceSubjectTarget)
-    : (subject.identity as NonFileTargetIdentity);
+  evidenceSubjectTarget(subject) ?? (subject.identity as NonFileTargetIdentity);
 
 /** The one projection of a producer's subject input into its target identity. */
 export const evidenceSubjectTargetIdentity = (
   target: EvidenceSubjectTarget | BinaryTarget,
-): FileTargetIdentity =>
-  "kind" in target
-    ? binaryTargetIdentity(target)
-    : {
-        kind: "file",
-        sha256: target.sha256,
-        format: target.format,
-        architecture: target.architecture ?? null,
-        selection: target.selection ?? null,
-      };
+): FileTargetIdentity | DirectoryTargetIdentity => {
+  if ("kind" in target) return binaryTargetIdentity(target);
+  if (target.tree === undefined)
+    return {
+      kind: "file",
+      sha256: target.sha256,
+      format: target.format,
+      architecture: target.architecture ?? null,
+      selection: target.selection ?? null,
+    };
+  if (
+    target.format !== "directory" ||
+    target.architecture !== undefined ||
+    (target.selection ?? null) !== null
+  )
+    throw new TypeError(
+      "A directory subject names only its tree digest; it has no format other than directory, architecture or selection",
+    );
+  return {
+    kind: "directory",
+    algorithm: target.tree.algorithm,
+    version: target.tree.version,
+    sha256: target.sha256,
+  };
+};
 
 /** Rebind a matching immutable artifact subject to the caller's selected path. */
 export const rebindEvidenceSubjectTargetPath = (
@@ -354,7 +406,6 @@ export const evidenceSubject = (
         }
       : { identity: target, name: null, local_path: null },
   );
-
 /** The target identity an Evidence record commits to; absent only for a partial record. */
 export const evidenceTargetIdentity = (evidence: {
   readonly subject?: Evidence["subject"] | undefined;
@@ -368,12 +419,22 @@ export const evidenceFileTarget = (evidence: {
   return identity?.kind === "file" ? identity : undefined;
 };
 
+/** The content identity a local file or directory subject commits to. */
+export const evidenceLocalTarget = (evidence: {
+  readonly subject?: Evidence["subject"] | undefined;
+}): FileTargetIdentity | DirectoryTargetIdentity | undefined => {
+  const identity = evidenceTargetIdentity(evidence);
+  return identity?.kind === "file" || identity?.kind === "directory"
+    ? identity
+    : undefined;
+};
+
 /** Display facts beside the subject identity; never part of the Evidence ID. */
 export const evidenceSubjectDisplay = (evidence: {
   readonly subject?: Evidence["subject"] | undefined;
 }): { readonly name: string; readonly local_path: string } | undefined => {
   const subject = evidence.subject;
-  return isFileSubject(subject)
+  return isLocalSubject(subject)
     ? { name: subject.name, local_path: subject.local_path }
     : undefined;
 };
@@ -493,7 +554,7 @@ export const rebindEvidenceToTargetPath = (
   target: EvidenceSubjectTarget,
 ): Evidence => {
   const subject = evidence.subject;
-  if (!isFileSubject(subject)) return evidence;
+  if (!isLocalSubject(subject)) return evidence;
   if (
     !sameTargetIdentity(subject.identity, evidenceSubjectTargetIdentity(target))
   )

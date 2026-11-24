@@ -1,7 +1,3 @@
-import {
-  fileIdentity,
-  fileSubjectDisplay,
-} from "../../fixtures/evidenceSubject.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,8 +15,15 @@ import {
   artifactComparisonResultSchema,
   compareArtifacts,
 } from "../../../src/domain/artifactComparison.js";
-import { parseArtifactInventoryEvidence } from "../../../src/domain/artifactInventoryEvidence.js";
-import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import {
+  artifactInventorySubject,
+  parseArtifactInventoryEvidence,
+} from "../../../src/domain/artifactInventoryEvidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 
 const PROVIDER = {
@@ -31,21 +34,13 @@ const PROVIDER = {
 
 const observe = async (path: string) => {
   const inventory = await inventoryArtifact(path);
-  return createEvidence(
-    {
-      path,
-      sha256: inventory.manifest.root_sha256,
-      format: inventory.manifest.root_format,
-    },
-    PROVIDER,
-    {
-      operation: "inventory_artifact",
-      parameters: {},
-      result: inventory,
-      confidence: "observed",
-      authority: "shipped-artifact",
-    },
-  );
+  return createEvidence(artifactInventorySubject(path, inventory), PROVIDER, {
+    operation: "inventory_artifact",
+    parameters: {},
+    result: inventory,
+    confidence: "observed",
+    authority: "shipped-artifact",
+  });
 };
 
 const inspectPages = (
@@ -58,11 +53,7 @@ const inspectPages = (
     first.normalized_result,
   );
   return createEvidence(
-    {
-      path: "artifact-inspection-example",
-      sha256: inventory.manifest.root_sha256,
-      format: inventory.manifest.root_format,
-    },
+    artifactInventorySubject("artifact-inspection-example", inventory),
     PROVIDER,
     {
       operation: "inspect_artifact",
@@ -140,11 +131,7 @@ describe("leaf artifact comparison", () => {
     const parsed = artifactInventoryResultSchema.parse(left.normalized_result);
     const { coverage: _coverage, ...withoutCoverage } = parsed;
     const malformed = createEvidence(
-      {
-        path: fileSubjectDisplay(left.subject).local_path,
-        sha256: fileIdentity(left.subject).sha256,
-        format: fileIdentity(left.subject).format,
-      },
+      evidenceSubjectInput(left.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",
@@ -302,11 +289,7 @@ describe("artifact inventory coverage", () => {
       complete.normalized_result,
     );
     const unknownCoverage = createEvidence(
-      {
-        path: fileSubjectDisplay(complete.subject).local_path,
-        sha256: fileIdentity(complete.subject).sha256,
-        format: fileIdentity(complete.subject).format,
-      },
+      evidenceSubjectInput(complete.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",
@@ -344,11 +327,7 @@ describe("artifact inventory coverage", () => {
       fragment.normalized_result,
     );
     const mixed = createEvidence(
-      {
-        path: fileSubjectDisplay(fragment.subject).local_path,
-        sha256: fileIdentity(fragment.subject).sha256,
-        format: fileIdentity(fragment.subject).format,
-      },
+      evidenceSubjectInput(fragment.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",
@@ -444,11 +423,7 @@ describe("artifact comparison", () => {
       complete.normalized_result,
     );
     const incomplete = createEvidence(
-      {
-        path: root,
-        sha256: fileIdentity(complete.subject).sha256 ?? "0".repeat(64),
-        format: "directory",
-      },
+      evidenceSubjectInput(complete.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",
@@ -491,24 +466,16 @@ describe("artifact comparison completeness", () => {
       const inventory = artifactInventoryResultSchema.parse(
         evidence.normalized_result,
       );
-      return createEvidence(
-        {
-          path: evidence.subject?.local_path ?? "",
-          sha256: inventory.manifest.root_sha256,
-          format: inventory.manifest.root_format,
+      return createEvidence(evidenceSubjectInput(evidence.subject), PROVIDER, {
+        operation: "inventory_artifact",
+        parameters: {},
+        result: {
+          ...inventory,
+          coverage: { scope: "root", status: "complete" },
         },
-        PROVIDER,
-        {
-          operation: "inventory_artifact",
-          parameters: {},
-          result: {
-            ...inventory,
-            coverage: { scope: "root", status: "complete" },
-          },
-          confidence: "derived",
-          authority: "shipped-artifact",
-        },
-      );
+        confidence: "derived",
+        authority: "shipped-artifact",
+      });
     };
     const compared = compareArtifacts(rootOnly(left), rootOnly(right));
     expect(compared.status).toBe("unknown");
@@ -952,11 +919,7 @@ describe("artifact comparison fragment integrity", () => {
     const fragment = leftFragments[0];
     if (fragment === undefined) throw new Error("Expected inventory fragments");
     const conflictingScope = createEvidence(
-      {
-        path: leftPath,
-        sha256: fileIdentity(left.subject).sha256 ?? "",
-        format: "directory",
-      },
+      evidenceSubjectInput(left.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",

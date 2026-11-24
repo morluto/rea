@@ -176,7 +176,7 @@ describe("nested container family", () => {
         artifact_format: "unknown",
         hash_status: "not-hashed",
         limitations: [
-          "Symlink target was not followed or disclosed.",
+          "Symlink target was recorded, not followed.",
           "The path suffix suggests APK, but these bytes were not read, so the container family is unknown.",
         ],
       });

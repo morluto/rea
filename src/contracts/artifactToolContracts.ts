@@ -34,6 +34,11 @@ export const artifactInventoryInputSchema = z.strictObject({
 /** Delivery selection belongs to the adapter, not the inventory producer. */
 export const artifactInspectionInputSchema =
   artifactInventoryInputSchema.extend({
+    path: absoluteLocalPathStringSchema
+      .exactOptional()
+      .describe(
+        "Absolute path of the file or directory to inspect, independently of the open target. A directory is inventoried as a tree whose subject is its content-addressed root digest. Omit to inspect the target open_binary opened.",
+      ),
     detail: analysisDetailSchema
       .unwrap()
       .optional()
@@ -89,6 +94,7 @@ const artifact = <
   description: string,
   inputSchema: Schema,
   retainedSummary?: ToolContract["retainedSummary"],
+  requiresActiveTarget = true,
 ) => {
   const outputSchema = requireOutputSchema(artifactOutputSchemas, name);
   return {
@@ -97,7 +103,7 @@ const artifact = <
     description,
     kind: "artifact-provider",
     cli: true,
-    requiresActiveTarget: true,
+    requiresActiveTarget,
     ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema,
     outputSchema,
@@ -119,9 +125,10 @@ export const ARTIFACT_TOOL_CONTRACTS = [
       launchesProcess: true,
       writesFilesystem: true,
     }),
-    "Inventory the active archive, app package, firmware container or supported packaged executable without running it. Returns nested content-addressed inventory Evidence with integrity observations, unexplored branches and next probes. Default complete returns the full graph; detail summary retains it for inspect_analysis_view kind inventory using parent_evidence_id, exact paths/IDs, path globs, size order, fields and paging. Summary changes delivery, not inventory coverage. Bun/Node SEA/Deno carriers expose stored modules/assets and recorded metadata; opaque bytecode and npm snapshots are not decoded. Local Evidence can include environment-file values and certificate bytes. iNES and NES 2.0 add file-region/reconstruction facts, not mapper execution. Integrity mismatches fail unless record-and-continue explicitly retains untrusted contradictions. Supported macOS DMGs are mounted read-only. Use extract_artifact to materialize regular contents; DMGs instead need a caller-managed read-only mount.",
+    "Inventory an archive, app package, directory, firmware container or supported packaged executable without running it: the path given, else the open target. A directory's subject is its content-addressed root digest; a walk a limit stops is partial and has none. Returns nested content-addressed inventory Evidence with integrity observations, unexplored branches and next probes. Default complete returns the full graph; detail summary retains it for inspect_analysis_view kind inventory using parent_evidence_id, exact paths/IDs, path globs, size order, fields and paging. Summary changes delivery, not inventory coverage. Bun/Node SEA/Deno carriers expose stored modules/assets and recorded metadata; opaque bytecode and npm snapshots are not decoded. Local Evidence can include environment-file values and certificate bytes. iNES and NES 2.0 add file-region/reconstruction facts, not mapper execution. Integrity mismatches fail unless record-and-continue explicitly retains untrusted contradictions. Supported macOS DMGs are mounted read-only. Use extract_artifact to materialize regular contents; DMGs instead need a caller-managed read-only mount.",
     artifactInspectionInputSchema,
     { evidenceParameters: "preserve-detail" },
+    false,
   ),
   artifact(
     "extract_artifact",

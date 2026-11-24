@@ -217,10 +217,10 @@ const parseSource = (
   const cached = reusable ? checkedSources.get(key) : undefined;
   if (cached !== undefined && cached.operation === parent.operation) {
     try {
-      validateArtifactInventorySubject(
-        parent.subject,
-        cached.source.inventory.manifest,
-      );
+      validateArtifactInventorySubject(parent.subject, {
+        manifest: cached.source.inventory.manifest,
+        root_digest: cached.source.inventory.rootDigest,
+      });
     } catch (cause: unknown) {
       return sourceFailure(parent.normalizedResult, cause);
     }

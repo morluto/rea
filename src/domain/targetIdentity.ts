@@ -6,6 +6,10 @@ import type {
   UniversalMachOSliceIdentity,
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
+import {
+  DIRECTORY_TREE_DIGEST_ALGORITHM,
+  DIRECTORY_TREE_DIGEST_VERSION,
+} from "./directoryTreeDigest.js";
 import { rawBinaryEntryPointSchema } from "./rawBinary.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
@@ -60,6 +64,27 @@ export interface FileTargetIdentity {
   readonly format: string;
   readonly architecture: string | null;
   readonly selection: FileTargetSelection | null;
+}
+
+/**
+ * A local directory, path-free, named by the complete root digest of its
+ * tree. The algorithm and its version are part of the identity, so a later
+ * encoding never collides with this one. A directory whose walk was partial
+ * has no such identity.
+ */
+export const directoryTargetIdentitySchema = z.strictObject({
+  kind: z.literal("directory"),
+  algorithm: z.literal(DIRECTORY_TREE_DIGEST_ALGORITHM),
+  version: z.literal(DIRECTORY_TREE_DIGEST_VERSION),
+  sha256: digestSchema,
+});
+
+/** A local directory named by the complete root digest of its tree. */
+export interface DirectoryTargetIdentity {
+  readonly kind: "directory";
+  readonly algorithm: typeof DIRECTORY_TREE_DIGEST_ALGORITHM;
+  readonly version: typeof DIRECTORY_TREE_DIGEST_VERSION;
+  readonly sha256: string;
 }
 
 /**
@@ -194,13 +219,17 @@ export interface SessionTargetIdentity {
  */
 export type TargetIdentity =
   | FileTargetIdentity
+  | DirectoryTargetIdentity
   | UrlTargetIdentity
   | ProcessTargetIdentity
   | SessionTargetIdentity
   | UnknownTargetIdentity;
 
-/** A target identity that names no file, and so has no file display facts. */
-export type NonFileTargetIdentity = Exclude<TargetIdentity, FileTargetIdentity>;
+/** A target identity that names no local path, and so has no display facts. */
+export type NonFileTargetIdentity = Exclude<
+  TargetIdentity,
+  FileTargetIdentity | DirectoryTargetIdentity
+>;
 
 /**
  * The identities without a nested target that a subject without file display

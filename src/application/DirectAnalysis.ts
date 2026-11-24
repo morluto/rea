@@ -4,6 +4,7 @@ import {
   type DirectEnhancedToolName,
 } from "./oneShotOperationInput.js";
 import { completedOperationEvidence } from "./binary/SessionEvidenceReuse.js";
+import { selectsArtifactDirectory } from "./artifacts/ArtifactPathInspection.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import type { TargetFormatHint } from "../domain/targetFormats.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
@@ -412,6 +413,32 @@ const runAnalysis = async (
     return collected.result;
   };
   const execute = async (): Promise<Result<Evidence, AnalysisError>> => {
+    // A directory is inventoried as a tree, not opened as a session target.
+    if (
+      tool === "inspect_artifact" &&
+      dependencies.inspectArtifactDirectory !== undefined &&
+      (await selectsArtifactDirectory(path))
+    ) {
+      const execution = await dependencies.inspectArtifactDirectory(
+        path,
+        arguments_,
+        { signal },
+      );
+      if (!execution.ok) return execution;
+      const evidence = withEvidenceCallerInputPath(
+        createAnalysisExecutionEvidence(
+          tool,
+          evidenceParameters,
+          execution.value,
+          "observed",
+        ),
+        path,
+      );
+      const captured = captureSources(evidence, execution.value.sourceEvidence);
+      if (!captured.ok)
+        return err(captured.error.retainPartialObservation(evidence));
+      return ok(evidence);
+    }
     let isDirectory = false;
     if (BUNDLE_RESOURCE_OPERATIONS.has(tool)) {
       const inspected = await inspectBundleResourceInput(path);

@@ -1,13 +1,17 @@
 import {
   resolveEvidenceInput,
-  resolvePairedEvidenceSources,
+  resolveEvidenceSource,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
+import type { z } from "zod";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
 import type { EvidenceFileReadOptions } from "../analysisView/evidenceFileSource.js";
-import { artifactComparisonInputSchema } from "../../contracts/artifactComparisonContracts.js";
+import {
+  artifactComparisonInputSchema,
+  type artifactPathSourceSchema,
+} from "../../contracts/artifactComparisonContracts.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/artifactInventorySummarySchema.js";
 import {
@@ -50,14 +54,30 @@ export interface ArtifactComparisonOutcome {
   readonly evidence: Evidence;
 }
 
+/** A caller-selected path inventoried in place for one comparison side. */
+export type ArtifactPathSource = z.output<typeof artifactPathSourceSchema>;
+
+/** How a comparison reads its sources: Evidence files, and paths to inventory. */
+export interface ArtifactComparisonSourceOptions extends EvidenceFileReadOptions {
+  /**
+   * Inventory a selected path and return its complete inventory Evidence.
+   * Absent, path sources are refused.
+   */
+  readonly inventoryPath?: (
+    source: ArtifactPathSource,
+    signal: AbortSignal | undefined,
+  ) => Promise<Result<Evidence, AnalysisError>>;
+}
+
 /**
- * Select both sides through the shared paired-source owner, authenticate them,
- * then resolve a summary to its exact retained parent inventory.
+ * Select both sides: inventory a path in place, or authenticate Evidence
+ * through the shared source owner and resolve a summary to its exact
+ * retained parent inventory.
  */
 export const resolveArtifactComparisonSources = async (
   input: unknown,
   evidenceById: EvidenceLookup | undefined,
-  options: EvidenceFileReadOptions = {},
+  options: ArtifactComparisonSourceOptions = {},
 ): Promise<Result<ArtifactComparisonSources, AnalysisError>> => {
   const request = parseAnalysisInput(
     OPERATION,
@@ -66,18 +86,41 @@ export const resolveArtifactComparisonSources = async (
     options.signal,
   );
   if (!request.ok) return request;
-  return resolvePairedEvidenceSources(request.value, evidenceById, {
-    ...options,
-    operation: OPERATION,
-    resolveEvidence: (candidate, related, side) => {
-      const authenticated = readEvidence(candidate);
-      return authenticated.ok
-        ? resolveArtifactComparisonEvidence(authenticated.value, related, [
-            side,
-          ])
-        : authenticated;
-    },
-  });
+  const resolveSide = (side: "left" | "right") => {
+    const source = request.value[side];
+    if ("kind" in source && source.kind === "path")
+      return options.inventoryPath === undefined
+        ? Promise.resolve(
+            err(
+              new AnalysisInputError(OPERATION, undefined, [
+                {
+                  path: [side, "kind"],
+                  reason: "invalid_value",
+                  message:
+                    "This adapter cannot inventory a path source; supply inventory Evidence instead.",
+                },
+              ]),
+            ),
+          )
+        : options.inventoryPath(source, options.signal);
+    return resolveEvidenceSource(source, side, evidenceById, {
+      ...options,
+      operation: OPERATION,
+      resolveEvidence: (candidate, related) => {
+        const authenticated = readEvidence(candidate);
+        return authenticated.ok
+          ? resolveArtifactComparisonEvidence(authenticated.value, related, [
+              side,
+            ])
+          : authenticated;
+      },
+    });
+  };
+  const left = await resolveSide("left");
+  if (!left.ok) return left;
+  const right = await resolveSide("right");
+  if (!right.ok) return right;
+  return ok({ left: left.value, right: right.value });
 };
 
 /** Compare resolved inventories and derive Evidence citing both complete owners. */

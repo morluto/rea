@@ -163,7 +163,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "compare_artifacts",
     evidenceEffects,
-    'Compare complete artifact inventories by occurrence path, content identity, metadata and graph relations; root . identifies the outer container separately. Accepts complete inline Evidence, {kind:"retained-evidence",evidence_id} for inspect_artifact/nested inventory/retained summary, or {kind:"evidence-file",path:"/absolute/bundle.json"} with optional evidence_id. Summaries resolve to their complete parent in that session/source bundle; summary facts alone are insufficient. Returns every delta inline with both source identities; coverage gaps remain truncated or unknown, never equivalence. Includes FIT and legacy uImage components.',
+    'Compare complete artifact inventories by occurrence path, content identity, metadata and graph relations; root . identifies the outer container separately. Accepts complete inline Evidence, {kind:"retained-evidence",evidence_id} for inspect_artifact/nested inventory/retained summary, {kind:"evidence-file",path:"/absolute/bundle.json"} with optional evidence_id, or {kind:"path",path:"/absolute/dir"} to inventory a file or directory in place. Summaries resolve to their complete parent in that session/source bundle; summary facts alone are insufficient. Returns every delta inline with both source identities; coverage gaps remain truncated or unknown, never equivalence. Includes FIT and legacy uImage components.',
     artifactComparisonInputSchema,
   ),
   session(
