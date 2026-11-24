@@ -1,8 +1,9 @@
 import { expect, it } from "vitest";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
+import { GhidraRemoteError } from "../../../src/ghidra/protocol.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
 
 it.each(["compact"] as const)(
   "preserves actionable Ghidra procedure ambiguity over MCP (%s)",
@@ -11,16 +12,25 @@ it.each(["compact"] as const)(
       "Ghidra procedure name is ambiguous: shared; select an exact entry address from [0x1000, 0x2000]";
     const harness = await connectGhidraMcp(
       "ambiguous-ghidra-procedure",
-      () =>
+      (operation, input) =>
         Promise.resolve(
-          err(
-            new GhidraSessionError(
-              "remote",
-              message,
-              {},
-              { remoteCode: "procedure_ambiguous" },
-            ),
-          ),
+          operation === "list_names"
+            ? ok(ghidraFixtureResult(operation, input))
+            : err(
+                new GhidraSessionError(
+                  "remote",
+                  message,
+                  {},
+                  {
+                    remoteCode: "procedure_ambiguous",
+                    cause: new GhidraRemoteError(
+                      "procedure_ambiguous",
+                      message,
+                      ["0x1000", "0x2000"],
+                    ),
+                  },
+                ),
+              ),
         ),
       { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
     );
@@ -38,6 +48,17 @@ it.each(["compact"] as const)(
         },
       });
       expect(error.recovery).toBeUndefined();
+      // The bridge's candidates survive as the typed ambiguity refusal.
+      expect(JSON.stringify(error)).toContain("0x2000");
+      // find_xrefs_to_name keeps the provider's ambiguity instead of reporting
+      // the name as not found.
+      const lookup = parseMcpToolError(
+        await harness.mcp.callTool({
+          name: "find_xrefs_to_name",
+          arguments: { name: "shared" },
+        }),
+      ).error;
+      expect(lookup).toMatchObject({ code: "invalid_request", message });
       const malformed = await harness.mcp.callTool({
         name: "analyze_function",
         arguments: { procedure: 42 },
@@ -67,16 +88,18 @@ it.each(["compact"] as const)(
       "File offset 0x400 has multiple loaded mappings: [0x1000, 0x2000]; select an explicit analysis address";
     const harness = await connectGhidraMcp(
       "ambiguous-ghidra-offset",
-      () =>
+      (operation, input) =>
         Promise.resolve(
-          err(
-            new GhidraSessionError(
-              "remote",
-              message,
-              {},
-              { remoteCode: "file_offset_ambiguous" },
-            ),
-          ),
+          operation === "list_names"
+            ? ok(ghidraFixtureResult(operation, input))
+            : err(
+                new GhidraSessionError(
+                  "remote",
+                  message,
+                  {},
+                  { remoteCode: "file_offset_ambiguous" },
+                ),
+              ),
         ),
       { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
     );

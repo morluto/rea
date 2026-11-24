@@ -56,6 +56,10 @@ const selectorField = (operation: NativeSymbolOperation) =>
 /** A lookup the provider refused as a valid request it could not satisfy. */
 const isLookupMiss = (error: AnalysisError): boolean =>
   !error.cleanupIncomplete &&
+  // A selector that matched several candidates was found, not missed.
+  !(
+    error instanceof AnalysisInputError && error.ambiguousSelector !== undefined
+  ) &&
   classifyAnalysisError(error).category === "invalid_input";
 
 /**
@@ -103,6 +107,10 @@ export const resolveNativeSymbol = async (
         operation,
         {
           conformsToInputContract: true,
+          ambiguousSelector: {
+            field: [selectorField(operation)],
+            candidates: selection.candidates.map(({ address }) => address),
+          },
           remediationAction:
             "Select an exact address from the candidates and retry with that address.",
         },

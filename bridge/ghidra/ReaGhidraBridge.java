@@ -475,7 +475,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
-                writeFailure(writer, request.id, failure.code, failure.getMessage());
+                writeFailure(writer, request.id, failure.code, failure.getMessage(), failure.candidates);
             }
             catch (Exception exception) {
                 writeFailure(
@@ -1283,7 +1283,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure(failure.code, "Selector " + selector +
                 " mapped to analysis address " + selection.get("mapped_address").getAsString() +
                 " and procedure " + canonicalAddress(function.getEntryPoint()) +
-                "; " + failure.getMessage());
+                "; " + failure.getMessage(), failure.candidates);
         }
     }
 
@@ -3113,11 +3113,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static RequestFailure ambiguousProcedureFailure(String value, List<Function> matches) {
+        JsonArray candidates = new JsonArray();
+        for (Function function : matches) candidates.add(canonicalAddress(function.getEntryPoint()));
         return new RequestFailure(
             "procedure_ambiguous",
             "Ghidra procedure name is ambiguous: " + value +
                 "; select an exact entry address from " + matches.stream()
-                    .map(function -> canonicalAddress(function.getEntryPoint())).toList()
+                    .map(function -> canonicalAddress(function.getEntryPoint())).toList(),
+            candidates
         );
     }
 
@@ -6566,9 +6569,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
             int id,
             String code,
             String message) throws IOException {
+        writeFailure(writer, id, code, message, null);
+    }
+
+    private static void writeFailure(
+            BufferedWriter writer,
+            int id,
+            String code,
+            String message,
+            JsonArray candidates) throws IOException {
         JsonObject error = new JsonObject();
         error.addProperty("code", code);
         error.addProperty("message", message);
+        if (candidates != null) error.add("candidates", candidates);
         JsonObject response = new JsonObject();
         response.addProperty("id", id);
         response.addProperty("ok", false);
@@ -6923,10 +6936,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private static final class RequestFailure extends RuntimeException {
         private final String code;
+        /** Every matching selector candidate, for an ambiguous selection only. */
+        private final JsonArray candidates;
 
         RequestFailure(String code, String message) {
+            this(code, message, null);
+        }
+
+        RequestFailure(String code, String message, JsonArray candidates) {
             super(message);
             this.code = code;
+            this.candidates = candidates;
         }
     }
 
