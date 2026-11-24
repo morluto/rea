@@ -364,6 +364,72 @@ const expectFridaProcessDiscovery = async (client: Client) => {
   });
 };
 
+it("pages Frida process discovery across changing enumeration order", async () => {
+  const first = { pid: 2, name: "first", identifier: null };
+  const second = { pid: 9, name: "second", identifier: null };
+  const last = { pid: 10, name: "last", identifier: null };
+  const initial = [last, first, second];
+  let enumerations = 0;
+  const provider = createFridaTestProvider({
+    async listProcesses(selector) {
+      const deviceId = selector.deviceId ?? "remote";
+      const processes =
+        deviceId === "empty"
+          ? []
+          : enumerations % 2 === 0
+            ? initial
+            : initial.toReversed();
+      enumerations += 1;
+      return { ok: true, value: { deviceId, processes, cleanupError: null } };
+    },
+  });
+  const session = createTestBinarySession(() => {
+    throw new Error("Binary provider must not start");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    { fridaInstrumentation: provider },
+  );
+  const client = await connectFridaTestClient(server, session, "frida-pages");
+  const call = (args: {
+    device_id?: string;
+    limit?: number;
+    offset?: number;
+  }) =>
+    client.callTool({
+      name: "list_frida_processes",
+      arguments: { device_id: "local", ...args },
+    });
+  const schema = toolContract("list_frida_processes").outputSchema;
+  for (const [args, processes, total, truncated] of [
+    [{ limit: 1 }, [first], 3, true],
+    [{ offset: 1, limit: 1 }, [second], 3, true],
+    [{ offset: 1 }, [second, last], 3, true],
+    [{ offset: 3 }, [], 3, true],
+    [{ device_id: "empty", offset: 1 }, [], 0, false],
+    [{ limit: 3 }, [first, second, last], 3, false],
+  ] as const) {
+    const response = await call(args);
+    expect(response.isError).not.toBe(true);
+    expect(schema.parse(response.structuredContent)).toEqual({
+      device_id: "device_id" in args ? args.device_id : "local",
+      processes,
+      cleanup_error: null,
+      total_processes: total,
+      truncated,
+    });
+  }
+  const unpaged = await call({});
+  expect(schema.parse(unpaged.structuredContent)).toEqual({
+    device_id: "local",
+    processes: initial,
+    cleanup_error: null,
+  });
+  expect((await call({ limit: 0 })).isError).toBe(true);
+  expect((await call({ offset: -1 })).isError).toBe(true);
+  expect(enumerations).toBe(7);
+});
+
 const expectFridaSelectorGuidance = async (
   client: Client,
   tools: Awaited<ReturnType<Client["listTools"]>>["tools"],

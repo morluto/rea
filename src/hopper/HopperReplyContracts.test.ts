@@ -185,7 +185,7 @@ it("names each failing field without echoing reported text", () => {
   expect(JSON.stringify(error?.diagnostics)).not.toContain("secret-name");
 });
 
-it("names the nested field of each option a failed union tried", () => {
+it("names the invalid field of the selected permissions variant", () => {
   const parsed = parseHopperReply("list_segments", [
     {
       name: "segment",
@@ -204,7 +204,6 @@ it("names the nested field of each option a failed union tried", () => {
   expect(diagnostics?.["contract_issues"]).toContainEqual({
     path: [0, "permissions", "reason"],
     code: "invalid_type",
-    union_branches: [0],
     expected: "string",
     received: "null",
   });

@@ -1128,6 +1128,57 @@ it.each(["pe", "elf"] as const)(
   },
 );
 
+it.each(["pe", "elf"] as const)(
+  "keeps a %s host native when DOTNET_BUNDLE_SIGNATURE has an out-of-bounds offset while direct reader fails closed",
+  async (format) => {
+    const root = await createTestTempDirectory("rea-dotnet-oob-offset-");
+    for (const [label, offset] of [
+      ["past-size-minus-12", (size: number) => BigInt(size - 11)],
+      ["u64-max", () => 0xffffffffffffffffn],
+    ] as const) {
+      const path = join(root, `${format}-${label}.bin`);
+      const fixture = dotnetBundleFixture();
+      fixture.bytes.writeBigUInt64LE(offset(fixture.bytes.length), 536);
+      if (format === "elf") writeMinimalElfHeader(fixture.bytes);
+      await writeFile(path, fixture.bytes);
+
+      const handle = await open(path, "r");
+      try {
+        expect(
+          await findDotnetBundleHeader(handle, fixture.bytes.length),
+        ).toBeUndefined();
+      } finally {
+        await handle.close();
+      }
+
+      const inventory = await inventoryArtifact(path, {
+        resourceScope: new ArtifactResourceScope(),
+      });
+      expect(inventory.manifest.root_format).toBe(format);
+      expect(inventory.manifest.root_sha256).toMatch(/^[0-9a-f]{64}$/u);
+      expect(inventory.occurrences.map((entry) => entry.logical_path)).toEqual([
+        ".",
+      ]);
+
+      const reader = new DotnetBundleArtifactReader(path);
+      try {
+        await expect(
+          (async () => {
+            for await (const _entry of reader.entries()) {
+              /* consume */
+            }
+          })(),
+        ).rejects.toMatchObject({
+          reason: "format",
+          message: "Selected file has no .NET bundle header",
+        });
+      } finally {
+        await reader.close();
+      }
+    }
+  },
+);
+
 it("preserves a physical .NET member read failure during cancellation", async () => {
   const root = await createTestTempDirectory("rea-dotnet-physical-failure-");
   const path = join(root, "host.exe");

@@ -297,10 +297,18 @@ const searchClasses = async (
   loaded: z.infer<typeof jadxLoadSchema>,
   engine: Engine,
 ): Promise<JsonValue> => {
+  const matchOffset = request.input.offset ?? 0;
+  const matchLimit = request.input.limit;
+  const stopAfter =
+    matchLimit === undefined ? undefined : matchOffset + matchLimit;
   const matches: string[] = [];
-  const pageSize = 4096;
+  const maximumPageSize = 4096;
   let offset = 0;
   do {
+    const pageSize =
+      stopAfter === undefined
+        ? maximumPageSize
+        : Math.min(maximumPageSize, stopAfter - matches.length + 1);
     const page = await tools.listClasses({
       query: request.input.query,
       offset,
@@ -316,7 +324,8 @@ const searchClasses = async (
       page.items.length > page.next_offset - offset ||
       (request.input.query === "" &&
         page.items.length !== page.next_offset - offset) ||
-      page.items.some((name) => !name.includes(request.input.query))
+      (request.input.query !== "" &&
+        page.items.some((name) => !name.includes(request.input.query)))
     )
       throw new AnalysisOutputError(
         request.operation,
@@ -332,9 +341,18 @@ const searchClasses = async (
       );
     matches.push(...page.items);
     offset = page.next_offset;
+    if (stopAfter !== undefined && matches.length > stopAfter) break;
   } while (offset < loaded.class_count);
+  const pagedMatches =
+    matchLimit === undefined
+      ? matchOffset === 0
+        ? matches
+        : matches.slice(matchOffset)
+      : matches.slice(matchOffset, matchOffset + matchLimit);
+  const truncated =
+    pagedMatches.length < matches.length || offset < loaded.class_count;
   const occurrences = new Map<string, number>();
-  for (const name of matches)
+  for (const name of pagedMatches)
     occurrences.set(name, (occurrences.get(name) ?? 0) + 1);
   const duplicateNames = [...occurrences]
     .filter(([, count]) => count > 1)
@@ -343,9 +361,9 @@ const searchClasses = async (
     engine,
     query: request.input.query,
     total_classes: loaded.class_count,
-    matches,
+    matches: pagedMatches,
     duplicate_names: duplicateNames,
-    coverage: "complete",
+    coverage: truncated ? "partial" : "complete",
   });
 };
 

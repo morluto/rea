@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { androidVbmetaMetadataSchema } from "../artifactFormatMetadata.js";
+import { androidVbmetaMetadataSchema } from "../formatMetadata/androidAndSystemMetadata.js";
 import { parseAndroidVbmeta } from "../firmware/androidVbmeta.js";
 import { sampleAndroidVbmeta } from "../firmware/androidVbmeta.fixture.js";
 import { androidVbmetaSummaryMetadataSchema } from "./androidVbmetaSummary.js";

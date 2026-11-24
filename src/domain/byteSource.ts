@@ -1,0 +1,40 @@
+/**
+ * Random-access bytes of one admitted artifact. Streaming parsers read only
+ * the ranges they need; `prefix`, when present, holds the file's leading bytes
+ * so header reads need no I/O.
+ */
+export interface ByteSource {
+  readonly size: number;
+  readonly prefix?: Buffer;
+  readRange(offset: number, length: number): Promise<Buffer>;
+}
+
+/** A byte source whose leading bytes were retained during admission. */
+export interface PrefixedByteSource extends ByteSource {
+  readonly prefix: Buffer;
+}
+
+/**
+ * Serve an in-memory buffer as a byte source. Reads outside the buffer return
+ * the bytes that exist (possibly none), as a short positional file read would.
+ * `prefixBytes` models how much of the file admission retained.
+ */
+export const bufferByteSource = (
+  data: Uint8Array,
+  prefixBytes = data.length,
+): PrefixedByteSource => {
+  // A Buffer view over the same memory; no bytes are copied.
+  const bytes = Buffer.isBuffer(data)
+    ? data
+    : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  return {
+    size: bytes.length,
+    prefix: bytes.subarray(0, prefixBytes),
+    readRange: (offset, length) =>
+      Promise.resolve(
+        offset < 0 || length <= 0 || offset >= bytes.length
+          ? Buffer.alloc(0)
+          : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
+      ),
+  };
+};

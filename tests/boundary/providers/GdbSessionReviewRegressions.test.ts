@@ -19,7 +19,7 @@ import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { waitForTestPidFile } from "../../support/process/pidFile.js";
-import { processHasStopped } from "../../support/process/observePosixProcess.js";
+import { waitForPosixProcessStopped } from "../../support/process/observePosixProcess.js";
 import { testWaitDeadline } from "../../support/testWait.js";
 
 // These tests launch controlled fake providers; Linux admission is injected so
@@ -160,12 +160,13 @@ process.stdin.on("data", (chunk) => {
         parameters: {
           command: "-gdb-set auto-load off",
         },
-        raw_result: {
+        normalized_result: {
           process_exit_code: 7,
           process_exit_observed: true,
           records: expect.arrayContaining([diagnostic]),
           completion_status: "unknown",
         },
+        raw_result: null,
       });
       expect(started.error.capturedOutput).toMatchObject({
         stderr: "GDB startup stderr diagnostic\n",
@@ -219,7 +220,7 @@ process.stdin.on("data", (chunk) => {
     if (!started.ok)
       expect(started.error.partialObservation).toMatchObject({
         predicate_type: "rea.debugger.startup-observation",
-        raw_result: {
+        normalized_result: {
           records: expect.arrayContaining([
             '~"automatic loading rejected',
             '"',
@@ -227,6 +228,7 @@ process.stdin.on("data", (chunk) => {
           ]),
           completion_status: "unknown",
         },
+        raw_result: null,
       });
     expect(detachChecked).toBe(true);
   },
@@ -279,11 +281,11 @@ process.stdin.on("data", (chunk) => {
     if (!started.ok) {
       expect(started.error.cleanupIncomplete).toBe(true);
       expect(started.error.partialObservation).toMatchObject({
-        normalized_result: { output_invalid_utf8: true },
-        raw_result: {
+        normalized_result: {
           output_invalid_utf8: true,
           process_exit_observed: true,
         },
+        raw_result: null,
         limitations: expect.arrayContaining([
           expect.stringContaining("invalid UTF-8 bytes"),
         ]),
@@ -498,7 +500,7 @@ process.stdin.resume();
     if (started.ok) throw new Error("GDB unexpectedly started");
     expect(started.error._tag).toBe("AnalysisCancelledError");
     expect(await readFile(signalPath, "utf8")).toBe("SIGTERM");
-    await expect.poll(() => processHasStopped(pid)).toBe(true);
+    await waitForPosixProcessStopped(pid);
     expect(manager.status("unknown-session")).toBeUndefined();
     await expect(manager.start()).resolves.toMatchObject({
       ok: false,
@@ -630,7 +632,7 @@ process.stdin.on("data", (chunk) => {
       join(directory, "pid"),
       testWaitDeadline(),
     );
-    await expect.poll(() => processHasStopped(pid)).toBe(true);
+    await waitForPosixProcessStopped(pid);
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
@@ -690,7 +692,7 @@ setTimeout(() => process.exit(0), 250);
         },
         partialObservation: {
           predicate_type: "rea.debugger.console-observation",
-          raw_result: {
+          normalized_result: {
             records: [
               '~"partial console record',
               '"',
@@ -699,6 +701,7 @@ setTimeout(() => process.exit(0), 250);
             ],
             completion_status: "unknown",
           },
+          raw_result: null,
         },
       });
     }
@@ -757,7 +760,7 @@ process.stdin.on("data", (chunk) => {
           completion_status: "unknown",
           records,
         },
-        raw_result: { records },
+        raw_result: null,
       },
     );
     expect(manager.status(started.value.session_id)).toMatchObject({
@@ -818,7 +821,7 @@ process.stdin.on("data", (chunk) => {
       expect(result.error.partialObservation).toMatchObject({
         predicate_type: "rea.debugger.console-observation",
         parameters: { command: "shell sleep 600" },
-        raw_result: {
+        normalized_result: {
           command: "shell sleep 600",
           records: [
             '~"partial before cancellation',
@@ -827,6 +830,7 @@ process.stdin.on("data", (chunk) => {
           ],
           completion_status: "unknown",
         },
+        raw_result: null,
       });
     }
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
@@ -1019,7 +1023,7 @@ setInterval(() => {}, 1000);
         }
         await ownedProcessExit;
         const pid = ownedLaunch.ownership.leaderPid;
-        await expect.poll(() => processHasStopped(pid)).toBe(true);
+        await waitForPosixProcessStopped(pid);
       }
       const retried = await manager.retryCleanupFailures();
       expect(retried.ok).toBe(false);
@@ -1124,11 +1128,7 @@ process.stdin.on("data", (chunk) => {
           ],
           completion_status: "unknown",
         },
-        raw_result: {
-          command: "second command",
-          records: expect.not.arrayContaining(["~first-command-only"]),
-          completion_status: "unknown",
-        },
+        raw_result: null,
         limitations: expect.arrayContaining([
           expect.stringContaining(
             "only records retained for the active command",

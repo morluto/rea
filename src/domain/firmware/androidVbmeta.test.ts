@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { androidVbmetaMetadataSchema } from "../artifactFormatMetadata.js";
+import { androidVbmetaMetadataSchema } from "../formatMetadata/androidAndSystemMetadata.js";
 import {
   DEFAULT_ANDROID_VBMETA_READER_LIMITS,
   type AndroidVbmetaReaderLimits,

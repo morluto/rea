@@ -158,9 +158,10 @@ interpretation, not browser request-path decoding or reachability.
 
 Metro compiles `require.context` into
 `Object.defineProperties({}, {"./file.tsx": getter, ...})`, and Expo Router web
-exports bundle the app directory this way. When every key of such a map is a
-`./`-relative `.js`, `.jsx`, `.ts` or `.tsx` file and at least one is a
-`_layout` or `+` file, each other key becomes an `expo-router-context-key`
+exports bundle the app directory this way. The scanner checks an unshadowed
+`Object.defineProperties` call on a new object, with statically visible getters
+for every file. When every key is a `./`-relative `.js`, `.jsx`, `.ts` or `.tsx`
+file and at least one is a `_layout` or `+` file, each other key becomes an `expo-router-context-key`
 occurrence at the key literal. Expo Router file conventions convert it: groups,
 including `(a,b)` group arrays, contribute no segment; `[id]` maps to `:id` and
 `[...rest]` to `:rest+`; a trailing `index` names its directory; platform

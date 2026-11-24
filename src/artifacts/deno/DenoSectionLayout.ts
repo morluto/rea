@@ -15,6 +15,8 @@ export const DENO_SECTION_MAGIC = Buffer.from("d3n0l4nd", "latin1");
 const MAX_DENO_METADATA_JSON_BYTES = 8 * 1024 * 1024;
 export const MAX_DENO_VFS_HEADER_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_DENO_TABLE_COUNT = 100_000;
+const REDIRECT_ROW_BYTES = 8;
+const REDIRECT_BATCH_ROWS = 1_024;
 export const MAX_DENO_SPECIFIER_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_DENO_REMOTE_BODY_BYTES = 256 * 1024 * 1024;
 
@@ -115,6 +117,7 @@ export interface DenoParsedSection {
   readonly specifierText: ReadonlyMap<number, string | null>;
 }
 
+/** Read a section-relative range, returning the acquired prefix at physical EOF. */
 export type DenoSectionRead = (
   offset: number,
   length: number,
@@ -236,17 +239,40 @@ export const parseDenoSection = async (
   assertTableCount(redirectCount, "redirect");
   const redirectIds = new Set<number>();
   let redirectListing: DenoListing = "listed";
-  for (let index = 0; index < redirectCount; index += 1) {
+  for (let index = 0; index < redirectCount;) {
     abortIfNeeded(signal);
-    const from = await u32();
-    const to = await u32();
-    if (redirectIds.has(from))
-      throw denoFormatFailure(
-        `duplicate redirect specifier id ${String(from)}`,
-      );
-    redirectIds.add(from);
-    if (!hasSpecifierText(from) || !hasSpecifierText(to))
-      redirectListing = "unsupported";
+    // A short last batch still admits every complete earlier row, so an earlier duplicate retains precedence.
+    const rows = Math.min(
+      redirectCount - index,
+      REDIRECT_BATCH_ROWS,
+      Math.floor(Number(size - cursor) / REDIRECT_ROW_BYTES),
+    );
+    if (rows === 0) throw denoFormatFailure("length overruns the section");
+    const range = takeRange(BigInt(rows * REDIRECT_ROW_BYTES));
+    const bytes = await read(range.sectionOffset, range.length);
+    abortIfNeeded(signal);
+    if (bytes.length > range.length)
+      throw denoFormatFailure("section read was short");
+    const batch = new BinaryReader(bytes, true, "deno");
+    // Decode the acquired complete rows even if a later row ends at physical EOF.
+    for (
+      let offset = 0;
+      offset <= bytes.length - REDIRECT_ROW_BYTES;
+      offset += REDIRECT_ROW_BYTES
+    ) {
+      const from = batch.u32(offset);
+      const to = batch.u32(offset + 4);
+      if (redirectIds.has(from))
+        throw denoFormatFailure(
+          `duplicate redirect specifier id ${String(from)}`,
+        );
+      redirectIds.add(from);
+      if (!hasSpecifierText(from) || !hasSpecifierText(to))
+        redirectListing = "unsupported";
+    }
+    if (bytes.length < range.length)
+      throw denoFormatFailure("section read was short");
+    index += rows;
   }
   const redirects: DenoCountedRegion = {
     count: redirectCount,

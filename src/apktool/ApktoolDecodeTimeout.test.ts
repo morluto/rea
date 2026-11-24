@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { DEFAULT_APKTOOL_DECODE_TIMEOUT_MS } from "../domain/apktool/apktoolResourceAnalysis.js";
 import {
@@ -88,7 +88,7 @@ const decode = async (
   path: string,
   decodeTimeoutMs?: number,
 ) =>
-  new ApktoolResourceAnalysisService(provider).execute(
+  createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     {
       path,

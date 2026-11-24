@@ -14,7 +14,7 @@ import {
   artifactReaderLimitFailure,
   abortIfNeeded,
 } from "../../resources/index.js";
-import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 
 /** SHA-256 marker embedded by Microsoft's apphost; the preceding UInt64 is the header offset. */
 export const DOTNET_BUNDLE_SIGNATURE = Buffer.from(
@@ -46,34 +46,72 @@ export const findDotnetBundleHeader = async (
   markerSearchEnd = size,
 ): Promise<number | undefined> => {
   abortIfNeeded(signal);
-  let tail = Buffer.alloc(0);
   if (markerSearchEnd === 0) return undefined;
-  for await (const value of readArtifactFileChunks(handle, {
-    end: markerSearchEnd - 1,
-    signal,
-  })) {
-    abortIfNeeded(signal);
-    const chunk: Buffer = value;
-    const bytes = Buffer.concat([tail, chunk]);
+  // A 32-byte signature preceded by an 8-byte offset spans 40 bytes, so a
+  // boundary-straddling match needs at most 39 tail bytes + 39 head bytes.
+  const SEAM_CARRY = 39;
+  const seam = Buffer.allocUnsafe(SEAM_CARRY * 2);
+  const seamReader = new BinaryReader(seam, true, "dotnet-bundle");
+  let tailLen = 0;
+  const checkMatches = (
+    bytes: Buffer,
+    reader: BinaryReader | undefined,
+  ): number | null | undefined => {
     for (
       let index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE);
       index >= 0;
       index = bytes.indexOf(DOTNET_BUNDLE_SIGNATURE, index + 1)
     ) {
       if (index < 8) continue;
-      const offset = new BinaryReader(bytes, true, "dotnet-bundle").word(
-        index - 8,
-        64,
-      );
+      const offset = (
+        reader ?? new BinaryReader(bytes, true, "dotnet-bundle")
+      ).word(index - 8, 64);
       // HostWriter.IsBundle uses the first apphost marker. Later markers may
       // belong to embedded native apphosts, whose coordinates are not this host's.
-      if (offset === 0n) return undefined;
-      if (offset > BigInt(size - 12))
-        fail(".NET bundle header is outside the host file");
+      // An offset outside the host file cannot name a bundle header here, so treat
+      // the carrier as not holding a .NET bundle rather than aborting outer native
+      // classification.
+      if (offset === 0n || size < 12 || offset > BigInt(size - 12)) return null;
       return Number(offset);
     }
+    return undefined;
+  };
+  for await (const value of readArtifactFileChunks(handle, {
+    end: markerSearchEnd - 1,
+    signal,
+  })) {
+    abortIfNeeded(signal);
+    const chunk: Buffer = value;
+    if (chunk.length === 0) continue;
+    if (tailLen > 0) {
+      const headLen = Math.min(SEAM_CARRY, chunk.length);
+      chunk.copy(seam, tailLen, 0, headLen);
+      const seamResult = checkMatches(
+        seam.subarray(0, tailLen + headLen),
+        seamReader,
+      );
+      if (seamResult !== undefined)
+        return seamResult === null ? undefined : seamResult;
+    }
+    const chunkResult = checkMatches(chunk, undefined);
+    if (chunkResult !== undefined)
+      return chunkResult === null ? undefined : chunkResult;
     // A complete marker already examined must not be examined again.
-    tail = bytes.subarray(Math.max(0, bytes.length - 39));
+    if (chunk.length >= SEAM_CARRY) {
+      chunk.copy(seam, 0, chunk.length - SEAM_CARRY, chunk.length);
+      tailLen = SEAM_CARRY;
+    } else {
+      const total = tailLen + chunk.length;
+      if (total <= SEAM_CARRY) {
+        chunk.copy(seam, tailLen);
+        tailLen = total;
+      } else {
+        const drop = total - SEAM_CARRY;
+        seam.copyWithin(0, drop, tailLen);
+        chunk.copy(seam, tailLen - drop);
+        tailLen = SEAM_CARRY;
+      }
+    }
   }
   return undefined;
 };
@@ -326,7 +364,7 @@ class BundleCursor {
       const at = await this.#advance(length);
       const bytes = this.#cache.range(at, length, "manifest string");
       try {
-        return strictUtf8Decoder("preserve").decode(bytes);
+        return decodeStrictUtf8(bytes, "preserve");
       } catch (cause) {
         throw new ArtifactReaderFailure(
           "format",

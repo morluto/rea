@@ -8,6 +8,7 @@ import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgem
 const fixture = vi.hoisted(() => ({
   files: new Map<string, string>(),
   handles: new Map<string, FileHandle>(),
+  startedOpens: new Set<string>(),
   denied: new Map<string, Error>(),
   onRead: undefined as undefined | ((path: string) => Promise<void>),
   onReadFailure: undefined as undefined | ((cause: unknown) => void),
@@ -24,6 +25,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return filesystem.readFile(...args);
     },
     open: async (path: string) => {
+      fixture.startedOpens.add(path);
       const selected = fixture.files.get(path);
       if (selected === undefined) throw new Error(`Unexpected open: ${path}`);
       const handle = await filesystem.open(selected, "r");
@@ -65,33 +67,124 @@ import {
   readNativeProcessIdentityMap,
 } from "./ProcessOwnershipObservation.js";
 
-const prepare = async () => {
+const prepare = async (count = 3, startTime = (_pid: number) => 100) => {
   fixture.files.clear();
   fixture.handles.clear();
+  fixture.startedOpens.clear();
   fixture.denied.clear();
   fixture.onRead = undefined;
   fixture.onReadFailure = undefined;
   fixture.onClosed = undefined;
   fixture.onDeniedClose = undefined;
   const root = await createTestTempDirectory("rea-inspection-descriptor-");
-  const rows = [42, 43, 44].map((pid) => ({
-    pid,
-    parentPid: 1,
-    processGroupId: pid,
-    state: "S",
-    command: "fixture",
-  }));
+  const rows = Array.from({ length: count }, (_, index) => 42 + index).map(
+    (pid) => ({
+      pid,
+      parentPid: 1,
+      processGroupId: pid,
+      state: "S",
+      command: "fixture",
+    }),
+  );
   for (const { pid } of rows) {
     const path = join(root, String(pid));
     // Linux stat fields 3..22, including PF flags and the native start tick.
     await writeFile(
       path,
-      `${pid} (fixture) S 1 ${pid} ${pid} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 100`,
+      `${pid} (fixture) S 1 ${pid} ${pid} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${startTime(pid)}`,
     );
     fixture.files.set(`/proc/${pid}/stat`, path);
   }
   return { root, rows, host: createSystemProcessOwnershipHost("linux", {}) };
 };
+
+it.each(["complete", "cancel"] as const)(
+  "bounds Linux identity reads and preserves PID attribution when queued reads %s",
+  async (outcome) => {
+    const concurrency = 48;
+    const startTime = (pid: number) => 1_000 + pid;
+    const { rows, host } = await prepare(concurrency + 4, startTime);
+    const paths = rows.map(({ pid }) => `/proc/${pid}/stat`);
+    const gates = new Map(
+      paths.map((path) => [
+        path,
+        { entered: createDeferred<void>(), release: createDeferred<void>() },
+      ]),
+    );
+    fixture.onRead = (path) => {
+      const gate = gates.get(path)!;
+      gate.entered.resolve();
+      return gate.release.promise;
+    };
+    const closed: string[] = [];
+    fixture.onClosed = (path) => closed.push(path);
+    const controller = new AbortController();
+    const reason = { caller: "while identity reads remain queued" };
+    const pending = host.processIdentities!(rows, controller.signal).catch(
+      (cause: unknown) => cause,
+    );
+    const firstWave = paths.slice(0, concurrency);
+    const firstQueued = paths[concurrency]!;
+    const secondQueued = paths[concurrency + 1]!;
+    const lastOfFirstWave = firstWave.at(-1)!;
+    let result: unknown;
+    try {
+      await awaitAcknowledgement(
+        Promise.all(firstWave.map((path) => gates.get(path)!.entered.promise)),
+        pending,
+        "first identity read wave",
+      );
+      expect(fixture.startedOpens).toEqual(new Set(firstWave));
+
+      gates.get(lastOfFirstWave)!.release.resolve();
+      await awaitAcknowledgement(
+        gates.get(firstQueued)!.entered.promise,
+        pending,
+        "first queued identity read",
+      );
+      gates.get(firstQueued)!.release.resolve();
+      await awaitAcknowledgement(
+        gates.get(secondQueued)!.entered.promise,
+        pending,
+        "second queued identity read",
+      );
+      expect(closed).toEqual([lastOfFirstWave, firstQueued]);
+      expect(fixture.startedOpens).toEqual(
+        new Set([...firstWave, firstQueued, secondQueued]),
+      );
+      if (outcome === "cancel") controller.abort(reason);
+    } finally {
+      for (const gate of gates.values()) gate.release.resolve();
+      result = await pending;
+    }
+    for (const handle of fixture.handles.values()) expect(handle.fd).toBe(-1);
+    if (outcome === "complete") {
+      if (!(result instanceof Map)) throw result;
+      expect([...result.keys()]).toEqual(rows.map(({ pid }) => pid));
+      for (const { pid } of rows)
+        expect(result.get(pid)).toMatchObject({
+          state: "readable",
+          identity: `linux-starttime:${startTime(pid)}`,
+        });
+      return;
+    }
+    if (!(result instanceof ProcessOwnershipIdentityBatchFailure)) throw result;
+    expect(result).toMatchObject({ origin: "cancelled", reason });
+    const completed = rows.slice(concurrency - 1, concurrency + 1);
+    expect([...result.observations.keys()]).toEqual(
+      completed.map(({ pid }) => pid),
+    );
+    for (const { pid } of completed)
+      expect(result.observations.get(pid)).toMatchObject({
+        state: "readable",
+        identity: `linux-starttime:${startTime(pid)}`,
+      });
+    expect(result.cancellations.at(-1)?.pid).toBe(rows.at(-1)!.pid);
+    expect(fixture.startedOpens).toEqual(
+      new Set(paths.slice(0, concurrency + 2)),
+    );
+  },
+);
 
 it("retains an actual descriptor read fault as unavailable when the identical fault aborts the caller", async () => {
   const { root, rows, host } = await prepare();

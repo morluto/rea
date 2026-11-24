@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { rawLoadAtEntry } from "./rawBinary.fixture.js";
 import type { BinaryTarget } from "./binaryTargetTypes.js";
 import {
   binaryTargetIdentity,
@@ -40,8 +41,7 @@ describe("target identity key", () => {
       format: "raw-binary",
       architecture: "arm",
       availableArchitectures: ["arm"],
-      entryPoint: "0x8000000",
-      entryPointSource: "0x08000000",
+      rawLoad: rawLoadAtEntry("0x08000000"),
     };
     const identity = binaryTargetIdentity(raw);
     expect(identity).toEqual({
@@ -51,7 +51,10 @@ describe("target identity key", () => {
       architecture: "arm",
       selection: { kind: "entry-point", entry_point: "0x8000000" },
     });
-    const moved = binaryTargetIdentity({ ...raw, entryPoint: "0x9000000" });
+    const moved = binaryTargetIdentity({
+      ...raw,
+      rawLoad: rawLoadAtEntry("0x9000000"),
+    });
     expect(sameTargetIdentity(identity, moved)).toBe(false);
 
     const flash: BinaryTarget = {

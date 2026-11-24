@@ -34,6 +34,7 @@ import {
   processInspectionFailure,
   retainArtifactCommandCleanup,
 } from "../providers/OwnedCommandCleanup.js";
+import { ownershipPreparationError } from "../providers/ownedProcessAvailability.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import type { AdbBinarySelection } from "./AdbConfiguration.js";
 
@@ -204,6 +205,24 @@ export const runAdbProcess = async (
 };
 
 /**
+ * The primary for a run whose owner kept cleanup or that never started. Host
+ * capacity outranks a helper root it left to remove, so `classify` reports it;
+ * other preparation failures are a host prerequisite, not an adb result.
+ */
+const retainedOrPreparationError = (
+  operation: string,
+  { cause, command, capturedOutput }: AdbRunFailure,
+  cleanup: AnalysisError | undefined,
+): AnalysisError | undefined => {
+  if (preparationHostCapacityFailure(cause) !== undefined) return undefined;
+  if (cleanup !== undefined) return cleanup;
+  return command?.reason === "timeout" ||
+    processInspectionFailure(cause) === undefined
+    ? undefined
+    : ownershipPreparationError("adb", operation, cause, capturedOutput);
+};
+
+/**
  * Report a failed adb run: a completed nonzero exit verdict stays primary
  * before attaching late cancellation or cleanup failures; otherwise caller
  * cancellation and interrupted process inspection come first, then `classify`
@@ -253,9 +272,9 @@ export const adbRunFailureError = (
   // of an earlier preparation it must finish before admitting another launch.
   else if (command === undefined && cause instanceof AnalysisError)
     primary = cause;
-  else if (cleanups[0] !== undefined) primary = cleanups[0];
   else
     primary =
+      retainedOrPreparationError(operation, failure, cleanups[0]) ??
       classify(failure) ??
       new AnalysisProtocolError(`adb failed for ${operation}`, { cause });
   for (const cleanup of cleanups)

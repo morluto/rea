@@ -2,9 +2,9 @@ import { z } from "zod";
 
 import {
   androidVbmetaMetadataSchema,
-  uint32,
   type AndroidVbmetaMetadata,
-} from "../artifactFormatMetadata.js";
+} from "../formatMetadata/androidAndSystemMetadata.js";
+import { uint32 } from "../formatMetadata/primitives.js";
 
 /**
  * A vbmeta image's root facts in the summary view, under their own kind:

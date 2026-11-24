@@ -13,7 +13,7 @@ import {
 import type {
   AndroidVbmetaEntryMetadata,
   AndroidVbmetaMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import {
   artifactParseFailure,
   artifactReaderLimitFailure,

@@ -4,7 +4,7 @@ import { sha256Hex } from "../../kernel/sha256Hex.js";
 import type {
   AndroidVbmetaDescriptor,
   AndroidVbmetaMetadata,
-} from "../artifactFormatMetadata.js";
+} from "../formatMetadata/androidAndSystemMetadata.js";
 import {
   DEFAULT_ANDROID_VBMETA_READER_LIMITS,
   type AndroidVbmetaReaderLimits,
