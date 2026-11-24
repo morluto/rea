@@ -756,11 +756,11 @@ export const CI_LANES = {
   code: {
     paths: [],
     required: {
-      fast: ["build", "test-shard", "test-source"],
-      full: ["build", "test-shard"],
+      fast: ["build", "test-shard", "test-source", "test"],
+      full: ["build", "test-shard", "test"],
     },
     // A selected PR subset runs its source tests in the test-shard groups.
-    selectedTests: ["build", "test-shard"],
+    selectedTests: ["build", "test-shard", "test"],
   },
   runtime: sameJobs([], ["windows-native-build", "package-e2e"]),
   package: sameJobs(PATH_SCOPES.package, ["windows-curated"], {
