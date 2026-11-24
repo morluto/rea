@@ -51,24 +51,32 @@ export const evmViewItemSchema = z.union([
 const DIAGNOSTIC_PREVIEW_ROWS = 16;
 const REFERENCE_PREVIEW_ROWS = 16;
 
+type PreviewRow = {
+  json_pointer: string;
+  severity: string | null;
+  source_range: z.output<typeof solcSourceRangeSchema>;
+};
+
 const diagnosticSummary = (
   diagnostics: NonNullable<SolcArtifact["diagnostics"]>,
 ) => {
-  const rows = diagnostics.map(({ json_pointer, severity, source_range }) => ({
-    json_pointer,
-    severity,
-    source_range,
-  }));
-  const errors = rows.filter((row) => row.severity === "error");
-  const { items, omitted } = boundedList(
-    [...errors, ...rows.filter((row) => row.severity !== "error")],
-    DIAGNOSTIC_PREVIEW_ROWS,
-  );
+  // One pass: count everything, keep at most one preview's worth of each kind.
+  const errors: PreviewRow[] = [];
+  const others: PreviewRow[] = [];
+  let errorCount = 0;
+  for (const { json_pointer, severity, source_range } of diagnostics) {
+    const isError = severity === "error";
+    if (isError) errorCount += 1;
+    const kept = isError ? errors : others;
+    if (kept.length < DIAGNOSTIC_PREVIEW_ROWS)
+      kept.push({ json_pointer, severity, source_range });
+  }
+  const preview = [...errors, ...others].slice(0, DIAGNOSTIC_PREVIEW_ROWS);
   return {
-    total: rows.length,
-    error_count: errors.length,
-    preview: [...items],
-    preview_omitted: omitted,
+    total: diagnostics.length,
+    error_count: errorCount,
+    preview,
+    preview_omitted: diagnostics.length - preview.length,
   };
 };
 

@@ -33,10 +33,7 @@ const failure = (
   message: string,
   limit?: LimitRef,
 ) => err({ reason, message, ...(limit === undefined ? {} : { limit }) });
-export const child = (
-  node: Node | undefined,
-  name: string,
-): Node | undefined =>
+export const child = (node: Node | undefined, name: string): Node | undefined =>
   node?.type === "object"
     ? node.children?.find((property) => property.children?.[0]?.value === name)
         ?.children?.[1]
