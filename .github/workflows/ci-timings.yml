@@ -57,11 +57,11 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 14
-      - name: Install dependencies for static failure attribution
+      - name: Install runtime dependencies for static failure attribution
         id: failure-deps
         if: ${{ !cancelled() && hashFiles('.cache/ci-job-timings/batch-manifest.json') != '' }}
         continue-on-error: true
-        run: npm ci
+        run: npm ci --omit=dev --ignore-scripts
       - name: Attribute supported static failures against main
         if: ${{ !cancelled() && steps.failure-deps.outcome == 'success' && hashFiles('.cache/ci-job-timings/batch-manifest.json') != '' }}
         continue-on-error: true

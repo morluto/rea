@@ -483,9 +483,13 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
             `${file}:${jobName} npm cache action requires preceding setup-node`,
           ).toBeDefined();
           expect(step.if).toBe(setup?.if);
+          const installCommand =
+            file === "ci-timings.yml" && jobName === "report"
+              ? "npm ci --omit=dev --ignore-scripts"
+              : "npm ci";
           const npmCiIndex = steps.findIndex(
             (candidate, candidateIndex) =>
-              candidateIndex > index && candidate.run === "npm ci",
+              candidateIndex > index && candidate.run === installCommand,
           );
           expect(
             npmCiIndex,
