@@ -109,6 +109,45 @@ describe("axml decoder limits", () => {
     });
   });
 
+  it("fails closed when retained UTF-16 strings exceed the byte bound", async () => {
+    // 129 distinct 65,500-unit CJK strings total ~8.45M code units, which
+    // would pass a code-unit reading of the bound, but occupy ~16.9 MB as
+    // retained UTF-16 and must trip the byte ceiling.
+    const value = (i: number) => "一".repeat(65490) + String(i);
+    const attrs = Array.from({ length: 129 }, (_, i) => ({
+      name: `a${i}`,
+      value: value(i),
+    }));
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "e", attrs },
+      { kind: "end", name: "e" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "capacity",
+      });
+    });
+  });
+
+  it("accepts retained UTF-16 strings just below the byte bound", async () => {
+    // 127 strings of the same shape occupy ~16.6 MB as UTF-16, under the
+    // 16 MiB ceiling, so the document decodes normally.
+    const value = (i: number) => "一".repeat(65490) + String(i);
+    const attrs = Array.from({ length: 127 }, (_, i) => ({
+      name: `a${i}`,
+      value: value(i),
+    }));
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "e", attrs },
+      { kind: "end", name: "e" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const entries = await list(reader);
+      expect(entries.length).toBe(1);
+    });
+  });
+
   it("fails closed on an over-limit declared file", async () => {
     const bytes = buildAxml(AXML_MANIFEST_EVENTS, {
       declaredSize: 64 * 1024 * 1024 + 1,
