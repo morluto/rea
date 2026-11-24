@@ -35,8 +35,12 @@ assert(
   ["chat", "call"].includes(mode),
   "Usage: verify-opencode-client.mjs [chat|call]",
 );
+const configFilename = new Map([
+  ["json", "opencode.json"],
+  ["jsonc", "opencode.jsonc"],
+]).get(configFormat);
 assert(
-  ["json", "jsonc"].includes(configFormat),
+  configFilename !== undefined,
   "REA_VERIFY_OPENCODE_CONFIG_FORMAT must be json or jsonc",
 );
 const verifier = createVerifierRun();
@@ -46,7 +50,7 @@ const { path: lab } = await VerifierFixture.keepArtifacts({
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
-const configPath = join(profile, `opencode.${configFormat}`);
+const configPath = join(profile, configFilename);
 const skillDirectory = join(
   account,
   ".agents",
