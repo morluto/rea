@@ -29,6 +29,7 @@ import {
   assertVerifierCleanupComplete,
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.platform === "win32")
   throw new Error(
@@ -126,10 +127,12 @@ async function cli(procedure, flags = [], path = target) {
 }
 async function connect(environment = {}) {
   const owner = createVerifierMcpOwner();
-  const client = new Client({
-    name: "rea-ghidra-checkpoint-verifier",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-ghidra-checkpoint-verifier",
+      version: "1",
+    }),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],

@@ -15,6 +15,7 @@ import { NativeModuleResolver } from "../../dist/browser/modules/NativeModuleRes
 import { startBrowserModuleSite } from "../fixtures/browser-module-site.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Check native URL resolution against an independently loaded module graph through CLI/MCP. */
 export async function verifyBrowserModules(
@@ -48,7 +49,9 @@ export async function verifyBrowserModules(
       env,
       stderr: "pipe",
     });
-    client = new Client({ name: "module-real-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "module-real-e2e", version: "1" }),
+    );
     const oracle = await loadingOracle(executable, site);
     const scenario = {
       browser: { mode: "launch", executable_path: executable },

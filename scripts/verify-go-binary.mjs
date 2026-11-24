@@ -16,6 +16,7 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const commands = await createVerifierCommands();
 const compiler = process.env.REA_VERIFY_GO_COMMAND ?? "go";
@@ -77,7 +78,9 @@ const verified = [];
 const omittedCoverage = [];
 const failures = [];
 try {
-  client = new Client({ name: "go-binary-verifier", version: "1" });
+  client = completeEvidenceClient(
+    new Client({ name: "go-binary-verifier", version: "1" }),
+  );
   transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
     arguments: [entrypoint, "mcp"],

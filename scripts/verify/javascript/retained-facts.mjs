@@ -17,6 +17,7 @@ import {
 } from "../../../dist/process/OwnedCommand.js";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { selectExportedJavaScriptFacts } from "../../lib/javascript-facts-reference.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -51,10 +52,12 @@ const transport = new StdioClientTransport({
   env: environment,
   stderr: "pipe",
 });
-const client = new Client({
-  name: "javascript-retained-facts-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "javascript-retained-facts-verifier",
+    version: "1",
+  }),
+);
 let temporary;
 let report;
 const serialize = (value) => JSON.stringify(value);

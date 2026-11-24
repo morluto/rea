@@ -25,6 +25,7 @@ import {
   triggerRuntimeFixtureAction,
   isolatedFixtureUrl,
 } from "./browser-runtime-world-e2e.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 // Arming, progress delivery, isolated-world proof and the page action cross
 // separate transports. Leave time for their round trips on shared CI runners;
@@ -101,7 +102,9 @@ export async function verifyBrowserRuntime(
       env,
       stderr: "pipe",
     });
-    client = new Client({ name: "web-runtime-real-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "web-runtime-real-e2e", version: "1" }),
+    );
     await client.connect(transport);
     const invalidSelectors = await verifyRuntimeInvalidSelectors(
       client,

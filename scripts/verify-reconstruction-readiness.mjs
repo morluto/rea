@@ -12,6 +12,7 @@ import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { createEvidenceBundle } from "../dist/domain/evidenceBundle.js";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const [
   { RECONSTRUCTION_READINESS_EXAMPLE },
@@ -72,11 +73,13 @@ const transport = new StdioClientTransport({
   env: environment,
   stderr: "pipe",
 });
-const client = new Client({
-  name: "rea-readiness-verifier",
-  version: "1",
-  capabilities: { elicitation: {} },
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "rea-readiness-verifier",
+    version: "1",
+    capabilities: { elicitation: {} },
+  }),
+);
 
 let verificationReport;
 await withVerifierCleanup(async () => {

@@ -12,6 +12,7 @@ import { AnalysisCancelledError } from "../../dist/domain/analysisErrorCore.js";
 import { runScenarioCli } from "./browser-scenario-verifier.mjs";
 import { requireMcpEvidenceResult } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 const expected = {
   timezone: "Pacific/Honolulu",
@@ -221,10 +222,12 @@ export async function verifyScenarioEnvironment(endpoint, targetId, origin) {
       env: process.env,
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "browser-environment-e2e",
-      version: "1",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "browser-environment-e2e",
+        version: "1",
+      }),
+    );
     await withVerifierCleanup(async () => {
       await client.connect(transport);
       const definition = (await client.listTools()).tools.find(

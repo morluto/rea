@@ -19,6 +19,8 @@ import {
 } from "./lib/verifier-run.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceToolArguments } from "./lib/complete-evidence.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const verifierRun = createVerifierRun();
 // xcrun resolves the compiler before a workspace exists. A failed probe must
@@ -107,7 +109,9 @@ const digest = async (path) =>
 const sessionsBefore = (
   await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
 ).paths;
-const client = new Client({ name: "hopper-callers-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "hopper-callers-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
@@ -290,10 +294,17 @@ try {
     detail: "complete",
   };
   const count = notifications;
-  await call("get_call_graph", query);
+  await call(
+    "get_call_graph",
+    await completeEvidenceToolArguments("get_call_graph", query),
+  );
   assert.equal(notifications, count, "unsolicited progress without token");
   const progress = [];
-  await call("get_call_graph", query, { onprogress: (x) => progress.push(x) });
+  await call(
+    "get_call_graph",
+    await completeEvidenceToolArguments("get_call_graph", query),
+    { onprogress: (x) => progress.push(x) },
+  );
   assert(
     progress.every((x, i) => i === 0 || x.progress > progress[i - 1].progress),
     "progress not monotonic",
@@ -334,7 +345,10 @@ try {
     "did not observe cancellation after partial scan progress; cancellation coverage unavailable on this host",
   );
   await client.ping();
-  const retry = await call("get_call_graph", query);
+  const retry = await call(
+    "get_call_graph",
+    await completeEvidenceToolArguments("get_call_graph", query),
+  );
   assert(retry.normalized_result.graph, "retry did not return graph");
   await call("close_binary", {});
   assert.equal(await digest(large), beforeLarge);

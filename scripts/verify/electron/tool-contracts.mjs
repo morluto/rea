@@ -20,6 +20,7 @@ import {
   cleanupOwnedProcessGroup,
   readProcessRunId,
 } from "../../../dist/process/ProcessOwnership.js";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 
@@ -112,7 +113,9 @@ bridge.exposeInMainWorld("fixture", {
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "electron-real-e2e", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "electron-real-e2e", version: "1" }),
+  );
   let serverStderr = "";
   transport.stderr?.on("data", (chunk) => {
     serverStderr += chunk.toString();

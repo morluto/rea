@@ -30,6 +30,8 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceCliArguments } from "./lib/complete-evidence.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-6502.mjs");
@@ -101,7 +103,9 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-6502-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-6502-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
@@ -475,27 +479,33 @@ await withVerifierFixture(workspaceFixture, async () => {
         );
         await call("close_binary");
         const snapshotPath = join(workspace, "direct-snapshot.json");
-        const cliArgs = (selectedPath) => [
+        const cliArgs = async (selectedPath) => [
           entrypoint,
-          "analyze",
-          selectedPath,
-          "--target-format",
-          "raw-binary",
-          "--architecture",
-          "6502",
-          "--entry-point",
-          "0x8001",
-          "--provider",
-          "ghidra",
-          "--snapshot",
-          snapshotPath,
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "analyze",
+            selectedPath,
+            "--target-format",
+            "raw-binary",
+            "--architecture",
+            "6502",
+            "--entry-point",
+            "0x8001",
+            "--provider",
+            "ghidra",
+            "--snapshot",
+            snapshotPath,
+            "--json",
+          ])),
         ];
-        const saved = await commands.exec(process.execPath, cliArgs(path), {
-          env,
-          timeout: 240000,
-          maxBuffer: 16 * 1024 * 1024,
-        });
+        const saved = await commands.exec(
+          process.execPath,
+          await cliArgs(path),
+          {
+            env,
+            timeout: 240000,
+            maxBuffer: 16 * 1024 * 1024,
+          },
+        );
         assert.equal(
           evidence(JSON.parse(saved.stdout), sha256).operation,
           "binary_overview",
@@ -509,7 +519,7 @@ await withVerifierFixture(workspaceFixture, async () => {
         assert.deepEqual(await readdir(runtime), []);
         // Replaying a matching snapshot must still reach native path admission.
         await assert.rejects(
-          commands.exec(process.execPath, cliArgs(linkedPath), {
+          commands.exec(process.execPath, await cliArgs(linkedPath), {
             env,
             timeout: 240000,
             maxBuffer: 16 * 1024 * 1024,

@@ -14,6 +14,8 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
+import { completeEvidenceCliArguments } from "../../lib/complete-evidence.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 /** Verify real Windows cancellation, disconnect and abrupt CLI owner exit. */
 export async function verifyWindowsAndroidLifecycle(options) {
@@ -99,10 +101,12 @@ async function verifyMcp({ entrypoint, environment, path, repository }, mode) {
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
-  const client = new Client({
-    name: `rea-windows-android-${mode}`,
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: `rea-windows-android-${mode}`,
+      version: "1",
+    }),
+  );
   let observer;
   try {
     await client.connect(transport);
@@ -176,7 +180,15 @@ async function verifyCliOwnerExit({
   const baseline = new Set(await runtimeRoots());
   const child = spawn(
     process.execPath,
-    [entrypoint, "inspect-android-package", path, "--format", "json"],
+    [
+      entrypoint,
+      ...(await completeEvidenceCliArguments([
+        "inspect-android-package",
+        path,
+        "--format",
+        "json",
+      ])),
+    ],
     { cwd: repository, env: environment, stdio: ["ignore", "pipe", "pipe"] },
   );
   let output = "";

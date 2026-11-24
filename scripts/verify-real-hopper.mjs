@@ -52,6 +52,7 @@ import {
 import { startUnrelatedHopperSentinel } from "./lib/unrelated-hopper-sentinel.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 import { verifyLinuxHopperOwnerExit } from "./lib/real-hopper-owner-exit.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 const verifierRun = createVerifierRun();
 // ps and any later host commands share one owner, created before a tool or
 // workspace exists. A failed workspace allocation still closes the owner.
@@ -293,7 +294,9 @@ try {
     stderrBytes += chunk.length;
     stderrChunks.push(chunk.toString("utf8"));
   });
-  const client = new Client({ name: "real-hopper-verifier", version: "1.0.0" });
+  const client = completeEvidenceClient(
+    new Client({ name: "real-hopper-verifier", version: "1.0.0" }),
+  );
   const unrelatedHopper = await startUnrelatedHopperSentinel();
 
   try {

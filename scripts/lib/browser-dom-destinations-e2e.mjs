@@ -8,6 +8,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { assertFormDestinations } from "./browser-verifier-assertions.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Verify the real fixture's form destinations through CLI and stdio MCP. */
 export async function verifyBrowserDomDestinations(
@@ -39,7 +40,9 @@ export async function verifyBrowserDomDestinations(
     env,
     stderr: "pipe",
   });
-  const client = new Client({ name: "browser-dom-destinations", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "browser-dom-destinations", version: "1" }),
+  );
   try {
     await client.connect(transport);
     const result = await client.callTool({

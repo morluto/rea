@@ -8,6 +8,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { inspectVerifierGhidraInstallation } from "./ghidra-installation-inspection.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 /** Exercise qualified annotation names against real demangled C++ ABI symbols. */
 export async function verifyGhidraNamespaceAnnotations({
@@ -240,7 +241,7 @@ async function verifyDuplicateAddressNames(call, evidence, procedures, names) {
   );
 
   for (const [kind, entries] of [
-    ["function", functionEntries],
+    await completeEvidenceCliArguments(["function", functionEntries]),
     ["label", labelEntries],
   ]) {
     const [owner, duplicate] = entries;

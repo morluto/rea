@@ -18,6 +18,7 @@ import {
 } from "../../../dist/process/OwnedCommand.js";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "../../lib/verifier-source-loader.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const { matchesStructuredScopeExpectation, structuredScopeExpectationsSchema } =
   await importVerifierSource(
@@ -97,10 +98,12 @@ const transport = new StdioClientTransport({
   env: environment,
   stderr: "pipe",
 });
-const client = new Client({
-  name: "javascript-native-handoff-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "javascript-native-handoff-verifier",
+    version: "1",
+  }),
+);
 const serialize = (value) => JSON.stringify(value);
 const digest = (value) =>
   createHash("sha256").update(serialize(value)).digest("hex");

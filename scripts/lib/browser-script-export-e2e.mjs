@@ -16,6 +16,8 @@ import {
 } from "./browser-script-export-assertions.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { completeEvidenceToolArguments } from "./complete-evidence.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Verify capture → export → existing analysis through real CLI and stdio MCP. */
 export async function verifyBrowserScriptExport(
@@ -44,7 +46,9 @@ export async function verifyBrowserScriptExport(
       env,
       stderr: "pipe",
     });
-    client = new Client({ name: "web-script-real-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "web-script-real-e2e", version: "1" }),
+    );
     const cliCapture = await cli(
       "capture-browser-scenario",
       JSON.stringify(scenario),
@@ -78,7 +82,10 @@ export async function verifyBrowserScriptExport(
       assert.notEqual(result.isError, true, mcpTextValue(result));
       return parseEvidence(JSON.parse(mcpTextValue(result)));
     };
-    const mcpCapture = await call("capture_browser_scenario", scenario);
+    const mcpCapture = await call(
+      "capture_browser_scenario",
+      await completeEvidenceToolArguments("capture_browser_scenario", scenario),
+    );
     const mcpInput = await save("mcp", mcpCapture);
     const mcpCounts = new Map(site.counts);
     const mcpResult = await assertWebScriptExport(

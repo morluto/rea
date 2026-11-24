@@ -21,6 +21,8 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { completeEvidenceCliArguments } from "./lib/complete-evidence.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -194,17 +196,19 @@ const cli = async () => {
   phase = "production CLI function analysis";
   const commands = await createVerifierCommands();
   const { stdout } = await withVerifierCleanup(
-    () =>
+    async () =>
       commands.exec(
         process.execPath,
         [
           entry,
-          "function",
-          target,
-          values.procedure,
-          "--provider",
-          "ida",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            target,
+            values.procedure,
+            "--provider",
+            "ida",
+            "--json",
+          ])),
         ],
         {
           env: environment,
@@ -291,7 +295,9 @@ const verifyPeerCleanup = async (analysis, closeWithPeer, retryClose) => {
 };
 
 const mcp = async (cliDossier) => {
-  const client = new Client({ name: "rea-real-ida-verifier", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-ida-verifier", version: "1" }),
+  );
   const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
     arguments: [entry, "mcp"],

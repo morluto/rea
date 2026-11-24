@@ -37,6 +37,7 @@ import {
   createVerifierMcpOwner,
   VerifierStdioTransport,
 } from "./lib/verifier-mcp-owner.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -107,7 +108,9 @@ const transport = new StdioClientTransport({
   env: env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-com-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-com-proof", version: "1" }),
+);
 let stderr = "";
 let connected = false;
 let verifierRun;
@@ -568,10 +571,12 @@ async function verifyRejectedCom() {
   await writeFile(rejectedPath, rejectedFixture.bytes, { mode: 0o600 });
   const fallbackOwner = createVerifierMcpOwner();
   workspaceFixture.releaseAfter(() => fallbackOwner.close());
-  const rejectedClient = new Client({
-    name: "rea-real-com-fallback",
-    version: "1",
-  });
+  const rejectedClient = completeEvidenceClient(
+    new Client({
+      name: "rea-real-com-fallback",
+      version: "1",
+    }),
+  );
   const rejectedTransport = new VerifierStdioTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],

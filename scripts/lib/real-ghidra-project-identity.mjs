@@ -15,6 +15,8 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { requireMcpToolError } from "./mcp-verifier-results.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 const exec = promisify(execFile);
 
@@ -118,13 +120,15 @@ public class ClearImportDigest extends GhidraScript {
           process.execPath,
           [
             entrypoint,
-            "decompile",
-            input,
-            "0x0",
-            "--provider",
-            "ghidra",
-            "--format",
-            "json",
+            ...(await completeEvidenceCliArguments([
+              "decompile",
+              input,
+              "0x0",
+              "--provider",
+              "ghidra",
+              "--format",
+              "json",
+            ])),
           ],
           { env: selectedEnv, timeout: 180000, maxBuffer: 8 * 1024 * 1024 },
         );
@@ -166,10 +170,12 @@ async function selectedProjectMcp({
   matching,
   expected,
 }) {
-  const client = new Client({
-    name: "rea-project-identity-verifier",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-project-identity-verifier",
+      version: "1",
+    }),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],

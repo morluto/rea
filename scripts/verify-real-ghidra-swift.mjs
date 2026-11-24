@@ -24,6 +24,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const run = createVerifierRun();
 const installation = await inspectVerifierGhidraInstallation({
@@ -68,7 +69,9 @@ const retainWorkspace = (message, options) => {
   rootFixture.retain(message);
   return new Error(message, options);
 };
-const client = new Client({ name: "ghidra-swift-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "ghidra-swift-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [fileURLToPath(new URL("./rea.mjs", import.meta.url)), "mcp"],

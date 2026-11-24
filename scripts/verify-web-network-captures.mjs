@@ -24,6 +24,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const executable = process.env.REA_MITMDUMP_COMMAND;
 if (
@@ -44,10 +45,12 @@ const runtime = await VerifierFixture.open({
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
-const client = new Client({
-  name: "historical-web-capture-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "historical-web-capture-verifier",
+    version: "1",
+  }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],

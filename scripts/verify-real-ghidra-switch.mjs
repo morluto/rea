@@ -39,6 +39,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // Narrow compiler-shape lane; no cross compiler or game artifact prerequisites.
 const { values } = parseArgs({
@@ -302,7 +303,9 @@ async function verifyTarget(path, sha256, fixtures, variant) {
     env,
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-real-switch-proof", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-switch-proof", version: "1" }),
+  );
   let opened = false;
   let stderr = "";
   const observations = [];

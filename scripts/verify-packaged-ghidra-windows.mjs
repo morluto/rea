@@ -24,6 +24,7 @@ import {
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "win32" || process.arch !== "x64")
   throw new Error(
@@ -298,10 +299,12 @@ try {
       cwd: callerDirectory,
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "rea-packaged-windows-ghidra",
-      version: "1.0.0",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "rea-packaged-windows-ghidra",
+        version: "1.0.0",
+      }),
+    );
     const closeClient = async () => {
       try {
         await client.close();

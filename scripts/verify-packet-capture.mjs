@@ -22,6 +22,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -44,7 +45,9 @@ const environment = {
   TMP: root.path,
   TEMP: root.path,
 };
-const client = new Client({ name: "packet-capture-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "packet-capture-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],

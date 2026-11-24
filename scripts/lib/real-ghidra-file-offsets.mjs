@@ -23,6 +23,7 @@ import {
   requireMcpToolError,
   mcpTextValue,
 } from "./mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Exercise file coordinates through public CLI/MCP using the source-owned PE fixture. */
 export async function verifyGhidraFileOffsets(
@@ -47,7 +48,9 @@ export async function verifyGhidraFileOffsets(
     TMP: runtime,
     TMPDIR: runtime,
   };
-  const client = new Client({ name: "rea-file-offsets", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-file-offsets", version: "1" }),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],

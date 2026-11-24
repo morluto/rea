@@ -20,6 +20,7 @@ import {
   verifyHopperSearch,
   verifyHopperRegexIsolation,
 } from "./real-hopper-search.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 const dispatcher = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 
@@ -512,26 +513,30 @@ export async function verifyHopperLifecycleAndCli(
     assert.deepEqual(evidence.normalized_result, expected);
     const traced = await runCli([
       dispatcher,
-      "trace",
-      primary,
-      query,
-      "--provider",
-      "hopper",
-      "--format",
-      "json",
+      ...(await completeEvidenceCliArguments([
+        "trace",
+        primary,
+        query,
+        "--provider",
+        "hopper",
+        "--format",
+        "json",
+      ])),
     ]);
     const traceEvidence = JSON.parse(traced.stdout);
     assert.equal(traceEvidence.subject.local_path, primary);
     assert.deepEqual(traceEvidence.normalized_result, expectedTrace);
     const analyzed = await runCli([
       dispatcher,
-      "function",
-      primary,
-      entry.value,
-      "--provider",
-      "hopper",
-      "--format",
-      "json",
+      ...(await completeEvidenceCliArguments([
+        "function",
+        primary,
+        entry.value,
+        "--provider",
+        "hopper",
+        "--format",
+        "json",
+      ])),
     ]);
     assert.deepEqual(
       JSON.parse(analyzed.stdout).normalized_result,
@@ -555,13 +560,15 @@ export async function verifyHopperLifecycleAndCli(
       await call("close_binary");
       const analyzed = await runCli([
         dispatcher,
-        "function",
-        objc,
-        delegate.address,
-        "--provider",
-        "hopper",
-        "--format",
-        "json",
+        ...(await completeEvidenceCliArguments([
+          "function",
+          objc,
+          delegate.address,
+          "--provider",
+          "hopper",
+          "--format",
+          "json",
+        ])),
       ]);
       assert.deepEqual(JSON.parse(analyzed.stdout).normalized_result, expected);
       cliTerminalFunctionParity = true;

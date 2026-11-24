@@ -45,6 +45,7 @@ import {
 } from "./lib/verifier-run.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 const { values } = parseArgs({
   options: {
     targets: { type: "string" },
@@ -217,7 +218,9 @@ const openServer = async (provider, kunaSettings = {}) => {
     },
     stderr: "ignore",
   });
-  const client = new Client({ name: "rea-real-kuna", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-kuna", version: "1" }),
+  );
   let peakKiB = 0;
   const cpu = new Map();
   const sampleOnce = async () => {

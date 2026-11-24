@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceToolArguments,
+} from "./complete-evidence.mjs";
 
 /** Verify imported entry aliases through CLI/MCP without admitting interior labels. */
 export async function verifyGhidraEntryAliases({
@@ -98,7 +102,12 @@ export async function verifyGhidraEntryAliases({
       { pattern: `^${escaped}$`, mode: "regex", case_sensitive: true },
     ]) {
       assert.deepEqual(
-        (await call("search_procedures", query))
+        (
+          await call(
+            "search_procedures",
+            await completeEvidenceToolArguments("search_procedures", query),
+          )
+        )
           .filter(({ address }) => address === alias.address)
           .map(({ value, matched_aliases }) => ({ value, matched_aliases })),
         [{ value: canonical.value, matched_aliases: [alias.value] }],
@@ -200,12 +209,14 @@ export async function verifyGhidraEntryAliases({
       process.execPath,
       [
         entrypoint,
-        "function",
-        path,
-        alias.value,
-        "--provider",
-        "ghidra",
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "function",
+          path,
+          alias.value,
+          "--provider",
+          "ghidra",
+          "--json",
+        ])),
       ],
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );

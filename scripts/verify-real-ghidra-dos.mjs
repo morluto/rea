@@ -28,6 +28,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -101,7 +102,9 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-dos-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-dos-proof", version: "1" }),
+);
 let stderr = "";
 let connected = false;
 let verifierRun;

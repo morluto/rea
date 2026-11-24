@@ -28,6 +28,8 @@ import {
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { mcpTextValue, requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { completeEvidenceCliArguments } from "./lib/complete-evidence.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 const environment = Object.fromEntries(
@@ -208,10 +210,12 @@ const inspectCli = async (path) => {
       (
         await run(process.execPath, [
           entrypoint,
-          "inspect-apk-signature",
-          path,
-          "--format",
-          "json",
+          ...(await completeEvidenceCliArguments([
+            "inspect-apk-signature",
+            path,
+            "--format",
+            "json",
+          ])),
         ])
       ).stdout,
     );
@@ -227,7 +231,9 @@ const fixture = await VerifierFixture.open({
   prefix: "rea-apk-signature-verifier-",
 });
 const workspace = fixture.path;
-const client = new Client({ name: "apk-signature-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "apk-signature-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],

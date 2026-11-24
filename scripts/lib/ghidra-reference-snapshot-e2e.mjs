@@ -21,6 +21,7 @@ import {
 } from "../../dist/domain/analysisSnapshot.js";
 import { createEvidence } from "../../dist/domain/evidence.js";
 import { createEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 /** Reject a valid older snapshot whose instruction-only collector omitted a real edge. */
 export async function verifyLegacyGhidraReferenceSnapshot(
@@ -159,14 +160,16 @@ export async function verifyLegacyGhidraReferenceSnapshot(
         process.execPath,
         [
           entrypoint,
-          "function",
-          target.path,
-          procedure,
-          "--provider",
-          "ghidra",
-          "--snapshot",
-          path,
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            target.path,
+            procedure,
+            "--provider",
+            "ghidra",
+            "--snapshot",
+            path,
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
       ),

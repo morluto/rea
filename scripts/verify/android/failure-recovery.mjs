@@ -14,6 +14,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 /** Real unusable Java runtimes and selectors must lead to applicable recovery. */
 export async function verifyAndroidFailureRecovery({
@@ -220,10 +221,12 @@ export async function verifyAndroidFailureRecovery({
       env: environment,
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "rea-real-android-failures",
-      version: "1",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "rea-real-android-failures",
+        version: "1",
+      }),
+    );
     try {
       await client.connect(transport);
       for (const name of [
@@ -308,7 +311,9 @@ const verifyAndroidReadiness = async ({
     env: environment,
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-android-readiness", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-android-readiness", version: "1" }),
+  );
   try {
     await client.connect(transport);
     const catalog = await client.listTools();

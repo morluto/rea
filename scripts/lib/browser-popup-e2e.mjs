@@ -16,6 +16,7 @@ import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
 import { compareBrowserScenarios } from "../../dist/domain/browserScenarioDiff.js";
 import { browserScenarioCaptureSchema } from "../../dist/domain/browserScenarioCapture.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 // Readiness includes descendant document loads, so complete network capture
 // does not depend on whether an inline script runs before an iframe finishes.
@@ -187,7 +188,9 @@ const verifyTransports = async (executable, origin) => {
     env,
     stderr: "pipe",
   });
-  const client = new Client({ name: "popup-real-e2e", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "popup-real-e2e", version: "1" }),
+  );
   try {
     await client.connect(transport);
     const captured = await client.callTool(

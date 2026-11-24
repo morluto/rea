@@ -26,6 +26,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 const run = createVerifierRun();
 const mode = process.argv[2] ?? "symbols";
 if (
@@ -162,7 +163,9 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-nativeaot-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-nativeaot-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);

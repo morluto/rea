@@ -16,6 +16,7 @@ import { parseEvidence } from "../dist/domain/evidence.js";
 import * as prompts from "./verify-package-prompts.mjs";
 import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const verifyMcpToolsAndPrompts = async (client, mcpOptions) => {
   await verifyCompleteToolCatalog(client, mcpOptions);
@@ -278,7 +279,9 @@ export async function verifyPackageMcp({
   transport.stderr?.on("data", (chunk) => {
     mcpStderr += chunk.toString();
   });
-  const client = new Client({ name: "package-smoke", version: "1.0.0" });
+  const client = completeEvidenceClient(
+    new Client({ name: "package-smoke", version: "1.0.0" }),
+  );
   await withVerifierCleanup(async () => {
     try {
       await client.connect(transport);

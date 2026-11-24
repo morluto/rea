@@ -17,6 +17,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const solcModule = process.env.REA_VERIFY_SOLC_MODULE;
 const strace = process.env.REA_VERIFY_STRACE_COMMAND;
@@ -56,7 +57,9 @@ const environment = Object.fromEntries(
 );
 const run = createVerifierRun();
 const root = await VerifierFixture.open({ prefix: "rea-evm-verifier-" });
-const client = new Client({ name: "evm-interface-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "evm-interface-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -339,10 +342,12 @@ try {
       process.execPath,
       "--disable-wasm-trap-handler",
     ];
-    const limitedClient = new Client({
-      name: "limited-evm-verifier",
-      version: "1",
-    });
+    const limitedClient = completeEvidenceClient(
+      new Client({
+        name: "limited-evm-verifier",
+        version: "1",
+      }),
+    );
     const limitedTransport = new StdioClientTransport({
       command: limiter,
       args: [...prefix, entrypoint, "mcp"],
@@ -404,10 +409,12 @@ try {
       ...environment,
       REA_EVM_PRLIMIT_COMMAND: limiter,
     };
-    const selectedClient = new Client({
-      name: "unavailable-evm-limiter-verifier",
-      version: "1",
-    });
+    const selectedClient = completeEvidenceClient(
+      new Client({
+        name: "unavailable-evm-limiter-verifier",
+        version: "1",
+      }),
+    );
     const selectedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],

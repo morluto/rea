@@ -18,6 +18,8 @@ import {
 } from "./lib/verifier-run.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceCliArguments } from "./lib/complete-evidence.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.argv.length !== 2 || process.platform !== "linux")
   throw new Error("Run this ELF verifier on Linux without arguments.");
@@ -49,7 +51,9 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-address-context", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-address-context", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
@@ -253,12 +257,16 @@ try {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
   const cliOverview = parseEvidence(
-    JSON.parse((await cli(["analyze", path])).stdout),
+    JSON.parse(
+      (await cli(await completeEvidenceCliArguments(["analyze", path]))).stdout,
+    ),
   );
   assert.deepEqual(cliOverview.normalized_result, overview.normalized_result);
   let cliFailure;
   try {
-    await cli(["decompile", path, missingAddress]);
+    await cli(
+      await completeEvidenceCliArguments(["decompile", path, missingAddress]),
+    );
   } catch (cause) {
     cliFailure = cause;
   }
@@ -294,16 +302,42 @@ try {
   assert.ok(cliEntry);
   assert.equal(cliEntry.address, entry.address);
   const cliImage = parseEvidence(
-    JSON.parse((await cli(["inspect-native-load-image", path])).stdout),
+    JSON.parse(
+      (
+        await cli(
+          await completeEvidenceCliArguments([
+            "inspect-native-load-image",
+            path,
+          ]),
+        )
+      ).stdout,
+    ),
   );
   assert.equal(cliImage.normalized_result.observations.image_base, base);
   const cliPseudo = parseEvidence(
-    JSON.parse((await cli(["decompile", path, cliEntry.address])).stdout),
+    JSON.parse(
+      (
+        await cli(
+          await completeEvidenceCliArguments([
+            "decompile",
+            path,
+            cliEntry.address,
+          ]),
+        )
+      ).stdout,
+    ),
   );
   const cliOffset = parseEvidence(
     JSON.parse(
-      (await cli(["decompile", path, `--file-offset=0x${offset.toString(16)}`]))
-        .stdout,
+      (
+        await cli(
+          await completeEvidenceCliArguments([
+            "decompile",
+            path,
+            `--file-offset=0x${offset.toString(16)}`,
+          ]),
+        )
+      ).stdout,
     ),
   );
   assert.equal(cliOffset.normalized_result, fromOffset.normalized_result);
