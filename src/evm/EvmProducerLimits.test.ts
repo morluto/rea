@@ -51,7 +51,7 @@ it("recovers complete EVMole worker evidence for the same carrier after raising 
   const recovered = await inspect(4096, 1);
   expect(recovered).toMatchObject({
     ok: true,
-    version: "0.9.3",
+    version: "0.9.4",
     bytecode: {
       bytes: 5,
       hex: "60006000f3",

@@ -832,7 +832,10 @@
               "type": "object",
               "properties": {
                 "logical_path": { "type": "string" },
-                "algorithm": { "type": "string", "const": "dfu-crc32" },
+                "algorithm": {
+                  "type": "string",
+                  "enum": ["dfu-crc32", "crc32"]
+                },
                 "declared_crc32": {
                   "type": "string",
                   "pattern": "^[a-f0-9]{8}$"

@@ -435,7 +435,7 @@ it("merges source and built reports exactly once using the workflow's shard matr
   const config = join(root, "vitest.config.mjs");
   await writeFile(
     config,
-    `export default { test: { maxWorkers: 1, projects: [${["source", "built"].map((name) => `{ test: { name: "${name}", globals: true, include: ["${name}*.test.js"] } }`).join(",")}] } };`,
+    `export default { test: { fsModuleCache: false, maxWorkers: 1, projects: [${["source", "built"].map((name) => `{ test: { name: "${name}", fsModuleCache: false, globals: true, include: ["${name}*.test.js"] } }`).join(",")}] } };`,
   );
   const files = [
     "source.test.js",

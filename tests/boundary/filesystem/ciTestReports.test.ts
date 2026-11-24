@@ -589,7 +589,7 @@ it("recovers complete module costs from real blob reports without executing test
   const config = join(root, "vitest.config.mjs");
   await writeFile(
     config,
-    'export default { test: { globals: true, include: ["sample.test.js"], maxWorkers: 1 } };',
+    'export default { test: { fsModuleCache: false, globals: true, include: ["sample.test.js"], maxWorkers: 1 } };',
   );
   await writeFile(
     join(root, "sample.test.js"),

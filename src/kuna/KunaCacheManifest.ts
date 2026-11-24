@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "../domain/canonicalDigest.js";
 import { z } from "zod";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 import { releaseProducerIdentity } from "../filesystem/ProducerIdentity.js";
@@ -37,7 +37,7 @@ export interface KunaProjectKeyInputs {
 /** Content address of one export: every input that can change its bytes. */
 export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
   sha256Hex(
-    canonicalize({
+    serializeCanonicalValue({
       // The entry layout and manifest meaning are REA's code: a new release
       // keys new entries, and older ones are retired as foreign manifests.
       producer: releaseProducerIdentity(),

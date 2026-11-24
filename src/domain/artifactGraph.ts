@@ -1,5 +1,6 @@
 import { completeOrUnknownCoverageSchema } from "./coverage.js";
 import {
+  artifactCrc32PairSchema,
   artifactDfuCrc32PairSchema,
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
@@ -72,6 +73,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "tar",
   "dds",
   "glb",
   "ktx",
@@ -125,6 +127,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "tar",
   "dds",
   "glb",
   "ktx",
@@ -230,6 +233,7 @@ export const integrityContradictionSchema = z.union([
   integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
+  integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
 ]);
 
 /**

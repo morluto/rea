@@ -13,14 +13,21 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import { createArtifactInspection } from "./artifactInspection.js";
+import {
+  artifactInspectionSources,
+  createArtifactInspection,
+} from "./artifactInspection.js";
 import {
   ArtifactInventoryValidationError,
   ArtifactInventoryCarrierError,
   parseArtifactInventoryEvidence,
   parseArtifactInspectionInventoryResult,
 } from "./artifactInventoryEvidence.js";
-import { createEvidence } from "./evidence.js";
+import {
+  createEvidence,
+  immutableEvidence,
+  isImmutableEvidence,
+} from "./evidence.js";
 
 const inventoryEvidence = ARTIFACT_COMPARISON_EXAMPLE.left;
 const target = inventoryEvidence.subject;
@@ -119,6 +126,23 @@ it("rejects a substep evidence ID that disagrees with its authenticated nested E
   ).toThrow(
     "Artifact inspection substep evidence ID does not match nested Evidence",
   );
+});
+
+it("keeps the supplied sealed inventory Evidence as the inspection's substep and source", () => {
+  const sealed = immutableEvidence(structuredClone(inventoryEvidence));
+  expect(isImmutableEvidence(sealed)).toBe(true);
+  const inspection = createArtifactInspection(sealed);
+  expect(inspection.substeps[0]!.evidence).toBe(sealed);
+  expect(artifactInspectionSources(freezeJsonSnapshot(inspection))).toEqual([
+    sealed,
+  ]);
+  expect(artifactInspectionSources(inspection)[0]).toBe(sealed);
+
+  // An unsealed copy is authenticated and sealed before it is kept.
+  const copy = structuredClone(inventoryEvidence);
+  const kept = createArtifactInspection(copy).substeps[0]!.evidence;
+  expect(isImmutableEvidence(kept)).toBe(true);
+  expect(kept).toEqual(sealed);
 });
 
 it("retains the authenticated parent's nested facts without a second inventory copy", () => {

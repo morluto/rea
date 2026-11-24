@@ -1,6 +1,10 @@
 import { BinaryReader } from "./binaryContainer.js";
 import { err, ok } from "./result.js";
 
+export type ElfSectionHeader = Extract<
+  ReturnType<typeof readElfSectionHeader>,
+  { readonly ok: true }
+>["value"];
 export const elfSectionHeaderWidth = (bits: 32 | 64): 40 | 64 =>
   bits === 64 ? 64 : 40;
 

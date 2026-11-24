@@ -652,25 +652,31 @@ export const typedZipFailure = (
     );
   // Only method 93 uses Node's native Zstandard decoder. Do not classify
   // cancellation or an unrelated codec/runtime error as malformed ZIP data.
-  const code = "code" in cause ? cause.code : undefined;
+  const codecCause =
+    compressionMethod === 93 &&
+    cause.message === ERR_INVALID_COMPRESSED_DATA &&
+    cause.cause instanceof Error
+      ? cause.cause
+      : cause;
+  const code = "code" in codecCause ? codecCause.code : undefined;
   if (compressionMethod === 93 && code === "ZSTD_error_dictionary_wrong")
     return new ArtifactReaderFailure(
       "unavailable",
       "ZIP archive uses an unsupported Zstandard dictionary",
-      { cause },
+      { cause: codecCause },
     );
   if (
     compressionMethod === 93 &&
     code === "ZSTD_error_frameParameter_windowTooLarge"
   )
     return new ArtifactReaderFailure("limit", ZIP_ZSTANDARD_WINDOW_LIMIT, {
-      cause,
+      cause: codecCause,
       boundary: "memory",
       fixedAllowance: ZIP_ZSTANDARD_WINDOW_CEILING,
     });
   const invalidZstandard =
     compressionMethod === 93 &&
-    (cause instanceof ZstandardFramingError ||
+    (codecCause instanceof ZstandardFramingError ||
       code === "ZSTD_error_prefix_unknown" ||
       code === "ZSTD_error_checksum_wrong" ||
       code === "ZSTD_error_corruption_detected" ||
@@ -686,7 +692,7 @@ export const typedZipFailure = (
     reason === "format"
       ? `ZIP archive is malformed: ${invalidZstandard ? ERR_INVALID_COMPRESSED_DATA : cause.message}`
       : `ZIP archive uses an unsupported feature: ${cause.message}`,
-    { cause },
+    { cause: invalidZstandard ? codecCause : cause },
   );
 };
 
