@@ -107,7 +107,17 @@ export const accountZipMemberRegion = async (
   const gap = async (end: number, signingBlockPadding = false) => {
     if (end < cursor) return;
     if (descriptor !== undefined) {
-      const bytes = await dataDescriptorBytes(descriptor, cursor, end, view);
+      const at = cursor;
+      const bytes = await dataDescriptorBytes(
+        descriptor,
+        at,
+        end,
+        view,
+        // A layout followed only by signing-block padding also ends the gap.
+        signingBlockPadding
+          ? (bytes) => isSigningBlockPadding(at + bytes, end, view)
+          : undefined,
+      );
       if (bytes === 0) unverifiedExtents += 1;
       cursor += bytes;
     }
@@ -222,13 +232,15 @@ const localCompressedSize = async (
  * Both size widths are tried, the record's own first: MSIX and APPX packages
  * write 8-byte descriptor sizes without a ZIP64 extra field. Zero sizes match
  * a narrow prefix of a wide descriptor too, so a layout that ends exactly at
- * `end`, the next accounted byte, wins over the first match.
+ * `end`, the next accounted byte, or that `accounts` for the rest of the
+ * range, wins over the first match.
  */
 const dataDescriptorBytes = async (
   record: ZipLocalRecord,
   at: number,
   end: number,
   view: (offset: number, length: number) => Promise<BinaryReader>,
+  accounts?: (bytes: number) => Promise<boolean>,
 ): Promise<number> => {
   const signed =
     end - at >= 16 && (await view(at, 4)).u32(0) === DATA_DESCRIPTOR_SIGNATURE;
@@ -245,7 +257,11 @@ const dataDescriptorBytes = async (
         compressed === BigInt(record.compressedSize) &&
         uncompressed === BigInt(record.uncompressedSize)
       ) {
-        if (at + prefix + body === end) return prefix + body;
+        if (
+          at + prefix + body === end ||
+          (accounts !== undefined && (await accounts(prefix + body)))
+        )
+          return prefix + body;
         if (first === 0) first = prefix + body;
       }
     }
