@@ -763,27 +763,49 @@ const expectSummaryKeepsDecisionFacts = (
   );
 };
 
-const connectDetailFixture = async (starts: string[]) => {
-  const session = composeBinarySession(
-    new AnalysisProviderRegistry([
-      candidate("alpha", starts),
-      candidate("beta", starts, false),
-    ]),
+const expectDetailSchemas = (
+  closedSummary: SessionStatus,
+  closedComplete: SessionStatus,
+) => {
+  const summary = closedSummary.raw.result;
+  const complete = closedComplete.raw.result;
+  const validate = new AjvJsonSchemaValidator().getValidator(
+    canonicalOutputSchema("binary_session"),
   );
-  const server = createServer(
-    { kind: "session", session },
-    { logger: silentLogger },
-  );
-  const mcp = new Client(
-    { name: "session-detail", version: "1.0.0" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
-  );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(mcp, server, { close: () => session.close() });
-  await server.connect(serverTransport);
-  await mcp.connect(clientTransport);
-  return mcp;
+  const canonical = toolContract("binary_session").outputSchema;
+  const { omitted_fields: _omitted, ...summaryWithoutOmissions } = summary;
+  const cases = {
+    summary,
+    complete,
+    "complete labelled summary": { ...complete, detail: "summary" },
+    "summary labelled complete": { ...summary, detail: "complete" },
+    "summary without omitted_fields": summaryWithoutOmissions,
+    "complete with omitted_fields": {
+      ...complete,
+      omitted_fields: summary.omitted_fields,
+    },
+    "summary with complete candidates": {
+      ...summary,
+      analysis_provider_candidates: complete.analysis_provider_candidates,
+    },
+    "summary with complete tool groups": {
+      ...summary,
+      tool_availability: complete.tool_availability,
+    },
+    "complete with summary candidates": {
+      ...complete,
+      analysis_provider_candidates: summary.analysis_provider_candidates,
+    },
+    "complete with summary tool groups": {
+      ...complete,
+      tool_availability: summary.tool_availability,
+    },
+  };
+  for (const [name, result] of Object.entries(cases)) {
+    const valid = name === "summary" || name === "complete";
+    expect(canonical.safeParse({ result }).success, name).toBe(valid);
+    expect(validate({ result }).valid, name).toBe(valid);
+  }
 };
 
 describe("binary_session detail over MCP", () => {
@@ -792,7 +814,38 @@ describe("binary_session detail over MCP", () => {
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     const starts: string[] = [];
-    const mcp = await connectDetailFixture(starts);
+    const alpha = candidate("alpha", starts);
+    const inspectAvailability = vi.fn(alpha.inspectAvailability);
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([
+        { ...alpha, inspectAvailability },
+        candidate("beta", starts, false),
+      ]),
+    );
+    const server = createServer(
+      { kind: "session", session },
+      { logger: silentLogger },
+    );
+    const mcp = new Client(
+      { name: "session-detail", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(mcp, server, { close: () => session.close() });
+    await server.connect(serverTransport);
+    await mcp.connect(clientTransport);
+
+    const probesBeforeInvalidRequest = inspectAvailability.mock.calls.length;
+    expect(
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { detail: "verbose" },
+      }),
+    ).toMatchObject({ isError: true });
+    expect(inspectAvailability).toHaveBeenCalledTimes(
+      probesBeforeInvalidRequest,
+    );
 
     for (const open of [false, true]) {
       if (open) {
@@ -803,10 +856,17 @@ describe("binary_session detail over MCP", () => {
         expect(opened.isError).not.toBe(true);
       }
       const summary = await sessionStatusOf(mcp, {});
-      const explicit = await sessionStatusOf(mcp, { detail: "summary" });
       const complete = await sessionStatusOf(mcp, { detail: "complete" });
-      expect(explicit.parsed).toEqual(summary.parsed);
       expectSummaryKeepsDecisionFacts(summary, complete, open);
+      if (open) {
+        const explicit = await sessionStatusOf(mcp, { detail: "summary" });
+        expect(explicit.parsed).toEqual(summary.parsed);
+      } else {
+        expect(inspectAvailability.mock.calls.length).toBeGreaterThan(
+          probesBeforeInvalidRequest,
+        );
+        expectDetailSchemas(summary, complete);
+      }
       expect(
         analysisProviderCandidate
           .array()
@@ -832,61 +892,6 @@ describe("binary_session detail over MCP", () => {
         },
       ]);
     }
-    expect(starts).toEqual([]);
-  });
-
-  it("rejects results whose fields do not match their detail, canonically and as advertised", async () => {
-    const mcp = await connectDetailFixture([]);
-    const summary = (await sessionStatusOf(mcp, {})).raw.result;
-    const complete = (await sessionStatusOf(mcp, { detail: "complete" })).raw
-      .result;
-    const validate = new AjvJsonSchemaValidator().getValidator(
-      canonicalOutputSchema("binary_session"),
-    );
-    const canonical = toolContract("binary_session").outputSchema;
-    const { omitted_fields: _omitted, ...summaryWithoutOmissions } = summary;
-    const cases = {
-      summary,
-      complete,
-      "complete labelled summary": { ...complete, detail: "summary" },
-      "summary labelled complete": { ...summary, detail: "complete" },
-      "summary without omitted_fields": summaryWithoutOmissions,
-      "complete with omitted_fields": {
-        ...complete,
-        omitted_fields: summary.omitted_fields,
-      },
-      "summary with complete candidates": {
-        ...summary,
-        analysis_provider_candidates: complete.analysis_provider_candidates,
-      },
-      "summary with complete tool groups": {
-        ...summary,
-        tool_availability: complete.tool_availability,
-      },
-      "complete with summary candidates": {
-        ...complete,
-        analysis_provider_candidates: summary.analysis_provider_candidates,
-      },
-      "complete with summary tool groups": {
-        ...complete,
-        tool_availability: summary.tool_availability,
-      },
-    };
-    for (const [name, result] of Object.entries(cases)) {
-      const valid = name === "summary" || name === "complete";
-      expect(canonical.safeParse({ result }).success, name).toBe(valid);
-      expect(validate({ result }).valid, name).toBe(valid);
-    }
-  });
-
-  it("rejects an unknown detail without starting a provider", async () => {
-    const starts: string[] = [];
-    const mcp = await connectDetailFixture(starts);
-    const rejected = await mcp.callTool({
-      name: "binary_session",
-      arguments: { detail: "verbose" },
-    });
-    expect(rejected.isError).toBe(true);
     expect(starts).toEqual([]);
   });
 });

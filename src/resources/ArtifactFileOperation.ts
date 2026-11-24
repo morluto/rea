@@ -1,4 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
+import { scheduler } from "node:timers/promises";
 import {
   RegularFileOperationCancelled,
   type StableRegularFileDescriptor,
@@ -22,7 +23,10 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "./AnalysisCleanupLease.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisCleanupObservation,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import type { ArtifactLimitBoundary } from "../domain/artifactOperationError.js";
 import { ParseFailureError, type LimitRef } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -101,6 +105,35 @@ export class ArtifactFileCleanupFailure<
   }
 }
 
+/** A primary file failure with unresolved cleanup from sibling operations. */
+export class ArtifactFileFailureGroup extends ArtifactReaderFailure {
+  constructor(
+    readonly primary: unknown,
+    readonly siblingCleanup: AnalysisCleanupObservation,
+    leases: readonly AnalysisCleanupLease[] | undefined,
+  ) {
+    const report = ArtifactReaderFailure.withCleanup(
+      primary,
+      siblingCleanup,
+      undefined,
+      leases,
+    );
+    super(
+      report.reason,
+      report.message,
+      {
+        ...report.primaryFacts(),
+        cause: primary,
+        cleanup: report.cleanup,
+        cleanupLeases: report.cleanupLeases,
+        partialObservation: report.partialObservation,
+        cancellation: report.cancellation,
+      },
+      report.details,
+    );
+  }
+}
+
 /** Errnos raised while the caller-selected artifact path is being resolved. */
 export type ArtifactSelectedPathErrno =
   | "ENOENT"
@@ -132,6 +165,16 @@ export const mapArtifactFileFailure = (
   cause: unknown,
   classify: (cause: unknown) => unknown,
 ): unknown => {
+  if (cause instanceof ArtifactFileFailureGroup) {
+    const primary = mapArtifactFileFailure(cause.primary, classify);
+    return Object.is(primary, cause.primary)
+      ? cause
+      : new ArtifactFileFailureGroup(
+          primary,
+          cause.siblingCleanup,
+          cause.cleanupLeases,
+        );
+  }
   if (!(cause instanceof ArtifactFileCleanupFailure)) return classify(cause);
   const physical = cause.fileCleanupFailure;
   if (physical.outcome.kind !== "failed") return cause;
@@ -159,6 +202,8 @@ export interface ArtifactFilePrimaryFacts {
 export const artifactFilePrimaryFacts = (
   cause: unknown,
 ): ArtifactFilePrimaryFacts => {
+  if (cause instanceof ArtifactFileFailureGroup)
+    return artifactFilePrimaryFacts(cause.primary);
   while (cause instanceof ArtifactFileCleanupFailure) {
     const physical = cause.fileCleanupFailure;
     if (physical.outcome.kind !== "failed") break;
@@ -246,10 +291,22 @@ export const assertArtifactReadActive = (
 };
 
 /**
+ * Let a queued abort land, then report it. Synchronous multi-frame decoding
+ * cannot observe the signal until the caller yields.
+ */
+export const yieldArtifactRead = async (
+  signal: AbortSignal | undefined,
+): Promise<void> => {
+  await scheduler.yield();
+  assertArtifactReadActive(signal);
+};
+
+/**
  * Project a failure raised by a domain byte parser over artifact bytes onto the
  * reader's reasons: the caller's cancellation (`signal.reason`) becomes
- * `cancelled`, parser failure kinds stay distinct, and a decode budget is
- * bounded by `limitBoundary`. Every other cause passes through unchanged.
+ * `cancelled`, parser failure kinds and limit facts survive, and
+ * `limitBoundary` describes what a decode budget constrains. Every other cause
+ * passes through unchanged.
  */
 export const artifactParseFailure = (
   cause: unknown,
@@ -266,6 +323,7 @@ export const artifactParseFailure = (
     const boundary = limitBoundary?.(failure.limit);
     return new ArtifactReaderFailure("limit", cause.message, {
       cause,
+      parserLimit: failure.limit,
       ...(boundary === undefined ? {} : { boundary }),
     });
   }
@@ -333,13 +391,15 @@ export const withArtifactRegularFile = async <Value>(
 /** Keep admission, operation outcome, final close and failed-owner transfer together. */
 export const withArtifactFileHandle = async <Value>(
   path: string,
-  file: FileHandle,
+  file: FileHandle | OwnedFileHandle,
   resources: ArtifactResourceScope | undefined,
   signal: AbortSignal | undefined,
   operation: (file: FileHandle) => Promise<Value>,
 ): Promise<Value> => {
-  const owner = new OwnedFileHandle(file);
-  const cleanupLease = new AnalysisCleanupLease(() => owner.close(), [path]);
+  const owner: OwnedFileHandle & {
+    readonly cleanupResources?: readonly string[];
+  } = file instanceof OwnedFileHandle ? file : new OwnedFileHandle(file);
+  const cleanupLease = AnalysisCleanupLease.forCloseOwner(owner, path);
   try {
     return await withOwnedFileHandle(
       path,

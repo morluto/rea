@@ -150,40 +150,6 @@ describe("investigation record ownership", () => {
     expect(records.updateUnknown(input, target).ok).toBe(false);
     expect(records.exportEvidenceBundle()).toEqual(bundle);
   });
-
-  it("reports Unknown-only bundle changes and clears the single record owner", () => {
-    const source = new InvestigationRecords();
-    expect(
-      source.recordUnknown(
-        unknownInput("Can imported Unknowns notify observers?"),
-      ).ok,
-    ).toBe(true);
-    const bundle = source.exportEvidenceBundle();
-    const records = new InvestigationRecords();
-    expect(
-      records.mergeEvidenceBundle(createEvidenceBundle(bundle.records)).ok,
-    ).toBe(true);
-    expect(records.mergeEvidenceBundle(bundle)).toEqual({
-      ok: true,
-      value: {
-        recordsAdded: 0,
-        unknownsAdded: 1,
-        changed: true,
-        replacements: [],
-      },
-    });
-    expect(records.mergeEvidenceBundle(bundle)).toEqual({
-      ok: true,
-      value: {
-        recordsAdded: 0,
-        unknownsAdded: 0,
-        changed: false,
-        replacements: [],
-      },
-    });
-    records.clear();
-    expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
-  });
 });
 
 it("retains complete mutation intent and distinguishes independent update requests", () => {

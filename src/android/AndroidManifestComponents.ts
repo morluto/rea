@@ -78,7 +78,7 @@ const containsUnresolvedToken = (value: string): boolean =>
  * dot or a name without any dot is relative to the package, while a dotted
  * name is already fully qualified.
  */
-export const resolveAndroidComponentName = (
+const resolveAndroidComponentName = (
   packageName: string | null,
   declared: string,
 ): string => {
@@ -202,6 +202,7 @@ export const parseAndroidManifestComponents = (
   let permissionBudget = ANDROID_MANIFEST_LIMITS.permissionBytes;
   let detailBudgetLimited = false;
   let unsupportedFilterMembers = 0;
+  let unnamedFilterMembers = 0;
   const readDetails = createAndroidManifestDetailsReader(
     manifestText,
     ANDROID_MANIFEST_LIMITS,
@@ -275,6 +276,7 @@ export const parseAndroidManifestComponents = (
       if (details.partial) truncated = true;
       if (details.detailLimited) detailBudgetLimited = true;
       unsupportedFilterMembers += details.unsupported;
+      unnamedFilterMembers += details.unnamedFilterMembers;
       if (details.processLimited) {
         processBudgetLimited = true;
         capacityTruncated = true;
@@ -592,6 +594,10 @@ export const parseAndroidManifestComponents = (
   if (unsupportedFilterMembers > 0)
     limitations.push(
       `${String(unsupportedFilterMembers)} intent-filter child declaration(s) use unsupported constructs; affected filter coverage is partial and the declarations remain in the retained manifest.`,
+    );
+  if (unnamedFilterMembers > 0)
+    limitations.push(
+      `${String(unnamedFilterMembers)} intent-filter action or category declaration(s) without android:name were omitted. Read the retained manifest at each affected filter's source location.`,
     );
   if (processBudgetLimited)
     limitations.push(

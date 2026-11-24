@@ -16,7 +16,7 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type {
   AndroidBootImageEntryMetadata,
   AndroidBootImageMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import {
   ANDROID_BOOT_HEADER_PROBE_BYTES,
   ANDROID_BOOT_FIXED_LIMITS,

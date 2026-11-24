@@ -19,6 +19,7 @@ type TypeInventory = Pick<
   | "nesting_read"
   | "selection"
   | "method_rows"
+  | "unresolved_definitions"
   | "limitations"
 >;
 
@@ -32,12 +33,23 @@ export const prepareManagedMemberRecovery = (
   issues: readonly ManagedParseIssue[],
   budget: ManagedDecodeBudget,
 ): ((offset: number | null) => ManagedMemberInspection) => {
+  const { unresolved_definitions, ...retained } = inventory;
   const capacityIssue = new ManagedRepresentationFailure(
     Number.MAX_SAFE_INTEGER,
     budget.maximumBytes,
   ).issue;
   const report: ManagedMemberInspection = {
-    ...inventory,
+    ...retained,
+    ...(unresolved_definitions === undefined
+      ? {}
+      : {
+          unresolved_definitions: {
+            rows: unresolved_definitions.rows.filter(
+              ({ kind }) => kind === "TypeDef",
+            ),
+            method_names_examined: false,
+          },
+        }),
     metadata: { ...inventory.metadata, status: "partial" },
     signature_resolution: null,
     assembly: null,
@@ -61,9 +73,12 @@ export const prepareManagedMemberRecovery = (
   admitManagedProjection(report, budget);
   // A successful full report serializes these same immutable facts once.
   // Transfer their existing charge, rather than charging the type list twice.
-  for (const value of Object.values(inventory)) {
+  for (const value of Object.values(retained)) {
     if (value !== null && typeof value === "object") budget.prepay(value);
   }
+  // The complete projection combines these same type rows with method rows.
+  for (const row of report.unresolved_definitions?.rows ?? [])
+    budget.prepay(row);
   return (offset) =>
     managedMemberInspectionSchema.parse({
       ...report,

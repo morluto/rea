@@ -1,3 +1,4 @@
+import type { WorkflowAnalysisPort } from "./WorkflowEvidence.js";
 import { unknownTarget } from "../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -476,6 +477,16 @@ it("deduplicates exact source caveats without merging providers or operations", 
   );
 });
 
+const useItem = async (
+  observed: WorkflowAnalysisPort,
+  operation: "procedure_info" | "procedure_pseudo_code",
+  procedure: string,
+) => {
+  const result = await observed.execute(operation, { procedure });
+  if (!result.ok) throw result.error;
+  observed.recordItemLimitations?.(operation, result.value);
+};
+
 it("bounds per-item caveat retention while preserving inventory caveats", async () => {
   const result = await executeComposedWorkflow(
     {
@@ -495,7 +506,7 @@ it("bounds per-item caveat retention while preserving inventory caveats", async 
     async (observed) => {
       await observed.execute("list_procedures", {});
       for (const procedure of ["0x1", "0x2", "0x3"])
-        await observed.execute("procedure_pseudo_code", { procedure });
+        await useItem(observed, "procedure_pseudo_code", procedure);
       return ok({ count: 3 });
     },
     {
@@ -531,8 +542,8 @@ it("spends one budget slot on a caveat that two per-item operations share", asyn
         ),
     },
     async (observed) => {
-      await observed.execute("procedure_info", { procedure: "0x1" });
-      await observed.execute("procedure_pseudo_code", { procedure: "0x1" });
+      await useItem(observed, "procedure_info", "0x1");
+      await useItem(observed, "procedure_pseudo_code", "0x1");
       return ok(null);
     },
     {
@@ -568,9 +579,9 @@ it("counts repeated omitted observations without retaining their text for rankin
         ),
     },
     async (observed) => {
-      await observed.execute("procedure_pseudo_code", { procedure: "first" });
+      await useItem(observed, "procedure_pseudo_code", "first");
       for (let index = 0; index < 30; index += 1)
-        await observed.execute("procedure_pseudo_code", { procedure: "later" });
+        await useItem(observed, "procedure_pseudo_code", "later");
       return ok(null);
     },
     {
@@ -607,7 +618,7 @@ it("bounds retained caveat text while preserving smaller later observations", as
         ),
     },
     async (observed) => {
-      await observed.execute("procedure_pseudo_code", {});
+      await useItem(observed, "procedure_pseudo_code", "0x1");
       return ok(null);
     },
     {

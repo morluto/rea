@@ -1,5 +1,12 @@
-import { readElfSectionHeader } from "./elfSectionHeader.js";
-import { readElfProgramHeader, PT_INTERP } from "./elfProgramHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "./elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
+  readElfProgramHeader,
+  PT_INTERP,
+} from "./elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "./elfRawTableDeclarations.js";
 import { readElfFixedHeader, type ElfFixedHeader } from "./elfFixedHeader.js";
 import { err, ok, type Result } from "./result.js";
@@ -52,8 +59,10 @@ const tableFailure = (
   fileSize: number,
 ): string | undefined => {
   if (table.count === 0n) return undefined;
-  const wide = header.elfClass === 64;
-  const minimumWidth = kind === "program" ? (wide ? 56 : 32) : wide ? 64 : 40;
+  const minimumWidth =
+    kind === "program"
+      ? elfProgramHeaderWidth(header.elfClass)
+      : elfSectionHeaderWidth(header.elfClass);
   const label = `${kind} header table`;
   if (table.width < minimumWidth) return `invalid ELF ${label} entry width`;
   // e_ehsize can extend past the class minimum. Bytes below it are the header.
@@ -78,8 +87,7 @@ const extendedCounts = (
   header: ElfFixedHeader,
   initial: TableCounts,
 ): Result<TableCounts, string> => {
-  const wide = header.elfClass === 64;
-  if (first.length !== (wide ? 64 : 40))
+  if (first.length !== elfSectionHeaderWidth(header.elfClass))
     return err("truncated ELF extended section-zero header");
   const parsed = readElfSectionHeader(
     first,
@@ -165,7 +173,7 @@ export function* readElfTableDeclarations(
     if (failure !== undefined) return err(failure);
     const first = yield {
       offset: Number(sectionOffset),
-      size: header.elfClass === 64 ? 64 : 40,
+      size: elfSectionHeaderWidth(header.elfClass),
     };
     const counts = extendedCounts(first, header, {
       programCount,

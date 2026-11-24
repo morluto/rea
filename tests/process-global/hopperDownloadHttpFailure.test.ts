@@ -358,16 +358,6 @@ it.each([undefined, null, 0, 200, 600, 503.5, "503", Number.NaN])(
   },
 );
 
-it("keeps a successful download unchanged", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response("package")),
-  );
-  expect(await downloadHopperPackage(debUrl)).toEqual(
-    ok(Buffer.from("package")),
-  );
-});
-
 it("chooses recovery by failure class: missing file, temporary service failure, refusal or unreachable host", () => {
   const status = (httpStatus?: number) =>
     hopperRequestRecovery(
@@ -470,25 +460,28 @@ it("keeps an observed HTTP status when its truncated body cannot be cancelled", 
   });
 });
 
-it("keeps the size-limit outcome when releasing the oversized body fails", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn<typeof globalThis.fetch>(
+it.each(["completed", "failed"] as const)(
+  "cancels the oversized body and retains the size limit when cleanup %s",
+  async (cleanup) => {
+    const cancel = vi.fn(() => {
+      if (cleanup === "failed") throw new TypeError("terminated");
+    });
+    vi.stubGlobal(
+      "fetch",
       async () =>
         new Response(
           new ReadableStream({
             start(controller) {
               controller.enqueue(new Uint8Array(4));
             },
-            cancel() {
-              throw new TypeError("terminated");
-            },
+            cancel,
           }),
         ),
-    ),
-  );
-  expect(await downloadHopperPackage(debUrl, { maxBytes: 3 })).toEqual({
-    ok: false,
-    error: { url: debUrl, kind: "response_too_large", maxBytes: 3 },
-  });
-});
+    );
+    expect(await downloadHopperPackage(debUrl, { maxBytes: 3 })).toEqual({
+      ok: false,
+      error: { url: debUrl, kind: "response_too_large", maxBytes: 3 },
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  },
+);

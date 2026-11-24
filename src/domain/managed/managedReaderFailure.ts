@@ -60,6 +60,20 @@ export const managedFailure = (
 ): ManagedReaderFailure =>
   new ManagedReaderFailure({ code, scope, offset, detail });
 
+/** Retain a local malformed fact; capacity and unexpected failures still escape. */
+export const retainManagedValueFailure = (
+  cause: unknown,
+  issues: ManagedParseIssue[],
+): ManagedReaderFailure => {
+  if (
+    !(cause instanceof ManagedReaderFailure) ||
+    managedMetadataFailureStatus(cause.issue) === "partial"
+  )
+    throw cause;
+  if (!(cause instanceof ManagedHeapAmbiguityFailure)) issues.push(cause.issue);
+  return cause;
+};
+
 /** Retain one malformed item's location while allowing independent items to be read. */
 export const readManagedValue = <Value>(
   operation: () => Value,
@@ -68,13 +82,7 @@ export const readManagedValue = <Value>(
   try {
     return operation();
   } catch (cause: unknown) {
-    if (
-      !(cause instanceof ManagedReaderFailure) ||
-      managedMetadataFailureStatus(cause.issue) === "partial"
-    )
-      throw cause;
-    if (!(cause instanceof ManagedHeapAmbiguityFailure))
-      issues.push(cause.issue);
+    retainManagedValueFailure(cause, issues);
     return undefined;
   }
 };

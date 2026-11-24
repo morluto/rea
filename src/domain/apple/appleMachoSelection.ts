@@ -20,6 +20,8 @@ import {
 } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
+  readMachoDyldInfoCommand,
+  readMachoLinkeditDataCommand,
   machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
@@ -35,6 +37,8 @@ import type { SelectedNativeImage } from "./machoSliceSelection.js";
 /** One mapped Mach-O segment with file-backed VA range. */
 export interface Segment {
   address: bigint;
+  /** Declared VM base when a leading zero-fill separates it from file backing. */
+  declaredAddress?: bigint;
   size: bigint;
   offset: number;
   executable: boolean;
@@ -242,7 +246,6 @@ const collectSegment = (
   if (!parsed.ok) throw truncatedInput("macho", "Truncated segment command");
   const {
     address,
-    memorySize,
     nameBytes,
     fileSize,
     fileOffset,
@@ -252,33 +255,27 @@ const collectSegment = (
   } = parsed.value;
   const admitted = admitMachoSegmentMapping(parsed.value, 64);
   if (!admitted.ok) throw malformedInput("macho", admitted.error.message);
+  const { unmapped, fileAddress, zeroFill } = admitted.value;
   if (fileOffset + fileSize > BigInt(state.sliceEnd - state.slice))
     throw malformedInput("macho", "Segment file range exceeds target bytes");
   const name = decodeMachoFixedName(nameBytes);
   state.segments.push({
-    address,
+    address: fileAddress,
+    ...(fileAddress === address ? {} : { declaredAddress: address }),
     size: fileSize,
     offset: state.slice + Number(fileOffset),
     executable: (protection & 4) !== 0,
   });
-  if (!admitted.value.unmapped && name !== "__PAGEZERO")
+  if (!unmapped && name !== "__PAGEZERO")
     state.mappings.push({
-      address,
+      address: fileAddress,
       size: Number(fileSize),
       offset: state.slice + Number(fileOffset),
     });
-  if (memorySize > fileSize && name !== "__PAGEZERO")
-    state.zeroFills.push({
-      address: address + fileSize,
-      size: memorySize - fileSize,
-    });
-  if (
-    !admitted.value.unmapped &&
-    name !== "__PAGEZERO" &&
-    fileOffset === 0n &&
-    fileSize > 0n
-  )
-    state.baseAddress ??= address;
+  if (zeroFill !== null && name !== "__PAGEZERO")
+    state.zeroFills.push(zeroFill);
+  if (!unmapped && name !== "__PAGEZERO" && fileOffset === 0n && fileSize > 0n)
+    state.baseAddress ??= fileAddress;
   if (!machoSegmentSectionTableFits(parsed.value, size, true))
     throw truncatedInput("macho", "Truncated section table");
   const sectionWidth = machoSectionHeaderSize(true);
@@ -308,9 +305,8 @@ const collectFixupCommand = (
   { cursor, kind, size }: LoadCommand,
   state: LayoutState,
 ): void => {
-  const range = (at: number): { offset: number; size: number } => {
-    const offset = state.slice + bytes.readUInt32LE(at);
-    const length = bytes.readUInt32LE(at + 4);
+  const range = (relativeOffset: number, length: number) => {
+    const offset = state.slice + relativeOffset;
     if (offset + length > state.sliceEnd)
       throw malformedInput("macho", "Fixup data exceeds the Mach-O slice");
     return { offset, size: length };
@@ -318,30 +314,40 @@ const collectFixupCommand = (
   // An image has one fixup table of each kind; with a repeat, neither table
   // is the image's, so the slice is refused rather than read by position.
   if (kind === LC.DYLD_CHAINED_FIXUPS) {
-    if (size < 16)
+    const data = readMachoLinkeditDataCommand(
+      kind,
+      bytes.subarray(cursor, cursor + size),
+      true,
+    );
+    if (data === null)
       throw truncatedInput("macho", "Truncated chained-fixups command");
     if (state.chained !== null)
       throw malformedInput(
         "macho",
         "Mach-O slice declares more than one LC_DYLD_CHAINED_FIXUPS command",
       );
-    state.chained = range(cursor + 8);
+    state.chained = range(data.dataOffset, data.dataSize);
   } else if (kind === LC.DYLD_INFO || kind === LC.DYLD_INFO_ONLY) {
-    if (size < 48) throw truncatedInput("macho", "Truncated dyld-info command");
+    const fields = readMachoDyldInfoCommand(
+      bytes.subarray(cursor, cursor + size),
+      true,
+    );
+    if (fields === null)
+      throw truncatedInput("macho", "Truncated dyld-info command");
     if (state.dyldInfo)
       throw malformedInput(
         "macho",
         "Mach-O slice declares more than one LC_DYLD_INFO or LC_DYLD_INFO_ONLY command",
       );
     state.dyldInfo = true;
-    const rebase = range(cursor + 8);
+    const rebase = range(fields.rebase_off, fields.rebase_size);
     if (rebase.size > 0) state.rebases.push(rebase);
-    for (const [at, stream] of [
-      [cursor + 16, "bind"],
-      [cursor + 24, "weak"],
-      [cursor + 32, "lazy"],
+    for (const [stream, offset, length] of [
+      ["bind", fields.bind_off, fields.bind_size],
+      ["weak", fields.weak_bind_off, fields.weak_bind_size],
+      ["lazy", fields.lazy_bind_off, fields.lazy_bind_size],
     ] as const) {
-      const bound = range(at);
+      const bound = range(offset, length);
       if (bound.size > 0) state.binds.push({ ...bound, stream });
     }
   } else if (machoDependencyCommand(kind) !== null) {

@@ -13,7 +13,7 @@ import {
   renderCliCommandFailure,
 } from "../../../src/cli/argumentErrors.js";
 
-import { readCliOutputArguments } from "../../../src/cliOutput.js";
+import { readCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -88,8 +88,9 @@ cliTest(
     ).toContain("[truncated: showing tokens 0–20 of ");
     expect(window.stdout).toContain("nextOffset");
 
-    // A different parser error has a much longer enum. Compare the visible
-    // cell with the unmodified machine-readable diagnostic, not a subset.
+    // A different parser error echoes the pipe-containing input before a much
+    // longer choice list. Compare the visible cell with the unmodified
+    // machine-readable diagnostic, not a subset.
     const doctorArgs = ["doctor", "--client", "x|y"];
     const doctorMd = await cli.run({
       arguments: [...doctorArgs, "--format", "md"],
@@ -101,7 +102,8 @@ cliTest(
     expect(doctorJson.exitCode).toBe(1);
     const doctorMessage = JSON.parse(doctorJson.stdout).fieldErrors[0]
       .message as string;
-    expect(doctorMessage.split("|").length).toBeGreaterThan(2);
+    expect(doctorMessage).toContain("Unknown client 'x|y'.");
+    expect(doctorMessage.split(", ").length).toBeGreaterThan(2);
     expect(renderedCells(doctorMd.stdout)).toContain(doctorMessage);
   },
 );

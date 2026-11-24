@@ -328,15 +328,15 @@ export function parseRiscvCallSites(listing) {
 }
 
 /** Disassemble the typed fixture's caller with an independent LLVM tool. */
-export async function inspectRiscvCallSites(path) {
+export async function inspectRiscvCallSites(path, run = execute) {
   const command = fixtureCommand(FIXTURE_TOOLS.riscvObjdump);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
     maxBuffer: 1024 * 1024,
   };
-  const version = await execute(command, ["--version"], options);
-  const { stdout, stderr } = await execute(
+  const version = await run(command, ["--version"], options);
+  const { stdout, stderr } = await run(
     command,
     [
       "-d",

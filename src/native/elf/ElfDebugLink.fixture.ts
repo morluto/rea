@@ -1,6 +1,17 @@
 import { gnuBuildIdNote } from "./ElfNotes.fixture.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 const concat = (...parts: readonly Buffer[]): Buffer => Buffer.concat(parts);
+
+export const elfDebugLinkByteSource = (
+  bytes: Buffer,
+  readRange: PrefixedByteSource["readRange"] = async (offset, length) =>
+    bytes.subarray(offset, offset + length),
+): PrefixedByteSource => ({
+  size: bytes.length,
+  prefix: bytes.subarray(0, 4096),
+  readRange,
+});
 
 const write16 = (
   bytes: Buffer,

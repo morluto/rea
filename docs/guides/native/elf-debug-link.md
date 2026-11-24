@@ -38,6 +38,10 @@ bytes that follow it. `build_id` reports the GNU build-id from `PT_NOTE` and
 Distinct build-ids stay in `ids` and none is selected.
 `sources` lists each contributing GNU build-id note with its table kind and
 index and the note and descriptor file ranges.
+When compressed note storage prevents a complete scan, `build_id.status`
+is `unknown`. Readable build IDs and their locations stay in `ids` and
+`sources`. The report needs a complete build ID to derive an image build-ID
+lookup path or compare against a candidate.
 
 `lookup_paths` lists conventional GNU/Linux strings:
 
@@ -102,7 +106,8 @@ The image is limited to 64 MiB by default (512 MiB maximum). The same
 `max_file_bytes` bounds how much of a candidate is decoded, not how much is
 hashed. At most
 128 note entries are examined by default while reading build-ids (256 maximum),
-which admits distribution glibc builds and their SystemTap probe notes. A debuglink
+which admits distribution glibc builds and their SystemTap probe notes. The scan
+checks the framing of each entry and decodes GNU build-id payloads. A debuglink
 or debugaltlink name longer than 4096 bytes is not copied. A build-id longer
 than 256 bytes is not copied. Malformed image ELF headers and exhausted image
 note budgets fail without partial success. Whole-file gzip, xz, and zstd

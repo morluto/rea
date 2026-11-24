@@ -75,6 +75,11 @@ export const TOOL_FAMILY_DEFINITIONS = [
     contracts: TOOL_CONTRACT_GROUPS.FIRMWARE_TOOL_CONTRACTS,
   },
   {
+    id: "uefi",
+    surface: "firmware-provider",
+    contracts: TOOL_CONTRACT_GROUPS.UEFI_TOOL_CONTRACTS,
+  },
+  {
     id: "android",
     surface: "android-provider",
     contracts: TOOL_CONTRACT_GROUPS.ANDROID_TOOL_CONTRACTS,

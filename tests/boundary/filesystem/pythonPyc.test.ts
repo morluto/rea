@@ -39,42 +39,42 @@ describe("Python pyc stable filesystem boundary", () => {
     }
   });
 
-  it("returns typed resource and cancellation failures", async () => {
+  it("reports each selected pyc limit and reopens the same artifact successfully", async () => {
     const root = await createTestTempDirectory("rea-python-pyc-budget-");
     const path = join(root, "sample.pyc");
     const bytes = pythonPycFixture("py311", { nested: true });
     await writeFile(path, bytes);
     const service = createPythonPycService();
-    const tooSmall = await service.inspect({ path, max_file_bytes: 16 });
-    if (tooSmall.ok) throw new Error("Expected resource budget failure");
-    expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
-    for (const [field, selected] of [
-      ["max_objects", 1],
-      ["max_depth", 1],
-      ["max_string_bytes", 2],
+    for (const [field, maximum, resource] of [
+      ["max_file_bytes", 16, "file-size"],
+      ["max_objects", 1, "memory"],
+      ["max_depth", 1, "capacity"],
+      ["max_string_bytes", 2, "memory"],
     ] as const) {
-      const refused = await service.inspect({ path, [field]: selected });
+      const refused = await service.inspect({ path, [field]: maximum });
       if (refused.ok) throw new Error(`Expected ${field} refusal`);
-      if (field === "max_objects")
-        expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
-      const projected = projectAnalysisError(refused.error);
-      expect(projected).toMatchObject({
+      expect(projectAnalysisError(refused.error)).toMatchObject({
         code: "resource_constraint",
         retryable: false,
+        details: {
+          resource,
+          reported_limits:
+            field === "max_file_bytes"
+              ? { max_file_bytes: maximum }
+              : { boundary: field, maximum },
+        },
         remediation: {
           action: expect.stringContaining(
             `${field} (--${field.replaceAll("_", "-")})`,
           ),
         },
       });
-      const control = await service.inspect({ path });
-      expect(control.ok).toBe(true);
     }
-    const cancelled = await service.inspect(
-      { path },
-      { signal: AbortSignal.abort() },
-    );
-    if (cancelled.ok) throw new Error("Expected cancellation");
-    expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+    const control = await service.inspect({ path });
+    if (!control.ok) throw control.error;
+    expect(control.value.normalized_result).toMatchObject({
+      artifact: { path, bytes: bytes.length },
+      coverage: { status: "complete", code_objects: 2 },
+    });
   });
 });

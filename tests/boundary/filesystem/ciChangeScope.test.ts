@@ -1,4 +1,5 @@
 import {
+  access,
   chmod,
   cp,
   mkdir,
@@ -223,7 +224,7 @@ it.each([
   ["scripts/fixtures/browser-request-site.mjs", "browser"],
   ["scripts/lib/browser-nested-source-map-e2e.mjs", "web_source_map"],
   ["scripts/lib/browser-runtime-fixture-lifecycle.mjs", "web_source_map"],
-  ["src/cliBrowserScenarioCommands.ts", "browser"],
+  ["src/cli/browserScenarioCommands.ts", "browser"],
   ["src/application/BrowserScenarioCaptureService.ts", "browser"],
   ["src/composition/browserScenario.ts", "browser"],
   ["src/cli/environmentCommands.ts", "browser"],
@@ -259,6 +260,8 @@ it.each([
   ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
   ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
   ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/server/browserToolBindings.ts", "browser"],
+  ["src/server/browserToolBindings.ts", "web_runtime"],
   ["src/go/GoBinaryProvider.ts", "go_binary"],
   ["scripts/verify-go-binary.mjs", "go_binary"],
   ["bridge/android/ReaJadxBridge.java", "android_metadata"],
@@ -422,6 +425,44 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
 });
 
+it("does not credit a fixture test as coverage for an unrelated shared script", async () => {
+  const { directory } = await fixture();
+  const module = "scripts/lib/uncovered.mjs";
+  const data = "tests/fixtures/independent.txt";
+  const test = "tests/boundary/filesystem/independent.test.ts";
+  await mkdir(dirname(join(directory, test)), { recursive: true });
+  await writeFile(join(directory, test), `readFileSync("${data}");\n`);
+  const base = await change(directory, [module, data]);
+  const head = await change(
+    directory,
+    [module, data],
+    "Updated fixture content\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: `No test reaches shared script module: ${module}`,
+    },
+  });
+});
+
+it("traces an exact template import alongside an unrelated changed test", async () => {
+  const { directory } = await fixture();
+  const source = "src/example/Probe.ts";
+  const test = "tests/boundary/filesystem/templateImport.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [test],
+    "await import(`../../../src/example/Probe.js`);\n",
+  );
+  const base = await change(directory, [source, unrelated]);
+  const head = await change(directory, [source, unrelated], "changed\n");
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: { mode: "selected", files: [test, unrelated] },
+  });
+});
+
 it("selects the tests a pull request affects and runs everything when it cannot decide", async () => {
   const { directory } = await fixture();
   // The entrypoint's output file is not part of the change.
@@ -560,7 +601,7 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   for (const staticOnly of [
     "scripts/lib/module-layers.baseline.json",
     "scripts/verify/architecture-guards.mjs",
-    "scripts/verify/baselines/raw-buffer-read.json",
+    "scripts/verify/baselines/cleanup-dependency-binding.json",
     "tsconfig.scripts.json",
   ]) {
     expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
@@ -573,6 +614,8 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   for (const docsAndCode of [
     "scripts/check-doc-facts.mjs",
     "scripts/lib/product-catalog.mjs",
+    "scripts/generate-completion-ledger.mjs",
+    "scripts/lib/completion-ledger-generation.mts",
   ]) {
     expect(await classifyPaths([docsAndCode]), docsAndCode).toMatchObject({
       code: true,
@@ -590,6 +633,17 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
     runtime: true,
     package: false,
   });
+});
+
+it("checks README locale links when the website language inventory changes", async () => {
+  expect(await classifyPaths(["website/locales/languages.json"])).toMatchObject(
+    {
+      docs: true,
+      website: true,
+      runtime: false,
+      package: false,
+    },
+  );
 });
 
 it("passes the workflow environment through the entrypoint unchanged", async () => {
@@ -675,14 +729,20 @@ it.each([
   },
 );
 
-const reverseToolsVitestConfig = await readFile(
-  new URL("../../../vitest.reverse-tools.config.ts", import.meta.url),
-  "utf8",
-);
-const reverseToolsVitestInputs = [
-  ...reverseToolsVitestConfig.matchAll(/"((?:\.\/)?(?:src|tests)\/[^"]+)"/gu),
-].flatMap((match) =>
-  match[1] === undefined ? [] : [match[1].replace(/^\.\//u, "")],
+const reverseToolsVitestInputs = (
+  await Promise.all(
+    [
+      "vitest.reverse-tools.config.ts",
+      "vitest.reverse-tools-semantics.config.ts",
+    ].map((name) =>
+      readFile(new URL(`../../../${name}`, import.meta.url), "utf8"),
+    ),
+  )
+).flatMap((source) =>
+  Array.from(
+    source.matchAll(/"((?:\.\/)?(?:src|tests)\/[^"]+)"/gu),
+    ([, path]) => path!.replace(/^\.\//u, ""),
+  ),
 );
 const reverseToolsMutationConfig = JSON.parse(
   await readFile(
@@ -700,8 +760,9 @@ const reverseToolsInputs = [
 ];
 
 it.each(reverseToolsInputs)(
-  "selects the reverse-tool quality gate for configured input %s",
+  "keeps configured reverse-tool input %s on disk and in the quality gate",
   async (path) => {
+    await access(new URL(`../../../${path}`, import.meta.url));
     expect(await classifyPaths([path])).toMatchObject({
       code: true,
       reverse_tools: true,
@@ -794,7 +855,7 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async ({
+it("selects a completed CI ancestor rather than a foreign or non-terminal run", async ({
   skip,
 }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
@@ -812,6 +873,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
     JSON.stringify({
       workflow_runs: [
         {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -819,6 +882,26 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
           head_sha: foreignBase,
         },
         {
+          status: "in_progress",
+          path: ".github/workflows/ci.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/release.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -957,13 +1040,13 @@ it("retains native Inspector verification on every documented package host", asy
   );
   expect(windowsBuild).toBeGreaterThanOrEqual(0);
   expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
-  for (const verifier of [
-    "node scripts/verify/inspector/runtime-observation.mjs",
-    "node scripts/verify-windows-package.mjs",
-  ]) {
+  for (const [verifier, condition] of [
+    ["node scripts/verify/inspector/runtime-observation.mjs", undefined],
+    ["node scripts/verify-windows-package.mjs", "matrix.suite == 'package'"],
+  ] as const) {
     const step = windowsSteps.findIndex(({ run }) => run === verifier);
     expect(step).toBeGreaterThan(windowsBuild);
-    expect(windowsSteps[step]?.if).toBeUndefined();
+    expect(windowsSteps[step]?.if).toBe(condition);
   }
 });
 
@@ -1000,6 +1083,10 @@ it.each([
   ],
   // The darwin package baseline is the CI run of packaged Hopper commands
   // against the fake bridge and the reply contracts.
+  [
+    "tests/process-global/curatedWindowsLane.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
   [
     "tests/fixtures/fakeHopper.mjs",
     { code: true, runtime: true, package: true },
@@ -1246,6 +1333,41 @@ it.each([
     ".github/actions/ubuntu-archive/action.yml",
     { code: true, runtime: true, package: true, binary_layout: true },
   ],
+  [
+    ".github/actions/ubuntu-archive/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
+  ],
   ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
   ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
   [
@@ -1394,6 +1516,10 @@ it.each([
   ],
   [
     "src/application/DshCordisYaml.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/desktop/AgentEnvBridgeSources.ts",
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
@@ -1752,6 +1878,22 @@ it.each([
   [
     ".github/workflows/real-termux.yml",
     { workflows: true, code: false, package: false, website: false },
+  ],
+  [
+    ".github/actions/npm-cache/action.yml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/example/nested/action.yaml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/publish-mcp/registry-state.mjs",
+    { workflows: false, code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actionlint.yml",
+    { workflows: true, code: false, runtime: false, package: false },
   ],
   [
     "src/domain/javascript/example.test.ts",
@@ -2298,4 +2440,52 @@ it("reads a Git blob whose path contains a line break alongside an ordinary blob
       ["README.md", "Initial fixture content\n"],
     ]),
   );
+});
+
+it("outputs only changed, tracked JS and TS paths for fast PR typed lint", async () => {
+  const { directory, base } = await fixture();
+  await git(directory, ["rm", "src/provider.ts"]);
+  const selected = ["scripts/ci/helper.mjs", "src/has spaces.ts"];
+  const head = await change(directory, [...selected, "docs/guide.md"]);
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    typedLintFiles: selected,
+  });
+  expect(await readFile(join(directory, "scope-output"), "utf8")).toContain(
+    `typed_lint_files=${JSON.stringify(selected)}\n`,
+  );
+  expect(
+    await classify(directory, base, head, "pull_request", true),
+  ).toMatchObject({ typedLintFiles: [] });
+  expect(await classify(directory, base, head, "push")).toMatchObject({
+    typedLintFiles: [],
+  });
+});
+
+it("requests full typed lint when changed paths exceed the CI output budget", () => {
+  const files = Array.from(
+    { length: 200 },
+    (_, index) => `src/${"長".repeat(40)}-${index}.ts`,
+  );
+  const plan = planChanges(
+    {
+      event: "pull_request",
+      full: false,
+      skipFull: false,
+      base: PATH_BASE,
+      head: PATH_HEAD,
+    },
+    {
+      mergeBase: () => PATH_BASE,
+      isAncestor: () => true,
+      changedFiles: () => files,
+      readFile: () => "{}",
+      listFiles: () => files,
+      readFiles: () => new Map(),
+    },
+  );
+  expect(plan).toMatchObject({
+    tier: "fast",
+    code: true,
+    typedLintFiles: null,
+  });
 });

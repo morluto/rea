@@ -4,19 +4,13 @@ runs:
   using: composite
   steps:
     - uses: ./.github/actions/ubuntu-archive
+    # Install and select only the POSIX variant used by the Windows add-on.
+    - uses: ./.github/actions/host-apt-packages
+      with:
+        packages: g++-mingw-w64-x86-64-posix
+        download-timeout-seconds: "120"
+        install-recommends: "false"
     - shell: bash
       run: |
-        # The addon uses std::mutex. Install one threading model and select
-        # it explicitly so preinstalled alternatives cannot choose another.
-        compiler=(--no-install-recommends -y g++-mingw-w64-x86-64-posix)
-        # Bound downloads separately from dpkg. Together with the index
-        # refresh this allows at most 290 seconds for archive acquisition.
-        sudo timeout --kill-after=5s 120s \
-          apt-get -o Acquire::Retries=2 --download-only install "${compiler[@]}" || {
-          status=$?
-          echo "MinGW package download failed (exit ${status})" >&2
-          exit "$status"
-        }
-        sudo apt-get --no-download install "${compiler[@]}"
         sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
         x86_64-w64-mingw32-g++ -v

@@ -3,7 +3,7 @@ import {
   desktopApplicationSchema,
   inspectDesktopApplicationInputSchema,
 } from "../domain/desktopApplication.js";
-import { desktopApplicationSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
+import { desktopApplicationSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/desktopApplicationSummarySchema.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, evidenceEffects } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";

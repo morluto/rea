@@ -2,6 +2,7 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { z } from "zod";
 
+import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
 import type { DoctorScope } from "../application/Doctor.js";
 import {
   DESKTOP_BUILD_PROVIDER_ID,
@@ -14,6 +15,7 @@ import {
 import { isUninstallFailure } from "../application/UninstallFailure.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { localPathStringSchema } from "../domain/localPath.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   mcpToolFamiliesSchema,
   toolFamiliesConstraint,
@@ -35,27 +37,29 @@ import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
 import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
-import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
-
-const supportedClientIds = SUPPORTED_CLIENT_DEFINITIONS.map(({ name }) => name);
-const supportedClientSchema = z.enum(supportedClientIds);
-const skillClientSchema = z.union([z.literal("shared"), supportedClientSchema]);
+import { skillClientSchema, supportedClientSchema } from "./clientNameInput.js";
 
 /** Register setup, doctor, uninstall, and update CLI commands. */
 export const registerSetupCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): void => {
-  registerSetupCommand(cli, logger, environment);
-  registerDoctorCommand(cli, logger, environment);
-  registerMaintenanceCommands(cli, logger, environment);
+  registerSetupCommand(cli, logger, environment, savedDefaults);
+  registerDoctorCommand(cli, logger, environment, savedDefaults);
+  registerMaintenanceCommands(
+    cli,
+    logger,
+    omitEnvironmentSettings(environment, savedDefaults),
+  );
 };
 
 const registerSetupCommand = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): void => {
   registerCliCommand(cli, CLI_COMMANDS.setup, {
     description: "Configure agent integrations and optional analysis providers",
@@ -132,7 +136,12 @@ const registerSetupCommand = (
           logger,
           CLI_COMMANDS.setup,
           () =>
-            runSetupCommand({ options, formatExplicit }, environment, signal),
+            runSetupCommand(
+              { options, formatExplicit },
+              environment,
+              signal,
+              savedDefaults,
+            ),
           isSetupFailure,
         ),
       ),
@@ -143,6 +152,7 @@ const registerDoctorCommand = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): void => {
   registerCliCommand(cli, CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
@@ -175,7 +185,12 @@ const registerDoctorCommand = (
             ]);
           return runDoctorOwned(
             options.target,
-            createSystemDoctorHost(environment, signal),
+            createSystemDoctorHost(
+              environment,
+              signal,
+              HOST_PLATFORM,
+              savedDefaults,
+            ),
             doctorScope(options),
           );
         }),
@@ -191,6 +206,11 @@ const registerMaintenanceCommands = (
   registerCliCommand(cli, CLI_COMMANDS.uninstall, {
     description: "Remove REA-owned agent configuration and skill files",
     options: z.object({
+      project: localPathStringSchema
+        .optional()
+        .describe(
+          "Remove owned Pi and OpenCode registrations in this directory only",
+        ),
       purgeData: z
         .boolean()
         .default(false)
@@ -201,6 +221,10 @@ const registerMaintenanceCommands = (
         logger,
         "uninstall",
         async () => {
+          if (options.project !== undefined && options.purgeData)
+            throw new ConfigurationError(
+              "--project cannot be combined with --purge-data.",
+            );
           const { runUninstall, systemUninstallHost } =
             await import("../application/Uninstall.js");
           return runUninstall(
@@ -210,6 +234,8 @@ const registerMaintenanceCommands = (
               undefined,
               environment,
               HOST_PLATFORM.platform,
+              undefined,
+              options.project,
             ),
           );
         },
@@ -266,6 +292,7 @@ const runSetupCommand = async (
   },
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
+  savedDefaults: ReadonlySet<string> | undefined,
 ) => {
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
@@ -278,7 +305,17 @@ const runSetupCommand = async (
     ]);
   const result = await runSetup(
     { ...setupRunOptions(input, interactive, hasExplicitScope), signal },
-    systemSetupHost(createSystemDoctorHost(environment, signal), environment),
+    systemSetupHost(
+      createSystemDoctorHost(
+        environment,
+        signal,
+        HOST_PLATFORM,
+        savedDefaults,
+        "user",
+      ),
+      environment,
+      savedDefaults,
+    ),
     interactive
       ? (actions, context) =>
           confirmInteractiveSetup(actions, options.accessible, context, signal)

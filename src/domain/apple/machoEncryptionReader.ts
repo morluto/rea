@@ -1,4 +1,5 @@
 import { LC } from "./machoLoadCommandCodes.js";
+import { machoWordReader } from "./machoLoadCommands.js";
 import type {
   MachoEncryptedRange,
   MachoEncryptionCommand,
@@ -12,6 +13,7 @@ import {
   readMachoSectionHeader,
 } from "./machoSectionHeader.js";
 import {
+  machoSegmentFileAddress,
   machoSegmentHeaderSize,
   machoSegmentSectionTableFits,
   readMachoSegmentHeader,
@@ -264,9 +266,9 @@ const decodeEncryptionCommand = ({
   body,
   index,
 }: MachoLoadCommand): MachoEncryptionCommand => {
-  const view = viewOf(body);
+  const reader = machoWordReader(body, true);
   const word = (at: number): number | null =>
-    body.byteLength >= at + 4 ? view.getUint32(at, true) : null;
+    body.byteLength >= at + 4 ? reader.u32(at) : null;
   const wide = command === LC.ENCRYPTION_INFO_64;
   return {
     kind: wide ? "LC_ENCRYPTION_INFO_64" : "LC_ENCRYPTION_INFO",
@@ -362,15 +364,11 @@ interface SegmentFacts {
   readonly index: number;
   readonly name: string;
   readonly vmAddress: bigint;
+  readonly fileAddress: bigint;
   readonly vmSize: bigint;
   readonly fileOffset: number;
   readonly fileSize: number;
-  readonly sections: readonly {
-    readonly name: string;
-    readonly offset: number;
-    readonly size: number;
-    readonly zerofill: boolean;
-  }[];
+  readonly sections: readonly string[];
 }
 
 const mapRange = (
@@ -386,7 +384,7 @@ const mapRange = (
         status: "unknown",
         reason: `load command ${command.index} ${command.command === LC.SEGMENT_64 ? "LC_SEGMENT_64" : "LC_SEGMENT"} appears in a ${header.wide ? 64 : 32}-bit image`,
       };
-    const segment = decodeSegment(command);
+    const segment = decodeSegment(command, start, end);
     if (typeof segment === "string")
       return { status: "unknown", reason: segment };
     // dyld maps only `vmsize` bytes, so file bytes past it have no address.
@@ -426,26 +424,17 @@ const mapRange = (
       slice_end: to,
       segment: segment.name,
       vm_start: mapped
-        ? hex(segment.vmAddress + BigInt(from - segment.fileOffset))
+        ? hex(segment.fileAddress + BigInt(from - segment.fileOffset))
         : null,
       vm_end: mapped
-        ? hex(segment.vmAddress + BigInt(to - segment.fileOffset))
+        ? hex(segment.fileAddress + BigInt(to - segment.fileOffset))
         : null,
     });
     cursor = Math.max(cursor, to);
   }
   if (cursor < end) fragments.push(unmapped(cursor, end));
-  // A section counts only where the range, the section and its segment's
-  // file-backed bytes all overlap, so names agree with the fragments.
-  const sections = fileBacked.flatMap((segment) =>
-    segment.sections
-      .filter(
-        ({ zerofill, size, offset }) =>
-          !zerofill &&
-          Math.max(start, offset, segment.fileOffset) <
-            Math.min(end, offset + size, segment.fileOffset + segment.fileSize),
-      )
-      .map(({ name }) => ({ segment: segment.name, section: name })),
+  const sections = fileBacked.flatMap(({ name, sections }) =>
+    sections.map((section) => ({ segment: name, section })),
   );
   return { status: "mapped", fragments, sections };
 };
@@ -477,11 +466,11 @@ const mappingRecords = ({ command, body }: MachoLoadCommand): number => {
 };
 
 /** Decode one segment command, or say why its file mapping is unknown. */
-const decodeSegment = ({
-  command,
-  body,
-  index,
-}: MachoLoadCommand): SegmentFacts | string => {
+const decodeSegment = (
+  { command, body, index }: MachoLoadCommand,
+  rangeStart: number,
+  rangeEnd: number,
+): SegmentFacts | string => {
   const wide = command === LC.SEGMENT_64;
   const parsed = readMachoSegmentHeader(body, wide, true);
   if (!parsed.ok)
@@ -494,27 +483,33 @@ const decodeSegment = ({
   const sectionSize = machoSectionHeaderSize(wide);
   if (!machoSegmentSectionTableFits(segment, body.byteLength, wide))
     return `load command ${index} section records exceed cmdsize`;
-  const sections: SegmentFacts["sections"][number][] = [];
-  for (let section = 0; section < segment.sectionCount; section += 1) {
-    const at = segment.headerSize + section * sectionSize;
-    const header = readMachoSectionHeader(
-      body.subarray(at, at + sectionSize),
-      wide,
-      true,
-    );
-    if (!header.ok)
-      return `load command ${index} section records exceed cmdsize`;
-    sections.push({
-      name: fixedName(header.value.nameBytes),
-      offset: header.value.offset,
-      size: Number(header.value.size),
-      zerofill: isMachoZeroFillSection(header.value.flags),
-    });
+  const sections: string[] = [];
+  // Validate the table extent even when none of its sections can contribute.
+  const start = Math.max(rangeStart, fileOffset);
+  const end = Math.min(rangeEnd, fileOffset + fileSize);
+  if (start < end) {
+    for (let section = 0; section < segment.sectionCount; section += 1) {
+      const at = segment.headerSize + section * sectionSize;
+      const header = readMachoSectionHeader(
+        body.subarray(at, at + sectionSize),
+        wide,
+        true,
+      );
+      if (!header.ok)
+        return `load command ${index} section records exceed cmdsize`;
+      const { flags, offset, size, nameBytes } = header.value;
+      if (
+        !isMachoZeroFillSection(flags) &&
+        Math.max(start, offset) < Math.min(end, offset + Number(size))
+      )
+        sections.push(fixedName(nameBytes));
+    }
   }
   return {
     index,
     name: fixedName(segment.nameBytes),
     vmAddress: segment.address,
+    fileAddress: machoSegmentFileAddress(segment),
     vmSize: segment.memorySize,
     fileOffset,
     fileSize,
@@ -533,6 +528,3 @@ const fixedName = (bytes: Uint8Array): string => {
 };
 
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
-
-const viewOf = (bytes: Uint8Array): DataView =>
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

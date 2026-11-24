@@ -1,10 +1,13 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
-import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
+import {
+  copyGhidraRegularFile,
+  ghidraFileDialect,
+} from "./GhidraFileArtifacts.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, readdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import {
   basename,
   dirname,
@@ -240,24 +243,25 @@ const pathsOverlap = (first: string, second: string): boolean => {
   return contains(first, second) || contains(second, first);
 };
 
-/** Never open the caller project itself. Copy only the selected pair, then revalidate its committed content. */
+const COPY_BUFFER_BYTES = 256 * 1024;
+
+/** Copy the selected pair through owned descriptors and match its committed content. */
 export const copyExistingGhidraProject = async (
   sourcePath: string,
   destinationRoot: string,
-  options: {
+  {
+    signal,
+    projectName,
+    expectedSha256,
+    resources,
+  }: {
     readonly signal?: AbortSignal | undefined;
-    readonly projectName?: string | undefined;
-    readonly expectedSha256?: string | undefined;
-    readonly resources?: ArtifactResourceScope | undefined;
-  } = {},
+    readonly projectName: string;
+    readonly expectedSha256: string;
+    readonly resources: ArtifactResourceScope;
+  },
 ): Promise<void> => {
   return projectFileOperation(sourcePath, "open_binary", async () => {
-    const {
-      signal,
-      projectName = "rea-project",
-      expectedSha256,
-      resources,
-    } = options;
     assertArtifactReadActive(signal);
     const source = await realpath(sourcePath).catch(absentProjectEntry);
     const runtime =
@@ -277,42 +281,45 @@ export const copyExistingGhidraProject = async (
         `Existing Ghidra project directory does not exist: ${sourcePath}`,
       );
     await validateProject(source, projectName);
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
     await visitProject(
       source,
       projectName,
       async (path, directory) => {
+        hash.update(
+          JSON.stringify([
+            path.split(sep).join("/"),
+            directory ? "directory" : "file",
+          ]) + "\n",
+        );
         const destination = join(destinationRoot, path);
         if (directory) await mkdir(destination, { mode: 0o700 });
         else
-          await cp(join(source, path), destination, {
-            dereference: true,
-            errorOnExist: true,
-            force: false,
-          });
+          await copyGhidraRegularFile(
+            join(source, path),
+            destination,
+            resources,
+            {
+              signal,
+              buffer,
+              hash,
+              onOpenedSource: (initialSize) => {
+                hash.update(`${String(initialSize)}\n`);
+              },
+            },
+          );
         assertArtifactReadActive(signal);
       },
       signal,
     );
-    if (expectedSha256 !== undefined) {
-      if (resources === undefined)
-        throw selectionFailure(
-          "Existing project verification requires an owned resource scope.",
-        );
-      if (
-        (await fingerprintGhidraProject(
-          destinationRoot,
-          projectName,
-          resources,
-          signal,
-        )) !== expectedSha256
-      )
-        // A digest mismatch shows only that the project differs from its
-        // committed profile, not when it changed relative to this copy.
-        throw new AnalysisArtifactChangedError(
-          "open_binary",
-          sourcePath,
-          GHIDRA_PROJECT_PROFILE_MISMATCH,
-        );
-    }
+    if (hash.digest("hex") !== expectedSha256)
+      // A digest mismatch shows only that the project differs from its
+      // committed profile, not when it changed relative to this copy.
+      throw new AnalysisArtifactChangedError(
+        "open_binary",
+        sourcePath,
+        GHIDRA_PROJECT_PROFILE_MISMATCH,
+      );
   });
 };

@@ -6,6 +6,8 @@ import {
 } from "../../tests/fixtures/managedStringsAmbiguity.js";
 import { validateManagedTokenScope } from "../domain/managed/managedInspectionEvidence.js";
 import { compareManagedMembers } from "../domain/managed/managedMemberComparison.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
@@ -56,13 +58,12 @@ it.each(["forward", "reverse"] as const)(
           ],
         },
       });
-      expect(
-        validateManagedTokenScope(
-          report,
-          "managed inspection",
-          "normalized result",
-        ).ok,
-      ).toBe(true);
+      const scope = validateManagedTokenScope(
+        report,
+        "managed inspection",
+        "normalized result",
+      );
+      if (!scope.ok) throw scope.error;
     }
     expect(members.identity_scope.requires_mvid).toBe(STRING_AMBIGUITY_MVID);
     expect(boundaries.identity_scope.requires_mvid).toBe(STRING_AMBIGUITY_MVID);
@@ -109,36 +110,37 @@ it("does not derive a token scope from conflicting GUID spans or multiple Module
   }
 });
 
-it.each(["forward", "reverse"] as const)(
-  "withholds Module identity when a nil name bypasses %s string-heap ambiguity but Module rows conflict",
-  (variant) => {
-    const { bytes } = managedStringsAmbiguity(variant, {
-      nilName: true,
-      multipleModules: true,
-    });
-    const target = managedPeFixtureTarget(bytes);
-    const artifact = inspectManagedArtifactBytes(bytes, target);
-    const members = inspectManagedMembersBytes(bytes, target);
-    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
-
-    for (const report of [artifact, members, boundaries]) {
-      expect(report.module).toBeNull();
-      expect(report.metadata).toMatchObject({
+it("withholds Module identity when a nil name bypasses string-heap ambiguity but rows conflict", () => {
+  const { bytes } = managedStringsAmbiguity("forward", {
+    nilName: true,
+    multipleModules: true,
+  });
+  const target = managedPeFixtureTarget(bytes);
+  const members = inspectManagedMembersBytes(bytes, target);
+  const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
+  for (const report of [
+    inspectManagedArtifactBytes(bytes, target),
+    members,
+    boundaries,
+  ]) {
+    expect(report).toMatchObject({
+      module: null,
+      metadata: {
         status: "partial",
         table_row_counts: { Module: 2, TypeDef: 1, MethodDef: 1 },
-      });
-      expect(report.metadata).not.toHaveProperty("unresolved_module_name");
-      expect(report.coverage.issues).toContainEqual(
-        expect.objectContaining({
-          code: "invalid-row",
-          scope: "metadata.Module",
-        }),
-      );
-    }
-    expect(members.identity_scope.requires_mvid).toBeNull();
-    expect(boundaries.identity_scope.requires_mvid).toBeNull();
-  },
-);
+      },
+    });
+    expect(report.metadata).not.toHaveProperty("unresolved_module_name");
+    expect(report.coverage.issues).toContainEqual(
+      expect.objectContaining({
+        code: "invalid-row",
+        scope: "metadata.Module",
+      }),
+    );
+  }
+  expect(members.identity_scope.requires_mvid).toBeNull();
+  expect(boundaries.identity_scope.requires_mvid).toBeNull();
+});
 
 it("keeps an independent MVID beside an invalid ENC index", () => {
   const { bytes } = managedStringsAmbiguity("forward", { invalidEnc: true });
@@ -157,6 +159,73 @@ it("keeps an independent MVID beside an invalid ENC index", () => {
     }),
   );
 });
+
+it.each([1, 2])(
+  "retains the MVID beside an invalid name only when the Module row is unique (rows: %i)",
+  (moduleRowCount) => {
+    const bytes = buildManagedPeFixture({ moduleRowCount });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+    const { size, rva } = pe.cli.metadata;
+    const root = pe.rvaToOffset(rva, size, "fixture metadata");
+    const module = readManagedMetadataLayout(bytes, root, size).table(0);
+    if (module === undefined) throw new Error("Fixture omitted its Module row");
+    const nameIndex = 0xffff;
+    bytes.writeUInt16LE(nameIndex, module.offset + 2);
+
+    const target = managedPeFixtureTarget(bytes);
+    const artifact = inspectManagedArtifactBytes(bytes, target);
+    const members = inspectManagedMembersBytes(bytes, target);
+    const mvid =
+      moduleRowCount === 1 ? "00112233-4455-6677-8899-aabbccddeeff" : null;
+    for (const report of [artifact, members]) {
+      expect(report.module).toBeNull();
+      expect(report.metadata.status).toBe("partial");
+      expect(report.coverage.issues).toContainEqual(
+        expect.objectContaining({
+          code: "invalid-heap-index",
+          scope: "metadata.#Strings",
+        }),
+      );
+      if (mvid === null) {
+        expect(report.metadata).not.toHaveProperty("unresolved_module_name");
+      } else {
+        expect(report.metadata.unresolved_module_name).toEqual({
+          name: null,
+          name_index: nameIndex,
+          generation: 0,
+          mvid,
+          enc_id: null,
+          enc_base_id: null,
+          token: "0x00000001",
+          row_offset: module.offset,
+        });
+      }
+    }
+    expect(members.identity_scope.requires_mvid).toBe(mvid);
+    const scope = validateManagedTokenScope(
+      members,
+      "managed inspection",
+      "fixture",
+    );
+    if (!scope.ok) throw scope.error;
+    if (moduleRowCount === 1) return;
+    const namedBytes = buildManagedPeFixture();
+    const named = inspectManagedMembersBytes(
+      namedBytes,
+      managedPeFixtureTarget(namedBytes),
+    );
+    const comparison = compareManagedMembers(
+      { evidenceId: "ev_" + "a".repeat(64), result: named },
+      { evidenceId: "ev_" + "b".repeat(64), result: members },
+    );
+    expect(comparison.right).toMatchObject({
+      mvid,
+      module_name: null,
+      metadata_status: "partial",
+    });
+  },
+);
 
 it("treats a duplicate #Strings extent outside the root as malformed", () => {
   const { bytes, metadataEnd } = managedStringsAmbiguity("outside-root");

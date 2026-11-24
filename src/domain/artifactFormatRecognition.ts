@@ -96,7 +96,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       const layout = parseInesLayout(prefix, fileSize);
       return layout.ok
         ? { state: "recognized", format: "ines" }
-        : { state: "refused", format: "ines", reason: layout.error };
+        : { state: "refused", format: "ines", reason: layout.error.detail };
     },
     when("zip", hasZipSignature),
     when("godot-pck", hasGodotPckHeader),

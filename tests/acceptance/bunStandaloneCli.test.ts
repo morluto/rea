@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 import {
   bunModuleGraphPayload,
   bunPrefixedPayload,
@@ -19,6 +20,50 @@ import {
   artifactInventoryResultSchema,
   artifactExtractionResultSchema,
 } from "../../src/domain/artifactGraph.js";
+
+cliTest(
+  "does not resolve Bun layout ambiguity by lowering the module budget",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bun-layout-ambiguity-");
+    const path = join(root, "app");
+    await writeFile(
+      path,
+      elfAppendedBunPayload(
+        bunModuleGraphPayload({
+          modules: [{ loader: 0, moduleFormat: 0 }],
+          tableLength: 468,
+        }),
+      ),
+    );
+    for (const moduleCount of [9, 13]) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-artifact",
+          path,
+          "--artifact-limits",
+          JSON.stringify({ bun: { module_count: moduleCount } }),
+          "--json",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: moduleCount < 13 ? "truncated" : "artifact_operation_failed",
+        retryable: moduleCount < 13,
+        details:
+          moduleCount < 13
+            ? {
+                reason: "limit",
+                reader_limit: {
+                  parameter: "artifact_limits.bun.module_count",
+                  effective_value: moduleCount,
+                  required_value: 13,
+                },
+              }
+            : { reason: "unavailable" },
+      });
+    }
+  },
+);
 
 cliTest(
   "distinguishes a truncated Bun graph from an intact graph over the selected limit",
@@ -129,13 +174,8 @@ cliTest(
       )?.evidence.normalized_result,
     );
     expect(graph.manifest.root_format).toBe("bun-standalone");
-    expect(inspection.next_probes).toEqual([
-      {
-        operation: "extract_artifact",
-        authority: "artifact-bytes",
-        rationale: expect.any(String),
-      },
-    ]);
+    // The ELF carrier's readers follow the package reader.
+    expectCarrierProbes(inspection.next_probes, "elf", ["extract_artifact"]);
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,

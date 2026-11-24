@@ -1,9 +1,10 @@
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
 import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "../../../src/contracts/releaseExposureToolContracts.js";
+import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -18,7 +19,7 @@ if (releaseExposureContract === undefined)
 const outputSchema = releaseExposureContract.outputSchema;
 
 mcpTest(
-  "keeps lossy text unknown while retaining a visible marker",
+  "reports exact CodeView path bytes with unknown encoding",
   async ({ mcp }) => {
     const session = createTestBinarySession(() => {
       throw new Error("Must not start a deep provider");
@@ -32,40 +33,38 @@ mcpTest(
       );
       if (definition === undefined)
         throw new Error("Missing advertised contract");
-      for (const [source, status] of [
-        [
-          Buffer.concat([
-            Buffer.from('const x = "'),
-            Buffer.from([0xff]),
-            Buffer.from('";'),
-          ]),
-          "unknown",
-        ],
-        [
-          Buffer.concat([
-            Buffer.from("-----BEGIN PRIVATE KEY-----\n"),
-            Buffer.from([0xff]),
-          ]),
-          "exposed",
-        ],
-      ] as const) {
-        const root = await createTestTempDirectory("rea-release-lossy-mcp-");
-        await writeFile(join(root, "app.js"), source);
-        const response = await client.callTool(
-          { name: "audit_release_exposure", arguments: { path: root } },
-          { toolDefinition: withCanonicalOutputSchema(definition) },
-        );
-        expect(response.isError).not.toBe(true);
-        const evidence = outputSchema.parse(response.structuredContent);
-        expect(
-          evidence.normalized_result.checks.find(
-            ({ id }) => id === "text.credential_markers",
-          )?.status,
-        ).toBe(status);
-        expect(JSON.stringify(evidence)).not.toContain(
-          "-----BEGIN PRIVATE KEY-----",
-        );
-      }
+      const root = await createTestTempDirectory("rea-release-codeview-");
+      const image = join(root, "app.exe");
+      await writeFile(
+        image,
+        pe(0x8664, 64, 2, false, {
+          pdbPath: Buffer.from("433a5ce92e706462", "hex"),
+        }),
+      );
+      const response = await client.callTool(
+        { name: "audit_release_exposure", arguments: { path: image } },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
+      );
+      expect(response.isError).not.toBe(true);
+      const evidence = outputSchema.parse(response.structuredContent);
+      const finding = evidence.normalized_result.checks.find(
+        ({ id }) => id === "native.pdb_path",
+      );
+      expect(finding).toMatchObject({
+        status: "exposed",
+        locations: [{ kind: "artifact-path", path: image }],
+        observation: {
+          counts: { examined: 1, paths: 1, failed: 0 },
+          samples: [],
+          pdb_path_bytes: [
+            {
+              image_path: image,
+              bytes_hex: "433a5ce92e706462",
+              encoding: "unknown",
+            },
+          ],
+        },
+      });
     } finally {
       await session.close();
     }
@@ -92,17 +91,25 @@ mcpTest(
         idempotentHint: true,
       });
       const root = await createTestTempDirectory("rea-release-exposure-mcp-");
-      await writeFile(
-        join(root, "app.js.map"),
-        JSON.stringify({
-          version: 3,
-          file: "app.js",
-          sources: ["app.js"],
-          names: [],
-          mappings: "",
-          sourcesContent: [PLANTED_SOURCE],
-        }),
-      );
+      const script = join(root, "app.js");
+      const map = join(root, "app.js.map");
+      const pemHeader = "-----BEGIN PRIVATE KEY-----";
+      const scriptBytes = Buffer.concat([
+        Buffer.from(pemHeader + "\n"),
+        Buffer.from([0xff]),
+      ]);
+      const mapBytes = JSON.stringify({
+        version: 3,
+        file: "app.js",
+        sources: ["app.js"],
+        names: [],
+        mappings: "",
+        sourcesContent: [PLANTED_SOURCE],
+      });
+      await Promise.all([
+        writeFile(script, scriptBytes),
+        writeFile(map, mapBytes),
+      ]);
       const response = await client.callTool(
         { name: "audit_release_exposure", arguments: { path: root } },
         { toolDefinition: withCanonicalOutputSchema(definition) },
@@ -114,7 +121,24 @@ mcpTest(
           (check) => check.id === "javascript.source_map_sources",
         )?.status,
       ).toBe("exposed");
-      expect(JSON.stringify(evidence)).not.toContain(PLANTED_SOURCE);
+      expect(
+        evidence.normalized_result.checks.find(
+          (check) => check.id === "text.credential_markers",
+        ),
+      ).toMatchObject({
+        status: "exposed",
+        severity: "high",
+        locations: [{ kind: "artifact-path", path: script }],
+        observation: {
+          counts: { skipped_members: 1, "pem.private_key": 1 },
+          samples: ["pem.private_key " + script + ":1"],
+        },
+      });
+      const delivered = JSON.stringify(response);
+      expect(delivered).not.toContain(PLANTED_SOURCE);
+      expect(delivered).not.toContain(pemHeader);
+      expect((await readFile(script)).equals(scriptBytes)).toBe(true);
+      expect(await readFile(map, "utf8")).toBe(mapBytes);
       const bad = await client.callTool(
         {
           name: "audit_release_exposure",

@@ -14,7 +14,9 @@ import { z } from "zod";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
+import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 import { acquireHopperTargetLease } from "../../../src/hopper/HopperLease.js";
+import { createSystemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 import { waitFor } from "../../support/testWait.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
@@ -264,33 +266,48 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
   ).toBe(false);
 });
 
+const prepareLateHandoff = async (
+  workspace: TestWorkspace,
+  launchMode: "handoff" | "not-found",
+) => {
+  const startupTimeoutMs = 10_000;
+  const mode = await workspace.write("mode", launchMode);
+  const receipt = workspace.path("bootstrap-path");
+  const environment = {
+    ...workspace.environment,
+    PATH: process.env.PATH ?? "",
+    REA_ANALYSIS_PROVIDER: "hopper",
+    HOPPER_LAUNCHER_PATH: process.execPath,
+    HOPPER_LOADER_ARGS_JSON: JSON.stringify([
+      resolve("tests/fixtures/hopperLaunchAdmission.mjs"),
+      mode,
+      receipt,
+    ]),
+    REA_HOPPER_STARTUP_TIMEOUT_MS: String(startupTimeoutMs),
+    REA_LOG_LEVEL: "silent",
+  };
+  // Cold Swift preparation belongs in setup for this late-handoff scenario.
+  // The real subprocess will authenticate the same workspace-owned cache.
+  const ownership = createSystemProcessOwnershipHost("darwin", environment);
+  await withVerifierCleanup(
+    () => ownership.prepare?.(),
+    [() => ownership.close?.()],
+  );
+  return { environment, mode, receipt, startupTimeoutMs };
+};
+
 test.for(["handoff", "not-found"] as const)(
-  "preserves an unconfirmed %s handoff and closes only a late bridge with matching run identity",
+  "retains ownership after %s and closes only a late bridge with matching run identity",
   async (launchMode, { workspace }) => {
     const target = workspace.path("target");
     await copyFile("/usr/bin/true", target);
-    // Budget the complete native startup, including cold helper preparation.
-    // The scenario below requires observed handoff, not a pre-launch timeout.
-    const startupTimeoutMs = 10_000;
-    const mode = await workspace.write("mode", launchMode);
-    const receipt = workspace.path("bootstrap-path");
+    const { environment, mode, receipt, startupTimeoutMs } =
+      await prepareLateHandoff(workspace, launchMode);
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("dist/main.js")],
       stderr: "pipe",
-      env: {
-        ...workspace.environment,
-        PATH: process.env.PATH ?? "",
-        REA_ANALYSIS_PROVIDER: "hopper",
-        HOPPER_LAUNCHER_PATH: process.execPath,
-        HOPPER_LOADER_ARGS_JSON: JSON.stringify([
-          resolve("tests/fixtures/hopperLaunchAdmission.mjs"),
-          mode,
-          receipt,
-        ]),
-        REA_HOPPER_STARTUP_TIMEOUT_MS: String(startupTimeoutMs),
-        REA_LOG_LEVEL: "silent",
-      },
+      env: environment,
     });
     const mcp = new Client(
       { name: "hopper-late-readiness", version: "1" },
@@ -317,7 +334,14 @@ test.for(["handoff", "not-found"] as const)(
     const initial = parseMcpToolError(await call("current_document"));
     // Capture ownership evidence before result assertions so teardown retains
     // the runtime even when the asserted failure stage regresses.
-    const bootstrapPath = await readFile(receipt, "utf8");
+    const bootstrapPath = await readFile(receipt, "utf8").catch(
+      (cause: unknown) => {
+        throw new Error(
+          `Launcher did not acknowledge handoff: ${JSON.stringify(initial.error)}`,
+          { cause },
+        );
+      },
+    );
     runtime = dirname(bootstrapPath);
     expect(initial.error).toMatchObject({
       code: "cleanup_incomplete",
@@ -330,7 +354,17 @@ test.for(["handoff", "not-found"] as const)(
                 : "provider_unavailable",
             details:
               launchMode === "handoff"
-                ? { timeout_ms: startupTimeoutMs, launcher: { exit_code: 0 } }
+                ? {
+                    timeout_ms: startupTimeoutMs,
+                    launcher: {
+                      // The receipt proves launch. The deadline snapshot may
+                      // precede delivery of the successful child exit event.
+                      exit_code: expect.toSatisfy(
+                        (exitCode: unknown) =>
+                          exitCode === null || exitCode === 0,
+                      ),
+                    },
+                  }
                 : { stage: "launch", launcher: { exit_code: 3 } },
           },
         },
@@ -358,9 +392,12 @@ test.for(["handoff", "not-found"] as const)(
       }),
     });
     status.parse((await call("binary_session")).structuredContent);
-    expect(parseMcpToolError(await call("close_binary")).error.code).toBe(
-      "cleanup_incomplete",
-    );
+    // A missing endpoint uses the full reconnect window. The not-found case
+    // exercises that outcome before both variants check live foreign bridges.
+    if (launchMode === "not-found")
+      expect(parseMcpToolError(await call("close_binary")).error.code).toBe(
+        "cleanup_incomplete",
+      );
     const bootstrap = await readFile(bootstrapPath, "utf8");
     const setting = (name: string): string => {
       const line = bootstrap

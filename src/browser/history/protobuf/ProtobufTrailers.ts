@@ -61,15 +61,12 @@ export const parseGrpcWebTrailers = (
         reason:
           "gRPC-web trailer header names must be lower-case HTTP field names",
       });
-    let name = "";
     let validName = true;
     for (let index = start; index < colon; index += 1) {
-      const byte = bytes[index]!;
-      if (!isTrailerNameByte(byte)) {
+      if (!isTrailerNameByte(bytes[index]!)) {
         validName = false;
         break;
       }
-      name += String.fromCharCode(byte);
     }
     // Unlike ordinary HTTP/1 headers, in-body gRPC-Web names must be lower-case.
     if (!validName)
@@ -80,8 +77,16 @@ export const parseGrpcWebTrailers = (
         reason:
           "gRPC-web trailer header names must be lower-case HTTP field names",
       });
+    const name = Buffer.from(
+      bytes.buffer,
+      bytes.byteOffset + start,
+      colon - start,
+    ).toString("latin1");
     let valueStart = colon + 1;
-    while (valueStart < lineEnd && [9, 32].includes(bytes[valueStart]!))
+    while (
+      valueStart < lineEnd &&
+      (bytes[valueStart] === 9 || bytes[valueStart] === 32)
+    )
       valueStart += 1;
     // RFC 9110 permits HTAB but excludes other C0 controls and DEL.
     for (let index = valueStart; index < lineEnd; index += 1) {
@@ -97,7 +102,10 @@ export const parseGrpcWebTrailers = (
     }
     // RFC 9110 section 5.5: a field value excludes surrounding whitespace.
     let valueEnd = lineEnd;
-    while (valueEnd > valueStart && [9, 32].includes(bytes[valueEnd - 1]!))
+    while (
+      valueEnd > valueStart &&
+      (bytes[valueEnd - 1] === 9 || bytes[valueEnd - 1] === 32)
+    )
       valueEnd -= 1;
     let value: string;
     try {

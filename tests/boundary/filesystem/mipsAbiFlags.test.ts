@@ -408,6 +408,7 @@ const malformed: [string, (bytes: Buffer) => void, RegExp][] = [
   ["short record", (b) => b.writeUInt32LE(23, 68), /record size/u],
   ["oversized record", (b) => b.writeUInt32LE(0xffffffff, 68), /record size/u],
   ["invalid table stride", (b) => b.writeUInt16LE(31, 42), /entry size/u],
+  ["padded MIPS program stride", (b) => b.writeUInt16LE(36, 42), /entry size/u],
   ["extended program count", (b) => b.writeUInt16LE(0xffff, 44), /numbering/u],
   ["extended section count", (b) => b.writeUInt16LE(0, 48), /extended/u],
   ["changed identity", (b) => b.writeUInt32LE(0x60001001, 36), /identity/u],

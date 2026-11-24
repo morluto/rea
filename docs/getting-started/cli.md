@@ -401,6 +401,13 @@ as archive corruption. The cap cannot be raised at runtime: recompress with a
 window of at most 128 MiB, or decompress externally before retrying.
 Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
 
+Extraction verifies each written file before publishing the output. REA syncs
+the file, reopens it, and checks its size and SHA-256 against the bytes it wrote.
+Each file adds filesystem work, so archives with many small files can take
+longer to extract even when their total size is modest. If you only need the
+archive inventory, run `rea inspect-artifact <path> --json` to get it without
+writing an extracted tree.
+
 Inventory and extract UF2 or DfuSe regions:
 
 ```sh
@@ -757,7 +764,9 @@ entries record a refused kind, format, architecture, or role. An availability-on
 message describes the recorded rejections without claiming that every provider
 is unconfigured or that target support is known.
 For Hopper, Ghidra, IDA, JADX, and Kuna, run
-`rea doctor --provider ID --json` to diagnose the selected engine. Other adapters,
+`rea doctor --provider ID --json` to diagnose the selected engine;
+`--provider desktop_build` checks the desktop application build host instead of
+an analysis engine. Other adapters,
 such as `pwntools-elf`, report their configuration requirements directly and are
 not accepted by `doctor --provider`. See
 [task readiness](installation.md#check-readiness-for-your-task) and
@@ -941,8 +950,7 @@ rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/righ
 rea compare left.json right.json --record_pairs '[{"left_evidence_id":"ev_<left-sha256>","right_evidence_id":"ev_<right-sha256>"}]' --json
 ```
 
-Migration: replace `rea compare-bundles` with `rea compare`; the former command
-has been removed. The MCP tool remains `compare_bundles`.
+`rea compare` is the CLI form of the MCP `compare_bundles` tool.
 
 `rea evidence-import` performs process-local bundle authentication and
 validation, reporting record and Unknown-revision counts. `unknowns_added`
@@ -967,6 +975,20 @@ one-sided membership remains unknown; REA does not infer correspondence from
 position or display names.
 
 Exports preserve an existing destination unless `--overwrite` is explicit.
+
+To discover records in a saved bundle without returning their payloads, page
+its metadata with `inspect-evidence-bundle`:
+
+```bash
+rea inspect-evidence-bundle '{"path":"/absolute/path/to/evidence/bundle.json","detail":"summary","filters":{"operation":"analyze_function"},"offset":0,"limit":64}' --json
+```
+
+For paging defaults, continuation, ordering and counts, see the
+[retained Evidence discovery contract](../reference/mcp-contracts.md#tool-results).
+Use a discovered `evidence_id` with `detail: "records"` to read that complete
+record, or with `inspect-analysis-view` for a supported projection. The command
+still reads and authenticates the complete selected bundle before producing the
+metadata page.
 
 Atomic Evidence output stages on the selected destination's filesystem. If the
 OS pathname ceiling prevents its internal staging name, REA retries in a shorter
@@ -1019,8 +1041,7 @@ supplying a bundle does not make incompatible Evidence valid for a workflow.
 [member inspection options](#managed-assemblies-net) it applies to both sides,
 and `compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
 option above selects an input. Producers write a new bundle with
-`--evidence_output`; `inspect-managed-members` spelled that option
-`--evidence-bundle` in earlier releases.
+`--evidence_output`.
 File selectors remain available only on contracts that explicitly support them.
 
 Compare two artifact inventories with `compare-artifacts`. It takes the same
@@ -1214,8 +1235,8 @@ user permissions; consult the chosen guide for host requirements and effects.
 ## Start the MCP server
 
 Start REA's MCP server with `rea mcp` (or `rea --mcp`). The per-command
-`rea <command> --mcp` entry has been removed; it returns `MCP_MODE_REMOVED`
-and points to `rea mcp`. This is a breaking change from the earlier CLI.
+`rea <command> --mcp` form returns `MCP_MODE_REMOVED` and points to
+`rea mcp`.
 
 ## Serve MCP over streamable HTTP
 
@@ -1485,10 +1506,8 @@ does not fall back to global settings.
 
 `rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
 executable position is refused before any settings change; configure remote MCP
-transport in the client's own settings. Earlier delegated registration could
-interpret a URL as remote transport for some clients while storing it as an
-executable for Amp. That inconsistent URL interpretation and package acquisition
-are removed. Launcher arguments that happen to contain URLs remain arguments.
+transport in the client's own settings. Launcher arguments that happen to
+contain URLs remain arguments.
 
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
@@ -1597,8 +1616,6 @@ Cutter when available. This is separate from `--format json`, which selects the
 CLI result representation; the global `--json` flag selects that same CLI
 representation.
 
-Cutter no longer accepts command-local `--json=true` or `--json=false`.
-Replace these with `--json-output=true` or `--json-output=false`, respectively.
 Combine `--json-output` with bare `--json` when both Cutter command output and
 the CLI result should use JSON; either argument order is accepted.
 

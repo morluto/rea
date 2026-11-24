@@ -238,6 +238,7 @@ it("requires portable report validation even when the timing report is missing",
 it("keeps diagnosis available after merge failure and publishes only complete successful history", async () => {
   const steps = (await workflow()).test!.steps;
   const diagnosis = steps.find((step) => step.with?.name === "test-results");
+  expect(diagnosis?.with?.overwrite).toBe(true);
   expect(diagnosis?.if).toContain("!cancelled()");
   expect(diagnosis?.if).not.toContain("success()");
   const history = steps.find(
@@ -256,6 +257,7 @@ it("keeps diagnosis available after merge failure and publishes only complete su
   expect(history?.with?.name).toBe(
     "test-timings-${{ needs.changes.outputs.tier }}",
   );
+  expect(history?.with?.overwrite).toBe(true);
   expect(history?.with?.path).toBe(".cache/ci-test-history/test-results.json");
   const buildSteps = (await workflow()).build!.steps;
   const lookup = buildSteps.find((step) =>

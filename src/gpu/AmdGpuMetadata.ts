@@ -14,6 +14,15 @@ const AMD_METADATA_VALUES = 262144;
 const AMD_METADATA_CONTAINER_ENTRIES = 65536;
 const AMD_METADATA_VALUE_BYTES = 65536;
 
+const metadataValueLimit = () =>
+  new BinaryResourceFailure(
+    "structure",
+    AMD_METADATA_VALUES,
+    `AMDGPU metadata exceeds its ${String(AMD_METADATA_VALUES)}-value aggregate allowance`,
+    "amdgpu-metadata-values",
+    "entries",
+  );
+
 /** Validate allocation and nesting costs before the standard decoder allocates containers. */
 const utf8 = strictUtf8Decoder("preserve");
 const preflight = (bytes: Buffer): Set<string> => {
@@ -29,12 +38,14 @@ const preflight = (bytes: Buffer): Set<string> => {
     return start;
   };
   const value = (depth: number): string | undefined => {
-    if (depth > AMD_METADATA_DEPTH || ++values > AMD_METADATA_VALUES)
+    if (depth > AMD_METADATA_DEPTH)
       throw new BinaryResourceFailure(
         "structure",
-        AMD_METADATA_VALUES,
-        `AMDGPU metadata exceeds depth ${String(AMD_METADATA_DEPTH)} or ${String(AMD_METADATA_VALUES)} decoded values`,
+        AMD_METADATA_DEPTH,
+        `AMDGPU metadata exceeds its ${String(AMD_METADATA_DEPTH)}-level nesting allowance`,
+        "amdgpu-metadata-depth",
       );
+    if (++values > AMD_METADATA_VALUES) throw metadataValueLimit();
     const code = bytes[take(1)]!;
     const string =
       (code & 0xe0) === 0xa0 || code === 0xd9 || code === 0xda || code === 0xdb;
@@ -100,12 +111,7 @@ const preflight = (bytes: Buffer): Set<string> => {
         AMD_METADATA_VALUE_BYTES,
         `AMDGPU metadata value exceeds its ${String(AMD_METADATA_VALUE_BYTES)}-byte allocation budget`,
       );
-    if (count > AMD_METADATA_VALUES - values)
-      throw new BinaryResourceFailure(
-        "structure",
-        AMD_METADATA_VALUES,
-        "AMDGPU metadata container exceeds its aggregate value budget",
-      );
+    if (count > AMD_METADATA_VALUES - values) throw metadataValueLimit();
     if (string) {
       strings.add(`${bytes.byteOffset + start}:${payload}`);
       try {

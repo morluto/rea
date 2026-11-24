@@ -15,6 +15,8 @@ export const DENO_SECTION_MAGIC = Buffer.from("d3n0l4nd", "latin1");
 const MAX_DENO_METADATA_JSON_BYTES = 8 * 1024 * 1024;
 export const MAX_DENO_VFS_HEADER_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_DENO_TABLE_COUNT = 100_000;
+const REDIRECT_ROW_BYTES = 8;
+const REDIRECT_BATCH_ROWS = 1_024;
 export const MAX_DENO_SPECIFIER_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_DENO_REMOTE_BODY_BYTES = 256 * 1024 * 1024;
 
@@ -111,10 +113,11 @@ export interface DenoParsedSection {
   readonly vfsHeaderByteLength: number;
   readonly vfsFileData: DenoByteRange;
   readonly vfs: DenoVfsWalk;
-  /** Specifier text when every specifier was valid UTF-8. */
-  readonly specifierText: ReadonlyMap<number, string> | null;
+  /** Declared specifier IDs. A null value identifies a row with invalid UTF-8. */
+  readonly specifierText: ReadonlyMap<number, string | null>;
 }
 
+/** Read a section-relative range, returning the acquired prefix at physical EOF. */
 export type DenoSectionRead = (
   offset: number,
   length: number,
@@ -201,8 +204,7 @@ export const parseDenoSection = async (
   const specifierStart = cursor;
   const specifierCount = await u32();
   assertTableCount(specifierCount, "specifier");
-  const specifierIds = new Set<number>();
-  const specifierText = new Map<number, string>();
+  const specifierText = new Map<number, string | null>();
   let textBytes = 0;
   let invalidUtf8 = false;
   for (let index = 0; index < specifierCount; index += 1) {
@@ -218,37 +220,59 @@ export const parseDenoSection = async (
       );
     const bytes = await readExact(range.sectionOffset, range.length);
     const id = await u32();
-    if (specifierIds.has(id))
+    if (specifierText.has(id))
       throw denoFormatFailure(`duplicate specifier id ${String(id)}`);
-    specifierIds.add(id);
     const decoded = decodeStrict(bytes, specifierDecoder);
     if (decoded === undefined) invalidUtf8 = true;
-    else specifierText.set(id, decoded);
+    specifierText.set(id, decoded ?? null);
   }
   const specifiers: DenoCountedRegion = {
     count: specifierCount,
     byteLength: Number(cursor - specifierStart),
     listing: invalidUtf8 ? "unsupported" : "listed",
   };
-  const namedSpecifiers = invalidUtf8 ? null : specifierText;
+  const hasSpecifierText = (id: number): boolean =>
+    typeof specifierText.get(id) === "string";
 
   const redirectStart = cursor;
   const redirectCount = await u32();
   assertTableCount(redirectCount, "redirect");
   const redirectIds = new Set<number>();
-  let redirectListing: DenoListing =
-    namedSpecifiers === null ? "unsupported" : "listed";
-  for (let index = 0; index < redirectCount; index += 1) {
+  let redirectListing: DenoListing = "listed";
+  for (let index = 0; index < redirectCount;) {
     abortIfNeeded(signal);
-    const from = await u32();
-    const to = await u32();
-    if (redirectIds.has(from))
-      throw denoFormatFailure(
-        `duplicate redirect specifier id ${String(from)}`,
-      );
-    redirectIds.add(from);
-    if (!specifierIds.has(from) || !specifierIds.has(to))
-      redirectListing = "unsupported";
+    // A short last batch still admits every complete earlier row, so an earlier duplicate retains precedence.
+    const rows = Math.min(
+      redirectCount - index,
+      REDIRECT_BATCH_ROWS,
+      Math.floor(Number(size - cursor) / REDIRECT_ROW_BYTES),
+    );
+    if (rows === 0) throw denoFormatFailure("length overruns the section");
+    const range = takeRange(BigInt(rows * REDIRECT_ROW_BYTES));
+    const bytes = await read(range.sectionOffset, range.length);
+    abortIfNeeded(signal);
+    if (bytes.length > range.length)
+      throw denoFormatFailure("section read was short");
+    const batch = new BinaryReader(bytes, true, "deno");
+    // Decode the acquired complete rows even if a later row ends at physical EOF.
+    for (
+      let offset = 0;
+      offset <= bytes.length - REDIRECT_ROW_BYTES;
+      offset += REDIRECT_ROW_BYTES
+    ) {
+      const from = batch.u32(offset);
+      const to = batch.u32(offset + 4);
+      if (redirectIds.has(from))
+        throw denoFormatFailure(
+          `duplicate redirect specifier id ${String(from)}`,
+        );
+      redirectIds.add(from);
+      if (!hasSpecifierText(from) || !hasSpecifierText(to))
+        redirectListing = "unsupported";
+    }
+    if (bytes.length < range.length)
+      throw denoFormatFailure("section read was short");
+    index += rows;
   }
   const redirects: DenoCountedRegion = {
     count: redirectCount,
@@ -267,7 +291,7 @@ export const parseDenoSection = async (
     remoteBodies = addRemoteBody(remoteBodies, length);
     return range;
   };
-  let unresolvedRemote = namedSpecifiers === null;
+  let unresolvedRemote = false;
   for (let index = 0; index < remoteCount; index += 1) {
     abortIfNeeded(signal);
     const specifierId = await u32();
@@ -276,7 +300,7 @@ export const parseDenoSection = async (
         `duplicate remote specifier id ${String(specifierId)}`,
       );
     remoteIds.add(specifierId);
-    if (namedSpecifiers?.has(specifierId) !== true) unresolvedRemote = true;
+    if (!hasSpecifierText(specifierId)) unresolvedRemote = true;
     const mediaType = await u8();
     const data = takeRemoteBody(await u32(), "remote module");
     const flags = await u8();
@@ -344,7 +368,7 @@ export const parseDenoSection = async (
     vfsHeaderByteLength: vfsHeader.length,
     vfsFileData,
     vfs: walkDenoVirtualFs(vfsJson, vfsFileData.length, signal),
-    specifierText: namedSpecifiers,
+    specifierText,
   };
 };
 

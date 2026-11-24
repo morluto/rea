@@ -88,7 +88,9 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
   magics before 3494 used other code layouts and are unsupported. The
   3.7.0a1/a2 magics 3390/3391 used 12-byte headers and are outside this
   reader's supported format;
-- `flags`, `hash_based`, and `check_source` from PEP 552;
+- `flags`, `hash_based`, and the stored `check_source` bit from PEP 552.
+  `check_source` applies only to hash-based pycs. A timestamp-based header
+  with that bit set retains it and includes a limitation explaining its scope;
 - `source_hash_hex` for hash-based pycs, or `source_mtime` and `source_size`
   for timestamp pycs.
 

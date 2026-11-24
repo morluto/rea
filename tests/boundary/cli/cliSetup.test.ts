@@ -140,7 +140,9 @@ cliTest.for([
 
     await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
     expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
+    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
+    expect(result.stdout).toContain("--dry-run");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
   },
 );
 
@@ -159,23 +161,6 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
       expect(result.json).toMatchObject({ status: "ready" });
       await expect(access(config)).resolves.toBeUndefined();
     }
-  },
-);
-
-cliTest(
-  "reports invalid dry-run through the public CLI without a stack trace",
-  async ({ cli }) => {
-    const home = await createTestTempDirectory(
-      "rea-cli-public-invalid-dry-run-",
-    );
-    const config = join(home, ".codex", "config.toml");
-    const result = await runSetup(cli, home, "--dry-run=abc");
-
-    expect(result.exitCode).not.toBe(0);
-    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
-    expect(result.stdout).toContain("--dry-run");
-    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
-    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 
@@ -576,11 +561,13 @@ describe("interactive setup journey", () => {
     expect(result.decision.approved).toBe(true);
   });
 
-  it("shows the launcher, backup, and path before final approval", async () => {
+  it("shows the selected changes before consent and leaves Hopper unselected", async () => {
+    const approvalPrompt = "Apply these 2 changes?";
     const result = await runJourney(
       [
         step("Which agents should use REA?", " \r"),
-        step("Apply these 2 changes?", "\r"),
+        step("Install Hopper for deep binary analysis?", "\r"),
+        step(approvalPrompt, "\r"),
       ],
       false,
       [
@@ -591,13 +578,18 @@ describe("interactive setup journey", () => {
           commands: ["npx -y rea-agents@3.2.1 mcp"],
         },
         actions[1],
+        actions[2],
       ],
     );
-    expect(result.output).toContain("/isolated/.codex/config.toml.bak");
-    expect(result.output).toContain("command: npx -y rea-agents@3.2.1 mcp");
-    expect(result.output.indexOf("command:")).toBeLessThan(
-      result.output.indexOf("Apply these 2 changes?"),
-    );
+    const preflight = result.output.split(approvalPrompt, 1)[0];
+    expect(preflight).toContain("UPDATE  Codex");
+    expect(preflight).toMatch(/\/isolated\/\.codex\/config\.toml\r?\n/u);
+    expect(preflight).toContain("backup: /isolated/.codex/config.toml.bak");
+    expect(preflight).toContain("command: npx -y rea-agents@3.2.1 mcp");
+    expect(result.decision).toEqual({
+      approved: true,
+      selectedActionIds: ["configure_client:codex", "install_skill"],
+    });
   });
 
   it("treats final No as cancellation", async () => {
@@ -626,22 +618,6 @@ describe("interactive setup journey", () => {
     ]);
     expect(result.decision.selectedActionIds).toEqual(["install_skill"]);
     expect(result.decision.approved).toBe(true);
-  });
-
-  it("offers Hopper separately and defaults against installing it", async () => {
-    const result = await runJourney(
-      [
-        step("Which agents should use REA?", " \r"),
-        step("Install Hopper for deep binary analysis?", "\r"),
-        step("Apply these 2 changes?", "\r"),
-      ],
-      false,
-      actions,
-    );
-    expect(result.decision.selectedActionIds).toEqual([
-      "configure_client:codex",
-      "install_skill",
-    ]);
   });
 
   it("uses sequential prompts without auto-selecting detected agents in accessible mode", async () => {

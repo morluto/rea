@@ -57,6 +57,61 @@ const typora = (
   unpackaged_libraries: [],
 });
 
+it("replays the observed suite of a repository whose authored suite is templated", () => {
+  const authored = repository({
+    sources_file: "/etc/apt/sources.list.d/vendor.sources",
+    suite: "stable/binary-$(ARCH)/",
+    repo_suite: "stable/binary-x86_64/",
+  });
+  const install = exportInstall(typora([authored]), "typora", "x64");
+
+  expect(install.ok && install.value.sources[0]?.suite).toBe(
+    "stable/binary-x86_64/",
+  );
+  expect(repositoryRefusal({ ...authored, repo_suite: undefined })).toContain(
+    "Capture the application again",
+  );
+});
+
+it("replays complete one-line words in older capture evidence", () => {
+  const installed = exportInstall(
+    typora([
+      repository({
+        uri: '"https://vendor.invalid/apt"',
+        suite: '"st%61ble"',
+        components: ["main%252Cextra", "cont%72ib"],
+      }),
+    ]),
+    "typora",
+    "arm64",
+  );
+  expect(installed).toMatchObject({
+    ok: true,
+    value: {
+      sources: [
+        {
+          uri: "https://vendor.invalid/apt",
+          suite: "stable",
+          components: ["main%2Cextra", "contrib"],
+        },
+      ],
+    },
+  });
+});
+
+it.each([
+  { uri: '"https://vendor.invalid/a' },
+  { suite: '"stable', components: ['testing"', "main"] },
+  { suite: "stable", components: ['"main', 'extra"'] },
+])(
+  "requests recapture of an incomplete historical one-line word",
+  (overrides) => {
+    expect(repositoryRefusal(repository(overrides))).toContain(
+      "Capture the application again",
+    );
+  },
+);
+
 describe("exportInstall", () => {
   it("installs from a vendor repository whose key the capture verified", () => {
     const install = exportInstall(typora([repository()]), "typora", "arm64");

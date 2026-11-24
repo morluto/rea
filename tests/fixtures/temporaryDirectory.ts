@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { onTestFinished } from "vitest";
 
 import { normalizeTestTemporaryPrefix } from "../../scripts/lib/test-temporary-ownership.mjs";
+import { isLosslessNodeDiscoveryPath } from "../../src/inspector/nodeDiscoveryPath.js";
 import { removeTestWorkspace } from "../support/workspace/workspaceFixture.js";
 
 /**
@@ -32,9 +33,6 @@ export const createTestTempDirectory = async (
   return canonicalDirectory;
 };
 
-/** Characters Node's Inspector discovery metadata cannot carry losslessly. */
-const NODE_DISCOVERY_AMBIGUOUS = /[_"\\]/u;
-
 /**
  * Like `createTestTempDirectory`, for fixtures whose paths Node reports through
  * Inspector discovery metadata.
@@ -53,16 +51,16 @@ export const createNodeDiscoveryTempDirectory = async (
 ): Promise<string> => {
   if (process.platform === "win32") return createTestTempDirectory(prefix);
   const primary = await realpath(tmpdir());
-  const base = NODE_DISCOVERY_AMBIGUOUS.test(primary)
-    ? await realpath("/tmp")
-    : primary;
+  const base = isLosslessNodeDiscoveryPath(primary, process.platform)
+    ? primary
+    : await realpath("/tmp");
   const canonicalDirectory = await realpath(
     await mkdtemp(join(base, normalizeTestTemporaryPrefix(prefix))),
   );
   onTestFinished(async () => {
     await removeTestWorkspace(canonicalDirectory);
   });
-  if (NODE_DISCOVERY_AMBIGUOUS.test(canonicalDirectory))
+  if (!isLosslessNodeDiscoveryPath(canonicalDirectory, process.platform))
     throw new Error(
       `No temporary directory free of '_', '"' and '\\' for Node discovery fixtures: ${canonicalDirectory}`,
     );

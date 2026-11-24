@@ -1,14 +1,18 @@
 import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
-import { readElfDynamicEntry } from "../elfDynamicEntry.js";
+import {
+  admitElfDynamicDirectory,
+  readElfDynamicEntry,
+} from "../elfDynamicEntry.js";
 import {
   decodeElfRelocationInfo,
   ELF_ANDROID_PACKED_RELOCATION_TABLES,
   ELF_ANDROID_PACKED_RELOCATION_TAGS,
+  ELF_RELOCATION_TRUNCATED_MESSAGE,
   ELF_RELR_DYNAMIC_TAGS,
-  readElfRelocationEntry,
+  readElfRelocationEntryAt,
 } from "../elfRelocation.js";
 import { readLeb128, SLEB64 } from "../leb128.js";
-import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
+import { elfSymbolSize, readElfSymbolAt } from "../elfSymbol.js";
 import {
   readElfHashSymbolCount,
   readElfGnuHashSymbolCount,
@@ -119,7 +123,10 @@ export interface ElfPointerRelocationInput {
   readonly bits: 32 | 64;
   readonly little: boolean;
   readonly machine: number;
-  readonly dynamicSegments: readonly ElfDynamicSegment[];
+  readonly dynamicSegments: readonly Pick<
+    ElfDynamicSegment,
+    "offset" | "size"
+  >[];
   readonly mappings: readonly FileMapping[];
   readonly zeroFills: readonly ZeroFillMapping[];
 }
@@ -446,10 +453,21 @@ const RELOCATION_KINDS = [
   })),
 ];
 
+const RELOCATION_KINDS_32 = new Map(
+  RELOCATION_KINDS.filter((kinds) => kinds.bits === 32).map((kinds) => [
+    kinds.machine,
+    kinds,
+  ]),
+);
+const RELOCATION_KINDS_64 = new Map(
+  RELOCATION_KINDS.filter((kinds) => kinds.bits === 64).map((kinds) => [
+    kinds.machine,
+    kinds,
+  ]),
+);
+
 const relocationKinds = (machine: number, bits: 32 | 64) =>
-  RELOCATION_KINDS.find(
-    (kinds) => kinds.machine === machine && kinds.bits === bits,
-  );
+  (bits === 64 ? RELOCATION_KINDS_64 : RELOCATION_KINDS_32).get(machine);
 
 /** R_*_RELATIVE type for a supported ELF machine, or undefined when unsupported. */
 export const elfRelativeRelocationType = (
@@ -468,6 +486,13 @@ export const elfCopyRelocationType = (
   machine: number,
   bits: 32 | 64,
 ): number | undefined => relocationKinds(machine, bits)?.copy;
+
+/** Relocation-kind width table for a supported `(machine, bits)` pair, hoisted outside loops. */
+export const elfRelocationWidthLookup = (
+  machine: number,
+  bits: 32 | 64,
+): ReadonlyMap<number, number> | undefined =>
+  relocationKinds(machine, bits)?.widths;
 
 /** Bytes written by a relocation; type zero is a no-op and unknown types remain undefined. */
 export const elfRelocationWidth = (
@@ -493,25 +518,21 @@ function* dynamicTags(
   const declaration = input.dynamicSegments[0];
   if (declaration === undefined)
     return { values: new Map(), ambiguous: new Set() };
-  const width = input.bits / 4;
-  if (declaration.size > 16n * 1024n * 1024n)
+  const table = admitElfDynamicDirectory(bytes.length, declaration, input.bits);
+  if (!table.ok) {
+    if (table.error.kind === "malformed") return malformed(table.error.message);
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
-      "ELF dynamic directory exceeds the 16 MiB structural allowance",
-      16 * 1024 * 1024,
+      table.error.message,
+      table.error.maximum,
       "bytes",
     );
-  if (
-    declaration.size % BigInt(width) !== 0n ||
-    declaration.offset > BigInt(bytes.length) ||
-    declaration.size > BigInt(bytes.length) - declaration.offset
-  )
-    malformed("PT_DYNAMIC is truncated or outside the file");
+  }
+  const { offset: start, size, width } = table.value;
   const tags = new Map<bigint, bigint>();
   const redeclared = new Set<bigint>();
   let relrFamily: "standard" | "android" | undefined;
-  const start = Number(declaration.offset),
-    end = start + Number(declaration.size);
+  const end = start + size;
   for (let at = start; at < end; at += width) {
     if ((at - start) % 65_536 === 0) yield;
     const parsed = readElfDynamicEntry(
@@ -597,6 +618,7 @@ export function* readElfRelocationWritesSteps(
     input,
   );
   const word = input.bits === 64 ? 8 : 4;
+  const reader = new BinaryReader(bytes, input.little, "elf");
   const index = createFileMappingIndex(input.mappings, input.zeroFills);
   const fileOffset = (address: bigint, width: number): number | null => {
     try {
@@ -607,16 +629,7 @@ export function* readElfRelocationWritesSteps(
       throw cause;
     }
   };
-  const rawWord = (offset: number): bigint =>
-    input.bits === 64
-      ? input.little
-        ? bytes.readBigUInt64LE(offset)
-        : bytes.readBigUInt64BE(offset)
-      : BigInt(
-          input.little
-            ? bytes.readUInt32LE(offset)
-            : bytes.readUInt32BE(offset),
-        );
+  const rawWord = (offset: number): bigint => reader.word(offset, input.bits);
   const target = (address: bigint, width: number): number | null => {
     const at = fileOffset(address, width);
     if (
@@ -673,21 +686,15 @@ export function* readElfRelocationWritesSteps(
       if (cause instanceof BinaryMappingFailure) return undefined;
       throw cause;
     }
-    const parsed = readElfSymbol(
-      bytes.subarray(at, at + symbolBytes),
-      input.bits,
-      input.little,
-    );
-    return parsed.ok ? parsed.value : undefined;
+    return readElfSymbolAt(bytes, at, input.bits, input.little) ?? undefined;
   };
-  const hashReader = new BinaryReader(bytes, input.little, "elf");
   const hashWords =
     (address: bigint): ElfHashWordReader =>
     (offset) => {
       try {
         // Hash walks skip bloom/bucket words; their whole prefix must be mapped.
         const at = index.offset(address, offset + 4) + offset;
-        return ok(hashReader.u32(at));
+        return ok(reader.u32(at));
       } catch (cause) {
         if (cause instanceof BinaryMappingFailure) return err(cause.message);
         throw cause;
@@ -785,7 +792,7 @@ export function* readElfRelocationWritesSteps(
     source: ElfPointerRelocationSource,
   ): Generator<ElfPointerWrite | undefined> {
     const { type: kind, offset: destination, symbolIndex } = parsed;
-    if (elfRelocationWidth(input.machine, kind, input.bits) === 0) return;
+    if (kind === 0 || unknownWidths.get(kind) === 0) return;
     const explicitAddend = parsed.addend;
     if (source.encoding === "rela" && explicitAddend === undefined)
       return malformed("RELA relocation has no decoded addend");
@@ -869,25 +876,18 @@ export function* readElfRelocationWritesSteps(
       return malformed(`${encoding.toUpperCase()} table is not file-backed`);
     for (let at = start; at < start + Number(size); at += width) {
       if ((at - start) % (width * 4096) === 0) yield;
-      const parsed =
-        encoding === "rela"
-          ? readElfRelocationEntry(
-              bytes.subarray(at, at + width),
-              input.bits,
-              input.little,
-              "rela",
-            )
-          : readElfRelocationEntry(
-              bytes.subarray(at, at + width),
-              input.bits,
-              input.little,
-              "rel",
-            );
-      if (!parsed.ok) return malformed(parsed.error.message);
-      yield* applyRelocation(parsed.value, {
+      const parsed = readElfRelocationEntryAt(
+        bytes,
+        at,
+        input.bits,
+        input.little,
+        encoding,
+      );
+      if (parsed === null) return malformed(ELF_RELOCATION_TRUNCATED_MESSAGE);
+      yield* applyRelocation(parsed, {
         encoding,
         record_file_offset: at,
-        kind: parsed.value.type,
+        kind: parsed.type,
       });
     }
   }
@@ -978,30 +978,43 @@ export function* readElfRelocationWritesSteps(
     const start = relrSize === 0n ? 0 : fileOffset(relr, Number(relrSize));
     if (start === null) return malformed("RELR table is not file-backed");
     let next: bigint | undefined;
-    for (let at = start; at < start + Number(relrSize); at += word) {
+    const wordBig = BigInt(word);
+    const addrSpace = 1n << BigInt(input.bits);
+    const maxAddr = addrSpace - wordBig;
+    const strideBig = BigInt((input.bits - 1) * word);
+    const end = start + Number(relrSize);
+    const add = (address: bigint, recordOffset: number) => {
+      if (address > maxAddr)
+        malformed("RELR destination overflows the ELF address space");
+      const slot = target(address, word);
+      return write(address, word, slot === null ? 0n : rawWord(slot), {
+        source: {
+          encoding: "relr",
+          record_file_offset: recordOffset,
+          kind: null,
+        },
+        symbol_index: null,
+        addend: null,
+      });
+    };
+    for (let at = start; at < end; at += word) {
       if ((at - start) % (word * 4096) === 0) yield;
       const entry = rawWord(at);
-      const add = (address: bigint) => {
-        if (address > (1n << BigInt(input.bits)) - BigInt(word))
-          malformed("RELR destination overflows the ELF address space");
-        const slot = target(address, word);
-        return write(address, word, slot === null ? 0n : rawWord(slot), {
-          source: { encoding: "relr", record_file_offset: at, kind: null },
-          symbol_index: null,
-          addend: null,
-        });
-      };
       if ((entry & 1n) === 0n) {
-        yield add(entry);
-        next = entry + BigInt(word);
+        yield add(entry, at);
+        next = entry + wordBig;
       } else {
         if (next === undefined)
           return malformed("RELR bitmap has no preceding address");
-        for (let bit = 1; bit < input.bits; bit++)
-          if ((entry & (1n << BigInt(bit))) !== 0n)
-            yield add(next + BigInt((bit - 1) * word));
-        next += BigInt((input.bits - 1) * word);
-        if (next > 1n << BigInt(input.bits))
+        let bits = entry >> 1n;
+        let addr = next;
+        while (bits !== 0n) {
+          if ((bits & 1n) !== 0n) yield add(addr, at);
+          bits >>= 1n;
+          addr += wordBig;
+        }
+        next += strideBig;
+        if (next > addrSpace)
           malformed("RELR bitmap overflows the ELF address space");
       }
     }
@@ -1016,14 +1029,7 @@ export function* readElfRelocationWritesSteps(
       return at === null
         ? undefined
         : {
-            value:
-              width === word
-                ? rawWord(at)
-                : BigInt(
-                    input.little
-                      ? bytes.readUInt32LE(at)
-                      : bytes.readUInt32BE(at),
-                  ),
+            value: reader.word(at, width === 4 ? 32 : input.bits),
             file_offset: at,
             relocation: null,
           };
@@ -1034,6 +1040,11 @@ export function* readElfRelocationWritesSteps(
 /** Loader values and overlap ownership, independent of retained relocation provenance. */
 export interface ElfVirtualPointerWrites {
   readonly hasWrites: (address: bigint, size: number) => boolean;
+  /** Sorted, coalesced mapping-relative `[start, end)` byte intervals overlapping loader writes. */
+  readonly writeIntervalsIn: (
+    address: bigint,
+    size: number,
+  ) => readonly { readonly start: number; readonly end: number }[];
   /** Undefined when a write leaves the selected field unresolved or partly overwritten. */
   readonly unsignedAt: (address: bigint, width: 4 | 8) => bigint | undefined;
 }
@@ -1189,6 +1200,37 @@ class ElfVirtualWriteIndex {
         const low = before(address + BigInt(size));
         return low > 0 && (reach[low - 1] ?? 0n) > address;
       },
+      writeIntervalsIn: (
+        address: bigint,
+        size: number,
+      ): readonly { readonly start: number; readonly end: number }[] => {
+        if (size <= 0) return [];
+        const limit = address + BigInt(size);
+        const last = before(limit) - 1;
+        if (last < 0 || (reach[last] ?? 0n) <= address) return [];
+        const reversed: { start: number; end: number }[] = [];
+        for (let at = last; at >= 0 && (reach[at] ?? 0n) > address; at--) {
+          const range = ranges[at]!;
+          if (range.end <= address) continue;
+          const start =
+            range.address <= address ? 0 : Number(range.address - address);
+          const end = range.end >= limit ? size : Number(range.end - address);
+          reversed.push({ start, end });
+        }
+        if (reversed.length <= 1) return reversed;
+        reversed.reverse();
+        const coalesced: { start: number; end: number }[] = [reversed[0]!];
+        for (let i = 1; i < reversed.length; i += 1) {
+          const next = reversed[i]!;
+          const tail = coalesced[coalesced.length - 1]!;
+          if (next.start <= tail.end) {
+            if (next.end > tail.end) tail.end = next.end;
+          } else {
+            coalesced.push(next);
+          }
+        }
+        return coalesced;
+      },
     };
   }
 }
@@ -1296,6 +1338,7 @@ export function* readElfPointerValuesSteps(
   const { originalValueAt } = next.value;
   return {
     hasWrites: facts.hasWrites,
+    writeIntervalsIn: facts.writeIntervalsIn,
     unsignedAt: (address, width) => {
       if (!facts.hasWrites(address, width)) return undefined;
       return facts.unsignedAt(

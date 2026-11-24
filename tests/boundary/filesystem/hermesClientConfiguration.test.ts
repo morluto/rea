@@ -139,7 +139,9 @@ describe("Hermes inherited registration removal", () => {
     const configured = await readFile(path, "utf8");
     expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
       status: "failed",
-      detail: expect.stringContaining("inherited from a YAML merge"),
+      detail: expect.stringContaining(
+        "Remove it at the shared source before rerunning uninstall",
+      ),
     });
     expect(await readFile(path, "utf8")).toBe(configured);
   });

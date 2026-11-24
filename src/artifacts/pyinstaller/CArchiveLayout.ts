@@ -8,7 +8,7 @@ import {
   pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
-import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 
 /** Magic at the start of a CArchive cookie. */
 const PYINSTALLER_COOKIE_MAGIC = Buffer.from("MEI\x0c\x0b\x0a\x0b\x0e");
@@ -177,19 +177,20 @@ export const parseCArchiveToc = (
       ),
     );
   while (offset < bytes.length) {
-    if (entries.length >= MAX_TOC_ENTRIES)
-      return err(
-        pyInstallerFailure(
-          "limit",
-          "CArchive table of contents exceeds its entry bound",
-        ),
-      );
     if (offset + TOC_HEADER_BYTES > bytes.length)
       return malformedEntry("CArchive table of contents entry is truncated");
     const entryLength = reader.u32(offset);
     if (entryLength < TOC_HEADER_BYTES || offset + entryLength > bytes.length)
       return malformedEntry(
         "CArchive table of contents entry extends outside the table",
+      );
+    // Only a framed record can exceed the retained entry allowance.
+    if (entries.length >= MAX_TOC_ENTRIES)
+      return err(
+        pyInstallerFailure(
+          "limit",
+          "CArchive table of contents exceeds its entry bound",
+        ),
       );
     const nameBytes = bytes.subarray(
       offset + TOC_HEADER_BYTES,
@@ -304,7 +305,7 @@ const libraryName = (
     );
   if (text.length === 0) return ok(null);
   try {
-    return ok(strictUtf8Decoder("preserve").decode(text));
+    return ok(decodeStrictUtf8(text, "preserve"));
   } catch {
     return err(
       pyInstallerFailure(
@@ -324,7 +325,7 @@ const tocName = (bytes: Buffer): Result<string, PyInstallerFailure> => {
   if (end === 0)
     return err(pyInstallerFailure("format", "CArchive entry name is empty"));
   try {
-    return ok(strictUtf8Decoder("preserve").decode(bytes.subarray(0, end)));
+    return ok(decodeStrictUtf8(bytes.subarray(0, end), "preserve"));
   } catch {
     return err(
       pyInstallerFailure("format", "CArchive entry name is not valid UTF-8"),

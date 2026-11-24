@@ -2,9 +2,9 @@ import { rustBinarySchema } from "../../domain/rust/rustBinary.js";
 import { inspectRustBinaryRequestSchema } from "../../domain/rust/rustBinaryQuery.js";
 import { z } from "zod";
 import {
-  rustBinarySummaryViewResultSchema,
   rustBinaryPageViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+  rustBinarySummaryViewResultSchema,
+} from "../../domain/analysisView/summarySchemas/rustBinarySummarySchemas.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";

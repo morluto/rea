@@ -63,6 +63,10 @@ export const ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION =
 export const ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION =
   "The candidate read did not complete, so the candidate was not compared. Only the image linkage is retained.";
 
+/** Candidate bytes were acquired without settling the ELF comparison. */
+export const ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION =
+  "The candidate read completed. Its ELF comparison did not complete.";
+
 /**
  * Whole-file ceiling for a streamed candidate. Only `max_file_bytes` of it is
  * retained for ELF decoding; the rest is hashed in bounded chunks.
@@ -338,7 +342,7 @@ const imageDirectory = (
   const segments = rest.split(/[\\/]+/u).filter((part) => part.length > 0);
   return {
     directory,
-    separator: "\\",
+    separator: binaryPath.includes("\\") ? "\\" : "/",
     globalRelative: [
       ...(letter === undefined ? [] : [letter]),
       ...segments,

@@ -5,7 +5,7 @@ import {
   declaredFileRange,
 } from "../../domain/binaryContainer.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   observePeCoffFrame,
   PE_COFF_FRAME_BYTES,
@@ -17,7 +17,10 @@ import {
 } from "../../domain/peSectionHeader.js";
 import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
 import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   readFatContainerHeader,
@@ -727,7 +730,7 @@ const peClaims = async (
 ): Promise<readonly SectionWindow[]> => {
   const { handle, fileSize, signal } = source;
   const dos = await tryRead(handle, 0, 64, fileSize, signal);
-  if (dos === null || dos[0] !== 0x4d || dos[1] !== 0x5a) return [];
+  if (dos === null || !hasDosMzMagic(dos)) return [];
   const probe = observePeCoffFrame(
     dos,
     fileSize,
@@ -808,7 +811,7 @@ const elfClaims = async (
   const declarations = readElfRawTableDeclarations(header, format.value);
   if (!declarations.ok) return [];
   const { offset, width, count, namesIndex } = declarations.value.sections;
-  const sectionWidth = elfClass === 64 ? 64 : 40;
+  const sectionWidth = elfSectionHeaderWidth(elfClass);
   // Unsupported extended numbering does not establish a Bun graph.
   if (
     (width !== 0 && width !== sectionWidth) ||

@@ -2,6 +2,8 @@ import { BinaryReader } from "../binaryContainer.js";
 import { machoSectionHeaderSize } from "./machoSectionHeader.js";
 import { err, ok } from "../result.js";
 
+const SG_HIGHVM = 0x1;
+
 /** Fixed byte widths of Apple's segment_command and segment_command_64 records. */
 export const machoSegmentHeaderSize = (wide: boolean): 56 | 72 =>
   wide ? 72 : 56;
@@ -38,24 +40,52 @@ export const readMachoSegmentHeader = (
   });
 };
 
-/** Admit VM sizes once for consumers that construct segment mappings. */
+interface MachoSegmentMemoryFields {
+  readonly address: bigint;
+  readonly memorySize: bigint;
+  readonly fileSize: bigint;
+  readonly flags: number;
+}
+
+/** VM address of a segment's first file byte after its extents are admitted. */
+export const machoSegmentFileAddress = ({
+  address,
+  memorySize,
+  fileSize,
+  flags,
+}: MachoSegmentMemoryFields): bigint =>
+  fileSize > 0n && fileSize < memorySize && (flags & SG_HIGHVM) !== 0
+    ? address + (memorySize - fileSize)
+    : address;
+
+/** Admit VM extents and locate the file-backed and zero-filled spans. */
 export const admitMachoSegmentMapping = (
-  segment: {
-    readonly address: bigint;
-    readonly memorySize: bigint;
-    readonly fileSize: bigint;
-    readonly protection: number;
-  },
+  segment: MachoSegmentMemoryFields & { readonly protection: number },
   bits: 32 | 64,
 ) => {
-  const unmapped = segment.memorySize === 0n && segment.protection === 0;
-  return (!unmapped && segment.fileSize > segment.memorySize) ||
-    segment.address + segment.memorySize > 1n << BigInt(bits)
-    ? err({
-        kind: "malformed" as const,
-        message: "Mach-O segment addresses or sizes are invalid",
-      })
-    : ok({ unmapped });
+  const { address, memorySize, fileSize, protection } = segment;
+  const unmapped = memorySize === 0n && protection === 0;
+  if (
+    (!unmapped && fileSize > memorySize) ||
+    address + memorySize > 1n << BigInt(bits)
+  )
+    return err({
+      kind: "malformed" as const,
+      message: "Mach-O segment addresses or sizes are invalid",
+    });
+  const zeroFillSize = memorySize - fileSize;
+  const fileAddress = machoSegmentFileAddress(segment);
+  return ok({
+    unmapped,
+    fileAddress,
+    zeroFill:
+      zeroFillSize > 0n
+        ? {
+            address: fileAddress === address ? address + fileSize : address,
+            size: zeroFillSize,
+          }
+        : null,
+  });
 };
 
 /** Check that the segment's fixed sections fit inside its declared cmdsize. */

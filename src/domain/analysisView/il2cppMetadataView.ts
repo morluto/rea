@@ -698,21 +698,6 @@ export const projectIl2cppMetadataView = (
         },
       ]),
     );
-  if (
-    view.collection === "parameter_types" &&
-    view.method_indices !== undefined &&
-    report.parameters === undefined
-  )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "method_indices"],
-          reason: "invalid_value",
-          message:
-            "Retained Evidence did not collect parameters, so parameter owners are unknown; inspect the metadata again to select parameter types by method.",
-        },
-      ]),
-    );
   const matches = selection(view, report);
   const selectedFields =
     view.fields === undefined ? undefined : new Set<string>(view.fields);

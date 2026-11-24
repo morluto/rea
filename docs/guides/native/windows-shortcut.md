@@ -36,7 +36,9 @@ decoded as `normal`, as specified.
 file offset, size, and type byte. Root-folder, volume, and file-entry items
 are decoded when those layouts match documented shell-item headers, including
 the 8.3 short name on a file entry. Every other item is `raw` with a SHA-256
-of its payload. Unknown items are not guessed.
+of its payload. An invalid item extent, missing TerminalID, or bytes after the
+TerminalID make coverage partial. Earlier items remain available, and parsing
+resumes at the declared end of the list when that extent fits the file.
 
 `link_info` reports volume drive type, serial, label, local base path, and
 common network relative link names, with Unicode variants when the header
@@ -61,7 +63,9 @@ birth-droid GUIDs. Version-1 UUID MAC and timestamp values are labelled
 `evidence_kind: "derived"`. `KnownFolderDataBlock` and `SpecialFolderDataBlock`
 keep their folder identifiers. `ConsoleFEDataBlock` keeps the code page.
 `PropertyStoreDataBlock` and unrecognized signatures stay raw with SHA-256.
-Unknown signatures are listed and are not dropped.
+Decoded fixed-size blocks with a mismatched length retain raw payload hashes
+and make coverage partial. Later blocks remain readable when the declared
+block extent fits the file.
 When `HasExpString`, `HasDarwinID`, `HasExpIcon`, or `RunWithShimLayer`
 declares a block, the terminal record lets REA report a missing block and mark
 coverage partial. If parsing stops before the terminal, an unseen block remains
@@ -90,9 +94,11 @@ extension. Raw fields and artifact identity are preserved. The code page in a
 ConsoleFE block describes the console and does not establish the original
 system ANSI encoding for these paths.
 
-An unreadable declared `LinkInfo` target path leaves the target extension
-unknown and prevents a mismatch claim, unless another complete target matches
-the icon.
+The target extension stays unknown when a LinkInfo or environment target is
+unreadable, or when parsing stops before a declared environment block is found.
+An independently established full-path match still gives
+`false` for `icon_location_differs_from_target`. Without such a match, the
+comparison remains unknown.
 
 A missing optional section is observed absence of that structure. It is not
 proof the shortcut never carried that data in another container.
@@ -107,10 +113,10 @@ Malformed `HeaderSize` or `LinkCLSID`, and exhausted budgets, fail without
 partial success. Truncation after a valid header, ExtraData size overruns, and
 odd Unicode lengths return partial coverage with `coverage.failing_offset`.
 A LinkInfo, VolumeID, or network-name string offset that points inside its
-structure header or outside its structure is reported at the offset field itself,
-so every issue offset lies inside the file. A `LinkInfoHeaderSize` below 0x1C
-does not shrink the mandatory 28-byte header, so an offset in that header is
-still reported at the offset field and the path stays unreadable.
+structure header or outside its structure is reported at the offset field.
+A `LinkInfoHeaderSize` below 0x1C does not shrink the mandatory 28-byte
+header, so an offset in that header is still reported at the offset field
+and the path stays unreadable.
 Coverage is never `complete` when issues are present.
 A PropertyStoreDataBlock shorter than 12 bytes or a ShimDataBlock shorter than
 136 bytes makes coverage partial. The report retains the block's signature,

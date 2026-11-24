@@ -89,9 +89,8 @@ function sameStableIdentity(left, right) {
   );
 }
 
-// The list API orders by last access. A restore between pages can place one
-// id on two pages. That is still one cache: collapse it, or abort when the
-// pages disagree, before any id can be both kept and deleted.
+// Adds and deletes can still shift page boundaries. Collapse a repeated id,
+// or abort when the pages disagree, before an id can be both kept and deleted.
 function uniqueById(entries) {
   const byId = new Map();
   for (const entry of entries) {
@@ -141,15 +140,17 @@ export function selectPrefixDeletions(
       throw new Error(
         `Refusing to evaluate a cache outside ${prefix}: ${entry.key}`,
       );
-  // A newer snapshot on a different ref is unavailable to this ref.
-  const newestByRef = new Map();
+  // A cache restore requires its version as well as a visible ref.
+  // Preserve fallbacks for jobs using either version during a transition.
+  const newestByRestoreScope = new Map();
   for (const entry of entries.toSorted(byNewest)) {
-    const newest = newestByRef.get(entry.ref) ?? [];
+    const scope = `${entry.ref}\n${entry.version}`;
+    const newest = newestByRestoreScope.get(scope) ?? [];
     if (newest.length >= keepGenerations) continue;
     newest.push(entry.id);
-    newestByRef.set(entry.ref, newest);
+    newestByRestoreScope.set(scope, newest);
   }
-  const protectedIds = new Set([...newestByRef.values()].flat());
+  const protectedIds = new Set([...newestByRestoreScope.values()].flat());
   if (keepKey !== undefined)
     for (const entry of entries)
       if (entry.key === keepKey) protectedIds.add(entry.id);
@@ -195,7 +196,7 @@ export async function listAllCaches(request, repository, prefix) {
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const body = await request(
       "GET",
-      `repos/${repository}/actions/caches?per_page=${String(PAGE_SIZE)}&page=${String(page)}&key=${encodeURIComponent(prefix)}`,
+      `repos/${repository}/actions/caches?per_page=${String(PAGE_SIZE)}&page=${String(page)}&sort=created_at&direction=desc&key=${encodeURIComponent(prefix)}`,
     );
     if (
       typeof body !== "object" ||

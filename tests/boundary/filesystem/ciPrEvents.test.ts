@@ -99,3 +99,18 @@ it("qualifies only ci:full label additions at the caller's merge revision", asyn
   expect(full.jobs.required).toBeUndefined();
   expect(full.concurrency).toBeUndefined();
 });
+
+it("includes release PR qualification in the ordinary required CI gate", async () => {
+  const ci = await workflow("ci.yml");
+  const full = ci.jobs.changes?.steps?.find((step) => step.env?.CI_FULL)?.env
+    ?.CI_FULL;
+  expect(full).toContain("github.event_name == 'pull_request'");
+  expect(full).toContain(
+    "github.event.pull_request.head.repo.full_name == github.repository",
+  );
+  expect(full).toContain(
+    "startsWith(github.event.pull_request.head.ref, format('release-please--branches--{0}--', github.event.pull_request.base.ref))",
+  );
+  expect(ci.jobs.required?.name).toBe("CI required");
+  expect(ci.jobs.required?.needs).toContain("static-deep");
+});

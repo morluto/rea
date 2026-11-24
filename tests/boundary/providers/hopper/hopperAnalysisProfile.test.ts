@@ -6,6 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { createInspectionResources } from "../../../fixtures/inspectionResources.js";
 
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
+import {
+  elf,
+  fat,
+  thinMach,
+} from "../../../../src/domain/binaryTarget.fixture.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import {
   hopperLoaderArgsForTarget,
@@ -176,6 +182,61 @@ describe("Hopper analysis profiles", () => {
     });
   });
 });
+
+it.each([
+  { admitted: "thin", replacement: "elf" },
+  { admitted: "thin", replacement: "fat32" },
+  { admitted: "fat32", replacement: "thin" },
+] as const)(
+  "refuses a replacement of kind $replacement for an admitted $admitted Mach-O with loader overrides",
+  async ({ admitted, replacement }) => {
+    const root = await createTestTempDirectory("rea-hopper-profile-magic-");
+    const path = join(root, "selected.macho");
+    const launcherPath = join(root, "hopper");
+    const arm64 = 0x0100000c;
+    const thin = thinMach(0xfeedfacf, arm64);
+    thin.writeUInt32BE(2, 12); // MH_EXECUTE
+    const inputs = { thin, fat32: fat([arm64]), elf: elf(2, 1, 183) };
+    await writeFile(path, inputs[admitted]);
+    await writeFile(launcherPath, "Hopper fixture");
+    const selected = await parseBinaryTarget(path, {
+      hostArchitecture: "arm64",
+    });
+    if (!selected.ok) throw selected.error;
+    const options = {
+      launcherPath,
+      loaderArgsOverride: ["-l", "Custom Loader"],
+      provider: HOPPER_PROVIDER_IDENTITY,
+      resourceScope: inspectionResources.owner,
+    };
+    const control = await resolveHopperAnalysisProfile(selected.value, options);
+    expect(control).toMatchObject({
+      ok: true,
+      value: {
+        profile: {
+          parameters: {
+            macho_container: admitted,
+            loader: {
+              source: "configured_override",
+              arguments: options.loaderArgsOverride,
+            },
+          },
+        },
+      },
+    });
+
+    await writeFile(path, inputs[replacement]);
+    await expect(
+      resolveHopperAnalysisProfile(selected.value, options),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "BinaryTargetError",
+        message: expect.stringContaining("admitted Mach-O format"),
+      },
+    });
+  },
+);
 
 const target = (
   format: "mach-o" | "elf" | "pe" | "dos-mz",

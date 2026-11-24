@@ -2,13 +2,11 @@ import { execFileSync } from "node:child_process";
 import {
   chmod,
   mkdir,
-  mkdtemp,
   rm,
   realpath,
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { expect, it } from "vitest";
 
@@ -46,79 +44,67 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "preserves the caller-selected executable symlink for process invocation",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-process-executable-alias-"));
-    try {
-      const alias = join(root, "chosen-node");
-      await symlink(process.execPath, alias);
+    const root = await createTestTempDirectory("rea-process-executable-alias-");
+    const alias = join(root, "chosen-node");
+    await symlink(process.execPath, alias);
 
-      const resolved = await resolveProcessScenarioRuntimePaths(
-        processScenarioSchema.parse({
-          executable: alias,
-          working_directory: root,
-          environment: { PATH: "" },
-        }),
-        process.env,
-        process.platform,
-      );
-      expect(resolved.executable).toBe(alias);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    const resolved = await resolveProcessScenarioRuntimePaths(
+      processScenarioSchema.parse({
+        executable: alias,
+        working_directory: root,
+        environment: { PATH: "" },
+      }),
+      process.env,
+      process.platform,
+    );
+    expect(resolved.executable).toBe(alias);
   },
 );
 
 it("resolves a Windows executable through the canonical PATH spelling", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-process-path-"));
-  try {
-    const selected = join(root, "selected");
-    const ambient = join(root, "ambient");
-    await mkdir(selected);
-    await mkdir(ambient);
-    await writeFile(join(selected, "tool.exe"), "");
-    await chmod(join(selected, "tool.exe"), 0o755);
-    const scenario = processScenarioSchema.parse({
-      executable: "tool.exe",
-      working_directory: root,
-      environment: { Path: selected },
-    });
-    const candidate = join(selected, "tool.exe");
-    const resolved = await resolveProcessScenarioRuntimePaths(
-      scenario,
-      { PATH: ambient },
-      "win32",
-    );
-    expect(resolved.executable).toBe(candidate);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  const root = await createTestTempDirectory("rea-process-path-");
+  const selected = join(root, "selected");
+  const ambient = join(root, "ambient");
+  await mkdir(selected);
+  await mkdir(ambient);
+  await writeFile(join(selected, "tool.exe"), "");
+  await chmod(join(selected, "tool.exe"), 0o755);
+  const scenario = processScenarioSchema.parse({
+    executable: "tool.exe",
+    working_directory: root,
+    environment: { Path: selected },
+  });
+  const candidate = join(selected, "tool.exe");
+  const resolved = await resolveProcessScenarioRuntimePaths(
+    scenario,
+    { PATH: ambient },
+    "win32",
+  );
+  expect(resolved.executable).toBe(candidate);
 });
 
 it("reports a working-directory file as invalid input", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-process-invalid-cwd-"));
+  const root = await createTestTempDirectory("rea-process-invalid-cwd-");
   const selectedFile = join(root, "selected-file");
   await writeFile(selectedFile, "not a directory");
-  try {
-    const failure = await runtimePathFailure({
-      executable: process.execPath,
-      working_directory: selectedFile,
-    });
-    expect(failure.issues[0]?.message).toContain("not a directory");
-    expect(projectAnalysisError(failure)).toMatchObject({
-      code: "invalid_request",
-      details: {
-        operation: "capture_process_scenario",
-        issues: [
-          {
-            path: ["working_directory"],
-            reason: "invalid_value",
-            message: expect.stringContaining(selectedFile),
-          },
-        ],
-      },
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  const failure = await runtimePathFailure({
+    executable: process.execPath,
+    working_directory: selectedFile,
+  });
+  expect(failure.issues[0]?.message).toContain("not a directory");
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "capture_process_scenario",
+      issues: [
+        {
+          path: ["working_directory"],
+          reason: "invalid_value",
+          message: expect.stringContaining(selectedFile),
+        },
+      ],
+    },
+  });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -151,60 +137,52 @@ it.skipIf(process.platform === "win32")(
 );
 
 it("reports an executable directory as invalid input", async () => {
-  const root = await mkdtemp(
-    join(tmpdir(), "rea-process-executable-directory-"),
+  const root = await createTestTempDirectory(
+    "rea-process-executable-directory-",
   );
   const directory = join(root, "tool-directory");
-  try {
-    await mkdir(directory);
-    const directoryFailure = await runtimePathFailure({
-      executable: directory,
-      working_directory: root,
-    });
-    expect(directoryFailure.issues[0]?.message).toContain("not a regular file");
-    expect(projectAnalysisError(directoryFailure)).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["executable"],
-            message: expect.stringContaining(directory),
-          },
-        ],
-      },
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  await mkdir(directory);
+  const directoryFailure = await runtimePathFailure({
+    executable: directory,
+    working_directory: root,
+  });
+  expect(directoryFailure.issues[0]?.message).toContain("not a regular file");
+  expect(projectAnalysisError(directoryFailure)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["executable"],
+          message: expect.stringContaining(directory),
+        },
+      ],
+    },
+  });
 });
 
 it.skipIf(process.platform === "win32")(
   "reports a non-executable regular file as invalid input",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-process-non-executable-"));
+    const root = await createTestTempDirectory("rea-process-non-executable-");
     const selected = join(root, "not-executable");
-    try {
-      await writeFile(selected, "not executable");
-      await chmod(selected, 0o644);
-      const failure = await runtimePathFailure({
-        executable: selected,
-        working_directory: root,
-      });
-      expect(failure.issues[0]?.message).toContain("EACCES");
-      expect(projectAnalysisError(failure)).toMatchObject({
-        code: "invalid_request",
-        details: {
-          issues: [
-            {
-              path: ["executable"],
-              message: expect.stringContaining(selected),
-            },
-          ],
-        },
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    await writeFile(selected, "not executable");
+    await chmod(selected, 0o644);
+    const failure = await runtimePathFailure({
+      executable: selected,
+      working_directory: root,
+    });
+    expect(failure.issues[0]?.message).toContain("EACCES");
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["executable"],
+            message: expect.stringContaining(selected),
+          },
+        ],
+      },
+    });
   },
 );
 

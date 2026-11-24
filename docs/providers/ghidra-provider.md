@@ -148,6 +148,9 @@ PDB identity or complete symbol-coverage attestation, and retains an inline
 coverage caveat. Handshake PDB strings share a 4096 UTF-16-unit serialization
 budget (at most 24 KiB after JSON escaping); whole attributes that do not fit
 are omitted with an explicit resource limitation, rather than truncated.
+When the CodeView path's text encoding is unknown, the caveat identifies that
+uncertainty and retains the original path bytes in hex when they fit the inline
+locator budget. This observation is independent of Ghidra's reported filename.
 
 Original names and types may be missing even when auto-analysis completes.
 An empty name search does not establish that a function is absent; use
@@ -315,8 +318,8 @@ Runtime updates apply to newly accepted operations on the existing Program.
 They preserve accepted budgets and do not clear cleanup blockers or change the
 client deadline. Transient decompile timeout failures remain uncached so the
 same function can be retried after raising the limit. See the
-[settings design](../design/limits-and-recovery.md) for snapshots, precedence,
-and provider integration.
+[analysis settings and recovery](../reference/limits-and-recovery.md#precedence-and-lifetime)
+for precedence and lifetime.
 
 Every Ghidra analysis profile commits `producer`: the REA release and a SHA-256
 of the packaged bridge scripts. A snapshot replays only under the same
@@ -396,9 +399,13 @@ DWARF 4 type-layout object. It proves the admitted operations, external function
 behavior, direct and targetless indirect calls, typed references, strings/xrefs,
 multi-block CFG, bounded p-code def-use/effect links, semantic enhanced workflows, cancellation, startup deadlines,
 serialized concurrency, malformed-target rejection, profile identity, and
-process/project cleanup against real Ghidra 12.1.4. Unit fixtures separately
-cover startup deadlines, process exit, queued cancellation, and malformed wire
-output.
+process/project cleanup. Its namespace-annotation check also needs the host's
+GNU demangler native component (`demangler_gnu_v2_41` under
+`GPL/DemanglerGnu/os/<platform>/`); the Ghidra 12.2 release ships it only for
+`linux_x86_64` and `win_x86_64`, and REA does not build it. Recorded on Ghidra
+12.1.4 (no longer accepted); not yet re-run on 12.2. A 12.2 run on macOS arm64
+stopped at that missing demangler. Unit fixtures separately cover startup deadlines, process
+exit, queued cancellation, and malformed wire output.
 
 `npm run verify:ghidra:cross-format` adds AArch64 ELF, x86-64 PE, and x86-64
 Mach-O target coverage. It requires `clang`, LLD, and `lld-link`; set

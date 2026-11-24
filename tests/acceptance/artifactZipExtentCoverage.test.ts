@@ -9,128 +9,117 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
-import { parseEvidence, type Evidence } from "../../src/domain/evidence.js";
+import { parseEvidence } from "../../src/domain/evidence.js";
 import { zipArchive } from "../../src/domain/desktop/zipArchive.fixture.js";
 import { nugetNupkgSchema } from "../../src/domain/nuget/nupkg.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
-cliTest.for(["directory", "encrypted"] as const)(
-  "keeps contradictory %s extents unknown through CLI and MCP",
-  async (kind, { cli }) => {
+cliTest.for([
+  { claim: "directory size", name: "dir/", flags: 0 },
+  { claim: "directory descriptor", name: "dir/", flags: 0x8 },
+  { claim: "encrypted member size", name: "encrypted.bin", flags: 1 },
+])(
+  "keeps an unverified ZIP $claim unknown through CLI and MCP",
+  async ({ claim, name, flags }, { cli }) => {
     const root = await createTestTempDirectory("rea-zip-extent-coverage-");
     const path = join(root, "fixture.zip");
-    const hidden = {
-      name: "hidden.txt",
-      data: "secret",
-      method: 0,
-      listed: false,
-    };
-    const hiddenBytes =
-      30 + Buffer.byteLength(hidden.name) + hidden.data.length;
-    const first = {
-      name: kind === "directory" ? "dir/" : "encrypted.bin",
-      data: "",
-      method: 0,
-      flags: kind === "encrypted" ? 1 : 0,
-    };
+    const hidden = { name: "hidden.txt", data: "secret", method: 0 };
+    const bytes = zipArchive([
+      {
+        name,
+        flags,
+        method: 0,
+        centralCompressedSize:
+          30 + Buffer.byteLength(hidden.name) + hidden.data.length,
+      },
+      { ...hidden, listed: false },
+    ]);
+    await writeFile(path, bytes);
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    const evidence = inspection.substeps[0]?.evidence;
+    const inventory = artifactInventoryResultSchema.parse(
+      evidence?.normalized_result,
+    );
+    expect(inventory.coverage.status).toBe("unknown");
+    expect(
+      inventory.occurrences.map((item) => item.logical_path),
+    ).not.toContain(hidden.name);
+    expect(inventory.manifest.root_sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+
     const call = await cli.sharedMcpCall?.();
     if (call === undefined)
       throw new Error("Expected the compiled MCP fixture");
-    let seed: Evidence | undefined;
-    if (kind === "directory") {
-      const seedPath = join(root, "seed.zip");
-      await writeFile(
-        seedPath,
-        zipArchive([first, { ...hidden, listed: true }]),
+    const opened = await call("open_binary", { path });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    try {
+      const response = await call("inspect_artifact", {});
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      const mcpInspection = artifactInspectionResultSchema.parse(
+        parseEvidence(response.structuredContent).normalized_result,
       );
-      const result = await cli.run({
+      expect(
+        artifactInventoryResultSchema.parse(
+          mcpInspection.substeps[0]?.evidence.normalized_result,
+        ),
+      ).toEqual(inventory);
+    } finally {
+      const closed = await call("close_binary", {});
+      expect(closed.isError, JSON.stringify(closed)).not.toBe(true);
+    }
+
+    if (claim === "directory size") {
+      const seedPath = join(root, "seed.zip");
+      await writeFile(seedPath, zipArchive([{ name, method: 0 }, hidden]));
+      const seedResult = await cli.run({
         arguments: ["inspect-artifact", seedPath, "--json"],
       });
-      expect(result.exitCode, result.stdout + result.stderr).toBe(0);
-      seed = artifactInspectionResultSchema.parse(
-        parseEvidence(result.json).normalized_result,
+      expect(seedResult.exitCode, seedResult.stdout + seedResult.stderr).toBe(
+        0,
+      );
+      const seed = artifactInspectionResultSchema.parse(
+        parseEvidence(seedResult.json).normalized_result,
       ).substeps[0]?.evidence;
+      const seedInventory = artifactInventoryResultSchema.parse(
+        seed?.normalized_result,
+      );
+      expect(seedInventory.coverage.status).toBe("complete");
       expect(
-        artifactInventoryResultSchema.parse(seed?.normalized_result).coverage
-          .status,
-      ).toBe("complete");
+        seedInventory.occurrences.map((item) => item.logical_path),
+      ).toContain(hidden.name);
+
+      const compared = await call("compare_artifacts", {
+        left: seed,
+        right: evidence,
+      });
+      expect(compared.isError, JSON.stringify(compared)).not.toBe(true);
+      const comparison = artifactComparisonResultSchema.parse(
+        parseEvidence(compared.structuredContent).normalized_result,
+      );
+      expect(
+        comparison.changes.find((change) => change.logical_path === hidden.name)
+          ?.classification,
+      ).toBe("unknown");
+
+      const extracted = await cli.run({
+        arguments: ["extract-artifact", path, "--json"],
+        environment: { TMPDIR: root, TMP: root, TEMP: root },
+      });
+      expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
+      const result = artifactExtractionResultSchema.parse(
+        parseEvidence(extracted.json).normalized_result,
+      );
+      expect(result.coverage.status).toBe("unknown");
     }
-    for (const deferred of [false, true]) {
-      for (const contradictory of [false, true]) {
-        const bytes = zipArchive([
-          {
-            ...first,
-            flags: first.flags | (deferred ? 0x8 : 0),
-            centralCompressedSize: contradictory ? hiddenBytes : 0,
-          },
-          hidden,
-        ]);
-        await writeFile(path, bytes);
-        const inspected = await cli.run({
-          arguments: ["inspect-artifact", path, "--json"],
-        });
-        expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
-        const inspection = artifactInspectionResultSchema.parse(
-          parseEvidence(inspected.json).normalized_result,
-        );
-        const inventory = artifactInventoryResultSchema.parse(
-          inspection.substeps[0]?.evidence.normalized_result,
-        );
-        if (seed !== undefined) {
-          const compared = await call("compare_artifacts", {
-            left: seed,
-            right: inspection.substeps[0]?.evidence,
-          });
-          expect(compared.isError, JSON.stringify(compared)).not.toBe(true);
-          const comparison = artifactComparisonResultSchema.parse(
-            parseEvidence(compared.structuredContent).normalized_result,
-          );
-          expect(
-            comparison.changes.find(
-              (change) => change.logical_path === hidden.name,
-            )?.classification,
-          ).toBe("unknown");
-        }
-        expect(inventory.coverage.status).toBe("unknown");
-        expect(
-          inventory.occurrences.map((item) => item.logical_path),
-        ).not.toContain(hidden.name);
-        expect(inventory.manifest.root_sha256).toBe(
-          createHash("sha256").update(bytes).digest("hex"),
-        );
-        const opened = await call("open_binary", { path });
-        expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-        try {
-          const response = await call("inspect_artifact", {});
-          expect(response.isError, JSON.stringify(response)).not.toBe(true);
-          const mcpInspection = artifactInspectionResultSchema.parse(
-            parseEvidence(response.structuredContent).normalized_result,
-          );
-          const mcpInventory = artifactInventoryResultSchema.parse(
-            mcpInspection.substeps[0]?.evidence.normalized_result,
-          );
-          expect(mcpInventory).toEqual(inventory);
-        } finally {
-          const closed = await call("close_binary", {});
-          expect(closed.isError, JSON.stringify(closed)).not.toBe(true);
-        }
-        if (kind === "directory") {
-          const extracted = await cli.run({
-            arguments: ["extract-artifact", path, "--json"],
-            environment: { TMPDIR: root, TMP: root, TEMP: root },
-          });
-          expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(
-            0,
-          );
-          const result = artifactExtractionResultSchema.parse(
-            parseEvidence(extracted.json).normalized_result,
-          );
-          expect(result.coverage.status).toBe("unknown");
-        }
-        expect((await readFile(path)).equals(bytes)).toBe(true);
-      }
-    }
+    expect((await readFile(path)).equals(bytes)).toBe(true);
   },
 );
 

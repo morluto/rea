@@ -52,6 +52,15 @@ export type InspectNativeExportsInput = z.infer<
 const peExportSchema = z.strictObject({
   name: z.string().min(1).nullable(),
   ordinal: z.number().int().min(0).max(MAX_PE_EXPORT_ORDINAL),
+  rva: z
+    .number()
+    .int()
+    .min(1)
+    .max(0xffffffff)
+    .optional()
+    .describe(
+      "Export-address-table RVA as stored; address is the image base plus this RVA, and a forwarder's RVA locates its forwarder string. The parser always records it; Evidence saved before this field existed omits it.",
+    ),
   address: address.nullable(),
   forwarder: z.string().min(1).nullable(),
 });

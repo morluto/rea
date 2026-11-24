@@ -15,7 +15,7 @@ import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
 import { runDeferred } from "./main/deferredRuntime.js";
 import { RECORDED_MCP_CATALOG_SHA256 } from "./recordedMcpCatalog.js";
-import { SERVER_START_FAILED } from "./main/messages.js";
+import { SERVER_START_FAILED } from "./server/serverStartFailure.js";
 
 import {
   createExitStatus,
@@ -101,10 +101,9 @@ export const run = async (
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  // The deferred server omits the recorded output schemas from listings, the
-  // default `off` profile; `compact` composes its bounded presentation.
-  const recordedOutputCatalog =
-    config.value.mcpOutputSchemaProfile !== "compact";
+  // The deferred server serves build-recorded output advertisements for
+  // both profiles (omitted, or compact when recorded at build time).
+  const recordedOutputCatalog = true;
   // Progressive discovery needs scoped identity before the first analysis.
   // Ordinary tool listings can defer that identity to the canonical runtime.
   const scopedProgressiveCatalog =
@@ -127,9 +126,26 @@ export const run = async (
   );
 };
 
+/** Only the production entrypoints read the account's configuration file. */
+const runWithUserConfiguration = async (
+  dependencies: RuntimeDependencies,
+): Promise<number> => {
+  const { loadUserConfiguration } =
+    await import("./application/UserConfigurationStore.js");
+  const configuration = await loadUserConfiguration(
+    snapshotEnvironment(dependencies.env, HOST_PLATFORM.platform),
+  );
+  if (!configuration.ok) {
+    dependencies.writeStderr(`${configuration.error.message}\n`);
+    return 1;
+  }
+  return run({ ...dependencies, env: configuration.value.environment });
+};
+
 /** Run the executable boundary without exposing an unexpected startup cause. */
 export const runEntrypoint = async (
-  start: () => Promise<number> = () => run(),
+  start: () => Promise<number> = () =>
+    runWithUserConfiguration(runtimeDependencies()),
   writeStderr: (text: string) => void = (text) => process.stderr.write(text),
   setExitCode: (code: number) => void = (code) => {
     process.exitCode = code;
@@ -199,7 +215,10 @@ export const runMcpHttpEntrypoint = async (
   const exit = createExitStatus(io.setExitCode);
   try {
     await runEntrypoint(
-      () => run(httpRuntimeDependencies(endpoint.value, latch, exit)),
+      () =>
+        runWithUserConfiguration(
+          httpRuntimeDependencies(endpoint.value, latch, exit),
+        ),
       io.writeStderr,
       exit.set,
     );

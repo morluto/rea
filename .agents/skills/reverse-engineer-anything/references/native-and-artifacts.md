@@ -403,8 +403,8 @@ Roles are folder conventions, not restore-time asset selection. See
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its
-schema and optional rows from one exact ordinary table. It requires Node.js
-24.x >=24.15 or 26+ with the native `DatabaseSync.limits` API. It also consumes the
+schema and optional rows from one exact ordinary table. It needs the native
+`DatabaseSync.limits` API, so it is unavailable when REA runs on Node.js 22.x. It also consumes the
 existing sibling `-wal`; retain both original digests when citing its result.
 Default output is a compact inventory; a selected table expands only its own
 schema and samples 20 rows. Select `columns` to avoid irrelevant or large cells,
@@ -453,6 +453,14 @@ Facets also include sections, imports, candidates, glue, WAT, headers, details
 and tool profile. Text offsets count UTF-16 code units; follow `next_offset`.
 The complete source remains retained after an oversized MCP reply. No target
 execution or network acquisition is implied, and WAT is decoded representation.
+
+For exact core-module import/export differences, use `compare_wasm_interfaces`
+with two complete inspection Evidence records (or current-session retained
+references) and explicit scope. Preserve unknown types/duplicate names; static
+interface equality is not runtime compatibility. CLI accepts complete inline
+Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
+with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
+ID when the inspection returned a summary.
 
 ## Offline APK signatures
 
@@ -738,7 +746,8 @@ for one selected type. For questions about a selected type, select
 names), coverage and per-collection counts. Page rows with
 `view: {kind: "managed-members", collection: "call_edges", offset: 0, limit: 64}`
 over `types`, `exported_types`, `fields`, `methods`, `member_refs`, `call_edges`,
-`field_accesses` or `user_strings`.
+`field_accesses`, `user_strings` or `unresolved_definitions`. The last collection
+pages checked TypeDef and MethodDef coordinates with failed name columns.
 Use exact `names` and `declaring_types` filters before paging supported
 collections. For a compact method lookup, request `fields: ["name",
 "declaring_type", "signature"]`; omit `body` to avoid anchors. Identity tokens,
@@ -801,14 +810,16 @@ REA. Symlinks and encrypted entries are inventory facts, not extractable files.
 The result reports the materialized directory; callers do not choose the
 destination. No separate permission grant is needed.
 
-For classic iNES cartridges, `open_binary` recognizes the byte signature without
-an executable architecture. `inspect_artifact` retains header facts and each
-PRG/CHR file unit's offset, length and SHA-256; its nested inventory's
+For iNES and NES 2.0 cartridges, `open_binary` recognizes the byte signature
+without an executable architecture. `inspect_artifact` retains header facts and
+each PRG/CHR file unit's offset, length and SHA-256; its nested inventory's
 `ines.reconstruction` verifies the actual ordered region bytes against the
-whole-file digest. Extraction includes the original header, optional trainer
-and uninterpreted trailing bytes. These file units are not mapper/CPU bank
-maps. NES 2.0, UNIF, dirty legacy headers and truncated payloads are explicitly
-refused. No emulator or 6502 analysis is performed. See the
+whole-file digest. Extraction includes the original header, optional trainer,
+NES 2.0 miscellaneous ROM bytes and uninterpreted trailing bytes. These file
+units are not mapper/CPU bank maps; NES 2.0 RAM, timing and console values are
+header declarations. UNIF, dirty legacy headers, malformed NES 2.0 declarations
+and truncated payloads are explicitly refused. No emulator or 6502 analysis is
+performed. See the
 [iNES guide](https://github.com/morluto/rea/blob/main/docs/ines-containers.md).
 
 Native DMG traversal automatically uses a read-only mount on supported macOS
@@ -891,14 +902,6 @@ target. Ordinal-only, forwarded and hidden-version exports stay distinct;
 partial or unsupported coverage means the inventory is incomplete, not that
 exports are absent. Use `inspect_macho` for Mach-O. See
 [offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
-
-For exact core-module import/export differences, use `compare_wasm_interfaces`
-with two complete inspection Evidence records (or current-session retained
-references) and explicit scope. Preserve unknown types/duplicate names; static
-interface equality is not runtime compatibility. CLI accepts complete inline
-Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
-with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
-ID when the inspection returned a summary.
 
 ## Godot PCK
 
