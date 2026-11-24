@@ -104,6 +104,10 @@ import type {
   BundleResourceClientFactory,
 } from "./BundleResourceSession.js";
 import { BUNDLE_RESOURCE_OPERATIONS } from "../../ports/BundleResourceOperations.js";
+import {
+  deliverSessionLimitations,
+  type SessionLimitationDelivery,
+} from "./SessionLimitationContext.js";
 
 interface SessionRun {
   readonly client: AnalysisClient;
@@ -206,6 +210,7 @@ export class BinarySession
   #shutdownStarted = false;
   readonly #calls = new Map<Promise<unknown>, number>();
   readonly #promptCompletionControllers = new Set<AbortController>();
+  readonly #sessionLimitations: SessionLimitationDelivery;
   readonly #providerRouter: SessionProviderRouter;
   readonly #bundleResourceFactory: BundleResourceClientFactory | undefined;
   #activeBundleResources: ActiveBundleResourceSession | undefined;
@@ -217,10 +222,13 @@ export class BinarySession
     providerRouter: SessionProviderRouter,
     records: InvestigationRecords = new InvestigationRecords(),
     bundleResourceFactory?: BundleResourceClientFactory,
+    /** How results deliver limitations their provider session shares. */
+    sessionLimitations: SessionLimitationDelivery = "inline",
   ) {
     super(records);
     this.#providerRouter = providerRouter;
     this.#bundleResourceFactory = bundleResourceFactory;
+    this.#sessionLimitations = sessionLimitations;
   }
 
   /** Create an isolated session over this session's auxiliary providers. */
@@ -1527,7 +1535,7 @@ export class BinarySession
       name,
       active.target,
     );
-    const execution =
+    const covered =
       profiled.ok &&
       (name === "procedure_callers" || name === "procedure_callees") &&
       profiled.value.relationshipCoverage === undefined
@@ -1540,6 +1548,15 @@ export class BinarySession
             },
           })
         : profiled;
+    const execution = covered.ok
+      ? ok(
+          deliverSessionLimitations(
+            covered.value,
+            covered.value.subject ?? active.target,
+            this.#sessionLimitations,
+          ),
+        )
+      : covered;
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
     const currentBinding = this.#active;
