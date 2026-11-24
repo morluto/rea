@@ -57,6 +57,7 @@ jobs:
       actions: read
     outputs:
       tier: ${{ steps.plan.outputs.tier }}
+      test_shadow_id: ${{ steps.shadow-upload.outputs.artifact-id }}
       qualification_run_id: ${{ steps.qualification.outputs.run_id }}
       code: ${{ steps.plan.outputs.code }}
       reverse_tools: ${{ steps.plan.outputs.reverse_tools }}
@@ -143,6 +144,7 @@ jobs:
           CI_SKIP_FULL: ${{ steps.qualification.outputs.run_full == 'false' }}
         run: node scripts/ci/plan.mjs
       - name: Record affected-test prediction before the full suite
+        id: shadow-upload
         if: steps.plan.outputs.test_shadow == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -655,13 +657,24 @@ jobs:
           --reporter=./scripts/ci/test-timing-reporter.mjs
           --outputFile.junit=test-results.xml
           --outputFile.json=test-results.json
+      - name: Download the classifier's affected-test prediction
+        id: shadow-download
+        if: ${{ !cancelled() && needs.changes.outputs.test_shadow_id != '' && hashFiles('test-timings.json') != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.changes.outputs.test_shadow_id }}
+          path: .cache/ci-test-shadow
+          merge-multiple: true
       - name: Summarize slowest test files
+        id: test-report
         if: needs.changes.outputs.code == 'true' && !cancelled()
         env:
           SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full' }}
           SOURCE_RESULT: ${{ needs.test-source.result }}
           MERGE_RESULT: ${{ needs.changes.outputs.tier == 'full' && steps.merge.outcome || steps.merge-fast.outcome }}
           CI_VERIFY_TEST_INVENTORY: "true"
+          CI_COMPARE_TEST_SHADOW: ${{ steps.shadow-download.outcome == 'success' }}
           CI_TEST_SELECTION: ${{ needs.changes.outputs.test_selection }}
           CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/test-report.mjs
@@ -674,6 +687,7 @@ jobs:
             test-results.xml
             test-results.json
             test-timings.json
+            ${{ steps.shadow-download.outcome == 'success' && steps.test-report.outcome == 'success' && 'test-selection-comparison.json' || '' }}
             coverage/
           include-hidden-files: true
           if-no-files-found: error
