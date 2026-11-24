@@ -338,14 +338,19 @@ does not resolve function names or dSYM symbols. See
 
 Use `inspect_kernel_module` for an explicit local ELF32/ELF64 relocatable
 object when the question concerns `.modinfo` license, vermagic, alias,
-depends, or parm strings, the `__versions` symbol CRCs, or an appended module
-signature trailer. No `open_binary`, Linux host, or `modinfo` program is
+depends, or parm strings, `__versions` or `CONFIG_EXTENDED_MODVERSIONS`
+(`__version_ext_names` and `__version_ext_crcs`) symbol CRCs,
+`__ksymtab_strings` and `__kcrctab` / `__kcrctab_gpl` exports, or an appended
+module signature trailer. No `open_binary`, Linux host, or `modinfo` program is
 required. The CLI equivalent is `inspect-kernel-module PATH`. Preserve
 artifact SHA-256, key order, duplicate keys, CRC hex, and section file ranges.
 A missing section is observed absence when section names are known, not proof
 the module never carried that metadata. `.gnu.linkonce.this_module` is reported
 as present or absent; `struct module` stays unknown because its layout changes
-with the kernel version. `__ksymtab` records are not decoded. The PKCS#7 range
+with the kernel version. `struct kernel_symbol` PREL32 and pointer relocations
+are not resolved, so `__ksymtab_strings` and `__kcrctab*` entries are reported
+in section order without pairing symbol names, namespaces, or GPL visibility.
+The PKCS#7 range
 and its SHA-256 are observed; certificate, signer, and digest coverage remain
 unvalidated. An absent trailer is not proof the module is unsigned in another
 container. gzip, xz, and zstd whole-file containers are unsupported and name

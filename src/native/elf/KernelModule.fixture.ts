@@ -47,6 +47,39 @@ export const moduleSignatureTrailer = (
   );
 };
 
+/** Encode an array of u32 CRCs in ELF byte order (`__kcrctab*`, `__version_ext_crcs`). */
+export const crc32Array = (
+  crcs: readonly number[],
+  little: boolean,
+): Buffer => {
+  const bytes = Buffer.alloc(crcs.length * 4);
+  for (let index = 0; index < crcs.length; index += 1)
+    write32(bytes, index * 4, crcs[index]! >>> 0, little);
+  return bytes;
+};
+
+/** Encode paired `CONFIG_EXTENDED_MODVERSIONS` sections (`__version_ext_names`, `__version_ext_crcs`). */
+export const extendedVersionSections = (
+  entries: readonly { readonly crc: number; readonly name: string }[],
+  little: boolean,
+): { readonly names: Buffer; readonly crcs: Buffer } => ({
+  names: Buffer.from(
+    entries.map((entry) => `${entry.name}\0`).join(""),
+    "latin1",
+  ),
+  crcs: crc32Array(
+    entries.map((entry) => entry.crc),
+    little,
+  ),
+});
+
+export interface KernelModuleFixtureSection {
+  readonly name: string;
+  readonly type?: number;
+  readonly flags?: bigint;
+  readonly body: Buffer;
+}
+
 export interface KernelModuleFixtureOptions {
   readonly bits?: 32 | 64;
   readonly little?: boolean;
@@ -59,6 +92,13 @@ export interface KernelModuleFixtureOptions {
   readonly ksymtab?: Buffer | null;
   readonly initText?: Buffer | null;
   readonly exitText?: Buffer | null;
+  /** Null or undefined omits these optional sections. */
+  readonly ksymtabStrings?: Buffer | null;
+  readonly kcrctab?: Buffer | null;
+  readonly kcrctabGpl?: Buffer | null;
+  readonly versionExtNames?: Buffer | null;
+  readonly versionExtCrcs?: Buffer | null;
+  readonly extraSections?: readonly KernelModuleFixtureSection[];
   /** Null omits the trailer. Undefined appends a consistent PKCS#7 trailer. */
   readonly signature?: Buffer | null;
   /** Extra file-backed sections that share one name-table string; empty by default. */
@@ -86,6 +126,7 @@ const defaultPkcs7 = (): Buffer => Buffer.from("fake-pkcs7-bytes", "latin1");
 interface SectionBody {
   readonly name: string;
   readonly type: number;
+  readonly flags: bigint;
   readonly body: Buffer;
 }
 
@@ -101,8 +142,14 @@ export const kernelModuleFixture = (
   ): Buffer | null =>
     value === null ? null : value === undefined ? fallback() : value;
   const bodies: SectionBody[] = [];
-  const add = (name: string, body: Buffer | null): void => {
-    if (body !== null) bodies.push({ name, type: 1, body });
+  const add = (
+    name: string,
+    body: Buffer | null | undefined,
+    type = 1,
+    flags = 0n,
+  ): void => {
+    if (body !== null && body !== undefined)
+      bodies.push({ name, type, flags, body });
   };
   add(".modinfo", chosen(options.modinfo, defaultModinfo));
   add(
@@ -125,12 +172,20 @@ export const kernelModuleFixture = (
     ".exit.text",
     chosen(options.exitText, () => Buffer.from([0xc3])),
   );
+  add("__ksymtab_strings", options.ksymtabStrings);
+  add("__kcrctab", options.kcrctab);
+  add("__kcrctab_gpl", options.kcrctabGpl);
+  add("__version_ext_names", options.versionExtNames);
+  add("__version_ext_crcs", options.versionExtCrcs);
+  for (const extra of options.extraSections ?? [])
+    add(extra.name, extra.body, extra.type ?? 1, extra.flags ?? 0n);
   const shared = options.sharedNameSections;
   if (shared !== undefined)
     for (let index = 0; index < shared.count; index++)
       bodies.push({
         name: shared.name,
         type: 1,
+        flags: 0n,
         body: shared.body ?? Buffer.alloc(0),
       });
   const labels = [
@@ -180,12 +235,14 @@ export const kernelModuleFixture = (
     index: number,
     name: string,
     type: number,
+    flags: bigint,
     offset: number,
     size: number,
   ): void => {
     const at = shoff + index * shentsize;
     write32(bytes, at, nameOffsets.get(name) ?? 0, little);
     write32(bytes, at + 4, type, little);
+    if (flags !== 0n) writeWord(bytes, at + 8, Number(flags), bits, little);
     writeWord(bytes, at + (bits === 64 ? 24 : 16), offset, bits, little);
     writeWord(bytes, at + (bits === 64 ? 32 : 20), size, bits, little);
     writeWord(bytes, at + (bits === 64 ? 48 : 32), 1, bits, little);
@@ -195,12 +252,13 @@ export const kernelModuleFixture = (
       index + 1,
       section.name,
       section.type,
+      section.flags,
       section.offset,
       section.body.length,
     );
     section.body.copy(bytes, section.offset);
   });
-  writeSection(shnum - 1, ".shstrtab", 3, namesOffset, names.length);
+  writeSection(shnum - 1, ".shstrtab", 3, 0n, namesOffset, names.length);
   names.copy(bytes, namesOffset);
   signature.copy(bytes, cursor);
   return bytes;

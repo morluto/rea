@@ -102,7 +102,7 @@ const inputBudgetRemediation = (
       : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
     : input.max_entries >= MAX_INSPECT_KERNEL_MODULE_ENTRIES
       ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_MODULE_ENTRIES)}-entry kernel-module ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected .modinfo and __versions entry budget.`;
+      : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected kernel-module entry budget.`;
 
 const kernelModuleFailure = (
   cause: unknown,

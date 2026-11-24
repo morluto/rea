@@ -310,7 +310,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_kernel_module", evidenceEffects),
     kind: "native-provider",
     description:
-      "Inspect an uncompressed local ELF32/64 ET_REL Linux kernel module for ordered .modinfo entries, symbol CRCs, module/export/init/exit section facts and appended signature ranges/digests. No execution, struct module decoding or certificate validation. Missing known sections describe this image only. gzip/xz/zstd require external decompression; extract_artifact does not decode those module containers. Malformed headers or exhausted entry budgets fail without partial success. Portable on supported Node hosts.",
+      "Inspect an uncompressed local ELF32/64 ET_REL Linux kernel module for ordered .modinfo entries, classic __versions and CONFIG_EXTENDED_MODVERSIONS (__version_ext_names/__version_ext_crcs) CRCs, __ksymtab_strings and __kcrctab/__kcrctab_gpl u32 CRCs, module/init/exit section facts and appended signature ranges/digests. No execution, struct module decoding, struct kernel_symbol PREL32/pointer relocation resolution or certificate validation. Missing known sections describe this image only. gzip/xz/zstd require external decompression; extract_artifact does not decode those module containers. Malformed headers or exhausted entry budgets fail without partial success. Portable on supported Node hosts.",
     inputSchema: inspectKernelModuleInputSchema,
     outputSchema: evidenceResultOf(kernelModuleSchema),
     examples: [
