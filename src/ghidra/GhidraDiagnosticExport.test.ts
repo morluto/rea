@@ -2,7 +2,7 @@ import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { GhidraDiagnosticExport } from "./GhidraDiagnosticExport.js";
 
 let failClose = false;

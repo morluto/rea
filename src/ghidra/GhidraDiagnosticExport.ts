@@ -2,8 +2,10 @@ import { mkdtempSync, renameSync, writeFileSync, writeSync } from "node:fs";
 import { open, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 
 /** Redacts an exact ASCII credential even when it crosses input chunks. */
 class RedactedFile {
