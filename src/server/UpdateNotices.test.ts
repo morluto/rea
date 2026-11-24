@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createMcpSchemaValidation } from "../../tests/fixtures/mcpSchemaValidation.js";
 import { waitFor } from "../../tests/support/testWait.js";
 import { ok, err } from "../domain/result.js";
+import { DeferredEvidenceMcpServer } from "./DeferredEvidenceMcpServer.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {
@@ -319,43 +320,81 @@ it("treats HTTP failure and network rejection as unavailable metadata", async ()
   expect(await lookupLatestRelease(signal)).toEqual(err("unavailable"));
 });
 
-it("server shutdown owns pending lookups even without a remaining SDK transport", async () => {
-  let release!: () => void;
-  let signal: AbortSignal | undefined;
-  const notices = new UpdateNotices("1.0.0", async (selected) => {
-    signal = selected;
-    await new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    return ok("1.1.0");
-  });
-  const server = new EvidenceMcpServerCore(
+const coreServer = (): EvidenceMcpServerCore =>
+  new EvidenceMcpServerCore(
     { name: "closed-transport", version: "1" },
     {},
     undefined,
     new ToolResultDelivery(16384),
   );
-  server.updateNoticeFactory = () => notices;
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  notices.refresh();
-  await waitFor(() => expect(signal).toBeDefined());
-  await clientTransport.close();
-  let closed = false;
-  const closing = server.close().then(() => {
-    closed = true;
-  });
-  try {
-    expect(signal?.aborted).toBe(true);
-    expect(closed).toBe(false);
-  } finally {
-    release();
-    await closing;
-  }
-  expect(closed).toBe(true);
-  expect(notices.peek()).toBeUndefined();
-});
+
+// The deferred server closes its protocol without the core's close(), and its
+// runtime cleanup is never owned when the runtime has not been loaded.
+const deferredServer = (): EvidenceMcpServerCore =>
+  new DeferredEvidenceMcpServer(
+    {
+      version: 1,
+      info: { name: "closed-transport", version: "1" },
+      capabilities: {},
+      instructions: "Fixture",
+      identity: {
+        counts: { cli_commands: 0, mcp_tools: 0, mcp_prompts: 0 },
+        digests: {
+          tools_sha256: "fixture",
+          prompts_sha256: "fixture",
+          combined_sha256: "fixture",
+        },
+      },
+      tools: [],
+      toolFamilies: {},
+      promptRequirements: {},
+      evidenceReferenceAlternatives: [],
+      prompts: [],
+    },
+    new ToolResultDelivery(16384),
+    async () => {},
+  );
+
+it.each([
+  ["core", coreServer],
+  ["deferred", deferredServer],
+])(
+  "%s server shutdown owns pending lookups even without a remaining SDK transport",
+  async (_kind, createServer) => {
+    let release!: () => void;
+    let signal: AbortSignal | undefined;
+    const notices = new UpdateNotices("1.0.0", async (selected) => {
+      signal = selected;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return ok("1.1.0");
+    });
+    const server = createServer();
+    server.updateNoticeFactory = () => notices;
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    notices.refresh();
+    await waitFor(() => expect(signal).toBeDefined());
+    await clientTransport.close();
+    let closed = false;
+    const closing = server.close().then(() => {
+      closed = true;
+    });
+    try {
+      expect(signal?.aborted).toBe(true);
+      // Protocol shutdown settles first; only the gated lookup holds close open.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(closed).toBe(false);
+    } finally {
+      release();
+      await closing;
+    }
+    expect(closed).toBe(true);
+    expect(notices.peek()).toBeUndefined();
+  },
+);
 
 it.each(["DELETE", "replacement"])(
   "announces again after HTTP session %s on the same listener",
