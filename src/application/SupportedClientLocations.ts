@@ -20,7 +20,6 @@ import {
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   kiloDefaultLocation,
   kiloGlobalLocation,
@@ -747,20 +746,20 @@ export const kiloLayeredLocation = async (
 ): Promise<Result<ClientLayeredLocation, ClientPathFailure>> => {
   const kilo = kiloTableContext(context);
   try {
-    const { configPath, configPaths, inlineConfiguration } =
-      await kiloGlobalLocation(kilo);
+    const location = await kiloGlobalLocation(kilo);
+    if (!location.ok)
+      return err({
+        path: kiloDefaultLocation(kilo).markerPath,
+        message: location.error.message,
+        failure: location.error,
+      });
+    const { configPath, configPaths, inlineConfiguration } = location.value;
     return ok({
       configPath,
       configPaths,
       ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
     });
   } catch (cause: unknown) {
-    if (cause instanceof ConfigurationError)
-      return err({
-        path: kiloDefaultLocation(kilo).markerPath,
-        message: cause.message,
-        failure: cause,
-      });
     return err(kiloPathFailure(cause));
   }
 };

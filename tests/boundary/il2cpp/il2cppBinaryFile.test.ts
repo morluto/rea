@@ -6,7 +6,10 @@ import {
   readUInt32,
   requireIl2cppBinaryImage,
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisMalformedTargetError,
+} from "../../../src/domain/analysisErrorCore.js";
 import type { Il2cppBinaryArchitecture } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import { describe, expect, it } from "vitest";
 import { findCodeRegistration } from "../../../src/il2cpp/Il2cppBinaryRegistration.js";
@@ -133,6 +136,20 @@ const selectionIssue = (
     throw cause;
   }
   throw new Error("expected a selection failure");
+};
+/** The universal file's own format refusal, which names the binary's path. */
+const containerFailure = (
+  bytes: Buffer,
+  architecture?: Il2cppBinaryArchitecture,
+) => {
+  try {
+    link(bytes, architecture);
+  } catch (cause) {
+    if (cause instanceof AnalysisMalformedTargetError)
+      return { path: cause.path, ...cause.failure };
+    throw cause;
+  }
+  throw new Error("expected a container failure");
 };
 const addElfLoadAlias = (
   bytes: Buffer,
@@ -340,9 +357,11 @@ it("rejects a universal Mach-O whose slices overlap before selecting one", () =>
   const first = universal.readUInt32BE(8 + 8);
   const second = universal.readUInt32BE(8 + 20 + 8);
   universal.writeUInt32BE(second - first + 16, 8 + 12);
-  expect(selectionIssue(universal, "arm64")).toMatchObject({
-    path: ["binary_path"],
-    reason: "invalid_format",
+  expect(containerFailure(universal, "arm64")).toMatchObject({
+    path: "/GameAssembly.dylib",
+    kind: "malformed",
+    format: "macho",
+    detail: "Mach-O slices 0 and 1 overlap.",
   });
 });
 
@@ -1419,13 +1438,38 @@ it("refuses an ambiguous architecture instead of choosing the first FAT slice", 
     message: expect.stringContaining("no slice was selected"),
   });
 });
+it("refuses a selected slice that ends inside its Mach-O identity as a truncated binary", () => {
+  const bytes = createUniversalFixture([
+    { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
+  ]);
+  bytes.writeUInt32BE(8, 8 + 12);
+  expect(containerFailure(bytes, "arm64")).toMatchObject({
+    path: "/GameAssembly.dylib",
+    kind: "truncated",
+    format: "macho",
+    offset: bytes.readUInt32BE(8 + 8),
+  });
+});
+it("refuses an architecture the universal binary does not hold as the caller's selection", () => {
+  const bytes = createUniversalFixture([
+    { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
+  ]);
+  expect(selectionIssue(bytes, "amd64")).toMatchObject({
+    path: ["binary_architecture"],
+    reason: "invalid_value",
+  });
+});
 it("checks the observed slice header against the caller-selected FAT architecture", () => {
   const bytes = createUniversalFixture([
     { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
   ]);
-  expect(selectionIssue(bytes, "amd64")).toMatchObject({
-    path: ["binary_path"],
-    reason: "invalid_format",
+  // The table and the slice header are two records of one file, so their
+  // disagreement is the file's malformed container, not the caller's choice.
+  expect(containerFailure(bytes, "amd64")).toMatchObject({
+    path: "/GameAssembly.dylib",
+    kind: "malformed",
+    format: "macho",
+    detail: expect.stringContaining("disagrees with its Mach-O header"),
   });
 });
 it.each([1, 0x80000000])(
@@ -1434,9 +1478,10 @@ it.each([1, 0x80000000])(
     const thin = createIl2cppBinaryFixture();
     thin.writeUInt32LE(subtype, 8);
     const bytes = createUniversalFixture([{ cpu: 0x0100000c, bytes: thin }]);
-    expect(selectionIssue(bytes, "arm64")).toMatchObject({
-      path: ["binary_path"],
-      reason: "invalid_format",
+    expect(containerFailure(bytes, "arm64")).toMatchObject({
+      path: "/GameAssembly.dylib",
+      kind: "malformed",
+      format: "macho",
     });
     bytes.writeUInt32BE(subtype, 12);
     expect(link(bytes, "arm64").method_addresses).toEqual(expectedAddresses);

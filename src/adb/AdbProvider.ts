@@ -8,6 +8,7 @@ import {
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { adbInputFileError } from "./AdbFilesystemAdmission.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
 import { lstat, link, mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
@@ -282,6 +283,8 @@ export class AdbProvider {
     } catch (cause) {
       if (cause instanceof AdbConfigurationFailure)
         return adbConfigurationAvailability(cause);
+      const prerequisite = ownedProcessPrerequisiteAvailability(cause);
+      if (prerequisite !== undefined) return prerequisite;
       throw cause;
     } finally {
       release();

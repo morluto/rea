@@ -73,8 +73,11 @@ unsafe paths and verifies container identity before creating output.
 The same CLI commands locate a PCK at the beginning of a file or through its
 12-byte EOF trailer in an executable carrier. They do not scan arbitrary
 payloads or discover packs behind additional trailing signatures. The root
-content SHA-256 covers the whole carrier; its content classification remains
-native, while the inventory records the PCK role and exact pack bounds.
+content SHA-256 covers the whole carrier, and the root node's content `format`
+remains native (for example `pe` or `elf`). The PCK role is recorded as
+`manifest.root_format`, the root occurrence's `artifact_format` and the Evidence
+subject format `godot-pck`, with the exact pack bounds in the occurrence's
+`format_metadata`.
 An EOF marker is only a candidate: an invalid size or a pointed-to location
 without a `GDPC` header leaves native classification in place. Once the
 trailer points to a pack header, malformed or unsupported PCK content remains

@@ -399,8 +399,12 @@ DWARF 4 type-layout object. It proves the admitted operations, external function
 behavior, direct and targetless indirect calls, typed references, strings/xrefs,
 multi-block CFG, bounded p-code def-use/effect links, semantic enhanced workflows, cancellation, startup deadlines,
 serialized concurrency, malformed-target rejection, profile identity, and
-process/project cleanup. Recorded on Ghidra 12.1.4 (no longer accepted); not
-yet re-run on 12.2. Unit fixtures separately cover startup deadlines, process
+process/project cleanup. Its namespace-annotation check also needs the host's
+GNU demangler native component (`demangler_gnu_v2_41` under
+`GPL/DemanglerGnu/os/<platform>/`); the Ghidra 12.2 release ships it only for
+`linux_x86_64` and `win_x86_64`, and REA does not build it. Recorded on Ghidra
+12.1.4 (no longer accepted); not yet re-run on 12.2. A 12.2 run on macOS arm64
+stopped at that missing demangler. Unit fixtures separately cover startup deadlines, process
 exit, queued cancellation, and malformed wire output.
 
 `npm run verify:ghidra:cross-format` adds AArch64 ELF, x86-64 PE, and x86-64

@@ -8,6 +8,7 @@ import {
   isJSONRPCResultResponse,
   type CallToolResult,
   type JSONRPCMessage,
+  type MessageExtraInfo,
   type RequestId,
   type Transport,
   type TransportSendOptions,
@@ -15,6 +16,7 @@ import {
 import { unknownTarget } from "../domain/targetIdentity.js";
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
+import { ForwardingTransport } from "./ForwardingTransport.js";
 import {
   advertiseToolOutput,
   type AdvertisedToolPresentation,
@@ -183,7 +185,11 @@ const presentOutputSchemasForToolsList = (
       tools: message.result.tools.map((tool: unknown) => {
         if (!isRecord(tool) || !isRecord(tool.outputSchema)) return tool;
         const { outputSchema: canonical, ...advertisedTool } = tool;
-        const outputSchema = advertiseToolOutput(canonical, presentation);
+        const outputSchema = advertiseToolOutput(
+          canonical,
+          presentation,
+          typeof tool.name === "string" ? tool.name : undefined,
+        );
         return outputSchema === undefined
           ? advertisedTool
           : { ...advertisedTool, outputSchema };
@@ -206,11 +212,7 @@ export const forgetPendingMcpRequest = (
   pendingCompletions.delete(id);
 };
 
-export class ErrorEvidenceTransport implements Transport {
-  onclose: Transport["onclose"];
-  onerror: Transport["onerror"];
-  onmessage: Transport["onmessage"];
-  readonly hasPerRequestStream?: boolean;
+export class ErrorEvidenceTransport extends ForwardingTransport {
   private readonly pendingTools = new Map<RequestId, string>();
   private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
   private readonly pendingToolLists = new Set<RequestId>();
@@ -226,7 +228,7 @@ export class ErrorEvidenceTransport implements Transport {
   }
 
   constructor(
-    private readonly transport: Transport,
+    transport: Transport,
     private readonly currentEvidenceWriter: () =>
       | EvidenceWriter["recordEvidence"]
       | undefined,
@@ -236,110 +238,102 @@ export class ErrorEvidenceTransport implements Transport {
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
   ) {
-    if (transport.hasPerRequestStream !== undefined)
-      this.hasPerRequestStream = transport.hasPerRequestStream;
-    transport.onmessage = (message, extra) => {
-      // The pinned SDK classifies generic method schema failures as internal
-      // errors. Validate these wire requests with its canonical schemas before
-      // dispatch, leaving callback failures and negotiated-era checks to it.
-      if (isJSONRPCRequest(message)) {
-        const schema = discoveryRequestSchema(message.method);
-        const result = schema?.["~standard"].validate(message);
-        if (result?.issues !== undefined) {
-          void this.send({
-            jsonrpc: "2.0",
-            id: message.id,
-            error: {
-              code: -32602,
-              message: `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
-            },
-          }).catch((cause: unknown) =>
-            this.onerror?.(
-              cause instanceof Error ? cause : new Error(String(cause)),
-            ),
-          );
-          return;
-        }
-      }
-      let validation: McpToolRequest | undefined;
-      if (
-        isJSONRPCRequest(message) &&
-        message.method === "tools/call" &&
-        typeof message.params?.["name"] === "string"
-      ) {
-        this.pendingTools.set(message.id, message.params["name"]);
-        validation = new McpToolRequest(message.id, message.params["name"]);
-        this.pendingValidation.set(message.id, validation);
-      }
-      if (isJSONRPCRequest(message) && message.method === "tools/list")
-        this.pendingToolLists.add(message.id);
-      if (isJSONRPCRequest(message) && message.method === "completion/complete")
-        this.pendingCompletions.set(message.id, new AbortController());
-      // The SDK suppresses replies after cancellation, so send() cannot release
-      // this bookkeeping. Keep transport authentication outside retained data.
-      if (
-        isJSONRPCNotification(message) &&
-        message.method === "notifications/cancelled"
-      ) {
-        const id = message.params?.["requestId"];
-        if (typeof id === "string" || typeof id === "number") {
-          const cancellation = new CallerAbort(
-            "request-cancelled",
-            message.params?.["reason"],
-          );
-          this.pendingValidation.get(id)?.cancel(cancellation);
-          this.pendingValidation.delete(id);
-          forgetPendingMcpRequest(
-            this.pendingTools,
-            this.pendingToolLists,
-            this.pendingCompletions,
-            id,
-            cancellation,
-          );
-        }
-      }
-      const completion =
-        isJSONRPCRequest(message) && message.method === "completion/complete"
-          ? this.pendingCompletions.get(message.id)
-          : undefined;
-      if (validation !== undefined)
-        runMcpToolRequest(validation, () => this.onmessage?.(message, extra));
-      else if (completion === undefined) this.onmessage?.(message, extra);
-      else
-        currentRequestSignal.run(completion.signal, () =>
-          this.onmessage?.(message, extra),
+    super(transport);
+  }
+
+  protected override receive(
+    message: JSONRPCMessage,
+    extra?: MessageExtraInfo,
+  ): void {
+    // The pinned SDK classifies generic method schema failures as internal
+    // errors. Validate these wire requests with its canonical schemas before
+    // dispatch, leaving callback failures and negotiated-era checks to it.
+    if (isJSONRPCRequest(message)) {
+      const schema = discoveryRequestSchema(message.method);
+      const result = schema?.["~standard"].validate(message);
+      if (result?.issues !== undefined) {
+        void this.send({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: {
+            code: -32602,
+            message: `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
+          },
+        }).catch((cause: unknown) =>
+          this.onerror?.(
+            cause instanceof Error ? cause : new Error(String(cause)),
+          ),
         );
-    };
-    transport.onerror = (error) => this.onerror?.(error);
-    transport.onclose = () => {
-      const disconnected =
-        this.closing || transportClosedByOwner(this.transport)
-          ? OwnerCancellation.ownerClosed
-          : new CallerAbort("client-disconnected");
-      this.pendingTools.clear();
-      for (const validation of this.pendingValidation.values())
-        validation.cancel(disconnected);
-      this.pendingValidation.clear();
-      this.pendingToolLists.clear();
-      for (const completion of this.pendingCompletions.values())
-        completion.abort(disconnected);
-      this.pendingCompletions.clear();
-      this.onclose?.();
-    };
+        return;
+      }
+    }
+    let validation: McpToolRequest | undefined;
+    if (
+      isJSONRPCRequest(message) &&
+      message.method === "tools/call" &&
+      typeof message.params?.["name"] === "string"
+    ) {
+      this.pendingTools.set(message.id, message.params["name"]);
+      validation = new McpToolRequest(message.id, message.params["name"]);
+      this.pendingValidation.set(message.id, validation);
+    }
+    if (isJSONRPCRequest(message) && message.method === "tools/list")
+      this.pendingToolLists.add(message.id);
+    if (isJSONRPCRequest(message) && message.method === "completion/complete")
+      this.pendingCompletions.set(message.id, new AbortController());
+    // The SDK suppresses replies after cancellation, so send() cannot release
+    // this bookkeeping. Keep transport authentication outside retained data.
+    if (
+      isJSONRPCNotification(message) &&
+      message.method === "notifications/cancelled"
+    ) {
+      const id = message.params?.["requestId"];
+      if (typeof id === "string" || typeof id === "number") {
+        const cancellation = new CallerAbort(
+          "request-cancelled",
+          message.params?.["reason"],
+        );
+        this.pendingValidation.get(id)?.cancel(cancellation);
+        this.pendingValidation.delete(id);
+        forgetPendingMcpRequest(
+          this.pendingTools,
+          this.pendingToolLists,
+          this.pendingCompletions,
+          id,
+          cancellation,
+        );
+      }
+    }
+    const completion =
+      isJSONRPCRequest(message) && message.method === "completion/complete"
+        ? this.pendingCompletions.get(message.id)
+        : undefined;
+    if (validation !== undefined)
+      runMcpToolRequest(validation, () => this.onmessage?.(message, extra));
+    else if (completion === undefined) this.onmessage?.(message, extra);
+    else
+      currentRequestSignal.run(completion.signal, () =>
+        this.onmessage?.(message, extra),
+      );
   }
 
-  get sessionId(): string | undefined {
-    return this.transport.sessionId;
-  }
-  set sessionId(value: string | undefined) {
-    this.transport.sessionId = value;
+  protected override closed(): void {
+    const disconnected =
+      this.closing || transportClosedByOwner(this.transport)
+        ? OwnerCancellation.ownerClosed
+        : new CallerAbort("client-disconnected");
+    this.pendingTools.clear();
+    for (const validation of this.pendingValidation.values())
+      validation.cancel(disconnected);
+    this.pendingValidation.clear();
+    this.pendingToolLists.clear();
+    for (const completion of this.pendingCompletions.values())
+      completion.abort(disconnected);
+    this.pendingCompletions.clear();
+    this.onclose?.();
   }
 
-  start(): Promise<void> {
-    return this.transport.start();
-  }
-
-  async close(): Promise<void> {
+  override async close(): Promise<void> {
     this.closing = true;
     try {
       await this.transport.close();
@@ -355,15 +349,7 @@ export class ErrorEvidenceTransport implements Transport {
     }
   }
 
-  setProtocolVersion(version: string): void {
-    this.transport.setProtocolVersion?.(version);
-  }
-
-  setSupportedProtocolVersions(versions: string[]): void {
-    this.transport.setSupportedProtocolVersions?.(versions);
-  }
-
-  async send(
+  override async send(
     message: JSONRPCMessage,
     options?: TransportSendOptions,
   ): Promise<void> {

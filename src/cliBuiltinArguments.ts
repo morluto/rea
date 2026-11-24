@@ -304,7 +304,11 @@ const productionMcpDoctorArguments = (
   };
 };
 
-/** The command parser accepts the schema key and its kebab-case spelling. */
+/**
+ * The command parser accepts only `--sensitive-value`. The schema key spelling
+ * is still read as a declaration, so the value it names stays redacted from the
+ * parser's refusal and from any other text that echoes the invocation.
+ */
 const FLAGS = ["--sensitive-value", "--sensitiveValue"] as const;
 
 /**

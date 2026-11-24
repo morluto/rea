@@ -4955,7 +4955,7 @@ it("keeps a refused setting's configuration error through the provider boundary"
     "admission",
     refusal.message,
     {},
-    { cause: refusal },
+    { cause: refusal, configurationFailure: refusal },
   );
   const ghidra = provider(installationHost(), () => ({
     start: async () => err(failure),

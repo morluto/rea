@@ -15,7 +15,6 @@ import type { DebuggerSessionStop } from "../domain/debuggerSessionErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import type { FifoQueue } from "../kernel/FifoQueue.js";
-import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { debuggerAdmissionRecovery } from "../process/ownedDebuggerSession.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
@@ -295,17 +294,6 @@ export const waitForFrame = (
     session.frameWaiters.push(waiter);
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted) onAbort();
-  });
-};
-
-export const waitForTurn = (
-  previous: Promise<void>,
-  signal?: AbortSignal,
-): Promise<void> => {
-  if (signal === undefined) return previous;
-  return waitForAbortable(previous, signal).then((outcome) => {
-    if (outcome instanceof AbortedWait)
-      throw cancelledBy("rizin_debug_command", outcome);
   });
 };
 

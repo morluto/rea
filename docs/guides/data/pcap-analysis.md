@@ -148,16 +148,15 @@ retains owned resources for retry on close.
 
 ## Verification scope
 
-Current follow-up verification uses Linux/Node 24.18.0 and Wireshark 4.0.17.
+The recorded follow-up verification used Linux, Node 24.18.0 and Wireshark 4.0.17;
+that Node release is below REA's current 24.x floor (24.22.1).
 Private real recorded corpora are checked against independent raw-frame/IP
 parsing and Python aggregation, public CLI/stdio MCP parity, SDK schemas, source
 hashes and retained views. Synthetic native tools separately test malformed
 output, cancellation, source/snapshot mutation, capacity and cleanup; they do
 not establish real Wireshark or other-platform behavior.
 
-The original proposal reported Linux 4.6.6, macOS/Windows 4.6.9 verification on
-its earlier implementation. Those reports do not verify the new final memory
-boundary. Actual Windows/Bun Wireshark execution is unverified here; macOS
+Actual Windows/Bun Wireshark execution is unverified here; macOS
 capture support needs a separate enforceable-bound decision.
 
 ```sh
