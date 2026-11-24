@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
-import { evidenceFileTarget } from "./evidence.js";
+import { evidenceFileTarget, evidenceLocalTarget } from "./evidence.js";
 import { z } from "zod";
 import {
   ArtifactInventoryCarrierError,
@@ -720,10 +720,13 @@ const authorityLimitations = (
     limitations.push(
       `Source Evidence lacks qualifying ${requiredAuthority} authority.`,
     );
+  // A function lives in one file's bytes; an artifact may also be a
+  // directory named by its complete tree digest.
   if (
-    (claim.kind === "structural-function" ||
-      claim.kind === "structural-artifact") &&
-    sources.some((source) => evidenceFileTarget(source) === undefined)
+    (claim.kind === "structural-function" &&
+      sources.some((source) => evidenceFileTarget(source) === undefined)) ||
+    (claim.kind === "structural-artifact" &&
+      sources.some((source) => evidenceLocalTarget(source) === undefined))
   )
     limitations.push("Structural source artifact identity is unavailable.");
   if (claim.kind === "behavioral") {

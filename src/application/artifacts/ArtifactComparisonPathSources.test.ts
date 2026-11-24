@@ -8,6 +8,8 @@ import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { artifactInventorySubject } from "../../domain/artifactInventoryEvidence.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
+import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import { verifyReconstruction } from "../../domain/reconstructionVerification.js";
 import { err, ok } from "../../domain/result.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
@@ -122,4 +124,53 @@ it("compares a partial directory's summary as partial instead of refusing it", a
       "Right artifact inventory traversal coverage is unknown.",
     ]),
   );
+});
+
+it("settles a structural-artifact claim from two complete directory inventories", async () => {
+  const base = await createTestTempDirectory("rea-compare-directory-claim-");
+  const original = join(base, "original");
+  const same = join(base, "same");
+  const changed = join(base, "changed");
+  await build(original, ["a.txt", "b.txt"]);
+  await build(same, ["a.txt", "b.txt"]);
+  await build(changed, ["a.txt", "c.txt"]);
+  const verify = async (reconstruction: string) => {
+    const left = await inventoryEvidence(original);
+    const right = await inventoryEvidence(reconstruction);
+    expect(left.subject.identity.kind).toBe("directory");
+    const compared = compareArtifactEvidence({ left, right });
+    if (!compared.ok) throw compared.error;
+    return verifyReconstruction(
+      {
+        name: "Build output",
+        claims: [
+          {
+            kind: "structural-artifact",
+            claim_id: "build-output",
+            title: "Build output is unchanged",
+            comparison_evidence_id: compared.value.evidence.evidence_id,
+            dimension: "overall",
+          },
+        ],
+      },
+      // Identical trees at two paths are one path-free observation.
+      createEvidenceBundle([
+        ...new Map(
+          [left, right, compared.value.evidence].map((record) => [
+            record.evidence_id,
+            record,
+          ]),
+        ).values(),
+      ]),
+    );
+  };
+  // A confirmed difference fails the claim instead of leaving it unknown.
+  const failed = await verify(changed);
+  expect(failed.status).toBe("fail");
+  expect(JSON.stringify(failed)).not.toContain(
+    "Structural source artifact identity is unavailable.",
+  );
+  // Identical trees at two paths are one observation, so they cannot serve
+  // as independent original and reconstruction sources.
+  expect((await verify(same)).status).toBe("unknown");
 });
