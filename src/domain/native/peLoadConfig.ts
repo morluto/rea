@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -327,6 +328,12 @@ export const tlsAlignment = (characteristics: number): number | null =>
 const tlsSchema = z
   .strictObject({
     directory: directorySchema,
+    /**
+     * File span of the IMAGE_TLS_DIRECTORY read at the RVA; it exceeds
+     * `directory` when the declared Size is short. Evidence saved before this
+     * field existed omits it.
+     */
+    structure_location: range.optional(),
     start_address_of_raw_data: hexVa,
     end_address_of_raw_data: hexVa,
     raw_data_size: uint,
@@ -400,6 +407,8 @@ export const peLoadConfigSchema = z.strictObject({
   tls: tlsSchema,
   load_config: loadConfigSchema,
   examined_callbacks: uint,
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 export type PeLoadConfig = z.infer<typeof peLoadConfigSchema>;
