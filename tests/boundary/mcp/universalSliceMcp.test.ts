@@ -276,6 +276,27 @@ sliceTest(
         },
       });
 
+    // A FAT table cut off by the file's end is truncated, not corrupt: the
+    // container reader measured both the file and the table it declares.
+    const cutOff = await write("cut-off", truncated.subarray(0, 20));
+    expect(
+      containerRefusal(
+        await client.callTool({
+          name: "inspect_go_binary",
+          arguments: { path: cutOff, architecture: "arm64" },
+        }),
+      ),
+    ).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        path: cutOff,
+        format_failure: "truncated",
+        format: "macho",
+        available_bytes: 20,
+        required_bytes: 28,
+      },
+    });
+
     // The FAT table and the slice header must agree before the slice is read.
     const disagreeing = await write(
       "disagreeing",
