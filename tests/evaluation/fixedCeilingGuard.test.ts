@@ -3,7 +3,10 @@ import {
   authoredOnlyRefusalCount,
   fixedCeilingDeclarations,
 } from "../../scripts/verify/fixed-ceiling-guard.mjs";
-import { compareFixedCeilings } from "../../scripts/verify/fixed-ceilings.mjs";
+import {
+  compareAuthoredOnlyRefusals,
+  compareFixedCeilings,
+} from "../../scripts/verify/fixed-ceilings.mjs";
 
 const PATH = "src/probe/Probe.ts";
 
@@ -84,4 +87,22 @@ it("requires every declaration to be registered with a class and reason", () => 
     expect.stringContaining("states no reason"),
     expect.stringContaining("remove the stale entry"),
   ]);
+});
+
+it("lets the authored-only refusal count shrink but never grow", () => {
+  const grown = compareAuthoredOnlyRefusals(
+    new Map([[PATH, 2]]),
+    { [PATH]: 1 },
+    false,
+  );
+  expect(grown.failures).toEqual([
+    expect.stringContaining(`${PATH}: 2 (baseline 1)`),
+  ]);
+  expect(
+    compareAuthoredOnlyRefusals(new Map(), { [PATH]: 1 }, false).failures,
+  ).toEqual([expect.stringContaining("--shrink-baselines")]);
+  expect(compareAuthoredOnlyRefusals(new Map(), { [PATH]: 1 }, true)).toEqual({
+    failures: [],
+    baseline: {},
+  });
 });

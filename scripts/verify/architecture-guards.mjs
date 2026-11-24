@@ -11,7 +11,6 @@ import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
-import { authoredOnlyRefusalCount } from "./fixed-ceiling-guard.mjs";
 import { completedAbortReclassificationCount } from "./completed-abort-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
@@ -472,19 +471,6 @@ checkCounted(
     "src/domain/analysisErrorCore.ts",
     "src/domain/parseFailureAnalysisError.ts",
   ],
-);
-
-// A refusal names the owner of the limit that stopped it: `limit` for a
-// setting or per-call parameter, `fixedAllowance` for a registered fixed
-// ceiling (scripts/verify/fixed-ceilings.mjs), or `measuredExhaustion`. One
-// whose only recovery is an authored remediationAction names its control in
-// prose, so a caller cannot act on it without parsing the sentence (#14234).
-checkCounted(
-  "budget refusal with only authored recovery (bind `limit` to its setting or per-call parameter, use a registered fixedAllowanceOptions ceiling, or declare measuredExhaustion)",
-  "untyped-budget-refusal",
-  files,
-  (content, { path }) => authoredOnlyRefusalCount(content, path),
-  [],
 );
 
 // A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in

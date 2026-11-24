@@ -6,3 +6,8 @@ export function compareFixedCeilings(
     Record<string, { class?: unknown; reason?: unknown; issue?: unknown }>
   >,
 ): string[];
+export function compareAuthoredOnlyRefusals(
+  counts: ReadonlyMap<string, number>,
+  baseline: Record<string, number>,
+  shrink: boolean,
+): { failures: string[]; baseline: Record<string, number> };

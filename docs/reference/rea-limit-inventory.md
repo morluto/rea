@@ -220,8 +220,9 @@ These parameters report that limit:
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/elfReadBudgets.ts` |
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`            | 128        |     1 |                       256 | `src/domain/native/elfReadBudgets.ts` |
 
-Refusals that still name a per-call control only in prose are counted by the
-`untyped-budget-refusal` architecture guard and tracked in
+Refusals that still name a per-call control only in prose are counted by
+`scripts/verify/fixed-ceilings.mjs` against
+`scripts/verify/untyped-budget-refusal-baseline.json` and tracked in
 [#14234](https://github.com/morluto/rea/issues/14234).
 
 Fixed ceilings are listed with their class and reason in

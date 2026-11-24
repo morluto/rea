@@ -302,9 +302,10 @@ another control), `forwarding` (relays a ceiling declared elsewhere), or
 `npm run lint` runs `scripts/verify/fixed-ceilings.mjs`, which fails on an
 unregistered declaration and on a stale entry. A resource or admission limit
 is not a fixed ceiling: give it a setting or per-call parameter and report
-`details.limit`. The architecture guards also count refusals whose only
-recovery is an authored `remediationAction`, with no `limit`,
-`fixedAllowance` or `measuredExhaustion`; that count may only shrink
+`details.limit`. The same script counts refusals whose only recovery is an
+authored `remediationAction`, with no `limit`, `fixedAllowance` or
+`measuredExhaustion`, against `scripts/verify/untyped-budget-refusal-baseline.json`;
+that count may only shrink, and `--shrink-baselines` lowers it
 ([#14234](https://github.com/morluto/rea/issues/14234)).
 
 JSON values stop at `MAX_JSON_DEPTH` (1000) in

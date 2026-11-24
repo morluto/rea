@@ -1,7 +1,14 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { fixedCeilingDeclarations } from "./fixed-ceiling-guard.mjs";
+import {
+  compareCountedBaseline,
+  reconcileBaselineFile,
+} from "./counted-baseline.mjs";
+import {
+  authoredOnlyRefusalCount,
+  fixedCeilingDeclarations,
+} from "./fixed-ceiling-guard.mjs";
 
 // Every fixed ceiling a refusal declares (`fixedAllowanceOptions`,
 // `fixedProducerInputAllowance`, `artifactFixedLimitFailure` or an inline
@@ -21,9 +28,16 @@ import { fixedCeilingDeclarations } from "./fixed-ceiling-guard.mjs";
 // per-call parameter and report `details.limit` instead
 // (docs/reference/limits-and-recovery.md). An entry whose declaration is gone
 // is stale and fails, so the registry cannot hide a removed ceiling.
+//
+// The same scan counts refusals whose only recovery is an authored
+// `remediationAction` (no `limit`, `fixedAllowance` or `measuredExhaustion`)
+// against a shrink-only per-file baseline (#14234). Both checks parse
+// TypeScript, so they run from `npm run lint` after dependencies are
+// installed rather than from the dependency-free architecture guards.
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const registryPath = join(root, "scripts/verify/fixed-ceiling-registry.json");
+const BASELINE = "scripts/verify/untyped-budget-refusal-baseline.json";
 
 /** Classes that may justify a fixed ceiling, plus `pending`. */
 export const FIXED_CEILING_CLASSES = new Set([
@@ -91,15 +105,68 @@ export const compareFixedCeilings = (declarations, registry) => {
   return failures;
 };
 
+/**
+ * Compare authored-only refusal counts with their shrink-only baseline.
+ * Returns failure lines and the baseline after any shrinking.
+ *
+ * @param {ReadonlyMap<string, number>} counts
+ * @param {Record<string, number>} baseline
+ * @param {boolean} shrink
+ * @returns {{ failures: string[], baseline: Record<string, number> }}
+ */
+export const compareAuthoredOnlyRefusals = (counts, baseline, shrink) => {
+  const compared = compareCountedBaseline(counts, baseline, shrink);
+  const lines = (differences) =>
+    differences
+      .map(
+        ({ path, count, allowed }) =>
+          `  ${path}: ${String(count)} (baseline ${String(allowed)})`,
+      )
+      .join("\n");
+  const failures = [];
+  if (compared.grown.length > 0)
+    failures.push(
+      `Budget refusal with only authored recovery; bind \`limit\` to its setting or per-call parameter, use a registered fixedAllowanceOptions ceiling, or declare measuredExhaustion (#14234):\n${lines(compared.grown)}`,
+    );
+  if (compared.stale.length > 0)
+    failures.push(
+      `Authored-only refusals were removed; lower ${BASELINE} with \`node scripts/verify/fixed-ceilings.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
+    );
+  return { failures, baseline: compared.baseline };
+};
+
 const main = async () => {
   const declarations = new Map();
+  const authored = new Map();
   for (const file of await sourceFiles(join(root, "src"))) {
     const path = relative(root, file).split(sep).join("/");
-    const found = fixedCeilingDeclarations(await readFile(file, "utf8"), path);
+    const content = await readFile(file, "utf8");
+    const found = fixedCeilingDeclarations(content, path);
     if (found.size > 0) declarations.set(path, found);
+    const count = authoredOnlyRefusalCount(content, path);
+    if (count > 0) authored.set(path, count);
   }
   const registry = JSON.parse(await readFile(registryPath, "utf8"));
   const failures = compareFixedCeilings(declarations, registry);
+  const shrink = process.argv.includes("--shrink-baselines");
+  const baselineText = await readFile(join(root, BASELINE), "utf8");
+  const refusals = compareAuthoredOnlyRefusals(
+    authored,
+    JSON.parse(baselineText),
+    shrink,
+  );
+  failures.push(...refusals.failures);
+  const baselineFile = reconcileBaselineFile(
+    baselineText,
+    refusals.baseline,
+    shrink,
+  );
+  if (baselineFile.action === "write")
+    await writeFile(join(root, BASELINE), baselineFile.text);
+  else if (baselineFile.action === "reject")
+    failures.push(
+      `${BASELINE} is not in its written form (paths sorted by code unit); rewrite it with \`node scripts/verify/fixed-ceilings.mjs --shrink-baselines\`.`,
+    );
   if (failures.length > 0) {
     console.error(failures.join("\n"));
     process.exitCode = 1;
@@ -110,7 +177,7 @@ const main = async () => {
     for (const entry of Object.values(entries))
       if (entry.class === "pending") pending++;
   console.log(
-    `Fixed ceilings: ${String([...declarations.values()].reduce((sum, found) => sum + found.size, 0))} declarations registered; ${String(pending)} pending a control.`,
+    `Fixed ceilings: ${String([...declarations.values()].reduce((sum, found) => sum + found.size, 0))} declarations registered; ${String(pending)} pending a control. Authored-only refusals: ${String([...authored.values()].reduce((sum, count) => sum + count, 0))}.`,
   );
 };
 
