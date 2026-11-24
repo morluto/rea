@@ -22,6 +22,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
+  AnalysisMalformedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisTimeoutError,
@@ -624,6 +625,18 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
     };
+  if (error instanceof AnalysisMalformedTargetError) {
+    const { kind, format, detail, offset, field } = error.failure;
+    return {
+      operation: error.operation,
+      path: error.path,
+      reason: detail,
+      format_failure: kind,
+      format,
+      ...(offset === undefined ? {} : { offset }),
+      ...(field === undefined ? {} : { field }),
+    };
+  }
   if (error instanceof AnalysisResourceConstraintError)
     return {
       operation: error.operation,

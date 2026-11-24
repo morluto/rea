@@ -160,7 +160,9 @@ describe("PE resource provider budget reporting", () => {
       max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
     });
     if (result.ok) throw new Error("Expected malformed table refusal");
-    expect(result.error).toMatchObject({ _tag: "AnalysisInputError" });
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+    });
   });
 });
 

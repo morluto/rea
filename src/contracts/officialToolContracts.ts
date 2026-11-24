@@ -290,14 +290,14 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "search_procedures",
     providerNetworkEvidenceEffects,
-    "Find analyzed procedures by literal name (default) or regex, including accepted secondary names. Returns deterministic provider-inventory matches under primary names with matched_aliases and available thunk/external metadata. For Ghidra case-insensitive literal searches, raw_result retains unfiltered candidates; normalized_result holds matches. detail summary retains native-inventory pages. Regex uses Java Pattern in Ghidra and ECMAScript Unicode in Kuna, IDA and Hopper; binary_session and errors report effective limits and recovery.",
+    "Find analyzed procedures by literal name (default) or regex, including accepted secondary names. Returns deterministic provider-inventory matches under primary names with matched_aliases and available thunk/external metadata. For Ghidra case-insensitive literal searches, raw_result holds Ghidra's candidates only when Unicode filtering removed any; normalized_result holds matches. detail summary retains native-inventory pages. Regex uses Java Pattern in Ghidra and ECMAScript Unicode in Kuna, IDA and Hopper; binary_session and errors report effective limits and recovery.",
     z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),
   official(
     "search_strings",
     providerNetworkEvidenceEffects,
-    "Find provider-reported strings by literal text (default) or regex. Complete results cover that inventory, not all artifact text; packed/undefined strings or independently matched fragments may be missing. Ghidra search_bytes finds known encoded bytes without establishing string identity/use; xrefs inspects references at a known address. Kuna scans mapped sequences of at least five characters without references or read_bytes. Hopper preserves decoded typed objects, display text and decoding unknowns. For Ghidra case-insensitive literal searches, raw_result holds candidates; normalized_result holds matches. detail summary retains native-inventory pages. Regex uses Java Pattern in Ghidra and ECMAScript Unicode elsewhere; binary_session/errors report limits.",
+    "Find provider-reported strings by literal text (default) or regex. Complete results cover that inventory, not all artifact text; packed/undefined strings or independently matched fragments may be missing. Ghidra search_bytes finds known encoded bytes without establishing string identity/use; xrefs inspects references at a known address. Kuna scans mapped sequences of at least five characters without references or read_bytes. Hopper preserves decoded typed objects, display text and decoding unknowns. For Ghidra case-insensitive literal searches, raw_result holds candidates only when Unicode filtering removed any; normalized_result holds matches. detail summary retains native-inventory pages. Regex uses Java Pattern in Ghidra and ECMAScript Unicode elsewhere; binary_session/errors report limits.",
     z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),

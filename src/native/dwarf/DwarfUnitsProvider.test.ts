@@ -5,6 +5,7 @@ import { expect, it, vi } from "vitest";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisMalformedTargetError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { readMachoImageFromReader } from "../../domain/apple/machoImage.js";
@@ -345,9 +346,9 @@ it("rejects an unterminated PE long name within the decoding allowance", async (
   const read = await inspect(image);
   expect(read.ok).toBe(false);
   if (!read.ok) {
-    expect(read.error).toBeInstanceOf(AnalysisInputError);
+    expect(read.error).toBeInstanceOf(AnalysisMalformedTargetError);
     expect(read.error).toMatchObject({
-      issues: [{ message: expect.stringContaining("could not be resolved") }],
+      failure: { detail: expect.stringContaining("could not be resolved") },
     });
   }
 });
@@ -388,15 +389,13 @@ it("rejects PE long section names when PointerToSymbolTable is zero", async () =
   }).toEqual({ zeroCountOk: false, nonZeroCountOk: false });
   for (const rejected of [readZeroCount, readNonZeroCount]) {
     if (rejected.ok) continue;
-    expect(rejected.error).toBeInstanceOf(AnalysisInputError);
+    expect(rejected.error).toBeInstanceOf(AnalysisMalformedTargetError);
     expect(rejected.error).toMatchObject({
-      issues: [
-        {
-          message: expect.stringContaining(
-            "PE long section name string table is unavailable",
-          ),
-        },
-      ],
+      failure: {
+        detail: expect.stringContaining(
+          "PE long section name string table is unavailable",
+        ),
+      },
     });
   }
 

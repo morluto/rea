@@ -48,7 +48,7 @@ export const cliArgumentFailure = (
   command: string,
   failure: CliArgvFailure,
 ): CliCommandFailure => {
-  if (failure.kind === "dry_run")
+  if (failure.kind === "dry_run" || failure.kind === "flag_spelling")
     return { code: "PARSE_ERROR", message: failure.message, retryable: false };
   if (failure.kind !== "validation")
     return {

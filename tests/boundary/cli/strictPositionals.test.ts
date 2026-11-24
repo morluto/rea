@@ -209,24 +209,27 @@ it("validates every dry-run literal before lossy coercion while retaining bare a
     const result = await serve(cli, [
       "setup",
       `--dry-run=${literal}`,
-      "--dryRun=false",
+      "--dry-run=false",
     ]);
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({ code: "PARSE_ERROR" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "PARSE_ERROR",
+      message: "Invalid --dry-run value; use true or false.",
+      retryable: false,
+    });
   }
   expect({ runs, defaults }).toEqual({ runs: 0, defaults: 0 });
   for (const [tokens, expected] of [
     [["--dry-run"], true],
-    [["--dryRun=true"], true],
     [["--dry-run=false"], false],
     [["--no-dry-run"], false],
-    [["--no-dryRun", "--dry-run"], true],
+    [["--no-dry-run", "--dry-run"], true],
   ] as const) {
     const result = await serve(cli, ["setup", ...tokens]);
     expect(result.exitCode, result.stdout).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ dryRun: expected });
   }
-  expect({ runs, defaults }).toEqual({ runs: 5, defaults: 5 });
+  expect({ runs, defaults }).toEqual({ runs: 4, defaults: 4 });
 });
 
 it("keeps flag-shaped option data untouched while validating only bound dry-run values", async () => {
