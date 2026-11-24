@@ -3,13 +3,16 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { EvidenceBundleExportReceipt } from "../domain/investigationLifecycle.js";
 import { jsonValueValidationIssue } from "../domain/jsonValue.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
-import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
+import {
+  estimateJsonStorage,
+  requireAuthenticationHeadroom,
+} from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 import { boundedValidationFailure } from "../domain/validationFailure.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
-import type { Evidence } from "../domain/evidence.js";
+import { evidenceFileTarget, type Evidence } from "../domain/evidence.js";
 import {
   safeParseImmutableEvidenceBundle,
   safeParseEvidenceBundle,
@@ -20,7 +23,10 @@ import {
   safeParseImmutableEvidence,
   unsupportedEvidenceFormatError,
 } from "../domain/evidenceValidation.js";
-import { isUnsupportedEvidenceFormat } from "../domain/evidenceFormat.js";
+import {
+  EVIDENCE_FORMAT_REVISION,
+  isUnsupportedEvidenceFormat,
+} from "../domain/evidenceFormat.js";
 import {
   EvidenceFileError,
   EvidenceIntegrityError,
@@ -162,6 +168,95 @@ export const boundedEvidenceContentIssues = (
       message: `${String(bounded.omittedIssueCount)} of ${String(issues.length)} validator issues were omitted because they do not fit the response budget; repair the reported fields and retry.`,
     },
   ];
+};
+
+const EMPTY_EVIDENCE_BUNDLE_SHELL = {
+  evidence_format: EVIDENCE_FORMAT_REVISION,
+  artifacts: [],
+  providers: [],
+  environments: [],
+  scenarios: [],
+  captures: [],
+  unknowns: [],
+  records: [],
+} as const;
+
+/** Incremental representation and escaped JSON budget across admitted pack records. */
+export interface BundlePackWorkingSetBudget {
+  readonly valueBytes: number;
+  readonly serializedUtf16Bytes: number;
+}
+
+const BUNDLE_RECORD_INDEX_OVERHEAD_BYTES = 128;
+
+const bundleRecordAdditionalStorage = (
+  record: Evidence,
+): BundlePackWorkingSetBudget => {
+  const fileTarget = evidenceFileTarget(record);
+  const manifestAdditions: unknown[] = [
+    record.provider,
+    ...(record.environment === null ? [] : [record.environment]),
+    ...(fileTarget === undefined
+      ? []
+      : [
+          {
+            digest: { sha256: fileTarget.sha256 },
+            format: fileTarget.format,
+            architecture: fileTarget.architecture,
+          },
+        ]),
+    ...(record.authority === "controlled-replay"
+      ? [
+          {
+            evidence_id: record.evidence_id,
+            operation: record.operation,
+            authority: record.authority,
+          },
+        ]
+      : []),
+    ...(record.predicate_type === "rea.process-capture"
+      ? [
+          {
+            evidence_id: record.evidence_id,
+            predicate_type: record.predicate_type,
+          },
+        ]
+      : []),
+  ];
+  const recordStorage = estimateJsonStorage(record);
+  const manifestStorage = estimateJsonStorage(manifestAdditions);
+  return {
+    valueBytes:
+      recordStorage.valueBytes +
+      manifestStorage.valueBytes +
+      BUNDLE_RECORD_INDEX_OVERHEAD_BYTES,
+    serializedUtf16Bytes:
+      recordStorage.serializedUtf16Bytes + manifestStorage.serializedUtf16Bytes,
+  };
+};
+
+/** Reserve cumulative heap headroom for constructing and writing the combined bundle before adding a record. */
+export const admitBundlePackRecordHeadroom = (
+  record: Evidence,
+  accumulated: BundlePackWorkingSetBudget,
+  callerPath: string,
+  availableBytes?: number,
+): Result<BundlePackWorkingSetBudget, AnalysisResourceConstraintError> => {
+  const delta = bundleRecordAdditionalStorage(record);
+  const next: BundlePackWorkingSetBudget = {
+    valueBytes: accumulated.valueBytes + delta.valueBytes,
+    serializedUtf16Bytes:
+      accumulated.serializedUtf16Bytes + delta.serializedUtf16Bytes,
+  };
+  const headroom = requireAuthenticationHeadroom(EMPTY_EVIDENCE_BUNDLE_SHELL, {
+    operation: "pack_evidence_bundle",
+    path: callerPath,
+    description:
+      "Insufficient heap headroom to construct the combined Evidence bundle",
+    additional: next,
+    ...(availableBytes === undefined ? {} : { availableBytes }),
+  });
+  return headroom.ok ? ok(next) : headroom;
 };
 
 /** Read and authenticate one standalone Evidence JSON record at the caller-supplied path. */

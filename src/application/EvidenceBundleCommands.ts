@@ -32,12 +32,14 @@ import {
 } from "../domain/bundleComparison.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import {
+  admitBundlePackRecordHeadroom,
   readEvidenceBundle,
   readImmutableEvidenceBundle,
   readComparisonEvidenceBundles,
   readStandaloneEvidenceRecord,
   writeEvidenceBundle,
   evidenceBundleExportReceipt,
+  type BundlePackWorkingSetBudget,
 } from "./EvidenceBundleFiles.js";
 import { inspectEvidenceBundle } from "./investigation/InspectEvidenceBundle.js";
 import type { EvidenceRecordFilters } from "../domain/evidenceRecordSummary.js";
@@ -107,6 +109,7 @@ export const packEvidenceBundleCommand = async (
   outputPath: string,
   overwrite: boolean,
   signal?: AbortSignal,
+  options?: { readonly availableBytes?: number },
 ): Promise<Result<JsonValue, AnalysisError>> => {
   if (sourcePaths.length === 0)
     return err(
@@ -131,6 +134,11 @@ export const packEvidenceBundleCommand = async (
         string,
         { readonly record: Evidence; readonly path: string }
       >();
+      const records: Evidence[] = [];
+      let bundleWorkingSet: BundlePackWorkingSetBudget = {
+        valueBytes: 0,
+        serializedUtf16Bytes: 0,
+      };
       for (const sourcePath of sourcePaths) {
         if (signal?.aborted)
           return err(cancelledBy("pack_evidence_bundle", signal));
@@ -145,7 +153,16 @@ export const packEvidenceBundleCommand = async (
         const callerPath = absoluteCallerPath(sourcePath);
         const existing = admitted.get(record.evidence_id);
         if (existing === undefined) {
+          const headroom = admitBundlePackRecordHeadroom(
+            record,
+            bundleWorkingSet,
+            callerPath,
+            options?.availableBytes,
+          );
+          if (!headroom.ok) return headroom;
+          bundleWorkingSet = headroom.value;
           admitted.set(record.evidence_id, { record, path: callerPath });
+          records.push(record);
           continue;
         }
         if (
@@ -169,11 +186,7 @@ export const packEvidenceBundleCommand = async (
           );
         }
       }
-      return ok(
-        createImmutableEvidenceBundle(
-          [...admitted.values()].map(({ record }) => record),
-        ),
-      );
+      return ok(createImmutableEvidenceBundle(records));
     },
     "pack_evidence_bundle",
     signal,

@@ -26,11 +26,15 @@ import {
   readStandaloneEvidenceRecord,
   writeEvidenceBundle,
 } from "../../../src/application/EvidenceBundleFiles.js";
-import { publishEvidenceDelivery } from "../../../src/application/EvidenceBundleCommands.js";
+import {
+  packEvidenceBundleCommand,
+  publishEvidenceDelivery,
+} from "../../../src/application/EvidenceBundleCommands.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createEvidence,
@@ -1247,5 +1251,75 @@ describe("standalone Evidence record intake", () => {
       65_536,
     );
     expect(strictKeyEncoded).not.toContain(longKey);
+
+    const record2 = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture-a", name: "Fixture A", version: "1" },
+      {
+        operation: "first",
+        parameters: {},
+        result: { blob: "x".repeat(80_000) },
+      },
+    );
+    const distinctRecord = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture-b", name: "Fixture B", version: "2" },
+      {
+        operation: "second",
+        parameters: {},
+        result: { blob: "y".repeat(80_000) },
+      },
+    );
+    const firstPath = join(directory, "pack-first.json");
+    const secondPath = join(directory, "pack-second.json");
+    const combinedOutPath = join(directory, "combined-out.json");
+    await Promise.all([
+      writeFile(firstPath, JSON.stringify(record2)),
+      writeFile(secondPath, JSON.stringify(distinctRecord)),
+    ]);
+    const singleProbe = await packEvidenceBundleCommand(
+      [firstPath],
+      combinedOutPath,
+      false,
+      undefined,
+      { availableBytes: 0 },
+    );
+    if (
+      singleProbe.ok ||
+      !(singleProbe.error instanceof AnalysisResourceConstraintError)
+    )
+      throw new Error("Expected AnalysisResourceConstraintError probe");
+    const oneRecordBundleBudget =
+      singleProbe.error.reportedLimits?.authentication_bytes;
+    if (typeof oneRecordBundleBudget !== "number")
+      throw new Error("Expected numeric authentication_bytes");
+    heapSpy.mockReturnValue({
+      ...actual,
+      total_available_size: oneRecordBundleBudget,
+    });
+    let liveCombinedRefusal: Awaited<
+      ReturnType<typeof packEvidenceBundleCommand>
+    >;
+    try {
+      liveCombinedRefusal = await packEvidenceBundleCommand(
+        [firstPath, secondPath],
+        combinedOutPath,
+        false,
+      );
+    } finally {
+      heapSpy.mockReset();
+    }
+    expect(liveCombinedRefusal).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "pack_evidence_bundle",
+        resource: "memory",
+        reportedLimits: {
+          input_path: secondPath,
+          available_heap_bytes: oneRecordBundleBudget,
+        },
+      },
+    });
   });
 });

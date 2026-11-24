@@ -1,16 +1,15 @@
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   createEvidence,
+  isImmutableEvidence,
   withEvidenceCallerInputPath,
 } from "../domain/evidence.js";
-import {
-  createEvidenceBundle,
-  serializeEvidenceBundle,
-} from "../domain/evidenceBundle.js";
+import * as evidenceBundleDomain from "../domain/evidenceBundle.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../domain/evidenceLegacy.fixture.js";
 import { RECREATE_EVIDENCE_GUIDANCE } from "../domain/evidenceFormat.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
@@ -18,6 +17,8 @@ import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCaptureE
 import { unknownTarget } from "../domain/targetIdentity.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { packEvidenceBundleCommand } from "./EvidenceBundleCommands.js";
+
+const { createEvidenceBundle, serializeEvidenceBundle } = evidenceBundleDomain;
 
 const PROVIDER = { id: "fixture", name: "Fixture", version: "1" } as const;
 
@@ -383,5 +384,118 @@ describe("packEvidenceBundleCommand", () => {
     expect(await readFile(sourcePath, "utf8")).toBe(
       serializeEvidenceBundle(createEvidenceBundle([record])),
     );
+  });
+
+  it("checks combined bundle working-set headroom before constructing the bundle", async () => {
+    const root = await createTestTempDirectory("rea-pack-headroom-");
+    const first = sampleRecord("headroom-a", {
+      targetPath: join(root, "alpha.bin"),
+      sha256: "c".repeat(64),
+      authority: "controlled-replay",
+      environment: {
+        id: "env-a",
+        platform: "linux",
+        architecture: "x86_64",
+        isolation: "none",
+      },
+    });
+    const second = sampleRecord("headroom-b", {
+      targetPath: join(root, "beta.bin"),
+      sha256: "d".repeat(64),
+      authority: "controlled-replay",
+      environment: {
+        id: "env-b",
+        platform: "darwin",
+        architecture: "arm64",
+        isolation: "none",
+      },
+    });
+    const firstPath = join(root, "first.json");
+    const duplicateFirstPath = join(root, "first-dup.json");
+    const secondPath = join(root, "second.json");
+    const outPath = join(root, "packed.json");
+    await Promise.all([
+      writeFile(firstPath, JSON.stringify(first)),
+      writeFile(duplicateFirstPath, JSON.stringify(first, null, 2)),
+      writeFile(secondPath, JSON.stringify(second)),
+    ]);
+
+    const probe = await packEvidenceBundleCommand(
+      [firstPath],
+      outPath,
+      false,
+      undefined,
+      { availableBytes: 0 },
+    );
+    expect(probe).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "pack_evidence_bundle",
+        resource: "memory",
+        reportedLimits: { input_path: firstPath },
+      },
+    });
+    if (probe.ok || !(probe.error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected single-record AnalysisResourceConstraintError");
+    const singleRecordBudget = probe.error.reportedLimits?.authentication_bytes;
+    if (typeof singleRecordBudget !== "number")
+      throw new Error("Expected numeric authentication_bytes limit");
+
+    const createSpy = vi.spyOn(
+      evidenceBundleDomain,
+      "createImmutableEvidenceBundle",
+    );
+    try {
+      const combinedRefusal = await packEvidenceBundleCommand(
+        [firstPath, secondPath],
+        outPath,
+        false,
+        undefined,
+        { availableBytes: singleRecordBudget },
+      );
+      expect(combinedRefusal).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisResourceConstraintError",
+          operation: "pack_evidence_bundle",
+          resource: "memory",
+          reportedLimits: {
+            input_path: secondPath,
+            available_heap_bytes: singleRecordBudget,
+          },
+        },
+      });
+      if (
+        combinedRefusal.ok ||
+        !(combinedRefusal.error instanceof AnalysisResourceConstraintError)
+      )
+        throw new Error("Expected combined AnalysisResourceConstraintError");
+      expect(
+        combinedRefusal.error.reportedLimits?.authentication_bytes,
+      ).toBeGreaterThan(singleRecordBudget);
+      expect(createSpy).not.toHaveBeenCalled();
+      await expect(access(outPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+      const dedupedOk = await packEvidenceBundleCommand(
+        [firstPath, duplicateFirstPath],
+        outPath,
+        false,
+        undefined,
+        { availableBytes: singleRecordBudget },
+      );
+      expect(dedupedOk).toMatchObject({
+        ok: true,
+        value: { path: outPath, records: 1, unknowns: 0 },
+      });
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      const passedRecord = createSpy.mock.calls[0]?.[0]?.[0];
+      expect(createSpy.mock.calls[0]?.[0]).toHaveLength(1);
+      if (passedRecord === undefined)
+        throw new Error("Expected sealed record argument");
+      expect(isImmutableEvidence(passedRecord)).toBe(true);
+    } finally {
+      createSpy.mockRestore();
+    }
   });
 });
