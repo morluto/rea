@@ -11,7 +11,6 @@ import {
   parseTestDurations,
   readTestDurations,
   scheduleWall,
-  seedSplitLoaderDurations,
 } from "../../ciTestSequencer.js";
 
 describe("CI test history", () => {
@@ -83,42 +82,6 @@ describe("CI test history", () => {
     ).rejects.toMatchObject({
       code: "EISDIR",
     });
-  });
-});
-
-describe("split loader history", () => {
-  const source =
-    "tests/acceptance/applications/javascriptLiteralPercentPaths.test.ts";
-  const parts = [
-    "tests/acceptance/applications/javascriptLiteralLoaderOwnershipEarly.test.ts",
-    "tests/acceptance/applications/javascriptLiteralLoaderOwnershipMiddle.test.ts",
-    "tests/acceptance/applications/javascriptLiteralLoaderOwnershipLate.test.ts",
-  ];
-
-  it("divides a pre-split duration across the four current files", () => {
-    const seeded = seedSplitLoaderDurations(
-      new Map([
-        [source, 192_000],
-        ["tests/other.test.ts", 10],
-      ]),
-    );
-    expect(seeded.get(source)).toBe(54_000);
-    for (const path of parts) expect(seeded.get(path)).toBe(46_000);
-    expect(seeded.get("tests/other.test.ts")).toBe(10);
-    expect(
-      [...seeded.values()].reduce((sum, duration) => sum + duration, 0),
-    ).toBe(192_000 + 10);
-  });
-
-  it("keeps published durations once any split file is in history", () => {
-    const recorded = new Map([
-      [source, 20_000],
-      [parts[0]!, 30_000],
-    ]);
-    expect(seedSplitLoaderDurations(recorded)).toEqual(recorded);
-    expect(
-      seedSplitLoaderDurations(new Map([["tests/other.test.ts", 10]])),
-    ).toEqual(new Map([["tests/other.test.ts", 10]]));
   });
 });
 

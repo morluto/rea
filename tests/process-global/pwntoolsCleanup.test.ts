@@ -1,13 +1,7 @@
+import { SIMULATED_LINUX_X64 } from "../fixtures/simulatedHost.js";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  expect,
-  it,
-  onTestFinished,
-} from "vitest";
+import { beforeAll, expect, it, onTestFinished } from "vitest";
 
 import { PwntoolsLayoutProvider } from "../../src/native/pwntools/PwntoolsLayoutProvider.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
@@ -15,33 +9,18 @@ import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js"
 import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { stopProviderProcessFixture } from "../fixtures/providerProcess.js";
+import { phaseGate } from "../support/lifecycleHarness.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../support/workspace/workspaceFixture.js";
 
-const platform = Object.getOwnPropertyDescriptor(process, "platform");
-const architecture = Object.getOwnPropertyDescriptor(process, "arch");
 const supportedHost = process.platform !== "win32";
 
 beforeAll(() =>
   supportedHost ? prepareProcessOwnershipInspection() : undefined,
 );
-
-// Only the decoder's availability gate is simulated. The module-owned process
-// inspector was created and prepared for the real host before these overrides;
-// every fixture launch, output stream, cleanup signal and filesystem is real.
-beforeEach(() => {
-  Object.defineProperty(process, "platform", { value: "linux" });
-  Object.defineProperty(process, "arch", { value: "x64" });
-});
-
-afterEach(() => {
-  if (platform !== undefined)
-    Object.defineProperty(process, "platform", platform);
-  if (architecture !== undefined)
-    Object.defineProperty(process, "arch", architecture);
-});
 
 const fixture = async () => {
   const workspace = await createTestWorkspace("rea-pwntools-cleanup-");
@@ -100,6 +79,7 @@ it.runIf(supportedHost)(
           },
         };
       },
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       cleanupAllowed = true;
@@ -113,14 +93,30 @@ it.runIf(supportedHost)(
       throw new Error("Expected output overflow and failed cleanup");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
+      capturedOutput: { truncated: true },
       diagnostics: {
         primary_error: {
-          code: "unreadable_output",
-          details: { captured_output: { truncated: true } },
+          code: "resource_constraint",
         },
         cleanup_error: { code: "cleanup_incomplete" },
       },
     });
+    const projected = projectAnalysisError(result.error);
+    expect(projected.details?.captured_output).toEqual(
+      result.error.capturedOutput,
+    );
+    expect(projected).not.toHaveProperty(
+      "details.diagnostics.primary_error.details.captured_output",
+    );
+    const output = result.error.capturedOutput?.stdout;
+    if (!output) throw new Error("Expected retained truncated worker output");
+    // The cleanup owner also retains a bounded worker snapshot for its own
+    // failed-close receipt. Generic primary history must not add a third copy.
+    expect(projected).toHaveProperty(
+      "details.diagnostics.cleanup_error.details.diagnostics.captured_output.stdout",
+      output,
+    );
+    expect(JSON.stringify(projected).split(output)).toHaveLength(3);
     if (pid === undefined)
       throw new Error("The fixture did not acquire a process");
     const workerPid = pid;
@@ -184,6 +180,7 @@ it.runIf(supportedHost)(
           await root.close();
         },
       }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       removalAllowed = true;
@@ -195,11 +192,9 @@ it.runIf(supportedHost)(
       throw new Error("Expected command and root-removal failures");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
+      capturedOutput: { stdout: "retained diagnostic" },
       diagnostics: {
-        primary_error: {
-          code: "execution_failure",
-          details: { diagnostics: { stdout: "retained diagnostic" } },
-        },
+        primary_error: { code: "execution_failure" },
         cleanup_error: { code: "cleanup_incomplete" },
       },
     });
@@ -220,21 +215,13 @@ it.runIf(supportedHost)(
   "cancels queued inspections promptly and drains the running inspection when closing",
   async () => {
     const { workspace, path } = await fixture();
-    let release: (() => void) | undefined;
-    let entered: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
+    const launch = phaseGate();
     let launches = 0;
     const provider = new PwntoolsLayoutProvider(
       { REA_PWNTOOLS_PYTHON: process.execPath },
       async (input) => {
         launches++;
-        entered?.();
-        await gate;
+        await launch.hold();
         return spawnOwnedProviderProcess({
           ...input,
           arguments: ["-e", "process.exit(2)"],
@@ -242,13 +229,14 @@ it.runIf(supportedHost)(
       },
       () =>
         PrivateRuntimeRoot.create({ parent: workspace.root, prefix: "owned-" }),
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
-      release?.();
+      launch.release();
       await provider.close();
     });
     const first = provider.inspect({ path });
-    await started;
+    await launch.reached(first, "pwntools launch");
     const controller = new AbortController();
     const cancelled = provider.inspect({ path }, { signal: controller.signal });
     const reason = { stage: "queued" };
@@ -263,7 +251,7 @@ it.runIf(supportedHost)(
     const queued = provider.inspect({ path });
     const closing = provider.close();
     const late = provider.inspect({ path });
-    release?.();
+    launch.release();
     const [firstResult, queuedResult, lateResult] = await Promise.all([
       first,
       queued,

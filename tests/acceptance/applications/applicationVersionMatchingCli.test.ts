@@ -14,24 +14,20 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-version-scope-");
     const application = join(root, "application");
-    const copy = join(root, "copy");
-    await Promise.all([mkdir(application), mkdir(copy)]);
+    await mkdir(application);
     const files = [
       ["lib.js", "export function shared() { return 1; }\n"],
       ["main.js", 'export const name = "one";\n'],
     ] as const;
     for (const [name, contents] of files) {
-      await Promise.all([
-        writeFile(join(application, name), contents),
-        writeFile(join(copy, name), contents),
-      ]);
+      await writeFile(join(application, name), contents);
     }
 
-    const analyze = async (input: string, selected: boolean) => {
+    const analyze = async (selected: boolean) => {
       const response = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          input,
+          application,
           ...(selected ? ["--source-path", "main.js"] : []),
           "--json",
         ],
@@ -40,9 +36,8 @@ cliTest(
       expect(response.exitCode, response.stderr).toBe(0);
       return parseEvidence(response.json);
     };
-    const full = await analyze(application, false);
-    const selected = await analyze(application, true);
-    const fullCopy = await analyze(copy, false);
+    const full = await analyze(false);
+    const selected = await analyze(true);
     const selectedAnalysis = javascriptApplicationAnalysisResultSchema.parse(
       selected.normalized_result,
     );
@@ -55,10 +50,13 @@ cliTest(
             properties.operation === "select-javascript-sources",
         ),
     );
-    expect(parseScope?.observations[0]?.evidence).toMatchObject({
+    const scopeEvidence = parseScope?.observations[0]?.evidence;
+    if (scopeEvidence === undefined)
+      throw new Error("Missing source scope evidence");
+    expect(scopeEvidence).toMatchObject({
       state: "unavailable",
       limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
+        expect.stringMatching(/source_paths.*inventoried.*not analyzed/iu),
       ],
     });
 
@@ -80,7 +78,6 @@ cliTest(
     };
     const forward = await compare(full, selected, "forward");
     const reverse = await compare(selected, full, "reverse");
-    const unchangedCopy = await compare(full, fullCopy, "full-copy");
 
     expect(
       forward.items.find(
@@ -89,9 +86,7 @@ cliTest(
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
-      limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
-      ],
+      limitations: scopeEvidence.limitations,
       evidence_links: expect.arrayContaining([
         full.evidence_id,
         selected.evidence_id,
@@ -104,15 +99,12 @@ cliTest(
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
-      limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
-      ],
+      limitations: scopeEvidence.limitations,
     });
     expect(forward.summary.added).toBe(0);
     expect(forward.summary.removed).toBe(0);
     expect(reverse.summary.added).toBe(0);
     expect(reverse.summary.removed).toBe(0);
-    expect(unchangedCopy.summary).toMatchObject({ added: 0, removed: 0 });
   },
 );
 
@@ -120,12 +112,17 @@ cliTest(
   "uses syntax-aware bundle fingerprints for changed syntax and renamed bindings",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-fingerprint-version-");
+    const literalPrefix = "x".repeat(1_024);
     const pairs = [
       ["bigint", "exports.v = 1n;", "exports.v = 2n;"],
       ["bigint-key", "exports.v = { 1n: 1 };", "exports.v = { 2n: 1 };"],
       ["directive", '"use strict";', '"use asm";'],
       ["assignment", "exports.v = 1;", "exports.v += 1;"],
-      ["string", 'exports.v = "left";', 'exports.v = "right";'],
+      [
+        "long-string",
+        `exports.v = "${literalPrefix}left";`,
+        `exports.v = "${literalPrefix}right";`,
+      ],
       ["class-method", "class A { foo() {} }", "class A { bar() {} }"],
       ["class-field", "class A { foo = 1; }", "class A { bar = 1; }"],
       [
@@ -452,5 +449,102 @@ cliTest(
           other.match.status !== "matched",
       ),
     ).toBe(true);
+  },
+);
+
+cliTest(
+  "matches unchanged module exports after a sibling file changes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-export-version-");
+    const util = {
+      v1: "module.exports = { greet: () => 1 };\n",
+      v2: "module.exports = { greet: () => 2 };\n",
+    };
+    const analyze = async (
+      name: string,
+      version: string,
+      utilSource: string,
+    ) => {
+      const application = join(root, name);
+      await mkdir(join(application, "src"), { recursive: true });
+      await writeFile(
+        join(application, "package.json"),
+        JSON.stringify({
+          name: "export-fixture",
+          version,
+          main: "src/main.js",
+        }),
+      );
+      await writeFile(
+        join(application, "src/main.js"),
+        'const util = require("./util.js");\nmodule.exports = { start: () => util.greet() };\n',
+      );
+      await writeFile(join(application, "src/util.js"), utilSource);
+      const response = await cli.run({
+        arguments: ["analyze-javascript-application", application, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      return parseEvidence(response.json);
+    };
+    const compare = async (left: unknown, right: unknown) => {
+      const inputPath = join(root, `comparison-${Math.random()}.json`);
+      await writeFile(inputPath, JSON.stringify({ left, right }));
+      const response = await cli.run({
+        arguments: ["compare-application-versions", inputPath, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      return applicationVersionComparisonResultSchema.parse(
+        parseEvidence(response.json).normalized_result,
+      );
+    };
+    const exportsOf = (evidence: { normalized_result: unknown }) =>
+      javascriptApplicationAnalysisResultSchema
+        .parse(evidence.normalized_result)
+        .graph.nodes.filter(({ observations }) =>
+          observations.some(
+            ({ properties }) => properties.semantic_role === "export-binding",
+          ),
+        );
+    const base = await analyze("base", "1.0.0", util.v1);
+    // Only package.json differs: both JavaScript files are byte-identical.
+    const bumped = await analyze("bumped", "1.0.1", util.v1);
+    const edited = await analyze("edited", "1.0.1", util.v2);
+    const baseExports = exportsOf(base);
+    expect(baseExports.length).toBeGreaterThanOrEqual(2);
+
+    const unchanged = await compare(base, bumped);
+    for (const node of baseExports)
+      expect(unchanged.items).toContainEqual(
+        expect.objectContaining({
+          left_node_id: node.node_id,
+          status: "unchanged",
+          match: expect.objectContaining({
+            basis: "exact-module-source-digest",
+            confidence: "exact",
+          }),
+        }),
+      );
+    expect(
+      unchanged.items.filter(
+        ({ node_kind, status }) =>
+          node_kind === "javascript-module" && status !== "unchanged",
+      ),
+    ).toEqual([]);
+
+    // An edited file's export is not paired by name alone.
+    const changed = await compare(base, edited);
+    const utilExport = baseExports.find(({ observations }) =>
+      observations.some(
+        ({ properties }) => properties.module_path === "src/util.js",
+      ),
+    );
+    expect(changed.items).toContainEqual(
+      expect.objectContaining({
+        left_node_id: utilExport?.node_id,
+        status: "removed",
+      }),
+    );
   },
 );

@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -45,7 +45,7 @@ cliTest(
           operation: "extract_firmware",
           issues: [
             {
-              path: ["input", "range", missing],
+              path: ["range", missing],
               reason: "missing_argument",
             },
           ],

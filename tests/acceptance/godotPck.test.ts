@@ -7,11 +7,12 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   buildAliasedGodotPck,
   buildGodotPck,
+  buildGodotPck1,
   pckU64,
 } from "../fixtures/godotPck.js";
 import { elf } from "../../src/domain/binaryTarget.fixture.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
-import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {
@@ -33,12 +34,15 @@ const graphFrom = (reply: unknown) => {
   );
 };
 
-cliTest.for([2, 3, 4] as const)(
+cliTest.for([1, 2, 3, 4] as const)(
   "inspects and safely extracts format %s PCK through the compiled CLI",
   async (version, { cli }) => {
     const root = await createTestTempDirectory("rea-pck-cli-");
     const source = join(root, "game.pck");
-    await writeFile(source, buildGodotPck(version, members));
+    await writeFile(
+      source,
+      version === 1 ? buildGodotPck1(members) : buildGodotPck(version, members),
+    );
     const inspected = await cli.run({
       arguments: ["inspect-artifact", source, "--json"],
     });
@@ -67,16 +71,24 @@ cliTest.for([2, 3, 4] as const)(
         source_path: member.path,
         flags: 0,
       });
+      expect(row?.source_path).toBe(member.path);
       expect(row?.hash_status).toBe("verified");
     }
+    const outputRoot = join(root, "extracted");
     const extracted = await cli.run({
-      arguments: ["extract-artifact", source, "--json"],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
+      arguments: [
+        "extract-artifact",
+        source,
+        "--output-root",
+        outputRoot,
+        "--json",
+      ],
     });
     expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
     const result = artifactExtractionResultSchema.parse(
       parseEvidence(extracted.json).normalized_result,
     );
+    expect(result.output_root).toBe(outputRoot);
     expect(result.containment_verified).toBe(true);
     for (const member of members)
       expect(
@@ -85,13 +97,16 @@ cliTest.for([2, 3, 4] as const)(
   },
 );
 
-cliTest(
-  "reads an embedded pack while preserving the native carrier's content classification",
-  async ({ cli }) => {
+cliTest.for([1, 4] as const)(
+  "reads an embedded format %s pack while preserving the native carrier's content classification",
+  async (version, { cli }) => {
     const root = await createTestTempDirectory("rea-pck-embedded-cli-");
     const source = join(root, "game.x86_64");
-    const pack = buildGodotPck(4, members);
     const carrier = elf(2, 1, 62);
+    const pack =
+      version === 1
+        ? buildGodotPck1(members, { carrierBytes: carrier.length })
+        : buildGodotPck(4, members);
     const bytes = Buffer.concat([
       carrier,
       pack,
@@ -119,6 +134,72 @@ cliTest(
       embedded: true,
       pack_start: carrier.length,
       pack_end: carrier.length + pack.length,
+    });
+  },
+);
+
+cliTest(
+  "keeps native inventory when an incidental GDPC trailer does not point at a pack header",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pck-marker-candidate-");
+    const carrier = elf(2, 1, 62);
+    const candidates = [
+      Buffer.concat([carrier, Buffer.from("12345678ABCD", "ascii")]),
+      Buffer.concat([carrier, Buffer.from("12345678GDPC", "ascii")]),
+      Buffer.concat([
+        carrier,
+        Buffer.from("notpack!", "ascii"),
+        pckU64(8),
+        Buffer.from("GDPC", "ascii"),
+      ]),
+    ];
+
+    for (const [index, bytes] of candidates.entries()) {
+      const source = join(root, `candidate-${String(index)}.x86_64`);
+      await writeFile(source, bytes);
+      const reply = await cli.run({
+        arguments: ["inspect-artifact", source, "--json"],
+      });
+      expect(reply.exitCode, reply.stdout + reply.stderr).toBe(0);
+      const graph = graphFrom(reply.json);
+      expect(graph.manifest.root_format).toBe("elf");
+      expect(
+        graph.nodes.find(
+          (row) => row.artifact_id === graph.manifest.root_artifact_id,
+        )?.format,
+      ).toBe("elf");
+      expect(graph.occurrences).toHaveLength(1);
+    }
+  },
+);
+
+cliTest(
+  "refuses an unsupported version after an embedded trailer points at a PCK header",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pck-confirmed-malformed-");
+    const source = join(root, "unsupported.x86_64");
+    const pack = buildGodotPck(4, members);
+    pack.writeUInt32LE(5, 4);
+    await writeFile(
+      source,
+      Buffer.concat([
+        elf(2, 1, 62),
+        pack,
+        pckU64(pack.length),
+        Buffer.from("GDPC", "ascii"),
+      ]),
+    );
+
+    const reply = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(reply.exitCode).toBe(1);
+    expect(reply.json).toMatchObject({
+      code: "artifact_operation_failed",
+      details: {
+        reason: "unavailable",
+        detail: expect.stringContaining("Godot PCK format 5 is unsupported"),
+      },
     });
   },
 );
@@ -177,9 +258,10 @@ cliTest(
         source,
         "--integrity-policy",
         "record-and-continue",
+        "--output-root",
+        join(root, "extracted"),
         "--json",
       ],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
     });
     expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
     const result = artifactExtractionResultSchema.parse(
@@ -195,8 +277,8 @@ cliTest(
 cliTest(
   "retains encrypted-directory declarations without claiming an empty package",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-pck-encrypted-cli-");
-    const source = join(root, "encrypted.pck");
+    const root = await createTestTempDirectory("rea-pck-refusal-");
+    const source = join(root, "game.pck");
     const bytes = buildGodotPck(4, members, { packFlags: 3 });
     const directory = Number(bytes.readBigUInt64LE(32));
     bytes.fill(0xff, directory + 4);
@@ -219,10 +301,21 @@ cliTest(
       },
     });
     const extracted = await cli.run({
-      arguments: ["extract-artifact", source, "--json"],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
+      arguments: [
+        "extract-artifact",
+        source,
+        "--output-root",
+        join(root, "extracted"),
+        "--json",
+      ],
     });
     expect(extracted.exitCode).toBe(1);
+    expect(extracted.json).toMatchObject({
+      code: "unsupported_target",
+      message: expect.stringMatching(/\bencrypted\b/iu),
+      details: { path: source },
+    });
+    expect(await readdir(root)).toEqual(["game.pck"]);
   },
 );
 
@@ -263,12 +356,20 @@ cliTest(
     });
     const saved = await readEvidenceBundle(bundle);
     if (!saved.ok) throw saved.error;
-    const evidence = saved.value.records[0];
+    const evidence = saved.value.records.find(
+      (record) => record.operation === "inspect_artifact",
+    );
     if (evidence === undefined) throw new Error("Missing complete inspection");
     expect(graphFrom(evidence).occurrences).toHaveLength(3);
+    const inspection = artifactInspectionResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(saved.value.records).toContainEqual(
+      inspection.substeps[0]?.evidence,
+    );
     const before = await readFile(bundle);
     expect((await cli.run({ arguments: args })).exitCode).toBe(1);
-    expect(await readFile(bundle)).toEqual(before);
+    expect(Buffer.compare(await readFile(bundle), before)).toBe(0);
     await unlink(source);
     const query = join(root, "query.json");
     await writeFile(
@@ -301,11 +402,10 @@ cliTest(
       }),
     ]);
   },
-  30000,
 );
 
 cliTest(
-  "rejects repeated-range expansion before hashing members or creating extraction output",
+  "rejects repeated-range expansion without creating extraction output",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pck-expansion-");
     const source = join(root, "aliased.pck");
@@ -325,15 +425,21 @@ cliTest(
         expect(reply.exitCode, reply.stdout + reply.stderr).toBe(1);
         expect(reply.json).toMatchObject({
           code: "truncated",
+          retryable: true,
           details: {
             reason: "limit",
             truncated: true,
-            detail: expect.stringContaining("expansion budget"),
+            reader_limit: {
+              parameter: "artifact_limits.expanded_bytes",
+              effective_value: 268_435_456,
+              required_value: 268_697_600,
+              unit: "bytes",
+              can_increase: true,
+            },
           },
         });
         expect(await readdir(root)).toEqual(["aliased.pck"]);
       }
     }
   },
-  30000,
 );

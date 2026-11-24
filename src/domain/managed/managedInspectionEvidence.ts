@@ -1,5 +1,22 @@
-import { parseEvidence, type Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
+import { AnalysisInputError } from "../analysisErrorCore.js";
+import { EvidenceIntegrityError } from "../evidenceErrors.js";
+import { readEvidence, readEvidencePayload } from "../evidenceValidation.js";
+import { err, ok, type Result } from "../result.js";
 import type { z } from "zod";
+
+import {
+  managedModuleRow,
+  type ManagedModuleEvidenceFacts,
+} from "./managedModuleIdentity.js";
+
+interface ManagedScopedEvidenceFacts extends ManagedModuleEvidenceFacts {
+  readonly artifact: { readonly sha256: string };
+  readonly identity_scope?: {
+    readonly requires_artifact_sha256: string;
+    readonly requires_mvid: string | null;
+  };
+}
 
 /** Build-local metadata tokens join only under a known, matching module MVID. */
 export const managedTokenScopesMatch = (
@@ -11,46 +28,98 @@ export const managedTokenScopesMatch = (
   leftMvid.toLowerCase() === rightMvid.toLowerCase();
 
 /**
- * Parse managed inspection Evidence and bind its artifact to any available subject.
+ * Authenticate managed inspection Evidence and bind its artifact to any available subject.
  * A null subject remains valid and means there is no digest to cross-check.
  */
-export const parseManagedInspectionEvidence = <
-  Result extends {
-    readonly artifact: { readonly sha256: string };
-    readonly identity_scope?: {
-      readonly requires_artifact_sha256: string;
-      readonly requires_mvid: string | null;
-    };
-    readonly module?: { readonly mvid: string | null } | null;
-  },
+export const readManagedInspectionEvidence = <
+  Payload extends ManagedScopedEvidenceFacts,
 >(
   rawEvidence: unknown,
   operation: string,
-  schema: z.ZodType<Result>,
-): { readonly evidence: Evidence; readonly result: Result } => {
-  const evidence = parseEvidence(rawEvidence);
-  if (evidence.operation !== operation)
-    throw new TypeError(`Evidence operation is not ${operation}`);
-  const result = schema.parse(evidence.normalized_result);
-  const artifactSha256 = result.artifact.sha256;
-  const subjectSha256 = evidence.subject?.digest.sha256;
-  if (subjectSha256 !== undefined && artifactSha256 !== subjectSha256)
-    throw new TypeError(
-      `Managed Evidence ${operation} (${evidence.evidence_id}) subject SHA-256 ${subjectSha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
+  schema: z.ZodType<Payload>,
+  selection: {
+    readonly operation: string;
+    readonly path: readonly (string | number)[];
+  },
+): Result<
+  { readonly evidence: Evidence; readonly result: Payload },
+  AnalysisInputError | EvidenceIntegrityError
+> => {
+  const record = readEvidence(rawEvidence);
+  if (!record.ok) return record;
+  const evidence = record.value;
+  if (
+    evidence.operation !== operation ||
+    evidence.predicate_type !== "rea.analysis"
+  ) {
+    const message = `Expected rea.analysis ${operation} Evidence, received ${evidence.predicate_type} ${evidence.operation}`;
+    return err(
+      new AnalysisInputError(selection.operation, { userMessage: message }, [
+        { path: selection.path, reason: "invalid_value", message },
+      ]),
     );
+  }
+  const payload = readEvidencePayload(schema, evidence.normalized_result, {
+    within: ["normalized_result"],
+  });
+  if (!payload.ok) return payload;
+  const result = payload.value;
+  const artifactSha256 = result.artifact.sha256;
+  const subjectSha256 = evidenceFileTarget(evidence)?.sha256;
+  if (subjectSha256 !== undefined && artifactSha256 !== subjectSha256)
+    return err(
+      integrityFailure(
+        `Managed Evidence ${operation} (${evidence.evidence_id}) subject SHA-256 ${subjectSha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
+      ),
+    );
+  const scope = validateManagedTokenScope(
+    result,
+    operation,
+    evidence.evidence_id,
+  );
+  if (!scope.ok) return scope;
+  return ok({ evidence, result });
+};
+
+/** Bind recorded token scope to the artifact and module that gave it meaning. */
+export const validateManagedTokenScope = (
+  result: ManagedScopedEvidenceFacts,
+  operation: string,
+  evidenceId: string,
+): Result<void, EvidenceIntegrityError> => {
+  const artifactSha256 = result.artifact.sha256;
   const scope = result.identity_scope;
   if (scope !== undefined && scope.requires_artifact_sha256 !== artifactSha256)
-    throw new TypeError(
-      `Managed Evidence ${operation} (${evidence.evidence_id}) token scope SHA-256 ${scope.requires_artifact_sha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
+    return err(
+      integrityFailure(
+        `Managed Evidence ${operation} (${evidenceId}) token scope SHA-256 ${scope.requires_artifact_sha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
+      ),
     );
-  const moduleMvid = result.module?.mvid ?? null;
+  const metadata = result.metadata;
+  if (
+    metadata?.unresolved_module_name !== undefined &&
+    (result.module != null ||
+      metadata.table_row_counts.Module !== 1 ||
+      metadata.status !== "partial")
+  )
+    return err(
+      integrityFailure(
+        `Managed Evidence ${operation} (${evidenceId}) has conflicting Module identity or coverage for an unresolved name`,
+      ),
+    );
+  const moduleMvid = managedModuleRow(result)?.mvid ?? null;
   const scopedMvid = scope?.requires_mvid;
   if (
     scopedMvid !== undefined &&
     scopedMvid?.toLowerCase() !== moduleMvid?.toLowerCase()
   )
-    throw new TypeError(
-      `Managed Evidence ${operation} (${evidence.evidence_id}) token scope MVID ${String(scopedMvid)} does not match module MVID ${String(moduleMvid)}`,
+    return err(
+      integrityFailure(
+        `Managed Evidence ${operation} (${evidenceId}) token scope MVID ${String(scopedMvid)} does not match module MVID ${String(moduleMvid)}`,
+      ),
     );
-  return { evidence, result };
+  return ok(undefined);
 };
+
+const integrityFailure = (message: string): EvidenceIntegrityError =>
+  new EvidenceIntegrityError(message, { userMessage: message });

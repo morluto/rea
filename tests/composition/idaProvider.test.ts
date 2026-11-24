@@ -1,4 +1,6 @@
-import { rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { snapshotExecution } from "../../src/domain/analysisSnapshot.fixture.js";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -13,9 +15,12 @@ import {
 } from "../../src/domain/analysisSnapshot.js";
 import { createEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import { EnhancedTools } from "../../src/application/EnhancedTools.js";
-import { IDA_PROVIDER_IDENTITY } from "../../src/ida/IdaProviderCapabilities.js";
+import { IDA_DATABASE_TARGET_LIMITATION } from "../../src/ida/IdaProviderCapabilities.js";
+import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
+import { RecordingHexRaysIdaMcp } from "../fixtures/idaHexRaysMcp.js";
+import { IDA_PROVIDER_IDENTITY } from "../../src/ida/IdaProviderMetadata.js";
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { fat } from "../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -29,16 +34,27 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 
+const registerIda = async (
+  root: string,
+  registration: Record<string, unknown>,
+) => {
+  const path = join(root, "registration.json");
+  await writeFile(path, JSON.stringify(registration));
+  const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+  if (!config.ok) throw config.error;
+  return { config: config.value, path };
+};
+
 const reobservesExternallyMutableState = async (): Promise<void> => {
   const { root, target } = await createIdaTarget();
   roots.push(root);
-  const path = join(root, "registration.json");
-  await writeFile(path, JSON.stringify({ command: "fixture" }));
-  const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
-  if (!config.ok) throw config.error;
+  const { config } = await registerIda(root, {
+    command: "fixture",
+    protocol: "native",
+  });
   const producer = new RecordingIdaMcp(target);
   const session = createTestBinarySession(
-    new IdaProvider(config.value, {}, () => producer),
+    new IdaProvider(config, {}, () => producer),
   );
   expect((await session.open(target.path)).ok).toBe(true);
   const query = { procedure: "main", document: target.path };
@@ -70,7 +86,7 @@ const reobservesExternallyMutableState = async (): Promise<void> => {
       binding: snapshotBinding(profile),
       operation: "procedure_pseudo_code",
       parameters: query,
-      execution: cached,
+      execution: snapshotExecution(cached),
     }),
   );
   snapshot.value.evidence_bundle = createEvidenceBundle([
@@ -90,7 +106,7 @@ const reobservesExternallyMutableState = async (): Promise<void> => {
   const second = await session.execute("procedure_pseudo_code", query);
   expect(second.ok && second.value.result).toContain("99");
   expect(
-    producer.calls.filter(({ name }) => name === "decompile_function"),
+    producer.calls.filter(({ name }) => name === "decompile"),
   ).toHaveLength(2);
   await session.close();
   expect(producer.closes).toBe(1);
@@ -100,22 +116,21 @@ describe("IDA provider composition", () => {
   it("discovers without launching and commits adapter semantics without persisting credentials", async () => {
     const { root, target } = await createIdaTarget();
     roots.push(root);
-    const path = join(root, "registration.json");
-    await writeFile(
-      path,
-      JSON.stringify({
-        url: "http://127.0.0.1:8745/mcp",
-        headers: { Authorization: "Bearer private-fixture-token" },
-        mode: "headless",
-      }),
-    );
-    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
-    if (!config.ok) throw config.error;
+    const { config, path } = await registerIda(root, {
+      url: "http://127.0.0.1:8745/mcp",
+      headers: { Authorization: "Bearer private-fixture-token" },
+      mode: "headless",
+    });
     const producer = new RecordingIdaMcp(target, "headless");
-    const provider = new IdaProvider(config.value, {}, () => producer);
-    expect(await provider.inspectAvailability()).toMatchObject({
+    let allocations = 0;
+    const provider = new IdaProvider(config, {}, () => {
+      allocations += 1;
+      return producer;
+    });
+    const readiness = await provider.inspectReadinessSnapshot();
+    expect(readiness.availability).toMatchObject({
       status: "available",
-      diagnostics: { live_connection_probed: false },
+      diagnostics: { registration_path: path, live_connection_probed: false },
     });
     const resolution = await provider.resolveAnalysisProfile(target);
     if (!resolution.ok) throw resolution.error;
@@ -127,8 +142,9 @@ describe("IDA provider composition", () => {
     });
     expect(JSON.stringify(resolution)).not.toContain("private-fixture-token");
     expect(producer.connects).toBe(0);
+    expect(allocations).toBe(0);
     expect(
-      (await provider.inspectReadinessSnapshot()).capabilities.find(
+      readiness.capabilities.find(
         ({ operation }) => operation === "procedure_callers",
       )?.available,
     ).toBe(false);
@@ -140,26 +156,24 @@ describe("IDA provider composition", () => {
   it("rejects unsupported target kinds and reports incomplete upstream profiles on first analysis", async () => {
     const { root, target } = await createIdaTarget();
     roots.push(root);
-    const path = join(root, "registration.json");
-    await writeFile(
-      path,
-      JSON.stringify({
-        command: "fixture",
-        mode: "headless",
-        workspaceRoot: root,
-      }),
-    );
-    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
-    if (!config.ok) throw config.error;
+    const { config } = await registerIda(root, {
+      command: "fixture",
+      mode: "headless",
+      workspaceRoot: root,
+    });
     const producer = new RecordingIdaMcp(target);
-    const provider = new IdaProvider(config.value, {}, () => producer);
+    const provider = new IdaProvider(config, {}, () => producer);
     expect(
-      provider.inspectTargetSupport({
-        path: target.path,
-        sha256: target.sha256,
-        kind: "database",
-        format: "analysis-database",
-      }),
+      await provider.inspectTargetSupportWithOptions(
+        {
+          path: target.path,
+          sha256: target.sha256,
+          kind: "database",
+          format: "analysis-database",
+          databaseEngine: "ida",
+        },
+        {},
+      ),
     ).toMatchObject({ status: "unsupported", code: "target_kind_unsupported" });
     const session = createTestBinarySession(provider);
     expect((await session.open(target.path)).ok).toBe(true);
@@ -194,19 +208,19 @@ describe("IDA provider composition", () => {
 describe("IDA provider selection cancellation", () => {
   it("restores a cancelled replacement through the prior selected registration binding", async () => {
     const first = await createIdaTarget();
-    const second = await createIdaTarget();
+    const second = await createIdaTarget("arm64");
     roots.push(first.root, second.root);
-    const path = join(first.root, "registration.json");
-    await writeFile(path, JSON.stringify({ command: "first-server" }));
-    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
-    if (!config.ok) throw config.error;
+    const { config, path } = await registerIda(first.root, {
+      command: "first-server",
+      protocol: "native",
+    });
     const factorySelections: string[] = [];
     const controller = new AbortController();
     const cancellationReason = new Error(
       "cancel after retiring previous IDA client",
     );
     let cancelWhenPreviousCloses = false;
-    const provider = new IdaProvider(config.value, {}, (registration) => {
+    const provider = new IdaProvider(config, {}, (registration) => {
       const command =
         "command" in registration ? registration.command : registration.url;
       factorySelections.push(command);
@@ -226,17 +240,24 @@ describe("IDA provider selection cancellation", () => {
       (await session.execute("procedure_pseudo_code", { procedure: "main" }))
         .ok,
     ).toBe(true);
-    await writeFile(path, JSON.stringify({ command: "replacement-server" }));
+    await writeFile(
+      path,
+      JSON.stringify({ command: "replacement-server", protocol: "native" }),
+    );
     cancelWhenPreviousCloses = true;
     const replacement = await session.open(second.target.path, {
       signal: controller.signal,
     });
-    expect(replacement.ok).toBe(false);
     expect(replacement).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisCancelledError", cause: cancellationReason },
+      error: { _tag: "AnalysisCancelledError" },
     });
-    expect(session.activeTarget()?.sha256).toBe(first.target.sha256);
+    if (replacement.ok) throw new Error("Expected cancellation");
+    expect(replacement.error.cause).toBe(cancellationReason);
+    expect(session.activeTarget()).toMatchObject({
+      path: await realpath(first.target.path),
+      sha256: first.target.sha256,
+    });
     expect(
       (await session.execute("procedure_pseudo_code", { procedure: "main" }))
         .ok,
@@ -272,6 +293,8 @@ describe("IDA provider selection cancellation", () => {
       ok: false,
       error: { _tag: "AnalysisCancelledError", cause: reason },
     });
+    if (profile.ok) throw new Error("Expected cancellation");
+    expect(profile.error.cause).toBe(reason);
     expect(runCalls).toBe(0);
   });
 });
@@ -279,19 +302,15 @@ describe("IDA provider selection cancellation", () => {
 describe("IDA universal Mach-O target identity", () => {
   const openUniversal = async (registration: Record<string, unknown>) => {
     const root = await createTestTempDirectory("rea-ida-universal-");
-    roots.push(root);
     const input = join(root, "universal");
     // x86_64 and arm64 slices share one whole-file digest.
     await writeFile(input, fat([0x01000007, 0x0100000c]));
     const resolved = await parseBinaryTarget(input);
     if (!resolved.ok) throw resolved.error;
-    const path = join(root, "registration.json");
-    await writeFile(
-      path,
-      JSON.stringify({ ...registration, workspaceRoot: root }),
-    );
-    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
-    if (!config.ok) throw config.error;
+    const { config } = await registerIda(root, {
+      ...registration,
+      workspaceRoot: root,
+    });
     const producer = new RecordingIdaMcp(
       resolved.value,
       registration.mode === "headless" ? "headless" : "attached",
@@ -300,7 +319,7 @@ describe("IDA universal Mach-O target identity", () => {
     const session = new BinarySession(
       SessionProviderRouter.selectable(
         new AnalysisProviderRegistry([
-          new IdaProvider(config.value, {}, () => producer),
+          new IdaProvider(config, {}, () => producer),
         ]),
         [],
       ),
@@ -313,9 +332,12 @@ describe("IDA universal Mach-O target identity", () => {
   };
 
   it.each([
-    { profile: "legacy attached", registration: { command: "fixture" } },
     {
-      profile: "native attached",
+      profile: "native stdio attached",
+      registration: { command: "fixture", protocol: "native" },
+    },
+    {
+      profile: "native HTTP attached",
       registration: {
         url: "http://127.0.0.1:13337/mcp",
         mode: "attached",
@@ -345,12 +367,13 @@ describe("IDA universal Mach-O target identity", () => {
     },
   );
 
-  it("keeps admitting headless analysis, which thins the selected slice", async () => {
-    const { session, opened } = await openUniversal({
+  it("admits universal Mach-O for headless analysis without opening a database", async () => {
+    const { producer, session, opened } = await openUniversal({
       command: "fixture",
       mode: "headless",
     });
     expect(opened.ok).toBe(true);
+    expect(producer.connects).toBe(0);
     expect((await session.close()).ok).toBe(true);
   });
 });
@@ -359,13 +382,13 @@ describe("IDA binary_overview execution", () => {
   it("uses the bound IDA document and omits unsupported segment coverage", async () => {
     const { root, target } = await createIdaTarget();
     roots.push(root);
-    const path = join(root, "registration.json");
-    await writeFile(path, JSON.stringify({ command: "fixture" }));
-    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
-    if (!config.ok) throw config.error;
+    const { config } = await registerIda(root, {
+      command: "fixture",
+      protocol: "native",
+    });
     const producer = new RecordingIdaMcp(target);
     const session = createTestBinarySession(
-      new IdaProvider(config.value, {}, () => producer),
+      new IdaProvider(config, {}, () => producer),
     );
     expect((await session.open(target.path)).ok).toBe(true);
     const tools = new EnhancedTools(session);
@@ -383,5 +406,132 @@ describe("IDA binary_overview execution", () => {
     const procedures = await session.execute("list_procedures", {});
     expect(procedures.ok).toBe(true);
     expect((await session.close()).ok).toBe(true);
+  });
+});
+
+describe("IDA database targets", () => {
+  const hexRaysSession = async () => {
+    const root = await createTestTempDirectory("rea-ida-database-");
+    const { config } = await registerIda(root, {
+      command: "uvx",
+      args: ["ida-mcp", "stdio"],
+      mode: "headless",
+      protocol: "hexrays",
+      workspaceRoot: root,
+    });
+    const bytes = Buffer.concat([
+      Buffer.from("IDA2", "latin1"),
+      Buffer.alloc(60, 7),
+    ]);
+    const path = await realpath(root).then((dir) =>
+      join(dir, "target.exe.i64"),
+    );
+    await writeFile(path, bytes);
+    const target: BinaryTarget = {
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      kind: "database",
+      format: "analysis-database",
+      databaseEngine: "ida",
+    };
+    const producer = new RecordingHexRaysIdaMcp(target);
+    producer.recordedInputPath = "/original/target.exe";
+    const provider = new IdaProvider(config, {}, () => producer);
+    return {
+      root,
+      path,
+      bytes,
+      target,
+      producer,
+      provider,
+      session: new BinarySession(
+        SessionProviderRouter.selectable(
+          new AnalysisProviderRegistry([provider]),
+          [],
+        ),
+      ),
+    };
+  };
+
+  it("analyzes a private database copy through idat and leaves the selected database unchanged", async () => {
+    const { root, path, bytes, target, producer, provider, session } =
+      await hexRaysSession();
+    producer.openBackend = "idat";
+    expect(
+      provider.inspectTargetSupport({
+        path: join(root, "sample.hop"),
+        sha256: "a".repeat(64),
+        kind: "database",
+        format: "analysis-database",
+        databaseEngine: "hopper",
+      }),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "target_format_unsupported",
+    });
+    // The registration protocol decides database support, so only the
+    // registration-aware check can admit an IDA database.
+    expect(provider.inspectTargetSupport(target)).toMatchObject({
+      status: "unknown",
+    });
+    expect(
+      await provider.inspectTargetSupportWithOptions(target, {}),
+    ).toMatchObject({ status: "supported" });
+
+    const opened = await session.open(path, { providerId: "ida" });
+    expect(opened).toMatchObject({
+      ok: true,
+      value: { kind: "database", databaseEngine: "ida" },
+    });
+    const listed = await session.execute("list_procedures", {});
+    if (!listed.ok) throw listed.error;
+    expect(listed.value.limitations).toContain(IDA_DATABASE_TARGET_LIMITATION);
+    const open = producer.calls.find(({ name }) => name === "open_database");
+    expect(open?.args.path).not.toBe(path);
+    expect(String(open?.args.path).replaceAll("\\", "/")).toMatch(
+      /rea-ida-[^/]+\/target\.exe\.i64$/u,
+    );
+
+    expect((await session.close()).ok).toBe(true);
+    // The worker repacked only its private copy, which REA then removed.
+    expect(producer.leases.size).toBe(0);
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+    expect(
+      (await readdir(root)).filter((name) => name.startsWith("rea-ida-")),
+    ).toEqual([]);
+  });
+
+  it("refuses a signature-recognized database without the upstream filename suffix before opening it", async () => {
+    const { root, bytes, producer, session } = await hexRaysSession();
+    const path = join(root, "saved-database");
+    await writeFile(path, bytes);
+
+    const opened = await session.open(path, { providerId: "ida" });
+    expect(opened).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderSelectionError",
+        rejections: [
+          {
+            providerId: "ida",
+            code: "target_format_unsupported",
+            reason: expect.stringContaining(".idb or .i64"),
+          },
+        ],
+      },
+    });
+    expect(producer.calls).toEqual([]);
+  });
+
+  it("binds the database by its opened path, not the input it records", async () => {
+    const { path, producer, session } = await hexRaysSession();
+    expect((await session.open(path, { providerId: "ida" })).ok).toBe(true);
+    expect((await session.execute("list_procedures", {})).ok).toBe(true);
+    producer.reads.idbPath = "/elsewhere/other.i64";
+    const moved = await session.execute("list_procedures", {});
+    expect(moved.ok).toBe(false);
+    if (!moved.ok)
+      expect(moved.error.message).toContain("input identity changed");
+    await session.close();
   });
 });

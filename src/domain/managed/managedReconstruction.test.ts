@@ -1,12 +1,13 @@
+import { unknownTarget } from "../targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../evidence.js";
 import { managedReconstructionImportInputSchema } from "./managedReconstruction.js";
 
 describe("managed reconstruction import input", () => {
-  it("accepts more than the former 50-method and 100-note ceilings", () => {
+  it("accepts more than 50 methods and 100 notes", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_managed_members",
@@ -51,7 +52,7 @@ describe("managed reconstruction import input", () => {
 
   it("accepts decompiler text and metadata without arbitrary length ceilings", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_managed_members",

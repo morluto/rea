@@ -1,12 +1,13 @@
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 
 const analyzeFailure = async (input: Record<string, unknown>) => {
   const result = await analyzeJavaScriptApplication(input);
@@ -22,7 +23,7 @@ const application = async () => {
   return { root, directory };
 };
 
-describe("JavaScript application input selection", () => {
+const registerSelectedPathResolutionTests = (): void => {
   it("preserves the selected path and host reason for an overlong name", async () => {
     const { root } = await application();
     const longPath = join(root, "x".repeat(300));
@@ -90,6 +91,10 @@ describe("JavaScript application input selection", () => {
       expect(loopError).not.toEqual(chainError);
     },
   );
+};
+
+describe("JavaScript application input selection", () => {
+  registerSelectedPathResolutionTests();
 
   it("reports a missing input path as invalid input, not an artifact read failure", async () => {
     const { root } = await application();
@@ -126,6 +131,71 @@ describe("JavaScript application input selection", () => {
     });
   });
 
+  it("refuses a directory whose complete inventory has no JavaScript application inputs", async () => {
+    const { root } = await application();
+    const build = join(root, "build");
+    await mkdir(join(build, "CMakeFiles"), { recursive: true });
+    await writeFile(join(build, "tool.exe"), pe(0x8664));
+    await writeFile(join(build, "runtime.dll"), pe(0x8664, 64, 0x2002));
+    await writeFile(join(build, "ctest.json"), '{"tests":[]}');
+    await writeFile(join(build, "CMakeFiles", "cache.txt"), "x\n");
+
+    const projected = await analyzeFailure({ input_path: build });
+    expect(projected).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "analyze_javascript_application",
+        related_operations: [
+          "inspect_desktop_application",
+          "audit_release_exposure",
+          "inspect_artifact",
+          "open_binary",
+        ],
+        diagnostics: {
+          inventoried_entries: 4,
+          entries_by_format: { file: 2, pe: 2 },
+          json_files: 1,
+          native_addon_files: 0,
+        },
+      },
+    });
+    expect(projected.remediation.action).toContain("entries_by_format");
+    expect(JSON.stringify(projected)).not.toContain("tool.exe");
+  });
+
+  it("analyzes an empty directory with an explicit no-input limitation", async () => {
+    const { root } = await application();
+    const empty = join(root, "empty");
+    await mkdir(join(empty, "nested"), { recursive: true });
+
+    const result = await analyzeJavaScriptApplication({ input_path: empty });
+    if (!result.ok) throw result.error;
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining("No JavaScript inputs were found"),
+    );
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining("inspect_desktop_application"),
+    );
+  });
+
+  it.each([
+    ["an HTML page", "index.html", "<!doctype html><p>x</p>\n"],
+    ["a package manifest", "package.json", '{"name":"app"}'],
+    ["a source map", "app.js.map", '{"version":3,"sources":[],"mappings":""}'],
+  ])(
+    "analyzes a directory whose only application input is %s",
+    async (_label, name, text) => {
+      const { root } = await application();
+      const directory = join(root, "only");
+      await mkdir(directory);
+      await writeFile(join(directory, name), text);
+      await writeFile(join(directory, "data.json"), "{}");
+      expect(
+        (await analyzeJavaScriptApplication({ input_path: directory })).ok,
+      ).toBe(true);
+    },
+  );
+
   it.each([
     ["a directory", "directory", "asar"],
     ["an .asar file", "asar", "directory"],
@@ -154,17 +224,32 @@ describe("JavaScript application input selection", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "reports an unreadable selected directory as a host access denial",
-    async () => {
+  it
+    .skipIf(process.platform === "win32" || process.getuid?.() === 0)
+    .each([0o000, 0o400])(
+    "reports denied selected-directory read/search access as a host denial (mode %s)",
+    async (mode) => {
       const { directory } = await application();
-      await chmod(directory, 0o000);
-      onTestFinished(() => chmod(directory, 0o700));
-
-      expect(await analyzeFailure({ input_path: directory })).toMatchObject({
-        code: "access_denied",
-        details: { path: directory, system_code: "EACCES" },
-      });
+      expect(
+        (await analyzeJavaScriptApplication({ input_path: directory })).ok,
+      ).toBe(true);
+      await chmod(directory, mode);
+      try {
+        expect(await analyzeFailure({ input_path: directory })).toMatchObject({
+          code: "access_denied",
+          category: "unavailable",
+          details: {
+            path: directory,
+            system_code: "EACCES",
+            boundary: "filesystem-read",
+          },
+        });
+      } finally {
+        await chmod(directory, 0o700);
+      }
+      expect(
+        (await analyzeJavaScriptApplication({ input_path: directory })).ok,
+      ).toBe(true);
     },
   );
 });

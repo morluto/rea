@@ -1,5 +1,5 @@
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { evidenceEffects, toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import {
   browserExtensionSchema,
@@ -10,7 +10,9 @@ import {
 export const BROWSER_EXTENSION_TOOL_CONTRACTS = [
   {
     name: "inspect_browser_extension",
-    ...toolContractMetadata("inspect_browser_extension"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_browser_extension", evidenceEffects),
     kind: "artifact-provider",
     description:
       "Inspect one explicit local CRX2, CRX3, XPI, ZIP, or unpacked manifest.json. Returns the declared manifest surface: manifest version, permissions, host permissions, content-script matches, background entry, Gecko id, action keys, and unknown top-level keys, with artifact SHA-256 Evidence. CRX header lengths are measured; signatures are not verified. Extension code, locale catalogs, and runtime grants remain unexamined. Reads a stable regular file. A directory is not an input. Malformed containers and exhausted budgets return no partial success. Portable on supported Node hosts; no browser or store is required.",

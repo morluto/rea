@@ -13,11 +13,12 @@ const script = fileURLToPath(
 const repository = "example/rea";
 const repositoryId = 1;
 const now = Date.now();
+const headSha = "a".repeat(40);
 
 function artifact(id: number, overrides: Record<string, unknown> = {}) {
   return {
     id: id + 100,
-    name: "test-timings",
+    name: "test-timings-full",
     expired: false,
     created_at: new Date(now - 60_000).toISOString(),
     workflow_run: {
@@ -25,6 +26,7 @@ function artifact(id: number, overrides: Record<string, unknown> = {}) {
       repository_id: repositoryId,
       head_repository_id: repositoryId,
       head_branch: "main",
+      head_sha: headSha,
     },
     ...overrides,
   };
@@ -40,6 +42,7 @@ function run(id: number, overrides: Record<string, unknown> = {}) {
     created_at: new Date(now - 120_000).toISOString(),
     head_branch: "main",
     head_repository: { full_name: repository },
+    head_sha: headSha,
     ...overrides,
   };
 }
@@ -51,6 +54,8 @@ async function invoke(
     apiError?: boolean;
     repository?: string;
     repositoryId?: string;
+    tier?: string;
+    successfulRuns?: unknown[];
   } = {},
 ) {
   const directory = await createTestTempDirectory("rea-ci-test-history-");
@@ -59,7 +64,14 @@ async function invoke(
   const fixture = join(directory, "api.json");
   const calls = join(directory, "api-calls");
   const output = join(directory, "github-output");
-  await writeFile(fixture, JSON.stringify({ artifacts, runs }));
+  await writeFile(
+    fixture,
+    JSON.stringify({
+      artifacts,
+      runs,
+      successfulRuns: options.successfulRuns ?? [],
+    }),
+  );
   await writeFile(output, "");
   await writeFile(calls, "");
   const fakeGh = join(fakeBin, "gh");
@@ -71,9 +83,11 @@ async function invoke(
       'if [ "$GH_API_ERROR" = "true" ]; then exit 1; fi',
       'if [ "$4" = "repos/example/rea/actions/artifacts" ]; then',
       '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({artifacts:x.artifacts}));\'',
+      'elif [ "$4" = "repos/example/rea/actions/workflows/ci.yml/runs" ]; then',
+      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({workflow_runs:x.successfulRuns}));\'',
       "else",
       '  run_id="${4##*/}"',
-      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify(x.runs[Number(process.argv[1])] ?? {}));\' "$run_id"',
+      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); const run=x.runs[Number(process.argv[1])]; if(run===null){console.error("gh: Not Found (HTTP 404)"); process.exit(1);} process.stdout.write(JSON.stringify(run ?? {}));\' "$run_id"',
       "fi",
       "",
     ].join("\n"),
@@ -92,6 +106,7 @@ async function invoke(
       CI_REPOSITORY: options.repository ?? repository,
       CI_REPOSITORY_ID: options.repositoryId ?? String(repositoryId),
       CI_DEFAULT_BRANCH: "main",
+      CI_TIMING_TIER: options.tier ?? "",
       GITHUB_OUTPUT: output,
     },
   });
@@ -120,41 +135,59 @@ it("selects the latest trusted full run that actually published timing history",
       14: run(14, { path: ".github/workflows/release.yml" }),
       11: run(11, { event: "workflow_dispatch" }),
     },
+    { tier: "full" },
   );
 
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "11" });
-  expect(output).toBe("run-id=11\n");
-  expect(calls).toContain("name=test-timings");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "11",
+    artifact_name: "test-timings-full",
+  });
+  expect(output).toBe("run-id=11\nartifact-name=test-timings-full\n");
+  expect(calls).toContain("name=test-timings-full");
   expect(calls).toContain("per_page=100");
+  expect(calls).not.toContain("actions/runs/13");
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(3);
   expect(calls).not.toContain("actions/workflows");
 });
 
-it("rejects expired, foreign, old, and non-full run candidates", async () => {
+it("rejects expired, old, and pull-request candidates", async () => {
   const { result, output } = await invoke(
     [
       artifact(15, { expired: true }),
-      artifact(14, {
-        workflow_run: { ...artifact(14).workflow_run, head_repository_id: 2 },
-      }),
       artifact(13, {
         created_at: new Date(now - 31 * 24 * 60 * 60 * 1000).toISOString(),
       }),
       artifact(12),
     ],
     {
+      15: run(15),
+      13: run(13),
       12: run(12, { event: "pull_request" }),
     },
+    { tier: "full" },
   );
 
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
-  expect(output).toBe("run-id=\n");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
 });
 
 it("writes an empty run id when GitHub history is unavailable", async () => {
-  const { result, output } = await invoke([], {}, { apiError: true });
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
-  expect(output).toBe("run-id=\n");
+  const { result, output } = await invoke(
+    [],
+    {},
+    {
+      apiError: true,
+      tier: "full",
+    },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
 });
 
 it("bounds run lookups to five artifacts even when inventory has more", async () => {
@@ -167,22 +200,224 @@ it("bounds run lookups to five artifacts even when inventory has more", async ()
         run(id, index < 5 ? { conclusion: "failure" } : {}),
       ]),
     ),
+    { tier: "full" },
   );
 
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(5);
 });
 
-it("returns empty history without querying for an invalid repository identity", async () => {
-  const { result, output, calls } = await invoke(
-    [],
-    {},
+it.each([
+  { repository: "owner/repo?per_page=100", repositoryId: "1" },
+  { repository: "example/rea", repositoryId: "not-an-id" },
+])(
+  "returns empty history without querying for an invalid repository identity: %j",
+  async (identity) => {
+    const { result, output, calls } = await invoke(
+      [],
+      {},
+      { ...identity, tier: "full" },
+    );
+    expect(JSON.parse(result.stdout)).toEqual({
+      run_id: "",
+      artifact_name: "",
+    });
+    expect(output).toBe("run-id=\nartifact-name=\n");
+    expect(calls).toBe("");
+  },
+);
+
+it("selects fast history without reading the full-tier artifact", async () => {
+  const { result, calls } = await invoke(
+    [
+      artifact(32, {
+        created_at: new Date(now - 30_000).toISOString(),
+      }),
+      artifact(31, {
+        name: "test-timings-fast",
+        created_at: new Date(now - 90_000).toISOString(),
+      }),
+      artifact(30, {
+        name: "test-timings-fast",
+        created_at: new Date(now - 20_000).toISOString(),
+        workflow_run: {
+          ...artifact(30).workflow_run,
+          head_branch: "feature",
+        },
+      }),
+    ],
     {
-      repository: "owner/repo?per_page=100",
-      repositoryId: "not-an-id",
+      32: run(32, { event: "schedule" }),
+      31: run(31, { event: "push" }),
+    },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "31",
+    artifact_name: "test-timings-fast",
+  });
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).not.toContain("name=test-timings-full");
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(1);
+});
+
+it("ignores pull-request fast history instead of borrowing another artifact", async () => {
+  const { result, calls } = await invoke(
+    [artifact(41, { name: "test-timings-fast" }), artifact(40)],
+    {
+      41: run(41, { event: "pull_request" }),
+      40: run(40, { event: "workflow_dispatch" }),
+    },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).not.toContain("name=test-timings-full");
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(1);
+});
+
+it("leaves fast history empty when only full-tier history was published", async () => {
+  const { result, output, calls } = await invoke(
+    [artifact(70)],
+    { 70: run(70, { event: "schedule" }) },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).not.toContain("name=test-timings-full");
+  expect(calls).not.toMatch(/actions\/runs\//u);
+});
+
+it("does not query when the tier has no timing artifact", async () => {
+  const { result, output, calls } = await invoke([artifact(71)], {
+    71: run(71, { event: "schedule" }),
+  });
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
+  expect(calls).toBe("");
+});
+
+it("selects full-tier history without using a newer fast artifact", async () => {
+  const { result } = await invoke(
+    [
+      artifact(61, {
+        name: "test-timings-fast",
+        created_at: new Date(now - 10_000).toISOString(),
+      }),
+      artifact(60, {
+        name: "test-timings-full",
+        created_at: new Date(now - 80_000).toISOString(),
+      }),
+    ],
+    {
+      61: run(61, { event: "push" }),
+      60: run(60, { event: "schedule" }),
+    },
+    { tier: "full" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "60",
+    artifact_name: "test-timings-full",
+  });
+});
+
+it("uses the next valid timing run when one listed run disappears", async () => {
+  const { result, calls } = await invoke(
+    [
+      artifact(81, { created_at: new Date(now - 30_000).toISOString() }),
+      artifact(80),
+      artifact(79),
+    ],
+    { 81: null, 80: run(80), 79: run(79) },
+    { tier: "full" },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "80",
+    artifact_name: "test-timings-full",
+  });
+  expect(calls).toContain("actions/runs/81");
+  expect(calls).toContain("actions/runs/80");
+  expect(calls).not.toContain("actions/runs/79");
+});
+
+it("finds an older successful timing artifact beyond five unsuccessful runs", async () => {
+  const newest = [107, 106, 105, 104, 103];
+  const { result, calls } = await invoke(
+    [...newest, 102, 101, 100].map((id) =>
+      artifact(id, {
+        created_at: new Date(now - (108 - id) * 1000).toISOString(),
+      }),
+    ),
+    Object.fromEntries(
+      newest.map((id) => [id, run(id, { conclusion: "failure" })]),
+    ),
+    {
+      tier: "full",
+      successfulRuns: [
+        run(999), // A successful run without this timing artifact.
+        run(102, { head_repository: { full_name: "fork/rea" } }),
+        run(100),
+        run(101),
+      ],
     },
   );
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
-  expect(output).toBe("run-id=\n");
-  expect(calls).toBe("");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "101",
+    artifact_name: "test-timings-full",
+  });
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(5);
+  expect(calls.match(/actions\/workflows\/ci\.yml\/runs/gu)).toHaveLength(1);
+  expect(calls).toContain("branch=main");
+  expect(calls).toContain("status=success");
+});
+
+it.each([
+  ["the commit SHAs differ", headSha, "b".repeat(40)],
+  ["both commit SHAs are omitted", undefined, undefined],
+  ["both commit SHAs are malformed", "invalid-sha", "invalid-sha"],
+])("skips newer timing history when %s", async (_, artifactSha, runSha) => {
+  const unverifiedArtifact = artifact(51, {
+    created_at: new Date(now - 30_000).toISOString(),
+    workflow_run: { ...artifact(51).workflow_run, head_sha: artifactSha },
+  });
+  const unverifiedRun = run(51, { head_sha: runSha });
+  const [fallback, empty] = await Promise.all([
+    invoke(
+      [unverifiedArtifact, artifact(50)],
+      { 51: unverifiedRun, 50: run(50) },
+      {
+        tier: "full",
+      },
+    ),
+    invoke([unverifiedArtifact], { 51: unverifiedRun }, { tier: "full" }),
+  ]);
+
+  expect(JSON.parse(fallback.result.stdout)).toEqual({
+    run_id: "50",
+    artifact_name: "test-timings-full",
+  });
+  expect(fallback.output).toBe("run-id=50\nartifact-name=test-timings-full\n");
+  expect(JSON.parse(empty.result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(empty.output).toBe("run-id=\nartifact-name=\n");
 });

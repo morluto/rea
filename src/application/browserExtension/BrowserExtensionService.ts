@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { BrowserExtensionPort } from "./BrowserExtensionPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { BrowserExtensionPort } from "../../ports/browserExtension/BrowserExtensionPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -31,8 +31,11 @@ export class BrowserExtensionService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "inspect_browser_extension";
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(operation));
+    const signal = options?.signal;
+    if (signal?.aborted === true)
+      return err(
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      );
     const input = inspectBrowserExtensionInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(

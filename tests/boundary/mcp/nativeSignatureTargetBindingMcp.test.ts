@@ -1,4 +1,5 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -16,6 +17,91 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+it("keeps admitted bundle facts in a completed signature report when cleanup must retry", async () => {
+  const root = await createTestTempDirectory("rea-bundle-signature-retry-");
+  const bundle = join(root, "Probe.app");
+  const programs = join(bundle, "Contents", "MacOS");
+  const infoPlist = join(bundle, "Contents", "Info.plist");
+  const plist =
+    "<plist><dict><key>CFBundleExecutable</key><string>Probe</string></dict></plist>";
+  await mkdir(programs, { recursive: true });
+  await writeFile(join(programs, "Probe"), machoImage({}));
+  await writeFile(infoPlist, plist);
+
+  const snapshot = join(root, "signature-snapshot");
+  let allowClose = false;
+  const provider = new NativeMacOSProvider(
+    {},
+    new NativeFixtureRunner(),
+    "darwin",
+    undefined,
+    async () => {
+      await mkdir(snapshot, { mode: 0o700 });
+      return {
+        path: snapshot,
+        close: async () => {
+          if (!allowClose)
+            throw new Error("controlled signature cleanup refusal");
+          await rm(snapshot, { recursive: true });
+        },
+      };
+    },
+  );
+  const server = createServer({
+    kind: "session",
+    session: createTestBinarySession(provider),
+  });
+  const client = new Client(
+    { name: "bundle-signature-cleanup-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path: bundle },
+    });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const failed = await client.callTool({
+      name: "inspect_signature",
+      arguments: {},
+    });
+    const error = parseMcpToolError(failed).error;
+    const report = {
+      signed: true,
+      bundle_provenance: {
+        canonical_path: bundle,
+        layout: "contents",
+        info_plist_path: infoPlist,
+        info_plist_sha256: createHash("sha256").update(plist).digest("hex"),
+        declared_executable: "Probe",
+      },
+    };
+    expect(error.code).toBe("cleanup_incomplete");
+    expect(error.details).toMatchObject({
+      cleanup: "incomplete",
+      resources: [snapshot],
+    });
+    expect((await lstat(snapshot)).isDirectory()).toBe(true);
+    expect(error.details).toMatchObject({
+      partial_observation: report,
+    });
+    allowClose = true;
+    expect(
+      (await client.callTool({ name: "close_binary", arguments: {} })).isError,
+    ).not.toBe(true);
+    await expect(lstat(snapshot)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    allowClose = true;
+    await client.close();
+    await server.close();
+  }
+});
 
 it("keeps a failed snapshot descriptor and root together through MCP close and recovery", async () => {
   const root = await createTestTempDirectory("rea-signature-order-mcp-");
@@ -46,7 +132,10 @@ it("keeps a failed snapshot descriptor and root together through MCP close and r
     kind: "session",
     session: createTestBinarySession(provider),
   });
-  const client = new Client({ name: "signature-order-test", version: "1" });
+  const client = new Client(
+    { name: "signature-order-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const original = OwnedFileHandle.prototype.close;
@@ -144,7 +233,10 @@ it.each(["mach-o", "mach-o-universal"] as const)(
       new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin"),
     );
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "signature-binding-test", version: "1" });
+    const client = new Client(
+      { name: "signature-binding-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -177,7 +269,7 @@ it.each(["mach-o", "mach-o-universal"] as const)(
         JSON.stringify(inspected.structuredContent),
       ).not.toBe(true);
       expect(inspected.structuredContent).toMatchObject({
-        subject: { format },
+        subject: { identity: { kind: "file", format } },
         normalized_result: { signed: true, identifier: "com.example.fixture" },
       });
     } finally {

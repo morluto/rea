@@ -8,11 +8,13 @@ import type {
   ElectronStaticValue,
   ElectronUtilityProcessFinding,
   ElectronWebPreference,
+  ElectronWindowConstructor,
 } from "./electronStaticAnalysisTypes.js";
 import { contextBridgeExposureArguments } from "./javascriptContextBridgeExposure.js";
 import {
   boundedExpression,
   collectContextBridgeMembers,
+  electronCandidateAuthority,
   electronCalleePath,
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
@@ -32,10 +34,31 @@ import {
 } from "./javascriptAstValues.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 import type { JavaScriptBindingIndex } from "./javascriptSemanticState.js";
+import { optionsAfterOptionalArgv } from "./javascriptSemanticExpressionShapes.js";
 import {
   hasElectronOptionObjectCandidate,
   resolveElectronOptionObject,
 } from "./electronStaticOptionObjects.js";
+import {
+  ELECTRON_WINDOW_CONSTRUCTOR_SURFACES,
+  electronWindowConstructor,
+  type ElectronWindowConstructorSurface,
+} from "./electronWindowConstructorSurfaces.js";
+
+const constructorSurfaces = (
+  constructor: ElectronWindowConstructor,
+): ElectronWindowConstructorSurface =>
+  ELECTRON_WINDOW_CONSTRUCTOR_SURFACES[constructor];
+
+/** The modeled window constructor a `new` callee names, if any. */
+const electronWindowConstructorOf = (
+  callee: t.Node,
+  context: JavaScriptFindingContext,
+): ElectronWindowConstructor | undefined => {
+  const path = electronCalleePath(callee, context);
+  const name = path?.length === 1 ? path[0] : undefined;
+  return name === undefined ? undefined : electronWindowConstructor(name);
+};
 
 /** Inspect BrowserWindow, contextBridge, and utility-process syntax. */
 export const inspectElectronBrowserNode = (
@@ -43,11 +66,15 @@ export const inspectElectronBrowserNode = (
   context: JavaScriptFindingContext,
 ): void => {
   if (t.isNewExpression(node)) {
-    const path = electronCalleePath(node.callee, context);
-    if (path?.length === 1 && path[0] === "BrowserWindow") {
-      if (needsConstantOptions(node))
-        context.accumulator.pendingBrowserWindows.push(node);
-      else inspectBrowserWindow(node, context);
+    const constructor = electronWindowConstructorOf(node.callee, context);
+    if (constructor !== undefined) {
+      const preferences = constructorSurfaces(constructor).preferences;
+      if (preferences && needsConstantOptions(node))
+        context.accumulator.pendingBrowserWindows.push({
+          node,
+          constructor,
+        });
+      else inspectBrowserWindow(node, context, constructor);
     }
   }
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
@@ -62,7 +89,7 @@ const needsConstantOptions = (node: t.NewExpression): boolean => {
   const lookup = staticObjectProperty(options, "webPreferences");
   return (
     lookup.status === "explicit" &&
-    t.isIdentifier(unwrapJavaScriptExpression(lookup.property.value).node)
+    t.isIdentifier(unwrapJavaScriptExpression(lookup.value).node)
   );
 };
 
@@ -74,7 +101,7 @@ export function* finishElectronBrowserWindowsSteps(
   const pending = context.accumulator.pendingBrowserWindows;
   if (pending.length === 0) return;
   if (
-    pending.some((node) => {
+    pending.some(({ node }) => {
       const argument = argumentNode(node.arguments[0]);
       const options = argument && unwrapJavaScriptExpression(argument).node;
       if (t.isIdentifier(options))
@@ -82,13 +109,13 @@ export function* finishElectronBrowserWindowsSteps(
       const lookup = staticObjectProperty(options, "webPreferences");
       return (
         lookup.status === "explicit" &&
-        hasElectronOptionObjectCandidate(lookup.property.value, index)
+        hasElectronOptionObjectCandidate(lookup.value, index)
       );
     })
   )
     yield* index.indexMemberMutationFactsSteps();
-  for (const node of pending) {
-    inspectBrowserWindow(node, context, index);
+  for (const { node, constructor } of pending) {
+    inspectBrowserWindow(node, context, constructor, index);
     yield;
   }
   // Inline findings arrive during traversal; deferred findings join that same
@@ -102,21 +129,29 @@ export function* finishElectronBrowserWindowsSteps(
 const inspectBrowserWindow = (
   node: t.NewExpression,
   context: JavaScriptFindingContext,
+  constructorName: ElectronWindowConstructor,
   index?: JavaScriptBindingIndex,
 ): void => {
+  // A constructor that accepts no webPreferences has none to read: the literal
+  // option it carries is inert, so reporting it as a preference surface would
+  // invent a preload the runtime never loads.
+  const readsPreferences = constructorSurfaces(constructorName).preferences;
   const argument = argumentNode(node.arguments[0]);
   const options =
     argument === undefined
       ? undefined
       : unwrapJavaScriptExpression(argument).node;
-  const resolvedOptions =
-    (index &&
-      resolveElectronOptionObject(options, node, index, ["webPreferences"])) ??
-    options;
+  const resolvedOptions = readsPreferences
+    ? ((index &&
+        resolveElectronOptionObject(options, node, index, [
+          "webPreferences",
+        ])) ??
+      options)
+    : options;
   const lookup = staticObjectProperty(resolvedOptions, "webPreferences");
   const declaredPreferences =
     lookup.status === "explicit"
-      ? unwrapJavaScriptExpression(lookup.property.value).node
+      ? unwrapJavaScriptExpression(lookup.value).node
       : undefined;
   const resolvedPreferences =
     (index && resolveElectronOptionObject(declaredPreferences, node, index)) ??
@@ -132,12 +167,16 @@ const inspectBrowserWindow = (
   ];
   const collected = collectWindowOptions(
     context.source,
-    lookup.status,
-    resolvedPreferences,
-    context.nodePathResolve,
+    readsPreferences ? lookup.status : "missing",
+    readsPreferences ? resolvedPreferences : undefined,
+    context.pathIntrinsics,
   );
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
+    ...electronCandidateAuthority(node.callee, context),
+    ...(constructorName === "BrowserWindow"
+      ? {}
+      : { window_constructor: constructorName }),
     options_status:
       resolvedOptions === undefined
         ? "missing"
@@ -153,9 +192,27 @@ const inspectBrowserWindow = (
     module_key: null,
     location: range(node),
   };
+  if (
+    finding.loader_authority !== "candidate" &&
+    finding.preload_path !== null &&
+    finding.preload_resolution_context !== null
+  )
+    addLocatedFinding(context, {
+      collection: context.accumulator.roles,
+      key: `role\0preload\0${finding.preload_path}`,
+      node,
+      value: {
+        role: "preload",
+        path: finding.preload_path,
+        resolution_context: finding.preload_resolution_context,
+        mechanism: `${constructorName}:webPreferences.preload`,
+        module_key: null,
+        location: range(node),
+      },
+    });
   addLocatedFinding(context, {
     collection: context.accumulator.browserWindows,
-    key: "electron-window\0BrowserWindow",
+    key: `electron-window\0${constructorName}`,
     node,
     value: finding,
   });
@@ -165,7 +222,7 @@ const collectWindowOptions = (
   source: string,
   lookupStatus: "explicit" | "missing" | "dynamic",
   preferences: t.Node | undefined,
-  nodePathResolve?: JavaScriptStaticPathIntrinsicQuery,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
 ): {
   readonly status: ElectronBrowserWindowFinding["web_preferences_status"];
   readonly preferences: readonly ElectronWebPreference[];
@@ -179,13 +236,13 @@ const collectWindowOptions = (
       preload: { preload_path: null, preload_resolution_context: null },
       unknown: lookupStatus === "missing" ? 0 : 1,
     };
-  return collectWebPreferences(source, preferences, nodePathResolve);
+  return collectWebPreferences(source, preferences, pathIntrinsics);
 };
 
 const collectWebPreferences = (
   source: string,
   object: t.ObjectExpression,
-  nodePathResolve?: JavaScriptStaticPathIntrinsicQuery,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
 ): {
   readonly status: "object-literal";
   readonly preferences: readonly ElectronWebPreference[];
@@ -197,15 +254,15 @@ const collectWebPreferences = (
   const effectivePreload = staticObjectProperty(object, "preload");
   const preloadPath =
     effectivePreload.status === "explicit"
-      ? staticPath(effectivePreload.property.value, nodePathResolve)
+      ? staticPath(effectivePreload.value, pathIntrinsics)
       : undefined;
   const preload: ElectronBrowserWindowPreload =
     effectivePreload.status === "explicit" && preloadPath !== undefined
       ? {
           preload_path: preloadPath,
           preload_resolution_context: staticPathResolutionContext(
-            effectivePreload.property.value,
-            nodePathResolve,
+            effectivePreload.value,
+            pathIntrinsics,
           ),
         }
       : { preload_path: null, preload_resolution_context: null };
@@ -237,7 +294,7 @@ const collectWebPreferences = (
     }
     const path =
       name === "preload"
-        ? staticPath(property.value, nodePathResolve)
+        ? staticPath(property.value, pathIntrinsics)
         : undefined;
     const value: ElectronStaticValue =
       path === undefined
@@ -287,6 +344,7 @@ const inspectContextBridge = (
         ? { api_key: key.value, api_key_expression: null }
         : { api_key: null, api_key_expression: null };
   const finding: ElectronContextBridgeFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     ...apiKey,
     world: exposure.world,
     world_id: worldId,
@@ -315,14 +373,28 @@ const inspectUtilityProcess = (
   const modulePath =
     moduleNode === undefined
       ? undefined
-      : staticPath(moduleNode, context.nodePathResolve);
-  const options = argumentNode(node.arguments[2]);
-  const serviceNameProperty = staticObjectProperty(options, "serviceName");
-  const serviceName =
-    serviceNameProperty.status === "explicit"
-      ? staticPath(serviceNameProperty.property.value, context.nodePathResolve)
+      : staticPath(moduleNode, context.pathIntrinsics);
+  // Electron treats a non-array object in the argv slot as the options.
+  const shapes = context.expressionShapes;
+  const options = optionsAfterOptionalArgv(node.arguments, shapes);
+  const serviceNameProperty =
+    options === undefined || shapes.isNullish(options)
+      ? { status: "missing" as const }
+      : staticObjectProperty(options, "serviceName", shapes.isNullish);
+  // A nullish serviceName selects Electron's default display name.
+  const declaredName =
+    serviceNameProperty.status === "explicit" &&
+    !shapes.isNullish(serviceNameProperty.value)
+      ? serviceNameProperty.value
       : undefined;
-  if (serviceNameProperty.status !== "missing" && serviceName === undefined)
+  const serviceName =
+    declaredName === undefined
+      ? undefined
+      : staticPath(declaredName, context.pathIntrinsics);
+  if (
+    serviceNameProperty.status === "dynamic" ||
+    (declaredName !== undefined && serviceName === undefined)
+  )
     context.accumulator.unknownFindings += 1;
   if (modulePath === undefined) context.accumulator.unknownFindings += 1;
   const moduleReference =
@@ -336,11 +408,12 @@ const inspectUtilityProcess = (
           module_path: modulePath,
           module_resolution_context: staticPathResolutionContext(
             moduleNode,
-            context.nodePathResolve,
+            context.pathIntrinsics,
           ),
           module_expression: null,
         };
   const finding: ElectronUtilityProcessFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     ...moduleReference,
     service_name: serviceName ?? null,
     module_key: null,

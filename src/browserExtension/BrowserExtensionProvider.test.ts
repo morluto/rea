@@ -110,7 +110,9 @@ describe("BrowserExtensionProvider", () => {
       });
       expect(evidence.ok, JSON.stringify(evidence)).toBe(true);
       if (!evidence.ok) return;
-      expect(evidence.value.subject?.format).toBe("file");
+      expect(evidence.value.subject).toMatchObject({
+        identity: { format: "file" },
+      });
       expect(evidence.value.operation).toBe("inspect_browser_extension");
     } finally {
       await provider.close();

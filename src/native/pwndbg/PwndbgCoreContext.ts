@@ -1,36 +1,51 @@
 import {
+  capturedProviderOutput,
+  providerResultDiagnostics,
+} from "../../process/capturedProviderOutput.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   recordedCrashDebuggerSchema,
   type RecordedCrash,
 } from "../../domain/native/recordedCrash.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
-  capturedPwntoolsOutput,
-  pwntoolsDecoderFailure,
+  pwntoolsFailureDialect,
+  pwntoolsReplyOutputLimit,
 } from "../pwntools/PwntoolsFailures.js";
-import { PWNTOOLS_LIMITS } from "../pwntools/PwntoolsRelease.js";
+import {
+  resolvePwntoolsLimits,
+  type PwntoolsProducerLimits,
+} from "../../domain/native/pwntoolsResourceLimits.js";
 import { readPwntoolsFailureEvidence } from "../pwntools/PwntoolsResourceLimits.js";
 import type { PwntoolsCommand } from "../pwntools/PwntoolsDecoder.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_recorded_crash";
 const replySchema = z.discriminatedUnion("ok", [
@@ -48,6 +63,53 @@ const replySchema = z.discriminatedUnion("ok", [
   }),
 ]);
 
+/** Completed debugger observations stay separate from their reply descriptor's close. */
+export interface PwndbgCoreInspection {
+  readonly context: Extract<RecordedCrash["debugger"], { status: "available" }>;
+  readonly finalization: AnalysisError | undefined;
+}
+
+/** Why a configured debugger path cannot be used; a host error is its cause. */
+interface ConfiguredPathRefusal {
+  readonly reason: string;
+  readonly cause?: unknown;
+}
+
+const hostPathRefusal = (cause: unknown): ConfiguredPathRefusal => ({
+  reason: errorMessage(cause),
+  cause,
+});
+
+/**
+ * Check one caller-supplied path, or return why it cannot be used.
+ * Cancellation between host checks propagates instead of becoming a refusal.
+ */
+const configuredPathRefusal = async (
+  path: string,
+  kind: "file" | "directory",
+  mode: number,
+  checkCancelled: () => void,
+): Promise<ConfiguredPathRefusal | undefined> => {
+  if (!isAbsolute(path))
+    return { reason: "Expected an absolute caller-supplied path." };
+  try {
+    await access(path, mode);
+  } catch (cause: unknown) {
+    return hostPathRefusal(cause);
+  }
+  checkCancelled();
+  let information: Stats;
+  try {
+    information = await stat(path);
+  } catch (cause: unknown) {
+    return hostPathRefusal(cause);
+  }
+  checkCancelled();
+  return (kind === "file" ? information.isFile() : information.isDirectory())
+    ? undefined
+    : { reason: `Expected a ${kind}.` };
+};
+
 /** Add mapping candidates from an owned core-only debugger, using the existing snapshot. */
 export const inspectPwndbgCore = async ({
   environment,
@@ -57,7 +119,8 @@ export const inspectPwndbgCore = async ({
   diagnostics,
   options,
   runCommand,
-  probePath,
+  timeoutMs,
+  producerLimits = resolvePwntoolsLimits(),
 }: {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly architecture: RecordedCrash["architecture"];
@@ -66,12 +129,10 @@ export const inspectPwndbgCore = async ({
   readonly diagnostics: AnalysisCapturedOutput;
   readonly options: ExecutionOptions | undefined;
   readonly runCommand: PwntoolsCommand;
-  readonly probePath?: (
-    path: string,
-    kind: "file" | "directory",
-    mode: number,
-  ) => Promise<void>;
-}): Promise<RecordedCrash["debugger"]> => {
+  /** Effective `pwntools_timeout_ms` for this debugger command. */
+  readonly timeoutMs: number;
+  readonly producerLimits?: PwntoolsProducerLimits;
+}): Promise<PwndbgCoreInspection> => {
   const gdb = environment.REA_PWNDBG_GDB ?? "/usr/bin/gdb";
   const entry = environment.REA_PWNDBG_GDBINIT ?? "";
   const venv = environment.REA_PWNDBG_VENV_PATH ?? "";
@@ -83,8 +144,7 @@ export const inspectPwndbgCore = async ({
     });
   const checkCancelled = () => {
     if (options?.signal?.aborted)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: options.signal.reason,
+      throw cancelledBy(OPERATION, options.signal, {
         capturedOutput: diagnostics,
       });
   };
@@ -94,31 +154,18 @@ export const inspectPwndbgCore = async ({
     ["REA_PWNDBG_GDBINIT", entry, "file"],
     ["REA_PWNDBG_VENV_PATH", venv, "directory"],
   ] as const) {
-    try {
-      checkCancelled();
-      if (!isAbsolute(path))
-        throw new Error("Expected an absolute caller-supplied path.");
-      const mode = key === "REA_PWNDBG_GDB" ? constants.X_OK : constants.R_OK;
-      if (probePath !== undefined) {
-        await probePath(path, kind, mode);
-      } else {
-        await access(path, mode);
-        checkCancelled();
-        const information = await stat(path);
-        checkCancelled();
-        if (
-          kind === "file" ? !information.isFile() : !information.isDirectory()
-        )
-          throw new Error(`Expected a ${kind}.`);
-      }
-      checkCancelled();
-    } catch (cause: unknown) {
-      if (cause instanceof AnalysisCancelledError) throw cause;
+    checkCancelled();
+    const refusal = await configuredPathRefusal(
+      path,
+      kind,
+      key === "REA_PWNDBG_GDB" ? constants.X_OK : constants.R_OK,
+      checkCancelled,
+    );
+    if (refusal !== undefined)
       throw unavailable(
-        `${key} is unavailable at ${path}: ${cause instanceof Error ? cause.message : String(cause)}. Configure the requested core-only context, or omit include_debugger_context for basic recorded evidence.`,
-        cause,
+        `${key} is unavailable at ${path}: ${refusal.reason}. Configure the requested core-only context, or omit include_debugger_context for basic recorded evidence.`,
+        refusal.cause,
       );
-    }
   }
   checkCancelled();
   const stage = join(rootPath, "debugger");
@@ -134,6 +181,7 @@ export const inspectPwndbgCore = async ({
       architecture,
       gdbinit: entry,
       venv,
+      producer_limits: producerLimits,
     }),
     { flag: "wx", mode: 0o600 },
   );
@@ -142,15 +190,19 @@ export const inspectPwndbgCore = async ({
     operation: OPERATION,
     providerId: "pwndbg-core",
     precedingOutput: diagnostics,
+    timeoutMs,
+    producerLimits,
   };
   const failure = (cause: unknown) =>
-    pwntoolsDecoderFailure(
+    classifyProviderFailure(
       cause,
-      "debugger",
-      gdb,
-      environment.REA_PWNTOOLS_PYTHON ?? "",
-      {},
-      failureContext,
+      pwntoolsFailureDialect(
+        "debugger",
+        gdb,
+        environment.REA_PWNTOOLS_PYTHON ?? "",
+        {},
+        failureContext,
+      ),
     );
   try {
     checkCancelled();
@@ -183,38 +235,62 @@ export const inspectPwndbgCore = async ({
       },
       failure,
     );
-    output = capturedPwntoolsOutput(execution);
+    output = capturedProviderOutput(execution);
     let reply: z.output<typeof replySchema>;
+    let finalization: AnalysisError | undefined;
     try {
-      const raw = await readStableArtifact(
-        replyPath,
-        PWNTOOLS_LIMITS.outputBytes,
-        options?.signal,
-        undefined,
-        resources,
-      );
-      reply = replySchema.parse(JSON.parse(raw.bytes.toString("utf8")));
+      let raw;
+      try {
+        raw = await readStableArtifact(
+          replyPath,
+          producerLimits.output_bytes,
+          options?.signal,
+          undefined,
+          resources,
+        );
+      } catch (cause: unknown) {
+        const completed = completedStableArtifact(cause);
+        if (
+          !(cause instanceof ArtifactReaderFailure) ||
+          completed === undefined
+        )
+          throw cause;
+        finalization = completedReplyFailure(
+          cause,
+          recordedCrashStageOutput(diagnostics, output),
+        );
+        raw = completed;
+      }
+      const decoded = safeParseUtf8Json(raw.bytes);
+      if (!decoded.ok) throw decoded.cause;
+      reply = replySchema.parse(decoded.value);
     } catch (cause: unknown) {
       if (
         cause instanceof ArtifactReaderFailure &&
         cause.reason === "cancelled"
       ) {
-        const error = new AnalysisCancelledError(OPERATION, {
-          cause: artifactFileCancellationCause(cause),
-          capturedOutput: recordedCrashStageOutput(diagnostics, output),
-          ...(cause instanceof ArtifactReaderFailure &&
-          cause.cleanup !== undefined
-            ? { cleanup: cause.cleanup }
-            : {}),
-        });
+        const error = cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(cause)),
+          {
+            capturedOutput: recordedCrashStageOutput(diagnostics, output),
+            ...(cause instanceof ArtifactReaderFailure &&
+            cause.cleanup !== undefined
+              ? { cleanup: cause.cleanup }
+              : {}),
+          },
+        );
         bindArtifactFileCleanup(cause, error);
-        throw error;
+        throw pwndbgContextFinalizationFailure(error, finalization);
       }
       const error = new AnalysisOutputError(
         OPERATION,
-        `Core-only debugger reply failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Core-only debugger reply failed: ${errorMessage(cause)}`,
         {
           cause,
+          ...(cause instanceof ArtifactReaderFailure && cause.reason === "limit"
+            ? pwntoolsReplyOutputLimit(producerLimits)
+            : {}),
           ...(cause instanceof ArtifactReaderFailure
             ? { cleanup: cause.cleanup }
             : {}),
@@ -222,51 +298,123 @@ export const inspectPwndbgCore = async ({
         },
       );
       bindArtifactFileCleanup(cause, error);
-      throw error;
+      throw pwndbgContextFinalizationFailure(error, finalization);
     }
     if (!reply.ok) {
       if (reply.reason === "unavailable" || reply.reason === "unsupported")
-        throw new AnalysisCapabilityUnavailableError(
-          "pwndbg-core",
-          OPERATION,
-          reply.message,
-          {
-            userMessage: reply.message,
-            capturedOutput: recordedCrashStageOutput(diagnostics, output),
-          },
+        throw pwndbgContextFinalizationFailure(
+          new AnalysisCapabilityUnavailableError(
+            "pwndbg-core",
+            OPERATION,
+            reply.message,
+            {
+              userMessage: reply.message,
+              capturedOutput: recordedCrashStageOutput(diagnostics, output),
+            },
+          ),
+          finalization,
         );
       if (reply.reason === "format" || reply.reason === "output-limit")
-        throw new AnalysisOutputError(OPERATION, reply.message, {
-          capturedOutput: recordedCrashStageOutput(diagnostics, output),
-        });
-      throw new ProviderAdapterError("pwndbg-core", OPERATION, {
-        diagnostics: {
-          stage: "debugger",
-          reason: reply.message,
-          captured_output: { ...recordedCrashStageOutput(diagnostics, output) },
-        },
-      });
+        throw pwndbgContextFinalizationFailure(
+          new AnalysisOutputError(OPERATION, reply.message, {
+            capturedOutput: recordedCrashStageOutput(diagnostics, output),
+            ...(reply.reason === "output-limit"
+              ? pwntoolsReplyOutputLimit(producerLimits)
+              : {}),
+          }),
+          finalization,
+        );
+      throw pwndbgContextFinalizationFailure(
+        new ProviderAdapterError("pwndbg-core", OPERATION, {
+          diagnostics: {
+            stage: "debugger",
+            reason: reply.message,
+            captured_output: {
+              ...recordedCrashStageOutput(diagnostics, output),
+            },
+          },
+        }),
+        finalization,
+      );
     }
     if (reply.value.status !== "available")
-      throw new AnalysisOutputError(
-        OPERATION,
-        "Requested debugger context returned no core evidence.",
-        { capturedOutput: recordedCrashStageOutput(diagnostics, output) },
+      throw pwndbgContextFinalizationFailure(
+        new AnalysisOutputError(
+          OPERATION,
+          "Requested debugger context returned no core evidence.",
+          { capturedOutput: recordedCrashStageOutput(diagnostics, output) },
+        ),
+        finalization,
       );
-    return { ...reply.value, diagnostics: output };
+    return {
+      context: {
+        ...reply.value,
+        diagnostics: providerResultDiagnostics(output),
+      },
+      finalization,
+    };
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError && cause.cleanupIncomplete) throw cause;
-    const primary = pwntoolsDecoderFailure(
+    const primary = classifyProviderFailure(
       cause,
-      "debugger",
-      gdb,
-      environment.REA_PWNTOOLS_PYTHON ?? "",
-      await readPwntoolsFailureEvidence(cause, stage, resources),
-      failureContext,
+      pwntoolsFailureDialect(
+        "debugger",
+        gdb,
+        environment.REA_PWNTOOLS_PYTHON ?? "",
+        await readPwntoolsFailureEvidence(
+          cause,
+          stage,
+          resources,
+          producerLimits,
+        ),
+        failureContext,
+      ),
     );
     throw primary;
   }
 };
+
+const completedReplyFailure = (
+  cause: ArtifactReaderFailure,
+  capturedOutput: AnalysisCapturedOutput,
+): AnalysisError => {
+  const cancellation =
+    cause.reason === "cancelled"
+      ? cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(cause)),
+          { capturedOutput },
+        )
+      : undefined;
+  if (cause.cleanup === undefined) {
+    if (cancellation !== undefined) return cancellation;
+    return new AnalysisOutputError(OPERATION, cause.message, {
+      cause,
+      capturedOutput,
+    });
+  }
+  const cleanup = new ProviderCleanupError(
+    "pwndbg-core",
+    cause.cleanup.resources,
+    { stage: "debugger_reply_descriptor_close", reason: cause.cleanup.reason },
+    { operation: OPERATION, cause, capturedOutput },
+  );
+  bindArtifactFileCleanup(cause, cleanup);
+  return cancellation === undefined
+    ? cleanup
+    : pwndbgContextFinalizationFailure(cancellation, cleanup);
+};
+
+/** A rejected/malformed context stays primary over its descriptor finalization. */
+export const pwndbgContextFinalizationFailure = (
+  primary: AnalysisError,
+  finalization: AnalysisError | undefined,
+): AnalysisError =>
+  finalization === undefined
+    ? primary
+    : finalization.cleanupIncomplete
+      ? analysisErrorWithCleanupDependencies(primary, finalization, OPERATION)
+      : primary.retainSecondaryFailure(finalization);
 
 /** Preserve both stages' exact text and their independently observed truncation state. */
 export const recordedCrashStageOutput = (

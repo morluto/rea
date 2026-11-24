@@ -60,50 +60,6 @@ export async function readTestDurations(
   }
 }
 
-/**
- * Case counts from the competing-loader file before it was split: 54 cases
- * stayed in the original file and 46 moved into each of the three new files.
- * History that still names only the original path is that combined cost.
- */
-const LOADER_HISTORY_SOURCE =
-  "tests/acceptance/applications/javascriptLiteralPercentPaths.test.ts";
-const LOADER_HISTORY_PARTS = [
-  "tests/acceptance/applications/javascriptLiteralLoaderOwnershipEarly.test.ts",
-  "tests/acceptance/applications/javascriptLiteralLoaderOwnershipMiddle.test.ts",
-  "tests/acceptance/applications/javascriptLiteralLoaderOwnershipLate.test.ts",
-] as const;
-const LOADER_HISTORY_REMAINDER_CASES = 54;
-const LOADER_HISTORY_PART_CASES = 46;
-const LOADER_HISTORY_CASES =
-  LOADER_HISTORY_REMAINDER_CASES +
-  LOADER_HISTORY_PART_CASES * LOADER_HISTORY_PARTS.length;
-
-/**
- * Give the split loader files a share of the pre-split duration. Once history
- * records any of the new paths, their published durations stand.
- */
-export function seedSplitLoaderDurations(
-  durations: ReadonlyMap<string, number>,
-): Map<string, number> {
-  const combined = durations.get(LOADER_HISTORY_SOURCE);
-  if (
-    combined === undefined ||
-    LOADER_HISTORY_PARTS.some((path) => durations.has(path))
-  )
-    return new Map(durations);
-  const seeded = new Map(durations);
-  seeded.set(
-    LOADER_HISTORY_SOURCE,
-    (combined * LOADER_HISTORY_REMAINDER_CASES) / LOADER_HISTORY_CASES,
-  );
-  for (const path of LOADER_HISTORY_PARTS)
-    seeded.set(
-      path,
-      (combined * LOADER_HISTORY_PART_CASES) / LOADER_HISTORY_CASES,
-    );
-  return seeded;
-}
-
 type TimedItem<T> = {
   item: T;
   key: string;
@@ -245,9 +201,8 @@ export class CiTestSequencer extends BaseSequencer {
     const shard = this.ctx.config.shard;
     if (!historyPath || !shard) return super.shard(files);
     const root = this.ctx.config.root;
-    const recorded = await readTestDurations(historyPath, root);
-    if (!recorded) return super.shard(files);
-    const durations = seedSplitLoaderDurations(recorded);
+    const durations = await readTestDurations(historyPath, root);
+    if (!durations) return super.shard(files);
 
     const weighted = files.map((item) => {
       const path = relative(root, resolve(root, item.moduleId))

@@ -8,7 +8,7 @@ import {
   type FileEntry,
 } from "@zip.js/zip.js";
 
-import { zipArchiveFaultKind } from "../artifacts/ZipArtifactReader.js";
+import { zipArchiveFaultKind } from "../resources/index.js";
 
 import {
   browserExtensionSchema,

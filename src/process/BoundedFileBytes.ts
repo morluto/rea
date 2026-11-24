@@ -41,10 +41,15 @@ export const readBoundedFileBytes = async (
       expectedSize > maxBytes)
   )
     throw new RangeError("Expected file size must fit the byte limit");
-  if (expectedSize === undefined) {
-    const chunks: Buffer[] = [];
-    const buffer = Buffer.allocUnsafe(Math.min(64 * 1_024, maxBytes + 1));
-    let total = 0;
+  assertActive();
+  const readChunks = async (
+    chunks: Buffer[],
+    initialTotal: number,
+  ): Promise<Buffer | undefined> => {
+    const buffer = Buffer.allocUnsafe(
+      Math.min(64 * 1_024, maxBytes - initialTotal + 1),
+    );
+    let total = initialTotal;
     for (;;) {
       assertActive();
       const { bytesRead } = await read(
@@ -52,21 +57,25 @@ export const readBoundedFileBytes = async (
         0,
         Math.min(buffer.length, maxBytes - total + 1),
       );
+      assertActive();
       if (bytesRead === 0) return Buffer.concat(chunks, total);
       total += bytesRead;
       if (total > maxBytes) return undefined;
       chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
     }
-  }
-  const buffer = Buffer.allocUnsafe(expectedSize);
-  if (expectedSize === 0) return buffer;
+  };
+  if (expectedSize === undefined) return readChunks([], 0);
+  // Allocate one extra probe byte so an unchanged file is read in a single
+  // buffer without Buffer.concat while still proving EOF (or detecting growth).
+  const buffer = Buffer.allocUnsafe(expectedSize + 1);
   let total = 0;
   for (;;) {
     assertActive();
-    const { bytesRead } = await read(buffer, total, expectedSize - total);
+    const { bytesRead } = await read(buffer, total, buffer.length - total);
+    assertActive();
     if (bytesRead === 0) return buffer.subarray(0, total);
     total += bytesRead;
     if (total > maxBytes) return undefined;
-    if (total === expectedSize) return buffer;
+    if (total === buffer.length) return readChunks([buffer], total);
   }
 };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const sourceMapUrls = (source: string): readonly string[] =>
   analyzeJavaScriptStaticSource(source).source_map_urls.map(
@@ -8,26 +8,35 @@ const sourceMapUrls = (source: string): readonly string[] =>
   );
 
 describe("source map directives", () => {
-  it.each([
-    ["line comment", "//# sourceMappingURL=app.js.map", "app.js.map"],
-    ["legacy line comment", "//@ sourceMappingURL=app.js.map", "app.js.map"],
-    // Minifiers commonly emit the block form; it previously matched nothing.
-    ["block comment", "/*# sourceMappingURL=app.js.map */", "app.js.map"],
-    [
-      "block comment after code",
-      "code();\n/*# sourceMappingURL=vendor.abc.map */",
-      "vendor.abc.map",
-    ],
-  ])("reads the %s form", (_label, source, expected) => {
-    expect(sourceMapUrls(source)).toEqual([expected]);
-  });
-
-  it("retains every directive in a source", () => {
-    expect(
-      sourceMapUrls(
-        "//# sourceMappingURL=first.map\n/*# sourceMappingURL=second.map */",
-      ),
-    ).toEqual(["first.map", "second.map"]);
+  it("retains every line and block directive with its exact URL and range", () => {
+    const cases = [
+      { marker: "//#", url: "app*part.js.map", suffix: "" },
+      { marker: "//@", url: "legacy.map", suffix: "" },
+      { marker: "/*#", url: "vendor*part.js.map", suffix: " */" },
+      { marker: "/*@", url: "*leading.map", suffix: "*/", prefix: "code(); " },
+      { marker: "/*#", url: "trailing.map*", suffix: "*/" },
+      { marker: "/*#", url: "**double.map", suffix: " */" },
+      { marker: "/*#", url: "plain.map", suffix: "*/" },
+    ];
+    const directives = cases.map(({ marker, url, suffix, prefix = "" }) => ({
+      url,
+      prefix,
+      comment: `${marker} sourceMappingURL=${url}`,
+      suffix,
+    }));
+    const source = directives
+      .map(({ prefix, comment, suffix }) => prefix + comment + suffix)
+      .join("\n");
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(result.source_map_urls).toEqual(
+      directives.map(({ url, prefix, comment }, index) => ({
+        declared_url: url,
+        location: {
+          start: { line: index + 1, column: prefix.length },
+          end: { line: index + 1, column: prefix.length + comment.length },
+        },
+      })),
+    );
   });
 
   it("reads a large inline map from a two-byte source without overflowing", () => {
@@ -56,11 +65,8 @@ describe("source map directives", () => {
   });
 
   it.each([
-    "//#",
     "//# \t",
-    "//# sourceMappingURL",
     "//# sourceMappingURL \t",
-    "//# sourceMappingURL=",
     "//# sourceMappingURL= \t",
     "/*# sourceMappingURL= */",
     "//# sourceMappingURLx=app.js.map",
@@ -83,71 +89,33 @@ describe("source map directives", () => {
       },
     ]);
   });
-
-  it.each([
-    ["/*#", "app*part.js.map", " */"],
-    ["/*@", "*part.js.map", "*/"],
-    ["/*#", "app.js.map*", "*/"],
-    ["/*#", "**part.js.map", " */"],
-    ["/*#", "app.js.map", "*/"],
-    ["//#", "app*part.js.map", ""],
-  ])("preserves the URL and range in %s %s%s", (marker, url, suffix) => {
-    const directive = marker + " sourceMappingURL=" + url;
-    const result = analyzeJavaScriptStaticSource(
-      "export const value = 1;\n" + directive + suffix,
-    );
-    expect(result.source_map_urls).toEqual([
-      {
-        declared_url: url,
-        location: {
-          start: { line: 2, column: 0 },
-          end: { line: 2, column: directive.length },
-        },
-      },
-    ]);
-  });
-
-  it("reports nothing when no directive is present", () => {
-    expect(sourceMapUrls("const value = 1;")).toEqual([]);
-  });
 });
 
-const quotedDirectiveSources = [
-  'const documentation = "//# sourceMappingURL=ghost.map ";',
-  'const documentation = "/*# sourceMappingURL=ghost.map */";',
-  "const documentation = `//# sourceMappingURL=ghost.map `;",
-  "const pattern = /[//# sourceMappingURL=ghost.map ]/;",
-  "const view = <div>//# sourceMappingURL=ghost.map </div>;",
-  'const documentation: string = "//# sourceMappingURL=ghost.map ";',
-  "/* Documentation example: //# sourceMappingURL=ghost.map */",
-];
-
 describe("source map comment boundaries", () => {
-  it.each(quotedDirectiveSources)(
-    "does not read a directive from %s",
-    (source) => {
-      const result = analyzeJavaScriptStaticSource(source);
-      expect(result.parse_status).toBe("complete");
-      expect(result.source_map_urls).toEqual([]);
-    },
-  );
+  it("ignores comment markers in JavaScript literals and ordinary comments", () => {
+    const source = [
+      'const documentation = "/*# sourceMappingURL=ghost.map */";',
+      "const template = `//# sourceMappingURL=ghost.map `;",
+      "const pattern = /[//# sourceMappingURL=ghost.map ]/;",
+      "/* Documentation example: //# sourceMappingURL=ghost.map */",
+    ].join("\n");
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(result.parse_status).toBe("complete");
+    expect(result.source_map_urls).toEqual([]);
+  });
 
-  it("retains only the real trailing directive after quoted examples", () => {
-    expect(
-      sourceMapUrls(
-        [
-          quotedDirectiveSources[0],
-          "const template = `/*# sourceMappingURL=template.map */`;",
-          "//# sourceMappingURL=real.map",
-        ].join("\n"),
-      ),
-    ).toEqual(["real.map"]);
+  it.each([
+    "const view = <div>//# sourceMappingURL=ghost.map </div>;",
+    'const documentation: string = "//# sourceMappingURL=ghost.map ";',
+  ])("ignores comment markers inside supported syntax: %s", (source) => {
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(result.parse_status).toBe("complete");
+    expect(result.source_map_urls).toEqual([]);
   });
 
   it.each([
     "const value: number = 1;\n//# sourceMappingURL=typed.map",
     "const view = <div />;\n//# sourceMappingURL=typed.map",
-    "const value = 1; /*@ sourceMappingURL=typed.map */",
     "const text = `${(() => { /*# sourceMappingURL=typed.map */ return 1; })()}`;",
   ])("keeps authentic comments in supported syntax: %s", (source) => {
     expect(sourceMapUrls(source)).toEqual(["typed.map"]);

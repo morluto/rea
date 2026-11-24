@@ -23,7 +23,16 @@ export async function connectRecordedCrash({ entrypoint, environment }) {
   try {
     await client.connect(transport);
   } catch (cause) {
-    await transport.close();
+    // Keep the connect failure when closing the transport also fails.
+    try {
+      await transport.close();
+    } catch (closeCause) {
+      throw new AggregateError(
+        [cause, closeCause],
+        "Recorded-crash MCP connection and transport cleanup failed",
+        { cause },
+      );
+    }
     throw cause;
   }
   return {

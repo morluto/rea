@@ -7,9 +7,9 @@ It does not load the extension, contact a store, or verify a CRX signature.
 Use it when the question is "what does this package declare?" A module graph,
 content-script implementation, or live page behavior is a different question.
 After this inspection, unpack the package yourself and use
-[JavaScript application analysis](javascript-application-workflows.md), or
+[JavaScript application analysis](guides/javascript/javascript-application-workflows.md), or
 observe a browser you already have open with
-[browser observation](browser-observation.md).
+[browser observation](guides/web/browser-observation.md).
 
 ```sh
 rea inspect-browser-extension ./extension.crx --json

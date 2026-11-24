@@ -1,14 +1,16 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   ArtifactFileCleanupFailure,
-  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
   artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  bindArtifactFileCleanup,
+  readStableArtifact,
+  zipArchiveFaultKind,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import type { BrowserExtensionPort } from "../application/browserExtension/BrowserExtensionPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { BrowserExtensionPort } from "../ports/browserExtension/BrowserExtensionPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   AnalysisAccessDeniedError,
@@ -18,6 +20,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
+  BROWSER_EXTENSION_BUDGETS,
   MAX_BROWSER_EXTENSION_ENTRIES,
   MAX_BROWSER_EXTENSION_FILE_BYTES,
   MAX_BROWSER_EXTENSION_MANIFEST_BYTES,
@@ -25,8 +28,7 @@ import {
 } from "../domain/browserExtension/browserExtension.js";
 import { err, ok } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { zipArchiveFaultKind } from "../artifacts/ZipArtifactReader.js";
-import { BROWSER_EXTENSION_PROVIDER } from "../application/InvestigationProviders.js";
+import { BROWSER_EXTENSION_PROVIDER } from "./BrowserExtensionProviderIdentity.js";
 import {
   BrowserExtensionParseError,
   parseBrowserExtension,
@@ -110,6 +112,31 @@ const budgetRemediation = (
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} or select a smaller package.`;
 };
 
+/** The per-call control of an exhausted budget, while a larger value is selectable. */
+const budgetLimit = (
+  cause: BrowserExtensionParseError,
+  input: InspectBrowserExtensionInput,
+): { readonly limit?: AnalysisControlLimit } => {
+  if (cause.limit === "fixed") return {};
+  const parameter = cause.limit;
+  const budget = BROWSER_EXTENSION_BUDGETS[parameter];
+  const value = input[parameter];
+  return value < budget.maximum
+    ? {
+        limit: {
+          control_kind: "parameter",
+          parameter,
+          effective_value: value,
+          unit: budget.unit,
+          minimum: budget.minimum,
+          maximum: budget.maximum,
+          default_value: budget.default_value,
+          applies_at: "next_call",
+        },
+      }
+    : {};
+};
+
 const failurePrimary = (
   cause: unknown,
   input: InspectBrowserExtensionInput,
@@ -130,6 +157,7 @@ const failurePrimary = (
           cause,
           retryable: false,
           remediationAction: budgetRemediation(cause, input),
+          ...budgetLimit(cause, input),
         },
       );
     return new AnalysisInputError(

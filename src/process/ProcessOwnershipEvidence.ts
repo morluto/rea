@@ -23,6 +23,7 @@ export interface RetainedProcessOwnershipCandidate {
     | "capture-leader-pid"
     | "captured-process-group-id"
     | "native-identity-unresolved"
+    | "unverified-table-relation"
     | "previously-related-generation";
   readonly token: ProcessRunTokenObservation;
   readonly relation:
@@ -81,6 +82,15 @@ export class ProcessOwnershipEvidenceOwner {
       readonly processGroupIds: ReadonlySet<number>;
       /** First identity/token/identity result before bounded token-only retries. */
       readonly scopeFacts?: readonly ProcessOwnershipFact[];
+      /** Native exit settled before candidate selection; these PIDs have no facts. */
+      readonly nativeExitedPids?: ReadonlySet<number>;
+      /** False disables disproven capture anchors without discarding token-owned ancestry. */
+      readonly allowCapturedScope?: boolean;
+      /** Caller-selected lineage links preserve uncertain scope, never ownership proof. */
+      readonly unverifiedLineageRelations?: ReadonlyMap<
+        number,
+        Pick<ProcessTableEntry, "parentPid" | "processGroupId">
+      >;
     },
   ): readonly RetainedProcessOwnershipCandidate[] {
     this.#snapshotCount += 1;
@@ -126,33 +136,58 @@ export class ProcessOwnershipEvidenceOwner {
           "run-token" | "previously-related-generation"
         >
       | undefined => {
-      const identity = generations.get(pid);
-      if (identity === undefined) return undefined;
-      const relation =
-        identity.relation?.state === "observed" ? identity.relation : undefined;
+      let unverifiedRelation = false;
+      const relationFor = (candidatePid: number) => {
+        const identity = generations.get(candidatePid);
+        if (identity?.relation?.state === "observed") return identity.relation;
+        const fallback = options.unverifiedLineageRelations?.get(candidatePid);
+        if (fallback === undefined) return undefined;
+        const current = sameGeneration.get(candidatePid);
+        // Only a same-generation native relation can disprove the earlier
+        // scope. A replacement or unproven generation must not sever the
+        // retained ancestry of a surviving descendant.
+        if (current?.relation?.state === "observed") {
+          if (identity === undefined) unverifiedRelation = true;
+          return current.relation;
+        }
+        unverifiedRelation = true;
+        return fallback;
+      };
+      const scoped = (
+        evidence:
+          | "captured-process-group-id"
+          | "capture-leader-pid"
+          | "current-token-owned-parent",
+      ) =>
+        unverifiedRelation ? ("unverified-table-relation" as const) : evidence;
+      const relation = relationFor(pid);
       if (relation === undefined) return undefined;
-      if (options.processGroupIds.has(relation.processGroupId))
-        return "captured-process-group-id";
+      if (
+        options.allowCapturedScope !== false &&
+        options.processGroupIds.has(relation.processGroupId)
+      )
+        return scoped("captured-process-group-id");
       const visited = new Set<number>([pid]);
       let parentPid = relation.parentPid;
       while (!visited.has(parentPid)) {
         const parent = generations.get(parentPid);
-        if (parent === undefined) {
-          return parentPid === options.leaderPid
-            ? "capture-leader-pid"
-            : undefined;
-        }
         const previousParent = this.#candidates.get(parentPid);
         if (
-          tokenOwners.has(parentPid) ||
-          (previousParent?.applicability === "token-verified" &&
-            parent.identity === previousParent.identity)
+          parent !== undefined &&
+          (tokenOwners.has(parentPid) ||
+            (previousParent?.applicability === "token-verified" &&
+              parent.identity === previousParent.identity))
         )
-          return "current-token-owned-parent";
-        if (parentPid === options.leaderPid) return "capture-leader-pid";
+          return scoped("current-token-owned-parent");
+        if (
+          options.allowCapturedScope !== false &&
+          parentPid === options.leaderPid
+        )
+          return scoped("capture-leader-pid");
         visited.add(parentPid);
-        if (parent.relation?.state !== "observed") return undefined;
-        parentPid = parent.relation.parentPid;
+        const parentRelation = relationFor(parentPid);
+        if (parentRelation === undefined) return undefined;
+        parentPid = parentRelation.parentPid;
       }
       return undefined;
     };
@@ -215,19 +250,27 @@ export class ProcessOwnershipEvidenceOwner {
     };
 
     for (const [pid, previous] of this.#candidates) {
+      // A bounded native exit also retires an unresolved prior generation,
+      // even when the caller excludes this PID from subsequent token reads.
+      if (options.nativeExitedPids?.has(pid)) {
+        this.#candidates.delete(pid);
+        retiredPids.add(pid);
+        continue;
+      }
       const fact = factsByPid.get(pid);
       if (fact === undefined) continue;
       // Retire only this generation's current ledger entry. Darwin's
       // `not-in-snapshot` and Linux's corroborated ENOENT/ESRCH facts are
       // bounded observations, not claims about later PID reuse or global
-      // liveness.
+      // liveness. A bracketed replacement also settles an identity-less
+      // candidate: its earlier lifetime has ended, regardless of relation access.
       if (
         fact.state === "absent" ||
+        fact.state === "replaced" ||
         (previous.identity !== undefined &&
           fact.identityAfter.state === "readable" &&
           fact.identityAfter.identity !== previous.identity) ||
-        (fact.state === "same-generation" &&
-          processIdentityHasExited(fact.identityAfter))
+        processIdentityHasExited(fact.identityAfter)
       ) {
         this.#candidates.delete(pid);
         retiredPids.add(pid);
@@ -286,16 +329,30 @@ export class ProcessOwnershipEvidenceOwner {
 
     for (const fact of facts) {
       const pid = fact.process.pid;
+      const matched =
+        fact.token.state === "readable" && fact.token.runId === options.runId;
+      const unresolvedReplacement = fact.state === "replaced" && matched;
+      // A replacement's token cannot be attributed to either generation.
+      // A matching token preserves uncertainty for another native observation,
+      // without carrying the retired generation's identity or signal authority.
       if (
         this.#candidates.has(pid) ||
-        (retiredPids.has(pid) && fact.state !== "same-generation") ||
+        (retiredPids.has(pid) &&
+          fact.state !== "same-generation" &&
+          !unresolvedReplacement) ||
         fact.state === "absent" ||
-        (fact.state === "same-generation" &&
-          processIdentityHasExited(fact.identityAfter))
+        (fact.state === "replaced" && !matched) ||
+        processIdentityHasExited(fact.identityAfter)
       )
         continue;
       const identity = fact.identityAfter;
       if (fact.state !== "same-generation" || identity.state !== "readable") {
+        if (
+          options.allowCapturedScope === false &&
+          !matched &&
+          related(pid) === undefined
+        )
+          continue;
         this.#candidates.set(pid, {
           pid,
           identity: undefined,
@@ -311,8 +368,6 @@ export class ProcessOwnershipEvidenceOwner {
         uncertainPids.add(pid);
         continue;
       }
-      const matched =
-        fact.token.state === "readable" && fact.token.runId === options.runId;
       const unresolvedScope = matched ? undefined : related(pid);
       if (!matched && unresolvedScope === undefined) continue;
       const relation =

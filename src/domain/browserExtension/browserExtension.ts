@@ -11,6 +11,27 @@ export const MAX_BROWSER_EXTENSION_FILE_BYTES = 536870912;
 export const MAX_BROWSER_EXTENSION_MANIFEST_BYTES = 8388608;
 /** Hard ceiling on central-directory entries examined before reading the manifest. */
 export const MAX_BROWSER_EXTENSION_ENTRIES = 100000;
+/** Per-call budget bounds, shared by the input schema and limit recovery. */
+export const BROWSER_EXTENSION_BUDGETS = Object.freeze({
+  max_file_bytes: {
+    minimum: 16,
+    maximum: MAX_BROWSER_EXTENSION_FILE_BYTES,
+    default_value: 67108864,
+    unit: "bytes",
+  },
+  max_manifest_bytes: {
+    minimum: 2,
+    maximum: MAX_BROWSER_EXTENSION_MANIFEST_BYTES,
+    default_value: 2097152,
+    unit: "bytes",
+  },
+  max_entries: {
+    minimum: 1,
+    maximum: MAX_BROWSER_EXTENSION_ENTRIES,
+    default_value: 20000,
+    unit: "count",
+  },
+} as const);
 /** Maximum distinct unresolved locale placeholders returned in one manifest. */
 export const MAX_BROWSER_EXTENSION_MESSAGE_KEYS = 64;
 
@@ -25,23 +46,23 @@ export const inspectBrowserExtensionInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(16)
-    .max(MAX_BROWSER_EXTENSION_FILE_BYTES)
-    .default(67108864)
+    .min(BROWSER_EXTENSION_BUDGETS.max_file_bytes.minimum)
+    .max(BROWSER_EXTENSION_BUDGETS.max_file_bytes.maximum)
+    .default(BROWSER_EXTENSION_BUDGETS.max_file_bytes.default_value)
     .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
   max_manifest_bytes: z
     .number()
     .int()
-    .min(2)
-    .max(MAX_BROWSER_EXTENSION_MANIFEST_BYTES)
-    .default(2097152)
+    .min(BROWSER_EXTENSION_BUDGETS.max_manifest_bytes.minimum)
+    .max(BROWSER_EXTENSION_BUDGETS.max_manifest_bytes.maximum)
+    .default(BROWSER_EXTENSION_BUDGETS.max_manifest_bytes.default_value)
     .describe("Maximum uncompressed manifest.json bytes (default 2 MiB)"),
   max_entries: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_BROWSER_EXTENSION_ENTRIES)
-    .default(20000)
+    .min(BROWSER_EXTENSION_BUDGETS.max_entries.minimum)
+    .max(BROWSER_EXTENSION_BUDGETS.max_entries.maximum)
+    .default(BROWSER_EXTENSION_BUDGETS.max_entries.default_value)
     .describe(
       "Maximum ZIP central-directory entries to examine before reading manifest.json",
     ),

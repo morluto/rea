@@ -6,15 +6,15 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { normalizeWorkflowRun } from "../../../scripts/ci/workflow-run.mjs";
 
 import {
+  classifyFailure,
   readStaticCheckArtifact,
   selectStaticCheckArtifact,
-} from "../../../scripts/ci/artifacts.mjs";
-import {
-  classifyFailure,
-  createGitHubApi,
-  reportCiFailures,
   type CiRun,
   type CiJob,
+} from "../../../scripts/ci/artifacts.mjs";
+import {
+  createGitHubApi,
+  reportCiFailures,
   type FailureReportApi,
 } from "../../../scripts/ci/failure-report.mjs";
 
@@ -40,7 +40,7 @@ const context = (
   turboVersion: "2.11.7",
   platform: "linux",
   architecture: "x64",
-  taskHashes: { "lint:built": taskHash },
+  taskHashes: { lint: taskHash },
 });
 const run = (overrides: Partial<CiRun> = {}) =>
   normalizeWorkflowRun({
@@ -119,6 +119,74 @@ it("attributes only an identical structured lint failure with matching task, con
       "supported_diagnostics_match_failed_task_and_source_on_verified_main_ancestor",
   });
 });
+
+it.each(["context", "mainContext"] as const)(
+  "keeps mixed legacy and canonical lint receipts unknown when %s uses the old task",
+  (side) => {
+    const input = comparison();
+    const receipt = input[side]!;
+    expect(
+      classifyFailure({
+        ...input,
+        [side]: {
+          ...receipt,
+          taskHashes: { "lint:built": "a".repeat(16) },
+        },
+      }),
+    ).toEqual({
+      classification: "unknown",
+      reason: "owning_task_hash_differs",
+    });
+  },
+);
+
+it.each([
+  ...[
+    "nodeVersion",
+    "npmVersion",
+    "turboVersion",
+    "platform",
+    "architecture",
+  ].map((field) => [field, { [field]: "" }] as const),
+  ["optional head hash", { prHeadSha: "bad" }],
+  [
+    "unrelated task hash",
+    { taskHashes: { lint: "a".repeat(16), typecheck: "bad" } },
+  ],
+] as const)(
+  "keeps malformed %s provenance unknown on either side",
+  (_label, invalid) => {
+    for (const side of ["context", "mainContext"] as const) {
+      const input = comparison();
+      expect(
+        classifyFailure({
+          ...input,
+          [side]: { ...input[side], ...invalid },
+        }),
+      ).toEqual({
+        classification: "unknown",
+        reason: "static_task_context_missing_or_invalid",
+      });
+    }
+  },
+);
+
+it.each(["path", "code"] as const)(
+  "keeps applicability unknown when the lint %s is unavailable on both runs",
+  (missing) => {
+    const { [missing]: _omitted, ...retained } = diagnostic;
+    expect(
+      classifyFailure({
+        ...comparison(),
+        diagnostics: [retained],
+        mainDiagnostics: [retained],
+      }),
+    ).toEqual({
+      classification: "unknown",
+      reason: "diagnostic_shape_not_supported",
+    });
+  },
+);
 
 it.each([
   ["task hash", { mainContext: context(sha("c"), "b".repeat(16)) }],

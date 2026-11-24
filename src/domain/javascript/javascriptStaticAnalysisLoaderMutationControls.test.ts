@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const named = "import {createRequire as make} from 'node:module';";
 const namespace = "import * as mod from 'node:module';";
@@ -77,3 +77,12 @@ it.each(cases)(
     );
   },
 );
+
+it("uses the restored call member after a local replacement", () => {
+  const source = `${named}const load=make(import.meta.url);load.call=()=>({kind:'local'});load.call=Function.prototype.call;load.call(null,'node:path');`;
+  const analysis = analyzeJavaScriptStaticSource(source);
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.references.filter(({ kind }) => kind === "require")).toEqual([
+    expect.objectContaining({ kind: "require", specifier: null }),
+  ]);
+});

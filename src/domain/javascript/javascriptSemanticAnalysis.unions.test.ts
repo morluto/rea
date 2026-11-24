@@ -212,10 +212,13 @@ describe("logical primitive unions", () => {
     '"one" ?? missing',
   ];
 
-  it("does not introduce short-circuit evaluation", () => {
-    expect(valuesOf(unevaluatedCases)).toEqual(
-      unevaluatedCases.map(() => incompatibleValue),
-    );
+  it("selects an established branch without evaluating an unreachable operand", () => {
+    expect(valuesOf(unevaluatedCases)).toEqual([
+      { status: "literal", value: "one" },
+      { status: "literal", value: "one" },
+      { status: "literal", value: false },
+      { status: "literal", value: "one" },
+    ]);
   });
 });
 

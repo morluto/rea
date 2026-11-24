@@ -1,4 +1,13 @@
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -10,43 +19,42 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { authorizedElectronFile } from "../../../src/browser/ElectronFileScope.js";
 
 describe("Electron file scope", () => {
-  it("accepts dot-prefixed child names beneath a canonical root", async () => {
-    const root = await createTestTempDirectory("rea-electron-dot-child-");
-    const directory = join(root, "..cache");
-    await mkdir(directory);
-    const path = join(directory, "index.html");
-    await writeFile(path, "allowed");
-    expect(await authorizedElectronFile(pathToFileURL(path).href)).toBe(path);
-  });
-
-  it("accepts explicit canonical local files and rejects remote or malformed URLs", async () => {
+  it("authorizes canonical files with URL suffixes but rejects remote paths and encoded separators", async () => {
     const base = await createTestTempDirectory("rea-electron-scope-");
-    const root = join(base, "root");
-    const outside = join(base, "outside");
+    const root = join(base, "..cache");
     await mkdir(root);
-    await mkdir(outside);
-    const allowed = join(root, "index.html");
-    const denied = join(outside, "secret.html");
-    await writeFile(allowed, "allowed");
-    await writeFile(denied, "denied");
-    await symlink(denied, join(root, "escape.html"));
-    expect(await authorizedElectronFile(pathToFileURL(allowed).href)).toBe(
-      allowed,
-    );
-    expect(await authorizedElectronFile(pathToFileURL(denied).href)).toBe(
-      denied,
-    );
-    expect(
-      await authorizedElectronFile(
-        pathToFileURL(join(root, "escape.html")).href,
+    const selected = join(root, "index.html");
+    const other = join(base, "other.html");
+    const alias = join(root, "alias.html");
+    await writeFile(selected, "selected");
+    await writeFile(other, "other");
+    await symlink(other, alias);
+    const local = pathToFileURL(selected).href;
+    for (const suffix of [
+      "",
+      "?next=/settings",
+      "#/settings",
+      "?next=%2Fsettings",
+      "?next=%5Csettings",
+      "#%2Fsettings",
+      "#%5Csettings",
+      `?${"x".repeat(70_000)}`,
+    ])
+      await expect(authorizedElectronFile(`${local}${suffix}`)).resolves.toBe(
+        selected,
+      );
+
+    for (const path of [other, alias])
+      await expect(
+        authorizedElectronFile(pathToFileURL(path).href),
+      ).resolves.toBe(other);
+    for (const denied of [
+      "file://server/share/index.html",
+      ...["%2F", "%5C"].map(
+        (separator) => `${pathToFileURL(root).href}${separator}index.html`,
       ),
-    ).toBe(denied);
-    expect(
-      await authorizedElectronFile("file://server/share/index.html"),
-    ).toBeUndefined();
-    expect(
-      await authorizedElectronFile("file:///tmp/root%2Findex.html"),
-    ).toBeUndefined();
+    ])
+      await expect(authorizedElectronFile(denied)).resolves.toBeUndefined();
   });
 
   it("resolves regular files Electron serves from inside an ASAR archive", async () => {
@@ -86,37 +94,76 @@ describe("Electron file scope", () => {
     ).toBeUndefined();
   });
 
-  it("accepts file URLs with long query text", async () => {
-    const root = await createTestTempDirectory("rea-electron-long-url-");
-    const path = join(root, "index.html");
-    await writeFile(path, "allowed");
-    const value = `${pathToFileURL(path).href}?${"x".repeat(70_000)}`;
-
-    await expect(authorizedElectronFile(value)).resolves.toBe(path);
-  });
-  it("resolves an archive beneath an ASAR-named directory and rejects oversized declared headers", async () => {
-    const root = await createTestTempDirectory("rea-electron-header-");
+  it("enforces cold and cached header admission beneath an ASAR-named directory", async () => {
+    const root = await createTestTempDirectory("rea-electron-admission-");
     const source = join(root, "source");
-    await mkdir(source);
-    await writeFile(join(source, "index.html"), "page");
     const parent = join(root, "parent.asar");
+    await mkdir(source);
     await mkdir(parent);
+    await writeFile(join(source, "index.html"), "page");
     const archive = join(parent, "app.asar");
     await createPackageWithOptions(source, archive, {});
-    expect(
-      await authorizedElectronFile(
-        pathToFileURL(join(archive, "index.html")).href,
-      ),
-    ).toBe(join(await realpath(archive), "index.html"));
+    const bytes = await readFile(archive);
+    const headerBytes = bytes.readUInt32LE(4);
+    const page = pathToFileURL(join(archive, "index.html")).href;
+    const authorize = (maximumBytes: number) =>
+      authorizedElectronFile(page, undefined, "inspect_electron_page", {
+        maximumBytes,
+        source: "setting",
+      });
+    await expect(authorize(headerBytes - 1)).resolves.toBeUndefined();
+    await expect(authorize(headerBytes)).resolves.toBe(
+      join(await realpath(archive), "index.html"),
+    );
+    await expect(authorize(headerBytes - 1)).resolves.toBeUndefined();
+
     const malformed = join(root, "bad.asar");
-    const header = Buffer.alloc(16);
-    header.writeUInt32LE(4, 0);
-    header.writeUInt32LE(0x40000000, 4);
-    await writeFile(malformed, header);
-    expect(
-      await authorizedElectronFile(
-        pathToFileURL(join(malformed, "index.html")).href,
-      ),
-    ).toBeUndefined();
+    bytes.writeUInt32LE(0x40000000, 4);
+    await writeFile(malformed, bytes);
+    await expect(
+      authorizedElectronFile(pathToFileURL(join(malformed, "index.html")).href),
+    ).resolves.toBeUndefined();
   });
+});
+
+it("refreshes ASAR member admission after a same-size rewrite preserving modification time", async () => {
+  const root = await createTestTempDirectory("rea-electron-asar-rewrite-");
+  const source = join(root, "source");
+  await mkdir(source);
+  await writeFile(join(source, "old.html"), "page");
+  const archive = join(root, "app.asar");
+  await createPackageWithOptions(source, archive, {});
+  const timestamp = new Date("2024-01-01T00:00:00Z");
+  await utimes(archive, timestamp, timestamp);
+  const before = await stat(archive);
+  const oldPage = pathToFileURL(join(archive, "old.html")).href;
+  const newPage = pathToFileURL(join(archive, "new.html")).href;
+  expect(await authorizedElectronFile(oldPage)).toBe(
+    join(await realpath(archive), "old.html"),
+  );
+  expect(await authorizedElectronFile(newPage)).toBeUndefined();
+
+  await rename(join(source, "old.html"), join(source, "new.html"));
+  const replacement = join(root, "replacement.asar");
+  await createPackageWithOptions(source, replacement, {});
+  await writeFile(archive, await readFile(replacement));
+  await utimes(archive, before.atime, before.mtime);
+  const after = await stat(archive);
+  expect({
+    dev: after.dev,
+    ino: after.ino,
+    size: after.size,
+    mtime: after.mtimeMs,
+  }).toEqual({
+    dev: before.dev,
+    ino: before.ino,
+    size: before.size,
+    mtime: before.mtimeMs,
+  });
+  expect(after.ctimeMs).not.toBe(before.ctimeMs);
+
+  expect(await authorizedElectronFile(oldPage)).toBeUndefined();
+  expect(await authorizedElectronFile(newPage)).toBe(
+    join(await realpath(archive), "new.html"),
+  );
 });
