@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **ghidra:** in MCP sessions, Ghidra result Evidence no longer lists session-scoped limitations inline. It carries one reference limitation and links a retained session-limitations Evidence (operation health, parameters.facet session-limitations) in evidence_links. Read it with get_evidence_bundle. Defect records no longer appear on operations or architectures outside their declared scope.
 * **pe:** import and delay-import walks continue to the null descriptor past a short directory Size instead of stopping with a malformed_entry issue, and inspect-pe-resources reports an unsupported optional-header magic as unsupported_target.
 * **limits:** an inspect_pcap_capture refusal at the snapshot or TShark JSON budget reports details.limit for producer_limits.input_bytes or producer_limits.output_bytes and no longer carries details.refusal fixed_ceiling.
 * **browser:** an MCP inspect_web_page call that omits detail on a capture above 32 KiB now returns the retained summary. Pass detail: "complete" for the previous shape, for example before compare_web_captures.
@@ -251,6 +252,7 @@
 * **ghidra:** return an elapsed startup instead of importing again ([691c277](https://github.com/morluto/rea/commit/691c277d641f401ec473835c893bd9c50be1ba9b))
 * **ghidra:** say byte-search pages read match metadata live ([#10684](https://github.com/morluto/rea/issues/10684)) ([e7a0232](https://github.com/morluto/rea/commit/e7a023263bdd1221ab1fb1c2cafcf1b848152436))
 * **ghidra:** say how to build a missing macOS or Linux arm64 decompiler ([cc8716c](https://github.com/morluto/rea/commit/cc8716ce22e5d9a9a7c889e900c5e5cf196d91ef)), refs [#7018](https://github.com/morluto/rea/issues/7018)
+* **ghidra:** scope defect notes and state session limitations once ([#14267](https://github.com/morluto/rea/issues/14267)) ([e309e15](https://github.com/morluto/rea/commit/e309e15bf861e58f6ae97dde078d382092610285))
 * **go:** reject contradictory module coverage in retained views ([#14029](https://github.com/morluto/rea/issues/14029)) ([be459ab](https://github.com/morluto/rea/commit/be459abee5f9c4f6a07d24b8ec4e8bdcb165967d))
 * **go:** report only admitted string candidate limits ([#13451](https://github.com/morluto/rea/issues/13451)) ([22042af](https://github.com/morluto/rea/commit/22042af848c2cfe4fbb1d6764771da570c421d4d))
 * **go:** retain verified reports through descriptor finalization ([#14026](https://github.com/morluto/rea/issues/14026)) ([6d7bf58](https://github.com/morluto/rea/commit/6d7bf586377f9c58419d884d5962bf192031aa02))
