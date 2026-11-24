@@ -3294,19 +3294,25 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         payloadSha256?: string | undefined;
       };
       const isWindows = HOST_PLATFORM.platform === "win32";
-      const isRootedPath = (p: string): boolean => {
-        return (
-          p.startsWith("/") ||
-          p.startsWith("\\") ||
-          /^[a-zA-Z]:[/\\]/.test(p) ||
-          /^[a-zA-Z]:$/.test(p)
-        );
+      const isRootedPath = (
+        p: string,
+        treatBackslashAsSep: boolean = isWindows,
+      ): boolean => {
+        if (p.startsWith("/")) return true;
+        if (treatBackslashAsSep) {
+          return (
+            p.startsWith("\\") ||
+            /^[a-zA-Z]:[/\\]/.test(p) ||
+            /^[a-zA-Z]:$/.test(p)
+          );
+        }
+        return false;
       };
       const normalizeRelativePath = (
         rawPath: string,
         treatBackslashAsSep: boolean,
       ): string => {
-        if (isRootedPath(rawPath)) return "";
+        if (isRootedPath(rawPath, treatBackslashAsSep)) return "";
         const parts = treatBackslashAsSep
           ? rawPath.split(/[/\\]+/)
           : rawPath.split(/\/+/);
@@ -3546,7 +3552,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   typeof m.payload_file !== "string" ||
                   m.payload_file.length === 0 ||
                   m.payload_file.length > 4096 ||
-                  isRootedPath(m.payload_file)
+                  isRootedPath(m.payload_file, isWindows)
                 ) {
                   isCoveragePartial = true;
                   const label =
@@ -3557,7 +3563,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       : `module_${mIdx}`;
                   const isRooted =
                     typeof m.payload_file === "string" &&
-                    isRootedPath(m.payload_file);
+                    isRootedPath(m.payload_file, isWindows);
                   omittedCandidates.push({
                     identityRelPath: isRooted
                       ? m.payload_file
@@ -3600,14 +3606,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   m.payload_file,
                   isWindows,
                 );
-                const crossPlatformNorm = normalizeRelativePath(
-                  m.payload_file,
-                  true,
-                );
                 if (
                   exactNorm.length === 0 ||
-                  exactNorm.split("/").includes("..") ||
-                  crossPlatformNorm.split("/").includes("..")
+                  exactNorm.split("/").includes("..")
                 ) {
                   isCoveragePartial = true;
                   const label =
@@ -3628,7 +3629,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   continue;
                 }
                 const foldedNorm = exactNorm.toLowerCase();
-                const crossPlatformFolded = crossPlatformNorm.toLowerCase();
 
                 let validGuid: string | null | undefined = undefined;
                 if (m.guid !== undefined && m.guid !== null) {
@@ -3766,21 +3766,35 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   );
                 }
                 if (!isWindows) {
-                  const registerFallbackKey = (key: string) => {
-                    const existing = manifestModulesByFallbackRelPath.get(key);
-                    if (
-                      existing !== undefined &&
-                      existing !== manifestEntryRecord
-                    ) {
-                      ambiguousCrossPlatformKeys.add(key);
-                    } else {
-                      manifestModulesByFallbackRelPath.set(
-                        key,
-                        manifestEntryRecord,
-                      );
-                    }
-                  };
-                  registerFallbackKey(crossPlatformNorm);
+                  const isCrossPlatformRooted = isRootedPath(
+                    m.payload_file,
+                    true,
+                  );
+                  const crossPlatformNorm = normalizeRelativePath(
+                    m.payload_file,
+                    true,
+                  );
+                  const isCrossPlatformEscaping =
+                    crossPlatformNorm.length === 0 ||
+                    crossPlatformNorm.split("/").includes("..");
+                  if (!isCrossPlatformRooted && !isCrossPlatformEscaping) {
+                    const registerFallbackKey = (key: string) => {
+                      const existing =
+                        manifestModulesByFallbackRelPath.get(key);
+                      if (
+                        existing !== undefined &&
+                        existing !== manifestEntryRecord
+                      ) {
+                        ambiguousCrossPlatformKeys.add(key);
+                      } else {
+                        manifestModulesByFallbackRelPath.set(
+                          key,
+                          manifestEntryRecord,
+                        );
+                      }
+                    };
+                    registerFallbackKey(crossPlatformNorm);
+                  }
                 }
               }
               if (
@@ -3880,7 +3894,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const ambiguousDirectoryInventoryKeys = new Set<string>();
       if (!isWindows) {
         for (const cEntry of candidateEntries) {
+          const isCrossPlatformRooted = isRootedPath(cEntry.path, true);
           const normK = normalizeRelativePath(cEntry.path, true);
+          if (
+            isCrossPlatformRooted ||
+            normK.length === 0 ||
+            normK.split("/").includes("..")
+          ) {
+            continue;
+          }
           const existing = candidateCrossPlatformKeys.get(normK);
           if (existing !== undefined && existing !== cEntry.path) {
             ambiguousDirectoryInventoryKeys.add(normK);

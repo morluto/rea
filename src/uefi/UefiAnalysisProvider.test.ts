@@ -9601,3 +9601,56 @@ it("preserves manifest metadata for valid payload files starting with two dots l
     await provider.close();
   }
 });
+
+it("preserves native POSIX payload files containing backslashes without rejecting as escaping cross-platform paths", async () => {
+  if (process.platform === "win32") {
+    return;
+  }
+  const directory = await createTestTempDirectory("rea-uefi-posix-bs-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  const posixFilename = "vendor\\..\\..\\Driver.efi";
+  await writeFile(join(inDir, posixFilename), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      manifest_version: "1.0",
+      modules: [
+        {
+          payload_file: posixFilename,
+          name: "PosixBackslashDriver",
+          guid: "98765432-1234-1234-1234-123456789abc",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("PosixBackslashDriver");
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.modules[0]?.guid).toBe(
+      "98765432-1234-1234-1234-123456789abc",
+    );
+  } finally {
+    await provider.close();
+  }
+});
