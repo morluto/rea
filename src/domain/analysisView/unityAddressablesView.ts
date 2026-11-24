@@ -13,7 +13,11 @@ import {
 import { err, ok, type Result } from "../result.js";
 import { evidenceFileTarget } from "../evidence.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { pageIndexedRows } from "./indexedRowPage.js";
+import {
+  selectIndexedViewRows,
+  selectRowFields,
+  selectViewRows,
+} from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -274,7 +278,22 @@ export const projectUnityAddressablesView = (
       coverage: completeWithinViewCoverage(1),
     });
   const rows: readonly Row[] = { keys, locations, providers }[view.collection];
-  const { items, total } = pageIndexedRows(rows, view, selection(view, report));
+  const fields =
+    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const project = (row: Row, index: number) =>
+    selectRowFields(row, index, fields);
+  const matches = selection(view, report);
+  // Filters intersect with indices; the page offset counts matching rows.
+  const { rows: items, total } =
+    view.indices === undefined
+      ? selectViewRows(rows, view, matches, project)
+      : selectIndexedViewRows(
+          rows,
+          new Set(view.indices),
+          view,
+          matches,
+          project,
+        );
   return ok({
     kind: "unity-addressables" as const,
     view,
