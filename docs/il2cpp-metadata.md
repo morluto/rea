@@ -489,10 +489,13 @@ Each category says which selected file is at fault:
   table entry, is reported the same way with `details.format` `macho`.
 - **conflict**: both files parsed but do not agree. They may come from
   different builds, either file may be damaged, or the binary's registration
-  layout may be outside coverage; nothing establishes which. The refusal is an
-  `invalid_request` with an `invalid_value` issue for each of `path` and
-  `binary_path` (`--binary` in the CLI) and no `inspect_input_contract`
-  recovery. Neither file is called malformed.
+  layout may be outside coverage; nothing establishes which. The refusal has
+  code `input_conflict`, `details.failure_kind` `conflict`, `retry`
+  `after_change` and no `recovery`. `details.inputs` lists both files as
+  `{ field, path }`: `path` for the metadata and `binary_path` for the binary
+  (`binary` in the CLI, after its `--binary` option). `details.path` names
+  the metadata. Neither file is called malformed; select a pair from the same
+  build. See [target failures](reference/target-failures.md).
 
 A token that is not a MethodDef row, or a row reused within one image, is
 the metadata's own fault, so linking refuses it as malformed metadata with

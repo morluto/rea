@@ -293,6 +293,10 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
       // Final source validation owns its in-flight I/O before late cancellation.
       lifecycle.finalizing();
       await pumping;
+      // Re-verify the source first: a file that changed during the read is a
+      // changed file, not a member that disagrees with its declaration.
+      await this.#source.readSelectedPath(signal);
+      abortIfNeeded(signal);
       if (
         bytes !== file.size ||
         (inflater !== undefined && inflater.bytesWritten !== storedBytes)
@@ -301,8 +305,6 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
           "dotnet-bundle",
           `.NET bundle member length or compressed extent does not match its declaration: ${file.path}`,
         );
-      await this.#source.readSelectedPath(signal);
-      abortIfNeeded(signal);
     } catch (cause) {
       const failure = this.#memberFailure(file, cause);
       lifecycle.failure(failure);

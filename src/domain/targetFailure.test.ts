@@ -18,7 +18,11 @@ const failureOf = (kind: TargetFailureKind): TargetFailure => {
     case "unsupported":
       return { ...facts, kind, undecodedContent: false };
     case "truncated":
-      return { ...facts, kind, availableBytes: 4, requiredBytes: 64 };
+      return {
+        ...facts,
+        kind,
+        extent: { availableBytes: 4, requiredBytes: 64 },
+      };
     case "conflict":
       return {
         ...facts,

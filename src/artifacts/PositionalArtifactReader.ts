@@ -253,8 +253,10 @@ export abstract class PositionalArtifactReader<
     const label = this.#label;
     let bytes = 0;
     const check = async (): Promise<void> => {
-      if (bytes !== entry.declaredSize) throw this.entryEndedEarly(entry);
+      // A carrier that changed during the read reports that change; only a
+      // stable carrier's short member is the format's fault.
       await lifecycle.verify((signal) => this.verifyCarrier(signal));
+      if (bytes !== entry.declaredSize) throw this.entryEndedEarly(entry);
     };
     return new Transform({
       transform(chunk: Buffer, _encoding, callback) {
