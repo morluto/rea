@@ -38,32 +38,43 @@ function inlineFacts(tokens) {
   return { parts, wording };
 }
 
-export function canonicalGitHubReleaseUrl(href) {
+function githubUrl(href) {
   const url = URL.parse(href ?? "");
   return url?.origin === "https://github.com" &&
     url.username === "" &&
-    url.password === "" &&
-    url.search === "" &&
-    url.hash === ""
+    url.password === ""
     ? url
     : undefined;
 }
 
+export function canonicalGitHubReleaseUrl(href) {
+  const url = githubUrl(href);
+  return url?.search === "" && url.hash === "" ? url : undefined;
+}
+
 /** A link names its repository and target regardless of its display text. */
 export function githubReleaseReference(href) {
-  const url = canonicalGitHubReleaseUrl(href);
+  const url = githubUrl(href);
   if (url === undefined) return undefined;
-  const match = /^\/([\w.-]+\/[\w.-]+)\/(pull|issues|commit)\/([^/]+)$/u.exec(
-    url.pathname,
-  );
+  const match =
+    /^\/([\w.-]+\/[\w.-]+)\/(pull|issues|commit)\/([^/]+)(\/?)$/u.exec(
+      url.pathname,
+    );
   if (match === null) return undefined;
-  const [, repository, route, target] = match;
+  const [, repository, route, target, trailingSlash] = match;
   if (route === "commit")
-    return /^[a-f0-9]{7,40}$/iu.test(target)
+    return url.search === "" &&
+      url.hash === "" &&
+      trailingSlash === "" &&
+      /^[a-f0-9]{7,40}$/iu.test(target)
       ? { repository: repository.toLowerCase(), commit: target.toLowerCase() }
       : undefined;
   return /^\d+$/u.test(target)
-    ? { repository: repository.toLowerCase(), number: Number(target) }
+    ? {
+        repository: repository.toLowerCase(),
+        number: Number(target),
+        canonicalUrl: `${url.origin}/${repository}/${route}/${target}`,
+      }
     : undefined;
 }
 
