@@ -435,9 +435,7 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
     expect(restoreAndSave?.if).toBe(
       "steps.context.outputs.can-save == 'true' && inputs.save == 'true'",
     );
-    expect(restoreOnly?.uses).toBe(
-      `actions/cache/restore@${revision}`,
-    );
+    expect(restoreOnly?.uses).toBe(`actions/cache/restore@${revision}`);
     expect(restoreOnly?.if).toBe(
       "steps.context.outputs.can-save != 'true' || inputs.save != 'true'",
     );
