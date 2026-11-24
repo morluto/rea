@@ -2,10 +2,19 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { afterEach, expect, it, vi } from "vitest";
-import { mkdir, writeFile, rm, access, symlink } from "node:fs/promises";
+import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import {
+  mkdir,
+  writeFile,
+  rm,
+  access,
+  symlink,
+  realpath,
+} from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
@@ -1490,9 +1499,14 @@ it("keeps discovered transport credentials out of projected handshake timeouts",
 it.skipIf(process.platform === "win32")(
   "reclaims a terminated run's profile and records this one before launching",
   async () => {
-    const root = await createTestTempDirectory("rea-scenario-stale-");
-    const stale = join(root, `${SCENARIO_PROFILE_PREFIX}terminated`);
+    const stale = join(
+      await realpath(tmpdir()),
+      `${SCENARIO_PROFILE_PREFIX}${randomUUID()}`,
+    );
     await mkdir(stale, { recursive: true });
+    onTestFinished(async () => {
+      await rm(stale, { recursive: true, force: true });
+    });
     const exited = spawn(
       process.execPath,
       ["-e", "setTimeout(() => {}, 5000)"],
@@ -1512,38 +1526,13 @@ it.skipIf(process.platform === "win32")(
     // A killed browser leaves its published singleton link behind.
     await symlink(`testhost-${String(ownerPid)}`, join(stale, "SingletonLock"));
 
-    const scenario = browserScenarioSchema.parse({
-      browser: { mode: "launch", executable_path: process.execPath },
-      start_url: { url: "https://example.test" },
-      actions: [
-        { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-      ],
-    });
-    let recorded = false;
-    await expect(
-      openPlaywrightScenarioBrowser(
-        scenario,
-        {},
-        {
-          launcher: {
-            connectOverCDP: async () => {
-              throw new Error("Unexpected connection");
-            },
-            launchPersistentContext: async (profilePath) => {
-              recorded = await access(
-                join(profilePath, SCENARIO_PROFILE_OWNER_FILE),
-              ).then(
-                () => true,
-                () => false,
-              );
-              throw new Error("launch boundary reached");
-            },
-          },
-        },
-      ),
-    ).rejects.toThrow("launch boundary reached");
-
-    expect(recorded).toBe(true);
+    const { profile } = await rejectedLaunch(launchScenario);
+    const recorded = await access(
+      join(profile, SCENARIO_PROFILE_OWNER_FILE),
+    ).then(
+      () => true,
+      () => false,
+    );
     await expect(
       access(stale).then(
         () => true,

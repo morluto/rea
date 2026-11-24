@@ -908,7 +908,7 @@ export const openPlaywrightScenarioBrowser = async (
   // live owner still holds is left in place. Best effort: the deadline bounds
   // the sweep so a stale directory can never decide when this browser starts.
   await withPlaywrightExecutionBoundary(
-    () => reclaimStaleScenarioProfiles(),
+    () => reclaimStaleScenarioProfiles({ platform }),
     SCENARIO_PROFILE_RECLAMATION_TIMEOUT_MS,
   ).catch(() => undefined);
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
@@ -920,7 +920,9 @@ export const openPlaywrightScenarioBrowser = async (
   try {
     await chmod(profilePath, 0o700);
     // Record this owner so a later run can prove this profile is stale.
-    await writeScenarioProfileOwner(profilePath).catch(() => undefined);
+    await writeScenarioProfileOwner(profilePath, { platform }).catch(
+      () => undefined,
+    );
     throwIfScenarioCancelled(options.signal);
     launchStarted = true;
     context = await withScenarioCommandDeadline(

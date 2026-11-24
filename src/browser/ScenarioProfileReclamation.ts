@@ -11,13 +11,14 @@ import type { Dirent } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import {
   execFileOutput,
   execFileOutputFailure,
 } from "../process/ExecFileOutput.js";
-import { parseLinuxProcessStartTime } from "../process/ProcessOwnershipObservation.js";
+import { parseLinuxProcessStat } from "../process/LinuxProcessStat.js";
 
 /** Scenario profile directories REA creates directly inside the temp root. */
 export const SCENARIO_PROFILE_PREFIX = "rea-browser-scenario-";
@@ -87,23 +88,25 @@ export const processIsAlive = (pid: number): boolean => {
  */
 export const observeScenarioOwnerIdentity = async (
   pid: number,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<ScenarioOwnerIdentityObservation> => {
   if (!Number.isSafeInteger(pid) || pid <= 0) return { state: "unavailable" };
-  if (process.platform === "linux") {
-    let stat: string;
+  if (platform === "linux") {
+    let raw: string;
     try {
-      stat = await readFile(`/proc/${String(pid)}/stat`, "utf8");
+      raw = await readFile(`/proc/${String(pid)}/stat`, "utf8");
     } catch (cause: unknown) {
       return (cause as NodeJS.ErrnoException).code === "ENOENT"
         ? { state: "gone" }
         : { state: "unavailable" };
     }
-    const identity = parseLinuxProcessStartTime(stat);
-    return identity === undefined
-      ? { state: "unavailable" }
-      : { state: "readable", identity: `linux-starttime:${identity}` };
+    const stat = parseLinuxProcessStat(raw);
+    if (stat === undefined) return { state: "unavailable" };
+    if (stat.lifecycle === "zombie" || stat.lifecycle === "dead")
+      return { state: "gone" };
+    return { state: "readable", identity: `linux-starttime:${stat.startTime}` };
   }
-  if (process.platform === "darwin") {
+  if (platform === "darwin") {
     try {
       const { stdout } = await execFileOutput(
         "ps",
@@ -135,14 +138,17 @@ export const writeScenarioProfileOwner = async (
   options: {
     readonly pid?: number;
     readonly now?: () => Date;
+    readonly platform?: NodeJS.Platform;
     readonly observeIdentity?: (
       pid: number,
     ) => Promise<ScenarioOwnerIdentityObservation>;
   } = {},
 ): Promise<void> => {
   const pid = options.pid ?? process.pid;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const observed = await (
-    options.observeIdentity ?? observeScenarioOwnerIdentity
+    options.observeIdentity ??
+    ((ownerPid: number) => observeScenarioOwnerIdentity(ownerPid, platform))
   )(pid);
   const owner: ScenarioProfileOwner = {
     schema: 2,
@@ -173,7 +179,8 @@ const readScenarioProfileOwner = async (
     bytes = await withOwnedRegularFile(
       path,
       { symlinks: "reject", signal },
-      (handle) => readBoundedFileBytes(handle, OWNER_MARKER_MAX_BYTES, signal),
+      (source) =>
+        readBoundedFileBytes(source.handle, OWNER_MARKER_MAX_BYTES, { signal }),
     );
   } catch {
     return undefined;
@@ -275,6 +282,7 @@ export interface ScenarioProfileReclamation {
 export const reclaimStaleScenarioProfiles = async (
   options: {
     readonly root?: string;
+    readonly platform?: NodeJS.Platform;
     readonly isProcessAlive?: (pid: number) => boolean;
     readonly observeIdentity?: (
       pid: number,
@@ -283,9 +291,11 @@ export const reclaimStaleScenarioProfiles = async (
   } = {},
 ): Promise<ScenarioProfileReclamation> => {
   const root = options.root ?? tmpdir();
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const isProcessAlive = options.isProcessAlive ?? processIsAlive;
   const observeIdentity =
-    options.observeIdentity ?? observeScenarioOwnerIdentity;
+    options.observeIdentity ??
+    ((pid: number) => observeScenarioOwnerIdentity(pid, platform));
   const singletonFileSystem =
     options.singletonFileSystem ?? DEFAULT_SINGLETON_FILE_SYSTEM;
   const reclaimed: string[] = [];
