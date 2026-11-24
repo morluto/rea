@@ -31,7 +31,7 @@ import {
   thinMach,
 } from "../../../src/domain/binaryTarget.fixture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { hasXmlPlistSignature } from "../../../src/domain/apple/appleArchiveFormat.js";
+import { createXmlPlistSignatureProbe } from "../../../src/domain/apple/appleArchiveFormat.js";
 import { parseExecutableHeader } from "../../../src/domain/binaryTarget.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -67,6 +67,12 @@ import {
   FIT_EXTERNAL,
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
 import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
+import {
+  ddsBc7Fixture,
+  glbFixture,
+  ktx2Fixture,
+  ktxFixture,
+} from "../../../src/artifacts/gpuAsset/gpuAsset.fixture.js";
 
 it.each([
   [4000, false],
@@ -667,9 +673,11 @@ describe("binary target I/O: package classification", () => {
       kind: "artifact",
       format: "plist",
     });
-    expect(hasXmlPlistSignature(Buffer.from(`<root><plist/></root>`))).toBe(
-      false,
-    );
+    expect(
+      createXmlPlistSignatureProbe().write(
+        Buffer.from(`<root><plist/></root>`),
+      ),
+    ).toBe("rejected");
   });
 
   it("classifies Intel HEX and S-records by a valid first record", async () => {
@@ -925,6 +933,24 @@ it("classifies a FIT by its /images node and a plain DTB as a devicetree artifac
     ok: true,
     value: { kind: "artifact", format: "devicetree" },
   });
+});
+
+it("classifies DDS, GLB, KTX and KTX2 files as archive targets by their headers", async () => {
+  const directory = await createTestTempDirectory("rea-gpu-asset-target-");
+  for (const [format, bytes] of [
+    ["dds", ddsBc7Fixture()],
+    ["glb", glbFixture()],
+    ["ktx", ktxFixture()],
+    ["ktx2", ktx2Fixture()],
+  ] as const) {
+    // An unrelated extension: detection reads the header, not the name.
+    const path = join(directory, `${format}.bin`);
+    await writeFile(path, bytes);
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format },
+    });
+  }
 });
 
 const executablePlist = (encodedName: string) =>

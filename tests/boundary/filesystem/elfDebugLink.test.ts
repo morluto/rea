@@ -189,11 +189,32 @@ describe("ELF debug-link stable filesystem boundary", () => {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(projectAnalysisError(tooSmall.error).details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          minimum: 64,
+          maximum: 536870912,
+          default_value: 67108864,
+        },
+      });
       const tooMany = await service.inspect({ path, max_entries: 1 });
       if (tooMany.ok) throw new Error("Expected entry budget failure");
       if (!(tooMany.error instanceof AnalysisResourceConstraintError))
         throw new Error("Expected entry budget failure");
       expect(tooMany.error.remediationAction).toContain("smaller image");
+      expect(tooMany.error.limit).toEqual({
+        control_kind: "parameter",
+        parameter: "max_entries",
+        effective_value: 1,
+        unit: "count",
+        minimum: 1,
+        maximum: 256,
+        default_value: 128,
+        applies_at: "next_call",
+      });
+      expect((await service.inspect({ path, max_entries: 2 })).ok).toBe(true);
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

@@ -4,6 +4,7 @@ import { isUtf8 } from "node:buffer";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 
 /** ELF strings declare bytes rather than an encoding; Latin-1 is only a lossless display fallback. */
 export const decodeElfExportName = (bytes: Buffer) => {
@@ -143,6 +144,8 @@ export const peNativeExportsSchema = z.strictObject({
   exports: z.array(peExportSchema).max(MAX_NATIVE_EXPORT_ROWS),
   coverage: coverageSchema,
   issues: z.array(nativeExportIssueSchema),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 
