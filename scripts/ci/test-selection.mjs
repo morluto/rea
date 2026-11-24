@@ -10,6 +10,8 @@ import { SHARED_BOUNDARY } from "./scopes.mjs";
 
 /** More selected files than this run the complete suite instead. */
 const SELECTION_CAP = 400;
+// Observe the next band while the complete suite still runs.
+const SHADOW_CAP = 600;
 // Selected files per test job, and the most jobs one selection uses. Each job
 // runs one `--shard` of the selection; the CI sequencer balances the shards by
 // main's recorded per-file durations when that history is available.
@@ -390,16 +392,16 @@ export function planTestSelection({ files, event, tier, code, snapshot }) {
   const paths = [...selected.keys()].sort();
   if (!paths.length)
     return full("No test imports, names or sits beside a changed path");
-  if (paths.length > SELECTION_CAP)
-    return full(
-      `${paths.length} affected test files exceed the ${SELECTION_CAP}-file selection cap`,
-    );
+  const overCap = paths.length > SELECTION_CAP;
+  const capReason = `${paths.length} affected test files exceed the ${SELECTION_CAP}-file selection cap`;
+  if (paths.length > SHADOW_CAP) return full(capReason);
   for (const path of paths)
     try {
       projectForTest(path);
     } catch {
-      return full(`No single test project runs ${path}`);
+      return full(overCap ? capReason : `No single test project runs ${path}`);
     }
+  if (overCap) return { ...full(capReason), shadowFiles: paths };
   const reasons = Object.groupBy([...selected.values()], (reason) => reason);
   return {
     version: 3,

@@ -179,10 +179,9 @@ describe("MZ Windows header observations", () => {
       offset: 4,
       signature: "PE",
     });
-    expect(parseExecutableHeader(bytes, "x64")).toEqual({
-      ok: false,
-      error:
-        "Unsupported overlapping PE header at file offset 4; this reader requires the Windows header outside the 64-byte DOS header",
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86" },
     });
   });
 

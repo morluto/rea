@@ -48,8 +48,8 @@ import {
 } from "./immutableJson.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import {
-  relationshipCoverageSchema,
-  type RelationshipCoverage,
+  evidenceRelationshipCoverageSchema,
+  type EvidenceRelationshipCoverage,
 } from "./relationshipCoverage.js";
 
 /** Predicate shared by ordinary provider analysis observations. */
@@ -183,7 +183,7 @@ const evidenceBaseSchema = z
     authority: evidenceAuthoritySchema,
     environment: executionEnvironmentSchema.nullable(),
     limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable(),
+    relationship_coverage: evidenceRelationshipCoverageSchema.nullable(),
     locations: z.array(evidenceLocationSchema),
     evidence_links: z.array(prefixedDigestSchema("ev")),
   })
@@ -395,7 +395,7 @@ export interface EvidenceObservationInput {
   readonly authority?: EvidenceAuthority;
   readonly environment?: ExecutionEnvironment | null;
   readonly limitations?: readonly string[];
-  readonly relationshipCoverage?: RelationshipCoverage;
+  readonly relationshipCoverage?: EvidenceRelationshipCoverage;
   readonly locations?: readonly EvidenceLocation[];
   readonly evidenceLinks?: readonly string[];
 }

@@ -37,11 +37,7 @@ export class PeCertificatesService {
         toParameters: (input) => input,
         validateReport: (report, parameters) =>
           report.artifact.path === parameters.path &&
-          validReport(
-            report,
-            parameters.max_entries,
-            parameters.max_file_bytes,
-          ),
+          validReport(report, parameters.max_entries),
         buildEvidence: (value, identity, parameters) => {
           const architecture = peSubjectArchitecture(
             value.machine,
@@ -85,14 +81,9 @@ export class PeCertificatesService {
   }
 }
 
-const validReport = (
-  report: PeCertificates,
-  maxEntries: number,
-  maxBytes: number,
-): boolean => {
+const validReport = (report: PeCertificates, maxEntries: number): boolean => {
   const inside = insideArtifact(report.artifact.bytes);
   if (
-    report.artifact.bytes > maxBytes ||
     report.coverage.examined_entries > maxEntries ||
     report.coverage.examined_entries !== report.entries.length ||
     report.coverage.certificates !==

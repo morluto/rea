@@ -21,18 +21,16 @@ import { CPU_ARM64, universalMacho } from "../../fixtures/universalMacho.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("rejects advertised PE32 data directories outside the optional header", async () => {
+it("reads Go build information from a PE32 image declaring one data directory", async () => {
   const root = await createTestTempDirectory("rea-go-pe-directories-");
   const fixture = createGoBinaryFixture({ format: "pe", bits: 32 });
   fixture.bytes.writeUInt32LE(1, 152 + 92);
-  const path = join(root, "truncated-pe32.exe");
+  const path = join(root, "one-directory-pe32.exe");
   await writeFile(path, fixture.bytes);
   const result = await new GoBinaryProvider().inspect({ path });
-  if (result.ok) throw new Error("Truncated PE32 directories must be refused");
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "unsupported_target",
-    category: "unsupported_target",
-    details: { path, format_failure: "malformed" },
+  expect(result).toMatchObject({
+    ok: true,
+    value: { build_info: { go_version: "go1.26.0" } },
   });
 });
 

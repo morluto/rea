@@ -18,7 +18,10 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
@@ -54,15 +57,7 @@ export const projectCommandObservationView = (
 ) => {
   const view = ownedView<SummaryAnalysisView>(admitted, "summary");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Command observations support summary views.",
-        },
-      ]),
-    );
+    return invalidAnalysisView("Command observations support summary views.");
   if (
     parent.operation !== "gdb_console" &&
     parent.operation !== "inspect_with_objdump"

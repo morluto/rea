@@ -294,10 +294,18 @@ it.each([
     },
   ],
   [
-    "agreement without the mismatch limitation",
+    "agreement without the mismatch limitation code",
     (value: ElfUnwindRanges) => {
-      value.limitations = value.limitations.filter(
-        (text) => !text.includes("does not match"),
+      value.limitation_codes = value.limitation_codes.filter(
+        (code) => code !== "eh_frame_hdr_mismatch",
+      );
+    },
+  ],
+  [
+    "missing cfa limitation code",
+    (value: ElfUnwindRanges) => {
+      value.limitation_codes = value.limitation_codes.filter(
+        (code) => code !== "cfa_not_evaluated",
       );
     },
   ],
@@ -307,6 +315,13 @@ it.each([
   const result = await accept(value);
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+});
+
+it("validates unwind limitations via typed limitation_codes without matching prose sentences", async () => {
+  const value = structuredClone(await parsed(elfUnwindFixture()));
+  value.limitations = ["Reworded unwind caveat."];
+  const result = await accept(value);
+  expect(result.ok).toBe(true);
 });
 
 it("reports a header capped by max_ranges as an incomplete Result", async () => {

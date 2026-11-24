@@ -1,3 +1,5 @@
+import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+
 /** Ghidra build whose bridge behavior this REA release verifies. */
 export const SUPPORTED_GHIDRA_VERSION = "12.2";
 /** Verified JDK major; admission uses the installation's declared bounds. */
@@ -73,6 +75,8 @@ export const GHIDRA_CLANG_O0_SWITCH_DEFECT = {
   scope: {
     compiler: "clang",
     architecture: "x86-64",
+    /** Target architectures, in REA's vocabulary, this record can apply to. */
+    target_architectures: ["x86_64"],
     optimization: "-O0",
     construct: "switch",
     case_base: "above-zero",
@@ -95,6 +99,7 @@ export const GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT = {
   status: "open",
   scope: {
     architecture: "aarch64",
+    target_architectures: ["arm64", "arm64_32"],
     optimization: "-O",
     construct: "switch",
     bound: "and-0xff",
@@ -120,15 +125,68 @@ const formatOpenSwitchDefect = (
 ): string =>
   `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} leaves an ${defect.scope.architecture} ${defect.scope.construct} unrecovered when it is a ${defect.scope.table} bounded by ${defect.scope.bound}. The function body stops at the indirect branch. Upstream issue ${defect.upstream_issue} is ${defect.status} and names a Swift ${defect.scope.optimization} ${defect.scope.source} switch; it has no fix commit and no milestone. REA reproduced the unrecovered jump table on the exact ${defect.release} build with an AArch64 ELF object of that instruction shape. A compare-bounded byte table still recovers. This record stays on every admitted build until a release is known to clear it.`;
 
-/** Session and decompile limitations for the observed Ghidra build. */
+/**
+ * Operations whose output cannot depend on jump-table or function-body flow
+ * recovery: byte, string, name, segment, and data-type reads, and edits.
+ * Every other operation keeps the switch defects, including search_bytes,
+ * whose matches name the function that contains them.
+ */
+const FLOW_INDEPENDENT_OPERATIONS: ReadonlySet<string> = new Set([
+  "health",
+  "inspect_native_load_image",
+  "read_bytes",
+  "address_to_file_offset",
+  "address_name",
+  "list_documents",
+  "list_names",
+  "list_segments",
+  "list_strings",
+  "search_strings",
+  "set_address_name",
+  "set_addresses_names",
+  "inspect_native_data_type",
+]);
+
+/** The observed facts a defect record's declared scope is checked against. */
+export interface GhidraDefectApplicability {
+  /** Undefined when the target architecture is unknown; the defect stays. */
+  readonly architecture: BinaryArchitecture | undefined;
+  readonly operation: string;
+}
+
+/**
+ * Whether a defect can apply to one operation on the observed target. A
+ * known architecture outside the record's scope excludes it. The compiler is
+ * rarely observable, so it never excludes a record.
+ */
+const defectApplies = (
+  defect: GhidraKnownProviderDefect,
+  { architecture, operation }: GhidraDefectApplicability,
+): boolean =>
+  !FLOW_INDEPENDENT_OPERATIONS.has(operation) &&
+  (architecture === undefined ||
+    (defect.scope.target_architectures as readonly string[]).includes(
+      architecture,
+    ));
+
+/**
+ * Limitations for the observed Ghidra build. With applicability, only records
+ * whose declared scope can match the target and operation are kept.
+ */
 export const ghidraKnownProviderDefectLimitations = (
   providerVersion: string,
+  applicability?: GhidraDefectApplicability,
 ): readonly string[] =>
-  ghidraKnownProviderDefects(providerVersion).map((defect) =>
-    defect.id === "ghidra-9996"
-      ? formatClosedSwitchDefect(defect)
-      : formatOpenSwitchDefect(defect),
-  );
+  ghidraKnownProviderDefects(providerVersion)
+    .filter(
+      (defect) =>
+        applicability === undefined || defectApplies(defect, applicability),
+    )
+    .map((defect) =>
+      defect.id === "ghidra-9996"
+        ? formatClosedSwitchDefect(defect)
+        : formatOpenSwitchDefect(defect),
+    );
 
 /**
  * Limitation recorded when a session runs a compatible build other than the

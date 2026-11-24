@@ -13,7 +13,10 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 
@@ -58,14 +61,8 @@ export const projectAndroidSymbolSummary = (
 ) => {
   const view = ownedView<SummaryAnalysisView>(admitted, "summary");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Android class and method Evidence supports summary views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Android class and method Evidence supports summary views.",
     );
   if (
     parent.operation !== "inspect_android_class" &&

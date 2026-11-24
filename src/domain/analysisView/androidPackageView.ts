@@ -26,6 +26,7 @@ import {
 import {
   ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
   analysisViewInputError,
+  invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
   analysisTextPage,
@@ -104,15 +105,8 @@ export const projectAndroidPackageView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "android")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Android package Evidence supports summary, manifest and component views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Android package Evidence supports summary, manifest and component views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof androidViewRequestSchema>
