@@ -1,4 +1,5 @@
 import {
+  succeeded,
   ownMember,
   at,
   isObject,
@@ -12,7 +13,6 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import {
-  succeeded,
   type CheckOutcome,
   type ReadBodies,
   type SimulatedState,
