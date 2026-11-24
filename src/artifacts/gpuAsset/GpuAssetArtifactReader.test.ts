@@ -346,6 +346,21 @@ describe("KTX headers", () => {
     ]);
   });
 
+  it.each([
+    ["first level byteOffset", 80],
+    ["first level byteLength", 88],
+    ["sgdByteOffset", 64],
+  ] as const)(
+    "reports an unsafe KTX2 %s at its file offset",
+    async (_field, offset) => {
+      const bytes = ktx2Fixture();
+      bytes.writeBigUInt64LE(0xffff_ffff_ffff_ffffn, offset);
+      await expect(read("ktx2", bytes)).rejects.toMatchObject({
+        parseFailure: { kind: "malformed", format: "ktx2", offset },
+      });
+    },
+  );
+
   it("reports a KTX2 level past the end of the file as truncated", async () => {
     const result = await read("ktx2", ktx2Fixture().subarray(0, 180));
     expect(result.metadata?.extent_check).toBe("truncated");

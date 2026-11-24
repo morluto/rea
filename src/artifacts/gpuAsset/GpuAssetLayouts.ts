@@ -632,24 +632,30 @@ export const ktx2Layout = async (
     );
   const fields = new BinaryReader(header, true, "ktx2");
   const u32 = (at: number) => fields.u32(at);
-  const u64 = (bytes: Buffer, at: number, field: string) => {
+  /**
+   * A 64-bit byte count from `bytes`, which were read from file offset
+   * `base`. `at` indexes `bytes`; failures report the file offset.
+   */
+  const u64 = (bytes: Buffer, base: number, at: number, field: string) => {
     const value = new BinaryReader(bytes, true, "ktx2").word(at, 64);
     if (value > BigInt(Number.MAX_SAFE_INTEGER))
-      throw malformed("ktx2", `${field} is not a safe byte count`, at);
+      throw malformed("ktx2", `${field} is not a safe byte count`, base + at);
     return Number(value);
   };
   const levelCount = u32(40);
   const levels = Math.max(1, levelCount);
   if (levels > MAX_LEVELS)
     throw malformed("ktx2", `KTX2 declares ${String(levelCount)} levels`, 40);
-  const index = await read(80, levels * 24);
+  const indexOffset = 80;
+  const index = await read(indexOffset, levels * 24);
   if (index.length < levels * 24)
-    throw malformed("ktx2", "KTX2 level index is cut off", 80);
+    throw malformed("ktx2", "KTX2 level index is cut off", indexOffset);
   const levelRows = Array.from({ length: levels }, (_, level) => ({
-    offset: u64(index, level * 24, "level byteOffset"),
-    length: u64(index, level * 24 + 8, "level byteLength"),
+    offset: u64(index, indexOffset, level * 24, "level byteOffset"),
+    length: u64(index, indexOffset, level * 24 + 8, "level byteLength"),
     uncompressed_length: u64(
       index,
+      indexOffset,
       level * 24 + 16,
       "level uncompressedByteLength",
     ),
@@ -657,8 +663,8 @@ export const ktx2Layout = async (
   const dfd = { offset: u32(48), length: u32(52) };
   const kvd = { offset: u32(56), length: u32(60) };
   const sgd = {
-    offset: u64(header, 64, "sgdByteOffset"),
-    length: u64(header, 72, "sgdByteLength"),
+    offset: u64(header, 0, 64, "sgdByteOffset"),
+    length: u64(header, 0, 72, "sgdByteLength"),
   };
   const regions: GpuAssetRegion[] = [
     ...(
