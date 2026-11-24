@@ -21,6 +21,7 @@ import { harmonyApplicationProjectionResultSchema } from "../../../src/domain/ha
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type CliInvocation } from "../../support/cli/cliFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 const harmony = {
   family: "HarmonyOS",
@@ -170,7 +171,7 @@ cliTest.for(fixtures)(
       await writeFile(path, bytes);
 
       const inspected = await run({
-        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+        arguments: completeArguments("inspect-artifact", path),
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -334,7 +335,7 @@ cliTest.for([
       const path = join(root, `${encrypted}.${fixture.extension}`);
       await writeFile(path, bytes);
       const inspected = await run({
-        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+        arguments: completeArguments("inspect-artifact", path),
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);

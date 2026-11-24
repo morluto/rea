@@ -27,6 +27,7 @@ import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 type CaptureRequest = z.input<typeof inspectWebNetworkCaptureInputSchema>;
 
@@ -436,8 +437,7 @@ captureTest(
     const original = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         capture,
         "har",
         "--json",
@@ -538,8 +538,7 @@ captureTest(
     const cliResult = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         capture,
         "har",
         "--record",
@@ -663,8 +662,7 @@ captureTest.for(
     const response = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         path,
         "har",
         ...ordinals.flatMap((ordinal) => ["--record", String(ordinal)]),

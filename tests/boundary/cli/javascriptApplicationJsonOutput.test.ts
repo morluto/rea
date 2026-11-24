@@ -8,6 +8,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const filter = "evidence_id,normalized_result.graph.nodes[0,1].node_id";
 
@@ -127,8 +128,7 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         root,
         "--json",
         "--filter-output",
@@ -147,8 +147,7 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         join(root, "absent"),
         "--json",
       ],
@@ -168,8 +167,7 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         root,
         "--json",
         "--filter-output",

@@ -8,6 +8,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "keeps unenumerated ELF dynamic exports unsupported through %s",
@@ -34,13 +35,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         let document: unknown;
         if (surface === "CLI") {
           const response = await cli.run({
-            arguments: [
-              "inspect-native-exports",
-              "--detail",
-              "complete",
-              path,
-              "--json",
-            ],
+            arguments: completeArguments("inspect-native-exports", path),
           });
           expect(response.exitCode, response.stderr).toBe(0);
           document = response.json;
@@ -100,13 +95,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       let error: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
-          arguments: [
-            "inspect-native-exports",
-            "--detail",
-            "complete",
-            path,
-            "--json",
-          ],
+          arguments: completeArguments("inspect-native-exports", path),
         });
         expect(response.exitCode).toBe(1);
         error = response.json;
@@ -132,13 +121,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         surface === "CLI"
           ? (
               await cli.run({
-                arguments: [
-                  "inspect-native-exports",
-                  "--detail",
-                  "complete",
-                  path,
-                  "--json",
-                ],
+                arguments: completeArguments("inspect-native-exports", path),
               })
             ).json
           : (
@@ -181,13 +164,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       let document: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
-          arguments: [
-            "inspect-native-exports",
-            "--detail",
-            "complete",
-            path,
-            "--json",
-          ],
+          arguments: completeArguments("inspect-native-exports", path),
         });
         expect(response.exitCode, response.stderr).toBe(0);
         document = response.json;

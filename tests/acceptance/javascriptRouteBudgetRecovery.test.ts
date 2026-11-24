@@ -4,6 +4,7 @@ import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 cliTest(
   "recovers an oversized retained route page by selecting fields",
@@ -54,8 +55,7 @@ cliTest(
     const analyzed = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         root,
         "--evidence_output",
         bundle,

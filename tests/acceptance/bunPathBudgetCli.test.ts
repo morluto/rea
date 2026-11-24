@@ -7,6 +7,7 @@ import {
 } from "../../src/artifacts/bun/BunStandalone.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 for (const shared of [false, true])
   test(`bounds combined Bun path growth with shared prefixes: ${String(shared)}`, async ({
@@ -25,7 +26,7 @@ for (const shared of [false, true])
       elfAppendedBunPayload(bunModuleGraphPayload({ modules })),
     );
     const result = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
       environment: { REA_LOG_LEVEL: "silent" },
     });
     if (!shared) {

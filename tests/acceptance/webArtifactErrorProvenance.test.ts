@@ -8,6 +8,7 @@ import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { webModuleArtifactsFixture } from "../fixtures/webModuleTrace.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const environment = { REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser" };
 const browserMcp = lazyLocalToolsMcp(environment);
@@ -23,8 +24,7 @@ const locationSelection = (manifestPath: string, mapPath: string) => ({
   operation: "trace_web_source_location",
   arguments: [
     "trace-web-source-location",
-    "--detail",
-    "complete",
+    ...COMPLETE_DETAIL,
     manifestPath,
     "0",
     mapPath,

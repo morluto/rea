@@ -28,6 +28,7 @@ import {
 } from "../../fixtures/environmentStateWrites.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 describe("rea environment-compare difference coverage", () => {
   cliTest(
@@ -98,8 +99,7 @@ describe("rea environment-compare difference coverage", () => {
         const captured = await cli.run({
           arguments: [
             "inspect-web-network-capture",
-            "--detail",
-            "complete",
+            ...COMPLETE_DETAIL,
             har,
             "har",
             "--json",

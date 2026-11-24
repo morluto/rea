@@ -15,6 +15,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { protobufHar } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const scalarMessage = (name: string, fieldName: string) =>
   create(DescriptorProtoSchema, {
@@ -122,8 +123,7 @@ cliTest(
           const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",
-              "--detail",
-              "complete",
+              ...COMPLETE_DETAIL,
               capture,
               "har",
               "--record",

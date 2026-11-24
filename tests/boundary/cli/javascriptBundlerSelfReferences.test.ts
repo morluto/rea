@@ -9,6 +9,7 @@ import {
   findGraphEdge,
   writeFixtureFiles,
 } from "../../support/javascriptApplicationFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 /** Analyze one fixture and check the graph-wide self-reference invariants. */
 const analyzeBundle = async (
@@ -19,13 +20,7 @@ const analyzeBundle = async (
   const root = await createTestTempDirectory(prefix);
   await writeFixtureFiles(root, files);
   const output = await cli.run({
-    arguments: [
-      "analyze-javascript-application",
-      "--detail",
-      "complete",
-      root,
-      "--json",
-    ],
+    arguments: completeApplicationAnalysis(root),
   });
   expect(output.exitCode).toBe(0);
   const result = javascriptApplicationAnalysisResultSchema.parse(

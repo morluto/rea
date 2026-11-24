@@ -8,6 +8,10 @@ import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../support/completeDetail.js";
 
 cliTest(
   "returns partial Evidence when managed table declarations conflict",
@@ -23,8 +27,7 @@ cliTest(
     const result = await cli.run({
       arguments: [
         "inspect-managed-members",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         path,
         "--full-output",
         "--json",
@@ -205,13 +208,7 @@ cliTest(
         }),
       );
       const result = await cli.run({
-        arguments: [
-          "inspect-managed-members",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-managed-members", path),
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toMatchObject({
@@ -267,13 +264,7 @@ cliTest(
         }),
       );
       const result = await cli.run({
-        arguments: [
-          "inspect-managed-members",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-managed-members", path),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.json).toMatchObject({
@@ -347,13 +338,7 @@ cliTest(
       }),
     );
     const artifact = await cli.run({
-      arguments: [
-        "inspect-managed-artifact",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-managed-artifact", path),
     });
     expect(artifact.exitCode).toBe(0);
     expect(artifact.json).toMatchObject({
@@ -372,13 +357,7 @@ cliTest(
       512,
     );
     const members = await cli.run({
-      arguments: [
-        "inspect-managed-members",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-managed-members", path),
     });
     expect(members.exitCode).toBe(0);
     expect(members.json).toMatchObject({
@@ -420,13 +399,7 @@ cliTest(
         buildManagedPeFixture({ targetFramework, readyToRun }),
       );
       const result = await cli.run({
-        arguments: [
-          "inspect-managed-artifact",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-managed-artifact", path),
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toMatchObject({
@@ -470,13 +443,7 @@ cliTest(
       }),
     );
     const hinted = await cli.run({
-      arguments: [
-        "inspect-managed-artifact",
-        "--detail",
-        "complete",
-        hintedPath,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-managed-artifact", hintedPath),
     });
     expect(hinted.exitCode).toBe(0);
     expect(hinted.json).toMatchObject({
@@ -515,13 +482,7 @@ cliTest(
     );
 
     const result = await cli.run({
-      arguments: [
-        "inspect-managed-artifact",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-managed-artifact", path),
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({
@@ -548,13 +509,7 @@ cliTest(
         ilBody: Buffer.from([0x0e, 0x17, 0x26, 0x2a]),
       }),
     );
-    const argv = [
-      "inspect-managed-members",
-      "--detail",
-      "complete",
-      path,
-      "--json",
-    ];
+    const argv = completeArguments("inspect-managed-members", path);
     const result = await cli.run({ arguments: argv });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({
@@ -665,8 +620,7 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "inspect-managed-members",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           path,
           ...types.flatMap((type) => ["--type", type]),
           "--json",
@@ -700,13 +654,7 @@ cliTest(
       const path = join(root, `virtual-${virtualSectionSize}.dll`);
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: [
-          "inspect-managed-members",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-managed-members", path),
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toMatchObject({
@@ -760,13 +708,7 @@ cliTest(
       const path = join(root, `sections-${virtualSectionSize}.dll`);
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: [
-          "inspect-managed-members",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-managed-members", path),
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toMatchObject({
@@ -845,13 +787,7 @@ cliTest(
       await writeFile(path, buildManagedPeFixture({ targetFramework }));
 
       const result = await cli.run({
-        arguments: [
-          "inspect-managed-artifact",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-managed-artifact", path),
       });
 
       expect(result.exitCode).toBe(0);
@@ -886,13 +822,7 @@ cliTest(
       }),
     );
     const result = await cli.run({
-      arguments: [
-        "inspect-managed-members",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-managed-members", path),
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({

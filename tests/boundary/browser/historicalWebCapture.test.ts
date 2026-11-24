@@ -25,8 +25,7 @@ const cli = async (
       [
         entrypoint,
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         path,
         format,
         "--json",
@@ -49,6 +48,7 @@ import {
   historicalHar,
   harWithContainerLookalikes,
 } from "../../fixtures/historicalHar.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 it("preserves opaque HAR container fields through CLI and MCP", async () => {
   const root = await createTestTempDirectory("rea-har-container-fields-");

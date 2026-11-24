@@ -7,6 +7,7 @@ import { z } from "zod";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest.for([
   {
@@ -62,13 +63,7 @@ cliTest.for([
     ]);
 
     const response = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--detail",
-        "complete",
-        root,
-        "--json",
-      ],
+      arguments: completeApplicationAnalysis(root),
     });
     expect(response.exitCode, response.stderr).toBe(0);
     const { normalized_result: application } = z

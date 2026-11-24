@@ -12,6 +12,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { historicalHar } from "../../fixtures/historicalHar.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const sha256 = (value: Uint8Array | string): string =>
   createHash("sha256").update(value).digest("hex");
@@ -91,8 +92,7 @@ cliTest(
     const fromCli = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         path,
         "har",
         "--json",

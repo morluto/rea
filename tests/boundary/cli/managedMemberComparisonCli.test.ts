@@ -15,6 +15,7 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 import { managedComparisonCommand } from "../../fixtures/managedComparisonCommand.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest(
   "compares proven same-artifact TypeSpec rows through CLI and MCP",
@@ -43,13 +44,7 @@ cliTest(
       await writeFile(leftPath, bytes);
       await writeFile(rightPath, bytes);
       const inspection = await cli.run({
-        arguments: [
-          "inspect-managed-members",
-          "--detail",
-          "complete",
-          leftPath,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-managed-members", leftPath),
       });
       expect(inspection.exitCode, inspection.stderr).toBe(0);
       const left = parseEvidence(inspection.json);
@@ -221,13 +216,7 @@ cliTest(
     }
 
     const inspection = await cli.run({
-      arguments: [
-        "inspect-managed-members",
-        "--detail",
-        "complete",
-        bad,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-managed-members", bad),
     });
     expect(inspection.exitCode, inspection.stderr).toBe(1);
     expect(inspection.json).toMatchObject({
@@ -264,13 +253,7 @@ cliTest(
       await writeFile(path, bytes);
       await writeFile(peerPath, bytes);
       const inspected = await cli.run({
-        arguments: [
-          "inspect-managed-members",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-managed-members", path),
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const cliEvidence = parseEvidence(inspected.json);

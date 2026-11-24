@@ -4,6 +4,7 @@ import { z } from "zod";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const capturedSource = `
   fetch("/api/orders");
@@ -28,8 +29,7 @@ cliTest(
     });
     const baseArguments = [
       "analyze-web-bundle",
-      "--detail",
-      "complete",
+      ...COMPLETE_DETAIL,
       browser.endpoint,
       "allowed-page",
       "--allowed-origins",

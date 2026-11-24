@@ -5,6 +5,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const runtimeSource = (
   runtime: string,
@@ -55,13 +56,7 @@ for (const includesLoader of [false, true]) {
       })();`,
       });
       const output = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          root,
-          "--json",
-        ],
+        arguments: completeApplicationAnalysis(root),
       });
       expect(output.exitCode).toBe(0);
       const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -108,13 +103,7 @@ cliTest(
       .join("\n");
     await writeFixtureFiles(root, { "bundle.js": source });
     const output = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--detail",
-        "complete",
-        root,
-        "--json",
-      ],
+      arguments: completeApplicationAnalysis(root),
     });
     expect(output.exitCode).toBe(0);
     const { graph } = javascriptApplicationAnalysisResultSchema.parse(
@@ -188,13 +177,7 @@ for (const scenario of [
       const root = await createTestTempDirectory("rea-bundler-runtime-scope-");
       await writeFixtureFiles(root, { "bundle.cjs": scenario.source });
       const output = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          root,
-          "--json",
-        ],
+        arguments: completeApplicationAnalysis(root),
       });
       expect(output.exitCode).toBe(0);
       const { graph } = javascriptApplicationAnalysisResultSchema.parse(
@@ -273,13 +256,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-bundler-unknown-host-");
     await writeFixtureFiles(root, { "bundle.js": appA + appB });
     const output = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--detail",
-        "complete",
-        root,
-        "--json",
-      ],
+      arguments: completeApplicationAnalysis(root),
     });
     expect(output.exitCode).toBe(0);
     const { graph } = javascriptApplicationAnalysisResultSchema.parse(
@@ -327,13 +304,7 @@ cliTest(
   `,
     });
     const output = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--detail",
-        "complete",
-        root,
-        "--json",
-      ],
+      arguments: completeApplicationAnalysis(root),
     });
     expect(output.exitCode).toBe(0);
     const { graph } = javascriptApplicationAnalysisResultSchema.parse(

@@ -18,6 +18,7 @@ import { writeOrderedZip } from "../fixtures/artifactEntryOrder.js";
 import { ZIP_PACKAGE_FORMATS } from "../../src/domain/zipPackageFormat.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { buildBinary } from "plist";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest(
   "refuses extraction after an already open plist is replaced through MCP",
@@ -121,7 +122,7 @@ cliTest(
     });
     await writeFile(path, bytes);
     const cliResult = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const inventory = inventoryFrom(cliResult.json);
@@ -277,7 +278,7 @@ cliTest(
     });
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const inventory = inventoryFrom(result.json);
@@ -335,7 +336,7 @@ cliTest(
       const path = join(root, `${name}.nes`);
       await writeFile(path, bytes);
       const refused = await cli.run({
-        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+        arguments: completeArguments("inspect-artifact", path),
       });
       expect(refused.exitCode).not.toBe(0);
       expect(JSON.stringify(refused.json)).toContain(reason);

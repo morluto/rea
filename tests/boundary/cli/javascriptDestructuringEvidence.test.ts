@@ -7,6 +7,7 @@ import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascr
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const iteratorCloseSource = `
     const box = { label: "ready", items: [{ mode: "kept" }, { mode: "old" }] };
@@ -250,13 +251,7 @@ cliTest(
     for (const [path, source] of sources)
       await writeFile(join(root, path), source);
     const output = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--detail",
-        "complete",
-        root,
-        "--json",
-      ],
+      arguments: completeApplicationAnalysis(root),
     });
     expect(output.exitCode).toBe(0);
     const application = parseEvidence(output.json);

@@ -12,6 +12,7 @@ import {
 } from "../fixtures/managedSelectedScope.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 cliTest(
   "compares actual selected type scope from public CLI Evidence through stdio MCP after source removal",
@@ -30,8 +31,7 @@ cliTest(
       const output = await cli.run({
         arguments: [
           "inspect-managed-members",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           path,
           ...selection.flatMap((name) => ["--type", name]),
           "--json",
@@ -104,8 +104,7 @@ cliTest(
         const output = await cli.run({
           arguments: [
             "inspect-managed-members",
-            "--detail",
-            "complete",
+            ...COMPLETE_DETAIL,
             path,
             ...(isSelected ? ["--type", "Fixture.Inner"] : []),
             "--json",

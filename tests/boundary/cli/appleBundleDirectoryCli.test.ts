@@ -11,6 +11,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 const rootPath = "Payload/Fixture.app";
 cliTest.for([
@@ -58,7 +59,7 @@ cliTest.for([
     );
     await writeFile(path, await writer.close());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const evidence = parseEvidence(inspected.json);
@@ -120,7 +121,7 @@ cliTest(
     }
     const environment = { HOME: root, USERPROFILE: root };
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", app, "--json"],
+      arguments: completeArguments("inspect-artifact", app),
       environment,
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -172,7 +173,7 @@ cliTest(
     await writer.add("Fake.app/Contents", new TextReader("ordinary resource"));
     await writeFile(path, await writer.close());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const source = parseEvidence(inspected.json);

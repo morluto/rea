@@ -7,6 +7,7 @@ import { z } from "zod";
 import { inspectMachoSchema } from "../../../src/domain/native/nativeInspection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 const evidenceSchema = z.object({ normalized_result: inspectMachoSchema });
 
@@ -30,13 +31,7 @@ describe.skipIf(process.platform !== "darwin")(
         ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         const result = await cli.run({
-          arguments: [
-            "inspect-macho",
-            "--detail",
-            "complete",
-            library,
-            "--json",
-          ],
+          arguments: completeArguments("inspect-macho", library),
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(result.exitCode, result.stdout + result.stderr).toBe(0);
@@ -64,13 +59,7 @@ describe.skipIf(process.platform !== "darwin")(
         ]);
         expect(combined.exitCode, combined.stderr).toBe(0);
         const fatResult = await cli.run({
-          arguments: [
-            "inspect-macho",
-            "--detail",
-            "complete",
-            universal,
-            "--json",
-          ],
+          arguments: completeArguments("inspect-macho", universal),
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(fatResult.exitCode, fatResult.stdout + fatResult.stderr).toBe(0);

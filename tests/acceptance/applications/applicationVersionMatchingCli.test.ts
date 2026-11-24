@@ -8,6 +8,14 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  COMPLETE_DETAIL,
+  completeApplicationAnalysis,
+} from "../../support/completeDetail.js";
+
+/** Analyze an application with its complete Evidence inline. */
+const analyzeComplete = (application: string): string[] =>
+  completeApplicationAnalysis(application);
 
 cliTest(
   "keeps unavailable source-selection scopes unknown in version comparisons",
@@ -27,8 +35,7 @@ cliTest(
       const response = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           application,
           ...(selected ? ["--source-path", "main.js"] : []),
           "--json",
@@ -153,13 +160,7 @@ cliTest(
           `globalThis.webpackChunkApp.push([[1], {17(module, exports) {${side === 1 ? left : right}}}]);`,
         );
       const response = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          application,
-          "--json",
-        ],
+        arguments: analyzeComplete(application),
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);
@@ -286,13 +287,7 @@ cliTest(
         );
         await writeFile(join(application, "chunk.js"), bundle);
         const response = await cli.run({
-          arguments: [
-            "analyze-javascript-application",
-            "--detail",
-            "complete",
-            application,
-            "--json",
-          ],
+          arguments: analyzeComplete(application),
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(response.exitCode, response.stderr).toBe(0);
@@ -385,13 +380,7 @@ cliTest(
           `module.exports = ${JSON.stringify(name)};\n`,
         );
         const response = await cli.run({
-          arguments: [
-            "analyze-javascript-application",
-            "--detail",
-            "complete",
-            application,
-            "--json",
-          ],
+          arguments: analyzeComplete(application),
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(response.exitCode, response.stderr).toBe(0);
@@ -501,13 +490,7 @@ cliTest(
       );
       await writeFile(join(application, "src/util.js"), utilSource);
       const response = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          application,
-          "--json",
-        ],
+        arguments: analyzeComplete(application),
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);

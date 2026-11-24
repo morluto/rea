@@ -7,6 +7,7 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSingleEntryZip } from "../../fixtures/zipNames.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest.skipIf(process.platform === "win32")(
   "retains the selected archive alias without changing inventory identity",
@@ -17,11 +18,11 @@ cliTest.skipIf(process.platform === "win32")(
     await writeFile(target, await createSingleEntryZip("payload.txt"));
     await symlink(target, join(root, alias));
     const selected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", alias, "--json"],
+      arguments: completeArguments("inspect-artifact", alias),
       cwd: root,
     });
     const control = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", target, "--json"],
+      arguments: completeArguments("inspect-artifact", target),
       cwd: root,
     });
     expect(selected.exitCode).toBe(0);

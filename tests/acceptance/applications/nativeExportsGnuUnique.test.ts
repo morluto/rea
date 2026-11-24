@@ -9,6 +9,7 @@ import { nativeExportsSchema } from "../../../src/domain/native/nativeExports.js
 import { elfExportImage } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 const oracle = z
   .object({
@@ -88,13 +89,7 @@ for (const variant of oracle.variants) {
       bytes[7] = variant.os_abi;
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: [
-          "inspect-native-exports",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-native-exports", path),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = toolContract(

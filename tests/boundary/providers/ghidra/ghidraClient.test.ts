@@ -164,16 +164,14 @@ describe("GhidraClient ready-only dispatch", () => {
     const launcher = new FixtureLauncher();
     const client = clientFor(launcher);
 
-    await expect(
-      client.callToolIfReady("list_strings", { detail: "complete" }),
-    ).resolves.toBe(undefined);
+    await expect(client.callToolIfReady("list_strings", {})).resolves.toBe(
+      undefined,
+    );
     expect(launcher.processes).toEqual([]);
 
     const started = await client.start();
     if (!started.ok) throw started.error;
-    await expect(
-      client.callToolIfReady("list_strings", { detail: "complete" }),
-    ).resolves.toEqual({
+    await expect(client.callToolIfReady("list_strings", {})).resolves.toEqual({
       ok: true,
       value: [expect.objectContaining({ value: "fixture value" })],
     });
@@ -972,7 +970,6 @@ it("scopes authenticated input-failure diagnostics to the request while retainin
   const client = clientFor(new FixtureLauncher("remote_error"));
 
   const result = await client.callTool("list_procedures", {
-    detail: "complete",
     document: null,
     offset: 0,
     limit: 500,
@@ -1005,7 +1002,7 @@ it("scopes authenticated input-failure diagnostics to the request while retainin
   });
   expect(client.isReady()).toBe(true);
   await expect(
-    client.callTool("list_strings", { detail: "complete", document: null }),
+    client.callTool("list_strings", { document: null }),
   ).resolves.toMatchObject({ ok: true });
   await client.close();
   expect(client.diagnostics()).toMatchObject({
@@ -1065,7 +1062,7 @@ it.each(
 it("does not classify a later remote error as an identity admission failure", async () => {
   const client = clientFor(new FixtureLauncher("late_identity_failure"));
   expect((await client.start()).ok).toBe(true);
-  const result = await client.callTool("list_strings", { detail: "complete" });
+  const result = await client.callTool("list_strings", {});
   if (result.ok) throw new Error("Expected the fixture's later remote failure");
   expect(result.error.kind).toBe("remote");
   expect(result.error.remoteCode).toBe("import_identity_mismatch");
@@ -1115,7 +1112,7 @@ describe("GhidraClient", () => {
     else expect(launcher.endpointPaths[0]).toMatch(/bridge-endpoint\.json$/u);
 
     await expect(
-      client.callTool("list_strings", { detail: "complete", document: null }),
+      client.callTool("list_strings", { document: null }),
     ).resolves.toMatchObject({
       ok: true,
       value: [{ address: "0x2000", value: "fixture �雪🦊" }],
@@ -1127,14 +1124,8 @@ describe("GhidraClient", () => {
     async (mode) => {
       const client = clientFor(new FixtureLauncher(mode));
       expect((await client.start()).ok).toBe(true);
-      const completed = client.callTool("list_strings", {
-        detail: "complete",
-        document: null,
-      });
-      const later = client.callTool("list_procedures", {
-        detail: "complete",
-        document: null,
-      });
+      const completed = client.callTool("list_strings", { document: null });
+      const later = client.callTool("list_procedures", { document: null });
       await expect(completed).resolves.toEqual({
         ok: true,
         value: "completed",
@@ -1149,7 +1140,7 @@ describe("GhidraClient", () => {
   it("keeps a valid UTF-8 EOF without a newline distinct from malformed bytes", async () => {
     const client = clientFor(new FixtureLauncher("valid_utf8_end"));
     await expect(
-      client.callTool("list_strings", { detail: "complete", document: null }),
+      client.callTool("list_strings", { document: null }),
     ).resolves.toMatchObject({
       ok: false,
       error: { kind: "process" },
@@ -1161,7 +1152,7 @@ describe("GhidraClient", () => {
     async (mode) => {
       const client = clientFor(new FixtureLauncher(mode));
       await expect(
-        client.callTool("list_strings", { detail: "complete", document: null }),
+        client.callTool("list_strings", { document: null }),
       ).resolves.toMatchObject({
         ok: false,
         error: {
@@ -1174,10 +1165,7 @@ describe("GhidraClient", () => {
 
   it("accepts an owned-socket result above 64 MiB", async () => {
     const client = clientFor(new FixtureLauncher("oversized_result"));
-    const result = await client.callTool("list_strings", {
-      detail: "complete",
-      document: null,
-    });
+    const result = await client.callTool("list_strings", { document: null });
 
     if (!result.ok) throw result.error;
     if (!Array.isArray(result.value))
@@ -1213,7 +1201,6 @@ describe("GhidraClient", () => {
 
     await expect(
       client.callTool("list_procedures", {
-        detail: "complete",
         document: null,
       }),
     ).resolves.toMatchObject({
@@ -1477,9 +1464,9 @@ it("cleans up when the final waiter cancels during lineage observation", async (
   await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
     code: "ENOENT",
   });
-  await expect(
-    client.callToolIfReady("list_strings", { detail: "complete" }),
-  ).resolves.toBe(undefined);
+  await expect(client.callToolIfReady("list_strings", {})).resolves.toBe(
+    undefined,
+  );
 
   await expect(client.start()).resolves.toMatchObject({ ok: true });
   expect(launcher.processes).toHaveLength(2);
@@ -1591,7 +1578,6 @@ describe("GhidraClient established requests", () => {
 
     await expect(
       client.callTool("procedure_pseudo_code", {
-        detail: "complete",
         document: null,
         procedure: "fixture_main",
       }),
@@ -1627,7 +1613,7 @@ describe("GhidraClient runtime removal failures", () => {
           const controller = new AbortController();
           const active = client.callTool(
             "procedure_pseudo_code",
-            { detail: "complete", document: null, procedure: "fixture_main" },
+            { document: null, procedure: "fixture_main" },
             { signal: controller.signal },
           );
           await waitFor(() =>
@@ -1721,7 +1707,7 @@ describe("GhidraClient cleanup and diagnostics", () => {
     const client = clientFor(launcher);
     await expect(client.start()).resolves.toMatchObject({ ok: true });
     await expect(
-      client.callTool("list_strings", { detail: "complete", document: null }),
+      client.callTool("list_strings", { document: null }),
     ).resolves.toMatchObject({ ok: true });
 
     await waitFor(() => {
@@ -1836,10 +1822,7 @@ describe("GhidraClient rejected requests", () => {
     await expect(client.start()).resolves.toMatchObject({ ok: true });
     expect(tokens).toHaveLength(2);
     rejectCompletion = true;
-    const result = await client.callTool("list_procedures", {
-      detail: "complete",
-      document: null,
-    });
+    const result = await client.callTool("list_procedures", { document: null });
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -1884,14 +1867,8 @@ describe("GhidraClient rejected requests", () => {
       { write: () => undefined },
     );
     const client = clientFor(launcher, { logger });
-    const first = client.callTool("list_procedures", {
-      detail: "complete",
-      document: null,
-    });
-    const second = client.callTool("list_procedures", {
-      detail: "complete",
-      document: null,
-    });
+    const first = client.callTool("list_procedures", { document: null });
+    const second = client.callTool("list_procedures", { document: null });
     const result = await first;
     expect(result).toMatchObject({
       ok: false,
@@ -2021,9 +1998,7 @@ describe("GhidraClient operation-scoped failure output", () => {
 
     const earlier = await client.callTool("list_documents", {});
     expect(earlier.ok).toBe(true);
-    const later = await client.callTool("list_procedures", {
-      detail: "complete",
-    });
+    const later = await client.callTool("list_procedures", {});
     expect(later.ok).toBe(false);
     if (later.ok) return;
 
@@ -2364,9 +2339,7 @@ it("reconnects a dropped preauthentication loopback socket within the original s
   const started = await client.start();
   expect(started.ok).toBe(true);
   expect(launcher.processes).toHaveLength(1);
-  const result = await client.callToolIfReady("list_strings", {
-    detail: "complete",
-  });
+  const result = await client.callToolIfReady("list_strings", {});
   expect(result).toMatchObject({ ok: true });
 });
 
@@ -2394,7 +2367,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
     const activeController = new AbortController();
     const active = client.callTool(
       "procedure_pseudo_code",
-      { detail: "complete", document: null, procedure: "fixture_main" },
+      { document: null, procedure: "fixture_main" },
       { signal: activeController.signal },
     );
     await waitFor(() =>
@@ -2412,9 +2385,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
       { document: null, procedure: "fixture_main" },
       { signal: queuedController.signal },
     );
-    const waiting = client.callToolIfReady("list_procedures", {
-      detail: "complete",
-    });
+    const waiting = client.callToolIfReady("list_procedures", {});
     try {
       for (const result of await Promise.all([queued, preAborted])) {
         if (result?.ok !== false)
@@ -2476,7 +2447,7 @@ it("preserves the observed protocol failure when cancellation interrupts request
   });
   const result = await client.callTool(
     "list_procedures",
-    { detail: "complete" },
+    {},
     { signal: controller.signal },
   );
   expect(abortScheduled).toBe(true);
@@ -2755,7 +2726,6 @@ describe("GhidraClient reply ceiling", () => {
     await expect(client.start()).resolves.toMatchObject({ ok: true });
     seedRefused = true;
     const result = await client.callTool("search_strings", {
-      detail: "complete",
       pattern: "refused",
     });
     if (result.ok) throw new Error("Expected a reply ceiling refusal");
@@ -2775,10 +2745,7 @@ describe("GhidraClient reply ceiling", () => {
       bridgeMaxReplyBytes: { maximumBytes: 1024 * 1024, source: "setting" },
     });
 
-    const result = await client.callTool("list_strings", {
-      detail: "complete",
-      document: null,
-    });
+    const result = await client.callTool("list_strings", { document: null });
 
     expect(result.ok ? undefined : result.error).toMatchObject({
       kind: "protocol",
@@ -2803,7 +2770,7 @@ describe("GhidraClient operation progress heartbeats", () => {
     await expect(
       fastClient.callTool(
         "list_strings",
-        { detail: "complete" },
+        {},
         {
           progress: {
             report: async (update) => {

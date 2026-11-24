@@ -30,6 +30,7 @@ import {
   fakeGdbStartupPreamble,
 } from "../providers/gdbTestHelpers.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const selectedBytes = Buffer.from("caller-selected executable bytes\n");
 const selectedDigest = createHash("sha256").update(selectedBytes).digest("hex");
@@ -57,8 +58,7 @@ it.skipIf(process.platform === "win32")(
     });
     const reply = await serveInProcessCli(cli, [
       "debug-with-gdb",
-      "--detail",
-      "complete",
+      ...COMPLETE_DETAIL,
       "info files",
       "--executable",
       f.executable,

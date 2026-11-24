@@ -11,6 +11,7 @@ import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js"
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest(
   "retains cross-load ELF pointer metadata and rejects a one-byte gap through CLI and MCP",
@@ -21,13 +22,7 @@ cliTest(
     const validPath = join(root, "elf-cross-load-contents");
     await writeFile(validPath, fixture.bytes);
     const result = await cli.run({
-      arguments: [
-        "inspect-go-binary",
-        "--detail",
-        "complete",
-        validPath,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-go-binary", validPath),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
@@ -61,7 +56,7 @@ cliTest(
     const path = join(root, "elf-cross-load-gap");
     await writeFile(path, damaged.bytes);
     const rejected = await cli.run({
-      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-go-binary", path),
     });
     expect(rejected.exitCode).toBe(1);
     expect(rejected.json).toMatchObject({

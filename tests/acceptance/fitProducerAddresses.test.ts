@@ -10,6 +10,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 const oracle = z
   .object({
@@ -62,7 +63,7 @@ for (const sample of oracle.samples) {
       );
       await writeFile(path, bytes);
       const response = await cli.run({
-        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+        arguments: completeArguments("inspect-artifact", path),
       });
       expect(response.exitCode, response.stdout + response.stderr).toBe(0);
       const inspection = artifactInspectionResultSchema.parse(

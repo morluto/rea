@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest.skipIf(process.platform === "win32")(
   "retains the selected browser and its startup failure through the CLI",
@@ -35,8 +36,7 @@ cliTest.skipIf(process.platform === "win32")(
       const response = await cli.run({
         arguments: [
           "capture-browser-scenario",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           JSON.stringify(scenario),
           "--json",
         ],

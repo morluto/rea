@@ -18,6 +18,7 @@ import {
 } from "../fixtures/managedStringsAmbiguity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 const buildSelectedCoordinateFixture = (): Buffer => {
   const bytes = buildManagedPeFixture({ additionalEmptyTypes: 1 });
@@ -42,13 +43,7 @@ cliTest(
     await writeFile(path, bytes);
 
     const output = await cli.run({
-      arguments: [
-        "inspect-managed-members",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-managed-members", path),
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const report = managedMemberInspectionSchema.parse(

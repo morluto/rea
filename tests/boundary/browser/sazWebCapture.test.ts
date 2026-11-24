@@ -41,6 +41,7 @@ import {
   CAPTURE_RUNTIME_SUPPORTED as runtimeSupported,
 } from "../../fixtures/captureDecoderLimits.js";
 import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
 
@@ -111,8 +112,7 @@ const cliResponse = async (path: string, extra: string[] = []) => {
       [
         entrypoint,
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         path,
         "saz",
         "--json",

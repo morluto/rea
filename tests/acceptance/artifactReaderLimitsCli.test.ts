@@ -20,6 +20,10 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { buildGodotPck } from "../fixtures/godotPck.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../support/completeDetail.js";
 
 const digest = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
@@ -129,8 +133,7 @@ test("rejects malformed directory dimensions before suggesting a budget increase
   const result = await cli.run({
     arguments: [
       "inspect-artifact",
-      "--detail",
-      "complete",
+      ...COMPLETE_DETAIL,
       path,
       "--json",
       "--artifact-limits",
@@ -164,13 +167,7 @@ for (const reader of readers)
     const path = workspace.path("carrier.bin");
     const bytes = await reader.create();
     await writeFile(path, bytes);
-    const command = [
-      "inspect-artifact",
-      "--detail",
-      "complete",
-      path,
-      "--json",
-    ];
+    const command = completeArguments("inspect-artifact", path);
     const baseline = await cli.run({ arguments: command });
     expect(baseline.exitCode, baseline.stderr).toBe(0);
     const original = readInspection(baseline.json);
@@ -233,7 +230,7 @@ test("admits the same SEA carrier above the legacy 4096-argument ceiling", async
     execArgv: Array.from({ length: 4097 }, () => ""),
   });
   await writeFile(path, bytes);
-  const command = ["inspect-artifact", "--detail", "complete", path, "--json"];
+  const command = completeArguments("inspect-artifact", path);
   const refused = await cli.run({ arguments: command });
   expect(refused.exitCode).toBe(1);
   expect(refused.json).toMatchObject({
@@ -325,8 +322,7 @@ test("rejects unknown reader-policy fields before opening the selected artifact"
     const invalid = await cli.run({
       arguments: [
         "inspect-artifact",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         workspace.path("does-not-exist"),
         "--artifact-limits",
         JSON.stringify(policy),

@@ -8,6 +8,7 @@ import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.j
 import { protobufFrame, protobufHar } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const body = Buffer.from([8, 1]);
 const bodySha = createHash("sha256").update(body).digest("hex");
@@ -33,8 +34,7 @@ cliTest(
       const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           path,
           "har",
           "--record",
@@ -115,8 +115,7 @@ cliTest(
       const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           path,
           "har",
           "--record",
@@ -287,8 +286,7 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         path,
         "har",
         "--record",

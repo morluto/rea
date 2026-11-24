@@ -6,6 +6,7 @@ import { expect } from "vitest";
 import { historicalHar } from "../../fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 /** A HAR whose entries copy the fixture entry with each request URL. */
 const harWithRequestUrls = (urls: readonly string[]) => {
@@ -55,8 +56,7 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         har,
         "har",
         "--json",
@@ -89,8 +89,7 @@ cliTest(
     const result = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         har,
         "har",
         "--json",

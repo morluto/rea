@@ -9,6 +9,7 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { zipSymlinkMetadataFixture } from "../fixtures/zipSymlinkMetadata.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest(
   "reports ZIP symlinks from type bits when Unix permission bits are absent",
@@ -18,13 +19,7 @@ cliTest(
     await writeFile(archivePath, await zipSymlinkMetadataFixture());
 
     const inspected = await cli.run({
-      arguments: [
-        "inspect-artifact",
-        "--detail",
-        "complete",
-        archivePath,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-artifact", archivePath),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(

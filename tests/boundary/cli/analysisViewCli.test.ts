@@ -49,6 +49,10 @@ import {
   parseEvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../../support/completeDetail.js";
 
 cliTest.for([false, true])(
   "requires source agreement before treating a HAR response as empty: %s",
@@ -612,13 +616,7 @@ cliTest(
     await writer.add("main.js", new TextReader("console.log(1);\n"));
     await writeFile(archive, await writer.close());
     const inspected = await cli.run({
-      arguments: [
-        "inspect-artifact",
-        "--detail",
-        "complete",
-        archive,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-artifact", archive),
     });
     expect(inspected.exitCode).toBe(0);
     const inspection = parseEvidence(inspected.json);
@@ -1411,8 +1409,7 @@ cliTest(
     const capture = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         capturePath,
         "har",
         "--json",
@@ -1708,8 +1705,7 @@ cliTest(
     const capture = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         capturePath,
         "har",
         "--json",

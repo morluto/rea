@@ -9,6 +9,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const scenarios = [
   {
@@ -405,8 +406,7 @@ cliTest(
         const analyzed = await cli.run({
           arguments: [
             "analyze-javascript-application",
-            "--detail",
-            "complete",
+            ...COMPLETE_DETAIL,
             directory,
             "--artifact-format",
             "directory",
@@ -491,8 +491,7 @@ cliTest(
       const analyzed = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           directory,
           "--artifact-format",
           "directory",

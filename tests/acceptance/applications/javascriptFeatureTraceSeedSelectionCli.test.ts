@@ -16,6 +16,7 @@ import {
   type SharedMcpCall,
   type TestCli,
 } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 type FeatureSeed = z.input<typeof applicationFeatureSeedSchema>;
 type Trace = z.infer<typeof applicationFeatureTraceResultSchema>;
@@ -137,8 +138,7 @@ const analyzeFixture = async (cli: TestCli, root: string) => {
   const response = await cli.run({
     arguments: [
       "analyze-javascript-application",
-      "--detail",
-      "complete",
+      ...COMPLETE_DETAIL,
       root,
       "--artifact-format",
       "directory",

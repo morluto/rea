@@ -13,6 +13,7 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { ZIP_NON_ENTRY_LIMITATION } from "../../src/domain/zipPackageFormat.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest(
   "inspects and extracts a ZIP after an inert script stub",
@@ -29,13 +30,7 @@ cliTest(
     );
 
     const inspected = await cli.run({
-      arguments: [
-        "inspect-artifact",
-        "--detail",
-        "complete",
-        archivePath,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-artifact", archivePath),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(

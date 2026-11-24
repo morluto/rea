@@ -2,6 +2,7 @@ import { expect } from "vitest";
 
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "keeps WebMCP receiver segments exact through the public CLI",
@@ -22,8 +23,7 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "analyze-web-bundle",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           browser.endpoint,
           "allowed-page",
           "--allowed-origins",

@@ -6,6 +6,7 @@ import { expect } from "vitest";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest(
   "reports normalized ASAR collisions as path failures",
@@ -40,13 +41,7 @@ cliTest(
       ]),
     );
     const result = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeApplicationAnalysis(path),
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -73,13 +68,7 @@ cliTest(
       Buffer.concat([asarHeaderBytes(JSON.stringify({ files })), main]),
     );
     const result = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeApplicationAnalysis(path),
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({

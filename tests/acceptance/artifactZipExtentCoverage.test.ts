@@ -14,6 +14,7 @@ import { zipArchive } from "../../src/domain/desktop/zipArchive.fixture.js";
 import { nugetNupkgSchema } from "../../src/domain/nuget/nupkg.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest.for([
   { claim: "directory size", name: "dir/", flags: 0 },
@@ -37,7 +38,7 @@ cliTest.for([
     ]);
     await writeFile(path, bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -80,13 +81,7 @@ cliTest.for([
       const seedPath = join(root, "seed.zip");
       await writeFile(seedPath, zipArchive([{ name, method: 0 }, hidden]));
       const seedResult = await cli.run({
-        arguments: [
-          "inspect-artifact",
-          "--detail",
-          "complete",
-          seedPath,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-artifact", seedPath),
       });
       expect(seedResult.exitCode, seedResult.stdout + seedResult.stderr).toBe(
         0,

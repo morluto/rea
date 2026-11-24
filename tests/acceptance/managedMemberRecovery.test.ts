@@ -20,6 +20,10 @@ import { buildManagedMemberCapacityFixture } from "../fixtures/managedMemberCapa
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../support/completeDetail.js";
 
 const createTransport = () =>
   new StdioClientTransport({
@@ -88,13 +92,7 @@ cliTest(
       expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const output = await cli.run({
-        arguments: [
-          "inspect-managed-members",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-managed-members", path),
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const cliEvidence = parseEvidence(output.json);
@@ -119,8 +117,7 @@ cliTest(
       const selectedCli = await cli.run({
         arguments: [
           "inspect-managed-members",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           path,
           "--type",
           empty.full_name,

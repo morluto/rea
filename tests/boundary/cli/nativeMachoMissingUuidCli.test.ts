@@ -13,6 +13,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 /** Match the readable synthetic CORE/header fixture reported in #5708. */
 const refusedFileTypeImage = (fileType: 3 | 4): Buffer => {
@@ -64,13 +65,7 @@ describe.skipIf(process.platform !== "darwin")(
 
         const inspect = async (path: string) => {
           const result = await cli.run({
-            arguments: [
-              "inspect-macho",
-              "--detail",
-              "complete",
-              path,
-              "--json",
-            ],
+            arguments: completeArguments("inspect-macho", path),
             environment: { REA_LOG_LEVEL: "silent" },
           });
           expect(result.exitCode, result.stdout + result.stderr).toBe(0);
@@ -162,13 +157,7 @@ describe.skipIf(process.platform !== "darwin")(
             },
           };
           const refused = await cli.run({
-            arguments: [
-              "inspect-macho",
-              "--detail",
-              "complete",
-              path,
-              "--json",
-            ],
+            arguments: completeArguments("inspect-macho", path),
             environment: { REA_LOG_LEVEL: "silent" },
           });
           expect(refused.exitCode, refused.stdout + refused.stderr).toBe(1);

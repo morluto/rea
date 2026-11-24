@@ -13,6 +13,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest(
   "refuses NFC-colliding ZIP members without an integrity retry",
@@ -27,13 +28,7 @@ cliTest(
     await writeFile(archive, await writer.close());
 
     const inspected = await cli.run({
-      arguments: [
-        "inspect-artifact",
-        "--detail",
-        "complete",
-        archive,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-artifact", archive),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(

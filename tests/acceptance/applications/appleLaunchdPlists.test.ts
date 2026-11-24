@@ -10,6 +10,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest(
   "Apple launchd domains follow their owning directory through CLI and MCP",
@@ -52,7 +53,7 @@ cliTest(
     const path = join(root, "Launchd.zip");
     await writeFile(path, await writer.close());
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
       environment,
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);

@@ -6,6 +6,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const capturedSource = `
 const dynamic = globalThis.options;
@@ -98,8 +99,7 @@ cliTest(
       const cliReply = await cli.run({
         arguments: [
           "analyze-web-bundle",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           browser.endpoint,
           "allowed-page",
           "--allowed-origins",

@@ -17,6 +17,7 @@ import { CAPTURE_RUNTIME_SUPPORTED } from "../../fixtures/captureDecoderLimits.j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url));
@@ -124,8 +125,7 @@ it.skipIf(
       [
         cli,
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         path,
         "har",
         "--json",

@@ -14,6 +14,10 @@ import {
 } from "../../../src/erlang/Beam.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type SharedMcpCall } from "../../support/cli/cliFixture.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../../support/completeDetail.js";
 
 const contract = toolContract("inspect_erlang_beam");
 const completeSchema = contract.outputSchema.safeExtend({
@@ -109,13 +113,7 @@ cliTest(
     await writeFile(path, erlangBeamFixture("views"));
     const run = cli.run.bind(cli);
     const complete = await run({
-      arguments: [
-        "inspect-erlang-beam",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-erlang-beam", path),
     });
     expect(complete.exitCode, complete.stderr).toBe(0);
     const parent = completeSchema.parse(complete.json);
@@ -323,7 +321,7 @@ cliTest(
     for (const [flags, key] of [
       [["--detail", "summary"], "evidence_output"],
       [
-        ["--detail", "complete", "--view", view, "--evidence_output", output],
+        [...COMPLETE_DETAIL, "--view", view, "--evidence_output", output],
         "view",
       ],
       [
@@ -334,8 +332,7 @@ cliTest(
       const result = await run({
         arguments: [
           "inspect-erlang-beam",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           "/rea-missing/app.beam",
           ...flags,
           "--json",

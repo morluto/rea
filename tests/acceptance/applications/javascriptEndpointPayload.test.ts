@@ -12,6 +12,7 @@ import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascr
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "keeps full endpoint evidence usable without copying large values into metadata",
@@ -41,8 +42,7 @@ cliTest(
     const cliResponse = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         root,
         "--artifact-format",
         "directory",

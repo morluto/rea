@@ -7,6 +7,7 @@ import { NativeDmgArtifactReader } from "../../src/artifacts/NativeDmgArtifactRe
 import { parseNativeDmgInfo } from "../../src/artifacts/NativeDmgOwnership.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 // Each command verifies the whole image before attaching; hosted macOS runners
 // take about three times as long as a local host. The project deadline bounds a
@@ -81,13 +82,7 @@ cliTest.skipIf(process.platform !== "darwin")(
       const busy = await cli.run({
         // Each command must release its own attachment when its process ends.
         freshProcess: true,
-        arguments: [
-          "inspect-artifact",
-          "--detail",
-          "complete",
-          image,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-artifact", image),
       });
       expect(busy.exitCode, busy.stdout).toBe(1);
       expect(busy.json).toMatchObject({
@@ -126,7 +121,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     expect(mountedDevices(await attachedImages())).toEqual([]);
     const control = await cli.run({
       freshProcess: true,
-      arguments: ["inspect-artifact", "--detail", "complete", image, "--json"],
+      arguments: completeArguments("inspect-artifact", image),
     });
     expect(control.exitCode, control.stdout).toBe(0);
     expect(control.json).toMatchObject({

@@ -22,6 +22,10 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../support/completeDetail.js";
 
 const connectLocalToolsMcp = lazyLocalToolsMcp();
 
@@ -41,13 +45,7 @@ cliTest(
     const path = join(root, "misaligned.macho");
     await writeFile(path, machoImageWithUnknownCommand(true, 12));
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject(expectedFailure);
@@ -73,13 +71,7 @@ cliTest(
       const path = join(root, name);
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: [
-          "inspect-rust-binary",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-rust-binary", path),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
@@ -121,13 +113,7 @@ cliTest(
     const path = join(root, "component.wasm");
     await writeFile(path, Buffer.from("0061736d0d000100", "hex"));
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -172,13 +158,7 @@ cliTest(
       }),
     );
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
@@ -229,13 +209,7 @@ cliTest(
             ),
       );
       const result = await cli.run({
-        arguments: [
-          "inspect-rust-binary",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-rust-binary", path),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
@@ -286,13 +260,7 @@ cliTest(
     await writeFile(path, bytes);
 
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
     });
 
     expect(result.exitCode, result.stderr).toBe(0);
@@ -324,13 +292,7 @@ cliTest(
     });
     await writeFile(path, createRustImage({ format: "elf", payload }));
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
@@ -363,13 +325,7 @@ cliTest(
     );
 
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -408,13 +364,7 @@ cliTest(
     await writeFile(path, bytes);
 
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
@@ -490,13 +440,7 @@ cliTest(
       },
     };
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject(expectedFailure);
@@ -556,13 +500,7 @@ cliTest(
   `,
     );
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
       environment: {
         NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
         REA_TEST_SELECTED_FILE: path,
@@ -590,13 +528,7 @@ cliTest(
     const path = join(root, "mixed.elf");
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-rust-binary", path),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
@@ -630,7 +562,7 @@ cliTest(
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     const go = await cli.run({
-      arguments: ["inspect-go-binary", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-go-binary", path),
     });
     expect(go.exitCode).toBe(1);
     const goFailure = {
@@ -663,8 +595,7 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "inspect-rust-binary",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           path,
           "--full-output",
           ...options,

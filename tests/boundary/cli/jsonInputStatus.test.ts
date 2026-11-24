@@ -11,6 +11,7 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 let isolatedHomeRoot = "";
 let isolatedHomeEnvironment: NodeJS.ProcessEnv = {};
@@ -374,13 +375,7 @@ describe("compiled CLI JSON path ambiguity", () => {
       await writeFile(join(root, "[prefix"), "regular file");
       const input = "[prefix/rest";
       const result = await cli.run({
-        arguments: [
-          "capture-browser-scenario",
-          "--detail",
-          "complete",
-          input,
-          "--json",
-        ],
+        arguments: completeArguments("capture-browser-scenario", input),
         cwd: root,
         environment: isolatedHomeEnvironment,
       });
@@ -413,13 +408,7 @@ describe("compiled CLI JSON path ambiguity", () => {
           code: "EACCES",
         });
         const result = await cli.run({
-          arguments: [
-            "capture-browser-scenario",
-            "--detail",
-            "complete",
-            input,
-            "--json",
-          ],
+          arguments: completeArguments("capture-browser-scenario", input),
           cwd: root,
           environment: isolatedHomeEnvironment,
         });

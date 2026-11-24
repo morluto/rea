@@ -10,6 +10,7 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "retains selected capture paths without exposing declared sensitive values",
@@ -21,8 +22,7 @@ cliTest(
     await writeFile(join(cwd, "capture.pb"), protobufCaptureDescriptor());
     const args = [
       "inspect-web-network-capture",
-      "--detail",
-      "complete",
+      ...COMPLETE_DETAIL,
       "./capture.har",
       "har",
       "--record",

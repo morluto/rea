@@ -23,6 +23,7 @@ import {
 } from "../../../src/domain/javascript/staticObservedEndpointSchemas.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const prepareInputs = async (cli: TestCli) => {
   const root = await createTestTempDirectory("rea-static-observed-endpoints-");
@@ -52,8 +53,7 @@ const prepareInputs = async (cli: TestCli) => {
   const analyzed = await run({
     arguments: [
       "analyze-javascript-application",
-      "--detail",
-      "complete",
+      ...COMPLETE_DETAIL,
       appPath,
       "--artifact-format",
       "directory",
@@ -65,8 +65,7 @@ const prepareInputs = async (cli: TestCli) => {
   const inspected = await run({
     arguments: [
       "inspect-web-network-capture",
-      "--detail",
-      "complete",
+      ...COMPLETE_DETAIL,
       harPath,
       "har",
       "--json",

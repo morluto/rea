@@ -13,6 +13,7 @@ import {
 import { fileLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const mcp = fileLocalToolsMcp();
 
@@ -105,13 +106,7 @@ for (const available of [false, true]) {
       const containerEvidence = nativeObservation(archive, archiveDigest);
       const nativeEvidence = nativeObservation(companion, nativeDigest);
       const analysis = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          archive,
-          "--json",
-        ],
+        arguments: completeApplicationAnalysis(archive),
       });
       expect(analysis.exitCode, analysis.stderr).toBe(0);
       const parent = toolContract(

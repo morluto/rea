@@ -7,6 +7,7 @@ import { expect } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest(
   "reports partial JavaScript request targets through the public CLI",
@@ -17,13 +18,7 @@ cliTest(
       "fetch(target); fetch('target'); fetch(`https://${hosts['a@b']}/items/${id}`); function other(target) { fetch(target); }",
     );
     const cliResult = await driver.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--detail",
-        "complete",
-        root,
-        "--json",
-      ],
+      arguments: completeApplicationAnalysis(root),
       environment: process.env,
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);

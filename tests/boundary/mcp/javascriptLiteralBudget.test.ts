@@ -8,6 +8,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { fileLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const mcp = fileLocalToolsMcp();
 
@@ -45,13 +46,7 @@ for (const scenario of [
       await writeFile(path, source);
       const digest = createHash("sha256").update(source).digest("hex");
       const cliResponse = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          root,
-          "--json",
-        ],
+        arguments: completeApplicationAnalysis(root),
       });
       expect(cliResponse.exitCode).toBe(0);
       const cliEvidence = toolContract(

@@ -23,6 +23,7 @@ import {
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 /** One synthetic cargo-auditable artifact for each supported container. */
 const rustArtifact = (
@@ -397,8 +398,7 @@ cliTest(
       const delivered = await cli.run({
         arguments: [
           "inspect-rust-binary",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           path,
           "--view",
           JSON.stringify(selection),
@@ -623,13 +623,12 @@ cliTest(
     for (const args of [
       ["--detail", "summary"],
       ["--view", "{"],
-      ["--detail", "complete", "--view", '{"collection":"packages"}'],
+      [...COMPLETE_DETAIL, "--view", '{"collection":"packages"}'],
     ]) {
       const refused = await cli.run({
         arguments: [
           "inspect-rust-binary",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           missing,
           ...args,
           "--json",

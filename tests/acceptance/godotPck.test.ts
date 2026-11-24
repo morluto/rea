@@ -19,6 +19,10 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../support/completeDetail.js";
 
 const members = [
   { path: "res://scripts/main.gd", data: "extends Node\n" },
@@ -44,7 +48,7 @@ cliTest.for([1, 2, 3, 4] as const)(
       version === 1 ? buildGodotPck1(members) : buildGodotPck(version, members),
     );
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
+      arguments: completeArguments("inspect-artifact", source),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const graph = graphFrom(inspected.json);
@@ -115,7 +119,7 @@ cliTest.for([1, 4] as const)(
     ]);
     await writeFile(source, bytes);
     const reply = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
+      arguments: completeArguments("inspect-artifact", source),
     });
     expect(reply.exitCode, reply.stdout + reply.stderr).toBe(0);
     const graph = graphFrom(reply.json);
@@ -158,13 +162,7 @@ cliTest(
       const source = join(root, `candidate-${String(index)}.x86_64`);
       await writeFile(source, bytes);
       const reply = await cli.run({
-        arguments: [
-          "inspect-artifact",
-          "--detail",
-          "complete",
-          source,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-artifact", source),
       });
       expect(reply.exitCode, reply.stdout + reply.stderr).toBe(0);
       const graph = graphFrom(reply.json);
@@ -197,7 +195,7 @@ cliTest(
     );
 
     const reply = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
+      arguments: completeArguments("inspect-artifact", source),
     });
     expect(reply.exitCode).toBe(1);
     expect(reply.json).toMatchObject({
@@ -222,7 +220,7 @@ cliTest(
       ]),
     );
     const rejected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
+      arguments: completeArguments("inspect-artifact", source),
     });
     expect(rejected.exitCode).toBe(1);
     expect(rejected.json).toMatchObject({
@@ -237,8 +235,7 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-artifact",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         source,
         "--integrity-policy",
         "record-and-continue",
@@ -292,7 +289,7 @@ cliTest(
     bytes.fill(0xff, directory + 4);
     await writeFile(source, bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
+      arguments: completeArguments("inspect-artifact", source),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const graph = graphFrom(inspected.json);

@@ -23,6 +23,10 @@ import { fileSubjectTarget } from "../../fixtures/evidenceSubject.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type SharedMcpCall } from "../../support/cli/cliFixture.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../../support/completeDetail.js";
 
 const pycContract = toolContract("inspect_python_pyc");
 const viewContract = toolContract("inspect_analysis_view");
@@ -138,7 +142,7 @@ cliTest(
     await writeSameNamePyc(path);
     const run = cli.run.bind(cli);
     const complete = await run({
-      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-python-pyc", path),
     });
     expect(complete.exitCode, complete.stderr).toBe(0);
     const parent = pycContract.outputSchema.parse(complete.json);
@@ -294,7 +298,7 @@ cliTest(
     for (const [flags, key] of [
       [["--detail", "summary"], "evidence_output"],
       [
-        ["--detail", "complete", "--view", view, "--evidence_output", output],
+        [...COMPLETE_DETAIL, "--view", view, "--evidence_output", output],
         "view",
       ],
       [
@@ -305,8 +309,7 @@ cliTest(
       const result = await run({
         arguments: [
           "inspect-python-pyc",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           "/rea-missing/module.pyc",
           ...flags,
           "--json",

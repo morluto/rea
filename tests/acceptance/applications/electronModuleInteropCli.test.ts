@@ -9,6 +9,7 @@ import { ROLLDOWN_MODULE_INTEROP } from "../../../src/domain/javascript/javascri
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const INTRINSIC_MUTATIONS = [
   ["poisoned.cjs", "({Object} = replacements);"],
@@ -127,13 +128,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     let document: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          root,
-          "--json",
-        ],
+        arguments: completeApplicationAnalysis(root),
       });
       expect(response.exitCode, response.stderr).toBe(0);
       document = response.json;

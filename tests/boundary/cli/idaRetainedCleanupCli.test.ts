@@ -3,6 +3,7 @@ import { describe, expect } from "vitest";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 /**
  * A headless IDA supervisor that completes the MCP handshake and then leaves
@@ -51,14 +52,7 @@ describe("headless IDA timeout through the one-shot CLI", () => {
       const target = await workspace.write("target.elf", elf(2, 1, 62));
 
       const result = await cli.run({
-        arguments: [
-          "decompile",
-          "--detail",
-          "complete",
-          target,
-          "main",
-          "--json",
-        ],
+        arguments: ["decompile", ...COMPLETE_DETAIL, target, "main", "--json"],
         environment: {
           ...workspace.environment,
           REA_ANALYSIS_PROVIDER: "ida",

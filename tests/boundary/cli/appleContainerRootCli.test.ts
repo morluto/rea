@@ -11,6 +11,7 @@ import { appleApplicationProjectionResultSchema } from "../../../src/domain/appl
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest.for([
   {
@@ -78,7 +79,7 @@ cliTest.for([
     const bytes = await writer.close();
     await writeFile(path, bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const source = parseEvidence(inspected.json);

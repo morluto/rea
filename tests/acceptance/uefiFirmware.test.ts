@@ -23,6 +23,7 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
@@ -266,8 +267,7 @@ it("never admits prose carrying a `_FVH` string as the flash image format", asyn
     const cliResult = await execute(process.execPath, [
       cli,
       "inspect-artifact",
-      "--detail",
-      "complete",
+      ...COMPLETE_DETAIL,
       path,
       "--json",
     ]);
@@ -300,8 +300,7 @@ it.each([
     const command = await execute(process.execPath, [
       cli,
       "inspect-artifact",
-      "--detail",
-      "complete",
+      ...COMPLETE_DETAIL,
       path,
       "--json",
     ]);

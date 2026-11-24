@@ -13,6 +13,7 @@ import {
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest(
   "finds compiler paths independently of ELF section names through CLI and stdio MCP",
@@ -27,13 +28,7 @@ cliTest(
       const path = join(root, `${name}.elf`);
       await writeFile(path, bytes);
       const output = await cli.run({
-        arguments: [
-          "inspect-rust-binary",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-rust-binary", path),
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const evidence = toolContract("inspect_rust_binary").outputSchema.parse(

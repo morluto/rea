@@ -17,6 +17,7 @@ import { protobufHar } from "../../fixtures/protobufCapture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const sha256 = (bytes: string | Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -160,8 +161,7 @@ cliTest.for([
         const output = await cli.run({
           arguments: [
             "inspect-web-network-capture",
-            "--detail",
-            "complete",
+            ...COMPLETE_DETAIL,
             capture,
             "har",
             "--record",
@@ -244,8 +244,7 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         capture,
         "har",
         "--record",

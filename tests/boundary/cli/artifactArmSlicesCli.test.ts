@@ -9,6 +9,7 @@ import {
   expectArmSliceInventory,
 } from "../../fixtures/machoArmSlices.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const envelope = z.object({ ok: z.literal(true), data: z.unknown() });
 
@@ -22,8 +23,7 @@ describe.skipIf(process.platform !== "darwin")(
         const inspected = await cli.run({
           arguments: [
             "inspect-artifact",
-            "--detail",
-            "complete",
+            ...COMPLETE_DETAIL,
             fixture.path,
             "--json",
             "--full-output",

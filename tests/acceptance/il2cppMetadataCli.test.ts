@@ -49,6 +49,7 @@ import {
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const sharedMcp = lazyLocalToolsMcp();
 
@@ -134,8 +135,7 @@ cliTest(
         path,
         "--binary",
         binaryPath,
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         "--json",
       ],
     });

@@ -9,6 +9,7 @@ import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascr
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "retains large event names and emitter-scoped listener ownership through CLI and stdio MCP",
@@ -30,8 +31,7 @@ cliTest(
     const cliResponse = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         root,
         "--artifact-format",
         "directory",
@@ -156,8 +156,7 @@ cliTest(
     const analyzed = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         root,
         "--artifact-format",
         "directory",

@@ -6,6 +6,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest(
   "retains exact factory bytes and relocation while exposing unresolved chunk alignment",
@@ -22,13 +23,7 @@ cliTest(
         `${side === 1 ? "" : "/* earlier bundle edit */\n"}${bundle}`,
       );
       const response = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          application,
-          "--json",
-        ],
+        arguments: completeApplicationAnalysis(application),
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);
@@ -118,13 +113,7 @@ cliTest(
         `${side === 1 ? "" : "/* shifted */\n"}${bundle}`,
       );
       const run = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          application,
-          "--json",
-        ],
+        arguments: completeApplicationAnalysis(application),
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(run.exitCode, run.stderr).toBe(0);

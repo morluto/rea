@@ -20,6 +20,10 @@ import {
   artifactInventoryResultSchema,
   artifactExtractionResultSchema,
 } from "../../src/domain/artifactGraph.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../support/completeDetail.js";
 
 cliTest(
   "does not resolve Bun layout ambiguity by lowering the module budget",
@@ -39,8 +43,7 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "inspect-artifact",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           path,
           "--artifact-limits",
           JSON.stringify({ bun: { module_count: moduleCount } }),
@@ -82,8 +85,7 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "inspect-artifact",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           source,
           "--artifact-limits",
           limits,
@@ -130,7 +132,7 @@ cliTest(
     ]);
     await writeFile(source, fat.bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
+      arguments: completeArguments("inspect-artifact", source),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(1);
     expect(inspected.json).toMatchObject({
@@ -166,7 +168,7 @@ cliTest(
       ),
     );
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
+      arguments: completeArguments("inspect-artifact", source),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(

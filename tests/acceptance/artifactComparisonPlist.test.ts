@@ -7,6 +7,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 const plist =
   '<?xml version="1.0"?><plist version="1.0"><dict><key>label</key><string>hello</string></dict></plist>';
@@ -23,13 +24,7 @@ cliTest(
     ]);
 
     const cliResult = await driver.run({
-      arguments: [
-        "inspect-artifact",
-        "--detail",
-        "complete",
-        leftPath,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-artifact", leftPath),
       environment: process.env,
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);

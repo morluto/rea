@@ -4,6 +4,7 @@ import { parseConfig } from "../../../src/config/parseConfig.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
 import { IdaProvider } from "../../../src/ida/IdaProvider.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 workspaceCliTest(
   "returns an unready IDA registration's repair for an explicit --provider selection",
@@ -25,8 +26,7 @@ workspaceCliTest(
     const result = await cli.run({
       arguments: [
         "decompile",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         target,
         "main",
         "--provider",

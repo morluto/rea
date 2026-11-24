@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const silentCliEnv = { REA_LOG_LEVEL: "silent" } as const;
 const defaultMcp = lazyLocalToolsMcp();
@@ -26,8 +27,7 @@ const traceCliArgs = (
   column = 0,
 ) => [
   "trace-web-source-location",
-  "--detail",
-  "complete",
+  ...COMPLETE_DETAIL,
   manifest,
   "0",
   path,
@@ -253,8 +253,7 @@ cliTest(
     const response = await cli.run({
       arguments: [
         "trace-web-source-location",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         process.platform === "win32"
           ? "manifest.json"
           : "lexical/link/../manifest.json",
@@ -345,8 +344,7 @@ cliTest(
     const invalid = await cli.run({
       arguments: [
         "trace-web-source-location",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         manifest,
         "0",
         map,

@@ -24,6 +24,7 @@ import {
 } from "../../fixtures/javascriptRuntimeReconciliation.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { waitFor } from "../../support/testWait.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const cliProcesses = createTestProcessRegistry();
 const cli = createTestCli(cliProcesses);
@@ -238,10 +239,7 @@ it("returns the static JavaScript application Evidence contract", async () => {
     ...process.env,
   };
 
-  const analyzed = await runCli(
-    ["analyze-javascript-application", "--detail", "complete", root, "--json"],
-    environment,
-  );
+  const analyzed = await runCli(completeApplicationAnalysis(root), environment);
 
   expect(analyzed).toMatchObject({
     operation: "analyze_javascript_application",

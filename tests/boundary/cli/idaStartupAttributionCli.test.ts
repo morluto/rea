@@ -4,6 +4,7 @@ import { expect } from "vitest";
 import { z } from "zod";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const tools = [
   "idb_open",
@@ -223,8 +224,7 @@ workspaceCliTest.for([
       const result = await cli.run({
         arguments: [
           "decompile",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           target,
           "main",
           "--provider",

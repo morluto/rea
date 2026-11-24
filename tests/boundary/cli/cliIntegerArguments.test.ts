@@ -5,6 +5,7 @@ import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type CliResult } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const SESSION_ID = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
 const NON_INTEGER_TEXT = [
@@ -52,8 +53,7 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "inspect-android-method",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           "/nonexistent/missing.apk",
           "com.example.Main",
           "run",
@@ -72,8 +72,7 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "inspect-android-method",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           "/nonexistent/missing.apk",
           "com.example.Main",
           "run",
@@ -115,8 +114,7 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "trace-web-source-location",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           "/nonexistent/manifest.json",
           "0",
           "/nonexistent/app.js.map",
@@ -181,8 +179,7 @@ describe("CLI integer arguments", () => {
       const result = await cli.run({
         arguments: [
           "inspect-web-network-capture",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           "/nonexistent/capture.qlog",
           "qlog",
           "--record",
@@ -213,8 +210,7 @@ describe("byte-entropy window options", () => {
         const result = await cli.run({
           arguments: [
             "inspect-byte-entropy",
-            "--detail",
-            "complete",
+            ...COMPLETE_DETAIL,
             await entropySample(),
             `${flag}=${value}`,
             "--json",
@@ -234,8 +230,7 @@ describe("byte-entropy window options", () => {
         const result = await cli.run({
           arguments: [
             "inspect-byte-entropy",
-            "--detail",
-            "complete",
+            ...COMPLETE_DETAIL,
             path,
             ...flags,
             "--json",

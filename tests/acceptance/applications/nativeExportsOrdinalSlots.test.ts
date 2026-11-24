@@ -7,6 +7,7 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { peExportImage } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 cliTest(
   "reports the last PE ordinal when an unused EAT slot follows it",
@@ -23,13 +24,7 @@ cliTest(
     );
 
     const result = await cli.run({
-      arguments: [
-        "inspect-native-exports",
-        "--detail",
-        "complete",
-        path,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-native-exports", path),
     });
 
     expect(result.exitCode, result.stderr).toBe(0);
@@ -93,13 +88,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       let document: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
-          arguments: [
-            "inspect-native-exports",
-            "--detail",
-            "complete",
-            path,
-            "--json",
-          ],
+          arguments: completeArguments("inspect-native-exports", path),
         });
         expect(response.exitCode, response.stderr).toBe(0);
         document = toolContract("inspect_native_exports").outputSchema.parse(
@@ -160,13 +149,7 @@ cliTest.for([32, 64] as const)(
       bytes.writeUInt32LE(size, virtualSizeField);
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: [
-          "inspect-native-exports",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-native-exports", path),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const response = await mcp.call("inspect_native_exports", {

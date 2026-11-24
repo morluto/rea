@@ -16,6 +16,7 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 const onefile = async (
   magic = PYTHON_39_MAGIC,
@@ -166,7 +167,7 @@ cliTest(
   async ({ cli: driver }) => {
     const path = await onefile();
     const result = await driver.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
       environment: process.env,
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -329,7 +330,7 @@ cliTest(
       }),
     );
     const inspected = await driver.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -436,7 +437,7 @@ cliTest(
   async ({ cli: driver }) => {
     const path = await namespacePathCollision();
     const inspectResult = await driver.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
       environment: process.env,
     });
     expect(inspectResult.exitCode, inspectResult.stderr).toBe(0);
@@ -543,7 +544,7 @@ cliTest(
   async ({ cli: driver }) => {
     const path = await onefile(Buffer.alloc(4), true, true);
     const result = await driver.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
       environment: process.env,
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -584,7 +585,7 @@ cliTest.for([
       namespaceToc(typeCode),
     );
     const result = await driver.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
       environment: process.env,
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -645,7 +646,7 @@ cliTest(
       Buffer.from("5b010000007301000000", "hex"),
     );
     const result = await driver.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
       environment: process.env,
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -702,7 +703,7 @@ cliTest(
       Buffer.from("7301000100", "hex"),
     );
     const result = await driver.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
       environment: process.env,
     });
     expect(result.exitCode).toBe(1);

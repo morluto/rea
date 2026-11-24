@@ -23,6 +23,7 @@ import {
 } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const sha256 = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -160,8 +161,7 @@ cliTest(
           const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",
-              "--detail",
-              "complete",
+              ...COMPLETE_DETAIL,
               capture,
               "har",
               "--record",
@@ -235,8 +235,7 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         capture,
         "har",
         "--record",
@@ -342,8 +341,7 @@ cliTest(
       const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           capture,
           "har",
           "--record",

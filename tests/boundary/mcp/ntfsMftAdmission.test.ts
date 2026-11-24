@@ -12,6 +12,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { serveCli } from "../cli/cliServeHarness.js";
+import { completeArguments } from "../../support/completeDetail.js";
 
 const expectMftInventory = (value: unknown): void => {
   const evidence = parseEvidence(value);
@@ -98,13 +99,7 @@ mcpTest(
     record.writeUInt16LE(5, 1022);
     await writeFile(path, record);
 
-    const cli = await serveCli([
-      "inspect-artifact",
-      "--detail",
-      "complete",
-      path,
-      "--json",
-    ]);
+    const cli = await serveCli(completeArguments("inspect-artifact", path));
     expect(cli.exitCode, cli.stdout).toBe(0);
     expectMftInventory(JSON.parse(cli.stdout));
 

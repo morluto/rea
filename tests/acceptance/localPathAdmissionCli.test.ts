@@ -7,6 +7,7 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { pythonPycFixture } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const fileCommands = [
   "inspect-sqlite-database",
@@ -193,8 +194,7 @@ cliTest(
     const result = await cli.run({
       arguments: [
         "inspect-python-pyc",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         "./selected.pyc",
         "--json",
       ],

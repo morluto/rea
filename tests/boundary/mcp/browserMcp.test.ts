@@ -32,6 +32,7 @@ import {
   type FakeCdpBrowser,
   type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const schemaValidation = createMcpSchemaValidation();
 const resources = new ArtifactResourceScope();
@@ -259,8 +260,7 @@ cliTest(
     const cliResult = await cli.run({
       arguments: [
         "analyze-web-bundle",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         browser.endpoint,
         "allowed-page",
         "--allowed-origins",
@@ -816,8 +816,7 @@ cliTest(
     const cliResult = await cli.run({
       arguments: [
         "analyze-web-bundle",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         browser.endpoint,
         "allowed-page",
         "--allowed-origins",

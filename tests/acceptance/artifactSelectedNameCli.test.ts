@@ -11,6 +11,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest
   .skipIf(process.platform === "win32")
@@ -31,13 +32,7 @@ cliTest
     await writeFile(stored, await writer.close());
     await symlink(stored, selected);
     const inspected = await cli.run({
-      arguments: [
-        "inspect-artifact",
-        "--detail",
-        "complete",
-        selected,
-        "--json",
-      ],
+      arguments: completeArguments("inspect-artifact", selected),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspectedEvidence = parseEvidence(inspected.json);

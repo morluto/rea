@@ -20,6 +20,7 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 const contents = "throw new Error('must not execute');\n";
 
@@ -41,7 +42,7 @@ cliTest.for(carriers)(
     const source = join(root, "app");
     await writeFile(source, bytes);
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", source, "--json"],
+      arguments: completeArguments("inspect-artifact", source),
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
     const inspection = artifactInspectionResultSchema.parse(
@@ -103,7 +104,7 @@ cliTest(
     const path = join(root, "large-table.exe");
     await writeFile(path, fixture.bytes);
     const capped = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
     });
     expect(capped.exitCode).toBe(1);
     expect(capped.json).toMatchObject({
@@ -125,7 +126,7 @@ cliTest(
     );
     await writeFile(path, fixture.bytes);
     const malformed = await cli.run({
-      arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-artifact", path),
     });
     expect(malformed.exitCode).toBe(1);
     expect(malformed.json).toMatchObject({

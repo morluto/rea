@@ -16,6 +16,7 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { javaClassFile } from "../fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest.for(["jar", "zip"])(
   "distinguishes JVM classes from universal Mach-O files in %s inventory",
@@ -64,7 +65,7 @@ cliTest.for(["jar", "zip"])(
       await writeFile(path, await writer.close());
 
       const reply = await cli.run({
-        arguments: ["inspect-artifact", "--detail", "complete", path, "--json"],
+        arguments: completeArguments("inspect-artifact", path),
       });
       expect(reply.exitCode, reply.stdout + reply.stderr).toBe(0);
       const inspection = artifactInspectionResultSchema.parse(

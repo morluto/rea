@@ -9,6 +9,10 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../../support/completeDetail.js";
 
 const envelope = z.object({ ok: z.literal(true), data: z.unknown() });
 
@@ -56,8 +60,7 @@ describe.skipIf(process.platform !== "darwin")(
           const result = await cli.run({
             arguments: [
               "inspect-artifact",
-              "--detail",
-              "complete",
+              ...COMPLETE_DETAIL,
               path,
               "--json",
               "--full-output",
@@ -125,13 +128,7 @@ describe.skipIf(process.platform !== "darwin")(
         // hdiutil itself treats any file as a raw image with no checksum.
         await writeFile(blob, Buffer.alloc(1024 * 1024));
         const result = await cli.run({
-          arguments: [
-            "inspect-artifact",
-            "--detail",
-            "complete",
-            blob,
-            "--json",
-          ],
+          arguments: completeArguments("inspect-artifact", blob),
           environment: { REA_LOG_LEVEL: "silent" },
         });
         expect(result.exitCode).not.toBe(0);

@@ -7,6 +7,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "keeps getter receiver mutations uncertain in exported Evidence through %s",
@@ -90,13 +91,7 @@ export function untouched() {
     let document: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
-        arguments: [
-          "analyze-javascript-application",
-          "--detail",
-          "complete",
-          root,
-          "--json",
-        ],
+        arguments: completeApplicationAnalysis(root),
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(response.exitCode, response.stderr).toBe(0);

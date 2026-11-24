@@ -6,6 +6,7 @@ import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "traces valid Evidence beyond the whole-document string limit",
@@ -28,8 +29,7 @@ cliTest(
     const application = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         source,
         "--artifact-format",
         "directory",

@@ -29,6 +29,7 @@ import {
   definedCliEnvironment,
 } from "../../support/cli/cliFixture.js";
 import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const execute = promisify(execFile);
 const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
@@ -396,8 +397,7 @@ it("runs built CLI and real stdio SDK with exact evidence parity, selection, ret
   const mcp = parseEvidence(response.structuredContent);
   const result = await runSharedCli([
     "inspect-web-network-capture",
-    "--detail",
-    "complete",
+    ...COMPLETE_DETAIL,
     path,
     "qlog",
     "--record",
@@ -456,8 +456,7 @@ it("runs built CLI and real stdio SDK with exact evidence parity, selection, ret
   });
   const hiddenCli = await runSharedCli([
     "inspect-web-network-capture",
-    "--detail",
-    "complete",
+    ...COMPLETE_DETAIL,
     path,
     "qlog",
     ...sensitive.flatMap((value) => ["--sensitive-value", value]),
@@ -558,8 +557,7 @@ it("fails whole-capture validation before selection and survives malformed, unsu
   await writeFile(path, outsideSelection);
   const failed = await runSharedCli([
     "inspect-web-network-capture",
-    "--detail",
-    "complete",
+    ...COMPLETE_DETAIL,
     path,
     "qlog",
     "--record",
@@ -648,8 +646,7 @@ runtimeTest.skipIf(
       [
         cli,
         "inspect-web-network-capture",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         path,
         "qlog",
         "--json",

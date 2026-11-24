@@ -6,6 +6,7 @@ import { z } from "zod";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 // Hand-written tokenizers dispatch through long short-circuit chains; the
 // CodeMirror 5 pug mode's `nextToken` has 38 operands. Work that doubled per
@@ -31,8 +32,7 @@ cliTest(
     const output = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         root,
         "--analysis-timeout-ms",
         "15000",

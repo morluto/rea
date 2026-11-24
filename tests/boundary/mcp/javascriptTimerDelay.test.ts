@@ -8,6 +8,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 cliTest(
   "retains unknown timer delays and unrelated facts through public CLI and MCP",
@@ -26,13 +27,7 @@ cliTest(
     await writeFile(path, source);
     const digest = createHash("sha256").update(source).digest("hex");
     const cliResult = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--detail",
-        "complete",
-        root,
-        "--json",
-      ],
+      arguments: completeApplicationAnalysis(root),
     });
     expect(cliResult.exitCode).toBe(0);
     const contract = toolContract("analyze_javascript_application");

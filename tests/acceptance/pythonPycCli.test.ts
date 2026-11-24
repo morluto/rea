@@ -12,6 +12,10 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { pythonPycEqualityGolden } from "../fixtures/python-pyc-equality/golden.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../support/completeDetail.js";
 
 const completePycEvidenceSchema = toolContract(
   "inspect_python_pyc",
@@ -25,7 +29,7 @@ cliTest(
     const path = join(directory, "equality.pyc");
     await writeFile(path, Buffer.from(golden.pyc_base64, "base64"));
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-python-pyc", path),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = completePycEvidenceSchema.parse(
@@ -70,13 +74,7 @@ cliTest(
       );
 
       const response = await cli.run({
-        arguments: [
-          "inspect-python-pyc",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-python-pyc", path),
       });
       expect(response.exitCode, response.stderr).toBe(0);
       const report = completePycEvidenceSchema.parse(
@@ -137,7 +135,7 @@ cliTest(
     const path = join(root, "code-set.pyc");
     await writeFile(path, pyc);
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-python-pyc", path),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completePycEvidenceSchema.parse(result.json);
@@ -188,7 +186,7 @@ cliTest.for([
     const path = join(root, `slice-${version}.pyc`);
     await writeFile(path, pyc);
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-python-pyc", path),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completePycEvidenceSchema.parse(result.json);
@@ -226,7 +224,7 @@ cliTest("reads a CPython 3.15 magic 3666 stdlib pyc", async ({ cli }) => {
   const path = join(root, "utf_8.cpython-315.pyc");
   await writeFile(path, pyc);
   const result = await cli.run({
-    arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
+    arguments: completeArguments("inspect-python-pyc", path),
   });
   expect(result.exitCode, result.stderr).toBe(0);
   const evidence = completePycEvidenceSchema.parse(result.json);
@@ -303,7 +301,7 @@ cliTest(
     const header = Buffer.from("3e0d0d0a0000000000000000", "hex");
     await writeFile(path, Buffer.concat([header, marshal]));
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-python-pyc", path),
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -335,7 +333,7 @@ cliTest(
     ]);
     await writeFile(path, bytes);
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-python-pyc", path),
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completePycEvidenceSchema.parse(result.json);
@@ -386,13 +384,7 @@ cliTest(
         ]),
       );
       const result = await cli.run({
-        arguments: [
-          "inspect-python-pyc",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-python-pyc", path),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = completePycEvidenceSchema.parse(result.json);
@@ -469,13 +461,7 @@ cliTest(
         ]),
       );
       const result = await cli.run({
-        arguments: [
-          "inspect-python-pyc",
-          "--detail",
-          "complete",
-          path,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-python-pyc", path),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = completePycEvidenceSchema.parse(result.json);
@@ -506,13 +492,7 @@ cliTest(
         ]),
       );
       const rawResult = await cli.run({
-        arguments: [
-          "inspect-python-pyc",
-          "--detail",
-          "complete",
-          rawPath,
-          "--json",
-        ],
+        arguments: completeArguments("inspect-python-pyc", rawPath),
       });
       expect(rawResult.exitCode, rawResult.stderr).toBe(0);
       const rawEvidence = completePycEvidenceSchema.parse(rawResult.json);
@@ -540,8 +520,7 @@ cliTest(
     const result = await cli.run({
       arguments: [
         "inspect-python-pyc",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         "sample.pyc",
         "--json",
       ],
@@ -580,8 +559,7 @@ cliTest.skipIf(process.platform === "win32")(
     const result = await cli.run({
       arguments: [
         "inspect-python-pyc",
-        "--detail",
-        "complete",
+        ...COMPLETE_DETAIL,
         "link/../sample.pyc",
         "--json",
       ],
@@ -601,7 +579,7 @@ cliTest(
     const path = join(root, "broken.pyc");
     await writeFile(path, pythonPycHeader(3531).subarray(0, 8));
     const result = await cli.run({
-      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-python-pyc", path),
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -671,7 +649,7 @@ cliTest(
     const path = join(root, "unicode.pyc");
     await writeFile(path, bytes);
     const response = await cli.run({
-      arguments: ["inspect-python-pyc", "--detail", "complete", path, "--json"],
+      arguments: completeArguments("inspect-python-pyc", path),
     });
     expect(response.exitCode, response.stderr).toBe(0);
     const report = completePycEvidenceSchema.parse(
@@ -731,8 +709,7 @@ cliTest(
       const result = await cli.run({
         arguments: [
           "inspect-python-pyc",
-          "--detail",
-          "complete",
+          ...COMPLETE_DETAIL,
           path,
           flag,
           String(maximum),

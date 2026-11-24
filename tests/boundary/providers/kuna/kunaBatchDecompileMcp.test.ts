@@ -108,8 +108,8 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
 
     const direct = async (procedure: string) =>
       parseEvidence(
-        (await call("procedure_pseudo_code", { detail: "complete", procedure }))
-          .structuredContent,
+        // One small observation fits the agent result budget unchanged.
+        (await call("procedure_pseudo_code", { procedure })).structuredContent,
       );
     const mainDirect = await direct("main");
     const broken = await direct("broken");

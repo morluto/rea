@@ -5,6 +5,7 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import { inspectMachoSchema } from "../../src/domain/native/nativeInspection.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest.skipIf(process.platform !== "darwin")(
   "inspects a Mach-O whose filename ends in parentheses with real otool",
@@ -16,7 +17,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     await copyFile("/usr/bin/true", target);
     const original = await readFile(target);
     const result = await cli.run({
-      arguments: ["inspect-macho", "--detail", "complete", target, "--json"],
+      arguments: completeArguments("inspect-macho", target),
       environment: {
         TMPDIR: temporary,
         ...(process.env.DEVELOPER_DIR === undefined
