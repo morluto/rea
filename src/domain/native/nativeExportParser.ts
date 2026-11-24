@@ -47,7 +47,7 @@ import {
   type ElfExportTableSelection,
   type ElfExportTables,
 } from "./elfDynamicExportTables.js";
-import type { ByteSource } from "../byteSource.js";
+import { readByteSourceSlice, type ByteSource } from "../byteSource.js";
 import { peDirectorySizeAnomaly } from "./peHeaderAnomalies.js";
 import { peImageBaseHex } from "./peAddressSpace.js";
 
@@ -560,12 +560,8 @@ const CSTRING_WINDOW_BYTES = 4096;
 
 const createSourceReaders = (source: ByteSource) => {
   const readRange = (offset: number, length: number): Promise<Buffer> => {
-    if (offset < 0 || length <= 0 || offset >= source.size)
-      return Promise.resolve(Buffer.alloc(0));
-    const clamped = Math.min(length, source.size - offset);
-    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-      return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
-    return source.readRange(offset, clamped);
+    if (offset < 0) return Promise.resolve(Buffer.alloc(0));
+    return readByteSourceSlice(source, offset, length);
   };
   let window: Buffer = Buffer.alloc(0);
   let windowOffset = 0;
