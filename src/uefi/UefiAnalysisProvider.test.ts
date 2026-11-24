@@ -2577,10 +2577,11 @@ it("truncates raw executable payload staging when reaching aggregate budget of 1
     expect(typeof result.modules[4]?.payload_file).toBe("string");
     expect(result.modules[5]?.payload_file).toBeNull();
     expect(
-      result.limitations.some((l) =>
-        l.includes(
-          "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget.",
-        ),
+      result.limitations.some(
+        (l) =>
+          l.includes(
+            "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget",
+          ) && l.includes("producer_limits.input_bytes"),
       ),
     ).toBe(true);
   } finally {
@@ -9571,10 +9572,11 @@ it("labels budget limit warning as retained recovered functions when Ghidra deco
     expect(result.coverage).toBe("partial");
     expect(result.modules[0]?.c_generator).toBe("ghidra");
     expect(
-      result.limitations.some((lim) =>
-        lim.includes(
-          "stopped after reaching 4 MiB per-module limit; retained recovered functions.",
-        ),
+      result.limitations.some(
+        (lim) =>
+          lim.includes("stopped after reaching 4 MiB per-module limit") &&
+          lim.includes("retained recovered functions") &&
+          lim.includes("producer_limits.output_bytes"),
       ),
     ).toBe(true);
     expect(
@@ -9650,10 +9652,11 @@ it("labels budget limit warning as reconstructed entry scaffolding when Ghidra p
     expect(result.coverage).toBe("partial");
     expect(result.modules[0]?.c_generator).toBe("scaffold");
     expect(
-      result.limitations.some((lim) =>
-        lim.includes(
-          "stopped after reaching 4 MiB per-module limit; recovered with reconstructed entry scaffolding.",
-        ),
+      result.limitations.some(
+        (lim) =>
+          lim.includes("stopped after reaching 4 MiB per-module limit") &&
+          lim.includes("recovered with reconstructed entry scaffolding") &&
+          lim.includes("producer_limits.output_bytes"),
       ),
     ).toBe(true);
     expect(
