@@ -64,7 +64,9 @@ const ghidraShaped = (calls: Call[]): AnalysisOperationPort => ({
               ]),
             );
       case "procedure_callers":
-        return selector === "VirtualAlloc" || selector === "0x18004a168"
+        return selector === "VirtualAlloc" ||
+          selector === "0x18004a168" ||
+          selector === "EXTERNAL:0x4d"
           ? observed(CALLERS)
           : procedureMiss(operation, String(selector));
       case "resolve_containing_procedure":
@@ -89,6 +91,7 @@ const hopperShaped = (calls: Call[]): AnalysisOperationPort => ({
           { address: "0x18004a168", value: "imp_VirtualAlloc" },
           { address: "0x401004", value: "inner" },
           { address: "0x18009a000", value: "timeout_label" },
+          { address: "0x18009b000", value: "containment_timeout" },
           { address: "0x18007d2fc", value: "VirtualAlloc" },
         ]);
       case "xrefs":
@@ -125,26 +128,40 @@ const procedureMiss = (
   );
 
 const containment = (address: string) =>
-  observed(
-    address === "0x401004"
-      ? {
-          query_address: address,
-          found: true,
-          procedure: {
-            address: "0x401000",
-            name: "entry",
-            symbol: null,
-            classification: null,
-            body: { available: false, reason: "unavailable" },
-          },
-        }
-      : {
-          query_address: address,
-          found: false,
-          procedure: null,
-          reason: "not_in_procedure",
-        },
-  );
+  address === "0x18009b000"
+    ? err(new AnalysisCancelledError("resolve_containing_procedure"))
+    : observed(
+        address === "EXTERNAL:0x4d"
+          ? {
+              query_address: address,
+              found: true,
+              procedure: {
+                address,
+                name: "KERNEL32.DLL::VirtualAlloc",
+                symbol: null,
+                classification: null,
+                body: { available: false, reason: "external" },
+              },
+            }
+          : address === "0x401004"
+            ? {
+                query_address: address,
+                found: true,
+                procedure: {
+                  address: "0x401000",
+                  name: "entry",
+                  symbol: null,
+                  classification: null,
+                  body: { available: false, reason: "unavailable" },
+                },
+              }
+            : {
+                query_address: address,
+                found: false,
+                procedure: null,
+                reason: "not_in_procedure",
+              },
+      );
 
 const hopperMiss = (
   operation: string,
@@ -297,6 +314,28 @@ describe("one name selector resolves the same way for every native operation", (
     expect(
       await call(hopperShaped([]), "procedure_callers", {
         procedure: "timeout_label",
+      }),
+    ).toMatchObject({ error: { code: "cancelled" } });
+  });
+
+  it("answers a library-qualified spelling the provider lookup refused at the import's exact entry", async () => {
+    const calls: Call[] = [];
+    expect(
+      await call(ghidraShaped(calls), "procedure_callers", {
+        procedure: "kernel32.dll::VirtualAlloc",
+      }),
+    ).toEqual(CALLERS);
+    expect(
+      calls
+        .filter(({ operation }) => operation === "procedure_callers")
+        .map(({ parameters }) => parameters.procedure),
+    ).toEqual(["kernel32.dll::VirtualAlloc", "EXTERNAL:0x4d"]);
+  });
+
+  it("reports a containment lookup failure instead of the earlier name refusal", async () => {
+    expect(
+      await call(hopperShaped([]), "procedure_callers", {
+        procedure: "containment_timeout",
       }),
     ).toMatchObject({ error: { code: "cancelled" } });
   });

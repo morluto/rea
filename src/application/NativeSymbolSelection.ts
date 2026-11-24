@@ -195,22 +195,32 @@ const refusesAddressFormatOnly = (error: AnalysisError): boolean =>
       path.length === 1 && path[0] === "address" && reason === "invalid_format",
   );
 
-/** True only when the provider observes the address outside every procedure. */
-const outsideEveryProcedure = async (
+/**
+ * Whether the provider's answer at a resolved address keeps the caller's
+ * symbol: an address outside every procedure, or a procedure's exact entry
+ * (such as an external import function). An address inside a procedure, such
+ * as an interior label, would silently select its containing procedure.
+ * A provider without containment lookup keeps its own refusal; any other
+ * lookup failure is returned with its facts.
+ */
+const answersSymbolByAddress = async (
   analysis: AnalysisOperationPort,
   address: string,
   signal: AbortSignal | undefined,
-): Promise<boolean> => {
+): Promise<Result<boolean, AnalysisError>> => {
   const containing = await executeFact(
     analysis,
     resolveContainingProcedureFact,
     { address },
     signal === undefined ? {} : { signal },
   );
-  return (
-    containing.ok &&
-    !containing.value.fact.found &&
-    containing.value.fact.reason === "not_in_procedure"
+  if (!containing.ok)
+    return permitsCapabilityFallback(containing.error) ? ok(false) : containing;
+  const fact = containing.value.fact;
+  return ok(
+    fact.found
+      ? fact.procedure.address === address
+      : fact.reason === "not_in_procedure",
   );
 };
 
@@ -289,13 +299,16 @@ export const executeWithNativeSymbolSelection = async (
       : first;
   if (resolution.address === retry.selector) return first;
   // A name inside a procedure, such as an interior label, was refused by the
-  // provider's procedure lookup on purpose; only a name outside every
-  // procedure is answered by its address.
-  if (
-    retry.operation !== "xrefs" &&
-    !(await outsideEveryProcedure(analysis, resolution.address, signal))
-  )
-    return first;
+  // provider's procedure lookup on purpose and stays refused.
+  if (retry.operation !== "xrefs") {
+    const answers = await answersSymbolByAddress(
+      analysis,
+      resolution.address,
+      signal,
+    );
+    if (!answers.ok) return answers;
+    if (!answers.value) return first;
+  }
   const field = retry.operation === "xrefs" ? "address" : "procedure";
   const answered = await execute({
     ...parameters,
