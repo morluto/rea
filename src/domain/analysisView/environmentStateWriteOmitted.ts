@@ -12,10 +12,10 @@ import {
   type StateRecordFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import {
-  type CheckOutcome,
-  type ReadBodies,
-  type SimulatedState,
+import type {
+  CheckOutcome,
+  ReadBodies,
+  SimulatedState,
 } from "./environmentStateWriteChecks.js";
 
 /**
