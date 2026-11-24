@@ -90,9 +90,7 @@ export const captureSummarySchema = z.strictObject({
   qlog: qlogSummarySchema.optional(),
 });
 
-const object = (
-  value: JsonValue,
-): Readonly<Record<string, JsonValue>> | null =>
+const object = (value: JsonValue): Readonly<Record<string, JsonValue>> | null =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? value
     : null;
