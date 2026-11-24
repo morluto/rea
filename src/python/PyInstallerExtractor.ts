@@ -20,6 +20,7 @@ import {
   MAX_PYZ_TABLE_BYTES,
   parsePyzEntries,
 } from "../artifacts/pyinstaller/PyzArchive.js";
+import { RECONSTRUCTED_PYTHON_HEADER_LIMITATION } from "../artifacts/pyinstaller/PythonBytecode.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import {
   readInt32At,
@@ -98,6 +99,7 @@ export interface ExtractedPyInstallerFile {
     | "metadata";
   readonly data: Buffer;
   readonly decompressed: boolean;
+  readonly bytecodeHeaderReconstructed?: boolean | undefined;
   readonly pythonVersion?: string | undefined;
   readonly limitations: readonly string[];
 }
@@ -461,8 +463,9 @@ const extractPyzModule = (
     kind: mod.isPackage ? "package" : "module",
     data: pycData,
     decompressed: true,
+    bytecodeHeaderReconstructed: true,
     pythonVersion,
-    limitations: [],
+    limitations: [RECONSTRUCTED_PYTHON_HEADER_LIMITATION],
   };
 };
 
@@ -479,6 +482,8 @@ const extractScriptEntry = (
 ): ExtractedPyInstallerFile => {
   const { entry, data, decompressed, archive, limitations } = options;
   let fileData = data;
+  let bytecodeHeaderReconstructed = false;
+  const entryLimitations = [...limitations];
   if (decompressed && !isPythonBytecode(fileData)) {
     const pyVer: number | string =
       archive.embeddedPyz?.pycMagic ??
@@ -490,6 +495,8 @@ const extractScriptEntry = (
         : "3.10");
     const header = buildPythonBytecodeHeader(pyVer);
     fileData = Buffer.concat([header, data]);
+    bytecodeHeaderReconstructed = true;
+    entryLimitations.push(RECONSTRUCTED_PYTHON_HEADER_LIMITATION);
   }
 
   const outName =
@@ -507,8 +514,11 @@ const extractScriptEntry = (
           : "script",
     data: fileData,
     decompressed,
+    ...(bytecodeHeaderReconstructed
+      ? { bytecodeHeaderReconstructed: true }
+      : {}),
     pythonVersion: archive.embeddedPyz?.pythonVersion,
-    limitations,
+    limitations: entryLimitations,
   };
 };
 
@@ -518,12 +528,19 @@ const extractScriptEntry = (
  */
 export const extractPyInstallerEntries = (
   buffer: Buffer,
+  options?: { readonly maxExpandedBytes?: number | undefined },
 ): ExtractedPyInstallerFile[] => {
   const parsed = parseCArchiveBuffer(buffer);
   if (!parsed) return [];
   const { archive, rawEntries } = parsed;
 
-  const totalBudget = artifactExpansionBudgetBytes(buffer.length);
+  const defaultBudget = artifactExpansionBudgetBytes(buffer.length);
+  const totalBudget =
+    options?.maxExpandedBytes !== undefined &&
+    Number.isFinite(options.maxExpandedBytes) &&
+    options.maxExpandedBytes >= 0
+      ? Math.min(defaultBudget, Math.floor(options.maxExpandedBytes))
+      : defaultBudget;
   let remainingBudget = totalBudget;
   const payloadEndOffset = archive.carchiveOffset + archive.cookie.tocOffset;
   const results: ExtractedPyInstallerFile[] = [];
@@ -594,23 +611,18 @@ export const extractPyInstallerEntries = (
     }
 
     if (entry.typeFlag === "z" || entry.name.toLowerCase().endsWith(".pyz")) {
-      const pyz =
-        remainingBudget > 0 && inflated.decompressed
-          ? parsePyzArchive(inflated.data)
-          : null;
+      const pyz = inflated.decompressed ? parsePyzArchive(inflated.data) : null;
       const pyzLimitations = [...limitations, ...(pyz?.limitations ?? [])];
-      results.push({
-        name: entry.name,
-        kind: "pyz",
-        data: inflated.data,
-        decompressed: inflated.decompressed,
-        pythonVersion: pyz?.pythonVersion ?? archive.embeddedPyz?.pythonVersion,
-        limitations: pyzLimitations,
-      });
+      const extractedPyzModules: ExtractedPyInstallerFile[] = [];
 
-      if (pyz && remainingBudget > 0) {
-        for (const mod of pyz.modules) {
-          if (remainingBudget <= 0) break;
+      if (pyz) {
+        let omittedModules = 0;
+        for (let modIdx = 0; modIdx < pyz.modules.length; modIdx += 1) {
+          if (remainingBudget <= 0) {
+            omittedModules = pyz.modules.length - modIdx;
+            break;
+          }
+          const mod = pyz.modules[modIdx]!;
           const modBudget = Math.min(MAX_PER_ENTRY_BYTES, remainingBudget);
           const extractedMod = extractPyzModule(
             inflated.data,
@@ -627,11 +639,29 @@ export const extractPyInstallerEntries = (
             } else {
               remainingBudget -= mod.dataLength;
             }
-            results.push(extractedMod);
-            if (remainingBudget <= 0) break;
+            extractedPyzModules.push(extractedMod);
+            if (remainingBudget <= 0 && modIdx + 1 < pyz.modules.length) {
+              omittedModules = pyz.modules.length - (modIdx + 1);
+              break;
+            }
           }
         }
+        if (omittedModules > 0) {
+          pyzLimitations.push(
+            `Total artifact expansion budget of ${totalBudget} bytes exhausted; ${omittedModules} PYZ module(s) were omitted.`,
+          );
+        }
       }
+
+      results.push({
+        name: entry.name,
+        kind: "pyz",
+        data: inflated.data,
+        decompressed: inflated.decompressed,
+        pythonVersion: pyz?.pythonVersion ?? archive.embeddedPyz?.pythonVersion,
+        limitations: pyzLimitations,
+      });
+      results.push(...extractedPyzModules);
       continue;
     }
 

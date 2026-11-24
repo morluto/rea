@@ -167,6 +167,7 @@ async function* compressedChunks(
 const gzipStreamFailure = (
   cause: unknown,
   signal: AbortSignal,
+  source: "input" | "gunzip",
 ): ArtifactReaderFailure => {
   if (cause instanceof ArtifactReaderFailure) return cause;
   if (artifactReadCancelledBy(cause, signal) || signal.aborted) {
@@ -179,6 +180,13 @@ const gzipStreamFailure = (
     );
   }
   const message = errorMessage(cause);
+  if (source === "input") {
+    return new ArtifactReaderFailure(
+      "io",
+      `GZIP carrier read error: ${message}`,
+      { cause },
+    );
+  }
   return new ArtifactReaderFailure(
     "format",
     `GZIP decompression error: ${message}`,
@@ -353,18 +361,18 @@ export class GzipArtifactReader implements ArtifactReader {
       resolve?.();
     };
 
-    const fail = (cause: unknown): void => {
+    const fail = (cause: unknown, source: "input" | "gunzip"): void => {
       if (streamState.status === "open") {
         streamState.status = "failed";
-        streamState.failure = gzipStreamFailure(cause, signal);
+        streamState.failure = gzipStreamFailure(cause, signal, source);
       }
       if (!input.destroyed) input.destroy();
       if (!gunzip.destroyed) gunzip.destroy();
       notify();
     };
 
-    input.on("error", fail);
-    gunzip.on("error", fail);
+    input.on("error", (cause: unknown) => fail(cause, "input"));
+    gunzip.on("error", (cause: unknown) => fail(cause, "gunzip"));
     gunzip.on("data", (chunk: Buffer) => {
       if (streamState.status !== "open") return;
       try {
@@ -378,7 +386,7 @@ export class GzipArtifactReader implements ArtifactReader {
           ),
         );
       } catch (cause: unknown) {
-        fail(cause);
+        fail(cause, "gunzip");
         return;
       }
       queue.push(chunk);
@@ -398,6 +406,7 @@ export class GzipArtifactReader implements ArtifactReader {
         new ArtifactReaderFailure("cancelled", "GZIP member read cancelled", {
           cause: signal.reason,
         }),
+        "input",
       );
     };
     signal.addEventListener("abort", onAbort, { once: true });

@@ -181,6 +181,15 @@ describe("PeFormatInspector", () => {
     expect(record?.vsVersion).toBe("VS 2019");
     expect(record?.toolName).toBe("Utc1920_C");
     expect(record?.count).toBe(5);
+
+    // A damaged Rich header whose record region is not a multiple of 8 bytes must be rejected
+    // rather than interpreting the "Rich" marker bytes as a record count.
+    const misaligned = createMockPeBinary();
+    // dansOffset = 0x40; +16 = 0x50; shift "Rich" + xorKey backward by 4 bytes to 0x54 (4-byte remainder)
+    const xorKey = misaligned.readUInt32LE(0x5c);
+    misaligned.write("Rich", 0x54, "ascii");
+    misaligned.writeUInt32LE(xorKey, 0x58);
+    expect(parsePeRichHeader(misaligned)).toBeNull();
   });
 
   it("rejects short, invalid, or truncated optional headers and data-directory tables", () => {

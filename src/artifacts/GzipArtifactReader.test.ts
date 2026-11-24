@@ -291,4 +291,59 @@ describe("GzipArtifactReader", () => {
       await owner.close();
     }
   });
+
+  it("classifies carrier disk read errors as io failures rather than damaged gzip format", async () => {
+    const tempDir = await createTestTempDirectory("rea-gzip-io-");
+    const gzipPath = join(tempDir, "disk_error.gz");
+    await writeFile(gzipPath, gzipSync(Buffer.from("valid gzip payload")));
+
+    const handle = await open(gzipPath, "r");
+    const owner = new OwnedFileHandle(handle);
+    try {
+      const initial = await handle.stat();
+      let failReads = false;
+      const wrappedHandle = new Proxy(handle, {
+        get(target, prop, receiver) {
+          if (prop === "read") {
+            return (...args: Parameters<typeof target.read>) => {
+              if (failReads) {
+                const ioErr = Object.assign(new Error("EIO: i/o error, read"), {
+                  code: "EIO",
+                });
+                return Promise.reject(ioErr);
+              }
+              return target.read(...args);
+            };
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const reader = new GzipArtifactReader(gzipPath, {
+        handle: wrappedHandle,
+        initial,
+      });
+      try {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        failReads = true;
+        const stream = await reader.open(entries[0]!);
+        let caught: unknown;
+        try {
+          for await (const _chunk of stream) {
+            // drain until read failure
+          }
+        } catch (cause: unknown) {
+          caught = cause;
+        }
+        expect(caught).toBeInstanceOf(ArtifactReaderFailure);
+        expect(caught).toMatchObject({ reason: "io" });
+      } finally {
+        await reader.close();
+      }
+      await expect(handle.stat()).resolves.toBeDefined();
+    } finally {
+      await owner.close();
+    }
+  });
 });

@@ -171,4 +171,23 @@ describe("MinidumpReader", () => {
     expect(report?.modules[0]?.name).toBeNull();
     expect(report?.limitations[0]).toMatch(/odd UTF-16 byte lengths/);
   });
+
+  it("reports limitations when SystemInfoStream or ExceptionStream is truncated or out of bounds", () => {
+    const buf = createMockMinidump();
+    const streamDirRva = 32;
+    // Truncate SystemInfoStream size to 16 (< 24) and ExceptionStream size to 24 (< 32)
+    buf.writeUInt32LE(16, streamDirRva + 4);
+    buf.writeUInt32LE(24, streamDirRva + 16);
+
+    const report = parseMinidump(buf);
+    expect(report).not.toBeNull();
+    expect(report?.systemInfo).toBeUndefined();
+    expect(report?.exception).toBeUndefined();
+    expect(report?.limitations).toContain(
+      "SystemInfoStream is truncated or extends past the end of the minidump.",
+    );
+    expect(report?.limitations).toContain(
+      "ExceptionStream is truncated or extends past the end of the minidump.",
+    );
+  });
 });

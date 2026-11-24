@@ -116,6 +116,8 @@ export const parsePeRichHeader = (buffer: Buffer): PeRichHeader | null => {
   }
 
   if (dansOffset === -1 || dansOffset + 16 > richOffset) return null;
+  const recordsByteLength = richOffset - (dansOffset + 16);
+  if (recordsByteLength % 8 !== 0) return null;
 
   // Decrypt and parse 8-byte tool records (skipping 16 bytes: DanS + 3 padding DWORDs)
   const records: PeRichRecord[] = [];

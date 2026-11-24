@@ -99,7 +99,11 @@ const parseSystemInfoStream = (
   readonly limitations: readonly string[];
 } => {
   if (rva + size > reader.bytes.length || size < 24) {
-    return { limitations: [] };
+    return {
+      limitations: [
+        "SystemInfoStream is truncated or extends past the end of the minidump.",
+      ],
+    };
   }
   const archCode = reader.u16(rva);
   const numberOfProcessors = reader.u8(rva + 6);
@@ -136,8 +140,17 @@ const parseExceptionStream = (
   reader: BinaryReader,
   rva: number,
   size: number,
-): MinidumpException | undefined => {
-  if (rva + size > reader.bytes.length || size < 32) return undefined;
+): {
+  readonly exception?: MinidumpException | undefined;
+  readonly limitations: readonly string[];
+} => {
+  if (rva + size > reader.bytes.length || size < 32) {
+    return {
+      limitations: [
+        "ExceptionStream is truncated or extends past the end of the minidump.",
+      ],
+    };
+  }
   const threadId = reader.u32(rva);
   const recOffset = rva + 8; // skip threadId + alignment
   const code = reader.u32(recOffset);
@@ -148,12 +161,15 @@ const parseExceptionStream = (
   const codeName = EXCEPTION_NAMES[code] ?? codeHex;
 
   return {
-    threadId,
-    code,
-    codeHex,
-    codeName,
-    address,
-    flags,
+    exception: {
+      threadId,
+      code,
+      codeHex,
+      codeName,
+      address,
+      flags,
+    },
+    limitations: [],
   };
 };
 
@@ -282,7 +298,9 @@ export const parseMinidump = (buffer: Buffer): MinidumpReport | null => {
       limitations.push(...parsedSysInfo.limitations);
     } else if (streamType === 6 && exception === undefined) {
       // ExceptionStream
-      exception = parseExceptionStream(reader, rva, dataSize);
+      const parsedException = parseExceptionStream(reader, rva, dataSize);
+      exception = parsedException.exception;
+      limitations.push(...parsedException.limitations);
     } else if (streamType === 4 && !hasParsedModules) {
       // ModuleListStream
       hasParsedModules = true;

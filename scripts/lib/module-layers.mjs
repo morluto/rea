@@ -502,6 +502,7 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     files: Object.freeze([
       "pyinstaller/CArchiveLayout.ts",
       "pyinstaller/MarshalSubset.ts",
+      "pyinstaller/PythonBytecode.ts",
       "pyinstaller/PyzArchive.ts",
     ]),
     // PyInstaller extraction reuses the artifacts provider's CArchive layout,

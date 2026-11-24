@@ -212,6 +212,10 @@ describe("PyInstallerExtractor - entry extraction and safety limits", () => {
     expect(script).toBeDefined();
     expect(script?.kind).toBe("script");
     expect(script?.decompressed).toBe(true);
+    expect(script?.bytecodeHeaderReconstructed).toBe(true);
+    expect(script?.limitations[0]).toMatch(
+      /bytecode header was reconstructed/i,
+    );
     // Bytecode header must be reconstructed!
     expect(isPythonBytecode(script!.data)).toBe(true);
 
@@ -220,6 +224,10 @@ describe("PyInstallerExtractor - entry extraction and safety limits", () => {
     expect(pyzMod).toBeDefined();
     expect(pyzMod?.kind).toBe("module");
     expect(pyzMod?.decompressed).toBe(true);
+    expect(pyzMod?.bytecodeHeaderReconstructed).toBe(true);
+    expect(pyzMod?.limitations[0]).toMatch(
+      /bytecode header was reconstructed/i,
+    );
     expect(isPythonBytecode(pyzMod!.data)).toBe(true);
     expect(pyzMod?.pythonVersion).toBe("3.10");
 
@@ -521,6 +529,66 @@ describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
     expect(parsed?.modules).toEqual([]);
     expect(parsed?.limitations?.[0]).toMatch(
       /exceeds maximum in-memory table budget/,
+    );
+  });
+
+  it("reports omitted PYZ modules on the PYZ entry when total expansion budget is exhausted mid-PYZ", () => {
+    // Build a PyInstaller binary whose sole CArchive entry is a PYZ with two modules.
+    // The first module succeeds and consumes the remaining expansion budget, forcing the second to be omitted.
+    const mod1Payload = Buffer.alloc(1024, 0x41);
+    const compressedMod1 = zlib.deflateSync(mod1Payload);
+    const compressedMod2 = zlib.deflateSync(Buffer.from("SECOND_MODULE_CODE"));
+    const mod1Offset = 12;
+    const mod2Offset = mod1Offset + compressedMod1.length;
+    const tocBuf = marshalList([
+      marshalPair("app.first", 0, mod1Offset, compressedMod1.length),
+      marshalPair("app.skipped", 0, mod2Offset, compressedMod2.length),
+    ]);
+    const pyzHeader = Buffer.alloc(12);
+    PYZ_MAGIC.copy(pyzHeader, 0);
+    Buffer.from([0x6f, 0x0d, 0x0d, 0x0a]).copy(pyzHeader, 4);
+    pyzHeader.writeUInt32BE(mod2Offset + compressedMod2.length, 8);
+    const pyzData = Buffer.concat([
+      pyzHeader,
+      compressedMod1,
+      compressedMod2,
+      tocBuf,
+    ]);
+
+    const nameBytes = Buffer.from("PYZ-00.pyz\0", "utf8");
+    const structLen = 18 + nameBytes.length;
+    const tocEntry = Buffer.alloc(structLen);
+    tocEntry.writeUInt32BE(structLen, 0);
+    tocEntry.writeUInt32BE(0, 4);
+    tocEntry.writeUInt32BE(pyzData.length, 8);
+    tocEntry.writeUInt32BE(pyzData.length, 12);
+    tocEntry.writeUInt8(0, 16);
+    tocEntry.writeUInt8("z".charCodeAt(0), 17);
+    nameBytes.copy(tocEntry, 18);
+
+    const cookie = Buffer.alloc(88);
+    PYINSTALLER_MAGIC.copy(cookie, 0);
+    cookie.writeUInt32BE(pyzData.length + tocEntry.length + 88, 8);
+    cookie.writeUInt32BE(pyzData.length, 12);
+    cookie.writeUInt32BE(tocEntry.length, 16);
+    cookie.writeInt32BE(310, 20);
+
+    const binary = Buffer.concat([pyzData, tocEntry, cookie]);
+    // Budget covers the PYZ container plus the first decompressed module (with 16-byte reconstructed header),
+    // leaving 0 bytes for the second module.
+    const extracted = extractPyInstallerEntries(binary, {
+      maxExpandedBytes: pyzData.length + mod1Payload.length + 16,
+    });
+    const pyzResult = extracted.find((entry) => entry.kind === "pyz");
+    expect(pyzResult).toBeDefined();
+    expect(pyzResult?.limitations.join(" ")).toMatch(
+      /1 PYZ module\(s\) were omitted/,
+    );
+    expect(extracted.some((entry) => entry.name === "app/first.pyc")).toBe(
+      true,
+    );
+    expect(extracted.some((entry) => entry.name === "app/skipped.pyc")).toBe(
+      false,
     );
   });
 });
