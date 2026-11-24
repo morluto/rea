@@ -443,7 +443,7 @@
     "husky": "9.1.7",
     "jscpd": "5.0.12",
     "knip": "6.39.0",
-    "lint-staged": "16.4.0",
+    "lint-staged": "17.6.1",
     "markdown-it": "15.0.3",
     "oxfmt": "0.72.0",
     "oxlint": "1.87.0",
