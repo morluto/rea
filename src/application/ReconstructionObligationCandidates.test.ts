@@ -530,6 +530,55 @@ describe("reconstruction obligation over-generation group", () => {
     expect(ledger.status).not.toBe("ready");
   });
 
+  it("does not improve the ledger when every claim is retired citing another artifact's observed capture", () => {
+    const flooded = decoyApplication(OBLIGATION_OVERGENERATION_THRESHOLD);
+    const capture = processEvidence();
+    const before = build(request([...flooded.records, capture]));
+    const process = before.obligations.find(
+      ({ family }) => family === "packaged-process-lifecycle",
+    );
+    // The cited capture is observed, but it describes another artifact.
+    expect(process).toMatchObject({ source_state: "observed" });
+    expect(process?.target.artifact_sha256).not.toBe(
+      APPLICATION_GRAPH_DIGESTS.asar,
+    );
+    const total = staticUnbound(before);
+    const after = build(
+      request([...flooded.records, capture], {
+        reviewed_obligations: before.obligations.map(
+          ({ obligation_id: obligationId }) => ({
+            ...reviewedObligation(obligationId, capture.evidence_id),
+            disposition: "out-of-scope" as const,
+            disposition_reason: "Retired by a blanket sweep.",
+          }),
+        ),
+      }),
+    );
+
+    expect(after.obligations.map(({ status }) => status)).toEqual(
+      before.obligations.map(() => "out-of-scope"),
+    );
+    // Review provenance is not a runtime observation of the flooded artifact.
+    expect(staticUnbound(after)).toBe(total);
+    expect(overgeneration(before)).toHaveLength(1);
+    expect(overgeneration(after)).toHaveLength(1);
+    expect(overgeneration(after)[0]).toContain(
+      `artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(total)} generated obligations`,
+    );
+    expect(overgeneration(after)[0]).toContain(
+      `; 0 still unreviewed, ${String(total)} retired by reviewed disposition.`,
+    );
+    const others = (ledger: ReconstructionObligationLedger) =>
+      ledger.limitations.filter(
+        (limitation) => !overgeneration(ledger).includes(limitation),
+      );
+    expect(others(after)).toEqual(others(before));
+    expect(after.coverage.status).toBe(before.coverage.status);
+    const rank = { failed: 0, unknown: 1, open: 2, ready: 3 } as const;
+    expect(rank[after.status]).toBeLessThanOrEqual(rank[before.status]);
+    expect(after.status).not.toBe("ready");
+  });
+
   it.each([
     ["a second retiring review", "out-of-scope"],
     ["an active review", "active"],
