@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **desktop:** the desktop application result adds the native family, the ui-framework and runtime-library component categories, new probe operations, a required probe priority and deferred_probes.
 * **macho:** inspect_go_binary, inspect_rust_binary, inspect_dwarf_units, inspect_native_initializers, inspect_native_dispatch_metadata, the IL2CPP binary readers and the macOS provider's lipo-selected slice reads now report a FAT header or table cut off by the file's end with details.format_failure "truncated" (previously "malformed", or an unsupported or not-universal result for a table past the end), plus details.available_bytes and details.required_bytes.
 * **doctor:** audit-wide doctor reports omit scope_checks; read checks. Passing providerInspections checks report classification "healthy".
 * **release-exposure:** release-exposure checks no longer use the not_applicable status, and summary.by_status has no not_applicable count. A check that cannot apply is absent from checks and listed in coverage.inapplicable_checks.
@@ -35,7 +36,9 @@
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
 * **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
 * **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
+* **cli:** add list-procedures to produce function-matching inventories ([#14241](https://github.com/morluto/rea/issues/14241)) ([e2c0071](https://github.com/morluto/rea/commit/e2c00712fd421fc77f335d7b9f87ce162808a437))
 * **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
+* **desktop:** recognise native releases and rank application probes first ([#14264](https://github.com/morluto/rea/issues/14264)) ([46b73f5](https://github.com/morluto/rea/commit/46b73f5b8116ac71333a0c37980f166c13bedd4e))
 * **elf:** inspect exports without section headers ([#9083](https://github.com/morluto/rea/issues/9083)) ([7e15884](https://github.com/morluto/rea/commit/7e158843b36c7cca8a8614687652d20e0f77e323))
 * **evidence:** find direct referrers by linked Evidence ID ([#11709](https://github.com/morluto/rea/issues/11709)) ([b57671c](https://github.com/morluto/rea/commit/b57671cb42ed16687d0b0ea8ff43d3643e045aef))
 * **evidence:** paginate retained evidence discovery summaries ([#9084](https://github.com/morluto/rea/issues/9084)) ([a16669a](https://github.com/morluto/rea/commit/a16669ab2adf8341b0261e9527bb26c98c1d7b21))
