@@ -2,6 +2,14 @@ import type { z } from "zod";
 
 import { recordedControlSchemas } from "../domain/analysisSettingDefinitions.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  MCP_TARGET_FAILURE_SPELLING,
+  renderTargetFailureRecovery,
+  TARGET_FAILURE_KINDS,
+  type TargetFailureKind,
+  type TargetFailureRecoveryFacts,
+  type TargetFailureSpelling,
+} from "../domain/targetFailure.js";
 import type { Result } from "../domain/result.js";
 import {
   cliCommandForOperation,
@@ -156,15 +164,18 @@ const projectErrorRecord = (
     details.secondary_failures,
     context,
   );
+  const remediation = cliTargetFailureRemediation(error, details, context);
   if (
     limit === undefined &&
     relatedFlags === undefined &&
     relatedCommands === undefined &&
-    secondaryFailures === undefined
+    secondaryFailures === undefined &&
+    remediation === undefined
   )
     return error;
   return {
     ...error,
+    ...(remediation === undefined ? {} : { remediation }),
     details: {
       ...details,
       ...(limit === undefined ? {} : { limit }),
@@ -179,6 +190,76 @@ const projectErrorRecord = (
         : { secondary_failures: secondaryFailures }),
     },
   };
+};
+
+const stringList = (value: JsonValue | undefined): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+
+const isTargetFailureKind = (
+  value: JsonValue | undefined,
+): value is TargetFailureKind =>
+  typeof value === "string" &&
+  (TARGET_FAILURE_KINDS as readonly string[]).includes(value);
+
+/**
+ * A target failure's recovery in CLI spelling: the projection table renders
+ * the same facts with commands and options in place of MCP tool names. Only
+ * the table's own MCP text is replaced, so appended guidance survives.
+ */
+const cliTargetFailureRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  const { remediation, retry } = error;
+  if (
+    typeof retry !== "string" ||
+    !isObject(remediation) ||
+    typeof remediation.action !== "string" ||
+    !isTargetFailureKind(details.failure_kind) ||
+    typeof details.format !== "string" ||
+    typeof details.operation !== "string"
+  )
+    return undefined;
+  const facts: TargetFailureRecoveryFacts = {
+    operation: details.operation,
+    kind: details.failure_kind,
+    format: details.format,
+    inputFields: Array.isArray(details.inputs)
+      ? details.inputs.flatMap((input) =>
+          isObject(input) && typeof input.field === "string"
+            ? [input.field]
+            : [],
+        )
+      : [],
+    transient: retry === "backoff",
+    alternatives: {
+      operations: stringList(details.related_operations),
+      providers: stringList(details.related_providers),
+    },
+  };
+  const mcp = renderTargetFailureRecovery(facts, MCP_TARGET_FAILURE_SPELLING);
+  if (!remediation.action.startsWith(mcp)) return undefined;
+  const cliName = context.cliName ?? "rea";
+  const spelling: TargetFailureSpelling = {
+    operation: (operation) =>
+      cliCommandForOperation(
+        operation,
+        context.commands,
+        cliName,
+        context.recordedCommands,
+      ) ?? operation,
+    provider: (providerId) => `--provider ${providerId}`,
+  };
+  const cli = renderTargetFailureRecovery(facts, spelling);
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${cli}${remediation.action.slice(mcp.length)}`,
+      };
 };
 
 const projectedSecondaryFailures = (

@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisTargetFailureError,
+} from "../../../src/domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../../src/domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { freezeJsonSnapshot } from "../../../src/domain/immutableJson.js";
@@ -272,4 +275,52 @@ it("names a flattened member flag or the JSON flag for its containing group", ()
       commands,
     }),
   ).toEqual(data);
+});
+
+it("names a target failure's alternative operations and providers in each adapter's spelling", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-artifact");
+  if (entry === undefined) throw new Error("Expected inspect-artifact");
+  const projected = projectAnalysisError(
+    new AnalysisTargetFailureError(
+      "inspect_artifact",
+      "/selected/app",
+      {
+        kind: "unsupported",
+        format: "directory",
+        detail: "No container format claims the directory",
+        undecodedContent: false,
+      },
+      {
+        related: {
+          operations: ["inspect_desktop_application"],
+          providers: ["ghidra"],
+        },
+      },
+    ),
+  );
+  // MCP, and Evidence, name the tool and the open_binary argument.
+  expect(projected).toMatchObject({
+    remediation: {
+      action:
+        'The selected target\'s directory form is outside what inspect_artifact reads. Use inspect_desktop_application for this target, or reopen it with open_binary with provider_id "ghidra".',
+    },
+    details: {
+      related_operations: ["inspect_desktop_application"],
+      related_providers: ["ghidra"],
+    },
+  });
+  // The CLI renders the same table entry with its commands and option.
+  expect(
+    projectCliCommandOutput(projected, {
+      operations: entry.operations,
+      commands: entries,
+    }),
+  ).toMatchObject({
+    remediation: {
+      action:
+        "The selected target's directory form is outside what rea inspect-artifact reads. Use rea inspect-desktop-application for this target, or reopen it with --provider ghidra.",
+    },
+  });
 });

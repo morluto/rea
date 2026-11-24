@@ -50,6 +50,11 @@ for (const { operation, session, cases } of await loadTargetFailureReaders()) {
         expect(result.json).not.toHaveProperty("recovery");
         expect(result.json).not.toHaveProperty("details.issues");
         expect(result.json).not.toHaveProperty("details.format_failure");
+        // The CLI names operations by command, never by MCP tool name.
+        expect(
+          (result.json as { remediation: { action: string } }).remediation
+            .action,
+        ).not.toContain(operation);
 
         const call = await cli.sharedMcpCall!();
         if (session === true) {
