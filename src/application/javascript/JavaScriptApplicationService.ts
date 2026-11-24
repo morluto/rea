@@ -1,20 +1,35 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
+import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
+import {
+  ASAR_HEADER_ADMISSION_SETTING,
+  parseAsarHeaderAdmission,
+} from "../../config/asarHeaderAdmission.js";
+import { parseAsarListingAdmission } from "../../config/asarListingAdmission.js";
+import { resolveJavaScriptMemberMutationAllowance } from "../../config/javascriptMemberMutationAllowance.js";
 import { z } from "zod";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  translateArtifactFailure,
+} from "../../resources/index.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
   type JavaScriptApplicationAnalysisResult,
   parseOwnedJavaScriptApplicationAnalysisSteps,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
 import {
   assertJavaScriptAnalysisActive,
@@ -25,15 +40,23 @@ import {
   reconstructJavaScriptArtifact,
   type JavaScriptArtifactReconstructionResult,
 } from "./JavaScriptArtifactReconstruction.js";
-import { JAVASCRIPT_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
+import { JAVASCRIPT_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 
 const OPERATION = "analyze_javascript_application" as const;
+
+/** Execution options plus the composition root's environment for admission settings. */
+export interface JavaScriptApplicationOptions extends ExecutionOptions {
+  /** Composition-bound source analyzer; application never constructs one. */
+  readonly sourceAnalysis: JavaScriptSourceAnalysisFactory;
+  readonly settings?: AnalysisSettingsReader;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+}
 
 /** Statically analyze one local JavaScript/Electron application. */
 export const analyzeJavaScriptApplication = async (
   rawInput: unknown,
   scope: ArtifactResourceScope,
-  options: ExecutionOptions = {},
+  options: JavaScriptApplicationOptions,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const parsed = analyzeJavaScriptApplicationInputSchema.safeParse(rawInput);
   if (!parsed.success)
@@ -47,8 +70,34 @@ export const analyzeJavaScriptApplication = async (
 export const analyzeJavaScriptApplicationValidated = async (
   input: z.output<typeof analyzeJavaScriptApplicationInputSchema>,
   scope: ArtifactResourceScope,
-  options: ExecutionOptions = {},
+  options: JavaScriptApplicationOptions,
 ): Promise<Result<Evidence, AnalysisError>> => {
+  // An invalid setting is refused before analysis, never replaced by the default.
+  const asarHeaderAdmission = parseAsarHeaderAdmission(
+    options.environment?.[ASAR_HEADER_ADMISSION_SETTING],
+  );
+  if (!asarHeaderAdmission.ok) return asarHeaderAdmission;
+  const listingAdmission = parseAsarListingAdmission(
+    options.environment?.REA_ASAR_MAX_LISTING_BYTES,
+  );
+  if (!listingAdmission.ok) return listingAdmission;
+  const overrides = options.settings?.().overrides;
+  const memberMutationAllowance = resolveJavaScriptMemberMutationAllowance(
+    options.environment,
+    overrides,
+  );
+  if (!memberMutationAllowance.ok) return memberMutationAllowance;
+  const header = overrides?.["asar.max_header_bytes"];
+  const listing = overrides?.["asar.max_listing_bytes"];
+  const acceptedAdmission = {
+    ...(header === undefined
+      ? asarHeaderAdmission.value
+      : { maximumBytes: header, source: "runtime" as const }),
+    listing:
+      listing === undefined
+        ? listingAdmission.value
+        : { maximumBytes: listing, source: "runtime" as const },
+  };
   let reconstructed: JavaScriptArtifactReconstructionResult | undefined;
   let result: JavaScriptApplicationAnalysisResult | undefined;
   let evidence: Evidence | undefined;
@@ -64,8 +113,12 @@ export const analyzeJavaScriptApplicationValidated = async (
     reconstructed = await reconstructJavaScriptArtifact(
       input,
       scope,
+      options.sourceAnalysis,
       options.signal,
       options.progress,
+      acceptedAdmission,
+      overrides,
+      memberMutationAllowance.value,
     );
     const { electron_summary: summary, ...application } = reconstructed;
     await options.progress?.report({
@@ -106,7 +159,8 @@ export const analyzeJavaScriptApplicationValidated = async (
     });
     assertJavaScriptAnalysisActive(options.signal);
     return ok(evidence);
-  } catch (cause: unknown) {
+  } catch (caught: unknown) {
+    let cause = caught;
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "cancelled" &&
@@ -129,7 +183,7 @@ export const analyzeJavaScriptApplicationValidated = async (
             result,
           );
         return err(
-          artifactFailureToOperationError(cause).retainPartialObservation(
+          translateArtifactFailure(OPERATION, cause).retainPartialObservation(
             evidence,
           ),
         );
@@ -142,7 +196,7 @@ export const analyzeJavaScriptApplicationValidated = async (
     // Preserve execution constraints and their completed partial Evidence.
     if (cause instanceof AnalysisError) return err(cause);
     if (cause instanceof ArtifactReaderFailure)
-      return err(artifactFailureToOperationError(cause));
+      return err(translateArtifactFailure(OPERATION, cause));
     if (cause instanceof z.ZodError)
       return err(
         new AnalysisOutputError(OPERATION, describeResultSchemaFailure(cause), {
@@ -154,8 +208,32 @@ export const analyzeJavaScriptApplicationValidated = async (
       "code" in cause &&
       typeof cause.code === "string" &&
       FILESYSTEM_ERROR_CODES.has(cause.code)
-    )
-      return err(new ArtifactOperationError(OPERATION, "io"));
+    ) {
+      const path: unknown = Reflect.get(cause, "path");
+      const syscall: unknown = Reflect.get(cause, "syscall");
+      const diagnostics = {
+        input_path: input.input_path,
+        system_code: cause.code,
+        ...(typeof path === "string" ? { path } : {}),
+        ...(typeof syscall === "string" ? { syscall } : {}),
+      };
+      return err(
+        cause.code === "EACCES" || cause.code === "EPERM"
+          ? new AnalysisAccessDeniedError(
+              OPERATION,
+              input.input_path,
+              cause.code,
+              { cause, diagnostics },
+            )
+          : new ArtifactOperationError(
+              OPERATION,
+              "io",
+              undefined,
+              cause.message,
+              { cause, diagnostics },
+            ),
+      );
+    }
     return err(
       new ProviderAdapterError(JAVASCRIPT_APPLICATION_PROVIDER.id, OPERATION, {
         cause,
@@ -174,23 +252,6 @@ export const analyzeJavaScriptApplicationValidated = async (
   }
 };
 
-const artifactFailureToOperationError = (
-  cause: ArtifactReaderFailure,
-): ArtifactOperationError =>
-  new ArtifactOperationError(
-    OPERATION,
-    cause.reason,
-    cause.details,
-    cause.message,
-    {
-      cause,
-      ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
-      ...(cause.partialObservation === undefined
-        ? {}
-        : { partialObservation: cause.partialObservation }),
-    },
-  );
-
 const describeResultSchemaFailure = (cause: z.ZodError): string => {
   const issue = cause.issues[0];
   if (issue === undefined) return "Result schema rejected an unknown issue";
@@ -200,12 +261,9 @@ const describeResultSchemaFailure = (cause: z.ZodError): string => {
   const pointer =
     path.length === 0
       ? "/"
-      : `/${path.map((part) => escapePointerPart(String(part))).join("/")}`;
+      : `/${path.map((part) => escapeJsonPointerToken(String(part))).join("/")}`;
   return `Result schema rejected ${String(cause.issues.length)} ${cause.issues.length === 1 ? "issue" : "issues"} at ${pointer} (${issue.code})`;
 };
-
-const escapePointerPart = (part: string): string =>
-  part.replaceAll("~", "~0").replaceAll("/", "~1");
 
 const FILESYSTEM_ERROR_CODES = new Set([
   "ENOENT",

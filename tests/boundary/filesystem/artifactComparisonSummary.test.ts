@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { compareArtifacts } from "../../../src/domain/artifactComparison.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const observe = async (
@@ -30,7 +30,7 @@ const observe = async (
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventory),
+      result: inventory,
       confidence: partial ? "derived" : "observed",
       authority: "shipped-artifact",
     },

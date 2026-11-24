@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertMipsCarvedTargetRefusal,
   assertMipsGlobal,
   assertMipsLoadedImage,
   assertMipsProbe,
   assertMipsSoftFloatStorage,
+  carveMipsElfBeforeSectionTable,
   parseMipsReadelf,
 } from "./mips-checks.mjs";
 
@@ -268,6 +270,73 @@ describe("MIPS real-verifier independent expectations", () => {
     assertMipsGlobal("00000007", "big");
     expect(() => assertMipsGlobal("00000007", "little")).toThrow();
     expect(() => assertMipsGlobal("0700", "little")).toThrow();
+  });
+});
+
+describe("MIPS real-verifier carved-copy expectations", () => {
+  it.each(["little", "big"] as const)(
+    "carves before the %s-endian section table only when every payload stays captured",
+    (byteOrder) => {
+      const bytes = Buffer.alloc(200);
+      const u16 = (offset: number, value: number) =>
+        byteOrder === "little"
+          ? bytes.writeUInt16LE(value, offset)
+          : bytes.writeUInt16BE(value, offset);
+      const u32 = (offset: number, value: number) =>
+        byteOrder === "little"
+          ? bytes.writeUInt32LE(value, offset)
+          : bytes.writeUInt32BE(value, offset);
+      u32(28, 52);
+      u32(32, 120);
+      u16(42, 32);
+      u16(44, 1);
+      u16(46, 40);
+      u16(48, 2);
+      u32(56, 100); // PT payload ends at the last captured byte.
+      u32(68, 19);
+      const carve = carveMipsElfBeforeSectionTable(bytes, byteOrder);
+      expect(carve.bytes.length).toBe(119);
+      expect(carve.reason).toBe(
+        "truncated ELF section header table: declared file range 120..200 exceeds the 119-byte file",
+      );
+      u32(68, 20);
+      expect(() => carveMipsElfBeforeSectionTable(bytes, byteOrder)).toThrow();
+    },
+  );
+
+  it("accepts only a target-opening refusal of the carved copy", () => {
+    const path = "/work/little-hard-carved.elf";
+    const reason =
+      "truncated ELF section header table: declared file range 2620..3580 exceeds the 2619-byte file";
+    const refusal = {
+      code: "target_unavailable",
+      details: { path, reason, constraint: "file_format_rejected" },
+    };
+    assertMipsCarvedTargetRefusal(refusal, path, reason);
+    for (const observed of [
+      // Superseded: a resolved copy refused later by Ghidra admission.
+      {
+        code: "capability_unavailable",
+        details: {
+          selection_reason: "target_unsupported",
+          rejections: [
+            {
+              provider_id: "ghidra",
+              code: "architecture_unsupported",
+              reason: `MIPS ABI declaration inspection is incomplete. ${reason}`,
+            },
+          ],
+        },
+      },
+      {
+        ...refusal,
+        details: { ...refusal.details, reason: reason.replace("2619", "2620") },
+      },
+      { ...refusal, details: { path, reason } },
+    ])
+      expect(() =>
+        assertMipsCarvedTargetRefusal(observed, path, reason),
+      ).toThrow();
   });
 });
 

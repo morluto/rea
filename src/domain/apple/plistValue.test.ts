@@ -1,8 +1,9 @@
 import { expect, it } from "vitest";
+import { InternalInvariantError } from "../internalInvariant.js";
 import { parseBinary } from "plist";
 
-import { projectPlistValue } from "./plistValue.js";
-import { UnknownPlistReal } from "./plistNumbers.js";
+import { PlistNestingLimitError, projectPlistValue } from "./plistValue.js";
+import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
 // Binary decoders build dates from seconds; beyond the Date range they are invalid.
 it("projects an unrepresentable date as unknown and counts it", () => {
@@ -14,9 +15,9 @@ it("projects an unrepresentable date as unknown and counts it", () => {
       near: { $plist_type: "date", iso8601: "1970-01-01T00:00:00.000Z" },
     },
     nonFiniteRealCount: 0,
-    unknownRealCount: 0,
     negativeZeroRealCount: 0,
     unknownDateCount: 1,
+    unknownScalarCount: 0,
   });
 });
 
@@ -27,7 +28,6 @@ it("keeps a negative-zero real distinct from positive zero and counts it", () =>
     (wrapper) => observed.push(wrapper),
   );
   expect(projected.negativeZeroRealCount).toBe(1);
-  expect(projected.unknownRealCount).toBe(0);
   expect(Array.isArray(projected.value)).toBe(true);
   if (!Array.isArray(projected.value)) throw new Error("Expected array");
   expect(projected.value[0]).toEqual({ $plist_type: "real", value: "-0" });
@@ -50,7 +50,7 @@ it("rejects excessive plist nesting without exhausting the stack", () => {
     cursor.push(next);
     cursor = next;
   }
-  expect(() => projectPlistValue(deep)).toThrow(RangeError);
+  expect(() => projectPlistValue(deep)).toThrow(PlistNestingLimitError);
 });
 
 it("reports only generated scalar wrappers and keeps lookalike dictionaries distinct", () => {
@@ -109,7 +109,7 @@ it("rejects accessors, proxies, holes and symbol keys without invoking user code
     Array(1),
     { [Symbol("key")]: "value" },
   ])
-    expect(() => projectPlistValue(value)).toThrow(TypeError);
+    expect(() => projectPlistValue(value)).toThrow(InternalInvariantError);
   expect(accessed).toBe(0);
 });
 
@@ -120,7 +120,6 @@ it("keeps retained integer scalars distinct from lookalike dictionaries", () => 
     [BigInt(decimal), { $plist_type: "integer", decimal }],
     (value) => observed.push(value),
   );
-  expect(projected.unknownRealCount).toBe(0);
   expect(projected.unknownDateCount).toBe(0);
   expect(Array.isArray(projected.value)).toBe(true);
   if (!Array.isArray(projected.value)) throw new Error("Expected array");
@@ -130,30 +129,41 @@ it("keeps retained integer scalars distinct from lookalike dictionaries", () => 
   expect(observed[0]).not.toBe(projected.value[1]);
 });
 
-it("projects known non-finite numbers while retaining explicit XML unknowns", () => {
+it("projects known non-finite and unknown XML scalars without wrapping lookalikes", () => {
   const observed: object[] = [];
   const projected = projectPlistValue(
     [
       Infinity,
       -Infinity,
       NaN,
-      new UnknownPlistReal(),
-      new UnknownPlistReal(),
+      new UnknownPlistScalar("real", "1e999", "unrepresentable"),
+      new UnknownPlistScalar(
+        "integer",
+        "12<!-- gap -->3",
+        "unsupported-markup",
+      ),
       { $plist_type: "real", value: "nan" },
+      {
+        $plist_type: "unknown",
+        element: "integer",
+        literal: "12<!-- gap -->3",
+        reason: "unsupported-markup",
+      },
     ],
     (wrapper) => observed.push(wrapper),
   );
   expect(projected.nonFiniteRealCount).toBe(3);
-  expect(projected.unknownRealCount).toBe(2);
+  expect(projected.unknownScalarCount).toBe(2);
   expect(projected.negativeZeroRealCount).toBe(0);
   expect(JSON.stringify(projected.value)).toBe(
-    '[{"$plist_type":"real","value":"+infinity"},{"$plist_type":"real","value":"-infinity"},{"$plist_type":"real","value":"nan"},{"$plist_type":"real","value":null},{"$plist_type":"real","value":null},{"$plist_type":"real","value":"nan"}]',
+    '[{"$plist_type":"real","value":"+infinity"},{"$plist_type":"real","value":"-infinity"},{"$plist_type":"real","value":"nan"},{"$plist_type":"unknown","element":"real","literal":"1e999","reason":"unrepresentable"},{"$plist_type":"unknown","element":"integer","literal":"12<!-- gap -->3","reason":"unsupported-markup"},{"$plist_type":"real","value":"nan"},{"$plist_type":"unknown","element":"integer","literal":"12<!-- gap -->3","reason":"unsupported-markup"}]',
   );
   expect(Array.isArray(projected.value)).toBe(true);
   if (!Array.isArray(projected.value)) throw new Error("Expected array");
   // Only generated wrappers are reported; the lookalike stays a dictionary.
   expect(observed).toEqual(projected.value.slice(0, 5));
   expect(observed).not.toContain(projected.value[5]);
+  expect(observed).not.toContain(projected.value[6]);
 });
 
 it.each([
@@ -226,7 +236,6 @@ it.each([
   ]);
   expect(projected.nonFiniteRealCount).toBe(4);
   expect(projected.negativeZeroRealCount).toBe(1);
-  expect(projected.unknownRealCount).toBe(0);
   expect(observed).toHaveLength(5);
-  expect(bytes).toEqual(original);
+  expect(Buffer.compare(bytes, original)).toBe(0);
 });

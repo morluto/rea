@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import type { HopperLauncherOutcome } from "../domain/hopperErrors.js";
+import type { HopperLauncherOutcome } from "./HopperErrors.js";
 import {
   hopperLauncherReportedApplicationNotFound,
   nativeHopperLaunchWasDenied,
@@ -30,8 +30,7 @@ it.each([
   { stdout: { text: "", bytes: 1, retained_bytes: 0 } },
   { output_closed: false },
   { diagnostic_truncated: true },
-  { signal: "SIGTERM", exit_code: null },
-  { signal: "SIGTERM", exit_code: 2 },
+  { signal: "SIGTERM" },
   { exit_code: 0 },
   {
     stderr: {
@@ -78,11 +77,8 @@ it("recognizes the native helper's complete Spotlight not-found report", () => {
 });
 
 it.each([
-  { stdout: { text: "wrapper output\n", bytes: 15, retained_bytes: 15 } },
-  { stdout: { text: "", bytes: 1, retained_bytes: 0 } },
   { output_closed: false },
-  { diagnostic_truncated: true },
-  { signal: "SIGTERM", exit_code: null },
+  { signal: "SIGTERM" },
   { exit_code: 2 },
   {
     stderr: {

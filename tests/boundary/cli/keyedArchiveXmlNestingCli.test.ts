@@ -37,8 +37,10 @@ for (const [name, xml] of [
         details: {
           reason: "limit",
           truncated: true,
-          detail:
-            "Cannot decode selected Foundation keyed archive: Plist exceeds 128 nesting levels",
+          reported_limits: { boundary: "plist-nesting-depth", maximum: 128 },
+          detail: expect.stringMatching(
+            /keyed archive.*128 nesting levels.*no runtime override/iu,
+          ),
         },
       });
     },

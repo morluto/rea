@@ -1,20 +1,21 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it, onTestFinished, vi } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import type { GoBinary } from "../../../src/domain/go/goBinary.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import { ok } from "../../../src/domain/result.js";
-import type { JavaScriptRuntimeObservationPort } from "../../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
-import type { BrowserObservationPort } from "../../../src/application/BrowserObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../../../src/ports/javascript/JavaScriptRuntimeObservationPort.js";
+import type { BrowserObservationPort } from "../../../src/ports/BrowserObservationPort.js";
 import type { BrowserTargetList } from "../../../src/domain/browserObservationSchemas.js";
 import type { JavaScriptRuntimeTargetList } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
+import { waitFor } from "../../support/testWait.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("retains late-cancelled Go artifact Evidence through MCP and keeps the server usable", async () => {
-  const gate = createDeferred<void>();
-  const started = createDeferred<void>();
+  const goInspection = phaseGate();
   const controller = new AbortController();
   const report: GoBinary = {
     artifact: { path: "/artifacts/example", sha256: "a".repeat(64), bytes: 10 },
@@ -29,10 +30,10 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
     throw new Error("unexpected binary admission");
   });
   const service = new GoBinaryService({
+    close: async () => {},
     identity: { id: "fixture", name: "fixture", version: "1" },
     inspect: async (_input, options) => {
-      started.resolve();
-      await gate.promise;
+      await goInspection.hold();
       if (!options?.signal) throw new Error("MCP did not forward its signal");
       return ok(report);
     },
@@ -41,11 +42,14 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
     { kind: "session", session },
     { logger: silentLogger, goBinary: service },
   );
-  const client = new Client({ name: "late-abort-artifact", version: "1" });
+  const client = new Client(
+    { name: "late-abort-artifact", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
-    gate.resolve();
+    goInspection.release();
     controller.abort();
     await client.close();
     await server.close();
@@ -57,11 +61,11 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
     { name: "inspect_go_binary", arguments: { path: report.artifact.path } },
     { signal: controller.signal },
   );
-  await started.promise;
+  await goInspection.reached(call, "MCP observation");
   controller.abort();
-  gate.resolve();
+  goInspection.release();
   await expect(call).rejects.toThrow();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(session.exportEvidenceBundle().records).toContainEqual(
       expect.objectContaining({
         operation: "inspect_go_binary",
@@ -73,8 +77,7 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
 });
 
 it("retains late-cancelled Inspector target Evidence through MCP and keeps the server usable", async () => {
-  const gate = createDeferred<void>();
-  const started = createDeferred<void>();
+  const inspectorObservation = phaseGate();
   const controller = new AbortController();
   const targetList: JavaScriptRuntimeTargetList = {
     runtime: { product: "Node.js", protocol_version: "1.0", v8_version: null },
@@ -89,8 +92,7 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
       version: "1",
     }),
     listTargets: async (_input, options) => {
-      started.resolve();
-      await gate.promise;
+      await inspectorObservation.hold();
       if (!options?.signal) throw new Error("MCP did not forward its signal");
       return ok(targetList);
     },
@@ -105,11 +107,14 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
     { kind: "session", session },
     { logger: silentLogger, javascriptRuntimeObservation: provider },
   );
-  const client = new Client({ name: "late-abort-inspector", version: "1" });
+  const client = new Client(
+    { name: "late-abort-inspector", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
-    gate.resolve();
+    inspectorObservation.release();
     controller.abort();
     await client.close();
     await server.close();
@@ -124,11 +129,11 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
     },
     { signal: controller.signal },
   );
-  await started.promise;
+  await inspectorObservation.reached(call, "MCP observation");
   controller.abort();
-  gate.resolve();
+  inspectorObservation.release();
   await expect(call).rejects.toThrow();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(session.exportEvidenceBundle().records).toContainEqual(
       expect.objectContaining({
         operation: "list_javascript_runtime_targets",
@@ -140,8 +145,7 @@ it("retains late-cancelled Inspector target Evidence through MCP and keeps the s
 });
 
 it("records late-cancelled Browser target Evidence and keeps the server usable", async () => {
-  const gate = createDeferred<void>();
-  const started = createDeferred<void>();
+  const browserObservation = phaseGate();
   const controller = new AbortController();
   const targetList: BrowserTargetList = {
     browser: {
@@ -158,8 +162,7 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
   const browser: BrowserObservationPort = {
     identity: () => ({ id: "fixture-browser", name: "fixture", version: "1" }),
     listTargets: async (_input, options) => {
-      started.resolve();
-      await gate.promise;
+      await browserObservation.hold();
       if (!options?.signal) throw new Error("MCP did not forward its signal");
       return ok(targetList);
     },
@@ -192,11 +195,14 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
     { kind: "session", session },
     { logger: silentLogger, browserObservation: browser },
   );
-  const client = new Client({ name: "late-abort-browser", version: "1" });
+  const client = new Client(
+    { name: "late-abort-browser", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
-    gate.resolve();
+    browserObservation.release();
     controller.abort();
     await client.close();
     await server.close();
@@ -211,11 +217,11 @@ it("records late-cancelled Browser target Evidence and keeps the server usable",
     },
     { signal: controller.signal },
   );
-  await started.promise;
+  await browserObservation.reached(call, "MCP observation");
   controller.abort();
-  gate.resolve();
+  browserObservation.release();
   await expect(call).rejects.toThrow();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(session.exportEvidenceBundle().records).toContainEqual(
       expect.objectContaining({
         operation: "list_browser_targets",

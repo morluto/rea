@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -10,6 +9,10 @@ import {
   artifactMcpResult,
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 const exec = promisify(execFile);
 
@@ -27,13 +30,14 @@ const { stdout: sdk } = await exec(
 const sdkPath = sdk.trim();
 assert.ok(sdkPath.length > 0, "iPhoneSimulator SDK path is empty");
 
-const root = await mkdtemp(join(tmpdir(), "rea-legacy-simulator-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-legacy-simulator-" });
+const root = fixture.path;
 const xcrun = (...args) =>
   exec("/usr/bin/xcrun", args, {
     timeout: 120_000,
     maxBuffer: 16 * 1024 * 1024,
   });
-try {
+await withVerifierFixture(fixture, async () => {
   // Source-owned fixture, never executed: a legacy deployment target makes
   // the Apple driver emit LC_VERSION_MIN_IPHONEOS (no simulator flag), while
   // the modern dylib carries LC_BUILD_VERSION with an explicit simulator ID.
@@ -136,6 +140,4 @@ try {
   console.log(
     "Legacy simulator verification passed against Apple clang, ld, vtool, and otool.",
   );
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+});

@@ -1,19 +1,23 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
+import { utcDateTimeSchema } from "./offsetDateTime.js";
 
+import {
+  browserDiscoveryTimeoutSchema,
+  webRuntimeCommandTimeoutSchema,
+} from "./browserDeadline.js";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
   browserAllowedOriginsSchema,
   browserObservationEndpointSchema,
 } from "./browserObservation.js";
 import { browserVersionSchema } from "./browserObservationSchemas.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Self-verifying inline PNG artifact for CLI/MCP parity. */
 export const webScreenshotArtifactSchema = z
   .object({
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    bytes: z.number().int().min(1),
+    bytes: z.int().min(1),
     media_type: z.literal("image/png"),
     data_base64: z.string(),
   })
@@ -23,7 +27,7 @@ export const webScreenshotArtifactSchema = z
       context.addIssue({ code: "custom", message: "Invalid canonical base64" });
       return;
     }
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     if (bytes.byteLength !== artifact.bytes || sha256 !== artifact.sha256)
       context.addIssue({
         code: "custom",
@@ -36,7 +40,9 @@ export type WebScreenshotArtifact = z.infer<typeof webScreenshotArtifactSchema>;
 export const captureWebScreenshotInputSchema = z.strictObject({
   cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
-  target_id: z.string().trim().min(1),
+  discovery_timeout_ms: browserDiscoveryTimeoutSchema,
+  target_id: z.string().min(1),
+  command_timeout_ms: webRuntimeCommandTimeoutSchema,
 });
 export type CaptureWebScreenshotInput = z.infer<
   typeof captureWebScreenshotInputSchema
@@ -50,10 +56,10 @@ export const webScreenshotSchema = z.object({
     url: z.string(),
     origin: z.string(),
   }),
-  captured_at: z.iso.datetime(),
+  captured_at: utcDateTimeSchema,
   viewport: z.object({
-    width: z.number().int().min(1),
-    height: z.number().int().min(1),
+    width: z.int().min(1),
+    height: z.int().min(1),
   }),
   artifact: webScreenshotArtifactSchema,
   completeness: browserCompletenessSchema,
@@ -65,7 +71,7 @@ export type WebScreenshot = z.infer<typeof webScreenshotSchema>;
 export const compareWebScreenshotsInputSchema = z.strictObject({
   before: webScreenshotArtifactSchema,
   after: webScreenshotArtifactSchema,
-  channel_threshold: z.number().int().min(0).max(255).default(0),
+  channel_threshold: z.int().min(0).max(255).default(0),
 });
 export type CompareWebScreenshotsInput = z.infer<
   typeof compareWebScreenshotsInputSchema
@@ -74,14 +80,14 @@ export type CompareWebScreenshotsInput = z.infer<
 /** Value-only visual difference metrics; no OCR or image mutation. */
 const webScreenshotDiffContextShape = {
   before: z.object({
-    width: z.number().int().min(1),
-    height: z.number().int().min(1),
+    width: z.int().min(1),
+    height: z.int().min(1),
   }),
   after: z.object({
-    width: z.number().int().min(1),
-    height: z.number().int().min(1),
+    width: z.int().min(1),
+    height: z.int().min(1),
   }),
-  channel_threshold: z.number().int().min(0).max(255),
+  channel_threshold: z.int().min(0).max(255),
   limitations: z.array(z.string()),
 };
 
@@ -90,19 +96,19 @@ export const webScreenshotDiffSchema = z
     z.object({
       ...webScreenshotDiffContextShape,
       status: z.literal("identical"),
-      compared_pixels: z.number().int().positive(),
+      compared_pixels: z.int().positive(),
       changed_pixels: z.literal(0),
       changed_ratio: z.literal(0),
-      maximum_channel_delta: z.number().int().min(0).max(255),
+      maximum_channel_delta: z.int().min(0).max(255),
       mean_absolute_channel_delta: z.number().min(0).max(255),
     }),
     z.object({
       ...webScreenshotDiffContextShape,
       status: z.literal("different"),
-      compared_pixels: z.number().int().positive(),
-      changed_pixels: z.number().int().positive(),
+      compared_pixels: z.int().positive(),
+      changed_pixels: z.int().positive(),
       changed_ratio: z.number().positive().max(1),
-      maximum_channel_delta: z.number().int().positive().max(255),
+      maximum_channel_delta: z.int().positive().max(255),
       mean_absolute_channel_delta: z.number().positive().max(255),
     }),
     z.object({
@@ -141,7 +147,7 @@ export type WebScreenshotDiff = z.infer<typeof webScreenshotDiffSchema>;
 export const createWebScreenshotArtifact = (
   bytes: Buffer,
 ): WebScreenshotArtifact => {
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const sha256 = sha256Hex(bytes);
   return webScreenshotArtifactSchema.parse({
     sha256,
     bytes: bytes.byteLength,

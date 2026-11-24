@@ -10,12 +10,12 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { PrivateRuntimeRoot } from "../../../dist/process/PrivateRuntimeRoot.js";
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
-import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { selectExportedJavaScriptFacts } from "../../lib/javascript-facts-reference.mjs";
 
 const { values } = parseArgs({
@@ -56,8 +56,6 @@ const client = new Client({
   version: "1",
 });
 let temporary;
-let primaryError;
-let retainTemporary = false;
 let report;
 const serialize = (value) => JSON.stringify(value);
 const digest = (value) =>
@@ -77,8 +75,13 @@ const ownedCommand = async (command, arguments_) => {
       { timeoutMs: 120_000, diagnosticBytes: 16 * 1024 * 1024 },
     );
   } catch (cause) {
-    retainTemporary ||=
-      cause instanceof OwnedCommandFailure && cause.cleanupOwner !== undefined;
+    if (
+      cause instanceof OwnedCommandFailure &&
+      cause.cleanupOwner !== undefined
+    )
+      temporary.retain(
+        `Command cleanup is incomplete; retaining its private inputs at ${temporary.path}.`,
+      );
     throw cause;
   }
 };
@@ -106,13 +109,13 @@ const resourceSnapshot = async () => {
   };
 };
 
-try {
+await withVerifierCleanup(async () => {
   const start = performance.now();
   const artifactHash = createHash("sha256");
   for await (const chunk of createReadStream(values.artifact))
     artifactHash.update(chunk);
   const artifactSha256 = artifactHash.digest("hex");
-  temporary = await PrivateRuntimeRoot.create({
+  temporary = await VerifierFixture.open({
     prefix: "rea-retained-facts-verifier-",
   });
   await client.connect(transport);
@@ -344,23 +347,5 @@ try {
     conditions:
       "Fresh MCP and input hashing (file cache warmed); build/OS caches uncontrolled. First export sample includes export plus caller projection code, later samples reuse that immutable export. View samples precede diagnostic export. Task token projections include preparation, first answer, selected/full name/description/inputSchema catalog and the exact baseline program; exec tool schema, host rendering, output schemas, reasoning and billing unmeasured. At-answer cgroup counters include observer/startup overhead, before repeats/export diagnostics/parity/tokenization; final external observer measures all validation work. No application or native provider executes.",
   };
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [
-      () => client.close(),
-      () => transport.close(),
-      async () => {
-        if (retainTemporary)
-          throw new Error(
-            `Command cleanup incomplete; retaining owned inputs at ${temporary?.path}.`,
-          );
-        await temporary?.close();
-      },
-    ],
-    primaryError,
-  );
-}
+}, [() => client.close(), () => transport.close(), () => temporary?.release()]);
 console.log(serialize(report));

@@ -14,7 +14,7 @@ describe("DOS COM admission", () => {
     const target = await parseBinaryTarget(path, {
       cwd: directory,
       hostArchitecture: "arm64",
-      formatHint: "dos-com",
+      loadSelection: { format: "dos-com" },
     });
     expect(target).toMatchObject({
       ok: true,
@@ -27,7 +27,7 @@ describe("DOS COM admission", () => {
         sha256: createHash("sha256").update(bytes).digest("hex"),
       },
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     const detected = await parseBinaryTarget(path);
     expect(detected.ok && detected.value.format).not.toBe("dos-com");
   });
@@ -39,7 +39,7 @@ describe("DOS COM admission", () => {
       await parseBinaryTarget(path, {
         cwd: directory,
         hostArchitecture: "x64",
-        formatHint: "dos-com",
+        loadSelection: { format: "dos-com" },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
   });
@@ -51,7 +51,7 @@ describe("DOS COM admission", () => {
     const target = await parseBinaryTarget(path, {
       cwd: directory,
       hostArchitecture: "x64",
-      formatHint: "dos-com",
+      loadSelection: { format: "dos-com" },
     });
     if (!target.ok) throw target.error;
     expect(target.value).toMatchObject({
@@ -59,7 +59,7 @@ describe("DOS COM admission", () => {
       architecture: "x86",
       sha256: createHash("sha256").update(bytes).digest("hex"),
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   });
   it("rejects contradictory target kind", async () => {
     const directory = await createTestTempDirectory("rea-com-target-");
@@ -70,7 +70,7 @@ describe("DOS COM admission", () => {
         cwd: directory,
         hostArchitecture: "x64",
         targetKind: "database",
-        formatHint: "dos-com",
+        loadSelection: { format: "dos-com" },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
   });

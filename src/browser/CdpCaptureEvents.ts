@@ -1,13 +1,15 @@
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
-import type { CdpEvent } from "./CdpConnection.js";
+import type { CdpReceivedEvent } from "./CdpConnection.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import * as bodyShapes from "./CdpCaptureEventBodyShapes.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import type { CapturedScript, NetworkState } from "./CdpCaptureEventTypes.js";
 import * as handlers from "./CdpCaptureEventHandlers.js";
 import { isJsonMediaType } from "./CdpCaptureEventHelpers.js";
-import { cdpStringValue, recordValue } from "./CdpCaptureValues.js";
+import type { CdpTargetDocument } from "./CdpTargetDocument.js";
 
 export interface ResponseBodyCandidate {
   readonly requestId: string;
@@ -16,6 +18,7 @@ export interface ResponseBodyCandidate {
 
 /** Event accumulator that validates and normalizes payloads at ingestion. */
 export class CdpCaptureEvents implements CdpCaptureEventsState {
+  readonly #coverageStarts = new Map<"Network" | "Runtime", string>();
   #scriptMetadataBudgetExclusionsRecorded = false;
   readonly #networkRequestOccurrences = new Map<string, number>();
   readonly #responseBodyExaminedOccurrences = new Map<string, number>();
@@ -25,10 +28,16 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
   rejectedSourceMapMetadataBudgetCount = 0;
   readonly scriptMetadataBytesById = new Map<string, number>();
   retainedScriptMetadataBytes = 0;
-  readonly executionContextFrames = new Map<string, string>();
+  retainedEventBytes = 0;
+  readonly bodyShapeBytesByRequestId = new Map<
+    string,
+    { readonly request: number; readonly response: number }
+  >();
+  readonly executionContextFrames = new Map<string, CdpContextFrameClaim>();
   readonly network = new Map<string, NetworkState>();
   readonly networkRequestTimestamps = new Map<string, number>();
   readonly malformedRedirectRequestIds = new Set<string>();
+  readonly missingRequestBodyShapeIds = new Set<string>();
   readonly webSocketConnectionsById = new Map<
     string,
     WebPageInspection["network"]["websocket_connections"][number]
@@ -44,9 +53,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     "metadata",
   ]);
   originViolation = false;
-  navigationDuringCapture = false;
-  mainFrameId: string | undefined = undefined;
-  committedDocument: string | undefined = undefined;
+  unknownRootIdentity = false;
+  document: CdpTargetDocument | undefined = undefined;
 
   readonly input: InspectWebPageInput;
   readonly allowedOrigins: ReadonlySet<string>;
@@ -56,17 +64,27 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     this.allowedOrigins = allowedOrigins;
   }
 
-  beginAuthorizedFrame(frameId: string): void {
-    this.mainFrameId = frameId;
+  /**
+   * Start capture for the authorized document. Root navigations reach the
+   * capture through the target session's document owner, not as raw events.
+   */
+  beginAuthorizedFrame(document: CdpTargetDocument): void {
+    this.document?.close();
+    this.document = document;
+    document.onNavigation((navigation) =>
+      handlers.handleRootNavigation(this, navigation),
+    );
+    this.#coverageStarts.clear();
     this.originViolation = false;
-    this.navigationDuringCapture = false;
-    this.committedDocument = undefined;
+    this.unknownRootIdentity = false;
     this.scripts.clear();
     this.scriptMetadataBudgetOmissionsById.clear();
     this.rejectedScriptMetadataBudgetCount = 0;
     this.rejectedSourceMapMetadataBudgetCount = 0;
     this.scriptMetadataBytesById.clear();
     this.retainedScriptMetadataBytes = 0;
+    this.retainedEventBytes = 0;
+    this.bodyShapeBytesByRequestId.clear();
     this.#scriptMetadataBudgetExclusionsRecorded = false;
     this.executionContextFrames.clear();
     this.network.clear();
@@ -74,6 +92,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     this.#networkRequestOccurrences.clear();
     this.#responseBodyExaminedOccurrences.clear();
     this.malformedRedirectRequestIds.clear();
+    this.missingRequestBodyShapeIds.clear();
     this.webSocketConnectionsById.clear();
     this.console.length = 0;
     this.responseMetadata.length = 0;
@@ -87,16 +106,17 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
       this.completeness.exclude("websocket_shapes", "not_approved", null);
   }
 
-  beginFinalCapture(frameId: string): void {
-    this.mainFrameId = frameId;
-    // Deliberately does not clear `navigationDuringCapture`. A main-frame
-    // navigation observed during the observation window means the page never
-    // settled, and clearing the flag here reported the capture as clean while
-    // carrying pre-navigation scripts, network and console into the inventory
-    // of the new document. The caller now reports `target_changed` instead.
-    // `committedDocument` is dropped so the new document's frame events are
-    // compared against itself rather than the document we just left.
-    this.committedDocument = undefined;
+  /** The first observed domain event or successful enable reply proves activity. */
+  markDomainEnabled(domain: "Network" | "Runtime"): void {
+    if (!this.#coverageStarts.has(domain))
+      this.#coverageStarts.set(domain, new Date().toISOString());
+  }
+
+  coverageStartedAt(domain: "Network" | "Runtime"): string {
+    const started = this.#coverageStarts.get(domain);
+    if (started === undefined)
+      throw new Error(`${domain} observation has not been enabled`);
+    return started;
   }
 
   /** Record final script metadata omissions after all scriptParsed replacements. */
@@ -121,55 +141,58 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
       );
   }
 
-  ingest(event: CdpEvent): void {
-    const params = recordValue(event.params);
-    if (params === undefined) return;
-    switch (event.method) {
+  ingest(event: CdpReceivedEvent): void {
+    if (this.document !== undefined) {
+      if (event.domain === "Network" || event.domain === "Runtime")
+        this.markDomainEnabled(event.domain);
+    }
+    const registered = event.registered;
+    switch (registered?.method) {
       case "Runtime.executionContextCreated":
-        handlers.handleExecutionContextCreated(this, params);
-        break;
+        handlers.handleExecutionContextCreated(this, registered.payload.facts);
+        return;
       case "Runtime.executionContextDestroyed":
-        handlers.handleExecutionContextDestroyed(this, params);
-        break;
-      case "Runtime.executionContextsCleared":
-        this.executionContextFrames.clear();
-        break;
+        handlers.handleExecutionContextDestroyed(this, registered.payload);
+        return;
       case "Debugger.scriptParsed":
-        handlers.handleScriptParsed(this, params);
-        break;
+        handlers.handleScriptParsed(this, registered.payload.facts);
+        return;
+      case "Runtime.consoleAPICalled":
+        handlers.handleConsoleAPICalled(this, registered.payload);
+        return;
       case "Network.requestWillBeSent": {
-        const requestId = cdpStringValue(params.requestId);
+        const facts = registered.payload.facts;
+        const requestId = facts.requestId;
         const previous =
-          requestId === undefined ? undefined : this.network.get(requestId);
-        handlers.handleRequestWillBeSent(this, params);
-        if (requestId !== undefined && this.network.get(requestId) !== previous)
+          requestId === null ? undefined : this.network.get(requestId);
+        handlers.handleRequestWillBeSent(this, facts);
+        if (requestId !== null && this.network.get(requestId) !== previous)
           this.#networkRequestOccurrences.set(
             requestId,
             (this.#networkRequestOccurrences.get(requestId) ?? 0) + 1,
           );
-        break;
+        return;
       }
       case "Network.responseReceived":
-        handlers.handleResponseReceived(this, params);
-        break;
+        handlers.handleResponseReceived(this, registered.payload);
+        return;
       case "Network.loadingFinished":
-        handlers.handleLoadingFinished(this, params);
-        break;
-      case "Runtime.consoleAPICalled":
-        handlers.handleConsoleAPICalled(this, params);
-        break;
-      case "Page.frameNavigated":
-        handlers.handleFrameNavigated(this, params);
-        break;
+        handlers.handleLoadingFinished(this, registered.payload);
+        return;
       case "Network.webSocketCreated":
-        handlers.handleWebSocketCreated(this, params);
-        break;
+        handlers.handleWebSocketCreated(this, registered.payload);
+        return;
       case "Network.webSocketFrameSent":
-        handlers.handleWebSocketFrame(this, params, "sent");
-        break;
+        handlers.handleWebSocketFrame(this, registered.payload, "sent");
+        return;
       case "Network.webSocketFrameReceived":
-        handlers.handleWebSocketFrame(this, params, "received");
-        break;
+        handlers.handleWebSocketFrame(this, registered.payload, "received");
+        return;
+      case "Runtime.executionContextsCleared":
+        this.executionContextFrames.clear();
+        return;
+      default:
+        return;
     }
   }
 
@@ -238,13 +261,17 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     }
   }
 
-  ingestResponseBody(candidate: ResponseBodyCandidate, value: unknown): void {
+  /** `"malformed"` records the body shape as an invalid protocol value. */
+  ingestResponseBody(
+    candidate: ResponseBodyCandidate,
+    reply: CdpCommandResult<"Network.getResponseBody"> | "malformed",
+  ): void {
     if (this.currentResponseBodyRequest(candidate) === undefined) return;
     this.#responseBodyExaminedOccurrences.set(
       candidate.requestId,
       candidate.occurrence,
     );
     if (this.malformedRedirectRequestIds.has(candidate.requestId)) return;
-    bodyShapes.ingestResponseBodyShape(this, candidate.requestId, value);
+    bodyShapes.ingestResponseBodyShape(this, candidate.requestId, reply);
   }
 }
