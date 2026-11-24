@@ -79,14 +79,13 @@ cliTest(
 );
 
 cliTest(
-  "attributes malformed managed comparison input to its selected argument and retains completed peer Evidence",
+  "names the malformed managed comparison input by its path and retains completed peer Evidence",
   async ({ cli }) => {
     const directory = await createTestTempDirectory(
       "rea-managed-malformed-cli-",
     );
     const good = join(directory, "good.dll");
     const peer = join(directory, "peer.dll");
-    const bad = join(directory, "bad.dll");
     const bytes = buildManagedPeFixture();
     const candidate = Buffer.concat([
       buildManagedPeFixture({ methodName: "Renamed" }),
@@ -96,7 +95,6 @@ cliTest(
     malformed.writeUInt16LE(0, malformed.readUInt32LE(0x3c) + 6);
     await writeFile(good, bytes);
     await writeFile(peer, candidate);
-    await writeFile(bad, malformed);
     const leftSource = {
       argument: "left",
       observation: {
@@ -172,30 +170,34 @@ cliTest(
       JSON.stringify((refused.json as { remediation: unknown }).remediation),
     ).not.toContain("--max-snapshot-bytes");
 
+    // The refusal names the malformed side by its own path; the arguments are
+    // not at fault, so no request field is listed.
     for (const field of ["leftPath", "rightPath"] as const) {
+      const side = join(directory, `${field}.dll`);
+      await writeFile(side, malformed);
       const result = await cli.run({
         arguments: [
           "compare-managed-members",
-          field === "leftPath" ? bad : good,
-          field === "rightPath" ? bad : good,
+          field === "leftPath" ? side : good,
+          field === "rightPath" ? side : good,
           "--json",
         ],
       });
       expect(result.exitCode, result.stderr).toBe(1);
       expect(result.json).toMatchObject({
-        code: "invalid_request",
-        category: "invalid_input",
+        code: "unsupported_target",
+        category: "unsupported_target",
         retryable: false,
         details: {
-          issues: [
-            {
-              path: [field],
-              reason: "invalid_format",
-              message: `Selected artifact ${bad}: PE section count must be positive`,
-            },
-          ],
+          operation: "inspect_managed_members",
+          path: side,
+          format_failure: "malformed",
+          format: "pe-cli",
+          reason: "PE section count must be positive",
         },
       });
+      expect(result.json).not.toHaveProperty("details.issues");
+      expect(result.json).not.toHaveProperty("recovery");
       if (field === "rightPath")
         expect(result.json).toMatchObject({
           details: {
@@ -206,24 +208,6 @@ cliTest(
         expect(result.json).not.toHaveProperty("details.argument_observations");
       expect(result.json).not.toHaveProperty("details.partial_observation");
     }
-
-    const inspection = await cli.run({
-      arguments: ["inspect-managed-members", bad, "--json"],
-    });
-    expect(inspection.exitCode, inspection.stderr).toBe(1);
-    expect(inspection.json).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-      details: {
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${bad}: PE section count must be positive`,
-          },
-        ],
-      },
-    });
   },
 );
 

@@ -53,10 +53,12 @@ interface Match {
   open: boolean;
   suffixCut: boolean;
 }
+const EMPTY_BUFFER = Buffer.alloc(0);
+
 /** Bounded literal token capture, delimited on the right by a non-ASCII-word byte or actual EOF. */
 export class ProcessOutputTokenScanner {
   readonly #marker: Buffer;
-  #lineTail: Buffer = Buffer.alloc(0);
+  #lineTail: Buffer = EMPTY_BUFFER;
   #lineTailCut = false;
   #latest: Match | undefined;
   #pending: Match | undefined;
@@ -79,22 +81,67 @@ export class ProcessOutputTokenScanner {
     }
     this.#extendOpenLine(chunk);
     const carried = this.#lineTail.byteLength;
-    const searched =
-      carried === 0 ? chunk : Buffer.concat([this.#lineTail, chunk]);
-    // A later identifier may share the literal prefix. Search past rejected
-    // candidates to retain the latest confirmed token in this same chunk.
-    let index = searched.lastIndexOf(this.#marker);
-    while (index >= 0 && index + this.#marker.byteLength > carried) {
-      const end = index + this.#marker.byteLength;
-      if (end === searched.length)
-        this.#pending = this.#record(searched, index, start - carried);
-      else if (!isWordByte(searched[end]!)) {
-        this.#latest = this.#record(searched, index, start - carried);
-        break;
+    const markerLen = this.#marker.byteLength;
+    let foundConfirmed = false;
+    // Fast path: scan `chunk` directly without concatenating `#lineTail`.
+    let index = chunk.lastIndexOf(this.#marker);
+    while (index >= 0) {
+      const end = index + markerLen;
+      const isPending = end === chunk.byteLength;
+      const isConfirmed = !isPending && !isWordByte(chunk[end]!);
+      if (isPending || isConfirmed) {
+        const needsCarriedPrefix =
+          carried > 0 &&
+          index <= PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES &&
+          (index === 0 || chunk.lastIndexOf(NEWLINE, index - 1) < 0);
+        // Keep one byte beyond the suffix allowance so #record can tell a
+        // newline at the limit from an omitted byte on the same line.
+        const match = needsCarriedPrefix
+          ? this.#record(
+              Buffer.concat([
+                this.#lineTail,
+                chunk.subarray(
+                  0,
+                  Math.min(
+                    chunk.byteLength,
+                    end + PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES + 1,
+                  ),
+                ),
+              ]),
+              carried + index,
+              start - carried,
+            )
+          : this.#record(chunk, index, start);
+        if (isPending) this.#pending = match;
+        else {
+          this.#latest = match;
+          foundConfirmed = true;
+          break;
+        }
       }
-      index = index === 0 ? -1 : searched.lastIndexOf(this.#marker, index - 1);
+      index = index === 0 ? -1 : chunk.lastIndexOf(this.#marker, index - 1);
     }
-    this.#retainLineTail(searched);
+    if (!foundConfirmed && carried > 0) {
+      // Only a match straddling the `#lineTail` / `chunk` seam remains possible.
+      const seamEnd = Math.min(
+        chunk.byteLength,
+        markerLen + PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES,
+      );
+      const seam = Buffer.concat([this.#lineTail, chunk.subarray(0, seamEnd)]);
+      let seamIndex = seam.lastIndexOf(this.#marker, carried - 1);
+      while (seamIndex >= 0 && seamIndex + markerLen > carried) {
+        const end = seamIndex + markerLen;
+        if (end === carried + chunk.byteLength)
+          this.#pending = this.#record(seam, seamIndex, start - carried);
+        else if (end < seam.byteLength && !isWordByte(seam[end]!)) {
+          this.#latest = this.#record(seam, seamIndex, start - carried);
+          break;
+        }
+        seamIndex =
+          seamIndex === 0 ? -1 : seam.lastIndexOf(this.#marker, seamIndex - 1);
+      }
+    }
+    this.#retainLineTail(chunk);
   }
   /** Only a true stream end proves the boundary of a trailing bare token. */
   finish(): void {
@@ -167,15 +214,42 @@ export class ProcessOutputTokenScanner {
     latest.suffixCut = taken < available;
     latest.open = lineEnd < 0 && taken === available;
   }
-  #retainLineTail(searched: Buffer): void {
-    const lineStart = searched.lastIndexOf(NEWLINE) + 1;
+  #retainLineTail(chunk: Buffer): void {
+    const lineStart = chunk.lastIndexOf(NEWLINE) + 1;
     const limit =
       PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES + this.#marker.byteLength - 1;
-    this.#lineTailCut =
-      searched.byteLength - lineStart > limit ||
-      (lineStart === 0 && this.#lineTailCut);
-    this.#lineTail = Buffer.from(
-      searched.subarray(Math.max(lineStart, searched.byteLength - limit)),
+    if (lineStart === chunk.byteLength) {
+      this.#lineTail = EMPTY_BUFFER;
+      this.#lineTailCut = false;
+      return;
+    }
+    if (lineStart > 0) {
+      const len = chunk.byteLength - lineStart;
+      this.#lineTailCut = len > limit;
+      this.#lineTail = Buffer.from(
+        chunk.subarray(Math.max(lineStart, chunk.byteLength - limit)),
+      );
+      return;
+    }
+    const total = this.#lineTail.byteLength + chunk.byteLength;
+    this.#lineTailCut = total > limit || this.#lineTailCut;
+    if (chunk.byteLength >= limit) {
+      this.#lineTail = Buffer.from(chunk.subarray(chunk.byteLength - limit));
+      return;
+    }
+    const keepFromTail = Math.min(
+      this.#lineTail.byteLength,
+      limit - chunk.byteLength,
     );
+    const next = Buffer.allocUnsafe(keepFromTail + chunk.byteLength);
+    if (keepFromTail > 0)
+      this.#lineTail.copy(
+        next,
+        0,
+        this.#lineTail.byteLength - keepFromTail,
+        this.#lineTail.byteLength,
+      );
+    chunk.copy(next, keepFromTail);
+    this.#lineTail = next;
   }
 }

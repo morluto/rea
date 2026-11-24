@@ -183,19 +183,14 @@ $env:REA_JADX_MCP_JAR = $jar
 
 REA runs its packaged Java metadata bridge in source-file mode against the
 unmodified engine JAR. REA does not install Java, an Android SDK, JADX, a device
-service or an emulator. Set the path in the shell or MCP server environment:
+service or an emulator. Set `REA_JADX_MCP_JAR` in the shell or MCP server
+environment, as above. To select an existing JDK rather than `java` on `PATH`,
+also set `JAVA_HOME=/absolute/path/existing-jdk`.
 
-```sh
-export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.8.0-all.jar
-# Optional: select an existing JDK rather than java on PATH.
-export JAVA_HOME=/absolute/path/existing-jdk
-```
-
-On Windows x64, use a REA package with its matching bundled Windows native
-controls **including owned protocol stdin support**. This Windows boundary is
-new on repository main; an older released package can still reject this host.
-PowerShell accepts paths containing spaces without additional escaping
-inside these environment values:
+On Windows x64, use a REA package (6.2.0 or later) with its matching bundled
+Windows native controls **including owned protocol stdin support**. PowerShell
+accepts paths containing spaces without additional escaping inside these
+environment values:
 
 ```powershell
 $env:REA_JADX_MCP_JAR = 'D:\tools\jadx-headless-mcp-0.8.0-all.jar'
@@ -239,7 +234,11 @@ rea trace-android-references /path/Example.apk example.MainActivity --method-nam
 
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
 `inspect_android_class`, `inspect_android_method` and `trace_android_references`.
-Every request includes `path`. Class/method operations use `class_name`,
+Every request includes `path`. `search_android_classes` also accepts optional
+`limit` (`1..10000`) and `offset` (`>= 0`) pagination (CLI `--limit` and
+`--offset`) so large APKs stop JADX pagination early once the requested page
+is filled; omitting both returns all matches with `coverage: "complete"`, while
+a paged slice reports `coverage: "partial"`. Class/method operations use `class_name`,
 `method_name` and optional `overload_index` as applicable. For example:
 
 ```json
@@ -253,6 +252,16 @@ Every request includes `path`. Class/method operations use `class_name`,
   }
 }
 ```
+
+For class searches, `offset` is the zero-based index among matches, and
+`limit` is the maximum number of matches to return. Pass `--offset` and
+`--limit` on the CLI or `offset` and `limit` in an MCP request. Omitting
+both returns every match. Omitting `limit` with an offset returns the matching
+suffix. Keep the same APK and query when advancing the offset by each page's
+length. A page reports `partial` when it omits matching rows, including earlier
+pages. A short or empty page ends forward paging. If the last page was full,
+request the next offset to check for more. `duplicate_names` counts occurrences
+within the returned page.
 
 Use `inspect_android_class` to choose an overload. REA rejects an ambiguous
 method request rather than silently selecting the first match. Method reference

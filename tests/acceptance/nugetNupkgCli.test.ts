@@ -195,17 +195,12 @@ cliTest("refuses a non-ZIP file through the public CLI", async ({ cli }) => {
   });
   expect(result.exitCode, result.stderr).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    category: "invalid_input",
+    code: "unsupported_target",
+    category: "unsupported_target",
     details: {
       operation: "inspect_nuget_nupkg",
-      issues: [
-        expect.objectContaining({
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining("not a ZIP"),
-        }),
-      ],
+      format_failure: "malformed",
+      reason: expect.stringContaining("not a ZIP"),
     },
   });
 });

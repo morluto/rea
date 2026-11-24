@@ -353,7 +353,7 @@ export class ZipArtifactReader implements ArtifactReader {
     const source = stored.source;
     if (source.directory || source.symlink)
       return Promise.reject(
-        new ArtifactReaderFailure("format", "ZIP entry is not a regular file"),
+        new ArtifactReaderFailure("path", "ZIP entry is not a regular file"),
       );
     if (source.encrypted)
       return Promise.reject(
@@ -574,6 +574,7 @@ const extractStream = (
   const writable = new WritableStream<Uint8Array>({
     write: async (chunk) => {
       assertArtifactReadActive(signal);
+      // The stream owns this copy for as long as downstream retains it.
       if (!output.write(Buffer.from(chunk)))
         await once(output, "drain", { signal: controller.signal });
     },

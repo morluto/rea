@@ -142,6 +142,31 @@ describe("windowsPathCandidates", () => {
     expect(paths("npm.cmd", environment, { cwd: "C:\\" })).toEqual([]);
   });
 
+  it("appends PATHEXT when a command's dot is part of its name, as Windows does", () => {
+    const environment = { PATH: "C:\\Python", PATHEXT: ".COM;.EXE;.BAT;.CMD" };
+    expect(paths("python3.12", environment, { cwd: "C:\\" })).toEqual([
+      "C:\\Python\\python3.12.COM",
+      "C:\\Python\\python3.12.EXE",
+    ]);
+    expect(paths("python3.12.exe", environment, { cwd: "C:\\" })).toEqual([
+      "C:\\Python\\python3.12.exe",
+    ]);
+    // An image extension stays explicit even when PATHEXT omits it.
+    expect(
+      paths("tool.com", { PATH: "C:\\bin", PATHEXT: ".EXE" }, { cwd: "C:\\" }),
+    ).toEqual(["C:\\bin\\tool.com"]);
+    // Appending PATHEXT validates it, as for a command without a dot.
+    expect(
+      windowsPathCandidates("pip3.12", {
+        PATH: "C:\\bin",
+        PATHEXT: ".EXE;C:\\bad",
+      }),
+    ).toEqual({
+      ok: false,
+      error: { kind: "invalid_extension", extension: "C:\\bad" },
+    });
+  });
+
   it("uses the selected working drive for a root-relative command", () => {
     expect(
       paths("\\bin\\tool", { PATHEXT: ".EXE" }, { cwd: "Z:\\work" }),

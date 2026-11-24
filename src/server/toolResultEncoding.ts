@@ -186,6 +186,14 @@ export const errorTextWireBytes = (
   value: JsonValue,
   budgetBytes: number,
 ): number => {
-  const encoded = encodeToolResult(value, budgetBytes, "error-text");
-  return encoded.ok ? encoded.bytes : encoded.bytesAtLeast;
+  let bytes = ERROR_RESULT_ENVELOPE_BYTES;
+  let codeUnits = bytes;
+  for (const part of bufferedJsonParts(jsonParts(value))) {
+    const measured = measureJsonPart(part);
+    bytes += measured.escapedBytes;
+    codeUnits += measured.escapedCodeUnits;
+    if (bytes > budgetBytes || codeUnits > MCP_RESULT_STRING_LIMIT)
+      return bytes;
+  }
+  return bytes;
 };

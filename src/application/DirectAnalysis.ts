@@ -584,11 +584,7 @@ const runAnalysis = async (
           return err(recorded.error.retainPartialObservation(evidence));
       }
     }
-    if (
-      tool !== "trace_native_ui_action" &&
-      tool !== "decompile_all" &&
-      snapshotPath !== undefined
-    ) {
+    if (!SNAPSHOT_UNWRITTEN_TOOLS.has(tool) && snapshotPath !== undefined) {
       const snapshot = session.exportAnalysisSnapshot();
       if (!snapshot.ok)
         return err(snapshot.error.retainPartialObservation(evidence));
@@ -678,6 +674,19 @@ const retainFinalCancellation = (
     ? analysisErrorWithCancellation(failure, cancelledBy(tool, signal))
     : failure;
 
+/** Composed commands whose one-shot call never writes the snapshot file. */
+const SNAPSHOT_UNWRITTEN_TOOLS: ReadonlySet<string> = new Set([
+  "decompile_all",
+  "trace_native_ui_action",
+]);
+
+/**
+ * A composed answer is rebuilt, not re-observed: its source reads that the
+ * snapshot holds can still replay without starting the provider.
+ */
+const workflowSnapshotNotSavedLimitation = (reason: string): string =>
+  `Not saved for snapshot replay as a composed answer: ${reason}. The snapshot records this Evidence and the source reads it can replay; repeating the call composes the answer again, starting the provider only for reads the snapshot lacks.`;
+
 const executeAnalysisTool = async (input: {
   readonly session: BinarySession;
   readonly openedTarget: BinaryTarget;
@@ -708,7 +717,13 @@ const executeAnalysisTool = async (input: {
       session,
       input.arguments,
       input.openedTarget,
-      { signal },
+      {
+        signal,
+        // The session reports when a saved one-shot answer cannot replay.
+        ...(input.saveSnapshot
+          ? { snapshotContext: "one-shot-target" as const }
+          : {}),
+      },
     );
     result = retainAnalysisResultSources(
       tool,
@@ -737,13 +752,30 @@ const executeAnalysisTool = async (input: {
       result,
     );
     if (!result.ok) return result;
+    // Mirrors the workflow snapshot record DirectAnalysis keeps afterwards.
+    const workflowReplayRefusal = !input.saveSnapshot
+      ? undefined
+      : SNAPSHOT_UNWRITTEN_TOOLS.has(tool)
+        ? `Not saved: ${tool} does not write analysis snapshots, so --snapshot recorded nothing for this call.`
+        : session.allowsSnapshotReplay(tool) &&
+            evidenceProfile !== undefined &&
+            result.value.cachePolicy !== "live"
+          ? undefined
+          : workflowSnapshotNotSavedLimitation(
+              result.value.cachePolicy === "live"
+                ? "it depends on live provider answers"
+                : "it is not bound to a replayable provider profile",
+            );
     const evidence = createWorkflowEvidence({
       target: input.openedTarget,
       operation: tool,
       parameters: input.evidenceParameters,
       result: result.value.result,
       upstreamProfile: evidenceProfile,
-      upstreamLimitations: result.value.limitations,
+      upstreamLimitations:
+        workflowReplayRefusal === undefined
+          ? result.value.limitations
+          : [...result.value.limitations, workflowReplayRefusal],
       ...(result.value.evidenceLinks === undefined
         ? {}
         : { upstreamEvidenceLinks: result.value.evidenceLinks }),
@@ -755,16 +787,18 @@ const executeAnalysisTool = async (input: {
         : { cachePolicy: result.value.cachePolicy }),
     });
   }
+  // A saved one-shot snapshot binds every read to this call's own target.
+  const executionOptions = {
+    signal,
+    ...(input.saveSnapshot
+      ? { snapshotContext: "one-shot-target" as const }
+      : {}),
+  };
   let result = await session.executeForDirectObservation(
     tool,
     input.arguments,
     input.evidenceParameters,
-    {
-      signal,
-      ...(input.saveSnapshot && tool === "procedure_pseudo_code"
-        ? { snapshotContext: "one-shot-target" as const }
-        : {}),
-    },
+    executionOptions,
   );
   if (
     tool === "xrefs" &&
@@ -791,7 +825,7 @@ const executeAnalysisTool = async (input: {
         tool,
         { ...input.arguments, address: address.value },
         input.evidenceParameters,
-        { signal },
+        executionOptions,
       );
   }
   if (!result.ok) return result;

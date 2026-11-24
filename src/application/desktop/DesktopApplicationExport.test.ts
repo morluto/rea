@@ -55,6 +55,7 @@ import {
   seedEndCapture,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
+import { SQLITE_HEADER } from "../../domain/sqliteFormat.js";
 
 /** Export a capture into a new directory under a fresh temporary folder. */
 const exportCapture = async (
@@ -180,7 +181,7 @@ it("exports and drafts state from the same capture each cites", async () => {
           [],
           [
             retained(SETTINGS, "[ui]\nwrap=true\n"),
-            retained(DATABASE, "SQLite format 3\0v1"),
+            retained(DATABASE, `${SQLITE_HEADER}v1`),
           ],
         ),
       ],
@@ -2234,7 +2235,7 @@ describe("exportDesktopApplication home paths", () => {
         "/data/notes",
         `${HOME}/.local/share/notes`,
       ],
-      baseline: [retained("/data/notes/notes.db", "SQLite format 3\0v1")],
+      baseline: [retained("/data/notes/notes.db", `${SQLITE_HEADER}v1`)],
     });
 
     if (result instanceof Error) throw result;
@@ -2246,7 +2247,7 @@ describe("exportDesktopApplication home paths", () => {
       stateDirectories: ["/data/notes", "/data/notes/share"],
       baseline: [
         retained("/data/notes/settings.ini", settings),
-        retained("/data/notes/share/notes.db", "SQLite format 3\0v1"),
+        retained("/data/notes/share/notes.db", `${SQLITE_HEADER}v1`),
       ],
     });
 

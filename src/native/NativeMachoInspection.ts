@@ -31,7 +31,6 @@ import {
   parseDyldImports,
 } from "./parsers/dyldInfo.js";
 
-type ParsedDyldExport = ReturnType<typeof parseDyldExports>[number];
 import { parseLipoCapture } from "./parsers/lipo.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 import {
@@ -64,6 +63,13 @@ import {
   lipoDescribesCpu,
   type LipoArchitecture,
 } from "../domain/apple/lipo.js";
+
+type ParsedDyldExport = ReturnType<typeof parseDyldExports>[number];
+
+interface CoveredDyldExports {
+  readonly nmNames: ReadonlySet<string>;
+  readonly dyldExports: ParsedDyldExport[];
+}
 
 interface NativeMachoObservation {
   readonly result: JsonValue;
@@ -154,6 +160,7 @@ const readChainedImportNames = async (
   }
 };
 
+const MH_DSYM = 10;
 const DISCOVERY_COMMANDS = [["lipo", ["-detailed_info"]]] as const;
 
 // llvm-nm's default dyld-info pass fakes up symbols the symbol table lacks
@@ -299,10 +306,9 @@ export const inspectNativeMacho = async (
     size,
     "declaration" in range ? range : undefined,
   );
-  const load = projectMachoBinary(binary);
   const unbackedTextFailure = captures.find(isUnbackedTextDyldFailure);
   if (unbackedTextFailure !== undefined) {
-    if (!["10", "DSYM", "MH_DSYM"].includes(load.fileType ?? ""))
+    if (binary.header.fileType !== MH_DSYM)
       return err(unusableNativeCommandOutput(unbackedTextFailure));
     return err(
       new AnalysisUnsupportedTargetError(
@@ -321,9 +327,9 @@ export const inspectNativeMacho = async (
     const refusal = parseDyldFileTypeRefusal(fileTypeFailure);
     if (refusal === null) continue;
     const { fileType, diagnostic } = refusal;
-    const typeName = fileType === "4" ? "CORE" : "FVMLIB";
-    if (![fileType, typeName, `MH_${typeName}`].includes(load.fileType ?? ""))
+    if (binary.header.fileType !== fileType)
       return err(unusableNativeCommandOutput(fileTypeFailure));
+    const typeName = fileType === 4 ? "CORE" : "FVMLIB";
     return err(
       new AnalysisUnsupportedTargetError(
         "inspect_macho",
@@ -340,9 +346,10 @@ export const inspectNativeMacho = async (
   const uuidlessDyldFailure = captures.find(isMissingUuidDyldFailure);
   if (
     uuidlessDyldFailure !== undefined &&
-    load.commands.some(({ kind }) => kind === "LC_UUID")
+    binary.commands.some(({ command }) => command === LC.UUID)
   )
     return err(conflictingUuidCommandEvidence(uuidlessDyldFailure));
+  const load = projectMachoBinary(binary);
   const imageBase =
     load.segments.find(
       (segment) =>
@@ -354,23 +361,14 @@ export const inspectNativeMacho = async (
   // A stripped symbol table (strip -T) can omit names the export trie keeps.
   // Only then does llvm-nm's dyld-info pass add names, and its exact names
   // disambiguate dyld_info rows. Refusals above are not export rows.
-  let precomputedExports:
-    | {
-        readonly nmExports: ReturnType<typeof parseNmExports>;
-        readonly dyldExports: ParsedDyldExport[];
-      }
-    | undefined;
+  let precomputedExports: CoveredDyldExports | undefined;
   if (dyldSliceRefusal(dyldExports) === null) {
     const coverage = analyzeExportCoverage(
       captures[nmIndex]!.stdout,
       dyldExports,
       imageBase,
     );
-    if (coverage.covered)
-      precomputedExports = {
-        nmExports: coverage.nmExports,
-        dyldExports: coverage.dyldExports,
-      };
+    if (coverage.covered) precomputedExports = coverage;
     else {
       const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
       if (!withDyldInfo.ok) return withDyldInfo;
@@ -415,7 +413,7 @@ export const inspectNativeMacho = async (
       parsedImports = parseDyldImports(
         sliceOutput(dyldImports),
         hasChainedFixups,
-        new Set(parseNmSymbolNames(importNames.value.stdout)),
+        parseNmSymbolNames(importNames.value.stdout),
       );
     }
   }
@@ -509,10 +507,7 @@ const normalizeMacho = (
     readonly container_file_offset: number | null;
   },
   outsideEntrypoint: boolean,
-  precomputedExports?: {
-    readonly nmExports: ReturnType<typeof parseNmExports>;
-    readonly dyldExports: ParsedDyldExport[];
-  },
+  precomputedExports?: CoveredDyldExports,
 ) => {
   const { architectures } = slices;
   const encryption = encryptionCoverage(slices);
@@ -523,18 +518,12 @@ const normalizeMacho = (
   const exportsRefusal = dyldSliceRefusal(dyldExportsCapture);
   const imports =
     importsRefusal === null ? parsedImports.map(withRuntimeName) : [];
-  const nmExports =
-    precomputedExports?.nmExports ?? parseNmExports(exportNames.stdout);
+  const nmNames =
+    precomputedExports?.nmNames ?? parseNmSymbolNames(exportNames.stdout);
   const dyldExports =
     precomputedExports?.dyldExports ??
-    parseDyldExports(
-      sliceOutput(dyldExportsCapture),
-      imageBase,
-      new Set(nmExports.map(({ name }) => name)),
-    );
-  const exports = uniqueSymbols([...dyldExports, ...nmExports]).map(
-    withRuntimeName,
-  );
+    parseDyldExports(sliceOutput(dyldExportsCapture), imageBase, nmNames);
+  const exports = mergeMachoExports(dyldExports, nmNames).map(withRuntimeName);
   const dwarfdump = byTool("dwarfdump");
   const uuid = reconcileMachoUuid(
     load.commands,
@@ -739,14 +728,9 @@ const analyzeExportCoverage = (
   dyldExportsCapture: NativeCommandCapture,
   imageBase: string | null,
 ):
-  | {
-      readonly covered: true;
-      readonly nmExports: ReturnType<typeof parseNmExports>;
-      readonly dyldExports: ParsedDyldExport[];
-    }
+  | ({ readonly covered: true } & CoveredDyldExports)
   | { readonly covered: false } => {
-  const nmExports = parseNmExports(nmOutput);
-  const names = new Set(nmExports.map(({ name }) => name));
+  const nmNames = parseNmSymbolNames(nmOutput);
   const output = sliceOutput(dyldExportsCapture);
   const offsets = /^\s*offset\s+symbol\s*$/mu.test(output);
   const parsed: ParsedDyldExport[] = [];
@@ -761,31 +745,25 @@ const analyzeExportCoverage = (
       /^offset\s+symbol$/u.test(line)
     )
       continue;
-    const row = parseDyldExportLine(line, offsets, imageBase, names);
+    const row = parseDyldExportLine(line, offsets, imageBase, nmNames);
     // The parser withholds a row only when nm names both of its readings.
     if (row === null) {
-      if (!names.has(parseDyldExportAddressRow(line)?.text ?? ""))
+      if (!nmNames.has(parseDyldExportAddressRow(line)?.text ?? ""))
         return { covered: false };
       continue;
     }
-    if (!names.has(row.name)) return { covered: false };
+    if (!nmNames.has(row.name)) return { covered: false };
     parsed.push(row);
   }
-  return { covered: true, nmExports, dyldExports: parsed };
+  return { covered: true, nmNames, dyldExports: parsed };
 };
 
 // nm -j ends each name with LF; a carriage return before it is part of the name.
-const parseNmSymbolNames = (output: string): string[] =>
-  output.split("\n").filter((name) => name.length > 0);
-
-const parseNmExports = (output: string) =>
-  parseNmSymbolNames(output).map((name) => ({
-    name,
-    address: null,
-    weak: null,
-    reexport: null,
-    source: "nm",
-  }));
+const parseNmSymbolNames = (output: string): ReadonlySet<string> => {
+  const names = new Set<string>();
+  for (const name of output.split("\n")) if (name.length !== 0) names.add(name);
+  return names;
+};
 
 const covered = <Value>(
   items: readonly Value[],
@@ -805,13 +783,27 @@ const withRuntimeName = <Value extends { readonly name: string | null }>(
   runtime_name: machoRuntimeSymbolName(symbol.name),
 });
 
-const uniqueSymbols = <Value extends { readonly name: string }>(
-  items: readonly Value[],
-): Value[] => {
-  const unique = new Map<string, Value>();
-  for (const item of items)
-    if (!unique.has(item.name)) unique.set(item.name, item);
-  return [...unique.values()].sort((left, right) =>
+const mergeMachoExports = (
+  dyldExports: readonly ParsedDyldExport[],
+  nmNames: ReadonlySet<string>,
+): ParsedDyldExport[] => {
+  const observed = new Set<string>();
+  const exports: ParsedDyldExport[] = [];
+  for (const item of dyldExports) {
+    if (observed.has(item.name)) continue;
+    observed.add(item.name);
+    exports.push(item);
+  }
+  for (const name of nmNames)
+    if (!observed.has(name))
+      exports.push({
+        name,
+        address: null,
+        weak: null,
+        reexport: null,
+        source: "nm",
+      });
+  return exports.sort((left, right) =>
     compareUnicodeCodePoints(left.name, right.name),
   );
 };

@@ -8,7 +8,13 @@ import {
   hasAdvertisedInputDialectViolation,
 } from "./advertisedDialect.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
-import { inlineWithinBudget, stripAnnotations } from "./compactJsonSchema.js";
+import {
+  pruneSchemaBeyondDepth,
+  schemaDepth,
+  inlineWithinBudget,
+  jsonValueSchema,
+  stripAnnotations,
+} from "./compactJsonSchema.js";
 import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
 const serializedBytes = (value: unknown): number =>
@@ -171,7 +177,7 @@ describe("compact advertised input schema", () => {
       expect(compact(input)).toBe(canonical(input));
   });
 
-  it("does not reintroduce unsupported dialect keywords in reduced schemas", () => {
+  it("does not reintroduce unsupported dialect keywords in deep schemas", () => {
     let nested: Record<string, unknown> = { type: "string" };
     for (let level = 0; level < 12; level += 1)
       nested = { type: "object", properties: { child: nested } };
@@ -184,7 +190,10 @@ describe("compact advertised input schema", () => {
       },
       1_500,
     );
-    expect(presentation).toBe("reduced");
+    // Depth alone no longer forces a whole-schema reduction; only the
+    // branches past the limit are elided.
+    expect(presentation).toBe("inline");
+    expect(schemaDepth(schema)).toBeLessThanOrEqual(10);
     expect(schema).not.toHaveProperty("$schema");
     expect(schema).not.toHaveProperty("dependentRequired");
     expect(guidance).toContain("When detail is provided, also provide target.");
@@ -196,12 +205,20 @@ describe("compact advertised input schema", () => {
     const { schema, presentation } = compactAdvertisedInputSchema(
       {
         type: "object",
-        properties: { normalized_result: {}, literal: { const: {} } },
+        properties: {
+          normalized_result: {},
+          json_value: jsonValueSchema(),
+          literal: { const: {} },
+        },
       },
       ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("reduced");
-    expect(schema.properties).toEqual({ normalized_result: {}, literal: {} });
+    expect(schema.properties).toEqual({
+      normalized_result: {},
+      json_value: expect.anything(),
+      literal: {},
+    });
     const validate = new Ajv2020({ strict: false }).compile(schema);
     for (const normalized_result of [
       null,
@@ -212,7 +229,9 @@ describe("compact advertised input schema", () => {
       "result",
       [[null, true, 42, "nested"], { values: [[], [false]] }],
     ])
-      expect(validate({ normalized_result })).toBe(true);
+      expect(
+        validate({ normalized_result, json_value: normalized_result }),
+      ).toBe(true);
   });
 
   it("preserves independent validation constraints on reference siblings", () => {
@@ -234,8 +253,59 @@ describe("compact advertised input schema", () => {
   });
 });
 
-it("keeps pattern-admitted property names open in reduced schemas", () => {
-  // Nesting past the dialect's depth limit forces the reduced form.
+it("prunes deep branches without breaking closed objects, not, oneOf, or fitting enums", () => {
+  const nest = (
+    leaf: Record<string, unknown>,
+    levels: number,
+  ): Record<string, unknown> =>
+    levels === 0
+      ? leaf
+      : {
+          type: "object",
+          properties: { child: nest(leaf, levels - 1) },
+          required: ["child"],
+          additionalProperties: false,
+        };
+  // Closed chain: a pruned node must not require a property it now forbids.
+  const closed = {
+    type: "object",
+    properties: { a: nest({ type: "string" }, 6) },
+    required: ["a"],
+    additionalProperties: false,
+  };
+  const prunedClosed = pruneSchemaBeyondDepth(closed);
+  expect(prunedClosed).not.toBeUndefined();
+  const validateClosed = new Ajv2020({ strict: false }).compile(prunedClosed!);
+  expect(
+    validateClosed({ a: { child: { child: { child: { child: "x" } } } } }),
+  ).toBe(true);
+  // Widening under `not` or `oneOf` can reject valid values: no pruning there.
+  expect(
+    pruneSchemaBeyondDepth({
+      type: "object",
+      properties: { deep: { not: nest({ type: "string" }, 8) } },
+    }),
+  ).toBeUndefined();
+  expect(
+    pruneSchemaBeyondDepth({
+      type: "object",
+      properties: { deep: { oneOf: [nest({ type: "string" }, 8)] } },
+    }),
+  ).toBeUndefined();
+  // A branch that already fits keeps its rules when a sibling is pruned.
+  const withEnum = {
+    type: "object",
+    properties: {
+      mode: nest({ type: "string", enum: ["a", "b"] }, 3),
+      deep: nest({ type: "string" }, 9),
+    },
+  };
+  const prunedEnum = pruneSchemaBeyondDepth(withEnum);
+  expect(JSON.stringify(prunedEnum)).toContain('"enum":["a","b"]');
+});
+
+it("keeps pattern-admitted property names open in deep schemas", () => {
+  // Nesting past the dialect's depth limit prunes only the deep branches.
   let deep: Record<string, unknown> = { type: "string" };
   for (let level = 0; level < 12; level++)
     deep = { type: "object", properties: { next: deep } };
@@ -249,7 +319,7 @@ it("keeps pattern-admitted property names open in reduced schemas", () => {
     canonical,
     10_000,
   );
-  expect(presentation).toBe("reduced");
+  expect(presentation).toBe("inline");
   const compact = new Ajv2020({ strict: false }).compile(schema);
   expect(new Ajv2020({ strict: false }).compile(canonical)({ b: "ok" })).toBe(
     true,
@@ -307,6 +377,39 @@ it("inlines the Kimi/Moonshot-rejected reference pattern from #9581", () => {
     expect(compact(input)).toBe(expected);
   }
 });
+
+it.each([
+  {
+    label: "non-null types",
+    property: { type: ["string", "number"], minLength: 2, minimum: 5 },
+    valid: ["ok", 5],
+    invalid: ["x", 4, true],
+  },
+  {
+    label: "JSON value types with typed array elements",
+    property: {
+      type: ["null", "boolean", "object", "array", "number", "string"],
+      items: { type: "string", minLength: 2 },
+    },
+    valid: [null, true, {}, ["ok"], 5, "ok"],
+    invalid: [[4], ["x"]],
+  },
+])(
+  "keeps $label inline with their constraints",
+  ({ property, valid, invalid }) => {
+    const { schema, presentation } = compactAdvertisedInputSchema(
+      { type: "object", properties: { value: property } },
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    );
+    expect(presentation).toBe("inline");
+    expect(
+      advertisedInputDialectViolations({ name: "probe", inputSchema: schema }),
+    ).toEqual([]);
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    for (const value of valid) expect(validate({ value })).toBe(true);
+    for (const value of invalid) expect(validate({ value })).toBe(false);
+  },
+);
 
 describe("portable dialect unions", () => {
   it("types homogeneous union items and widens oneOf to anyOf", () => {
@@ -375,7 +478,7 @@ describe("portable dialect unions", () => {
       );
   });
 
-  it("reduces mixed-type union items to typed branches instead of selecting one branch type", () => {
+  it("keeps mixed-type union items inline with typed branches", () => {
     const { schema, presentation } = compactAdvertisedInputSchema(
       {
         type: "object",
@@ -392,7 +495,7 @@ describe("portable dialect unions", () => {
       schema.properties as Record<string, Record<string, unknown>>
     ).values;
     if (values === undefined) throw new Error("Missing values property");
-    expect(presentation).toBe("reduced");
+    expect(presentation).toBe("inline");
     expect(values).toEqual({
       type: "array",
       items: { anyOf: [{ type: "string" }, { type: "object" }] },

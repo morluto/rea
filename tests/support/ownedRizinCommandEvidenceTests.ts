@@ -90,12 +90,13 @@ const registerOwnedRizinCommandOutcomeTests = (options: {
         expect(result).toMatchObject({
           ok: true,
           value: {
-            raw_result: {
+            normalized_result: {
               stdout: "captured owned output",
               completion_status: completion,
               exit_code: exitCode,
               output_truncated: outputTruncated,
             },
+            raw_result: null,
           },
         });
         if (!result.ok) throw new Error("Expected provider Evidence");
@@ -155,13 +156,14 @@ const registerOwnedRizinCommandFailureTests = (): void => {
           expect(result).toMatchObject({
             ok: true,
             value: {
-              raw_result: {
+              normalized_result: {
                 stdout: "captured owned output",
                 exit_code: mappedCode === 7 ? 7 : null,
                 completion_status:
                   reason === "output-limit" ? "unknown" : "complete",
                 output_truncated: true,
               },
+              raw_result: null,
             },
           });
         } else {
@@ -170,12 +172,13 @@ const registerOwnedRizinCommandFailureTests = (): void => {
             error: {
               _tag: expected,
               partialObservation: {
-                raw_result: {
+                normalized_result: {
                   stdout: "captured owned output",
                   exit_code: null,
                   completion_status: "unknown",
                   output_truncated: reason !== "cancelled",
                 },
+                raw_result: null,
               },
               ...(reason === "timeout"
                 ? {

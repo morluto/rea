@@ -4,6 +4,7 @@ import { isUtf8 } from "node:buffer";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 
 /** ELF strings declare bytes rather than an encoding; Latin-1 is only a lossless display fallback. */
 export const decodeElfExportName = (bytes: Buffer) => {
@@ -52,6 +53,15 @@ export type InspectNativeExportsInput = z.infer<
 const peExportSchema = z.strictObject({
   name: z.string().min(1).nullable(),
   ordinal: z.number().int().min(0).max(MAX_PE_EXPORT_ORDINAL),
+  rva: z
+    .number()
+    .int()
+    .min(1)
+    .max(0xffffffff)
+    .optional()
+    .describe(
+      "Export-address-table RVA as stored; address is the image base plus this RVA, and a forwarder's RVA locates its forwarder string. The parser always records it; Evidence saved before this field existed omits it.",
+    ),
   address: address.nullable(),
   forwarder: z.string().min(1).nullable(),
 });
@@ -134,6 +144,8 @@ export const peNativeExportsSchema = z.strictObject({
   exports: z.array(peExportSchema).max(MAX_NATIVE_EXPORT_ROWS),
   coverage: coverageSchema,
   issues: z.array(nativeExportIssueSchema),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 
