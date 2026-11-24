@@ -91,10 +91,6 @@ const workspace = await VerifierFixture.open({
   throw cause;
 });
 const directory = workspace.path;
-const retainWorkspace = (message, options) => {
-  workspace.retain(message);
-  return new Error(message, options);
-};
 const fixture = join(directory, "tail-call");
 const large = join(directory, "long-scan");
 const source = fileURLToPath(
@@ -397,7 +393,7 @@ try {
   commandCleanupFailure = cause;
 }
 if (commandCleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspace.retainedError(
     `Hopper caller command cleanup failed; retained diagnostic workspace: ${directory}`,
     {
       cause:
@@ -413,7 +409,7 @@ const completedVerifierRun = await completeVerifierRun(verifierRun);
 try {
   assertVerifierCleanupComplete(completedVerifierRun.process_lineage);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspace.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${directory}`,
     {
       cause:
@@ -427,7 +423,7 @@ try {
   );
 }
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspace.retainedError(
     `Hopper caller verification failed; retained workspace: ${directory}`,
     { cause: primaryFailure },
   );

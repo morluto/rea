@@ -1,6 +1,7 @@
 import type { FixedCeilingFacts } from "./fixedAllowanceRemediation.js";
 import {
   resolveMappedFileOffset,
+  spansOverlap,
   type FileMapping,
   type ZeroFillMapping,
 } from "./virtualFileMapping.js";
@@ -903,14 +904,3 @@ export const isZeroFilledSpan = (
   }
   return true;
 };
-
-const spansOverlap = (
-  address: bigint,
-  size: bigint,
-  otherAddress: bigint,
-  otherSize: bigint,
-): boolean =>
-  size > 0n &&
-  otherSize > 0n &&
-  address < otherAddress + otherSize &&
-  otherAddress < address + size;

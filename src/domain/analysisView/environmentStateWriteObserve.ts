@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { StateRecordChronology } from "./StateRecordChronology.js";
 import {
+  succeeded,
   ownMember,
   at,
   collectionPathOf,
@@ -220,9 +221,6 @@ export const projectedRead = (
     );
   });
 };
-
-const succeeded = (record: StateRecordFacts): boolean =>
-  record.status !== null && record.status >= 200 && record.status < 300;
 
 /**
  * The first later read, before the next write, that shows a written entity: an item read of
