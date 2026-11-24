@@ -324,6 +324,7 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "dfuse" ||
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
+    inventory.manifest.root_format === "android-dtbo" ||
     inventory.manifest.root_format === "android-ota-payload";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([

@@ -86,6 +86,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ADB device inspection and acquisition](guides/android/adb-device-analysis.md)
 - [Flutter build identification](guides/android/flutter-analysis.md)
 - [Android boot and vendor_boot images](android-boot-image.md)
+- [Android DTBO partition images](android-dtbo.md)
 - [APK signature schemes](apk-signature.md)
 
 ## Apple applications

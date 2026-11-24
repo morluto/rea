@@ -349,6 +349,11 @@ export const documentationSections = [
         route: "/android-boot-image",
       },
       {
+        text: "Android DTBO partition images",
+        source: "android-dtbo.md",
+        route: "/android-dtbo",
+      },
+      {
         text: "APK signature schemes",
         source: "apk-signature.md",
         route: "/apk-signature",

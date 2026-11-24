@@ -1,5 +1,6 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
+import { hasAndroidDtboMagic } from "./firmware/androidDtboFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
@@ -45,6 +46,7 @@ export type RecognizedArtifactFormat = Extract<
   | "ktx2"
   | "uimage"
   | "android-boot-image"
+  | "android-dtbo"
   | "android-ota-payload"
   | "intel-hex"
   | "srec"
@@ -160,6 +162,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("ktx2", hasKtx2Identifier),
     when("uimage", hasUImageMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    when("android-dtbo", hasAndroidDtboMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);
       if (ota === undefined) return undefined;

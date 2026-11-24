@@ -106,6 +106,14 @@ it("recognizes Android boot and vendor boot image prefixes", () => {
     });
 });
 
+it("recognizes Android DTBO partition table magic prefixes", () => {
+  expect(recognize(Buffer.from([0xd7, 0xb7, 0xab, 0x1e]))).toMatchObject({
+    state: "recognized",
+    format: "android-dtbo",
+  });
+  expect(recognize(Buffer.from([0xd7, 0xb7, 0xab]))).toBeUndefined();
+});
+
 it("recognizes a CrAU v2 payload after the uImage magic check", () => {
   expect(recognize(fullAndroidOtaPayload())).toMatchObject({
     state: "recognized",

@@ -571,3 +571,12 @@ zstd are recorded from leading magic and left compressed. An AVB footer is
 reported with its sizes and is not verified. `ANDROID!` does not say whether
 the file was boot, init_boot, or recovery. Extract `dtb` and pass that file
 to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).
+
+### Android DTBO partition images
+
+Standalone Android DTBO partition images (`0xd7b7ab1e`, table versions `0` and
+`1`) expose child overlay entries (`dtbo-<index>.dtbo`) with `id`, `rev`,
+version-1 compression flags (`none`, `zlib`, `gzip`, or `unknown`), custom
+metadata words, and leading `0xd00dfeed` FDT magic checks. Compressed entries
+remain untouched with explicit limitations; extract uncompressed entries to
+run `inspect-devicetree`. See [Android DTBO partition images](../../android-dtbo.md).

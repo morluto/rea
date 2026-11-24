@@ -465,6 +465,7 @@ const formatProbes = (
       : [];
   if (format === "esp-image") return espFlashDumpProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
+  if (format === "android-dtbo") return androidDtboProbes(inventory);
   if (format === "directory") return directoryProbes(inventory);
   if (format === "pe")
     return nativeImageProbes({ format, managed: rootImage?.managed });
@@ -536,6 +537,34 @@ const fitProbes = (
       : []),
     ...(rawProbe === undefined ? [] : [rawProbe]),
   ];
+};
+
+const androidDtboProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  const entries = inventory.occurrences.flatMap((row) =>
+    row.format_metadata?.kind === "android-dtbo-entry"
+      ? [{ row, entry: row.format_metadata }]
+      : [],
+  );
+  if (entries.length === 0) return [];
+  const probes: ArtifactInspectionResult["next_probes"][number][] = [
+    {
+      operation: "extract_artifact",
+      rationale:
+        "Extract DTBO entry payloads with extract_artifact into a fresh owned directory to inspect individual .dtbo blobs or decompress compressed entries separately.",
+      authority: "artifact-bytes",
+    },
+  ];
+  if (entries.some(({ entry }) => entry.fdt_magic_valid)) {
+    probes.push({
+      operation: "inspect_devicetree",
+      rationale:
+        "Extract uncompressed DTBO entries starting with 0xd00dfeed using extract_artifact, then inspect those extracted .dtbo files with inspect_devicetree.",
+      authority: "artifact-bytes",
+    });
+  }
+  return probes;
 };
 
 // An application bundle directory is only a container, so its probes follow

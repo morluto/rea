@@ -444,6 +444,9 @@ See [Android boot images](../android-boot-image.md) for header versions 0 throug
 4, vendor ramdisk table entries, stored compression, and the unverified AVB
 footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
+Standalone `dtbo.img` partition tables (`0xd7b7ab1e`) can also be inspected
+and extracted with `inspect-artifact` and `extract-artifact`; see [Android DTBO partition images](../android-dtbo.md).
+
 Inspect local model declarations without loading weights:
 
 ```bash

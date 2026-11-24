@@ -29,6 +29,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   ktx2: "archive",
   uimage: "archive",
   "android-boot-image": "archive",
+  "android-dtbo": "archive",
   "android-ota-payload": "archive",
   dmg: "archive",
   pkg: "archive",
