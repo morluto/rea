@@ -269,7 +269,11 @@ interface HeaderBlockResult {
   readonly block: HeaderBlock | null;
   /** Resource allowance reached while reading this header, if any. */
   readonly limit:
-    "line" | "block-bytes" | "block-fields" | "archive-fields" | null;
+    | "line"
+    | "block-bytes"
+    | "block-fields"
+    | "archive-fields"
+    | null;
   /** The line began `WARC/` but carries no parseable version. */
   readonly invalidVersion?: number;
 }
