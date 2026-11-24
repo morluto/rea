@@ -38,6 +38,16 @@ import {
 } from "../ghidra/GhidraInstallation.fixture.js";
 import { ok as javaProbeOk } from "../domain/result.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import {
+  UEFI_PROVIDER_IDENTITY,
+  createUefiEvidenceFromWrapper,
+} from "../domain/uefi/uefiEvidence.js";
+import { windowsBatchCommand } from "../process/WindowsBatchCommand.js";
+import {
+  ghidraHeadlessJavaOptions,
+  ghidraLaunchEnvironment,
+  ghidraRuntimePaths,
+} from "../ghidra/GhidraLauncher.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
@@ -10087,4 +10097,188 @@ it("strictly validates isPhaseSupportedByFfsType across all standard and standal
   // Application
   expect(isPhaseSupportedByFfsType("APP", "application")).toBe(true);
   expect(isPhaseSupportedByFfsType("DXE", "application")).toBe(false);
+});
+
+it("strictly enforces UEFI_PROVIDER_IDENTITY contract and forbids re-export shims", () => {
+  expect(UEFI_PROVIDER_IDENTITY.id).toBe("rea-uefi");
+  expect(UEFI_PROVIDER_IDENTITY.name).toBe("REA UEFI firmware parser");
+  expect(UEFI_PROVIDER_IDENTITY.version).toBeDefined();
+
+  // Regression check: ensure UefiProviderIdentity.ts was deleted and is never resurrected
+  const shimPath = resolve(
+    fileURLToPath(import.meta.url),
+    "../UefiProviderIdentity.ts",
+  );
+  expect(existsSync(shimPath)).toBe(false);
+});
+
+it("strictly verifies WindowsBatchCommand ComSpec normalization and absolute command invariants", () => {
+  // Relative ComSpec must throw WindowsBatchCommandError
+  expect(() =>
+    windowsBatchCommand({
+      batchPath: "analyzeHeadless.bat",
+      arguments: ["project", "dir"],
+      environment: {
+        SystemRoot: "C:\\Windows",
+        ComSpec: "cmd.exe",
+      },
+    }),
+  ).toThrowError(/Windows ComSpec must be an absolute cmd\.exe path/);
+
+  // Absolute ComSpec resolution
+  const res2 = windowsBatchCommand({
+    batchPath: "C:\\Ghidra\\support\\analyzeHeadless.bat",
+    arguments: ["--help"],
+    environment: {
+      ComSpec: "C:\\Custom\\cmd.exe",
+    },
+  });
+  expect(res2.command).toBe("C:\\Custom\\cmd.exe");
+  expect(res2.arguments.join(" ")).toContain(
+    "C:\\Ghidra\\support\\analyzeHeadless.bat",
+  );
+
+  // Lowercase comspec environment variable with absolute path
+  const res3 = windowsBatchCommand({
+    batchPath: "test.bat",
+    arguments: [],
+    environment: {
+      comspec: "C:\\Windows\\System32\\cmd.exe",
+    },
+  });
+  expect(res3.command).toBe("C:\\Windows\\System32\\cmd.exe");
+});
+
+it("strictly verifies ghidraLaunchEnvironment ComSpec and Java options isolation on Windows", () => {
+  const customEnv = {
+    ComSpec: "C:\\Windows\\System32\\cmd.exe",
+    SystemRoot: "C:\\Windows",
+  };
+  const paths = ghidraRuntimePaths("C:\\GhidraRuntime");
+  const launchEnv = ghidraLaunchEnvironment(
+    paths,
+    "C:\\Java",
+    "win32",
+    "C:\\Windows\\System32\\cmd.exe",
+    customEnv,
+  );
+
+  expect(launchEnv.ComSpec).toBe("C:\\Windows\\System32\\cmd.exe");
+  expect(launchEnv.USERPROFILE).toBe(paths.homeRoot);
+  expect(launchEnv.TEMP).toBe(paths.tempRoot);
+  expect(launchEnv.JDK_JAVA_OPTIONS).toBeDefined();
+});
+
+it("strictly verifies ghidraHeadlessJavaOptions quotes paths with spaces", () => {
+  const opts = ghidraHeadlessJavaOptions(
+    "C:\\My Documents\\GhidraHome",
+    "C:\\Program Files\\Temp",
+    "win32",
+  );
+  expect(opts.JDK_JAVA_OPTIONS).toContain(
+    '"-Duser.home=C:\\My Documents\\GhidraHome"',
+  );
+  expect(opts.JDK_JAVA_OPTIONS).toContain(
+    '"-Djava.io.tmpdir=C:\\Program Files\\Temp"',
+  );
+});
+
+it("strictly verifies createUefiEvidenceFromWrapper propagates format identity and derived confidence", () => {
+  const dummyShaA = "a".repeat(64);
+  const dummyShaB = "b".repeat(64);
+
+  // Directory format propagation
+  const dirEvidence = createUefiEvidenceFromWrapper(
+    "decompile_uefi_firmware",
+    decompileRequest("/tmp/in_dir", "/tmp/out_dir").input,
+    {
+      kind: "uefi",
+      result: { total_modules_decompiled: 5, limitations: ["omitted module"] },
+      provenance: {
+        path: "/tmp/in_dir",
+        sha256: dummyShaA,
+        format: "directory",
+      },
+    },
+  );
+  expect(dirEvidence.operation).toBe("decompile_uefi_firmware");
+  expect(dirEvidence.confidence).toBe("derived");
+  expect(dirEvidence.subject).toMatchObject({
+    identity: {
+      sha256: dummyShaA,
+      format: "directory",
+    },
+    local_path: "/tmp/in_dir",
+  });
+
+  // File format propagation
+  const fileEvidence = createUefiEvidenceFromWrapper(
+    "decompile_uefi_firmware",
+    decompileRequest("/tmp/sample.efi", "/tmp/out_file").input,
+    {
+      kind: "uefi",
+      result: { total_modules_decompiled: 1, limitations: [] },
+      provenance: {
+        path: "/tmp/sample.efi",
+        sha256: dummyShaB,
+        format: "file",
+      },
+    },
+  );
+  expect(fileEvidence.operation).toBe("decompile_uefi_firmware");
+  expect(fileEvidence.confidence).toBe("derived");
+  expect(fileEvidence.subject).toMatchObject({
+    identity: {
+      sha256: dummyShaB,
+      format: "file",
+    },
+    local_path: "/tmp/sample.efi",
+  });
+
+  // Default fallback when provenance is missing
+  const fallbackEvidence = createUefiEvidenceFromWrapper(
+    "inspect_uefi_firmware",
+    inspectRequest("/tmp/inspect.rom").input,
+    {
+      kind: "uefi",
+      result: { volumes: [] },
+    },
+  );
+  expect(fallbackEvidence.operation).toBe("inspect_uefi_firmware");
+  expect(fallbackEvidence.confidence).toBe("observed");
+  expect(fallbackEvidence.subject).toMatchObject({
+    identity: {
+      sha256: "0".repeat(64),
+      format: "file",
+    },
+    local_path: "/tmp/inspect.rom",
+  });
+});
+
+it("strictly verifies malformed and out-of-bounds PE headers are safely handled", () => {
+  // Empty buffer
+  expect(detectPeTeMachineWidth(Buffer.alloc(0))).toBe("unknown");
+
+  // Short buffer (< 64 bytes)
+  const shortMz = Buffer.from("MZ" + "\0".repeat(30));
+  expect(detectPeTeMachineWidth(shortMz)).toBe("unknown");
+
+  // MZ with negative e_lfanew
+  const negLfanew = Buffer.alloc(64);
+  negLfanew.write("MZ", 0);
+  negLfanew.writeInt32LE(-1, 0x3c);
+  expect(detectPeTeMachineWidth(negLfanew)).toBe("unknown");
+
+  // MZ with e_lfanew exceeding buffer
+  const outOfBoundsLfanew = Buffer.alloc(64);
+  outOfBoundsLfanew.write("MZ", 0);
+  outOfBoundsLfanew.writeInt32LE(0x1000, 0x3c);
+  expect(detectPeTeMachineWidth(outOfBoundsLfanew)).toBe("unknown");
+
+  // MZ with e_lfanew pointing to non-PE signature
+  const nonPeSig = Buffer.alloc(128);
+  nonPeSig.write("MZ", 0);
+  nonPeSig.writeInt32LE(64, 0x3c);
+  nonPeSig.write("NOTP", 64);
+  expect(detectPeTeMachineWidth(nonPeSig)).toBe("unknown");
 });
