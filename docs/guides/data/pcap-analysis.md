@@ -133,7 +133,7 @@ capture commands enforce Linux address-space ceilings of at most 1 GiB,
 limits. Windows uses a 1 GiB committed-memory limit for each owned tool tree.
 These are not aggregate machine or filesystem quotas.
 
-Each TShark JSON pass is bounded by `producer_limits.output_bytes` (default
+Each TShark JSON pass is bounded by `producer_limits.output_bytes`, which counts its stdout and stderr together (default
 8 MiB, at most 128 MiB). Its known five-level selected-field shape and the fixed
 128 MiB graph-expansion estimate across both passes are checked before
 allocation, so raising the output budget does not raise that estimate. Retained

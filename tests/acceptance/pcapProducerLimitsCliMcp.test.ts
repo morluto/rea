@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { writeStubTools } from "../fixtures/pcap/pcapTestTools.js";
+import {
+  TSHARK_DNS_JSON,
+  TSHARK_JSON,
+  writeStubTools,
+} from "../fixtures/pcap/pcapTestTools.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const environmentFor = (
@@ -109,5 +113,93 @@ cliTest.skipIf(process.platform !== "linux")(
     } finally {
       await client.close();
     }
+  },
+);
+
+/** Valid TShark JSON padded with whitespace past the 8 MiB default. */
+const padded = (json: string) =>
+  `[${" ".repeat(8 * 1024 * 1024 + 1024)}${json.slice(1)}`;
+const RAISED = { output_bytes: 9 * 1024 * 1024 };
+
+cliTest.skipIf(process.platform !== "linux")(
+  "admits TShark output above the old 8 MiB ceiling once producer_limits.output_bytes is raised",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pcap-raised-output-");
+    const path = join(root, "capture.pcap");
+    await writeFile(path, Buffer.from("pcap-fixture-bytes"));
+    const environment = environmentFor(
+      root,
+      await writeStubTools(root, {
+        tsharkJson: padded(TSHARK_JSON),
+        dnsJson: padded(TSHARK_DNS_JSON),
+      }),
+    );
+    const refused = await cli.run({
+      arguments: ["inspect-pcap-capture", path, "--json"],
+      environment,
+    });
+    expect(refused.exitCode, refused.stdout).toBe(1);
+    expect(refused.json).toMatchObject({
+      details: { limit: parameterLimit("output_bytes", 8 * 1024 * 1024) },
+    });
+    // Both passes, base and DNS, run within the raised budget.
+    const admitted = await cli.run({
+      arguments: [
+        "inspect-pcap-capture",
+        path,
+        "--producer-limits",
+        JSON.stringify(RAISED),
+        "--json",
+      ],
+      environment,
+    });
+    expect(admitted.exitCode, admitted.stdout).toBe(0);
+    expect(admitted.json).toMatchObject({
+      normalized_result: { tls_sni_values: ["api.example.com"] },
+    });
+    expect(admitted.json).not.toHaveProperty(
+      "normalized_result.dns_identity_limit",
+    );
+  },
+);
+
+cliTest.skipIf(process.platform !== "linux")(
+  "records the producer limit that stopped only the DNS pass beside the partial summary",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pcap-dns-output-");
+    const path = join(root, "capture.pcap");
+    await writeFile(path, Buffer.from("pcap-fixture-bytes"));
+    const environment = environmentFor(
+      root,
+      await writeStubTools(root, { dnsJson: padded(TSHARK_DNS_JSON) }),
+    );
+    const partial = await cli.run({
+      arguments: ["inspect-pcap-capture", path, "--json"],
+      environment,
+    });
+    expect(partial.exitCode, partial.stdout).toBe(0);
+    expect(partial.json).toMatchObject({
+      normalized_result: {
+        coverage: "partial",
+        dns_identity_limit: {
+          ...parameterLimit("output_bytes", 8 * 1024 * 1024),
+          default_value: 8 * 1024 * 1024,
+        },
+      },
+    });
+    const complete = await cli.run({
+      arguments: [
+        "inspect-pcap-capture",
+        path,
+        "--producer-limits",
+        JSON.stringify(RAISED),
+        "--json",
+      ],
+      environment,
+    });
+    expect(complete.exitCode, complete.stdout).toBe(0);
+    expect(complete.json).not.toHaveProperty(
+      "normalized_result.dns_identity_limit",
+    );
   },
 );

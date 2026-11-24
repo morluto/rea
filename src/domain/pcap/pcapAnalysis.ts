@@ -6,6 +6,7 @@ import {
 } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 
 /** Summary capture admission and discovery share this native-bound host profile. */
 export const pcapCaptureHostSupported = (platform: string): boolean =>
@@ -79,7 +80,7 @@ const pcapProducerLimitsSchema = z
   })
   .optional()
   .describe(
-    `Per-call producer limits in bytes. input_bytes bounds the private capture copy (default ${String(PCAP_PRODUCER_LIMITS.input_bytes)}); output_bytes bounds each tshark JSON output (default ${String(PCAP_PRODUCER_LIMITS.output_bytes)}, at most ${String(PCAP_PRODUCER_LIMIT_MAXIMA.output_bytes)}, the fixed decoded-JSON allowance). Omitted fields keep defaults; changes apply on the next call without restart.`,
+    `Per-call producer limits in bytes. input_bytes bounds the private capture copy (default ${String(PCAP_PRODUCER_LIMITS.input_bytes)}); output_bytes bounds the combined stdout and stderr of each tshark JSON pass (default ${String(PCAP_PRODUCER_LIMITS.output_bytes)}, at most ${String(PCAP_PRODUCER_LIMIT_MAXIMA.output_bytes)}, the fixed decoded-JSON allowance). Omitted fields keep defaults; changes apply on the next call without restart.`,
   );
 
 /**
@@ -196,6 +197,12 @@ export const pcapResultSchemas = {
     unattributed_dns_address_count: z.int().nonnegative(),
     unattributed_dns_packet_count: z.int().nonnegative(),
     coverage: knownCoverageStatusSchema,
+    /**
+     * The producer limit that stopped the DNS wire-identity pass, when that
+     * pass alone exceeded it; the summary is then partial and raising the
+     * named control on the next call runs the pass.
+     */
+    dns_identity_limit: analysisParameterLimitSchema.optional(),
     diagnostics: z
       .strictObject({ capinfos_stderr: z.string(), tshark_stderr: z.string() })
       .optional(),

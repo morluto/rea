@@ -59,6 +59,7 @@ import {
   prepareTsharkBaseOutput,
 } from "./PcapOutput.js";
 import { PCAP_PRODUCER_LIMITS } from "../domain/pcap/pcapAnalysis.js";
+import type { AnalysisParameterLimit } from "../domain/analysisSettings.js";
 import { resolveProducerLimits } from "../domain/producerResourceLimits.js";
 import {
   runPcapCommand,
@@ -1230,6 +1231,8 @@ export class PcapProvider {
     let fields = prepared.fallback;
     let dnsDissected: typeof dissected | undefined;
     let dnsLimitation: string | undefined;
+    // The producer limit that stopped the DNS pass alone, kept as a fact.
+    let dnsIdentityLimit: AnalysisParameterLimit | undefined;
     if (!prepared.hasDnsProtocol) {
       // Base pass observed no DNS/mDNS/LLMNR frames or fields; skip the second tshark pass.
     } else if (dissected.cleanup === undefined) {
@@ -1278,7 +1281,14 @@ export class PcapProvider {
           )
         )
           throw cause;
-        dnsLimitation = `DNS wire identity extraction was unavailable: ${dnsFailureReason(cause)}; producer queries and addresses are retained without inferred ownership`;
+        if (
+          cause instanceof AnalysisResourceConstraintError &&
+          cause.limit !== undefined &&
+          "control_kind" in cause.limit &&
+          cause.limit.control_kind === "parameter"
+        )
+          dnsIdentityLimit = cause.limit;
+        dnsLimitation = `DNS wire identity extraction was unavailable: ${dnsFailureReason(cause)}; producer queries and addresses are retained without inferred ownership${dnsIdentityLimit === undefined ? "" : `. dns_identity_limit names ${dnsIdentityLimit.parameter}; raise it on the next call to run the DNS pass`}`;
       }
     } else {
       dnsLimitation =
@@ -1328,6 +1338,9 @@ export class PcapProvider {
         unattributed_dns_address_count: fields.unattributedDnsAddressCount,
         unattributed_dns_packet_count: fields.unattributedDnsPackets,
         coverage: fields.partial ? "partial" : "complete",
+        ...(dnsIdentityLimit === undefined
+          ? {}
+          : { dns_identity_limit: dnsIdentityLimit }),
       },
       limitations: [
         ...fields.dnsLimitations.map((reason) => `DNS wire parsing: ${reason}`),
