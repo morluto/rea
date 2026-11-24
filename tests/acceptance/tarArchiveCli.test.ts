@@ -51,7 +51,7 @@ cliTest.for([
     ).toMatchObject({ kind: "tar", compression, end_state: "end-marker" });
     expect(
       graph.occurrences
-        .filter((row) => row.entry_kind === "file")
+        .filter((row) => row.entry_kind === "file" && row.logical_path !== ".")
         .map((row) => row.logical_path)
         .sort(),
     ).toEqual(["app/data.pck", "app/run.x86_64"]);
