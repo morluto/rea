@@ -1,5 +1,4 @@
 import { probeUefiFlashImage } from "../../uefi/UefiFormatProbe.js";
-import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   createCachedPrefixReader,
   readFileHandleRange,
@@ -12,10 +11,7 @@ import {
   abortIfNeeded,
   assertArtifactSelectedSource,
 } from "../../resources/index.js";
-import {
-  nesContainerFormat,
-  parseInesLayout,
-} from "../../domain/inesContainer.js";
+import { nesContainerFormat } from "../../domain/inesContainer.js";
 import {
   resolveArtifactReaderLimits,
   type ArtifactReaderLimits,
@@ -363,14 +359,7 @@ const classifyRootFormat = async (
       );
     return { kind: "esp-flash-image", source, location: selected.value };
   }
-  if (nesContainerFormat(evidence.prefix) !== undefined) {
-    const parsed = parseInesLayout(evidence.prefix, archiveBytes);
-    if (!parsed.ok)
-      throw new ArtifactReaderFailure("format", parsed.error.detail, {
-        cause: new ParseFailureError(parsed.error),
-      });
-    return "ines";
-  }
+  if (nesContainerFormat(evidence.prefix) !== undefined) return "ines";
   const classificationPath = artifactNameForClassification(
     selectedPath ?? path,
     path,
@@ -484,6 +473,22 @@ const classifyRootFormat = async (
         cookie: embedded.cookie,
         carrierPathDialect: format === "pe" ? "windows" : "posix",
       };
+  }
+  if (
+    format === "asar" &&
+    evidence.asarHeader.state === "matched" &&
+    evidence.asarHeader.extents.archiveBytes === archiveBytes
+  ) {
+    return {
+      kind: "asar",
+      source,
+      extents: {
+        archiveBytes,
+        headerBytes: evidence.asarHeader.extents.headerBytes,
+        jsonBytes: evidence.asarHeader.extents.jsonBytes,
+      },
+      headerAdmission: evidence.asarHeader.admission,
+    };
   }
   return format;
 };
