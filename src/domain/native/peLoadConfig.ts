@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -400,6 +401,8 @@ export const peLoadConfigSchema = z.strictObject({
   tls: tlsSchema,
   load_config: loadConfigSchema,
   examined_callbacks: uint,
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 export type PeLoadConfig = z.infer<typeof peLoadConfigSchema>;

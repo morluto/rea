@@ -377,7 +377,7 @@ const parsePeResourceInventory = async (
     format: layout.format,
     machine: layout.machine,
     directory:
-      layout.size === 0
+      layout.size === 0 || layout.directoryAt === null
         ? null
         : {
             rva: layout.rva,
@@ -392,6 +392,7 @@ const parsePeResourceInventory = async (
       examined_entries: examined,
       resources: resources.length,
     },
+    header_anomalies: [...layout.headerAnomalies],
     limitations: [
       "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON remain opaque.",
       "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",

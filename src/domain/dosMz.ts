@@ -138,17 +138,9 @@ const observeWindowsHeader = (
     relocationTableOffset: tableStart,
     relocationTableEnd: tableEnd,
   } = declarations ?? fixedDosMzDeclarations(reader);
-  if (
-    headerBytes !== 0 &&
-    relocationCount > 0 &&
-    tableStart < 64 &&
-    tableEnd > 60
-  )
-    return { state: "absent" };
   const offset = reader.u32(60);
-  if (offset === 0) return { state: "absent" };
   const inlineSignature =
-    offset < bytes.length
+    offset !== 0 && offset < bytes.length
       ? bytes.subarray(offset, Math.min(offset + 4, bytes.length))
       : undefined;
   const available =
@@ -156,6 +148,26 @@ const observeWindowsHeader = (
       ? signatureEvidence.bytes
       : inlineSignature;
   const signature = windowsHeaderSignature(available);
+  // The Windows loader reads e_lfanew without consulting DOS relocation or
+  // page fields, so a complete "PE\0\0" signature there declares the image
+  // even when a DOS relocation table claims those bytes.
+  if (offset !== 0 && signature === "PE")
+    return { state: "declared", offset, signature };
+  if (
+    headerBytes !== 0 &&
+    relocationCount > 0 &&
+    tableStart < 64 &&
+    tableEnd > 60
+  )
+    // Only a PE signature overrides the table's claim; request those bytes
+    // when the prefix does not hold them.
+    return offset !== 0 &&
+      signature === "unobserved" &&
+      signatureEvidence?.offset !== offset &&
+      fileSize - offset >= 4
+      ? { state: "signature-needed", offset }
+      : { state: "absent" };
+  if (offset === 0) return { state: "absent" };
   if (signature !== "other" && signature !== "unobserved")
     return { state: "declared", offset, signature };
   // A relocation table that ends inside a complete DOS header owns the rest of

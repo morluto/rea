@@ -307,13 +307,6 @@ describe("PE header admission and bounded traversal", () => {
         fixture.bytes.subarray(0, 63),
     ],
     [
-      "invalid optional magic",
-      (fixture: ReturnType<typeof peResourceFixture>) => {
-        fixture.bytes.writeUInt16LE(0, 0x98);
-        return fixture.bytes;
-      },
-    ],
-    [
       "unbacked virtual payload",
       (fixture: ReturnType<typeof peResourceFixture>) => {
         fixture.bytes.writeUInt32LE(0x10000, fixture.sectionAt + 8);
@@ -376,6 +369,14 @@ describe("PE header admission and bounded traversal", () => {
     });
   });
 
+  it("refuses an unsupported optional-header magic through the shared image owner", async () => {
+    const fixture = peResourceFixture();
+    fixture.bytes.writeUInt16LE(0, 0x98);
+    await expect(parse(fixture.bytes)).rejects.toMatchObject({
+      kind: "unsupported",
+    });
+  });
+
   it("keeps icon size mismatch and unresolved language distinct", async () => {
     const fixture = peResourceFixture();
     const data = fixture.dataOffsets.at(-1) ?? 0;
@@ -432,6 +433,48 @@ describe("PE header admission and bounded traversal", () => {
   });
 });
 
+describe("PE resource header admission shared with every PE reader", () => {
+  it("reads a resource section whose raw bytes overlap SizeOfHeaders", async () => {
+    // corkami appendedhdr.exe and footer.exe: SizeOfHeaders covers section
+    // raw data, a layout the loader and the other PE readers accept.
+    const baseline = await parse(peResourceFixture().bytes);
+    const fixture = peResourceFixture();
+    fixture.bytes.writeUInt32LE(
+      fixture.bytes.length,
+      fixture.bytes.readUInt32LE(60) + 24 + 60,
+    );
+    const report = await parse(fixture.bytes);
+    expect(report.resources).toEqual(baseline.resources);
+    expect(report.header_anomalies).toEqual([]);
+  });
+
+  it("records an inconsistent SizeOfHeaders instead of refusing", async () => {
+    // corkami foldedhdr.exe declares 44.
+    const fixture = peResourceFixture();
+    fixture.bytes.writeUInt32LE(44, fixture.bytes.readUInt32LE(60) + 24 + 60);
+    const report = await parse(fixture.bytes);
+    expect(report.coverage).toMatchObject({ status: "complete", resources: 5 });
+    expect(report.header_anomalies?.map(({ code }) => code)).toEqual([
+      "size_of_headers_inconsistent",
+    ]);
+  });
+
+  it("walks the tree at its RVA when the resource directory Size is 0", async () => {
+    // corkami resource.exe declares RVA 0x1110 with Size 0.
+    const baseline = await parse(peResourceFixture().bytes);
+    const fixture = peResourceFixture();
+    fixture.bytes.writeUInt32LE(0, fixture.directoryAt + 4);
+    const report = await parse(fixture.bytes);
+    expect(report.resources).toEqual(baseline.resources);
+    expect(report.header_anomalies).toEqual([
+      {
+        code: "directory_size_below_structure",
+        message: expect.stringContaining("Data directory 2 (resource)"),
+      },
+    ]);
+  });
+});
+
 describe("PE resource section virtual extent", () => {
   const sectionSizes = (fixture: ReturnType<typeof peResourceFixture>) => {
     const virtualSize = fixture.bytes.readUInt32LE(fixture.sectionAt + 8);
@@ -441,8 +484,8 @@ describe("PE resource section virtual extent", () => {
   };
 
   it.each([
-    [0, /RVA.*(?:missing|overlapping).*section/iu],
-    [-2, /range.*virtual size/iu],
+    [0, /RVA.*not file-backed/iu],
+    [-2, /RVA.*not file-backed/iu],
   ])(
     "rejects a payload reaching raw alignment padding past VirtualSize (start %i)",
     async (start, message) => {
@@ -488,7 +531,7 @@ describe("PE resource section virtual extent", () => {
     fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
       kind: "malformed",
-      message: expect.stringMatching(/RVA.*(?:missing|overlapping).*section/iu),
+      message: expect.stringMatching(/RVA.*not file-backed/iu),
     });
   });
 
@@ -595,18 +638,16 @@ describe("PE resource ownership boundaries", () => {
     );
   });
 
-  it("maps a payload after an expired section nested in its owner", () => {
+  it("refuses a resource tree crossing a section nested in its owner, as every PE reader does", () => {
     const fixture = singleResource();
     const [entry] = fixture.dataOffsets;
     if (entry === undefined) throw new Error("Expected a resource data entry");
     const rva = fixture.bytes.readUInt32LE(entry);
-    const size = fixture.bytes.readUInt32LE(entry + 4);
-    const expected = readPeResourceLayout(fixture.bytes).map(rva, size);
     const bytes = secondSection(fixture, 1, rva - 2, 0);
-
-    expect(readPeResourceLayout(bytes).map(rva, size)).toBe(expected);
-    expect(() => readPeResourceLayout(bytes).map(rva - 2, 1)).toThrow(
-      /overlapping section mappings/iu,
+    // The nested section's zero-filled byte overlaps the owner's file bytes,
+    // so the shared mapping cannot choose one translation for the tree.
+    expect(() => readPeResourceLayout(bytes)).toThrow(
+      /ambiguously file-backed/iu,
     );
   });
 
@@ -615,7 +656,7 @@ describe("PE resource ownership boundaries", () => {
     const bytes = secondSection(fixture, 4, 0x2001, 0);
     await expect(parse(bytes)).rejects.toMatchObject({
       kind: "malformed",
-      message: expect.stringMatching(/interval.*overlapping.*sections/iu),
+      message: expect.stringMatching(/ambiguously file-backed/iu),
     });
   });
 
@@ -642,7 +683,7 @@ describe("PE resource ownership boundaries", () => {
     const bytes = secondSection(fixture, 4, 0x100, 4);
     await expect(parse(bytes)).rejects.toMatchObject({
       kind: "malformed",
-      message: expect.stringMatching(/ambiguous.*header.*RVA/iu),
+      message: expect.stringMatching(/ambiguously file-backed/iu),
     });
   });
 
