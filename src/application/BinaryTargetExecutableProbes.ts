@@ -50,7 +50,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import { peOptionalHeaderReadBytes } from "../domain/peOptionalHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { readRiscvIsaDeclaration } from "../domain/riscvIsaDeclaration.js";
+import { readRiscvElfDeclarations } from "../domain/riscvIsaDeclaration.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
@@ -221,6 +221,9 @@ export const readExecutableMetadata = async (
   return parsed;
 };
 
+const ET_EXEC = 2;
+const ET_DYN = 3;
+
 /** ELF structure and family declarations share one descriptor before provider selection. */
 const readElfMetadata = async (
   handle: FileHandle,
@@ -251,12 +254,18 @@ const readElfMetadata = async (
       riscv: {
         ...parsed.value.riscv,
         ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
-        isa: await readElfDeclarations(
+        ...(await readElfDeclarations(
           handle,
           bytes,
-          readRiscvIsaDeclaration(bytes, fileSize),
+          readRiscvElfDeclarations(bytes, fileSize, {
+            // Executable section addresses are load addresses, offset by the
+            // load base in a PIE; relocatable sections have no addresses yet.
+            sectionOverlap:
+              parsed.value.riscv.type === ET_EXEC ||
+              parsed.value.riscv.type === ET_DYN,
+          }),
           signal,
-        ),
+        )),
       },
     });
   if (!isMips32) return parsed;
