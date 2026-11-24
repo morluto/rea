@@ -1,12 +1,13 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join, win32 } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { ok } from "../../../src/domain/result.js";
 import { Radare2SessionManager } from "../../../src/radare2/Radare2SessionManager.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { waitFor } from "../../support/testWait.js";
 import type {
   ProviderProcessHandle,
@@ -107,7 +108,7 @@ const jsonResponder =
 
 describe("Radare2SessionManager lifecycle", () => {
   it("starts a session after the first NUL frame and echoes the spawn profile", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-r2-start-"));
+    const directory = await createTestTempDirectory("rea-r2-start-");
     const artifact = join(directory, "fixture.bin");
     await writeFile(artifact, "fixture");
     const { spawnProcess, control } = createInjectedProcess({
@@ -142,9 +143,8 @@ describe("Radare2SessionManager lifecycle", () => {
         }),
       );
       control.exit(0);
-      await manager.closeAll();
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await manager.closeAll();
     }
   });
 
@@ -185,7 +185,7 @@ describe("Radare2SessionManager lifecycle", () => {
   });
 
   it("executes a command over the r2pipe2 protocol and maps the reply", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-r2-exec-"));
+    const directory = await createTestTempDirectory("rea-r2-exec-");
     const artifact = join(directory, "fixture.bin");
     await writeFile(artifact, "fixture");
     const { spawnProcess } = createInjectedProcess({
@@ -214,7 +214,6 @@ describe("Radare2SessionManager lifecycle", () => {
       expect(executed.value.evidence.provider.id).toBe("radare2.session");
     } finally {
       await manager.closeAll();
-      await rm(directory, { recursive: true, force: true });
     }
   });
 
@@ -380,7 +379,7 @@ describe("Radare2SessionManager cancellation", () => {
     if (!overflow.ok)
       expect(overflow.error._tag).toBe("AnalysisResourceConstraintError");
     ownerControl?.output(
-      `${JSON.stringify({ res: [], error: false, value: 0, code: 0 })}\0`,
+      `${JSON.stringify({ res: "[]", error: false, value: 0, code: 0 })}\0`,
     );
     const ownerResult = await owner;
     expect(ownerResult.ok).toBe(true);
@@ -390,7 +389,7 @@ describe("Radare2SessionManager cancellation", () => {
 
 describe("Radare2SessionManager command handling", () => {
   it("rejects multiline commands before writing to stdin", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-r2-lines-"));
+    const directory = await createTestTempDirectory("rea-r2-lines-");
     const artifact = join(directory, "fixture.bin");
     await writeFile(artifact, "fixture");
     const { spawnProcess, written } = createInjectedProcess({
@@ -412,12 +411,11 @@ describe("Radare2SessionManager command handling", () => {
       expect(written).toEqual([]);
     } finally {
       await manager.closeAll();
-      await rm(directory, { recursive: true, force: true });
     }
   });
 
   it("times out a command whose reply never arrives and stops the session", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-r2-timeout-"));
+    const directory = await createTestTempDirectory("rea-r2-timeout-");
     const artifact = join(directory, "fixture.bin");
     await writeFile(artifact, "fixture");
     const { spawnProcess } = createInjectedProcess({
@@ -447,7 +445,6 @@ describe("Radare2SessionManager command handling", () => {
       expect(manager.status(started.value.session_id)).toBeUndefined();
     } finally {
       await manager.closeAll();
-      await rm(directory, { recursive: true, force: true });
     }
   });
 
@@ -480,6 +477,14 @@ describe("Radare2SessionManager command handling", () => {
     control.stderr("WARN: ABI mismatch from plugin\n");
     const status = manager.status(started.value.session_id);
     expect(status?.recent_stderr).toContain("WARN: ABI mismatch");
+    // The supervisor retains only the first 64 KiB of stderr over the
+    // session's life; status must still report the latest diagnostics.
+    control.stderr("x".repeat(64 * 1024));
+    control.stderr("latest plugin failure\n");
+    const latest = manager.status(started.value.session_id);
+    expect(latest?.recent_stderr).toContain("latest plugin failure");
+    // The window is the tail, so the retained text says its start was cut.
+    expect(latest?.recent_stderr.startsWith("…")).toBe(true);
     control.exit(0);
     await manager.close(started.value.session_id);
   });
@@ -597,6 +602,92 @@ describe("Radare2SessionManager r2pipe2 protocol failures", () => {
     );
     expect(executed.ok).toBe(true);
     if (executed.ok) expect(executed.value.result.output_truncated).toBe(true);
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+    await manager.closeAll();
+  });
+
+  it("reports a cancellation that arrives while the oversized reply retires its session", async () => {
+    const controller = new AbortController();
+    const abortReason = new Error("caller stopped");
+    let releaseStop!: () => void;
+    let markStopStarted!: () => void;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const stopStarted = new Promise<void>((resolve) => {
+      markStopStarted = resolve;
+    });
+    const { spawnProcess } = createInjectedProcess({
+      startup: (control) => {
+        control.output("\0");
+      },
+      onWrite: (_text, commandControl) => {
+        queueMicrotask(() =>
+          commandControl.output(`${"a".repeat(16 * 1024 * 1024 + 1)}\0`),
+        );
+      },
+    });
+    const manager = new Radare2SessionManager(
+      {},
+      {
+        spawnProcess,
+        frameTimeoutMs: 5_000,
+        stopProcess: async () => {
+          markStopStarted();
+          await stopGate;
+          return { status: "verified-cleanup" };
+        },
+      },
+    );
+
+    const started = await manager.start({ path: "/tmp/f" });
+    if (!started.ok) throw started.error;
+    const pending = manager.execute(
+      started.value.session_id,
+      "p8 100000000",
+      controller.signal,
+    );
+    await stopStarted;
+    controller.abort(abortReason);
+    releaseStop();
+    const executed = await pending;
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error._tag).toBe("AnalysisCancelledError");
+      expect(executed.error.cause).toBe(abortReason);
+      expect(executed.error.partialObservation).toBeDefined();
+    }
+    await manager.closeAll();
+  });
+
+  it("treats a reply whose error flag is not boolean as a protocol failure", async () => {
+    const { spawnProcess } = createInjectedProcess({
+      startup: (control) => {
+        control.output("\0");
+      },
+      onWrite: (_text, commandControl) => {
+        queueMicrotask(() =>
+          commandControl.output(
+            `${JSON.stringify({ res: "partial", error: "failed", code: 0 })}\0`,
+          ),
+        );
+      },
+    });
+    const manager = new Radare2SessionManager(
+      {},
+      { spawnProcess, frameTimeoutMs: 5_000 },
+    );
+
+    const started = await manager.start({ path: "/tmp/f" });
+    if (!started.ok) throw started.error;
+    const executed = await manager.execute(started.value.session_id, "aflj");
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error._tag).toBe("AnalysisCapabilityUnavailableError");
+      expect(JSON.stringify(executed.error.partialObservation)).toContain(
+        "partial",
+      );
+    }
     expect(manager.status(started.value.session_id)).toBeUndefined();
     await manager.closeAll();
   });
@@ -768,8 +859,8 @@ describe("Radare2SessionManager provider resolution", () => {
         startupControl.output("\0");
       },
     });
-    const resolveExecutable = vi.fn(
-      (command: string) => `C:\\tools\\${command}.exe`,
+    const resolveExecutable = vi.fn((command: string) =>
+      ok(`C:\\tools\\${command}.exe`),
     );
     const manager = new Radare2SessionManager(
       { REA_R2_COMMAND: "radare2" },
@@ -787,6 +878,25 @@ describe("Radare2SessionManager provider resolution", () => {
     );
     control.exit(0);
     await manager.closeAll();
+  });
+
+  it("refuses to spawn a bare name when the Windows lookup fails", async () => {
+    const { spawnProcess } = createInjectedProcess();
+    const manager = new Radare2SessionManager(
+      { REA_R2_COMMAND: "radare2", PATH: "" },
+      { spawnProcess, platform: "win32" },
+    );
+
+    const started = await manager.start({ path: "/tmp/f" });
+    expect(started.ok).toBe(false);
+    if (!started.ok) {
+      expect(started.error._tag).toBe("AnalysisCapabilityUnavailableError");
+      expect(started.error.diagnostics).toMatchObject({
+        boundary: "provider-lookup",
+        lookup_failure: "not_found",
+      });
+    }
+    expect(spawnProcess).not.toHaveBeenCalled();
   });
 });
 

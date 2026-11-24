@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   inspectRadare2Provider,
@@ -49,6 +49,22 @@ describe("inspectRadare2Provider", () => {
     expect(inspection.checks[0]).toMatchObject({
       name: "radare2-executable",
       ok: false,
+      classification: "missing_dependency",
+    });
+  });
+
+  it("reports an unresolved Windows lookup without running the bare name", async () => {
+    const runVersion = vi.fn();
+    const inspection = await inspectRadare2Provider(
+      { REA_R2_COMMAND: "radare2", PATH: "" },
+      { platform: "win32", runVersion },
+    );
+    expect(runVersion).not.toHaveBeenCalled();
+    expect(inspection.available).toBe(false);
+    expect(inspection.checks[0]).toMatchObject({
+      name: "radare2-executable",
+      ok: false,
+      code: "ENOENT",
       classification: "missing_dependency",
     });
   });

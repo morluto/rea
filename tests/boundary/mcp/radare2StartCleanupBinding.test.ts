@@ -109,6 +109,52 @@ it("releases the failed-start wrapper's cleanup once the failed close is release
   expect(result.error.cleanupIncomplete).toBe(false);
 });
 
+it("keeps an earlier initial command's observation when a later one fails", async () => {
+  const completedEvidence = failingEvidence();
+  const binding = startBinding({
+    start: async () => ok({ session_id: "session-1" }),
+    execute: async (_sessionId: string, command: string) =>
+      command === "ij"
+        ? ok({
+            result: {
+              command: "ij",
+              output: "{}",
+              output_truncated: false,
+              completion_status: "complete" as const,
+              command_error: false,
+              command_code: 0,
+              command_logs: [],
+            },
+            evidence: completedEvidence,
+          })
+        : ok({
+            result: {
+              command: "__fail__",
+              output: "",
+              output_truncated: false,
+              completion_status: "complete" as const,
+              command_error: true,
+              command_code: 1,
+              command_logs: [],
+            },
+            evidence: failingEvidence(),
+          }),
+    status: () => undefined,
+    close: async () => ok({ closed: true }),
+    retryCleanupFailures: async () => ok(null),
+  });
+
+  const result = await binding.run(
+    { path: "/tmp/f", initial_commands: ["ij", "__fail__"] },
+    new AbortController().signal,
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.argumentObservations).toEqual([
+    { argument: "initial_commands[0]", observation: completedEvidence },
+  ]);
+});
+
 it("releases the failed-start wrapper's cleanup once the failed close is released (execution failure path)", async () => {
   const release = new AnalysisCleanupRelease();
   const closeFailure = retainedCloseFailure(release);

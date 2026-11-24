@@ -103,7 +103,7 @@ export const RADARE2_SESSION_TOOL_CONTRACTS = [
     ),
     kind: "native-provider",
     description:
-      "Return observed lifecycle state, launch provenance, and bounded recent NUL-framed output for one Radare2 session; output_invalid_utf8 reports whether invalid UTF-8 has been observed in session frame bytes; recent output may contain replacement characters.",
+      "Return observed lifecycle state, launch provenance, and bounded recent NUL-framed output for one Radare2 session; output_invalid_utf8 reports whether invalid UTF-8 has been observed in session frame bytes; recent output may contain replacement characters. recent_stderr is the bounded tail of stderr, including diagnostics emitted after startup, and starts with an ellipsis when earlier stderr was dropped.",
     inputSchema: z.strictObject({ session_id: sessionId }),
     outputSchema: z.strictObject({
       session_id: sessionId,

@@ -36,15 +36,43 @@ export const inspectRadare2Provider = async (
     readonly runVersion?: (command: string) => Promise<VersionOutcome>;
     /** Doctor inspection cancellation; a stopped probe still settles after exit. */
     readonly signal?: AbortSignal;
+    /** @internal Test seam; production callers use the host platform. */
+    readonly platform?: NodeJS.Platform;
   } = {},
 ): Promise<DoctorProviderInspection> => {
   // Resolve the same way the one-shot and session paths spawn the engine, so
-  // the doctor's availability verdict matches what actually runs.
-  const command = resolveProviderExecutable(
+  // the doctor's availability verdict matches what actually runs. A failed
+  // lookup is reported without running anything: the bare name would let the
+  // host also search the current directory.
+  const selected = resolveProviderExecutable(
     environment.REA_R2_COMMAND ?? "radare2",
     environment,
-    HOST_PLATFORM.platform,
+    options.platform ?? HOST_PLATFORM.platform,
   );
+  if (!selected.ok) {
+    const missing = selected.error.kind === "not_found";
+    const check: DoctorProviderCheck = {
+      name: "radare2-executable",
+      ok: false,
+      code: missing ? "ENOENT" : "invalid_pathext",
+      detail: missing
+        ? `REA did not find ${environment.REA_R2_COMMAND ?? "radare2"} on PATH and PATHEXT; it does not search the current directory.`
+        : `REA could not search PATH for ${environment.REA_R2_COMMAND ?? "radare2"}: PATHEXT entry ${JSON.stringify(selected.error.extension)} is not a filename extension.`,
+      remediation: missing
+        ? `Install radare2 (or point REA_R2_COMMAND at your executable); REA never installs it. Session tools additionally need radare2 >= ${R2PIPE2_FLOOR.major}.${R2PIPE2_FLOOR.minor}.`
+        : `Remove ${JSON.stringify(selected.error.extension)} from PATHEXT, or point REA_R2_COMMAND at an absolute executable path.`,
+      classification: "missing_dependency",
+    };
+    return {
+      id: "radare2",
+      configured: environment.REA_R2_COMMAND !== undefined,
+      available: false,
+      providerVersion: null,
+      registrationEnvironment: {},
+      checks: [check],
+    };
+  }
+  const command = selected.value;
   const runVersion =
     options.runVersion ??
     (async (selected: string) => {

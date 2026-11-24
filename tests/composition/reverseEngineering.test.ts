@@ -1191,7 +1191,7 @@ describe("Radare2 command service", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.provider.id).toBe("radare2");
-    expect(result.value.raw_result).toMatchObject({
+    expect(result.value.normalized_result).toMatchObject({
       stdout: "bin info",
       stderr: "",
       exit_code: 0,
@@ -1243,7 +1243,7 @@ describe("radiff2 comparison service", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.provider.id).toBe("radiff2");
-    expect(result.value.raw_result).toMatchObject({
+    expect(result.value.normalized_result).toMatchObject({
       stdout: '[{"match":"MATCH"}]',
       exit_code: 0,
       completion_status: "complete",

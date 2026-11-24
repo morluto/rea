@@ -17,6 +17,7 @@ import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { unknownTarget } from "../domain/targetIdentity.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { ellipsisExcerpt } from "../domain/excerpt.js";
+import { utf8TailExcerpt } from "../domain/utf8Excerpt.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -26,12 +27,12 @@ import {
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
-import { resolveProviderExecutable } from "../process/resolveWindowsProviderExecutable.js";
 import {
-  projectRadare2JsonOutput,
-  projectRadare2Summary,
-  projectRadare2DeliveryViews,
-} from "./radare2CommandOutput.js";
+  resolveProviderExecutable,
+  type ProviderExecutableLookupFailure,
+} from "../process/resolveWindowsProviderExecutable.js";
+import { RADARE2_COMMAND_REPAIR } from "./Radare2Command.js";
+import { projectRadare2DeliveryViews } from "./radare2CommandOutput.js";
 
 const MAX_SESSIONS = 8;
 const MAX_PENDING_COMMANDS = 16;
@@ -46,6 +47,8 @@ const MAX_HISTORY_FRAMES = 64;
 const MAX_RECENT_FRAME_BYTES = 16 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const MAX_RECENT_STDERR_BYTES = 4 * 1024;
+/** Extra bytes kept so a tail excerpt never starts inside a multi-byte character. */
+const RECENT_STDERR_WINDOW_BYTES = MAX_RECENT_STDERR_BYTES + 4;
 /** Cap for partial frame text retained in a failure diagnostic. */
 const MAX_FAILURE_FRAME_BYTES = 4096;
 
@@ -112,13 +115,17 @@ const parseR2Pipe2Reply = (text: string): R2Pipe2Reply | undefined => {
   if (typeof parsed !== "object" || parsed === null) return undefined;
   const reply = parsed as Record<string, unknown>;
   const hasRes = typeof reply.res === "string";
-  // Every observed reply shape carries `error` and `code`; requiring them keeps
-  // target-produced JSON from impersonating a failed reply and hiding output.
+  // Every observed reply shape carries `error` and `code`; requiring both for
+  // every accepted frame keeps target-produced JSON from impersonating a
+  // failed reply, and an unparseable error flag from reading as success.
   const isEnvelope =
     typeof reply.error === "boolean" &&
     typeof reply.code === "number" &&
-    (typeof reply.value === "number" || Array.isArray(reply.logs));
-  if (!hasRes && !isEnvelope) return undefined;
+    Number.isFinite(reply.code);
+  // A reply that failed before producing output omits `res`; without `res` and
+  // without a failure flag the frame would hide a lost reply as empty success.
+  if (!isEnvelope) return undefined;
+  if (!hasRes && reply.error !== true) return undefined;
   return {
     res: typeof reply.res === "string" ? reply.res : "",
     error: reply.error === true,
@@ -176,6 +183,12 @@ interface Radare2Session {
   cleanupRelease: AnalysisCleanupRelease | undefined;
   pendingCommandCount: number;
   invalidUtf8Observed: boolean;
+  /**
+   * Rolling tail of stderr. The supervisor bounds stderr over the session's
+   * whole lifetime, so its snapshot only ever holds the earliest diagnostics.
+   */
+  recentStderr: Buffer;
+  recentStderrTruncated: boolean;
   closing: boolean;
   stopAttempt: Promise<StopOutcome> | undefined;
 }
@@ -240,7 +253,8 @@ export class Radare2SessionManager {
   #closingAll = false;
   readonly #startDrainWaiters: Array<() => void> = [];
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
-  readonly #command: string;
+  readonly #commandName: string;
+  readonly #command: Result<string, ProviderExecutableLookupFailure>;
   readonly #frameTimeoutMs: number;
   readonly #startupTimeoutMs: number;
   readonly #spawnProcess: typeof spawnOwnedProviderProcess;
@@ -251,8 +265,9 @@ export class Radare2SessionManager {
     options: Radare2SessionManagerOptions = {},
   ) {
     this.#environment = { ...environment };
+    this.#commandName = environment.REA_R2_COMMAND ?? "radare2";
     this.#command = (options.resolveExecutable ?? resolveProviderExecutable)(
-      environment.REA_R2_COMMAND ?? "radare2",
+      this.#commandName,
       this.#environment,
       options.platform ?? HOST_PLATFORM.platform,
     );
@@ -309,12 +324,20 @@ export class Radare2SessionManager {
       return err(cancelledBy("start_radare2_session", signal));
     if (input.path.length === 0)
       return err(new AnalysisInputError("start_radare2_session"));
+    if (!this.#command.ok)
+      return err(
+        radare2LookupFailure(
+          "start_radare2_session",
+          this.#commandName,
+          this.#command.error,
+        ),
+      );
     const id = randomUUID();
     const resolvedPath = absoluteCallerPath(input.path);
     let launched: SpawnedOwnedProviderProcess;
     try {
       launched = await this.#spawnProcess({
-        command: this.#command,
+        command: this.#command.value,
         arguments: [
           "-N",
           "-q",
@@ -368,6 +391,8 @@ export class Radare2SessionManager {
       cleanupRelease: undefined,
       pendingCommandCount: 0,
       invalidUtf8Observed: false,
+      recentStderr: Buffer.alloc(0),
+      recentStderrTruncated: false,
       closing: false,
       stopAttempt: undefined,
     };
@@ -375,6 +400,9 @@ export class Radare2SessionManager {
     releaseReservation();
     launched.process.stdout?.on("data", (chunk: Buffer | string) =>
       this.#receive(session, Buffer.from(chunk)),
+    );
+    launched.process.stderr?.on("data", (chunk: Buffer | string) =>
+      this.#appendRecentStderr(session, Buffer.from(chunk)),
     );
     launched.process.stdin?.on("error", (cause: Error) =>
       this.#failProtocol(
@@ -594,9 +622,13 @@ export class Radare2SessionManager {
       let cleanupFailure: string | undefined;
       let parsedReply: R2Pipe2Reply | undefined;
       let outputTruncated = false;
+      let cancellationDuringCleanup: AbortSignal | undefined;
       if (reply.truncated) {
         const stopped = await this.#stopAndRetire(session);
         if (stopped.status === "incomplete") cleanupFailure = stopped.reason;
+        // Cleanup can outlast the last cancellation check; the caller must not
+        // read a cancelled command as a completed observation.
+        if (signal?.aborted === true) cancellationDuringCleanup = signal;
         outputTruncated = true;
       } else {
         parsedReply = parseR2Pipe2Reply(reply.text);
@@ -675,6 +707,14 @@ export class Radare2SessionManager {
               partialObservation: evidence,
             },
           ),
+        );
+      // A cancellation that arrived while the session was retired still owns
+      // the caller's answer, and the retained output belongs to it.
+      if (cancellationDuringCleanup !== undefined)
+        return err(
+          cancelledBy("radare2_command", cancellationDuringCleanup, {
+            partialObservation: evidence,
+          }),
         );
       return ok({ result, evidence });
     } catch (cause) {
@@ -860,10 +900,7 @@ export class Radare2SessionManager {
       caller_selected_path: session.callerSelectedPath,
       resolved_path: session.resolvedPath,
       recent_output: [...session.history],
-      recent_stderr: ellipsisExcerpt(
-        session.supervisor.snapshot().stderr.text,
-        MAX_RECENT_STDERR_BYTES,
-      ),
+      recent_stderr: recentStderrText(session),
       output_invalid_utf8: session.invalidUtf8Observed,
       protocol_error: session.protocolError ?? null,
     };
@@ -998,6 +1035,19 @@ export class Radare2SessionManager {
         limitations,
       },
     );
+  }
+
+  #appendRecentStderr(session: Radare2Session, chunk: Buffer): void {
+    if (chunk.length === 0) return;
+    const combined = Buffer.concat([session.recentStderr, chunk]);
+    if (combined.length <= RECENT_STDERR_WINDOW_BYTES) {
+      session.recentStderr = combined;
+      return;
+    }
+    session.recentStderr = Buffer.from(
+      combined.subarray(combined.length - RECENT_STDERR_WINDOW_BYTES),
+    );
+    session.recentStderrTruncated = true;
   }
 
   #receive(session: Radare2Session, chunk: Buffer): void {
@@ -1341,6 +1391,49 @@ const boundedText = (value: string): string =>
 
 const bufferedFrameText = (session: Radare2Session): string =>
   boundedFrameBytes(session).toString("utf8");
+
+/**
+ * Refuse to spawn when the configured name never became a path. Windows would
+ * otherwise search the working directory for a bare name.
+ */
+const radare2LookupFailure = (
+  operation: string,
+  command: string,
+  failure: ProviderExecutableLookupFailure,
+): AnalysisError =>
+  new AnalysisCapabilityUnavailableError(
+    "radare2",
+    operation,
+    failure.kind === "not_found"
+      ? "Configured command was not found on PATH"
+      : `Configured command could not be searched on PATH (invalid PATHEXT entry ${JSON.stringify(failure.extension)})`,
+    {
+      userMessage:
+        failure.kind === "not_found"
+          ? `Could not find the selected radare2 command ${JSON.stringify(command)} on PATH; REA did not search the current directory.`
+          : `Could not search PATH for the selected radare2 command ${JSON.stringify(command)}: PATHEXT entry ${JSON.stringify(failure.extension)} is not a filename extension.`,
+      remediationAction: RADARE2_COMMAND_REPAIR.remediationAction,
+      diagnostics: {
+        boundary: "provider-lookup",
+        command,
+        lookup_failure: failure.kind,
+        ...(failure.kind === "invalid_extension"
+          ? { pathext_entry: failure.extension }
+          : {}),
+      },
+    },
+  );
+
+/** The most recent stderr, marked when the reported window is only its tail. */
+const recentStderrText = (session: Radare2Session): string => {
+  const excerpt = utf8TailExcerpt(
+    session.recentStderr.toString("utf8"),
+    MAX_RECENT_STDERR_BYTES,
+  );
+  return excerpt.truncated || session.recentStderrTruncated
+    ? `…${excerpt.text}`
+    : excerpt.text;
+};
 
 const boundedFrameBytes = (session: Radare2Session): Buffer => {
   const bytes = Buffer.concat(session.frameChunks, session.bufferedFrameBytes);

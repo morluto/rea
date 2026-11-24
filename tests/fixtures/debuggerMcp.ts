@@ -5,6 +5,7 @@ import type { ExternalMutationAdmission } from "../../src/server/externalMutatio
 import type {
   CutterToolOptions,
   GdbToolOptions,
+  Radare2SessionToolOptions,
   RizinDebugToolOptions,
 } from "../../src/server/debuggerToolBindings.js";
 import {
@@ -55,6 +56,15 @@ export const rizinDebugMcpServer = (
     { rizinDebug: { manager, session } },
     { recordEvidence },
   );
+
+/** An MCP server binding only the Radare2 session tools over `manager`. */
+export const radare2McpServer = (
+  name: string,
+  manager: Radare2SessionToolOptions["manager"],
+  session?: ExternalMutationAdmission,
+  ledger: DebuggerMcpLedger = {},
+): EvidenceMcpServer =>
+  debuggerMcpServer(name, { radare2: { manager, session } }, ledger);
 
 /** An MCP server binding only the GDB session tools over `manager`. */
 export const gdbMcpServer = (

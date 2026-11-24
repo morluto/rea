@@ -163,7 +163,10 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
     cases: ["tests/boundary/mcp/reverseEngineeringEnvironmentMcp.test.ts"],
   },
   radare2Sessions: {
-    cases: ["tests/boundary/mcp/radare2StartCleanupBinding.test.ts"],
+    cases: [
+      "tests/boundary/mcp/radare2SessionMcp.test.ts",
+      "tests/boundary/mcp/radare2StartCleanupBinding.test.ts",
+    ],
   },
   rizinDebugSessions: {
     cases: ["tests/boundary/mcp/rizinDebuggerCancellationMcp.test.ts"],

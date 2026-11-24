@@ -45,12 +45,12 @@ describe.skipIf(version === null)(
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.provider.id).toBe("radare2");
-      expect(result.value.raw_result).toMatchObject({
+      expect(result.value.normalized_result).toMatchObject({
         exit_code: 0,
         completion_status: "complete",
       });
       expect(
-        String((result.value.raw_result as { stdout?: string }).stdout),
+        String((result.value.normalized_result as { stdout?: string }).stdout),
       ).toContain('"core"');
     });
 
