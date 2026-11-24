@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **doctor:** audit-wide doctor reports omit scope_checks; read checks. Passing providerInspections checks report classification "healthy".
 * **release-exposure:** release-exposure checks no longer use the not_applicable status, and summary.by_status has no not_applicable count. A check that cannot apply is absent from checks and listed in coverage.inapplicable_checks.
 * **gpu:** amd_target_metadata gains required os_abi and abi fields, GPU objects gain a nullable amd_pal_metadata field, and PAL-ABI objects report complete, partial or unsupported instead of malformed.
 * **errors:** when a managed reader stops on `unsupported-signature`, `metadata.status` is `partial` (was `malformed`) in managed artifact, member and native-boundary inspection, and the artifact `classification.status` is `managed` (was `malformed`). The field names and enum members are unchanged.
@@ -157,6 +158,7 @@
 * **desktop:** skip only ASCII whitespace before a desktop entry key ([#13126](https://github.com/morluto/rea/issues/13126)) ([a44e705](https://github.com/morluto/rea/commit/a44e705ad820d24e95577b4f61a3dc633ca4fcb8))
 * **devicetree:** validate retained report ranges and coverage ([#14066](https://github.com/morluto/rea/issues/14066)) ([a5f735c](https://github.com/morluto/rea/commit/a5f735c67b2226ec66913add6b5424a884ad5c11))
 * **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
+* **doctor:** emit each check once and classify passing checks healthy ([#14251](https://github.com/morluto/rea/issues/14251)) ([f986b25](https://github.com/morluto/rea/commit/f986b25df9e8668491096245ce8b3e5acb3325ca))
 * **doctor:** report startup timeouts independently of launcher discovery ([#13420](https://github.com/morluto/rea/issues/13420)) ([255a585](https://github.com/morluto/rea/commit/255a585c0a06975d0855f169f5e80663b642658d))
 * **domain:** make partial count switches exhaustive for typed lint ([#14048](https://github.com/morluto/rea/issues/14048)) ([4298507](https://github.com/morluto/rea/commit/42985076ac43814d3cf60a8b97687240980304d0))
 * **dwarf:** reject PE long section names when PointerToSymbolTable is zero ([#13889](https://github.com/morluto/rea/issues/13889)) ([a46bc22](https://github.com/morluto/rea/commit/a46bc22117928c04e2aefee04d629597b3393378))
