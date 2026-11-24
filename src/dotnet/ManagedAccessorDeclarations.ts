@@ -25,6 +25,10 @@ import {
 
 type Accessors = NonNullable<ManagedMemberInspection["accessors"]>;
 type Declaration = Accessors["declarations"][number];
+type AccessorMembers = Pick<
+  ManagedMemberInspection,
+  "methods" | "unresolved_definitions"
+>;
 const ROLES = [
   [1, "setter"],
   [2, "getter"],
@@ -37,7 +41,7 @@ const ROLES = [
 const readDeclarations = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  report: ManagedMemberInspection,
+  report: AccessorMembers,
 ): Accessors => {
   const budget = managedDecodeBudget(layout);
   const declarations: Declaration[] = [];
@@ -189,12 +193,12 @@ const readDeclarations = (
   }
 };
 
-/** Add an independently bounded facet after original members and literals were admitted. */
-export const withManagedAccessorDeclarations = (
+/** Read an independently bounded facet after original members and literals were admitted. */
+export const readManagedAccessorDeclarations = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  report: ManagedMemberInspection,
-): ManagedMemberInspection => {
+  report: AccessorMembers,
+): Accessors | null => {
   const budget = managedDecodeBudget(layout);
   let recovery: Accessors;
   try {
@@ -216,24 +220,18 @@ export const withManagedAccessorDeclarations = (
     );
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedRepresentationFailure)) throw cause;
-    return { ...report, accessors: null };
+    return null;
   }
   try {
-    return {
-      ...report,
-      accessors: admitManagedProjection(
-        readDeclarations(bytes, layout, report),
-        budget,
-      ),
-    };
+    return admitManagedProjection(
+      readDeclarations(bytes, layout, report),
+      budget,
+    );
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedRepresentationFailure)) throw cause;
     return {
-      ...report,
-      accessors: {
-        ...recovery,
-        issues: [{ ...recovery.issues[0]!, offset: cause.issue.offset }],
-      },
+      ...recovery,
+      issues: [{ ...recovery.issues[0]!, offset: cause.issue.offset }],
     };
   }
 };

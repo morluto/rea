@@ -42,7 +42,7 @@ import { managedSignatureTypeNames } from "../domain/managed/managedSignatureTyp
 import { typeNameLookup } from "./ManagedTypeNames.js";
 import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
-import { withManagedAccessorDeclarations } from "./ManagedAccessorDeclarations.js";
+import { readManagedAccessorDeclarations } from "./ManagedAccessorDeclarations.js";
 import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import {
@@ -455,7 +455,7 @@ export const inspectManagedMembersBytes = (
     const coverageIssues = uniqueManagedParseIssues(issues);
     // Admit the member projection before reading #US literals so an overflow
     // in #US preserves the already-decoded members without re-decoding them.
-    const baseInspection = admitManagedProjection<ManagedMemberInspection>(
+    const baseInspection = admitManagedProjection(
       {
         ...envelope,
         metadata: {
@@ -501,11 +501,21 @@ export const inspectManagedMembersBytes = (
       },
       budget,
     );
-    const finish = (value: ManagedMemberInspection): ManagedMemberInspection =>
-      managedMemberInspectionSchema.parse(
-        withManagedAccessorDeclarations(bytes, layout, value),
-      );
-    if (!readUserStrings) return finish(baseInspection);
+    const finish = (
+      userStrings: ManagedMemberInspection["user_strings"] = null,
+      limitations = baseInspection.limitations,
+    ): ManagedMemberInspection =>
+      managedMemberInspectionSchema.parse({
+        ...baseInspection,
+        user_strings: userStrings,
+        limitations,
+        accessors: readManagedAccessorDeclarations(
+          bytes,
+          layout,
+          baseInspection,
+        ),
+      });
+    if (!readUserStrings) return finish();
     let userStrings: ManagedMemberInspection["user_strings"];
     try {
       // #US literals sit beside the member inventory and carry their own
@@ -526,24 +536,20 @@ export const inspectManagedMembersBytes = (
             code === cause.issue.code && scope === cause.issue.scope,
         )
       )
-        return finish(baseInspection);
-      return finish({
-        ...baseInspection,
-        user_strings: {
+        return finish();
+      return finish(
+        {
           state: "partial",
           literals: [],
           issues: [{ ...cause.issue, scope: "metadata.#US" }],
         },
-        limitations: [
+        [
           ...baseInspection.limitations,
           "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
         ],
-      });
+      );
     }
-    return finish({
-      ...baseInspection,
-      user_strings: userStrings,
-    });
+    return finish(userStrings);
   } catch (cause: unknown) {
     if (cause instanceof ManagedReaderFailure) {
       if (

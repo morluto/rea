@@ -248,6 +248,9 @@ it("reads a shared unterminated association name once without dropping declarati
     ),
   ).toBe(true);
   expect(result.accessors?.issues).toEqual([
-    expect.objectContaining({ code: "invalid-string", scope: "metadata.#Strings" }),
+    expect.objectContaining({
+      code: "invalid-string",
+      scope: "metadata.#Strings",
+    }),
   ]);
 });
