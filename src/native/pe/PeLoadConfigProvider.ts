@@ -1,7 +1,10 @@
+import {
+  maxFileBytesReadBudget,
+  PE_FILE_CEILING_BYTES,
+} from "../../domain/artifactReadBudget.js";
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
   projectArtifactCloseFailure,
-  imageFileSizeRemediation,
   withStableArtifactHandle,
   assertArtifactReadActive,
   ArtifactResourceScope,
@@ -55,8 +58,12 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
       return await this.#resources.run(async () =>
         withStableArtifactHandle(
           input.path,
-          input.max_file_bytes,
+          PE_FILE_CEILING_BYTES,
           {
+            readBudget: maxFileBytesReadBudget(
+              input.max_file_bytes,
+              MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
+            ),
             retainBytes: (size) => Math.min(size, PE_HEADER_PREFIX_BYTES),
             signal: options?.signal,
             resourceScope: this.#resources,
@@ -117,11 +124,10 @@ const peLoadConfigFailure = (
     {
       operation: OPERATION,
       providerId: PE_LOAD_CONFIG_PROVIDER.id,
-      fileSizeRemediation: () =>
-        imageFileSizeRemediation(
-          input.max_file_bytes,
-          MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
-        ),
+      fileCeiling: {
+        name: "The PE whole-file ceiling (32-bit file offsets)",
+        bytes: PE_FILE_CEILING_BYTES,
+      },
       limits: PE_LOAD_CONFIG_LIMITS,
       limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
     },

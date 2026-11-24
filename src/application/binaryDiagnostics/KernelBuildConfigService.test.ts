@@ -18,25 +18,19 @@ import {
   nonConfigGzipFixture,
   truncatedKernelConfigFixture,
 } from "../../native/elf/KernelBuildConfig.fixture.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { parseKernelBuildConfigFromHandle } from "../../native/elf/KernelBuildConfig.js";
+import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const identity = KERNEL_BUILD_CONFIG_PROVIDER;
 const path = "/artifacts/vmlinux";
-
-const bufferSource = (bytes: Buffer): NativeByteSource => ({
-  size: bytes.length,
-  prefix: bytes,
-  readRange: (offset, length) =>
-    Promise.resolve(bytes.subarray(offset, offset + length)),
-});
 
 const reportOf = (
   bytes: Buffer,
   extra: object = {},
 ): Promise<KernelBuildConfig> =>
   parseKernelBuildConfigFromHandle(
-    bufferSource(bytes),
+    bufferByteSource(bytes),
     { path, sha256: "a".repeat(64), bytes: bytes.length },
     inspectKernelBuildConfigInputSchema.parse({ path, ...extra }),
   );
@@ -176,12 +170,31 @@ it("rejects provider reports with inconsistent bounds, framing, or coverage", as
       ...truncated,
       config: { ...truncated.config, reason: "config_text_invalid" },
     },
+    "empty limitations": {
+      ...valid,
+      limitations: [],
+    },
+    "non-untrusted banner trust": {
+      ...valid,
+      banner: {
+        ...valid.banner,
+        trust: "trusted" as KernelBuildConfig["banner"]["trust"],
+      },
+    },
   } satisfies Record<string, KernelBuildConfig>;
   for (const [defect, report] of Object.entries(invalidReports))
     expect(await serviceFor(report).inspect({ path }), defect).toMatchObject({
       ok: false,
       error: expect.any(AnalysisOutputError),
     });
+
+  // Untrustedness is validated via structured trust fields rather than prose scanning.
+  expect(
+    await serviceFor({
+      ...valid,
+      limitations: ["This workflow does not execute the image."],
+    }).inspect({ path }),
+  ).toMatchObject({ ok: true });
 });
 
 it("rejects a report whose page disagrees with the caller page", async () => {

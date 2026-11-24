@@ -29,24 +29,14 @@ import {
   trailingBytesKernelConfigFixture,
   truncatedKernelConfigFixture,
 } from "./KernelBuildConfig.fixture.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import {
   KernelBuildConfigBudgetFailure,
   parseKernelBuildConfigFromHandle,
 } from "./KernelBuildConfig.js";
+import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const artifactPath = "/artifacts/vmlinux";
-
-const bufferSource = (bytes: Buffer): NativeByteSource => ({
-  size: bytes.length,
-  prefix: bytes,
-  readRange: (offset, length) =>
-    Promise.resolve(
-      offset < 0 || length <= 0 || offset >= bytes.length
-        ? Buffer.alloc(0)
-        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
-    ),
-});
 
 const parse = async (
   bytes: Buffer,
@@ -54,7 +44,7 @@ const parse = async (
 ) =>
   kernelBuildConfigSchema.parse(
     await parseKernelBuildConfigFromHandle(
-      bufferSource(bytes),
+      bufferByteSource(bytes),
       { path: artifactPath, sha256: "ab".repeat(32), bytes: bytes.length },
       inspectKernelBuildConfigInputSchema.parse({
         path: artifactPath,
@@ -525,7 +515,8 @@ it("rejects a short positional read of an admitted banner range", async () => {
       input,
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "integrity",
+    integrityCheck: "read-coverage",
     message: "Kernel image ended before the admitted file range.",
   });
 });
@@ -738,7 +729,7 @@ it("yields to the event loop while decoding and validating one long value", asyn
   } as unknown as AbortSignal;
   try {
     const report = await parseKernelBuildConfigFromHandle(
-      bufferSource(bytes),
+      bufferByteSource(bytes),
       artifact,
       input,
       signal,
@@ -809,7 +800,7 @@ it("yields to the event loop while marker searches find nothing", async () => {
   } as unknown as AbortSignal;
   try {
     const report = await parseKernelBuildConfigFromHandle(
-      bufferSource(bytes),
+      bufferByteSource(bytes),
       artifact,
       input,
       signal,

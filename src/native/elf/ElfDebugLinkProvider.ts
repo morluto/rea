@@ -23,6 +23,7 @@ import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js
 import {
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_READ_BUDGETS,
   MAX_ELF_DEBUG_CANDIDATE_BYTES,
   MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES,
   MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES,
@@ -46,6 +47,7 @@ import {
 } from "./ElfDebugLink.js";
 import { ELF_NOTE_TEXT_ALLOWANCE } from "./ElfNoteParser.js";
 import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 
 const OPERATION = "inspect_elf_debug_link";
 const HEADER_PREFIX_BYTES = 4096;
@@ -204,6 +206,7 @@ const incompleteCandidateObservation = (
   report: ElfDebugLink,
 ): ElfDebugLink => ({
   ...report,
+  limitation_codes: [...report.limitation_codes, "candidate_read_incomplete"],
   limitations: [
     ...report.limitations,
     ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
@@ -224,6 +227,10 @@ const unverifiedCandidateObservation = (
     debug_info: "unknown",
     symtab: "unknown",
   },
+  limitation_codes: [
+    ...report.limitation_codes,
+    "candidate_comparison_incomplete",
+  ],
   limitations: [
     ...report.limitations,
     ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
@@ -353,6 +360,11 @@ const elfDebugLinkFailure = (
         if (isParseLimit(failure, "elf") && sectionNameBudget !== undefined)
           return parseLimitConstraint(OPERATION, "memory", failure, {
             retryable: false,
+            limit: elfReadBudgetLimit(
+              ELF_DEBUG_LINK_READ_BUDGETS,
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
             remediationAction: sectionNameBudgetRemediation(
               sectionNameBudget.required,
               field,
@@ -378,6 +390,11 @@ const elfDebugLinkFailure = (
             entryBudget
               ? {
                   retryable: false,
+                  limit: elfReadBudgetLimit(
+                    ELF_DEBUG_LINK_READ_BUDGETS,
+                    "max_entries",
+                    input.max_entries,
+                  ),
                   remediationAction: inputBudgetRemediation(
                     "capacity",
                     input,
@@ -419,6 +436,11 @@ const elfDebugLinkFailure = (
               )
             : {
                 retryable: false,
+                limit: elfReadBudgetLimit(
+                  ELF_DEBUG_LINK_READ_BUDGETS,
+                  "max_file_bytes",
+                  input.max_file_bytes,
+                ),
                 remediationAction: inputBudgetRemediation(
                   "file-size",
                   input,

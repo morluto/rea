@@ -4,6 +4,11 @@ import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
 import { coverageStatusSchema } from "../coverage.js";
+import {
+  DEFAULT_ELF_READ_FILE_BYTES,
+  MINIMUM_ELF_READ_FILE_BYTES,
+  type ElfReadBudgets,
+} from "./elfReadBudgets.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const crc32Hex = z.string().regex(/^[0-9a-f]{8}$/u);
@@ -15,6 +20,20 @@ export const MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES = 536870912;
 export const MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES = 256;
 /** Default note entry budget; admits distribution glibc and its SystemTap probe notes. */
 export const DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES = 128;
+
+/** The per-call budgets `inspect_elf_debug_link` accepts, shared by its schema and refusals. */
+export const ELF_DEBUG_LINK_READ_BUDGETS: ElfReadBudgets = {
+  max_file_bytes: {
+    minimum: MINIMUM_ELF_READ_FILE_BYTES,
+    maximum: MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES,
+    default_value: DEFAULT_ELF_READ_FILE_BYTES,
+  },
+  max_entries: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES,
+    default_value: DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES,
+  },
+};
 /** Retained debuglink and debugaltlink file-name length. */
 export const MAX_ELF_DEBUG_LINK_NAME_BYTES = 4096;
 /** Retained build-id length for debugaltlink and GNU notes. */
@@ -76,6 +95,27 @@ export const MAX_ELF_DEBUG_CANDIDATE_BYTES = 0xffffffff;
 /** Distinct GNU build-ids were observed and none is selected. */
 export const ELF_DEBUG_LINK_MULTIPLE_BUILD_IDS_LIMITATION =
   "Multiple distinct GNU build-ids were observed. None is selected as the image build-id.";
+
+/** Typed limitation discriminators emitted by ELF debug-link inspection. */
+export const ELF_DEBUG_LINK_LIMITATION_CODES = [
+  "standing_caveats",
+  "name_not_single_segment",
+  "multiple_build_ids",
+  "candidate_prefix_only",
+  "candidate_budget_exceeded",
+  "candidate_unreadable",
+  "candidate_read_incomplete",
+  "candidate_comparison_incomplete",
+  "unavailable_check",
+  "cannot_verify",
+] as const;
+
+export const elfDebugLinkLimitationCodeSchema = z.enum(
+  ELF_DEBUG_LINK_LIMITATION_CODES,
+);
+export type ElfDebugLinkLimitationCode = z.infer<
+  typeof elfDebugLinkLimitationCodeSchema
+>;
 
 /** The debuglink name is not one path segment, so directory strings are omitted. */
 export const ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION =
@@ -182,16 +222,16 @@ export const inspectElfDebugLinkInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(64)
-    .max(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)
-    .default(67108864)
+    .min(ELF_DEBUG_LINK_READ_BUDGETS.max_file_bytes.minimum)
+    .max(ELF_DEBUG_LINK_READ_BUDGETS.max_file_bytes.maximum)
+    .default(ELF_DEBUG_LINK_READ_BUDGETS.max_file_bytes.default_value)
     .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
   max_entries: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES)
-    .default(DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES)
+    .min(ELF_DEBUG_LINK_READ_BUDGETS.max_entries.minimum)
+    .max(ELF_DEBUG_LINK_READ_BUDGETS.max_entries.maximum)
+    .default(ELF_DEBUG_LINK_READ_BUDGETS.max_entries.default_value)
     .describe(
       "Maximum note entries to examine while reading GNU build-ids; an image exceeding the budget fails without partial success, and a candidate exceeding it leaves its build-id check unavailable",
     ),
@@ -300,6 +340,7 @@ export const elfDebugLinkSchema = z.strictObject({
     status: coverageStatusSchema,
     examined_sections: uint,
   }),
+  limitation_codes: z.array(elfDebugLinkLimitationCodeSchema),
   limitations: z.array(z.string()),
 });
 

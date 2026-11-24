@@ -52,7 +52,7 @@ cliTest(
       arguments: ["inspect-elf-notes", invalid, "--json", "--timings"],
     });
     expect(failed.exitCode).toBe(1);
-    expect(failed.json).toMatchObject({ code: "invalid_request" });
+    expect(failed.json).toMatchObject({ code: "unsupported_target" });
     expect(failed.stdout).toBe(defaultFailure.stdout);
     timingRecord(failed.stderr);
   },

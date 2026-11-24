@@ -6,9 +6,7 @@ export type ScenarioActionStop = "failed" | "cancelled";
  * earlier action stopped the sequence. Scenario producers record every
  * remaining action so results account for the whole declared sequence.
  */
-export const notExecutedActionError = (
-  stoppedBy: ScenarioActionStop,
-): string =>
+export const notExecutedActionError = (stoppedBy: ScenarioActionStop): string =>
   stoppedBy === "failed"
     ? "not executed after an earlier action failure"
     : "not executed after scenario request cancellation";

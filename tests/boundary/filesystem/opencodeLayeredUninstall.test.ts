@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -53,9 +54,11 @@ it.each([
       effectiveClientConfiguration(
         await Promise.all(
           [lower, upper].map(async (sourcePath) => ({
-            ...parseClientConfiguration(
-              await readFile(sourcePath, "utf8"),
-              "opencode",
+            ...expectResultValue(
+              parseClientConfiguration(
+                await readFile(sourcePath, "utf8"),
+                "opencode",
+              ),
             ),
             sourcePath,
           })),

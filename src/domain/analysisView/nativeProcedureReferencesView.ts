@@ -17,7 +17,7 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
@@ -107,15 +107,8 @@ export const projectNativeProcedureReferencesView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "native-procedure-references")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Procedure-reference Evidence supports summary and native-procedure-references views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Procedure-reference Evidence supports summary and native-procedure-references views.",
     );
   assertOwnedView<
     | SummaryAnalysisView

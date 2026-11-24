@@ -6,11 +6,15 @@ import {
   desktopCandidateSchema,
   desktopComponentSchema,
   desktopProbeSchema,
+  desktopDeferredProbeSchema,
   desktopFamilySchema,
   desktopCoverageSchema,
   type DesktopApplication,
 } from "../desktopApplication.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   completeWithinViewCoverage,
@@ -139,6 +143,8 @@ export const desktopSummarySchema = z.strictObject({
       example: desktopProbeSchema,
     }),
   ),
+  /** Probes counted rather than listed: one bounded group per operation and reason. */
+  deferred_probes: z.array(desktopDeferredProbeSchema),
 });
 
 type DesktopCollection = z.infer<typeof desktopViewRequestSchema>["collection"];
@@ -156,15 +162,8 @@ export const projectDesktopApplicationView = (
     SummaryAnalysisView | z.output<typeof desktopViewRequestSchema>
   >(admitted, "summary", "desktop-application");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Desktop directory Evidence supports summary and desktop-application views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Desktop directory Evidence supports summary and desktop-application views.",
     );
   const parsed = readDesktopApplication(parent);
   if (!parsed.ok) return parsed;
@@ -276,6 +275,7 @@ export const projectDesktopApplicationView = (
         candidates: report.candidates.map(summarizeBasis),
         components: report.components.map(summarizeBasis),
         next_probe_groups: [...groups.values()],
+        deferred_probes: report.deferred_probes,
       },
       coverage: completeWithinViewCoverage(report.files.length),
     });

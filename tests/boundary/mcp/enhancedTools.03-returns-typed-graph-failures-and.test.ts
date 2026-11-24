@@ -5,6 +5,8 @@ import {
   type AnalysisOperationPort,
 } from "../../../src/ports/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import { err } from "../../../src/domain/result.js";
 
 import {
   closeEnhancedToolResources,
@@ -20,7 +22,18 @@ afterEach(closeEnhancedToolResources);
 describe("enhanced MCP tools", () => {
   it("returns stable unresolved-name results", async () => {
     const tools = new EnhancedTools({
-      execute: () => Promise.resolve(ok(inventory({}))),
+      execute: (operation) =>
+        Promise.resolve(
+          operation === "list_names"
+            ? ok(inventory({}))
+            : err(
+                new AnalysisInputError(
+                  operation,
+                  { conformsToInputContract: true },
+                  [{ path: ["procedure"], reason: "invalid_value" }],
+                ),
+              ),
+        ),
     });
 
     const unresolved = await tools.executeValidated({

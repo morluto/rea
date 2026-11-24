@@ -1,3 +1,4 @@
+import { isSuccessfulHttpStatus } from "../httpResponseStatus.js";
 import { isRecord } from "../../kernel/isRecord.js";
 import { escapeJsonPointerToken, jsonPointerTokens } from "../jsonPointer.js";
 import {
@@ -439,6 +440,10 @@ export const isQueryPost = (method: string, path: string): boolean =>
 /** Whether a request with this method and path may change state: a write method that is not a query POST. */
 export const changesState = (method: string, path: string): boolean =>
   WRITE_METHODS.has(method) && !isQueryPost(method, path);
+
+/** A 2xx record: the only status whose response shows what a request did. */
+export const succeeded = (record: Pick<StateRecordFacts, "status">): boolean =>
+  isSuccessfulHttpStatus(record.status);
 
 /** Whether a record may change state: a successful or unanswered request that `changesState` names. */
 export const isStateWrite = (

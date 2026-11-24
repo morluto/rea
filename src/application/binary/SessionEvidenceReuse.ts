@@ -23,9 +23,15 @@ export const bindSessionEvidenceExecution = (
   evidence: Evidence,
   callerInputPath: string | undefined,
 ): AnalysisExecution => {
+  // A sourced execution reuses its record only when that record links exactly
+  // the sources the execution carries, in order, so the reused Evidence keeps
+  // its authenticated provenance.
+  const sources = execution.sourceEvidence ?? [];
   if (
-    (execution.sourceEvidence !== undefined &&
-      execution.sourceEvidence.length > 0) ||
+    sources.length !== evidence.evidence_links.length ||
+    sources.some(
+      (source, index) => source.evidence_id !== evidence.evidence_links[index],
+    ) ||
     evidence.caller_input_path !== callerInputPath
   )
     return execution;

@@ -38,6 +38,7 @@ import {
   withDescriptorCloseFailure,
 } from "../../fixtures/descriptorCloseFailure.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 
 vi.mock(import("node:zlib"), { spy: true });
@@ -75,37 +76,19 @@ it("inflates section names once per artifact while preserving build-ID compariso
 });
 
 describe("ELF debug-link stable filesystem boundary", () => {
-  it("reports non-file and malformed ELF selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-files-");
     const path = join(root, "prog");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elfDebugLinkFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createElfDebugLinkService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [malformed, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_elf_debug_link",
-          issues: [
-            {
-              path: ["path"],
-              reason,
-              message: expect.any(String),
-            },
-          ],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_elf_debug_link", {
+        root,
+        alias,
+        path,
+      });
     } finally {
       await service.close();
     }
@@ -192,11 +175,32 @@ describe("ELF debug-link stable filesystem boundary", () => {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(projectAnalysisError(tooSmall.error).details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          minimum: 64,
+          maximum: 536870912,
+          default_value: 67108864,
+        },
+      });
       const tooMany = await service.inspect({ path, max_entries: 1 });
       if (tooMany.ok) throw new Error("Expected entry budget failure");
       if (!(tooMany.error instanceof AnalysisResourceConstraintError))
         throw new Error("Expected entry budget failure");
       expect(tooMany.error.remediationAction).toContain("smaller image");
+      expect(tooMany.error.limit).toEqual({
+        control_kind: "parameter",
+        parameter: "max_entries",
+        effective_value: 1,
+        unit: "count",
+        minimum: 1,
+        maximum: 256,
+        default_value: 128,
+        applies_at: "next_call",
+      });
+      expect((await service.inspect({ path, max_entries: 2 })).ok).toBe(true);
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

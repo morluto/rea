@@ -70,10 +70,10 @@ cliTest(
         expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       } else {
         const expected = {
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
             operation: "inspect_go_binary",
-            issues: [{ path: ["path"], reason: "invalid_format" }],
+            format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
           },
         };
         expect(result.exitCode).toBe(1);
@@ -158,7 +158,7 @@ cliTest(
         const code =
           item.outcome === "resource"
             ? "resource_constraint"
-            : "invalid_request";
+            : "unsupported_target";
         expect(result.exitCode).toBe(1);
         expect(result.json).toMatchObject({
           code,
@@ -172,7 +172,11 @@ cliTest(
                     maximum,
                   },
                 }
-              : { issues: [{ path: ["path"], reason: "invalid_format" }] }),
+              : {
+                  format_failure: expect.stringMatching(
+                    /^(?:malformed|truncated)$/u,
+                  ),
+                }),
           },
         });
         expect(parseMcpToolError(response).error).toMatchObject({
@@ -187,7 +191,11 @@ cliTest(
                     maximum,
                   },
                 }
-              : { issues: [{ path: ["path"], reason: "invalid_format" }] }),
+              : {
+                  format_failure: expect.stringMatching(
+                    /^(?:malformed|truncated)$/u,
+                  ),
+                }),
           },
         });
       }
@@ -355,10 +363,10 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-macho-alignment-");
     const { client, call } = await connectLocalToolsMcp();
     const expectedFailure = {
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_go_binary",
-        issues: [{ path: ["path"], reason: "invalid_format" }],
+        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
       },
     };
 

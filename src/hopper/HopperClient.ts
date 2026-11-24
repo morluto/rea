@@ -35,7 +35,7 @@ import {
 import {
   hopperAppleEventsAuthorizationRejection,
   hopperCancelledBySignal,
-  type HopperCancelledError,
+  HopperCancelledError,
   type HopperError,
   type HopperLauncherOutcome,
   HopperProcessError,
@@ -70,7 +70,11 @@ import {
 } from "../process/ProviderDeadline.js";
 import { redactExplicitOutput } from "../domain/explicitSensitiveValues.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
-import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import {
+  AbortedWait,
+  waitForAbortable,
+  waitForRetainedResult,
+} from "../process/AbortablePromise.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   type ProviderProcessDiagnostic,
@@ -501,9 +505,9 @@ export class HopperClient<
     attempt: HopperStartupAttempt,
     signal?: AbortSignal,
   ): Promise<HopperStartupResult> {
-    const waited = await waitForAbortable(attempt.promise, signal);
-    if (waited instanceof AbortedWait || (waited.ok && isAborted(signal)))
-      return err(hopperCancelledBySignal(signal));
+    const waited = await waitForRetainedResult(attempt.promise, signal);
+    if (waited instanceof AbortedWait)
+      return err(new HopperCancelledError(waited.carried));
     if (waited.ok || waited.error.cleanupIncomplete) return waited;
     return this.start(signal);
   }
@@ -543,10 +547,11 @@ export class HopperClient<
     };
     deadline.signal.addEventListener("abort", onStartupAbort, { once: true });
     try {
-      const result = await this.#startWithin(deadline);
-      return result.ok && deadline.signal.aborted
-        ? await this.#startupFailure(await this.#interruptionFailure(deadline))
-        : result;
+      return await deadline.finishStartup(
+        () => this.#startWithin(deadline),
+        async () =>
+          this.#startupFailure(await this.#interruptionFailure(deadline)),
+      );
     } finally {
       deadline.signal.removeEventListener("abort", onStartupAbort);
       if (this.#startupSignal === deadline.signal)

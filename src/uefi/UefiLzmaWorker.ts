@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { once } from "node:events";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
@@ -19,7 +19,6 @@ import {
   encodeLzmaFrameHeader,
   LZMA_FRAME_HEADER_BYTES,
   LzmaFrameReader,
-  lzmaRequestSchema,
   lzmaStreamRequestSchema,
   type UefiLzmaReply,
 } from "./UefiLzmaProtocol.js";
@@ -266,56 +265,7 @@ const runStdioWorker = async (): Promise<void> => {
   }
 };
 
-const runSingleFileWorker = async (requestPath: string): Promise<void> => {
-  const request = lzmaRequestSchema.parse(
-    JSON.parse(await readFile(requestPath, "utf8")),
-  );
-  let reply: UefiLzmaReply;
-  try {
-    const codec = await loadLzmaCodec();
-    const payload = await readFile(request.payload_path);
-    const outcome = decodeStreamPayload(
-      codec,
-      payload,
-      request.format,
-      request.max_output_bytes,
-    );
-    reply = outcome.reply;
-    if (reply.ok && outcome.decoded !== undefined) {
-      await writeFile(request.output_path, outcome.decoded, {
-        flag: "wx",
-        mode: 0o600,
-      });
-    }
-  } catch (cause: unknown) {
-    const failure = parseFailureFromCause(cause);
-    reply = {
-      ok: false,
-      reason:
-        failure === undefined
-          ? "decoder"
-          : failure.kind === "limit"
-            ? "output-limit"
-            : "format",
-      message: errorMessage(cause),
-    };
-  }
-  await writeFile(request.reply_path, serializeReply(reply).text, {
-    flag: "wx",
-    mode: 0o600,
-  });
-};
+if (process.argv[2] !== "--stdio")
+  throw new Error("Owned LZMA worker requires framed stdio.");
 
-const main = async (): Promise<void> => {
-  const arg = process.argv[2];
-  if (arg === "--stdio") {
-    await runStdioWorker();
-    return;
-  }
-  if (arg === undefined) {
-    throw new Error("Owned worker request path missing.");
-  }
-  await runSingleFileWorker(arg);
-};
-
-await main();
+await runStdioWorker();

@@ -226,7 +226,11 @@ it("preserves native relationship coverage through inline and retained MCP views
       limitations: ["Callees: fixture read limit"],
       diagnostics: ["Fixture relationship diagnostic"],
     },
-    { status: "partial", limitations: ["Historical read limit"] },
+    {
+      status: "partial",
+      limited_directions: ["callers", "callees"],
+      limitations: ["Historical read limit"],
+    },
     {
       status: "unknown",
       limited_directions: ["callees"],
