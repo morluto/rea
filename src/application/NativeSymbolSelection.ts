@@ -54,11 +54,6 @@ const selectorField = (operation: NativeSymbolOperation) =>
       : "procedure";
 
 /** A lookup the provider refused as a valid request it could not satisfy. */
-const isAmbiguousRefusal = (error: AnalysisError): boolean =>
-  !error.cleanupIncomplete &&
-  error instanceof AnalysisInputError &&
-  error.ambiguousSelector !== undefined;
-
 const isLookupMiss = (error: AnalysisError): boolean =>
   !error.cleanupIncomplete &&
   // A selector that matched several candidates was found, not missed.
@@ -237,50 +232,56 @@ const answersSymbolByAddress = async (
   );
 };
 
-/** Whether a failed call may be answered by resolving its name selector. */
-const symbolRetry = (
+/** A non-address name selector of an operation the shared owner resolves. */
+const nameSelector = (
   operation: AnalysisOperation,
   parameters: Readonly<Record<string, JsonValue>>,
-  error: AnalysisError,
-):
-  | {
-      operation: NativeSymbolOperation;
-      selector: string;
-      /** The provider matched several procedures for the name. */
-      ambiguous: boolean;
-    }
-  | undefined => {
-  const ambiguous = isAmbiguousRefusal(error);
-  if (!ambiguous && !isLookupMiss(error)) return undefined;
-  if (operation === "xrefs") {
-    const selector = parameters.address;
-    return !ambiguous &&
-      typeof selector === "string" &&
-      !ADDRESS_SELECTOR.test(selector)
-      ? { operation, selector, ambiguous }
-      : undefined;
-  }
-  // Outgoing references have no meaning for a symbol outside a procedure.
-  if (
-    operation !== "procedure_callers" &&
-    !(
-      operation === "procedure_references" &&
-      parameters.direction === "incoming"
-    )
-  )
-    return undefined;
-  const selector = parameters.procedure;
+): { operation: NativeSymbolOperation; selector: string } | undefined => {
+  const field =
+    operation === "xrefs"
+      ? "address"
+      : operation === "procedure_callers" ||
+          // Outgoing references have no meaning for a symbol outside a procedure.
+          (operation === "procedure_references" &&
+            parameters.direction === "incoming")
+        ? "procedure"
+        : undefined;
+  if (field === undefined) return undefined;
+  const selector = parameters[field];
   return typeof selector === "string" && !ADDRESS_SELECTOR.test(selector)
-    ? { operation, selector, ambiguous }
+    ? { operation: operation as NativeSymbolOperation, selector }
     : undefined;
 };
 
+const answeredByAddress = (
+  answered: Result<AnalysisExecution, AnalysisError>,
+  selector: string,
+  resolution: Extract<NativeSymbolResolution, { status: "resolved" }>,
+): Result<AnalysisExecution, AnalysisError> =>
+  !answered.ok || resolution.address === selector
+    ? answered
+    : ok({
+        ...answered.value,
+        limitations: [
+          `REA resolved ${JSON.stringify(selector)} to ${resolution.name === selector ? "" : `${resolution.name} at `}${resolution.address} (${resolution.match}) and the provider answered by that address.`,
+          ...answered.value.limitations,
+        ],
+      });
+
 /**
- * Run one native operation for CLI and MCP alike. When the provider refuses a
- * name selector for `xrefs`, `procedure_callers` or incoming
- * `procedure_references`, resolve it with {@link resolveNativeSymbol} and
- * ask the provider again by address. The provider's own refusal is kept when
- * resolution adds nothing, so its facts and recovery still reach the caller.
+ * Run one native operation for CLI and MCP alike, resolving a name selector
+ * with {@link resolveNativeSymbol} so it means the same symbol in every tool.
+ *
+ * - `procedure_callers` and incoming `procedure_references` resolve the name
+ *   first and ask the provider by its address when that address is outside
+ *   every procedure or a procedure's exact entry. A name the shared owner
+ *   cannot resolve, or one inside a procedure, goes to the provider's own
+ *   procedure lookup, which also accepts its alias and thunk spellings.
+ * - `xrefs` asks the provider first; a refused name is resolved and asked
+ *   again by address.
+ *
+ * The provider's own refusal is kept when resolution adds nothing, so its
+ * facts and recovery still reach the caller.
  */
 export const executeWithNativeSymbolSelection = async (
   analysis: AnalysisOperationPort,
@@ -291,74 +292,97 @@ export const executeWithNativeSymbolSelection = async (
   ) => Promise<Result<AnalysisExecution, AnalysisError>>,
   signal?: AbortSignal,
 ): Promise<Result<AnalysisExecution, AnalysisError>> => {
-  const first = await execute(parameters);
-  if (first.ok) return first;
-  const retry = symbolRetry(operation, parameters, first.error);
-  if (retry === undefined) return first;
+  const named = nameSelector(operation, parameters);
+  if (named === undefined) return execute(parameters);
+  return named.operation === "xrefs"
+    ? executeXrefs(analysis, parameters, execute, named.selector, signal)
+    : executeIncoming(analysis, parameters, execute, named, signal);
+};
+
+const executeIncoming = async (
+  analysis: AnalysisOperationPort,
+  parameters: Readonly<Record<string, JsonValue>>,
+  execute: (
+    parameters: Readonly<Record<string, JsonValue>>,
+  ) => Promise<Result<AnalysisExecution, AnalysisError>>,
+  {
+    operation,
+    selector,
+  }: { operation: NativeSymbolOperation; selector: string },
+  signal: AbortSignal | undefined,
+): Promise<Result<AnalysisExecution, AnalysisError>> => {
   const resolved = await resolveNativeSymbol(
     analysis,
-    retry.selector,
-    retry.operation,
+    selector,
+    operation,
     signal,
-    // The provider's procedure lookup already refused the procedure selector.
-    { procedureLookup: retry.operation === "xrefs" },
+    // The provider's own procedure lookup runs below when the owner misses.
+    { procedureLookup: false },
   );
-  // Without a name inventory, the provider's own refusal remains the answer.
+  // Without a name inventory the provider's procedure lookup is the owner.
   if (!resolved.ok)
-    return permitsCapabilityFallback(resolved.error) ||
-      (retry.ambiguous && resolved.error instanceof AnalysisInputError)
-      ? first
+    return permitsCapabilityFallback(resolved.error)
+      ? execute(parameters)
       : resolved;
   const resolution = resolved.value;
-  // A provider that matched several procedures, such as Ghidra matching the
-  // leaf names of `work` and `ns::work`, is answered only by a unique exact
-  // name; otherwise its ambiguity and candidates stand.
-  if (
-    retry.ambiguous &&
-    (resolution.status !== "resolved" || resolution.match !== "exact_name")
-  )
-    return first;
-  // A provider that refused only the address format never looked the name up,
-  // so its refusal says nothing about the name; any other refusal stands.
-  if (resolution.status === "unresolved")
-    return resolution.candidates.length > 0 ||
-      refusesAddressFormatOnly(first.error)
-      ? err(
-          unresolvedNameError(
-            retry.operation,
-            retry.selector,
-            resolution.candidates,
-          ),
-        )
-      : first;
-  if (resolution.address === retry.selector) return first;
-  // A name inside a procedure, such as an interior label, was refused by the
-  // provider's procedure lookup on purpose and stays refused.
-  if (retry.operation !== "xrefs") {
+  if (resolution.status === "resolved") {
+    // An address inside a procedure, such as an interior label, would select
+    // its containing procedure; the provider decides that name itself.
     const answers = await answersSymbolByAddress(
       analysis,
       resolution.address,
       signal,
     );
     if (!answers.ok) return answers;
-    if (!answers.value) return first;
+    if (answers.value)
+      return answeredByAddress(
+        await execute({ ...parameters, procedure: resolution.address }),
+        selector,
+        resolution,
+      );
+    return execute(parameters);
   }
-  const field = retry.operation === "xrefs" ? "address" : "procedure";
-  const answered = await execute({
-    ...parameters,
-    [field]: resolution.address,
-  });
-  // A retry that fails for another reason, such as a timeout or unreadable
-  // output, reports that failure; a second lookup miss keeps the first.
-  if (!answered.ok)
-    return retry.operation !== "xrefs" && isLookupMiss(answered.error)
-      ? first
-      : answered;
-  return ok({
-    ...answered.value,
-    limitations: [
-      `REA resolved ${JSON.stringify(retry.selector)} to ${resolution.name === retry.selector ? "" : `${resolution.name} at `}${resolution.address} (${resolution.match}) and the provider answered by that address.`,
-      ...answered.value.limitations,
-    ],
-  });
+  const provided = await execute(parameters);
+  return !provided.ok &&
+    resolution.candidates.length > 0 &&
+    isLookupMiss(provided.error)
+    ? err(unresolvedNameError(operation, selector, resolution.candidates))
+    : provided;
+};
+
+const executeXrefs = async (
+  analysis: AnalysisOperationPort,
+  parameters: Readonly<Record<string, JsonValue>>,
+  execute: (
+    parameters: Readonly<Record<string, JsonValue>>,
+  ) => Promise<Result<AnalysisExecution, AnalysisError>>,
+  selector: string,
+  signal: AbortSignal | undefined,
+): Promise<Result<AnalysisExecution, AnalysisError>> => {
+  const first = await execute(parameters);
+  if (first.ok || !isLookupMiss(first.error)) return first;
+  const resolved = await resolveNativeSymbol(
+    analysis,
+    selector,
+    "xrefs",
+    signal,
+    { procedureLookup: true },
+  );
+  // Without a name inventory, the provider's own refusal remains the answer.
+  if (!resolved.ok)
+    return permitsCapabilityFallback(resolved.error) ? first : resolved;
+  const resolution = resolved.value;
+  // A provider that refused only the address format never looked the name up,
+  // so its refusal says nothing about the name; any other refusal stands.
+  if (resolution.status === "unresolved")
+    return resolution.candidates.length > 0 ||
+      refusesAddressFormatOnly(first.error)
+      ? err(unresolvedNameError("xrefs", selector, resolution.candidates))
+      : first;
+  if (resolution.address === selector) return first;
+  return answeredByAddress(
+    await execute({ ...parameters, address: resolution.address }),
+    selector,
+    resolution,
+  );
 };

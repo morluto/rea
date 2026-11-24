@@ -213,7 +213,7 @@ describe("one name selector resolves the same way for every native operation", (
     expect(
       await call(analysis, "procedure_callers", { procedure: "VirtualAlloc" }),
     ).toEqual(CALLERS);
-    // A non-procedure name is resolved once and asked again by address.
+    // The shared owner resolves the name once; the provider answers by address.
     calls.length = 0;
     expect(
       await call(analysis, "procedure_callers", {
@@ -224,7 +224,7 @@ describe("one name selector resolves the same way for every native operation", (
       calls
         .filter(({ operation }) => operation === "procedure_callers")
         .map(({ parameters }) => parameters.procedure),
-    ).toEqual(["PTR_VirtualAlloc_18004a168", "0x18004a168"]);
+    ).toEqual(["0x18004a168"]);
   });
 
   it("resolves the Hopper imported name and asks incoming operations by address", async () => {
@@ -245,7 +245,7 @@ describe("one name selector resolves the same way for every native operation", (
       calls
         .filter(({ operation }) => operation === "procedure_callers")
         .map(({ parameters }) => parameters.procedure),
-    ).toEqual(["VirtualAlloc", "0x18007d2fc"]);
+    ).toEqual(["0x18007d2fc"]);
   });
 
   it("leaves a library-qualified name unresolved where the provider reports no library, naming the observed spelling", async () => {
@@ -329,7 +329,7 @@ describe("one name selector resolves the same way for every native operation", (
       calls
         .filter(({ operation }) => operation === "procedure_callers")
         .map(({ parameters }) => parameters.procedure),
-    ).toEqual(["kernel32.dll::VirtualAlloc", "EXTERNAL:0x4d"]);
+    ).toEqual(["EXTERNAL:0x4d"]);
   });
 
   it("reports a containment lookup failure instead of the earlier name refusal", async () => {

@@ -190,7 +190,63 @@ it("answers a leaf name Ghidra finds ambiguous by its unique exact name", async 
       arguments: { procedure: "work" },
     });
     expect(response.isError).not.toBe(true);
-    expect(asked).toEqual(["work", "0x401000"]);
+    // The exact name wins before Ghidra's leaf lookup can match ns::work.
+    expect(asked).toEqual(["0x401000"]);
+  } finally {
+    await harness.close();
+  }
+});
+
+it("answers procedure_callers for the exact data label, not a function sharing its leaf name", async () => {
+  const symbol = (type: string) => ({
+    primary: true,
+    dynamic: false,
+    external: false,
+    type,
+    source: "analysis" as const,
+  });
+  const harness = await connectGhidraMcp(
+    "exact-label-over-leaf-function",
+    (operation, input) => {
+      if (operation === "list_names")
+        return Promise.resolve(
+          ok([
+            { address: "0x403000", value: "work", symbol: symbol("label") },
+            {
+              address: "0x402000",
+              value: "ns::work",
+              symbol: symbol("function"),
+            },
+          ]),
+        );
+      if (operation === "resolve_containing_procedure")
+        return Promise.resolve(
+          ok({
+            query_address: "0x403000",
+            found: false,
+            procedure: null,
+            reason: "not_in_procedure",
+          }),
+        );
+      if (operation === "procedure_callers")
+        // Ghidra's leaf lookup would answer "work" with ns::work's callers.
+        return Promise.resolve(
+          ok({
+            value: input.procedure === "0x403000" ? ["0x401100"] : ["0x409900"],
+            limitations: [],
+          }),
+        );
+      return Promise.resolve(ok(ghidraFixtureResult(operation, input)));
+    },
+  );
+  try {
+    const response = await harness.mcp.callTool({
+      name: "procedure_callers",
+      arguments: { procedure: "work" },
+    });
+    expect(response.structuredContent).toMatchObject({
+      normalized_result: ["0x401100"],
+    });
   } finally {
     await harness.close();
   }
