@@ -13,11 +13,12 @@ import {
   type FatSliceHeaderEvidence,
 } from "../domain/apple/machoContainer.js";
 import {
-  MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
-  type MachoLoadCommandTableHeader,
+  validateMachoLoadCommandFraming,
 } from "../domain/apple/machoLoadCommands.js";
 import {
+  MAX_PE_OPTIONAL_HEADER_BYTES,
+  PE_RECORD_HEADER_BYTES,
   parseCodeViewData,
   parseExecutableHeader,
   parseMzExecutableMetadata,
@@ -34,7 +35,6 @@ import {
 } from "../domain/binaryTargetTypes.js";
 import {
   hasDosMzMagic,
-  mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
   withMzWindowsHeaderSignature,
   type DosMzHeader,
@@ -47,6 +47,7 @@ import {
 } from "../domain/elfDeclaredRanges.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
+import { peOptionalHeaderReadBytes } from "../domain/peOptionalHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readRiscvIsaDeclaration } from "../domain/riscvIsaDeclaration.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
@@ -118,15 +119,6 @@ export const readExecutableMetadata = async (
     }
     const { windowsHeader } = evidence;
     if (windowsHeader.state === "declared") {
-      const limitation = mzWindowsHeaderLayoutLimitation(windowsHeader);
-      if (limitation !== undefined)
-        return err({
-          reason: limitation,
-          diagnostics: {
-            unsupported_layout: true,
-            mz_windows_header: { ...windowsHeader },
-          },
-        });
       return readPeMetadata(handle, windowsHeader.offset, {
         mzPrefix: bytes,
         fileSize,
@@ -134,29 +126,30 @@ export const readExecutableMetadata = async (
         signal,
       });
     }
-    // MZ relocation records may extend past the initial probe; their format
-    // bounds are at most 65535 records inside a 65535-paragraph header.
-    const { relocationTableRead } = evidence;
-    if (relocationTableRead !== undefined) {
-      const observedBytes = await readHandleRange(
-        handle,
-        relocationTableRead.offset,
-        relocationTableRead.byteLength,
-        signal,
-      );
-      evidence = parseMzHeaderEvidence(
-        observedBytes,
-        fileSize,
-        signatureEvidence,
-      );
-      if (evidence.windowsHeader.state === "candidate")
-        return err(
-          unresolvedMzHeaderFailure(evidence.windowsHeader, evidence.dos),
+    if (windowsHeader.state === "candidate") {
+      // Extend the bounded prefix only for unresolved Windows-header candidates
+      // so diagnostics can report accurate DOS relocation structure.
+      const { relocationTableRead } = evidence;
+      if (relocationTableRead !== undefined) {
+        const observedBytes = await readHandleRange(
+          handle,
+          relocationTableRead.offset,
+          relocationTableRead.byteLength,
+          signal,
         );
-      return parseMzExecutableMetadata(observedBytes, evidence);
-    }
-    if (windowsHeader.state === "candidate")
+        evidence = parseMzHeaderEvidence(
+          observedBytes,
+          fileSize,
+          signatureEvidence,
+        );
+        if (evidence.windowsHeader.state === "candidate")
+          return err(
+            unresolvedMzHeaderFailure(evidence.windowsHeader, evidence.dos),
+          );
+        return parseMzExecutableMetadata(observedBytes, evidence);
+      }
       return err(unresolvedMzHeaderFailure(windowsHeader, evidence.dos));
+    }
     return parseMzExecutableMetadata(bytes, evidence);
   }
   if (bytes.length >= 4 && bytes.toString("hex", 0, 4) === "7f454c46")
@@ -196,6 +189,7 @@ export const readExecutableMetadata = async (
     const identity = classifyFatContainerIdentity(
       header,
       (offset) => sliceHeadersByOffset.get(offset)?.magic,
+      { ignoreAlignmentIssues: true },
     );
     const limitIssue = await readFatJvmIdentityLimitIssue(
       header,
@@ -216,10 +210,12 @@ export const readExecutableMetadata = async (
     parsed.value.format === "mach-o-universal" &&
     fatEvidence !== undefined
   ) {
-    for (const slice of fatEvidence.header.slices) {
-      const framed = await readMachoSliceCommandFrames(handle, slice, signal);
-      if (!framed.ok) return framed;
-    }
+    const framed = await readMachoSliceCommandFrames(
+      handle,
+      parsed.value.universalSlice,
+      signal,
+    );
+    if (!framed.ok) return framed;
   }
   return parsed;
 };
@@ -372,52 +368,16 @@ const readThinMachoMetadata = async (
     input.fileSize,
   );
   if (!parsed.ok) return parsed;
-  const framed = await readMachoCommandFrames(handle, table.value, {
+  const framed = await validateMachoLoadCommandFraming(table.value, {
     prefix,
     fileSize: input.fileSize,
-    signal: input.signal,
+    readWindow: (offset, length) =>
+      readHandleRange(handle, offset, length, input.signal),
   });
   return framed.ok ? parsed : framed;
 };
 
-/** Walk thin command headers through one probe window, skipping payload bytes. */
-const readMachoCommandFrames = async (
-  handle: FileHandle,
-  table: MachoLoadCommandTableHeader,
-  input: {
-    readonly prefix: Buffer;
-    readonly fileSize: number;
-    readonly fileOffset?: number | undefined;
-    readonly signal?: AbortSignal | undefined;
-  },
-): Promise<Result<null, string>> => {
-  const commands = new MachoLoadCommandCursor(table);
-  let window = input.prefix;
-  let windowOffset = 0;
-  while (commands.nextOffset !== null) {
-    const offset = table.headerSize + commands.nextOffset;
-    if (
-      offset + 8 <= input.fileSize &&
-      (offset < windowOffset || offset + 8 > windowOffset + window.length)
-    ) {
-      windowOffset = offset;
-      window = await readHandleRange(
-        handle,
-        (input.fileOffset ?? 0) + offset,
-        Math.min(4096, input.fileSize - offset),
-        input.signal,
-      );
-    }
-    const relative = offset - windowOffset;
-    const frame = commands.read(
-      relative >= 0 ? window.subarray(relative, relative + 8) : Buffer.alloc(0),
-    );
-    if (!frame.ok) return frame;
-  }
-  return commands.finish();
-};
-
-/** Validate declared FAT slices after the canonical table/identity admission succeeds. */
+/** Validate the selected FAT slice's load-command framing after container admission succeeds. */
 const readMachoSliceCommandFrames = async (
   handle: FileHandle,
   slice: UniversalMachOSlice,
@@ -433,11 +393,11 @@ const readMachoSliceCommandFrames = async (
   if (!table.ok) return table;
   if (table.value === null)
     return err("FAT slice does not identify a thin Mach-O image");
-  return readMachoCommandFrames(handle, table.value, {
+  return validateMachoLoadCommandFraming(table.value, {
     prefix: bytes,
     fileSize: slice.size,
-    fileOffset: slice.offset,
-    signal,
+    readWindow: (offset, length) =>
+      readHandleRange(handle, slice.offset + offset, length, signal),
   });
 };
 
@@ -462,8 +422,10 @@ const readFatSliceHeaderEvidence = async (
   }
   if (header.state !== "parsed") return undefined;
 
-  return readFatSliceHeaders(header, (offset, length) =>
-    readHandleRange(handle, offset, length, signal),
+  return readFatSliceHeaders(
+    header,
+    (offset, length) => readHandleRange(handle, offset, length, signal),
+    { includeMisaligned: true },
   );
 };
 
@@ -498,21 +460,26 @@ const readPeMetadata = async (
   const coff = readPeCoffHeader(fileHeader.subarray(4));
   if (!coff.ok) return err("invalid or truncated PE header");
   const optionalHeaderSize = coff.value.optionalHeaderSize;
-  if (optionalHeaderSize > 4096) return err("invalid PE optional header size");
   const numberOfSections = coff.value.sectionCount;
+  const optionalOffset = offset + PE_RECORD_HEADER_BYTES;
+  const optionalAvailable = Math.max(0, fileSize - optionalOffset);
+  const optionalReadLength = Math.min(
+    peOptionalHeaderReadBytes(optionalHeaderSize, optionalAvailable),
+    MAX_PE_OPTIONAL_HEADER_BYTES,
+  );
   const record = await readHandleRange(
     handle,
     offset,
-    24 + optionalHeaderSize,
+    PE_RECORD_HEADER_BYTES + optionalReadLength,
     signal,
   );
-  if (record.length !== 24 + optionalHeaderSize)
+  if (record.length < PE_RECORD_HEADER_BYTES)
     return err("invalid or truncated PE header");
   const codeView = await readPeCodeView(
     handle,
     offset,
     numberOfSections,
-    record.subarray(24),
+    record.subarray(PE_RECORD_HEADER_BYTES),
     optionalHeaderSize,
     signal,
   );
