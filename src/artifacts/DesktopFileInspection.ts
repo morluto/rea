@@ -262,7 +262,9 @@ export const inspectDesktopFile = async (
     } catch (cause: unknown) {
       if (
         !(cause instanceof ArtifactReaderFailure) ||
-        (cause.parseFailure === undefined && cause.reason !== "limit")
+        (cause.parseFailure === undefined &&
+          cause.reason !== "limit" &&
+          cause.reason !== "unsupported")
       )
         throw cause;
       if (!row.issues.includes(cause.message)) row.issues.push(cause.message);
