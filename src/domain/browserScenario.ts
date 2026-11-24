@@ -25,7 +25,7 @@ export const browserScenarioInputSchema = z.strictObject({
     "Required launch/connect selection. Launch uses the selected executable and an owned temporary profile; connect uses one loopback CDP endpoint and target.",
   ),
   start_url: browserScenarioUrlSchema.describe(
-    "Required initial HTTP(S) URL. Query values must be declared separately as public literals or secret references.",
+    "Required initial HTTP(S) URL. Ordinary query values and fragments may be inline. Use structured query entries to supply declared secrets.",
   ),
   environment: browserScenarioEnvironmentSchema,
   actions: z

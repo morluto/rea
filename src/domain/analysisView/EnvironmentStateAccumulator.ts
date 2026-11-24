@@ -1,6 +1,11 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
+import { parseExactJson } from "../exactJsonNumber.js";
+import {
+  jsonValueExceedsDepth,
+  MAX_JSON_DEPTH,
+  type JsonValue,
+} from "../jsonValue.js";
 import {
   addOffsetDateTimeMilliseconds,
   compareOffsetDateTimeInstants,
@@ -23,7 +28,6 @@ import {
   XSSI_RESPONSE_BODY_LIMIT_BYTES,
 } from "./rpcOperationSelector.js";
 import {
-  deeperThan,
   isStateWrite,
   STATE_BODY_LIMIT_BYTES,
   type ParsedBody,
@@ -35,7 +39,6 @@ import {
   base64PrefixChars,
   readRecordedResponseBody,
   readRecordedResponseDeclaration,
-  recordedResponseStatus,
   recordedResponseBodyIsEmpty,
   type RecordedResponseBody,
 } from "./recordedResponseBody.js";
@@ -43,6 +46,7 @@ import {
   ENTRY_BYTES,
   RECORD_SCRATCH_BYTES,
   type RecordedRequestLine,
+  type RequestLineExclusion,
   textBytes,
 } from "./webNetworkRouteTemplates.js";
 
@@ -56,14 +60,24 @@ const STATE_NESTING_DEPTH = 16;
 // this also covers the whole-second digits of every finite number duration.
 const DURATION_DIGITS = 3 - Math.floor(Math.log10(Number.MIN_VALUE));
 
-/** A recorded response body as state JSON: a JSON-like or XSSI-guarded JSON response, complete UTF-8 text within the state body limit, exact numbers; otherwise undefined. */
-export const stateBodyJson = (
-  contentType: string | null,
+const parseStateJsonText = (
+  text: string,
+  allowXssi = false,
+): JsonValue | undefined => {
+  const value = allowXssi ? parseXssiOrExactJson(text) : parseExactJson(text);
+  return value === undefined ||
+    jsonValueExceedsDepth(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
+    ? undefined
+    : value;
+};
+
+/** Parsed state JSON for a body whose media type has already been normalized. */
+const parseStateBodyJson = (
+  essence: string | null,
   body: RecordedResponseBody,
   allowXssi = true,
 ): JsonValue | undefined => {
-  const essence = contentType === null ? null : mediaTypeEssence(contentType);
-  const isJson = contentType !== null && isJsonLike(essence);
+  const isJson = isJsonLike(essence);
   if (
     body.bodyText === null ||
     body.bodyEncoding === "base64" ||
@@ -78,28 +92,63 @@ export const stateBodyJson = (
       (isJson ? STATE_BODY_LIMIT_BYTES : XSSI_RESPONSE_BODY_LIMIT_BYTES)
   )
     return undefined;
-  const value = allowXssi
-    ? parseXssiOrExactJson(body.bodyText)
-    : parseXssiOrExactJson(
-        hasXssiGuardPrefix(body.bodyText) ? "" : body.bodyText,
-      );
-  return value === undefined ||
-    deeperThan(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
-    ? undefined
-    : value;
+  return parseStateJsonText(body.bodyText, allowXssi);
 };
+
+/** Interpret a serving exchange's raw media type before reading its state body. */
+export const stateBodyJson = (
+  contentType: string | null,
+  body: RecordedResponseBody,
+): JsonValue | undefined =>
+  parseStateBodyJson(
+    contentType === null ? null : mediaTypeEssence(contentType),
+    body,
+  );
 
 const startSchema = z.object({ startedDateTime: z.string() });
 const durationSchema = z.object({ time: z.number().nonnegative() });
 const unlocatedWriteSchema = z.object({
   request: z.object({ method: z.string() }),
 });
+type UnlocatedWriteLine = Omit<
+  Extract<RecordedRequestLine, { kind: "line" }>,
+  "kind" | "origin"
+> & {
+  readonly origin: null;
+  readonly targetExclusion: "url-redacted" | "url-unparseable";
+};
+
+/** Only a possible write without a usable target can bound the state timeline. */
+const unlocatedWriteLine = (
+  reported: unknown,
+  reason: RequestLineExclusion,
+): UnlocatedWriteLine | undefined => {
+  if (
+    reason !== "url-redacted" &&
+    reason !== "url-unparseable" &&
+    reason !== "request-unavailable"
+  )
+    return undefined;
+  const request = unlocatedWriteSchema.safeParse(reported);
+  if (!request.success) return undefined;
+  const line: UnlocatedWriteLine = {
+    method: request.data.request.method,
+    path: "",
+    query: undefined,
+    status: readRecordedResponseDeclaration(reported)?.status ?? null,
+    origin: null,
+    rawMime: "",
+    targetExclusion: reason === "url-redacted" ? reason : "url-unparseable",
+  };
+  return isStateWrite(line) ? line : undefined;
+};
+
 interface RecordEntry {
   readonly facts: StateRecordFacts;
   /** Null for a write without a usable URL: its unknown target bounds every type. */
   readonly origin: string | null;
   readonly targetExclusion?: "url-redacted" | "url-unparseable";
-  readonly contentType: string;
+  readonly contentTypeEssence: string | null;
   readonly startInterpretation:
     | NonNullable<ReturnType<typeof readRecordedStart>>["interpretation"]
     | undefined;
@@ -145,7 +194,13 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   protected override prepareRecordedRequestLine(
     record: WebNetworkCaptureRecord,
     line: RecordedRequestLine,
+    mime: string | null,
   ): Result<() => void, AnalysisError> {
+    const target =
+      line.kind === "line"
+        ? line
+        : unlocatedWriteLine(record.reported, line.reason);
+    if (target === undefined) return ok(() => undefined);
     const started = startSchema.safeParse(record.reported);
     const duration = durationSchema.safeParse(record.reported);
     // Admit normalization and fraction parsing before materializing their strings.
@@ -205,29 +260,17 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       (endInstant !== undefined && endInstant !== startInstant
         ? ENTRY_BYTES + textBytes(endInstant.fraction.length)
         : 0);
-    if (line.kind === "excluded")
-      return line.reason === "url-redacted" ||
-        line.reason === "url-unparseable" ||
-        line.reason === "request-unavailable"
-        ? this.#unlocatedWrite(
-            record,
-            line.reason === "url-redacted" ? "url-redacted" : "url-unparseable",
-            timing,
-            instantBytes,
-            reading?.interpretation,
-          )
-        : ok(() => undefined);
-    // The entry keeps the line's strings and a reference to the already admitted record.
+    // The entry keeps the admitted request facts and the borrowed record.
     if (
       !this.retain(
         ENTRY_BYTES * 8 +
           instantBytes +
           textBytes(
-            line.method.length +
-              line.origin.length +
-              line.path.length +
-              (line.query?.length ?? 0) +
-              line.rawMime.length,
+            target.method.length +
+              (target.origin?.length ?? 0) +
+              target.path.length +
+              (target.query?.length ?? 0) +
+              target.rawMime.length,
           ),
       )
     )
@@ -236,55 +279,18 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       this.#entries.set(record.ordinal, {
         facts: {
           ordinal: record.ordinal,
-          method: line.method,
-          path: line.path,
-          query: line.query === "" ? undefined : line.query,
-          status: line.status,
+          method: target.method,
+          path: target.path,
+          query: target.query === "" ? undefined : target.query,
+          status: target.status,
           timing,
         },
-        origin: line.origin,
-        contentType: line.rawMime,
+        origin: target.origin,
+        ...("targetExclusion" in target
+          ? { targetExclusion: target.targetExclusion }
+          : {}),
+        contentTypeEssence: mime,
         startInterpretation: reading?.interpretation,
-        record,
-      });
-    });
-  }
-
-  /** Prepare a successful write with unknown target, whose empty root relates to every type. */
-  #unlocatedWrite(
-    record: WebNetworkCaptureRecord,
-    reason: "url-redacted" | "url-unparseable",
-    timing: StateRecordFacts["timing"],
-    instantBytes: number,
-    startInterpretation: RecordEntry["startInterpretation"],
-  ): Result<() => void, AnalysisError> {
-    const parsed = unlocatedWriteSchema.safeParse(record.reported);
-    if (!parsed.success) return ok(() => undefined);
-    const status = recordedResponseStatus(
-      readRecordedResponseDeclaration(record.reported),
-    );
-    const facts: StateRecordFacts = {
-      ordinal: record.ordinal,
-      method: parsed.data.request.method,
-      path: "",
-      query: undefined,
-      status,
-      timing,
-    };
-    if (!isStateWrite(facts)) return ok(() => undefined);
-    if (
-      !this.retain(
-        ENTRY_BYTES * 8 + textBytes(facts.method.length) + instantBytes,
-      )
-    )
-      return this.overBudget();
-    return ok(() => {
-      this.#entries.set(record.ordinal, {
-        facts,
-        origin: null,
-        targetExclusion: reason,
-        contentType: "",
-        startInterpretation,
         record,
       });
     });
@@ -294,25 +300,19 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   #body(ordinal: number): ParsedBody | null {
     this.#bodyReleases.push(this.temporaryCheckpoint());
     const entry = this.#entries.get(ordinal);
-    const essence =
-      entry === undefined
-        ? null
-        : entry.contentType === ""
-          ? null
-          : mediaTypeEssence(entry.contentType);
     // A body whose media type cannot carry JSON or XSSI JSON is refused before its decoding is charged.
     if (
       entry === undefined ||
       (this.discriminateRpc
-        ? !isXssiEligibleMediaType(essence)
-        : entry.contentType === "" || !isJsonLike(essence))
+        ? !isXssiEligibleMediaType(entry.contentTypeEssence)
+        : !isJsonLike(entry.contentTypeEssence))
     )
       return { kind: "unusable" };
     const declaration = readRecordedResponseDeclaration(entry.record.reported);
     const content = declaration?.content;
     if (typeof content?.text !== "string") return { kind: "unusable" };
     if (
-      !isJsonLike(essence) &&
+      !isJsonLike(entry.contentTypeEssence) &&
       !(content.encoding === undefined
         ? hasXssiGuardPrefix(content.text)
         : content.encoding === "base64" &&
@@ -330,8 +330,8 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       return { kind: "unusable" };
     if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(length) * 4))
       return null;
-    const value = stateBodyJson(
-      entry.contentType === "" ? null : entry.contentType,
+    const value = parseStateBodyJson(
+      entry.contentTypeEssence,
       readRecordedResponseBody(
         entry.record,
         STATE_BODY_LIMIT_BYTES,
@@ -374,15 +374,19 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     )
       return use({ kind: "absent" });
     if (
-      !isJsonLike(mediaTypeEssence(mimeType)) ||
+      text.length > STATE_BODY_LIMIT_BYTES ||
       Buffer.byteLength(text, "utf8") > STATE_BODY_LIMIT_BYTES
     )
       return use({ kind: "unusable" });
     const release = this.temporaryCheckpoint();
     try {
+      // Request media is separate from the response type admitted with the line.
+      if (!this.temporary(textBytes(mimeType.length))) return null;
+      if (!isJsonLike(mediaTypeEssence(mimeType)))
+        return use({ kind: "unusable" });
       if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(text.length) * 4))
         return null;
-      const value = stateBodyJson(mimeType, { bodyText: text }, false);
+      const value = parseStateJsonText(text);
       return use(
         value === undefined ? { kind: "unusable" } : { kind: "json", value },
       );

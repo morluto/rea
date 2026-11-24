@@ -1,13 +1,4 @@
-/** Distinguish a file that is not a Shell Link from later structural damage. */
-export class WindowsShortcutFormatFailure extends Error {
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    message: string,
-  ) {
-    super(message);
-    this.name = "WindowsShortcutFormatFailure";
-  }
-}
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 /** Caller-selected budgets that bound Shell Link expansion. */
 export type WindowsShortcutSelectedBoundary =
@@ -16,13 +7,22 @@ export type WindowsShortcutSelectedBoundary =
   | "string_bytes";
 
 /** Resource boundary exceeded while walking a Shell Link file. */
-export class WindowsShortcutResourceFailure extends Error {
+export class WindowsShortcutResourceFailure extends ParseFailureError<"limit"> {
+  declare readonly failure: ParseFailureError<"limit">["failure"] & {
+    readonly limit: { readonly name: WindowsShortcutSelectedBoundary };
+  };
+
   constructor(
-    readonly boundary: WindowsShortcutSelectedBoundary,
-    readonly maximum: number,
-    message: string,
+    boundary: WindowsShortcutSelectedBoundary,
+    maximum: number,
+    detail: string,
   ) {
-    super(message);
+    super({
+      kind: "limit",
+      format: "windows-shortcut",
+      detail,
+      limit: { name: boundary, maximum },
+    });
     this.name = "WindowsShortcutResourceFailure";
   }
 }

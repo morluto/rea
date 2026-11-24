@@ -1,4 +1,5 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { DirectAnalysisDependencies } from "../application/DirectAnalysisDependencies.js";
 
@@ -20,7 +21,10 @@ type BoundOperation<Operation> = Operation extends (
 export const createDirectAnalysis = (
   selectedEnvironment: Readonly<Record<string, string | undefined>>,
 ) => {
-  const environment = snapshotEnvironment(selectedEnvironment);
+  const environment = snapshotEnvironment(
+    selectedEnvironment,
+    HOST_PLATFORM.platform,
+  );
   const dependencies: DirectAnalysisDependencies = {
     readConfiguration: () => parseConfig(environment),
     createBinarySession: async (config, logger) => {
@@ -43,7 +47,23 @@ export const createDirectAnalysis = (
       const { createArtifactBinarySession } = await import("./binary.js");
       return createArtifactBinarySession(environment);
     },
+    inspectArtifactDirectory: async (path, parameters, options, retained) => {
+      const { createArtifactPathInspection } = await import("./binary.js");
+      return createArtifactPathInspection(environment).inspectArtifactDirectory(
+        path,
+        parameters,
+        options,
+        retained,
+      );
+    },
   };
+  return bindDirectAnalysis(dependencies);
+};
+
+/** Bind one-shot analysis and status commands to the given session owners. */
+export const bindDirectAnalysis = (
+  dependencies: DirectAnalysisDependencies,
+) => {
   const runDirectAnalysis: BoundOperation<
     DirectAnalysisRuntime["runDirectAnalysis"]
   > = async (...args) => {
@@ -58,6 +78,13 @@ export const createDirectAnalysis = (
       await import("../application/DirectAnalysis.js");
     return runProviderAnalysis(dependencies, ...args);
   };
+  const runManagedProviderEvidence: BoundOperation<
+    DirectAnalysisRuntime["runManagedProviderEvidence"]
+  > = async (...args) => {
+    const { runManagedProviderEvidence } =
+      await import("../application/DirectAnalysis.js");
+    return runManagedProviderEvidence(dependencies, ...args);
+  };
   const runSessionStatus: BoundOperation<
     DirectAnalysisStatusRuntime["runSessionStatus"]
   > = async (...args) => {
@@ -68,12 +95,13 @@ export const createDirectAnalysis = (
   return {
     runDirectAnalysis,
     runProviderAnalysis,
+    runManagedProviderEvidence,
     runSessionStatus,
   };
 };
 
 /** Bound operations used by CLI command registration. */
-export type DirectAnalysis = ReturnType<typeof createDirectAnalysis>;
+export type DirectAnalysis = ReturnType<typeof bindDirectAnalysis>;
 
 /** Execute managed metadata without configuration or native provider candidates. */
 export const runManagedProviderExecution: BoundOperation<

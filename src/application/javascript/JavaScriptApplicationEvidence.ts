@@ -12,7 +12,7 @@ import { freezeOwnedJsonSnapshotSteps } from "../../domain/immutableJson.js";
 import { rememberOwnedApplicationGraphEvidence } from "./JavaScriptApplicationEvidenceGraph.js";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { jsonValueValidationSteps } from "../../domain/jsonValue.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 
 /** Create owned analysis Evidence while allowing request cancellation during sealing and hashing. */
 export const createOwnedJavaScriptApplicationEvidenceCooperatively = async (
@@ -93,6 +93,9 @@ const parameters = (
   ...(input.semantic_precision === undefined
     ? {}
     : { semantic_precision: input.semantic_precision }),
+  ...(input.semantic_analysis === undefined
+    ? {}
+    : { semantic_analysis: input.semantic_analysis }),
   format: input.format,
   integrity_policy: input.integrity_policy,
   ...(input.max_semantic_nodes === undefined

@@ -3,13 +3,14 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../../dist/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../dist/process/ProcessOwnership.js";
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { discoverCdpEndpoint } from "../../dist/browser/CdpEndpoint.js";
 import { BrowserObservationError } from "../../dist/domain/browserObservationError.js";
@@ -171,6 +172,45 @@ async function waitForRuntimeFixturePage({ child, port, origin, deadline }) {
     clearTimeout(timer);
     child.removeListener("exit", onExit);
     child.removeListener("error", onError);
+  }
+}
+
+/** Wait for both external scripts in the owned fixture document. */
+export async function waitForRuntimeFixtureSources(
+  connection,
+  timeoutMs = 10_000,
+) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let state = null;
+  try {
+    for (;;) {
+      const reply = await connection.send(
+        "Runtime.evaluate",
+        {
+          expression: `({
+            readyState: document.readyState,
+            chosenLoaded: typeof chosen === 'function',
+            untouchedLoaded: typeof untouched === 'function'
+          })`,
+          returnByValue: true,
+        },
+        undefined,
+        signal,
+      );
+      signal.throwIfAborted();
+      if (reply.exceptionDetails !== undefined)
+        throw new Error("Runtime fixture source probe threw");
+      state = reply.result.value ?? null;
+      if (state?.chosenLoaded === true && state.untouchedLoaded === true)
+        return;
+      await delay(20, undefined, { signal });
+    }
+  } catch (cause) {
+    if (!signal.aborted) throw cause;
+    throw new Error(
+      `Runtime fixture sources did not load within ${String(timeoutMs)} ms; last state: ${JSON.stringify(state)}`,
+      { cause },
+    );
   }
 }
 

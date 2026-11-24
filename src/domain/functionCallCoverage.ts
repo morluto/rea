@@ -1,5 +1,6 @@
 import {
   relationshipCoverageLimitations,
+  type EvidenceRelationshipCoverage,
   type RelationshipCoverage,
   type RelationshipDiscoveryStatus,
 } from "./relationshipCoverage.js";
@@ -11,14 +12,15 @@ const calleeCoveragePrefix = "Callees: ";
 
 /** Combine caller and callee read outcomes without losing either explanation. */
 export const combineFunctionRelationshipCoverage = (
-  callers: RelationshipCoverage | undefined,
-  callees: RelationshipCoverage | undefined,
+  callers: EvidenceRelationshipCoverage | undefined,
+  callees: EvidenceRelationshipCoverage | undefined,
 ): RelationshipCoverage => {
   const reads = [
     { direction: "callers" as const, coverage: callers },
     { direction: "callees" as const, coverage: callees },
   ];
   const diagnostics = uniqueSorted(
+    // optional-fact-default: descriptive caveats; discovery status carries completeness.
     reads.flatMap(({ coverage }) => coverage?.diagnostics ?? []),
   );
   const discovery = {
@@ -72,21 +74,16 @@ export const combineFunctionRelationshipCoverage = (
 };
 
 /**
- * Forward searches depend on callee coverage. Preserve the historical
- * unknown-reason encoding when reading observations without explicit directions.
+ * Forward searches depend on callee coverage. Historical format-2 records that
+ * omitted `limited_directions` fail closed (never treated as caller-only).
  */
 export const isCallerOnlyIncompleteCoverage = (
-  coverage: RelationshipCoverage,
+  coverage: EvidenceRelationshipCoverage,
 ): boolean => {
   if (coverage.status === "complete") return false;
-  if (coverage.limited_directions !== undefined)
-    return !coverage.limited_directions.some(
-      (direction) => direction === "callees",
-    );
-  return (
-    coverage.status === "unknown" &&
-    coverage.reason.startsWith(callerCoveragePrefix) &&
-    !coverage.reason.includes(calleeCoveragePrefix)
+  if (coverage.limited_directions === undefined) return false;
+  return !coverage.limited_directions.some(
+    (direction) => direction === "callees",
   );
 };
 
@@ -105,10 +102,11 @@ export interface FunctionCallCoverageAssessment {
 
 /** Keep observed-set blockers separate from descriptive provider caveats. */
 export const assessFunctionCallCoverage = (
-  coverage: RelationshipCoverage | null,
+  coverage: EvidenceRelationshipCoverage | null,
   dossier: Pick<FunctionDossier, "unresolved_calls">,
 ): FunctionCallCoverageAssessment => {
   const unresolvedCallCaveats = uniqueSorted(
+    // optional-fact-default: caveat text only; discoveryStatus carries completeness.
     (dossier.unresolved_calls ?? []).map(
       ({ address, reason }) => `Unresolved call at ${address}: ${reason}`,
     ),
@@ -138,6 +136,7 @@ export const assessFunctionCallCoverage = (
       ...unresolvedCallCaveats,
     ]),
     unresolvedCallCaveats,
+    // optional-fact-default: descriptive caveats; discoveryStatus carries completeness.
     diagnostics: uniqueSorted(coverage?.diagnostics ?? []),
     discoveryLimitations,
     discoveryStatus,

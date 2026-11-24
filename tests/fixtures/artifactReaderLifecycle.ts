@@ -1,13 +1,12 @@
+import { collectEntries } from "./artifactEntries.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getDefaultHighWaterMark } from "node:stream";
 import { buffer } from "node:stream/consumers";
 import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  ArtifactReader,
-  ArtifactEntry,
-} from "../../src/artifacts/ArtifactReader.js";
+import type { ArtifactReader } from "../../src/resources/ArtifactReader.js";
 import {
   openRegularFile,
   type StableRegularFileDescriptor,
@@ -33,11 +32,6 @@ const fixture = async (bytes: Buffer): Promise<string> => {
   await writeFile(path, bytes);
   return path;
 };
-const entries = async (reader: ArtifactReader): Promise<ArtifactEntry[]> => {
-  const result: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) result.push(entry);
-  return result;
-};
 
 const consumptionCases = ({ image, createReader }: LifecycleFixture): void => {
   it("does not complete paused inventory after its reader closes", async () => {
@@ -60,8 +54,18 @@ const consumptionCases = ({ image, createReader }: LifecycleFixture): void => {
       const controller = new AbortController();
       const reason = new Error("cancel buffered member");
       try {
-        const [entry] = await entries(reader);
-        const stream = await reader.open(entry!, controller.signal);
+        // Unread bytes buffer fully only below the readable high-water mark.
+        // Node's default is 16 KiB on Windows and 64 KiB elsewhere.
+        const entry = (await collectEntries(reader)).find(
+          ({ declaredSize }) =>
+            declaredSize !== null &&
+            declaredSize > 0 &&
+            declaredSize < getDefaultHighWaterMark(false),
+        );
+        if (entry === undefined)
+          throw new Error("fixture has no member that fits one stream buffer");
+        const stream = await reader.open(entry, controller.signal);
+        expect(entry.declaredSize).toBeLessThan(stream.readableHighWaterMark);
         await finished(stream, { readable: false, cleanup: true });
         await setImmediate();
         expect(stream.readableLength).toBeGreaterThan(0);
@@ -92,7 +96,7 @@ const descriptorCases = ({ image, createReader }: LifecycleFixture): void => {
     let outcome: Promise<unknown> | undefined;
     let closing: Promise<void> | undefined;
     try {
-      const [entry] = await entries(reader);
+      const [entry] = await collectEntries(reader);
       reads.mockImplementation((async (...args: unknown[]) => {
         reached.resolve();
         await release.promise;
@@ -130,7 +134,7 @@ const descriptorCases = ({ image, createReader }: LifecycleFixture): void => {
   it("retains failed descriptor cleanup for retry", async () => {
     const reader = createReader(await fixture(image()));
     try {
-      const [entry] = await entries(reader);
+      const [entry] = await collectEntries(reader);
       const stream = await reader.open(entry!);
       const failure = new Error("artifact close denied");
       const close = vi
@@ -172,7 +176,7 @@ const validationCases = ({ image, createReader }: LifecycleFixture): void => {
       let outcome: Promise<unknown> | undefined;
       let closing: Promise<void> | undefined;
       try {
-        const [entry] = await entries(reader);
+        const [entry] = await collectEntries(reader);
         const memberEnd = BigInt(entry!.byteOffset! + entry!.declaredSize!);
         let memberReadComplete = false;
         reads.mockImplementation((async (...args: unknown[]) => {
@@ -243,7 +247,8 @@ const validationCases = ({ image, createReader }: LifecycleFixture): void => {
 };
 
 /** Stored-member readers share ownership and native I/O regression oracles.
- * The fixture must have a nonempty first entry with a physical byte range.
+ * The fixture must have a nonempty first entry with a physical byte range,
+ * and a nonempty entry smaller than Node's default stream buffer.
  */
 export const artifactReaderLifecycleCases = (setup: LifecycleFixture): void => {
   describe("stored member lifecycle", () => {
@@ -294,7 +299,7 @@ export const artifactPreparationRecoveryCases = ({
         pending.push(first);
         void first.catch(() => undefined);
         await awaitAcknowledgement(reached.promise, first, "preparation read");
-        const peer = entries(reader);
+        const peer = collectEntries(reader);
         pending.push(peer);
         void peer.catch(() => undefined);
         controller.abort(reason);

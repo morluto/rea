@@ -16,7 +16,7 @@ import {
 import {
   analysisViewResultSchema,
   type AnalysisViewResult,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import { scenarioCaptureRecords } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import {
   readRecordedResponseBody,
@@ -34,7 +34,11 @@ import {
   type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseImmutableEvidence,
+  unsupportedEvidenceFormatError,
+} from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
 import { immutableJsonSnapshotMember } from "../../domain/immutableJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -161,15 +165,16 @@ export const parseEvidenceFile = (
   for (const key of ["parameters", "raw_result", "normalized_result"])
     immutableJsonSnapshotMember(value, key);
   const parsed = safeParseImmutableEvidence(value);
-  return parsed.ok
-    ? parsed
-    : err(
-        schemaInputError(
-          operation,
-          { prefix: [role], cause: parsed.error, value },
-          `The ${role} file is not authenticated REA Evidence JSON.`,
-        ),
-      );
+  if (parsed.ok) return parsed;
+  if (isUnsupportedEvidenceFormat(parsed.error))
+    return err(unsupportedEvidenceFormatError(parsed.error));
+  return err(
+    schemaInputError(
+      operation,
+      { prefix: [role], cause: parsed.error, value },
+      `The ${role} file is not authenticated REA Evidence JSON.`,
+    ),
+  );
 };
 
 /** A schema refusal of `value`, found at `prefix`; issue paths extend the prefix and the schema failure is retained. */
@@ -216,17 +221,24 @@ const hasBatchExecuteRequest = (
 export const recordedExchange = (
   record: WebNetworkCaptureRecord,
   line: Extract<RecordedRequestLine, { readonly kind: "line" }>,
-): RecordedExchange => ({
-  ordinal: record.ordinal,
-  path: line.path,
-  query: line.query === undefined || line.query === "" ? null : line.query,
-  status: line.status,
-  contentType: line.rawMime === "" ? null : line.rawMime,
-  ...(hasBatchExecuteRequest(record, line)
-    ? { batchexecuteRequest: true }
-    : {}),
-  ...readRecordedResponseBody(record, REPLAY_BODY_LIMIT_BYTES),
-});
+): RecordedExchange => {
+  const body = readRecordedResponseBody(record, REPLAY_BODY_LIMIT_BYTES);
+  return {
+    ordinal: record.ordinal,
+    path: line.path,
+    query: line.query === undefined || line.query === "" ? null : line.query,
+    status: line.status,
+    contentType: line.rawMime === "" ? null : line.rawMime,
+    ...(hasBatchExecuteRequest(record, line)
+      ? { batchexecuteRequest: true }
+      : {}),
+    bodyText: body.bodyText,
+    ...(body.bodyEncoding === undefined
+      ? {}
+      : { bodyEncoding: body.bodyEncoding }),
+    ...(body.bodyCut === true ? { bodyCut: true } : {}),
+  };
+};
 
 /** Authenticate a view Evidence file and require one view kind; a refusal names the file role. */
 export const parseViewEvidence = <Kind extends AnalysisViewResult["kind"]>(

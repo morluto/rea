@@ -1,4 +1,4 @@
-import type { AnalysisViewResult } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewResult } from "../../domain/analysisView/analysisViewResult.js";
 import { EnvironmentStateAccumulator } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import {
   changesState,

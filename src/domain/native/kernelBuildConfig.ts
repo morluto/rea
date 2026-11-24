@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { coverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
@@ -58,9 +59,12 @@ const range = z.strictObject({
   bytes: uint,
 });
 
-/** Matches a Kconfig `int` or `hex` value as written to `.config`. */
+/**
+ * Kconfig writes `int` and `hex` lexemes as stored. Hex may omit its prefix,
+ * so a digit-only value does not establish a base without the symbol type.
+ */
 export const KERNEL_BUILD_CONFIG_NUMBER =
-  /^(?:-?(?:0|[1-9][0-9]*)|0[xX][0-9A-Fa-f]+)$/u;
+  /^(?:-(?:0|[1-9][0-9]*)|(?:0[xX])?[0-9A-Fa-f]+)$/u;
 /** Length of the `IKCFG_ST` and `IKCFG_ED` markers. */
 export const KERNEL_BUILD_CONFIG_MARKER_BYTES = 8;
 
@@ -214,7 +218,14 @@ export const kernelBuildConfigSchema = z.strictObject({
     entries: z.array(entrySchema),
   }),
   coverage: z.strictObject({
-    status: z.enum(["complete", "incomplete", "unsupported"]),
+    /**
+     * `partial` when the config is known to extend past what was examined (a
+     * gzip member cut by the searched bytes, or the candidate budget stopping
+     * the search); `unknown` when whether a config exists or what it holds
+     * cannot be determined (an unreadable payload that was not searched, or a
+     * malformed config); `unsupported` for a payload codec REA does not inflate.
+     */
+    status: z.enum([...coverageStatusSchema.options, "unsupported"]),
     examined_bytes: uint,
     examined_entries: uint,
   }),

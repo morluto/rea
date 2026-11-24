@@ -1,16 +1,16 @@
 # EVM interface upstream profile
 
 REA integrates unchanged [EVMole](https://github.com/cdump/evmole) as the exact
-npm dependency `evmole@0.9.3`, with lockfile integrity verification. Tag `0.9.3`
-resolves to commit `0409707c2efef11a9043f9b4505cad5719054a7e`.
+npm dependency `evmole@0.9.4`, with lockfile integrity verification. Tag `0.9.4`
+resolves to commit `bc8a56c0a5928c7846f46e9a6f224bd98df08d90`.
 
 The JavaScript binding and WASM engine remain in the original upstream package;
 REA contains only carrier validation, a worker adapter and portable contracts.
 No submodule or vendored engine fork is required. No signature database,
 LLM decompiler, blockchain node or RPC dependency is acquired.
 
-Upstream is MIT, copyright (c) 2023 Maxim Andreev. Its npm tarball omits the
-license file, so REA packages the unchanged tag's [LICENSE](LICENSE) here.
+Upstream is MIT, copyright (c) 2023 Maxim Andreev. Its npm tarball includes the
+same [LICENSE](LICENSE) as the pinned source tag.
 The engine is initialized through the upstream `no_tla`/`initSync` interface
 only inside an owned worker; importing REA services performs no WASM/file I/O.
 

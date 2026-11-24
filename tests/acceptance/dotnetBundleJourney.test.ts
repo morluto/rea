@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { expect } from "vitest";
+import { afterAll, expect } from "vitest";
 
 import { dotnetBundleFixture } from "../../src/artifacts/dotnet/DotnetBundle.fixture.js";
 import { cArchiveExecutable } from "../../src/artifacts/pyinstaller/CArchive.fixture.js";
@@ -14,8 +14,14 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import {
   analysisViewResultSchema,
   artifactInventorySummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const checkProjectedMember = async (
   client: Client,
@@ -125,10 +131,13 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
       GHIDRA_INSTALL_DIR: workspace.path("unavailable-ghidra"),
     };
     const outputs: string[] = [];
-    const client = new Client({
-      name: "rea-dotnet-bundle-acceptance",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "rea-dotnet-bundle-acceptance",
+        version: "1",
+      },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -161,11 +170,8 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
         root_sha256: createHash("sha256").update(bytes).digest("hex"),
       });
       if (format === "dotnet-bundle") {
-        expect(inventory.next_probes).toHaveLength(1);
-        expect(inventory.next_probes[0]).toMatchObject({
-          operation: "extract_artifact",
-          authority: "artifact-bytes",
-        });
+        // The apphost carrier is a PE, so its readers follow the package's.
+        expectCarrierProbes(inventory.next_probes, "pe", ["extract_artifact"]);
       }
       expect(
         inventory.unexplored_branches.map(({ next_probe }) => next_probe),
@@ -219,7 +225,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
         outputs.map((output) => rm(output, { recursive: true, force: true })),
       );
     }
-  }, 120_000);
+  });
 }
 
 test("reports excessive bundle path depth as a public CLI limit", async ({

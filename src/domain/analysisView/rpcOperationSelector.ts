@@ -1,3 +1,4 @@
+import { isRecord } from "../../kernel/isRecord.js";
 import { parseExactJson } from "../exactJsonNumber.js";
 import type { JsonValue } from "../jsonValue.js";
 import { safeParseJson } from "../safeJson.js";
@@ -52,11 +53,6 @@ const XSSI_SCRIPT_ESSENCES = new Set([
   "application/javascript",
   "application/x-javascript",
 ]);
-
-const isPlainObject = (
-  value: unknown,
-): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isAsciiAlphaOrUnderscore = (code: number): boolean =>
   (code >= 0x41 && code <= 0x5a) ||
@@ -293,7 +289,7 @@ const selectFactsFromJsonObject = (
         graphqlOperationKind(root.query, root.operationName) ?? "unknown",
     };
   }
-  if (isPlainObject(root.extensions) || isGraphqlPath(path))
+  if (isRecord(root.extensions) || isGraphqlPath(path))
     return {
       kind: "graphql",
       name: root.operationName,
@@ -393,7 +389,7 @@ export const selectRpcOperationFactsFromText = (input: {
         ? undefined
         : safeParseJson(bodyText);
     if (parsedJson?.ok === true)
-      return isJsonCandidateMime(essence) && isPlainObject(parsedJson.value)
+      return isJsonCandidateMime(essence) && isRecord(parsedJson.value)
         ? selectFactsFromJsonObject(parsedJson.value, input.path)
         : undefined;
     if (isFormCandidateMime(essence, input.path)) {

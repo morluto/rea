@@ -1,5 +1,6 @@
+import { write32, write64 } from "../../native/BinaryInteger.fixture.js";
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 
 /** Node 24 SEA blob magic: https://github.com/nodejs/node/blob/v24.12.0/src/node_sea.h */
 export const NODE_SEA_FIXTURE_MAGIC = 0x143da20;
@@ -22,6 +23,7 @@ export interface NodeSeaBlobFixtureOptions {
   readonly assets?: readonly NodeSeaAssetFixture[];
   readonly execArgv?: readonly string[];
   readonly execArgvExtension?: 0 | 1 | 2;
+  readonly mainCodeFormat?: 0 | 1;
   readonly disableExperimentalSeaWarning?: boolean;
   readonly trailing?: Buffer;
 }
@@ -47,7 +49,7 @@ const sized = (value: Buffer | string): Buffer => {
   return Buffer.concat([u64(body.length), body]);
 };
 
-/** Build a Node 24 SEA blob: magic, flags, extension, then length-prefixed fields. */
+/** Build a SEA blob with the optional main-format byte used by newer Node producers. */
 export const buildNodeSeaBlob = (
   options: NodeSeaBlobFixtureOptions = {},
 ): Buffer => {
@@ -66,7 +68,10 @@ export const buildNodeSeaBlob = (
   header.writeUInt32LE(NODE_SEA_FIXTURE_MAGIC, 0);
   header.writeUInt32LE(flags, 4);
   header[8] = options.execArgvExtension ?? 1;
-  const parts: Buffer[] = [header, sized(codePath), sized(body)];
+  const parts: Buffer[] = [header];
+  if (options.mainCodeFormat !== undefined)
+    parts.push(Buffer.from([options.mainCodeFormat]));
+  parts.push(sized(codePath), sized(body));
   if (options.codeCache !== undefined) parts.push(sized(options.codeCache));
   if (assets.length > 0) {
     parts.push(u64(assets.length));
@@ -214,24 +219,4 @@ const carrierBlobs = (options: NodeSeaCarrierOptions): Buffer[] => [
 
 const writeName = (bytes: Buffer, offset: number, name: string): void => {
   bytes.write(name, offset, Math.min(name.length, 16), "latin1");
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(value, offset);
-  else bytes.writeUInt32BE(value, offset);
-};
-
-const write64 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeBigUInt64LE(BigInt(value), offset);
-  else bytes.writeBigUInt64BE(BigInt(value), offset);
 };

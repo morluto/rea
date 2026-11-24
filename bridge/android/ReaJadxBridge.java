@@ -26,7 +26,6 @@ import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
-import java.util.stream.Collectors;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -44,24 +43,32 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
 
-/** REA-owned metadata boundary for the unmodified jadx-headless-mcp 0.7.1 JAR. */
+/** REA-owned metadata boundary for the unmodified pinned jadx-headless-mcp JAR. */
 class ReaJadxBridge {
+  // REA reads this identity from this source (JadxRelease.ts), so it is typed
+  // once. Change BRIDGE_VERSION with any protocol change REA must not mix.
+  static final String BRIDGE_NAME = "rea-jadx-bridge";
+  static final String BRIDGE_VERSION = "12";
+  private static final int DEFAULT_MAX_EXTERNAL_CALLER_INDEX_ENTRIES = 4096;
   private static final Gson JSON = new Gson();
   private final SessionHolder holder;
+  private int maxExternalCallerIndexEntries = DEFAULT_MAX_EXTERNAL_CALLER_INDEX_ENTRIES;
   private JadxSession indexedSession;
   private Map<String, List<ClassSnapshot>> classes = Map.of();
+  private List<ClassSnapshot> orderedClasses = List.of();
   private JadxSession manifestSession;
   private ManifestSnapshot manifestSnapshot;
   private ExternalInventory externalInventory;
 
-  private record MethodSnapshot(String name, String rawName, String shortId, List<String> bodyAbsenceMarkers,
-      Map<String, Object> summary) {}
+  private record MethodSnapshot(MethodNode methodNode, String name, String rawName, String shortId,
+      int overloadIndex, List<String> bodyAbsenceMarkers, Map<String, Object> summary) {}
   private record ClassSnapshot(JavaClass node, List<MethodSnapshot> methods, Map<String, Object> summary,
       Map<String, Object> summaryWithValues) {}
   private record ManifestSnapshot(String text, Map<String, Object> summary) {}
   private record ExternalMethod(MethodInfo info, Map<String, Object> summary) {}
+  private record ExternalCallerTarget(ClassSnapshot owner, MethodSnapshot method) {}
   private record ExternalInventory(JadxSession session, String className, String methodName,
-      List<ExternalMethod> methods) {}
+      List<ExternalMethod> methods, Map<String, List<ExternalCallerTarget>> callersByShortId) {}
 
   private static final class InputFailure extends IllegalArgumentException {
     final String field;
@@ -195,6 +202,9 @@ class ReaJadxBridge {
   }
 
   private void clearManifest() {
+    indexedSession = null;
+    classes = Map.of();
+    orderedClasses = List.of();
     manifestSession = null;
     manifestSnapshot = null;
     externalInventory = null;
@@ -203,6 +213,9 @@ class ReaJadxBridge {
   // One bounded DEX at a time, beside the already admitted analysis JVM. The
   // response allowance accounts for worst-case JSON escaping before retention.
   private static final int NATIVE_DEX_BYTES = 64 * 1024 * 1024;
+  private static final int NATIVE_MANIFEST_BYTES = 8 * 1024 * 1024;
+  private static final int NATIVE_SPLIT_TYPES = 64;
+  private static final int NATIVE_SPLIT_TYPE_CHARS = 256;
   private static final long NATIVE_TOTAL_DEX_BYTES = 256L * 1024 * 1024;
   // This JSON is escaped again inside an 8 MiB MCP frame.
   private static final long NATIVE_JSON_BYTES = 4L * 1024 * 1024;
@@ -248,6 +261,8 @@ class ReaJadxBridge {
     int examinedMethods;
     boolean partial;
     boolean diagnosticLimit;
+    Map<String, Object> manifestSplits =
+        Map.of("status", "unknown", "reason", "Root AndroidManifest.xml was not examined");
 
     void unknown(String reason) {
       partial = true;
@@ -276,19 +291,78 @@ class ReaJadxBridge {
           "coverage", Map.of("status", partial ? "partial" : "complete",
               "dex_entries", dexEntries, "examined_dex_entries", examinedDexEntries,
               "examined_classes", examinedClasses, "examined_methods", examinedMethods),
-          "unknowns", List.copyOf(unknowns));
+          "unknowns", List.copyOf(unknowns), "manifest_splits", manifestSplits);
     }
+  }
+
+  /**
+   * Whether the root manifest requires split APKs, which can carry native
+   * libraries outside this APK. Decoded without a loaded session: the binary
+   * XML parser resolves framework attribute names through their resource IDs.
+   */
+  static Map<String, Object> manifestSplitRequirements(ZipFile archive, int manifests) {
+    if (manifests != 1)
+      return Map.of("status", "unknown", "reason", manifests == 0
+          ? "Root AndroidManifest.xml is absent"
+          : "Root AndroidManifest.xml entry name is ambiguous");
+    try {
+      byte[] bytes = readNativeMember(archive, archive.getEntry("AndroidManifest.xml"),
+          "AndroidManifest.xml", NATIVE_MANIFEST_BYTES, "8 MiB");
+      return manifestSplitFacts(new BinaryXMLParser(new RootNode(new JadxArgs()))
+          .parse(new java.io.ByteArrayInputStream(bytes)).getCodeStr());
+    } catch (IOException | RuntimeException failure) {
+      if (failure instanceof java.util.concurrent.CancellationException) throw (RuntimeException) failure;
+      String reason = "Root AndroidManifest.xml split requirements could not be read: "
+          + failure.getClass().getSimpleName()
+          + (failure.getMessage() == null ? "" : " (" + failure.getMessage() + ")");
+      return Map.of("status", "unknown", "reason",
+          reason.length() > 512 ? reason.substring(0, 512) : reason);
+    }
+  }
+
+  /** Split requirements declared by decoded manifest text, within a fixed report allowance. */
+  static Map<String, Object> manifestSplitFacts(String xml) {
+    Element root = manifestRoot(xml);
+    String android = "http://schemas.android.com/apk/res/android";
+    List<String> types = new ArrayList<>();
+    for (String type : root.getAttributeNS(android, "requiredSplitTypes").split(",")) {
+      if (type.isBlank()) continue;
+      if (types.size() == NATIVE_SPLIT_TYPES || type.strip().length() > NATIVE_SPLIT_TYPE_CHARS)
+        throw new IllegalArgumentException("requiredSplitTypes exceeds the " + NATIVE_SPLIT_TYPES
+            + "-entry, " + NATIVE_SPLIT_TYPE_CHARS + "-character report allowance");
+      types.add(type.strip());
+    }
+    boolean required = false;
+    for (Node child = root.getFirstChild(); child != null; child = child.getNextSibling()) {
+      if (child instanceof Element element && element.getNamespaceURI() == null
+          && element.getTagName().equals("application"))
+        required |= element.getAttributeNS(android, "isSplitRequired").equals("true");
+    }
+    return Map.of("status", "observed", "required_split_types", List.copyOf(types),
+        "split_required", required);
   }
 
   /** Match Android's standard root multidex carriers, without a basename guess. */
   private static boolean nativeDexEntry(String name) {
-    return name.equals("classes.dex") || name.matches("classes[0-9]+\\.dex");
+    if (name.equals("classes.dex")) return true;
+    if (!name.startsWith("classes") || !name.endsWith(".dex") || name.length() <= 11) return false;
+    for (int i = 7; i < name.length() - 4; i++) {
+      char c = name.charAt(i);
+      if (c < '0' || c > '9') return false;
+    }
+    return true;
   }
 
   private static byte[] readNativeDex(ZipFile archive, ZipEntry entry) throws IOException {
+    return readNativeMember(archive, entry, "DEX", NATIVE_DEX_BYTES, "64 MiB");
+  }
+
+  /** Read one stored or deflated root member exactly, checked against its CRC32. */
+  private static byte[] readNativeMember(ZipFile archive, ZipEntry entry, String label,
+      int maximum, String allowance) throws IOException {
     long size = entry.getSize();
-    if (size < 0 || size > NATIVE_DEX_BYTES)
-      throw new IllegalArgumentException("DEX exceeds the 64 MiB single-member read allowance");
+    if (size < 0 || size > maximum)
+      throw new IllegalArgumentException(label + " exceeds the " + allowance + " single-member read allowance");
     byte[] bytes = new byte[(int) size];
     CRC32 crc = new CRC32();
     try (InputStream input = archive.getInputStream(entry)) {
@@ -296,41 +370,52 @@ class ReaJadxBridge {
       while (offset < bytes.length) {
         checkNativeInterrupted();
         int read = input.read(bytes, offset, Math.min(65536, bytes.length - offset));
-        if (read < 0) throw new IOException("DEX is shorter than its ZIP declaration");
+        if (read < 0) throw new IOException(label + " is shorter than its ZIP declaration");
         if (read == 0) continue;
         crc.update(bytes, offset, read);
         offset += read;
       }
-      if (input.read() != -1) throw new IOException("DEX exceeds its ZIP declaration");
+      if (input.read() != -1) throw new IOException(label + " exceeds its ZIP declaration");
     }
     if (entry.getCrc() < 0 || entry.getCrc() != crc.getValue())
-      throw new IOException("DEX does not match its ZIP CRC32 declaration");
+      throw new IOException(label + " does not match its ZIP CRC32 declaration");
     return bytes;
   }
 
   /** Raw DEX ownership precedes JADX's duplicate-class selection and aliases. */
   static Map<String, Object> nativeDeclarations(Path apk) {
+    record DexZipEntry(ZipEntry entry, int entryIndex) {}
     NativeInventory inventory = new NativeInventory();
     try (ZipFile archive = new ZipFile(apk.toFile())) {
       Map<String, Integer> names = new HashMap<>();
+      List<DexZipEntry> dexEntries = new ArrayList<>();
+      int manifests = 0;
+      int nextEntryIndex = 0;
       var directory = archive.entries();
       while (directory.hasMoreElements()) {
         checkNativeInterrupted();
         ZipEntry entry = directory.nextElement();
-        if (!entry.isDirectory() && nativeDexEntry(entry.getName())) {
+        int entryIndex = nextEntryIndex++;
+        if (entry.isDirectory()) continue;
+        String entryName = entry.getName();
+        if (nativeDexEntry(entryName)) {
           inventory.dexEntries++;
-          names.merge(entry.getName(), 1, Integer::sum);
+          names.merge(entryName, 1, Integer::sum);
+          dexEntries.add(new DexZipEntry(entry, entryIndex));
+        } else if (entryName.equals("AndroidManifest.xml")) {
+          manifests++;
         }
       }
+      // Before any early return, so every result states whether splits hold code.
+      inventory.manifestSplits = manifestSplitRequirements(archive, manifests);
+      // Split facts share the retained JSON allowance; escaping is at most 6x.
+      inventory.retainedBytes += 64L + 6L * inventory.manifestSplits.toString().length();
       long totalBytes = 0;
-      int entryIndex = -1;
-      directory = archive.entries();
-      while (directory.hasMoreElements()) {
+      for (DexZipEntry item : dexEntries) {
         checkNativeInterrupted();
-        ZipEntry entry = directory.nextElement();
-        entryIndex++;
+        ZipEntry entry = item.entry();
+        int entryIndex = item.entryIndex();
         String path = entry.getName();
-        if (entry.isDirectory() || !nativeDexEntry(path)) continue;
         if (names.get(path) != 1) {
           inventory.unknown("Duplicate root DEX entry name cannot be selected uniquely by the ZIP reader: " + path);
           continue;
@@ -350,14 +435,17 @@ class ReaJadxBridge {
             String type = cls.getType();
             if (!type.startsWith("L") || !type.endsWith(";"))
               throw new IllegalArgumentException("Class definition has no reference type");
-            String className = type.substring(1, type.length() - 1).replace('/', '.');
+            String className = null;
             // Passing false retains duplicate encoded method references too.
-            for (Iterable<? extends DexBackedMethod> group : List.of(
-                cls.getDirectMethods(false), cls.getVirtualMethods(false))) {
+            for (int pass = 0; pass < 2; pass++) {
+              Iterable<? extends DexBackedMethod> group =
+                  pass == 0 ? cls.getDirectMethods(false) : cls.getVirtualMethods(false);
               for (DexBackedMethod method : group) {
                 checkNativeInterrupted();
                 inventory.examinedMethods++;
                 if ((method.getAccessFlags() & 0x100) == 0) continue;
+                if (className == null)
+                  className = type.substring(1, type.length() - 1).replace('/', '.');
                 String methodName = method.getName();
                 String returnType = method.getReturnType();
                 long characters = 2L + returnType.length();
@@ -436,18 +524,27 @@ class ReaJadxBridge {
     }
   }
 
-  /** One parsed XML owner supplies namespace-aware values alongside the exact decoded text. */
-  static Map<String, Object> manifestSummary(String xml) {
+  private static final ThreadLocal<DocumentBuilderFactory> MANIFEST_XML_FACTORIES =
+      ThreadLocal.withInitial(() -> {
+        try {
+          // Match REA's existing JDK XML setup: document types are unsupported.
+          // Parse an in-memory string; XInclude and external DTD/schema I/O stay disabled.
+          DocumentBuilderFactory factory = DocumentBuilderFactory.newDefaultNSInstance();
+          factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+          factory.setXIncludeAware(false);
+          factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
+          factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+          return factory;
+        } catch (javax.xml.parsers.ParserConfigurationException failure) {
+          throw new IllegalStateException("Root AndroidManifest.xml XML parser factory is unsupported", failure);
+        }
+      });
+
+  /** One namespace-aware XML owner for the decoded manifest text. */
+  static Element manifestRoot(String xml) {
     Element root;
     try {
-      // Match REA's existing JDK XML setup: document types are unsupported.
-      // Parse an in-memory string; XInclude and external DTD/schema I/O stay disabled.
-      DocumentBuilderFactory factory = DocumentBuilderFactory.newDefaultNSInstance();
-      factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-      factory.setXIncludeAware(false);
-      factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
-      factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
-      root = factory.newDocumentBuilder().parse(new InputSource(new StringReader(xml)))
+      root = MANIFEST_XML_FACTORIES.get().newDocumentBuilder().parse(new InputSource(new StringReader(xml)))
           .getDocumentElement();
     } catch (javax.xml.parsers.ParserConfigurationException | org.xml.sax.SAXException
         | java.io.IOException failure) {
@@ -455,6 +552,12 @@ class ReaJadxBridge {
     }
     if (!root.getTagName().equals("manifest") || root.getNamespaceURI() != null)
       throw new IllegalArgumentException("AndroidManifest.xml root must be an unnamespaced <manifest>");
+    return root;
+  }
+
+  /** One parsed XML owner supplies namespace-aware values alongside the exact decoded text. */
+  static Map<String, Object> manifestSummary(String xml) {
+    Element root = manifestRoot(xml);
     String android = "http://schemas.android.com/apk/res/android";
     String minSdk = "";
     String targetSdk = "";
@@ -485,76 +588,143 @@ class ReaJadxBridge {
     JadxSession current = session();
     if (indexedSession != current) {
       Map<String, List<ClassSnapshot>> index = new LinkedHashMap<>();
+      List<ClassSnapshot> orderedList = List.of();
       if (!current.getClasses().isEmpty()) {
         JadxDecompiler decompiler = current.getClasses().get(0).getClassNode().root().getDecompiler();
+        List<JavaClass> rawClasses = decompiler.getClassesWithInners();
+        index = new LinkedHashMap<>(rawClasses.size() * 2);
+        orderedList = new ArrayList<>(rawClasses.size());
         // JavaClass.getMethods/getFields/getInnerClasses all load code. Raw nodes do not.
         // Snapshot every identity before code generation can rewrite aliases or members.
-        for (JavaClass cls : decompiler.getClassesWithInners()) {
+        for (JavaClass cls : rawClasses) {
           ClassNode node = cls.getClassNode();
-          List<MethodNode> ordered = new ArrayList<>(node.getMethods());
-          ordered.sort(Comparator.comparing(MethodNode::getAlias));
-          List<MethodSnapshot> methods = ordered.stream().map(method -> {
-            String name = method.getAlias();
-            String shortId = method.getMethodInfo().getShortId();
-            String rawName = method.getMethodInfo().getName();
-            if (!shortId.startsWith(rawName + "("))
-              throw new IllegalStateException("JADX method ID has no raw-name prefix: " + shortId);
-            String descriptor = shortId.substring(rawName.length());
-            List<String> bodyAbsenceMarkers = new ArrayList<>();
-            if (method.getAccessFlags().isNative()) bodyAbsenceMarkers.add("native_method");
-            if (method.getAccessFlags().isAbstract()) bodyAbsenceMarkers.add("abstract_method");
-            String signature = name + "(" + method.getArgTypes().stream()
-                .map(Object::toString).collect(Collectors.joining(", "))
-                + "): " + method.getReturnType().toString();
-            return new MethodSnapshot(name, rawName, shortId, List.copyOf(bodyAbsenceMarkers), Map.of(
-                "name", name, "raw_name", rawName, "signature", signature,
-                "dex_descriptor", descriptor,
-                "is_constructor", method.isConstructor(), "def_pos", 0));
-          }).toList();
-          List<FieldNode> orderedFields = new ArrayList<>(node.getFields());
-          orderedFields.sort(Comparator.comparing(FieldNode::getAlias));
-          List<Map<String, Object>> fields = new ArrayList<>();
-          List<Map<String, Object>> valuedFields = new ArrayList<>();
-          boolean anyValue = false;
-          for (FieldNode field : orderedFields) {
-            // Raw DEX identity for mapping lookups; the display type can carry generics.
-            Map<String, Object> entry = Map.of("name", field.getAlias(),
-                "raw_name", field.getFieldInfo().getName(),
-                "type", field.getType().toString(),
-                "dex_type", TypeGen.signature(field.getFieldInfo().getType()), "def_pos", 0);
-            fields.add(entry);
-            Map<String, Object> value = dexStaticValue(field);
-            if (value == null) valuedFields.add(entry);
-            else {
-              anyValue = true;
-              Map<String, Object> valued = new LinkedHashMap<>(entry);
-              valued.put("dex_static_value", value);
-              valuedFields.add(Collections.unmodifiableMap(valued));
+          List<MethodNode> rawMethods = node.getMethods();
+          List<MethodSnapshot> methods;
+          List<Map<String, Object>> methodSummaries;
+          if (rawMethods.isEmpty()) {
+            methods = List.of();
+            methodSummaries = List.of();
+          } else {
+            List<MethodNode> ordered = new ArrayList<>(rawMethods);
+            if (ordered.size() > 1) ordered.sort(Comparator.comparing(MethodNode::getAlias));
+            methods = new ArrayList<>(ordered.size());
+            methodSummaries = new ArrayList<>(ordered.size());
+            String prevName = null;
+            int overloadIndex = 0;
+            for (MethodNode method : ordered) {
+              String name = method.getAlias();
+              overloadIndex = name.equals(prevName) ? overloadIndex + 1 : 0;
+              prevName = name;
+              String shortId = method.getMethodInfo().getShortId();
+              String rawName = method.getMethodInfo().getName();
+              if (!shortId.startsWith(rawName + "("))
+                throw new IllegalStateException("JADX method ID has no raw-name prefix: " + shortId);
+              String descriptor = shortId.substring(rawName.length());
+              boolean isNative = method.getAccessFlags().isNative();
+              boolean isAbstract = method.getAccessFlags().isAbstract();
+              List<String> bodyAbsenceMarkers;
+              if (isNative && isAbstract) bodyAbsenceMarkers = List.of("native_method", "abstract_method");
+              else if (isNative) bodyAbsenceMarkers = List.of("native_method");
+              else if (isAbstract) bodyAbsenceMarkers = List.of("abstract_method");
+              else bodyAbsenceMarkers = List.of();
+              List<ArgType> argTypes = method.getArgTypes();
+              String signature;
+              if (argTypes.isEmpty()) {
+                signature = name + "(): " + method.getReturnType().toString();
+              } else {
+                StringBuilder sigBuilder = new StringBuilder(name.length() + 32);
+                sigBuilder.append(name).append('(');
+                for (int i = 0; i < argTypes.size(); i++) {
+                  if (i > 0) sigBuilder.append(", ");
+                  sigBuilder.append(argTypes.get(i).toString());
+                }
+                sigBuilder.append("): ").append(method.getReturnType().toString());
+                signature = sigBuilder.toString();
+              }
+              Map<String, Object> methodSummary = Map.of(
+                  "name", name, "raw_name", rawName, "signature", signature,
+                  "dex_descriptor", descriptor,
+                  "is_constructor", method.isConstructor(), "def_pos", 0);
+              methods.add(new MethodSnapshot(method, name, rawName, shortId, overloadIndex,
+                  bodyAbsenceMarkers, methodSummary));
+              methodSummaries.add(methodSummary);
             }
+            methods = Collections.unmodifiableList(methods);
+            methodSummaries = Collections.unmodifiableList(methodSummaries);
           }
-          List<String> inner = node.getInnerClasses().stream().map(ClassNode::getFullName).toList();
-          List<String> innerRaw = node.getInnerClasses().stream().map(ClassNode::getRawName).toList();
+          List<FieldNode> rawFields = node.getFields();
+          List<Map<String, Object>> fields;
+          List<Map<String, Object>> valuedFieldsList = null;
+          if (rawFields.isEmpty()) {
+            fields = List.of();
+          } else {
+            List<FieldNode> orderedFields = new ArrayList<>(rawFields);
+            if (orderedFields.size() > 1) orderedFields.sort(Comparator.comparing(FieldNode::getAlias));
+            fields = new ArrayList<>(orderedFields.size());
+            for (int i = 0; i < orderedFields.size(); i++) {
+              FieldNode field = orderedFields.get(i);
+              // Raw DEX identity for mapping lookups; the display type can carry generics.
+              Map<String, Object> entry = Map.of("name", field.getAlias(),
+                  "raw_name", field.getFieldInfo().getName(),
+                  "type", field.getType().toString(),
+                  "dex_type", TypeGen.signature(field.getFieldInfo().getType()), "def_pos", 0);
+              fields.add(entry);
+              Map<String, Object> value = dexStaticValue(field);
+              if (value != null) {
+                if (valuedFieldsList == null) {
+                  valuedFieldsList = new ArrayList<>(orderedFields.size());
+                  for (int j = 0; j < i; j++) valuedFieldsList.add(fields.get(j));
+                }
+                Map<String, Object> valued = new LinkedHashMap<>(entry);
+                valued.put("dex_static_value", value);
+                valuedFieldsList.add(Collections.unmodifiableMap(valued));
+              } else if (valuedFieldsList != null) {
+                valuedFieldsList.add(entry);
+              }
+            }
+            fields = Collections.unmodifiableList(fields);
+          }
+          List<ClassNode> rawInners = node.getInnerClasses();
+          List<String> inner;
+          List<String> innerRaw;
+          if (rawInners.isEmpty()) {
+            inner = List.of();
+            innerRaw = List.of();
+          } else {
+            List<String> innerList = new ArrayList<>(rawInners.size());
+            List<String> innerRawList = new ArrayList<>(rawInners.size());
+            for (ClassNode innerNode : rawInners) {
+              innerList.add(innerNode.getFullName());
+              innerRawList.add(innerNode.getRawName());
+            }
+            inner = Collections.unmodifiableList(innerList);
+            innerRaw = Collections.unmodifiableList(innerRawList);
+          }
           Map<String, Object> summary = Map.of(
               "full_name", cls.getFullName(), "raw_name", cls.getRawName(), "name", cls.getName(),
               "method_count", methods.size(), "field_count", fields.size(),
               "inner_class_count", inner.size(), "inner_classes", inner, "inner_class_raw_names", innerRaw,
-              "methods", methods.stream().map(MethodSnapshot::summary).toList(), "fields", List.copyOf(fields));
+              "methods", methodSummaries, "fields", fields);
           // DEX static values are opt-in, so method and reference lookups keep the member-only reply.
           Map<String, Object> summaryWithValues = summary;
-          if (anyValue) {
+          if (valuedFieldsList != null) {
             Map<String, Object> copy = new LinkedHashMap<>(summary);
-            copy.put("fields", List.copyOf(valuedFields));
+            copy.put("fields", Collections.unmodifiableList(valuedFieldsList));
             summaryWithValues = Collections.unmodifiableMap(copy);
           }
           ClassSnapshot snapshot = new ClassSnapshot(cls, methods, summary, summaryWithValues);
-          index.computeIfAbsent(cls.getFullName(), ignored -> new ArrayList<>()).add(snapshot);
+          orderedList.add(snapshot);
+          index.computeIfAbsent(cls.getFullName(), ignored -> new ArrayList<>(1)).add(snapshot);
           // Keep the binary identity supplied by JADX; '$' can also be a literal
           // name character, so replacing separators would invent lookup aliases.
           if (!cls.getRawName().equals(cls.getFullName()))
-            index.computeIfAbsent(cls.getRawName(), ignored -> new ArrayList<>()).add(snapshot);
+            index.computeIfAbsent(cls.getRawName(), ignored -> new ArrayList<>(1)).add(snapshot);
         }
+        if (orderedList.size() > 1)
+          orderedList.sort(Comparator.comparing(source -> source.node().getRawName()));
       }
       classes = Collections.unmodifiableMap(index);
+      orderedClasses = Collections.unmodifiableList(orderedList);
       indexedSession = current;
     }
   }
@@ -601,8 +771,9 @@ class ReaJadxBridge {
   }
 
   private JavaMethod method(ClassSnapshot cls, MethodSnapshot selected) {
-    JavaMethod result = cls.node().searchMethodByShortId(selected.shortId());
-    if (result == null) throw new IllegalArgumentException("Method identity no longer available: " + selected.shortId());
+    JavaNode resolved = cls.node().getClassNode().root().getDecompiler().getJavaNodeByRef(selected.methodNode());
+    if (!(resolved instanceof JavaMethod result))
+      throw new IllegalArgumentException("Method identity no longer available: " + selected.shortId());
     return result;
   }
 
@@ -638,10 +809,19 @@ class ReaJadxBridge {
         TextUtilKt.truncateToBytes(block, current.getMaxSourceBytes()), "smali", true, markers);
   }
 
+  private static final class MethodDisassemblyUnavailable extends IllegalArgumentException {
+    MethodDisassemblyUnavailable(String message) { super(message); }
+  }
+
   private static String selectMethodSmali(JadxSession.MethodSmali smali, String shortId) {
-    if (!smali.getFound())
-      throw new IllegalArgumentException("JADX could not disassemble " + shortId
-          + (smali.getNote() == null ? "" : ": " + smali.getNote()));
+    if (!smali.getFound()) {
+      String reason = "JADX could not disassemble " + shortId
+          + (smali.getNote() == null ? "" : ": " + smali.getNote());
+      // JADX folds caller interruption into the same result as failed generation
+      // and missing blocks, but leaves the interrupt flag set.
+      if (Thread.currentThread().isInterrupted()) throw new IllegalArgumentException(reason);
+      throw new MethodDisassemblyUnavailable(reason);
+    }
     // Upstream returns every same-name overload, and can return an unterminated
     // trailing block. Match the full original identity before applying output limits.
     List<String> matches = smali.getBlocks().stream().filter(block -> {
@@ -649,10 +829,10 @@ class ReaJadxBridge {
       return header.startsWith(".method ") && header.endsWith(" " + shortId);
     }).toList();
     if (matches.size() != 1)
-      throw new IllegalArgumentException("Disassembly could not establish one selected method: " + shortId);
+      throw new MethodDisassemblyUnavailable("Disassembly could not establish one selected method: " + shortId);
     String block = matches.get(0);
     if (!block.stripTrailing().endsWith("\n.end method"))
-      throw new IllegalArgumentException("Selected method disassembly is incomplete: " + shortId);
+      throw new MethodDisassemblyUnavailable("Selected method disassembly is incomplete: " + shortId);
     return block;
   }
 
@@ -666,11 +846,61 @@ class ReaJadxBridge {
   private static int escapedJsonBytes(Object value) {
     return JSON.toJson(JSON.toJson(value)).getBytes(StandardCharsets.UTF_8).length;
   }
+
+  /**
+   * Exact UTF-8 byte length of a string's characters after Gson htmlSafe=true
+   * serialization wrapped inside an outer Gson JSON string (excluding quotes).
+   */
+  static long doubleEscapedStringBytes(String text) {
+    long bytes = 0;
+    int length = text.length();
+    for (int i = 0; i < length; i++) {
+      char c = text.charAt(i);
+      if (c < 0x80) {
+        if (c == '"' || c == '\\') bytes += 4;
+        else if (c == '\b' || c == '\t' || c == '\n' || c == '\f' || c == '\r') bytes += 3;
+        else if (c < 0x20 || c == '<' || c == '>' || c == '&' || c == '=' || c == '\'') bytes += 7;
+        else bytes += 1;
+      } else if (c < 0x800) {
+        bytes += 2;
+      } else if (c == '\u2028' || c == '\u2029') {
+        bytes += 7;
+      } else if (Character.isHighSurrogate(c) && i + 1 < length && Character.isLowSurrogate(text.charAt(i + 1))) {
+        bytes += 4;
+        i++;
+      } else if (Character.isSurrogate(c)) {
+        bytes += 1;
+      } else {
+        bytes += 3;
+      }
+    }
+    return bytes;
+  }
+
+  private static int intDigits(int value) {
+    if (value < 0) return value == Integer.MIN_VALUE ? 11 : 1 + intDigits(-value);
+    if (value < 10) return 1;
+    if (value < 100) return 2;
+    if (value < 1000) return 3;
+    if (value < 10000) return 4;
+    if (value < 100000) return 5;
+    if (value < 1000000) return 6;
+    if (value < 10000000) return 7;
+    if (value < 100000000) return 8;
+    if (value < 1000000000) return 9;
+    return 10;
+  }
+
   private static final class InvokeBudget {
     long remaining;
     InvokeBudget(long remaining) { this.remaining = Math.max(0, remaining); }
     boolean fitsText(long characters) {
       return remaining >= 256 && characters <= (remaining - 256) / 12;
+    }
+    boolean admitBytes(long bytes) {
+      if (bytes > remaining) return false;
+      remaining -= bytes;
+      return true;
     }
     boolean admit(Map<String, Object> site) {
       // Check a conservative two-layer escape bound before serialization.
@@ -690,6 +920,15 @@ class ReaJadxBridge {
     void accept(MethodInfo target, int offset, int index, Opcode opcode);
   }
 
+  private static final boolean[] INVOKE_OPCODES;
+  static {
+    Opcode[] values = Opcode.values();
+    INVOKE_OPCODES = new boolean[values.length];
+    for (Opcode opcode : values) {
+      if (opcode.name().startsWith("INVOKE_")) INVOKE_OPCODES[opcode.ordinal()] = true;
+    }
+  }
+
   /** Decode raw invoke identity once at the shared bridge boundary, without generating source. */
   private static void visitInvokes(MethodNode node, InvokeVisitor visitor) {
     checkNativeInterrupted();
@@ -697,12 +936,10 @@ class ReaJadxBridge {
     if (code == null) return;
     code.visitInstructions(insn -> {
       checkNativeInterrupted();
-      insn.decode();
-      if (insn.getIndexType() != InsnIndexType.METHOD_REF) return;
       Opcode opcode = insn.getOpcode();
-      if (!opcode.name().startsWith("INVOKE_")) return;
+      if (!INVOKE_OPCODES[opcode.ordinal()] || insn.getIndexType() != InsnIndexType.METHOD_REF) return;
+      insn.decode();
       IMethodRef ref = insn.getIndexAsMethod();
-      ref.load();
       visitor.accept(MethodInfo.fromRef(node.root(), ref), insn.getOffset(), insn.getIndex(), opcode);
     });
   }
@@ -713,43 +950,41 @@ class ReaJadxBridge {
   }
 
   private static void visitDirectInvokes(MethodNode node, MethodInfo target, InvokeVisitor visitor) {
+    String targetRawFullId = target.getRawFullId();
     visitInvokes(node, (referenced, offset, index, opcode) -> {
-      if (referenced.getRawFullId().equals(target.getRawFullId()))
+      if (referenced.getRawFullId().equals(targetRawFullId))
         visitor.accept(referenced, offset, index, opcode);
     });
-  }
-
-  private static boolean referencesMethod(MethodNode node, MethodInfo target) {
-    boolean[] found = {false};
-    visitDirectInvokes(node, target, (referenced, offset, index, opcode) -> found[0] = true);
-    return found[0];
   }
 
   private static DirectInvokes directInvokes(MethodNode node, MethodInfo target, InvokeBudget budget) {
     if (node.getCodeReader() == null) return null;
     List<Map<String, Object>> sites = new ArrayList<>();
     boolean[] exhaustive = {true};
+    String dexEntry = node.getInputFileName();
+    String sourceRawMethodId = node.getMethodInfo().getRawFullId();
+    // 5 ASCII keys/quotes/colons (96) + 3 value quote pairs (12) + braces/commas (6) + 1 separator = 115.
+    long fixedBytes = 115L + doubleEscapedStringBytes(dexEntry) + doubleEscapedStringBytes(sourceRawMethodId);
     visitDirectInvokes(node, target, (referenced, offset, index, opcode) -> {
-      Map<String, Object> site = Map.of(
-          "dex_entry", node.getInputFileName(),
-          "source_raw_method_id", node.getMethodInfo().getRawFullId(),
-          "dex_code_unit_offset", offset,
-          "dex_method_index", index,
-          "opcode", opcode.name());
-      if (budget.admit(site)) sites.add(site);
-      else exhaustive[0] = false;
+      String opcodeName = opcode.name();
+      long siteBytes = fixedBytes + opcodeName.length() + intDigits(offset) + intDigits(index);
+      if (budget.admitBytes(siteBytes)) {
+        sites.add(Map.of(
+            "dex_entry", dexEntry,
+            "source_raw_method_id", sourceRawMethodId,
+            "dex_code_unit_offset", offset,
+            "dex_method_index", index,
+            "opcode", opcodeName));
+      } else {
+        exhaustive[0] = false;
+      }
     });
     return new DirectInvokes(sites, exhaustive[0]);
   }
 
   private List<ClassSnapshot> sourceClasses() {
     indexClasses();
-    Set<ClassSnapshot> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-    List<ClassSnapshot> result = new ArrayList<>();
-    for (List<ClassSnapshot> group : classes.values())
-      for (ClassSnapshot source : group) if (seen.add(source)) result.add(source);
-    result.sort(Comparator.comparing(source -> source.node().getRawName()));
-    return result;
+    return orderedClasses;
   }
 
   private static long displayTypeCharacters(ArgType type) {
@@ -764,15 +999,26 @@ class ReaJadxBridge {
     String name = info.getName();
     long signatureCharacters = name.length() + 4L + displayTypeCharacters(info.getReturnType())
         + 2L * Math.max(0, info.getArgsCount() - 1);
-    for (ArgType type : info.getArgumentsTypes()) signatureCharacters += displayTypeCharacters(type);
+    List<ArgType> argTypes = info.getArgumentsTypes();
+    for (ArgType type : argTypes) signatureCharacters += displayTypeCharacters(type);
     long descriptorCharacters = info.getShortId().length() - (long) name.length();
     // Use parsed type facts and the existing short-id length before copying/joining strings.
     if (!budget.fitsText(2L * name.length() + descriptorCharacters + signatureCharacters))
       throw new ReferenceLimit("method_inventory");
     String descriptor = info.getShortId().substring(name.length());
-    String signature = name + "(" + info.getArgumentsTypes().stream()
-        .map(Object::toString).collect(Collectors.joining(", "))
-        + "): " + info.getReturnType();
+    String signature;
+    if (argTypes.isEmpty()) {
+      signature = name + "(): " + info.getReturnType();
+    } else {
+      StringBuilder sigBuilder = new StringBuilder((int) Math.min(signatureCharacters, 4096L));
+      sigBuilder.append(name).append('(');
+      for (int i = 0; i < argTypes.size(); i++) {
+        if (i > 0) sigBuilder.append(", ");
+        sigBuilder.append(argTypes.get(i).toString());
+      }
+      sigBuilder.append("): ").append(info.getReturnType());
+      signature = sigBuilder.toString();
+    }
     Map<String, Object> summary = Map.of("name", name, "raw_name", name, "signature", signature,
         "dex_descriptor", descriptor, "is_constructor", info.isConstructor(), "def_pos", 0);
     if (!budget.admit(summary)) throw new ReferenceLimit("method_inventory");
@@ -790,16 +1036,47 @@ class ReaJadxBridge {
     // Retain only the latest bounded selection, never results from a replaced APK/session.
     externalInventory = null;
     SortedMap<String, ExternalMethod> methods = new TreeMap<>();
+    Map<String, List<ExternalCallerTarget>> callersByShortId = new HashMap<>();
+    int indexedCallerEntries = 0;
     boolean[] observedClass = {false};
     InvokeBudget budget = new InvokeBudget(MAX_EXTERNAL_XREF_BYTES
         - 4096L - 12L * (className.length() + (long) methodName.length()));
+    final class MethodScanState {
+      String firstShortId;
+      Set<String> extraShortIds;
+      boolean callersIndexed = true;
+      int indexedEntries = 0;
+    }
+    MethodScanState scanState = new MethodScanState();
     for (ClassSnapshot source : sourceClasses()) {
       for (MethodSnapshot selected : source.methods()) {
-        visitInvokes(method(source, selected).getMethodNode(), (info, offset, index, opcode) -> {
+        scanState.firstShortId = null;
+        if (scanState.extraShortIds != null) scanState.extraShortIds.clear();
+        visitInvokes(selected.methodNode(), (info, offset, index, opcode) -> {
           if (!info.getDeclClass().getRawName().equals(className)) return;
           observedClass[0] = true;
-          if (!info.getName().equals(methodName) || methods.containsKey(info.getShortId())) return;
-          methods.put(info.getShortId(), new ExternalMethod(info, externalMethodSummary(info, budget)));
+          if (!info.getName().equals(methodName)) return;
+          String shortId = info.getShortId();
+          if (!methods.containsKey(shortId))
+            methods.put(shortId, new ExternalMethod(info, externalMethodSummary(info, budget)));
+          if (!scanState.callersIndexed) return;
+          boolean recordCaller = false;
+          if (scanState.firstShortId == null) {
+            scanState.firstShortId = shortId;
+            recordCaller = true;
+          } else if (!scanState.firstShortId.equals(shortId)) {
+            if (scanState.extraShortIds == null) scanState.extraShortIds = new HashSet<>();
+            recordCaller = scanState.extraShortIds.add(shortId);
+          }
+          if (!recordCaller) return;
+          if (scanState.indexedEntries >= maxExternalCallerIndexEntries) {
+            scanState.callersIndexed = false;
+            callersByShortId.clear();
+            return;
+          }
+          scanState.indexedEntries++;
+          callersByShortId.computeIfAbsent(shortId, ignored -> new ArrayList<>())
+              .add(new ExternalCallerTarget(source, selected));
         });
       }
     }
@@ -808,7 +1085,8 @@ class ReaJadxBridge {
     if (methods.isEmpty()) throw new InputFailure("method_name",
         "No direct DEX invoke references " + className + "." + methodName);
     List<ExternalMethod> result = List.copyOf(methods.values());
-    externalInventory = new ExternalInventory(current, className, methodName, result);
+    externalInventory = new ExternalInventory(current, className, methodName, result,
+        scanState.callersIndexed ? Collections.unmodifiableMap(callersByShortId) : null);
     return result;
   }
 
@@ -821,26 +1099,37 @@ class ReaJadxBridge {
 
   private record ExternalCaller(MethodNode node, Map<String, Object> row) {}
 
+  private void appendExternalCaller(ClassSnapshot source, MethodSnapshot candidate,
+      InvokeBudget budget, List<ExternalCaller> callers) {
+    String className = String.valueOf(source.summary().get("full_name"));
+    if (classes.get(className).size() != 1)
+      throw new IllegalArgumentException("External caller has an ambiguous APK class identity: " + className);
+    Map<String, Object> row = new LinkedHashMap<>(Map.of(
+        "kind", "method", "name", candidate.name(), "full_name", className + "." + candidate.name(),
+        "containing_class", className, "top_class", source.node().getTopParentClass().getFullName(),
+        "def_pos", 0, "source_selector", Map.of("class_name", className,
+            "method_name", candidate.name(), "overload_index", candidate.overloadIndex()),
+        "direct_invokes", List.of(), "direct_invokes_exhaustive", false));
+    if (!budget.admit(row)) throw new ReferenceLimit("caller_inventory");
+    callers.add(new ExternalCaller(candidate.methodNode(), row));
+  }
+
   /** Reserve the complete using-node inventory before optional instruction positions. */
-  private List<ExternalCaller> externalCallers(MethodInfo target, InvokeBudget budget) {
+  private List<ExternalCaller> externalCallers(ExternalInventory inventory, MethodInfo target, InvokeBudget budget) {
+    Map<String, List<ExternalCallerTarget>> indexedCallers = inventory.callersByShortId();
+    if (indexedCallers != null) {
+      List<ExternalCallerTarget> targets = indexedCallers.getOrDefault(target.getShortId(), List.of());
+      List<ExternalCaller> callers = new ArrayList<>(targets.size());
+      for (ExternalCallerTarget callerTarget : targets)
+        appendExternalCaller(callerTarget.owner(), callerTarget.method(), budget, callers);
+      return List.copyOf(callers);
+    }
     List<ExternalCaller> callers = new ArrayList<>();
     for (ClassSnapshot source : sourceClasses()) {
-      String className = String.valueOf(source.summary().get("full_name"));
-      Map<String, Integer> overloads = new HashMap<>();
       for (MethodSnapshot candidate : source.methods()) {
-        int overload = overloads.merge(candidate.name(), 1, Integer::sum) - 1;
-        MethodNode node = method(source, candidate).getMethodNode();
-        if (!referencesMethod(node, target)) continue;
-        if (classes.get(className).size() != 1)
-          throw new IllegalArgumentException("External caller has an ambiguous APK class identity: " + className);
-        Map<String, Object> row = new LinkedHashMap<>(Map.of(
-            "kind", "method", "name", candidate.name(), "full_name", className + "." + candidate.name(),
-            "containing_class", className, "top_class", source.node().getTopParentClass().getFullName(),
-            "def_pos", 0, "source_selector", Map.of("class_name", className,
-                "method_name", candidate.name(), "overload_index", overload),
-            "direct_invokes", List.of(), "direct_invokes_exhaustive", false));
-        if (!budget.admit(row)) throw new ReferenceLimit("caller_inventory");
-        callers.add(new ExternalCaller(node, row));
+        boolean[] invokes = {false};
+        visitDirectInvokes(candidate.methodNode(), target, (referenced, offset, index, opcode) -> invokes[0] = true);
+        if (invokes[0]) appendExternalCaller(source, candidate, budget, callers);
       }
     }
     return List.copyOf(callers);
@@ -857,7 +1146,7 @@ class ReaJadxBridge {
     Map<String, Object> selected = method.summary();
     InvokeBudget budget = new InvokeBudget(MAX_EXTERNAL_XREF_BYTES
         - 4096L - escapedJsonBytes(selected));
-    List<ExternalCaller> callers = externalCallers(target, budget);
+    List<ExternalCaller> callers = externalCallers(externalInventory, target, budget);
     List<Map<String, Object>> items = new ArrayList<>();
     for (ExternalCaller caller : callers) {
       DirectInvokes invokes = directInvokes(caller.node(), target, budget);
@@ -928,14 +1217,22 @@ class ReaJadxBridge {
       List<MethodSnapshot> overloads = methods(cls, args);
       int index = integer(args, "overload_index", 0);
       if (index >= overloads.size()) throw new InputFailure("overload_index", "overload_index out of range: " + index);
-      JavaMethod method = method(cls, overloads.get(index));
-      JadxSession.SmartCode code = methodBody(current, cls, overloads.get(index), method);
-      return json(Map.of("class_name", cls.summary().get("full_name"),
-          "method_name", overloads.get(index).name(), "full_name", method.getFullName(),
-          "dex_descriptor", overloads.get(index).summary().get("dex_descriptor"),
-          "overload_index", index, "overload_count", overloads.size(),
-          "mode", code.getKind(), "fell_back", code.getFellBack(),
-          "markers", code.getMarkers(), "body", code.getText()));
+      MethodSnapshot selected = overloads.get(index);
+      JavaMethod method = method(cls, selected);
+      Map<String, Object> result = new LinkedHashMap<>(Map.of(
+          "class_name", cls.summary().get("full_name"),
+          "method_name", selected.name(), "full_name", method.getFullName(),
+          "dex_descriptor", selected.summary().get("dex_descriptor"),
+          "overload_index", index, "overload_count", overloads.size()));
+      try {
+        JadxSession.SmartCode code = methodBody(current, cls, selected, method);
+        result.putAll(Map.of("mode", code.getKind(), "fell_back", code.getFellBack(),
+            "markers", code.getMarkers(), "body", code.getText()));
+      } catch (MethodDisassemblyUnavailable failure) {
+        result.put("mode", "unavailable");
+        result.put("body_unavailable_reason", failure.getMessage());
+      }
+      return json(result);
     }
     List<JavaNode> uses;
     String target = (String) cls.summary().get("full_name");
@@ -987,6 +1284,20 @@ class ReaJadxBridge {
     return json(result);
   }
 
+  /** Shared input guidance for the bridge's exact-selection tools. */
+  private static final kotlinx.serialization.json.JsonObject CLASS_NAME_PROPERTY =
+      property("string", "Exact class name.");
+  private static final kotlinx.serialization.json.JsonObject METHOD_NAME_PROPERTY =
+      property("string", "Method name inside the selected class.");
+  private static final kotlinx.serialization.json.JsonObject OVERLOAD_INDEX_PROPERTY =
+      property("integer", "0-based index when the name is overloaded; omit for the single overload.");
+
+  private static kotlinx.serialization.json.JsonObject property(String type, String description) {
+    return new kotlinx.serialization.json.JsonObject(Map.of(
+        "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive(type),
+        "description", kotlinx.serialization.json.JsonElementKt.JsonPrimitive(description)));
+  }
+
   private static void registerBridgeTool(Server server, ReaJadxBridge bridge, String name,
       ToolSchema schema, String description) {
     Tool tool = new Tool(name, schema, description, null, null, null, null, null, null);
@@ -1009,7 +1320,7 @@ class ReaJadxBridge {
     SessionHolder holder = new SessionHolder(defaults);
     ServerCapabilities capabilities = new ServerCapabilities(
         new ServerCapabilities.Tools(null), null, null, null, null, null, null, Map.of());
-    Server server = new Server(new Implementation("rea-jadx-bridge", "10", null, null, null),
+    Server server = new Server(new Implementation(BRIDGE_NAME, BRIDGE_VERSION, null, null, null),
         new ServerOptions(capabilities), "", ignored -> Unit.INSTANCE);
     SessionToolsKt.registerSessionTools(server, holder);
     ClassToolsKt.registerClassTools(server, holder);
@@ -1020,9 +1331,11 @@ class ReaJadxBridge {
     server.removeTool("load_apk");
     server.addTool(loadTool, (connection, request, continuation) ->
         bridge.load(request.getArguments(), defaults, continuation));
-    Set<String> consumed = Set.of("load_apk",
+    List<String> reimplementedTools = List.of(
         "list_classes", "get_class_summary", "get_method_body",
         "get_xrefs_to_class", "get_xrefs_to_method");
+    Set<String> consumed = new HashSet<>(reimplementedTools);
+    consumed.add("load_apk");
     for (String name : new ArrayList<>(server.getTools().keySet()))
       if (!consumed.contains(name)) server.removeTool(name);
     Tool diagnostics = new Tool("rea_jvm_status",
@@ -1041,39 +1354,55 @@ class ReaJadxBridge {
       registerBridgeTool(server, bridge, name,
           new ToolSchema(null, new kotlinx.serialization.json.JsonObject(Map.of()), List.of(), null), description);
     }
-    for (String name : List.of("list_classes", "get_class_summary",
-        "get_method_body", "get_xrefs_to_class", "get_xrefs_to_method")) {
-      Tool tool = server.getTools().get(name).getTool();
+    // REA owns these input schemas: it pages inventories and selects overloads
+    // itself, so the pinned engine's shape cannot describe what it accepts.
+    for (String name : reimplementedTools) {
       server.removeTool(name);
-      List<String> fields = switch (name) {
-        case "list_classes" -> List.of("offset", "limit");
-        case "get_method_body" -> List.of("class_name", "method_name", "overload_index");
-        case "get_xrefs_to_method" -> List.of("class_name", "method_name", "overload_index");
-        default -> List.of("class_name");
-      };
       Map<String, kotlinx.serialization.json.JsonElement> properties = new LinkedHashMap<>();
-      for (String field : fields) properties.put(field, tool.getInputSchema().getProperties().get(field));
-      if (name.equals("list_classes")) properties.put("query",
-          new kotlinx.serialization.json.JsonObject(Map.of(
-              "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))));
-      if (name.equals("get_class_summary")) properties.put("dex_static_values",
-          new kotlinx.serialization.json.JsonObject(Map.of(
-              "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
-      if (name.equals("get_class_summary") || name.equals("get_xrefs_to_method"))
-        properties.put("reference_target", new kotlinx.serialization.json.JsonObject(Map.of(
-            "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
-      if (name.equals("get_class_summary")) properties.put("method_name",
-          new kotlinx.serialization.json.JsonObject(Map.of(
-              "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))));
+      List<String> required;
+      switch (name) {
+        case "list_classes" -> {
+          properties.put("offset", property("integer", "Inventory position to start listing from."));
+          properties.put("limit", property("integer", "Maximum matching class names to return."));
+          properties.put("query", property("string", "Case-sensitive substring matched against top-level class names; omit or leave empty to inventory every name."));
+          required = List.of();
+        }
+        case "get_class_summary" -> {
+          properties.put("class_name", CLASS_NAME_PROPERTY);
+          properties.put("method_name", property("string", "Method whose referenced prototypes are returned; only read when reference_target selects a class outside the APK."));
+          properties.put("reference_target", property("boolean", "Return referenced prototypes for a class outside the APK instead of parsed members."));
+          properties.put("dex_static_values", property("boolean", "Include encoded static final field values."));
+          required = List.of("class_name");
+        }
+        case "get_method_body" -> {
+          properties.put("class_name", CLASS_NAME_PROPERTY);
+          properties.put("method_name", METHOD_NAME_PROPERTY);
+          properties.put("overload_index", OVERLOAD_INDEX_PROPERTY);
+          required = List.of("class_name", "method_name");
+        }
+        case "get_xrefs_to_class" -> {
+          properties.put("class_name", CLASS_NAME_PROPERTY);
+          required = List.of("class_name");
+        }
+        case "get_xrefs_to_method" -> {
+          properties.put("class_name", CLASS_NAME_PROPERTY);
+          properties.put("method_name", METHOD_NAME_PROPERTY);
+          properties.put("overload_index", OVERLOAD_INDEX_PROPERTY);
+          properties.put("reference_target", property("boolean", "Return referenced prototypes for a class outside the APK instead of resolved cross-references."));
+          required = List.of("class_name", "method_name");
+        }
+        default -> throw new IllegalStateException("Unhandled reimplemented tool: " + name);
+      }
       String description = switch (name) {
         case "list_classes" -> "Pages of case-sensitive matching top-level class names; offset and next_offset are inventory positions, limit bounds matching rows. Omitted or empty query inventories all names.";
         case "get_class_summary" -> "Parsed member metadata for one exact class name; no source generation. Set dex_static_values to include encoded static final field values.";
         case "get_method_body" -> "Source for an exact class and stable same-name overload index; static initializers use smali to preserve folded field initialization.";
-        default -> "Complete static using-node inventory for an exact class or selected method overload; one node may contain multiple invoke instructions, and source lines are unresolved.";
+        case "get_xrefs_to_class", "get_xrefs_to_method" -> "Complete static using-node inventory for an exact class or selected method overload; one node may contain multiple invoke instructions, and source lines are unresolved.";
+        default -> throw new IllegalStateException("Unhandled reimplemented tool: " + name);
       };
       registerBridgeTool(server, bridge, name,
           new ToolSchema(null, new kotlinx.serialization.json.JsonObject(properties),
-              tool.getInputSchema().getRequired(), null), description);
+              required, null), description);
     }
     CountDownLatch done = new CountDownLatch(1);
     server.onClose(() -> { done.countDown(); return Unit.INSTANCE; });
