@@ -81,7 +81,7 @@ cliTest(
     expect(renderedCells(markdown.stdout)).toContain(message);
     expect(renderedCells(full.stdout)).toContain(message);
     expect(Number(count.stdout.trim())).toBe(
-      estimateTokenCount(markdown.stdout.trimEnd()),
+      estimateTokenCount(markdown.stdout),
     );
     expect(
       visibleText(parseFragment(renderer.render(window.stdout))),

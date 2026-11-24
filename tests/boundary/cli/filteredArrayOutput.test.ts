@@ -362,7 +362,7 @@ it.each(["json", "jsonl"] as const)(
       },
     });
     expect(Buffer.concat(chunks).toString()).toBe(
-      `${estimateTokenCount(formatCliOutput([1, null, null], format))}\n`,
+      `${estimateTokenCount(format === "json" ? renderCliDocument([1, null, null], "json", false) : formatCliOutput([1, null, null], format) + "\n")}\n`,
     );
     expect(fallback).toBe("");
   },
