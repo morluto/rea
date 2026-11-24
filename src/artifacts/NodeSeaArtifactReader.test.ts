@@ -818,6 +818,7 @@ it("isolates malformed located SEA blobs to outer native inventory while direct 
     const snapshot = await scanCanonicalArtifactInventory(path);
     expect(snapshot.manifest.root_format).toBe(item.outerFormat);
     expect(snapshot.manifest.root_sha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(snapshot.coverage.status).toBe("unknown");
     expect(snapshot.limitations).toContainEqual(
       expect.stringMatching(/Node SEA recognition remains unknown/iu),
     );
@@ -851,6 +852,7 @@ it.each([
     });
     expect(snapshot.manifest.root_format).toBe(outerFormat);
     expect(snapshot.manifest.root_sha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(snapshot.coverage.status).toBe("unknown");
     expect(snapshot.limitations).toContainEqual(
       expect.stringMatching(/Node SEA recognition remains unknown/iu),
     );

@@ -207,6 +207,22 @@ export class ArtifactEmbeddedFormatProbes {
     return observed;
   }
 
+  recognitionLimitations(): string[] {
+    const { bunStandalone, nodeSeaRecognitionFailure } = this.#facts;
+    return [
+      ...(bunStandalone?.status === "limited"
+        ? [
+            `Bun graph recognition remains unknown: ${bunStandalone.failure.message}`,
+          ]
+        : []),
+      ...(nodeSeaRecognitionFailure === undefined
+        ? []
+        : [
+            `Node SEA recognition remains unknown: ${nodeSeaRecognitionFailure.message}`,
+          ]),
+    ];
+  }
+
   completedFacts(): ArtifactEmbeddedFormatProbeFacts {
     return this.#facts;
   }

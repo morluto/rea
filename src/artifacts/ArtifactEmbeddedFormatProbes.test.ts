@@ -6,6 +6,9 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
+import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
+import * as bunLayout from "./bun/BunModuleGraphLayout.js";
+import { artifactReaderLimitFailure } from "../resources/index.js";
 import * as dotnetLayout from "./dotnet/DotnetBundle.js";
 import { dotnetBundleFixture } from "./dotnet/DotnetBundle.fixture.js";
 import { denoMachO } from "./deno/DenoStandalone.fixture.js";
@@ -297,5 +300,64 @@ it("propagates I/O and cancellation errors from nodeSea without caching absence 
     });
   } finally {
     locate.mockRestore();
+  }
+});
+
+it("reports unknown rather than absent from classifyEmbeddedExecutablePackage when Node SEA or Bun recognition is limited", async () => {
+  const root = await createTestTempDirectory("rea-embedded-classify-unknown-");
+  const seaPath = join(root, "sea-carrier");
+  await writeFile(seaPath, nodeSeaElf({ fuse: "set", ownership: "section" }));
+  await withOwnedRegularFile(seaPath, {}, async (source) => {
+    const seaLimited = new ArtifactEmbeddedFormatProbes(
+      seaPath,
+      source,
+      undefined,
+      undefined,
+      resolveArtifactReaderLimits({ node_sea: { blob_bytes: 1 } }),
+    );
+    await expect(
+      classifyEmbeddedExecutablePackage(seaLimited, "elf"),
+    ).resolves.toEqual({
+      status: "unknown",
+      limitations: [
+        expect.stringMatching(/Node SEA recognition remains unknown/iu),
+      ],
+    });
+  });
+
+  const plainPath = join(root, "plain-elf");
+  await writeFile(
+    plainPath,
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46, ...new Uint8Array(60)]),
+  );
+  const bunFailure = artifactReaderLimitFailure(
+    "artifact_limits.bun.recognition_table_bytes",
+    64,
+    "bytes",
+    128,
+    "memory",
+  );
+  const bunSpy = vi
+    .spyOn(bunLayout, "probeBunStandaloneGraph")
+    .mockResolvedValueOnce({ status: "limited", failure: bunFailure });
+  try {
+    await withOwnedRegularFile(plainPath, {}, async (source) => {
+      const bunLimited = new ArtifactEmbeddedFormatProbes(plainPath, source);
+      await expect(
+        classifyEmbeddedExecutablePackage(bunLimited, "elf"),
+      ).resolves.toEqual({
+        status: "unknown",
+        limitations: [
+          expect.stringMatching(/Bun graph recognition remains unknown/iu),
+        ],
+      });
+
+      const plain = new ArtifactEmbeddedFormatProbes(plainPath, source);
+      await expect(
+        classifyEmbeddedExecutablePackage(plain, "elf"),
+      ).resolves.toEqual({ status: "absent" });
+    });
+  } finally {
+    bunSpy.mockRestore();
   }
 });
