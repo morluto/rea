@@ -88,6 +88,7 @@ export const projectCliInputFields = <Output>(
       ? [{ name: binding.operation, flags: binding.flags }]
       : orderedOperations(binding.operations, error.details.operation);
   const issues = renamedIssues(error, error.details, binding);
+  const remediation = cliConflictRemediation(error, error.details, binding);
   const inputs = renamedTargetInputs(error.details, binding);
   const limit = flaggedLimit(error.details.limit, operations);
   const relatedFlags =
@@ -97,6 +98,7 @@ export const projectCliInputFields = <Output>(
       : relatedCliFlagsFromOperations(error.details, operations);
   if (
     issues === undefined &&
+    remediation === undefined &&
     inputs === undefined &&
     limit === undefined &&
     relatedFlags === undefined
@@ -104,6 +106,7 @@ export const projectCliInputFields = <Output>(
     return output;
   return {
     ...error,
+    ...(remediation === undefined ? {} : { remediation }),
     details: {
       ...error.details,
       ...(issues === undefined ? {} : { issues }),
@@ -203,6 +206,63 @@ const isTargetFailureKind = (
   typeof value === "string" &&
   (TARGET_FAILURE_KINDS as readonly string[]).includes(value);
 
+const targetInputFields = (details: Record<string, JsonValue>): string[] =>
+  Array.isArray(details.inputs)
+    ? details.inputs.flatMap((input) =>
+        isObject(input) && typeof input.field === "string" ? [input.field] : [],
+      )
+    : [];
+
+/**
+ * Rewrite a conflict failure's recovery text with CLI input spellings before
+ * `renamedTargetInputs` replaces the source field names in `details.inputs`.
+ */
+const cliConflictRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  binding: CliInputFieldBinding,
+): Record<string, JsonValue> | undefined => {
+  const { remediation } = error;
+  if (
+    details.operation !== binding.operation ||
+    details.failure_kind !== "conflict" ||
+    typeof details.format !== "string" ||
+    !isObject(remediation) ||
+    typeof remediation.action !== "string"
+  )
+    return undefined;
+  const inputFields = targetInputFields(details);
+  if (inputFields.length === 0) return undefined;
+  const mcpFacts: TargetFailureRecoveryFacts = {
+    operation: binding.operation,
+    kind: "conflict",
+    format: details.format,
+    inputFields,
+  };
+  const mcp = renderTargetFailureRecovery(
+    mcpFacts,
+    MCP_TARGET_FAILURE_SPELLING,
+  );
+  if (!remediation.action.startsWith(mcp)) return undefined;
+  const cliInputFields = inputFields.map((field) => {
+    const flag = cliFlagForFlags(field, binding.flags);
+    if (flag !== undefined) return flag;
+    return Object.hasOwn(binding.fields, field)
+      ? (binding.fields[field] ?? field)
+      : field;
+  });
+  const cli = renderTargetFailureRecovery(
+    { ...mcpFacts, inputFields: cliInputFields },
+    MCP_TARGET_FAILURE_SPELLING,
+  );
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${cli}${remediation.action.slice(mcp.length)}`,
+      };
+};
+
 /**
  * A target failure's recovery in CLI spelling: the projection table renders
  * the same facts with commands and options in place of MCP tool names. Only
@@ -223,17 +283,12 @@ const cliTargetFailureRemediation = (
     typeof details.operation !== "string"
   )
     return undefined;
+  const inputFields = targetInputFields(details);
   const facts: TargetFailureRecoveryFacts = {
     operation: details.operation,
     kind: details.failure_kind,
     format: details.format,
-    inputFields: Array.isArray(details.inputs)
-      ? details.inputs.flatMap((input) =>
-          isObject(input) && typeof input.field === "string"
-            ? [input.field]
-            : [],
-        )
-      : [],
+    inputFields,
     transient: retry === "backoff",
     alternatives: {
       operations: stringList(details.related_operations),
@@ -254,12 +309,17 @@ const cliTargetFailureRemediation = (
     operation: (operation) => mappedOperation(operation) ?? operation,
     provider: (providerId) => `--provider ${providerId}`,
   };
+  const operations = orderedOperations(context.operations, details.operation);
+  const cliInputFields = inputFields.map(
+    (field) => cliFlagForOperations(field, operations) ?? field,
+  );
   const cliOperations = facts.alternatives?.operations?.filter(
     (operation) => mappedOperation(operation) !== undefined,
   );
   const cliProviders = facts.alternatives?.providers;
   const cliFacts: TargetFailureRecoveryFacts = {
     ...facts,
+    inputFields: cliInputFields,
     alternatives: {
       ...(cliOperations === undefined ? {} : { operations: cliOperations }),
       ...(cliProviders === undefined ? {} : { providers: cliProviders }),

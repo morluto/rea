@@ -399,3 +399,56 @@ it("omits MCP-only alternative operations from CLI target failure recovery", () 
     "export_evidence_bundle",
   );
 });
+
+it("rewrites conflict recovery input names to CLI flags even after renaming details.inputs", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-il2cpp-metadata");
+  if (entry === undefined) throw new Error("Expected inspect-il2cpp-metadata");
+  const projected = projectAnalysisError(
+    new AnalysisTargetFailureError(
+      "inspect_il2cpp_metadata",
+      "/selected/global-metadata.dat",
+      {
+        kind: "conflict",
+        format: "il2cpp-metadata",
+        detail: "code-registration-not-found: no registration matched",
+        inputs: [
+          { field: "path", path: "/selected/global-metadata.dat" },
+          { field: "binary_path", path: "/selected/GameAssembly.dylib" },
+        ],
+      },
+    ),
+  );
+  expect(projected.remediation.action).toContain("(path, binary_path)");
+
+  // Contract commands run projectCliInputFields before projectCliCommandOutput.
+  const fieldProjected = projectCliInputFields(projected, {
+    operation: "inspect_il2cpp_metadata",
+    fields: { binary_path: "binary" },
+    flags: { binary_path: "--binary" },
+    operations: entry.operations,
+  });
+  const cliProjected = projectCliCommandOutput(fieldProjected, {
+    operations: entry.operations,
+    commands: entries,
+  });
+  expect(cliProjected).toMatchObject({
+    details: {
+      inputs: [
+        { field: "path", path: "/selected/global-metadata.dat" },
+        { field: "binary", path: "/selected/GameAssembly.dylib" },
+      ],
+    },
+  });
+  expect(cliProjected.remediation.action).toContain("(path, --binary)");
+  expect(cliProjected.remediation.action).not.toContain("binary_path");
+
+  // Direct command-output projection without prior field renaming also maps flags.
+  const directProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  });
+  expect(directProjected.remediation.action).toContain("(path, --binary)");
+  expect(directProjected.remediation.action).not.toContain("binary_path");
+});
