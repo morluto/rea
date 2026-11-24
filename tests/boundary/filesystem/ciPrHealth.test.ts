@@ -401,9 +401,14 @@ it("keeps the result unknown when the head changes between API snapshots", async
   });
 });
 
-it.each([{ state: "closed" }, { draft: true }])(
+it.each([
+  { change: { state: "closed" }, hasRun: false },
+  { change: { draft: true }, hasRun: false },
+  { change: { state: "closed" }, hasRun: true },
+  { change: { draft: true }, hasRun: true },
+])(
   "does not diagnose missing CI after a pull request becomes ineligible: %j",
-  async (change) => {
+  async ({ change, hasRun }) => {
     const report = await collectPrCiHealth({
       repository: "owner/rea",
       repositoryId: 11,
@@ -412,7 +417,9 @@ it.each([{ state: "closed" }, { draft: true }])(
       apiRequest: async (_method, endpoint) => {
         if (endpoint.includes("/pulls?")) return [rawPull(63)];
         if (endpoint.includes("/actions/workflows/ci.yml/runs?"))
-          return { workflow_runs: [] };
+          return {
+            workflow_runs: hasRun ? [run({ head_branch: "feature-63" })] : [],
+          };
         return rawPull(63, { mergeable: true, ...change });
       },
     });
@@ -421,6 +428,9 @@ it.each([{ state: "closed" }, { draft: true }])(
       ci: {
         category: "unknown",
         reason: "pull_request_eligibility_changed_during_scan",
+        runs: hasRun
+          ? [expect.objectContaining({ id: 77, conclusion: "success" })]
+          : [],
       },
     });
     expect(report.counts.missing).toBe(0);
