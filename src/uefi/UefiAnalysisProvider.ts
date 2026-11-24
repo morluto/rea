@@ -127,7 +127,7 @@ import {
   type UefiWriteReceipt,
 } from "./UefiPublication.js";
 import { UefiLzmaSession } from "./UefiLzmaSession.js";
-import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
+import { UEFI_PROVIDER_IDENTITY } from "../domain/uefi/uefiEvidence.js";
 
 const inflateBounded = promisify(inflate);
 
@@ -1663,13 +1663,24 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               this.#hostPlatform.platform,
               configReleaseDirectory,
             );
+            let executable = "sh";
+            if (this.#hostPlatform.platform === "win32") {
+              try {
+                executable = windowsBatchCommand({
+                  environment: this.#environment,
+                  batchPath:
+                    ghidraBin ?? "C:\\ghidra\\support\\analyzeHeadless.bat",
+                  arguments: [],
+                }).command;
+              } catch {
+                executable = "C:\\Windows\\System32\\cmd.exe";
+              }
+            }
             const baseGhidraEnv = ghidraLaunchEnvironment(
               paths,
               ghidraInspection?.javaHome ?? undefined,
               this.#hostPlatform.platform,
-              this.#hostPlatform.platform === "win32"
-                ? (this.#environment.ComSpec ?? "cmd.exe")
-                : "sh",
+              executable,
               this.#environment,
             );
             const ghidraEnv: NodeJS.ProcessEnv = {
@@ -2981,6 +2992,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 provenance: {
                   path: input.path,
                   sha256: imageSha256,
+                  format: "file" as const,
                 },
               }
             : undefined;
@@ -3018,6 +3030,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 provenance: {
                   path: input.path,
                   sha256: imageSha256,
+                  format: "file" as const,
                 },
               }
             : undefined;
@@ -4434,6 +4447,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 provenance: {
                   path: input.path,
                   sha256: dirSha256,
+                  format: "directory" as const,
                 },
               }
             : undefined;
@@ -4471,6 +4485,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 provenance: {
                   path: input.path,
                   sha256: dirSha256,
+                  format: "directory" as const,
                 },
               }
             : undefined;

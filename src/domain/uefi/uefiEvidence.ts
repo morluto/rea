@@ -37,9 +37,7 @@ export const createUefiEvidenceFromWrapper = (
   const provenance = wrapper.provenance;
   const path = provenance?.path ?? input.path;
   const sha256 = provenance?.sha256 ?? "";
-  const format =
-    provenance?.format ??
-    ("path" in input && typeof input.path === "string" ? "file" : "directory");
+  const format = provenance?.format ?? "file";
   const limitations =
     typeof result === "object" &&
     result !== null &&

@@ -44,7 +44,7 @@ import {
   LzmaFrameReader,
   lzmaReplySchema,
 } from "./UefiLzmaProtocol.js";
-import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
+import { UEFI_PROVIDER_IDENTITY } from "../domain/uefi/uefiEvidence.js";
 
 const workerAbortFailure = (
   signal: AbortSignal,

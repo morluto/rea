@@ -18,7 +18,7 @@ import type {
 import { uefiFailureDialect } from "./UefiFailures.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 
-import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
+import { UEFI_PROVIDER_IDENTITY } from "../domain/uefi/uefiEvidence.js";
 
 export interface UefiWriteReceipt {
   readonly relativePath: string;

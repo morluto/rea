@@ -20,7 +20,7 @@ import {
   ArtifactReaderFailure,
   artifactFileCancellationCause,
 } from "../resources/index.js";
-import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
+import { UEFI_PROVIDER_IDENTITY } from "../domain/uefi/uefiEvidence.js";
 
 /** Provider-specific reporting for a bounded decode and its stable artifact reads. */
 export const uefiFailureDialect = (

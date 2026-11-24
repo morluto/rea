@@ -2271,6 +2271,67 @@ it("converts completed UEFI observations to authenticated Evidence when cancelle
 
     expect(parsed.value.operation).toBe("decompile_uefi_firmware");
     expect(parsed.value.confidence).toBe("derived");
+    expect(parsed.value.subject).toMatchObject({
+      identity: { format: "file" },
+    });
+    expect(
+      (parsed.value.normalized_result as { output_directory?: string })
+        .output_directory,
+    ).toBe(outDir);
+  } finally {
+    vi.restoreAllMocks();
+    await service.close();
+  }
+});
+
+it("converts completed UEFI directory observations to authenticated Evidence with directory format when cancelled", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-cancel-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const controller = new AbortController();
+  const provider = new UefiAnalysisProvider();
+  const service = createUefiAnalysisService(provider);
+  let intercepted = false;
+
+  const originalRelease = DirectoryArtifactReader.prototype.close;
+  vi.spyOn(DirectoryArtifactReader.prototype, "close").mockImplementation(
+    async function (this: DirectoryArtifactReader) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("test cancellation after directory publication");
+      }
+      return originalRelease.call(this);
+    },
+  );
+
+  try {
+    const executed = await service.execute(
+      "decompile_uefi_firmware",
+      {
+        path: inDir,
+        output_directory: outDir,
+      },
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const parsed = safeParseEvidence(executed.error.partialObservation);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.value.operation).toBe("decompile_uefi_firmware");
+    expect(parsed.value.confidence).toBe("derived");
+    expect(parsed.value.subject).toMatchObject({
+      identity: { format: "directory" },
+    });
     expect(
       (parsed.value.normalized_result as { output_directory?: string })
         .output_directory,

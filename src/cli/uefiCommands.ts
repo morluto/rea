@@ -7,7 +7,7 @@ import { UEFI_TOOL_CONTRACTS } from "../contracts/uefi/uefiToolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { UefiOperation } from "../domain/uefi/uefiFirmwareAnalysis.js";
-import { UEFI_PROVIDER_IDENTITY } from "../uefi/UefiProviderIdentity.js";
+import { UEFI_PROVIDER_IDENTITY } from "../domain/uefi/uefiEvidence.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { inspectWithService } from "./contractCommandRunners.js";
