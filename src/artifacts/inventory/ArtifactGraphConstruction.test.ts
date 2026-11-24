@@ -42,6 +42,7 @@ import {
 } from "../../../tests/fixtures/espImage.js";
 import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
+import { createPakFixture } from "../../../tests/fixtures/unreal/pak.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -625,11 +626,31 @@ it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () =>
       dfu.length,
     ),
   ).toMatchObject({ kind: "container", format: "dfuse" });
-  // Bytes the probe never saw may follow, so it reports no suffix at all.
+  // Bytes the probe never saw may follow, so it reports no tail at all.
   const partial = probe.finish(dfu.length + 1);
-  expect(partial.suffix).toBeUndefined();
+  expect(partial.tail).toBeUndefined();
   expect(
     classifyArtifactContent("firmware/update.bin", partial, dfu.length + 1),
+  ).toMatchObject({ format: "file" });
+});
+
+it("classifies a nested Unreal pak by the footer at its stream end", () => {
+  const { bytes } = createPakFixture({
+    layout: "v12",
+    files: [{ path: "Game/Content/Large.uasset", size: 65_536 }],
+  });
+  expect(
+    classifyArtifactBytesAtPath("Content/Paks/pakchunk0.pak", bytes),
+  ).toEqual({ kind: "resource", format: "unreal-pak" });
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes);
+  // Bytes the probe never saw may follow, so the footer does not decide.
+  expect(
+    classifyArtifactContent(
+      "Content/Paks/pakchunk0.pak",
+      probe.finish(bytes.length + 1),
+      bytes.length + 1,
+    ),
   ).toMatchObject({ format: "file" });
 });
 

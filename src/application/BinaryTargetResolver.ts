@@ -85,8 +85,10 @@ import {
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
-import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
-import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
+import {
+  ARTIFACT_RECOGNITION_TAIL_BYTES,
+  recognizeArtifactFormat,
+} from "../domain/artifactFormatRecognition.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
@@ -738,15 +740,15 @@ const detectArtifactFormat = async (
     initial.size,
     () => throwIfTargetResolutionCancelled(signal),
   );
-  // The shared recognizer table decides; this route reads the trailer or
+  // The shared recognizer table decides; this route reads the tail or
   // locates an ESP flash layout only when a recognizer asks for it, and
   // refuses a file whose header names a format it cannot open.
-  let suffix: Uint8Array | undefined;
+  let tail: Uint8Array | undefined;
   let espFlashLayout: boolean | undefined;
   const recognitionInput = () => ({
     prefix: magic,
     fileSize: initial.size,
-    suffix,
+    tail,
     espFlashLayout,
   });
   let recognition = recognizeArtifactFormat(recognitionInput());
@@ -760,15 +762,10 @@ const detectArtifactFormat = async (
       throw new BinaryTargetError(path, recognition.reason, {
         constraint: "file_format_rejected",
       });
-    if (recognition.format === "dfuse")
-      suffix =
-        initial.size < DFUSE_SUFFIX_BYTES
-          ? new Uint8Array(0)
-          : await readCachedRange(
-              initial.size - DFUSE_SUFFIX_BYTES,
-              DFUSE_SUFFIX_BYTES,
-            );
-    else
+    if (recognition.format !== "esp-flash-image") {
+      const length = Math.min(initial.size, ARTIFACT_RECOGNITION_TAIL_BYTES);
+      tail = await readCachedRange(initial.size - length, length);
+    } else
       espFlashLayout = (
         await locateEspFlashLayout(
           initial.size,

@@ -8,6 +8,7 @@ import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/window
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { buildFv } from "../../../fixtures/uefiImage.js";
+import { createPakFixture } from "../../../fixtures/unreal/pak.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
@@ -111,6 +112,21 @@ it.each([
     ),
     format: "uefi",
     operation: "inspect_uefi_firmware",
+  },
+  {
+    // The data area outgrows every leading-byte read, so only the tail
+    // read finds the footer.
+    name: "an Unreal pak",
+    create: writeBytes(
+      "pakchunk0-Windows.pak",
+      () =>
+        createPakFixture({
+          layout: "v11",
+          files: [{ path: "Game/Content/Large.uasset", size: 65_536 }],
+        }).bytes,
+    ),
+    format: "unreal-pak",
+    operation: "inspect_unreal_pak",
   },
   {
     name: "a SQLite database",

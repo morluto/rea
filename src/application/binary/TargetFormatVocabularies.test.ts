@@ -155,6 +155,7 @@ const TARGETS: TargetFixtures = {
   "windows-shortcut": { ...artifact, format: "windows-shortcut" },
   "python-pyc": { ...artifact, format: "python-pyc" },
   devicetree: { ...artifact, format: "devicetree" },
+  "unreal-pak": { ...artifact, format: "unreal-pak" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;

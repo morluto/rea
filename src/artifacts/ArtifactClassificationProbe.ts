@@ -21,7 +21,7 @@ import {
   MAX_PE_OPTIONAL_HEADER_BYTES,
   PE_RECORD_HEADER_BYTES,
 } from "../domain/binaryTarget.js";
-import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
+import { ARTIFACT_RECOGNITION_TAIL_BYTES } from "../domain/artifactFormatRecognition.js";
 import {
   createAsarHeaderSignatureProbe,
   type FinalAsarHeaderProbeObservation,
@@ -29,14 +29,12 @@ import {
 
 /** Initial bytes required by the other bounded format classifiers. */
 export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES = 8_192;
-/** Final bytes kept for formats identified by a trailer: the DFU suffix. */
-const ARTIFACT_CLASSIFICATION_SUFFIX_BYTES = DFUSE_SUFFIX_BYTES;
 
 /** Retained prefix plus bounded format-specific observations from the stream. */
 export interface ArtifactClassificationEvidence {
   readonly prefix: Buffer;
   /** The last bytes of the stream, when the producer observed its end. */
-  readonly suffix?: Buffer;
+  readonly tail?: Buffer;
   /** The probe matched an XML plist prolog in the retained prefix. */
   readonly xmlPlistSignature: boolean;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
@@ -96,7 +94,7 @@ const NO_FAT_SLICE_HEADERS: ReadonlyMap<number, MachoHeaderPrefixFacts> =
 
 const finishClassificationEvidence = (
   prefix: Buffer,
-  suffix: Buffer | undefined,
+  tail: Buffer | undefined,
   xmlPlistSignature: boolean,
   archiveBytes: number,
   finishAsar: (archiveBytes: number) => FinalAsarHeaderProbeObservation,
@@ -125,7 +123,7 @@ const finishClassificationEvidence = (
   }
   return {
     prefix,
-    ...(suffix === undefined ? {} : { suffix }),
+    ...(tail === undefined ? {} : { tail }),
     xmlPlistSignature,
     asarHeader: finishAsar(archiveBytes),
     fatHeader: finalHeader,
@@ -159,27 +157,27 @@ export const createArtifactClassificationProbe = (
   let mzWindowsHeaderRecord: MzWindowsHeaderRecordEvidence | undefined;
   let mzWindowsHeaderOffset: number | undefined;
   let mzHeaderChecked = false;
-  const suffixBuffer = Buffer.allocUnsafe(ARTIFACT_CLASSIFICATION_SUFFIX_BYTES);
-  let suffixLength = 0;
-  const observeSuffix = (bytes: Uint8Array): void => {
+  const tailBuffer = Buffer.allocUnsafe(ARTIFACT_RECOGNITION_TAIL_BYTES);
+  let tailLength = 0;
+  const observeTail = (bytes: Uint8Array): void => {
     if (bytes.length === 0) return;
-    if (bytes.length >= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES) {
-      suffixBuffer.set(
-        bytes.subarray(bytes.length - ARTIFACT_CLASSIFICATION_SUFFIX_BYTES),
+    if (bytes.length >= ARTIFACT_RECOGNITION_TAIL_BYTES) {
+      tailBuffer.set(
+        bytes.subarray(bytes.length - ARTIFACT_RECOGNITION_TAIL_BYTES),
         0,
       );
-      suffixLength = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES;
+      tailLength = ARTIFACT_RECOGNITION_TAIL_BYTES;
       return;
     }
-    if (suffixLength + bytes.length <= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES) {
-      suffixBuffer.set(bytes, suffixLength);
-      suffixLength += bytes.length;
+    if (tailLength + bytes.length <= ARTIFACT_RECOGNITION_TAIL_BYTES) {
+      tailBuffer.set(bytes, tailLength);
+      tailLength += bytes.length;
       return;
     }
-    const keep = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES - bytes.length;
-    suffixBuffer.copyWithin(0, suffixLength - keep, suffixLength);
-    suffixBuffer.set(bytes, keep);
-    suffixLength = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES;
+    const keep = ARTIFACT_RECOGNITION_TAIL_BYTES - bytes.length;
+    tailBuffer.copyWithin(0, tailLength - keep, tailLength);
+    tailBuffer.set(bytes, keep);
+    tailLength = ARTIFACT_RECOGNITION_TAIL_BYTES;
   };
   const observeWindow = (
     current: { readonly offset: number; readonly bytes: Buffer } | undefined,
@@ -338,7 +336,7 @@ export const createArtifactClassificationProbe = (
         observeSignatureWindow(mzWindowsHeaderOffset, streamOffset, bytes);
         observeRecordWindow(mzWindowsHeaderOffset, streamOffset, bytes);
       }
-      observeSuffix(bytes);
+      observeTail(bytes);
       observedBytes += bytes.length;
     },
     finish(archiveBytes: number): ArtifactClassificationEvidence {
@@ -346,7 +344,7 @@ export const createArtifactClassificationProbe = (
         retainedPrefix(),
         // Bytes the probe did not observe could still follow its last write.
         observedBytes === archiveBytes
-          ? suffixBuffer.subarray(0, suffixLength)
+          ? tailBuffer.subarray(0, tailLength)
           : undefined,
         xml.state === "matched",
         archiveBytes,

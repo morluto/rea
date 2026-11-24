@@ -1,7 +1,11 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
-import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
+import {
+  DFUSE_SUFFIX_BYTES,
+  hasDfuSePrefix,
+  isDfuSeFile,
+} from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
 import { hasFitImagesNode } from "./firmware/fitImage.js";
 import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
@@ -20,6 +24,11 @@ import {
 } from "./firmware/devicetreeHeader.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
+import { claimsExecutableHeader } from "./binaryTarget.js";
+import {
+  UNREAL_PAK_MAX_FOOTER_BYTES,
+  hasUnrealPakFooter,
+} from "./unreal/unrealPakFooter.js";
 import {
   hasDdsHeader,
   hasGlbHeader,
@@ -65,6 +74,7 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "unreal-pak",
 ] as const;
 
 export type StandaloneArtifactFormat =
@@ -75,13 +85,25 @@ export const isStandaloneArtifactFormat = (
 ): format is StandaloneArtifactFormat =>
   (STANDALONE_ARTIFACT_FORMATS as readonly string[]).includes(format);
 
+/**
+ * How many final bytes a route reads for formats identified by a trailer:
+ * the DFU suffix and the longest Unreal pak footer.
+ */
+export const ARTIFACT_RECOGNITION_TAIL_BYTES = Math.max(
+  DFUSE_SUFFIX_BYTES,
+  UNREAL_PAK_MAX_FOOTER_BYTES,
+);
+
 /** The bytes one route has read when it asks which format a file holds. */
 export interface ArtifactRecognitionInput {
   /** Leading bytes; routes read different prefix lengths. */
   readonly prefix: Buffer;
   readonly fileSize: number;
-  /** The final DFU suffix bytes, when the route has read them. */
-  readonly suffix?: Uint8Array | undefined;
+  /**
+   * The file's final `ARTIFACT_RECOGNITION_TAIL_BYTES` bytes (all of them when
+   * the file is shorter), when the route has read them.
+   */
+  readonly tail?: Uint8Array | undefined;
   /** Whether an ESP flash partition layout was located, when the route looked. */
   readonly espFlashLayout?: boolean | undefined;
 }
@@ -165,11 +187,10 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return format === undefined ? undefined : { state: "recognized", format };
     },
     when("uf2", hasUf2Block),
-    ({ prefix, suffix, fileSize }) => {
+    ({ prefix, tail, fileSize }) => {
       if (!hasDfuSePrefix(prefix)) return undefined;
-      if (suffix === undefined)
-        return { state: "needs-input", format: "dfuse" };
-      return isDfuSeFile(prefix, suffix, fileSize)
+      if (tail === undefined) return { state: "needs-input", format: "dfuse" };
+      return isDfuSeFile(prefix, tail.subarray(-DFUSE_SUFFIX_BYTES), fileSize)
         ? { state: "recognized", format: "dfuse" }
         : undefined;
     },
@@ -216,6 +237,25 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
+    // A pak is known only by its footer, so it is decided after every leading
+    // signature, and an executable header keeps its own route. A prefix that
+    // holds the whole file is its tail.
+    ({ prefix, tail, fileSize }) => {
+      if (claimsExecutableHeader(prefix, fileSize)) return undefined;
+      const final =
+        tail ??
+        (prefix.length >= fileSize
+          ? prefix.subarray(
+              Math.max(0, fileSize - ARTIFACT_RECOGNITION_TAIL_BYTES),
+              fileSize,
+            )
+          : undefined);
+      if (final === undefined)
+        return { state: "needs-input", format: "unreal-pak" };
+      return hasUnrealPakFooter(final, fileSize)
+        ? { state: "recognized", format: "unreal-pak" }
+        : undefined;
+    },
   ];
 
 /**

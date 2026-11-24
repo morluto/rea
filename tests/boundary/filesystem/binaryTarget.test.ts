@@ -67,6 +67,7 @@ import {
   FIT_EXTERNAL,
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
 import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
+import { createPakFixture } from "../../fixtures/unreal/pak.js";
 import {
   ddsBc7Fixture,
   glbFixture,
@@ -911,6 +912,30 @@ describe("binary target I/O: ESP flash layouts", () => {
         ),
       },
     });
+  });
+});
+
+it("admits an Unreal pak by the footer at its end as an artifact", async () => {
+  const directory = await createTestTempDirectory("rea-pak-target-");
+  const path = join(directory, "pakchunk0-Windows.pak");
+  // The data area is longer than the admitted prefix, so the footer is read
+  // from the tail.
+  const { bytes } = createPakFixture({
+    layout: "v8b",
+    files: [{ path: "Game/Content/Large.uasset", size: 65_536 }],
+  });
+  await writeFile(path, bytes);
+  expect(await parseBinaryTarget(path)).toMatchObject({
+    ok: true,
+    value: { kind: "artifact", format: "unreal-pak" },
+  });
+  // A footer whose index lies past the footer is not a pak.
+  const outside = Buffer.from(bytes);
+  outside.writeBigUInt64LE(BigInt(bytes.length), bytes.length - 221 + 25);
+  await writeFile(path, outside);
+  expect(await parseBinaryTarget(path)).toMatchObject({
+    ok: false,
+    error: { _tag: "BinaryTargetError" },
   });
 });
 

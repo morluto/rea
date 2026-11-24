@@ -623,6 +623,11 @@ const STANDALONE_FORMAT_READERS = {
     rationale:
       "Decode the flattened devicetree header, reservations and node tree.",
   },
+  "unreal-pak": {
+    operation: "inspect_unreal_pak",
+    rationale:
+      "Read the pak footer, index and entry table without extracting or decrypting entries.",
+  },
 } as const satisfies Record<
   "uefi" | StandaloneArtifactFormat,
   { readonly operation: string; readonly rationale: string }

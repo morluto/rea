@@ -627,7 +627,7 @@ export const classifyArtifactHeader = (
   evidence: ArtifactClassificationEvidence,
   fileSize: number,
 ): Pick<ArtifactNode, "format" | "architecture"> => {
-  const { prefix, suffix, mzWindowsHeaderSignature, mzWindowsHeaderRecord } =
+  const { prefix, tail, mzWindowsHeaderSignature, mzWindowsHeaderRecord } =
     evidence;
   const only = (format: ArtifactNode["format"]) => ({
     format,
@@ -639,7 +639,7 @@ export const classifyArtifactHeader = (
   // bytes falls through too: the scan holds a bounded prefix and the trailer,
   // so it cannot locate an ESP flash partition table, and a flash dump is
   // classified by its first image.
-  const input = { prefix, fileSize, suffix };
+  const input = { prefix, fileSize, tail };
   for (
     let recognition = recognizeArtifactFormat(input);
     recognition !== undefined;

@@ -12,16 +12,19 @@ import { ellipsisExcerpt } from "../domain/excerpt.js";
 const UTF8 = strictUtf8Decoder("preserve");
 import { createHash } from "node:crypto";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import {
-  UNREAL_PAK_FOOTER_LAYOUTS,
-  type UnrealPak,
-  type UnrealPakEntry,
-  type UnrealPakFooter,
-  type UnrealPakIssue,
+import type {
+  UnrealPak,
+  UnrealPakEntry,
+  UnrealPakFooter,
+  UnrealPakIssue,
 } from "../domain/unreal/unrealPak.js";
 import { pathHasher } from "./UnrealPakPathHash.js";
-
-export const UNREAL_PAK_MAGIC = 0x5a6f12e1;
+import {
+  UNREAL_PAK_MAX_FOOTER_BYTES,
+  matchUnrealPakFooter,
+  unrealPakFooterBytes,
+  type UnrealPakFooterShape,
+} from "../domain/unreal/unrealPakFooter.js";
 
 /** Stable machine-readable reason for each rejected input. */
 export const UNREAL_PAK_FAILURE_REASONS = {
@@ -144,39 +147,6 @@ const pacer = (limits: UnrealPakLimits) => {
 };
 
 export type UnrealPakDecoded = Omit<UnrealPak, "artifact" | "limitations">;
-
-type Layout = (typeof UNREAL_PAK_FOOTER_LAYOUTS)[number];
-
-interface LayoutShape {
-  readonly version: number;
-  readonly keyGuid: boolean;
-  readonly encryptedFlag: boolean;
-  readonly frozenFlag: boolean;
-  readonly compressionSlots: 0 | 4 | 5;
-}
-
-const shape = (layout: Layout): LayoutShape => {
-  const version =
-    layout === "v8a" || layout === "v8b" ? 8 : Number(layout.slice(1));
-  return {
-    version,
-    keyGuid: version >= 7,
-    encryptedFlag: version >= 4,
-    frozenFlag: version === 9,
-    compressionSlots: version < 8 ? 0 : layout === "v8a" ? 4 : 5,
-  };
-};
-
-const footerBytes = (layout: LayoutShape) =>
-  (layout.keyGuid ? 16 : 0) +
-  (layout.encryptedFlag ? 1 : 0) +
-  4 +
-  4 +
-  8 +
-  8 +
-  20 +
-  (layout.frozenFlag ? 1 : 0) +
-  layout.compressionSlots * 32;
 
 /** Legacy ECompressionFlags values used before named compression slots. */
 const LEGACY_COMPRESSION = new Map([
@@ -360,71 +330,59 @@ const sha1Hex = (cursor: Cursor) => cursor.hex(20);
 /** Find the footer by trying each layout's fixed size from the end, newest first. */
 const readFooter = async (
   source: UnrealPakSource,
-): Promise<{ footer: UnrealPakFooter; shape: LayoutShape }> => {
-  const longest = Math.max(
-    ...UNREAL_PAK_FOOTER_LAYOUTS.map((layout) => footerBytes(shape(layout))),
-  );
-  const tailLength = Math.min(longest, source.size);
+): Promise<{ footer: UnrealPakFooter; shape: UnrealPakFooterShape }> => {
+  const tailLength = Math.min(UNREAL_PAK_MAX_FOOTER_BYTES, source.size);
   const tail = await source.read(source.size - tailLength, tailLength);
-  for (const layout of UNREAL_PAK_FOOTER_LAYOUTS) {
-    const layoutShape = shape(layout);
-    const size = footerBytes(layoutShape);
-    if (size > tail.length) continue;
-    const start = tail.length - size;
-    const magicAt =
-      start +
-      (layoutShape.keyGuid ? 16 : 0) +
-      (layoutShape.encryptedFlag ? 1 : 0);
-    const footerReader = littleEndian(tail);
-    if (footerReader.u32(magicAt) !== UNREAL_PAK_MAGIC) continue;
-    if (footerReader.u32(magicAt + 4) !== layoutShape.version) continue;
-    // The footer has no redundant facts, so it reports nothing.
-    const cursor = new Cursor(
-      tail.subarray(start),
-      "footer",
-      source.size - tailLength + start,
-      discardIssues,
+  const match = matchUnrealPakFooter(tail);
+  if (match === undefined)
+    throw unrealPakFailure(
+      "unrecognized-footer",
+      "no pak footer layout (versions 1 to 12) matches the end of the file",
     );
-    const keyGuid = layoutShape.keyGuid ? cursor.hex(16) : null;
-    const indexEncrypted = layoutShape.encryptedFlag
-      ? cursor.bool("index encryption flag")
-      : null;
-    cursor.u32();
-    cursor.u32();
-    const indexOffset = cursor.u64();
-    const indexSize = cursor.u64();
-    const indexSha1 = sha1Hex(cursor);
-    const frozen = layoutShape.frozenFlag
-      ? cursor.bool("frozen index flag")
-      : null;
-    const names: (string | null)[] = [];
-    for (let slot = 0; slot < layoutShape.compressionSlots; slot++) {
-      const raw = cursor.bytes.subarray(cursor.position, cursor.position + 32);
-      cursor.position += 32;
-      const end = raw.indexOf(0);
-      const name = raw.subarray(0, end === -1 ? 32 : end).toString("latin1");
-      names.push(name === "" ? null : name);
-    }
-    const footerOffset = source.size - size;
-    return {
-      shape: layoutShape,
-      footer: {
-        offset: footerOffset,
-        size,
-        layout,
-        version: layoutShape.version,
-        index: { offset: indexOffset, size: indexSize, sha1: indexSha1 },
-        index_encrypted: indexEncrypted,
-        encryption_key_guid: keyGuid,
-        frozen_index: frozen,
-        compression_methods: names,
-      },
-    };
-  }
-  throw unrealPakFailure(
-    "unrecognized-footer",
-    "no pak footer layout (versions 1 to 12) matches the end of the file",
+  const { layout, shape: layoutShape, start } = match;
+  const size = unrealPakFooterBytes(layoutShape);
+  // The footer has no redundant facts, so it reports nothing.
+  const cursor = new Cursor(
+    tail.subarray(start),
+    "footer",
+    source.size - tailLength + start,
+    discardIssues,
   );
+  const keyGuid = layoutShape.keyGuid ? cursor.hex(16) : null;
+  const indexEncrypted = layoutShape.encryptedFlag
+    ? cursor.bool("index encryption flag")
+    : null;
+  cursor.u32();
+  cursor.u32();
+  const indexOffset = cursor.u64();
+  const indexSize = cursor.u64();
+  const indexSha1 = sha1Hex(cursor);
+  const frozen = layoutShape.frozenFlag
+    ? cursor.bool("frozen index flag")
+    : null;
+  const names: (string | null)[] = [];
+  for (let slot = 0; slot < layoutShape.compressionSlots; slot++) {
+    const raw = cursor.bytes.subarray(cursor.position, cursor.position + 32);
+    cursor.position += 32;
+    const end = raw.indexOf(0);
+    const name = raw.subarray(0, end === -1 ? 32 : end).toString("latin1");
+    names.push(name === "" ? null : name);
+  }
+  const footerOffset = source.size - size;
+  return {
+    shape: layoutShape,
+    footer: {
+      offset: footerOffset,
+      size,
+      layout,
+      version: layoutShape.version,
+      index: { offset: indexOffset, size: indexSize, sha1: indexSha1 },
+      index_encrypted: indexEncrypted,
+      encryption_key_guid: keyGuid,
+      frozen_index: frozen,
+      compression_methods: names,
+    },
+  };
 };
 
 /** Index region bytes already read, so the regions of one pak share one limit. */

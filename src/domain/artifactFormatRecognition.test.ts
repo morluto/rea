@@ -5,14 +5,18 @@ import {
   esp8266Image,
   espImage,
 } from "../../tests/fixtures/espImage.js";
-import { recognizeArtifactFormat } from "./artifactFormatRecognition.js";
+import {
+  ARTIFACT_RECOGNITION_TAIL_BYTES,
+  recognizeArtifactFormat,
+} from "./artifactFormatRecognition.js";
+import { elf } from "./binaryTarget.fixture.js";
+import { createPakFixture } from "../../tests/fixtures/unreal/pak.js";
 import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
 } from "./firmware/androidOtaPayload.fixture.js";
 import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
-import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
 
 /** A classic iNES header declaring one 16 KiB PRG bank, with no bank bytes. */
@@ -22,7 +26,7 @@ const headerOnlyInes = (): Buffer => {
   return bytes;
 };
 
-const recognize = (bytes: Buffer, extra: { suffix?: Uint8Array } = {}) =>
+const recognize = (bytes: Buffer, extra: { tail?: Uint8Array } = {}) =>
   recognizeArtifactFormat({
     prefix: bytes,
     fileSize: bytes.length,
@@ -67,7 +71,9 @@ it("asks for the DFU trailer only when the prefix claims DfuSe", () => {
   const claim = recognize(bytes);
   expect(claim).toMatchObject({ state: "needs-input", format: "dfuse" });
   expect(
-    recognize(bytes, { suffix: bytes.subarray(-DFUSE_SUFFIX_BYTES) }),
+    recognize(bytes, {
+      tail: bytes.subarray(-ARTIFACT_RECOGNITION_TAIL_BYTES),
+    }),
   ).toEqual({ state: "recognized", format: "dfuse", index: claim?.index });
 });
 
@@ -179,3 +185,73 @@ it.each([8, 12, 19])(
     });
   },
 );
+
+/** Recognize a file from a short prefix and, when given, its recognition tail. */
+const recognizeFromEnds = (bytes: Buffer, withTail: boolean) =>
+  recognizeArtifactFormat({
+    prefix: bytes.subarray(0, 16),
+    fileSize: bytes.length,
+    espFlashLayout: false,
+    ...(withTail
+      ? { tail: bytes.subarray(-ARTIFACT_RECOGNITION_TAIL_BYTES) }
+      : {}),
+  });
+
+it.each([
+  "v1",
+  "v3",
+  "v4",
+  "v7",
+  "v8a",
+  "v8b",
+  "v9",
+  "v10",
+  "v11",
+  "v12",
+] as const)(
+  "recognizes an Unreal pak %s footer only from the file's tail",
+  (layout) => {
+    const { bytes } = createPakFixture({ layout });
+    const pending = recognizeFromEnds(bytes, false);
+    expect(pending).toMatchObject({
+      state: "needs-input",
+      format: "unreal-pak",
+    });
+    expect(recognizeFromEnds(bytes, true)).toEqual({
+      state: "recognized",
+      format: "unreal-pak",
+      index: pending?.index,
+    });
+    // A prefix holding the whole file is its own tail.
+    expect(recognize(bytes)).toMatchObject({
+      state: "recognized",
+      format: "unreal-pak",
+    });
+  },
+);
+
+it("does not claim a pak footer whose index lies outside the file", () => {
+  const { bytes } = createPakFixture({ layout: "v11" });
+  const match = recognizeFromEnds(bytes, true);
+  expect(match).toMatchObject({ format: "unreal-pak" });
+  // v11 footer: key GUID, encryption flag, magic, version, then the index offset.
+  const indexAt = bytes.length - 221 + 16 + 1 + 8;
+  const outside = Buffer.from(bytes);
+  outside.writeBigUInt64LE(BigInt(bytes.length), indexAt);
+  expect(recognizeFromEnds(outside, true)).toBeUndefined();
+  const empty = Buffer.from(bytes);
+  empty.writeBigUInt64LE(0n, indexAt + 8);
+  expect(recognizeFromEnds(empty, true)).toBeUndefined();
+});
+
+it("leaves a pak footer after an executable header to the executable route", () => {
+  const { bytes } = createPakFixture({ layout: "v11" });
+  const image = Buffer.concat([elf(2, 1, 62), bytes]);
+  const recognized = recognizeArtifactFormat({
+    prefix: image.subarray(0, 64),
+    fileSize: image.length,
+    espFlashLayout: false,
+    tail: image.subarray(-ARTIFACT_RECOGNITION_TAIL_BYTES),
+  });
+  expect(recognized).toBeUndefined();
+});

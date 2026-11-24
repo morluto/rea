@@ -430,6 +430,7 @@ const NON_ZIP_FORMATS = {
   "windows-shortcut": described("windows-shortcut", plain),
   "python-pyc": described("python-pyc", plain),
   devicetree: described("devicetree", plain),
+  "unreal-pak": described("unreal-pak", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",
