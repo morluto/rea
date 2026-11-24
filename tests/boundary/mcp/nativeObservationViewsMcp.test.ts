@@ -176,6 +176,7 @@ it("follows native overflow continuations through MCP without repeating provider
             relationshipCoverage: {
               status: "partial",
               limitations: ["Indirect edges unknown"],
+              limited_directions: ["callees"],
               discovery: {
                 callees: {
                   status: "partial",

@@ -2017,6 +2017,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             !scan.truncated(), "The function instruction scan was truncated."
         ));
         result.add("facet_availability", availability);
+        JsonArray limitationCodes = new JsonArray();
+        limitationCodes.add("unresolved_computed_or_indirect_flows");
+        limitationCodes.add("provider_specific_representations");
+        result.add("limitation_codes", limitationCodes);
         JsonArray limitations = new JsonArray();
         limitations.add(
             "Unresolved computed or indirect flows without target addresses are not represented as reference edges."

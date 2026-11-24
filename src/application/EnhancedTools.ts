@@ -1,4 +1,5 @@
 import { boundedList } from "../domain/boundedList.js";
+import { withRequiredLimitedDirections } from "../domain/relationshipCoverage.js";
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { withOverviewInventoryCoverage } from "../domain/native/inventoryCoverage.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
@@ -596,10 +597,16 @@ export class EnhancedTools {
       for (const limitation of execution.limitations)
         limitations.add(limitation);
       const reportedCoverage = execution.relationshipCoverage;
-      const coverage = reportedCoverage ?? {
-        status: "unknown" as const,
-        reason: "Provider did not report relationship coverage.",
-      };
+      const directionFallback: ["callers"] | ["callees"] =
+        input.direction === "backward" ? ["callers"] : ["callees"];
+      const coverage =
+        reportedCoverage === undefined
+          ? {
+              status: "unknown" as const,
+              reason: "Provider did not report relationship coverage.",
+              limited_directions: directionFallback,
+            }
+          : withRequiredLimitedDirections(reportedCoverage, directionFallback);
       const relationshipLimitations =
         reportedCoverage === undefined
           ? [
