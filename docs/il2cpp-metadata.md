@@ -493,22 +493,22 @@ reported: versions 27.0 to 27.2 share that header number but place the
 Il2CppType byref flag in different bits, so a rendered name could gain or lose
 `&` without warning.
 
-| Reason                                  | Category    | Meaning                                                                                                      |
-| --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
-| `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section), nor an uncompressed wasm32 module that defines its memory and table.            |
-| `unsupported-pointer-encoding`          | unsupported | Mach-O chained fixups or Android packed (APS2) ELF relocations; pointers not decoded.                        |
-| `malformed-container`                   | malformed   | The container headers are damaged.                                                                           |
-| `code-gen-modules-not-found`            | conflict    | An image has no module record; often a binary from a different build.                                        |
-| `ambiguous-code-gen-module`             | conflict    | More than one module record matches an image.                                                                |
-| `code-registration-not-found`           | conflict    | No unique module table or executable-byte array candidate was resolved.                                      |
-| `invalid-method-token`                  | conflict    | A metadata MethodDef row is past its module's method-pointer rows.                                           |
-| `invalid-method-pointer`                | conflict    | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                     |
-| `metadata-registration-not-found`       | conflict    | No single MetadataRegistration or code-loaded type-table candidate was resolved.                             |
-| `invalid-type`                          | conflict    | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                  |
-| `unsupported-type-kind`                 | unsupported | A valid type kind has no implemented rendering.                                                              |
-| `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39, or a build lacks either static registration. |
-| `generic-method-registration-not-found` | conflict    | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
-| `ambiguous-generic-method-registration` | conflict    | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
+| Reason                                  | Category    | Meaning                                                                                                                                                                |
+| --------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section), nor an uncompressed wasm32 module that defines its memory and table. |
+| `unsupported-pointer-encoding`          | unsupported | Mach-O chained fixups or Android packed (APS2) ELF relocations; pointers not decoded.                                                                                  |
+| `malformed-container`                   | malformed   | The container headers are damaged.                                                                                                                                     |
+| `code-gen-modules-not-found`            | conflict    | An image has no module record; often a binary from a different build.                                                                                                  |
+| `ambiguous-code-gen-module`             | conflict    | More than one module record matches an image.                                                                                                                          |
+| `code-registration-not-found`           | conflict    | No unique module table or executable-byte array candidate was resolved.                                                                                                |
+| `invalid-method-token`                  | conflict    | A metadata MethodDef row is past its module's method-pointer rows.                                                                                                     |
+| `invalid-method-pointer`                | conflict    | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                                                                               |
+| `metadata-registration-not-found`       | conflict    | No single MetadataRegistration or code-loaded type-table candidate was resolved.                                                                                       |
+| `invalid-type`                          | conflict    | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                                                                            |
+| `unsupported-type-kind`                 | unsupported | A valid type kind has no implemented rendering.                                                                                                                        |
+| `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39, or a build lacks either static registration.                                                           |
+| `generic-method-registration-not-found` | conflict    | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.                                                                  |
+| `ambiguous-generic-method-registration` | conflict    | More than one CodeRegistration layout bounds every genericMethodTable row.                                                                                             |
 
 Each category says which selected file is at fault:
 
