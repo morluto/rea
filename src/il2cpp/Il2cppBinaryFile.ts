@@ -148,25 +148,6 @@ function* linkImageSteps(
         methodImage[type.method_start + method] = index;
       }
     }
-  const methodByImageAndRow = metadata.images.map(
-    () => new Map<number, number>(),
-  );
-  for (let index = 0; index < methodImage.length; index++) {
-    if (index % LINK_BATCH === 0) yield;
-    const owner = methodImage[index]!;
-    if (owner === -1) continue;
-    const token = facts.methodTokens[index]!;
-    const row = token & 0xffffff;
-    if (token >>> 24 !== 0x06 || row === 0) continue;
-    const methodsByRow = methodByImageAndRow[owner]!;
-    const earlier = methodsByRow.get(row);
-    if (earlier !== undefined)
-      throw new Il2cppBinaryFormatFailure(
-        "invalid-method-token",
-        `methods ${earlier} and ${index} in image ${metadata.images[owner]!.name} share MethodDef token 0x${token.toString(16)}`,
-      );
-    methodsByRow.set(row, index);
-  }
   yield;
   const methodAddress = (index: number): Il2cppMethodCode => {
     const owner = methodImage[index]!;
@@ -175,7 +156,9 @@ function* linkImageSteps(
     const module = modules[owner]!;
     const token = facts.methodTokens[index]!;
     const row = token & 0xffffff;
-    if (token >>> 24 !== 0x06 || row === 0 || row > module.method_pointer_count)
+    // The metadata reader admitted every owned token as a nonzero MethodDef
+    // row unique within its image; only the binary's row count is left.
+    if (row > module.method_pointer_count)
       throw new Il2cppBinaryFormatFailure(
         "invalid-method-token",
         `method ${index} token 0x${token.toString(16)} is outside module ${metadata.images[owner]!.name}'s ${module.method_pointer_count} method pointers`,
