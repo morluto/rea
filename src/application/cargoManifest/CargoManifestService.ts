@@ -15,7 +15,7 @@ import type {
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  type AnalysisResourceConstraintError,
+  AnalysisResourceConstraintError,
   fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -36,7 +36,10 @@ import {
 import { parseCargoManifest } from "../../domain/cargoManifest/parseCargoManifest.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const inputFailure = (message: string, cause?: unknown) =>
@@ -87,21 +90,42 @@ const decodeManifest = (
   }
 };
 
-/** The manifest input budget is a fixed ceiling; only a smaller file fits. */
+/**
+ * A refusal names the value that admitted or refused this read. The 32 MiB
+ * release maximum is not a ceiling the caller can raise, so it is only
+ * reported when that is the value that refused the file; a smaller
+ * `input.max_file_bytes` is the caller's own budget and says how to raise it.
+ */
 const manifestFileSizeRefusal = (
+  maxFileBytes: number,
   cause: ArtifactReaderFailure,
   details: AnalysisErrorOptions,
 ): AnalysisResourceConstraintError =>
-  fixedCeilingConstraint(
-    operation,
-    cause.boundary ?? "file-size",
-    cause.message,
-    fixedAllowanceOptions("The Cargo manifest input allowance", "input", {
-      limit: CARGO_MANIFEST_MAX_FILE_BYTES,
-      unit: "bytes",
-    }).fixedAllowance,
-    details,
-  );
+  maxFileBytes >= CARGO_MANIFEST_MAX_FILE_BYTES
+    ? fixedCeilingConstraint(
+        operation,
+        cause.boundary ?? "file-size",
+        cause.message,
+        fixedAllowanceOptions("The Cargo manifest input allowance", "input", {
+          limit: CARGO_MANIFEST_MAX_FILE_BYTES,
+          unit: "bytes",
+        }).fixedAllowance,
+        details,
+      )
+    : new AnalysisResourceConstraintError(
+        operation,
+        "file-size",
+        cause.message,
+        {
+          max_file_bytes: maxFileBytes,
+          maximum_file_bytes: CARGO_MANIFEST_MAX_FILE_BYTES,
+        },
+        {
+          cause,
+          retryable: false,
+          remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes, up to the ${String(CARGO_MANIFEST_MAX_FILE_BYTES)}-byte release maximum, or select a smaller manifest.`,
+        },
+      );
 
 /** What a failure none of the shared classifications recognised reports. */
 const manifestReadRefusal = (cause: unknown, path: string) =>
@@ -145,7 +169,8 @@ const readManifest = async (
       file: {
         path: input.path,
         description: "Cargo manifest",
-        fileSize: manifestFileSizeRefusal,
+        fileSize: (cause, details) =>
+          manifestFileSizeRefusal(input.max_file_bytes, cause, details),
       },
       unclassified: (cause) => manifestReadRefusal(cause, input.path),
     });
@@ -181,6 +206,7 @@ export const inspectCargoManifestEvidence = async (
   );
   if (!admitted.ok) return admitted;
   const input = admitted.value;
+  const selectedParameters = callerAnalysisParameters(rawInput);
   if (!isAbsolute(input.path))
     return err(
       inputFailure("Expected an absolute filesystem path on this host."),
@@ -217,11 +243,11 @@ export const inspectCargoManifestEvidence = async (
       {
         operation,
         predicateType: "rea.cargo-manifest-inventory",
-        parameters: {
+        parameters: selectedParameters({
           path: input.path,
           format: input.format,
           max_file_bytes: input.max_file_bytes,
-        },
+        }),
         result,
         confidence: "observed",
         limitations: result.limitations,

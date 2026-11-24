@@ -2,6 +2,10 @@ import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import type { CargoManifest } from "./cargoManifest.js";
 import { parseCargoManifest } from "./parseCargoManifest.js";
+import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import type { AnalysisError } from "../analysisErrorBase.js";
+import type { Result } from "../result.js";
+import { CARGO_MANIFEST_FACT_BYTES } from "./cargoManifest.js";
 
 const artifact: CargoManifest["artifact"] = {
   path: "/fixtures/Cargo.toml",
@@ -11,10 +15,25 @@ const artifact: CargoManifest["artifact"] = {
 
 const parse = (toml: string) => parseCargoManifest(parseToml(toml), artifact);
 
-const required = <T>(result: { ok: boolean; value?: T }): T => {
-  expect(result.ok).toBe(true);
-  if (result.value === undefined) throw new Error("Expected a parsed manifest");
+const required = <T>(result: Result<T, AnalysisError>): T => {
+  if (!result.ok) throw result.error;
   return result.value;
+};
+
+/** The retained-facts refusal, which every over-allowance case must produce. */
+const retainedFactsRefusal = <T>(result: Result<T, AnalysisError>) => {
+  if (result.ok) throw new Error("Expected the retained-facts refusal");
+  const error = result.error;
+  if (!(error instanceof AnalysisResourceConstraintError)) throw error;
+  expect(error.resource).toBe("memory");
+  expect(error.fixedAllowance).toEqual({
+    name: "The Cargo manifest retained-facts allowance",
+    kind: "bytes",
+    limit: CARGO_MANIFEST_FACT_BYTES,
+    unit: "bytes",
+    narrowing:
+      "Select a smaller complete manifest; reply paging does not increase the parser's retained-facts allowance.",
+  });
 };
 
 describe("parseCargoManifest dependencies", () => {
@@ -371,7 +390,7 @@ describe("parseCargoManifest retained-fact allowance", () => {
 [workspace]
 members = [${members.map((m) => `"${m}"`).join(", ")}]
 `);
-    expect(result.ok).toBe(false);
+    expect(retainedFactsRefusal(result)).toBeUndefined();
   });
 
   it("charges a dependency's inline features, not just its key", () => {
@@ -387,7 +406,7 @@ helper = { version = "1", features = [${features
       .map((f) => `"${f}"`)
       .join(", ")}] }
 `);
-    expect(result.ok).toBe(false);
+    expect(retainedFactsRefusal(result)).toBeUndefined();
   });
 
   it("charges an emitted feature list once, not the discarded declaration too", () => {
@@ -416,7 +435,7 @@ helper = { version = "1", features = [${features
       },
       artifact,
     );
-    expect(result.ok).toBe(false);
+    expect(retainedFactsRefusal(result)).toBeUndefined();
   });
 
   it("charges repeated target selectors and feature source pointers", () => {
@@ -428,13 +447,13 @@ helper = { version = "1", features = [${features
       },
       artifact,
     );
-    expect(target.ok).toBe(false);
+    expect(retainedFactsRefusal(target)).toBeUndefined();
     const feature = "f".repeat(9_000_000);
     const features = parseCargoManifest(
       { package: { name: "demo" }, features: { [feature]: [] } },
       artifact,
     );
-    expect(features.ok).toBe(false);
+    expect(retainedFactsRefusal(features)).toBeUndefined();
   });
 
   it("charges only the emitted diagnostic for an unclassified dependency", () => {
@@ -457,7 +476,7 @@ helper = { version = "1", features = [${features
 members = ["crates/*"]
 exclude = [${excluded.map((e) => `"${e}"`).join(", ")}]
 `);
-    expect(result.ok).toBe(false);
+    expect(retainedFactsRefusal(result)).toBeUndefined();
   });
 
   it("rejects a document that is neither a package nor a workspace", () => {

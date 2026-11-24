@@ -656,8 +656,25 @@ export const parseCargoManifest = (
     if (!recorded.ok) return recorded;
   }
 
-  const count = (predicate: (dependency: CargoDependency) => boolean) =>
-    inventory.dependencies.filter(predicate).length;
+  // One pass over the inventory: each dependency contributes to every
+  // summary bucket it matches, so five separate filters do not scan it five
+  // times for a manifest with many declarations.
+  const summaryCounts = {
+    workspace_dependencies: 0,
+    inherited_dependencies: 0,
+    git_dependencies: 0,
+    path_dependencies: 0,
+    target_dependencies: 0,
+  };
+  for (const dependency of inventory.dependencies) {
+    if (dependency.declared_by === "workspace")
+      summaryCounts.workspace_dependencies += 1;
+    if (dependency.source === "workspace")
+      summaryCounts.inherited_dependencies += 1;
+    if (dependency.source === "git") summaryCounts.git_dependencies += 1;
+    if (dependency.source === "path") summaryCounts.path_dependencies += 1;
+    if (dependency.target !== null) summaryCounts.target_dependencies += 1;
+  }
 
   return ok({
     manifest_id: `cargo_manifest_${artifact.sha256}`,
@@ -680,15 +697,7 @@ export const parseCargoManifest = (
     summary: {
       packages: inventory.packages.length,
       dependencies: inventory.dependencies.length,
-      workspace_dependencies: count(
-        (dependency) => dependency.declared_by === "workspace",
-      ),
-      inherited_dependencies: count(
-        (dependency) => dependency.source === "workspace",
-      ),
-      git_dependencies: count((dependency) => dependency.source === "git"),
-      path_dependencies: count((dependency) => dependency.source === "path"),
-      target_dependencies: count((dependency) => dependency.target !== null),
+      ...summaryCounts,
       diagnostics: inventory.diagnostics.length,
     },
     source_coverage: {
