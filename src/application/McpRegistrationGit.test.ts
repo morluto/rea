@@ -1,10 +1,11 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { err } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import * as exec from "../process/ExecFileOutput.js";
 import { resolveKiloRegistrationWorktree } from "./McpRegistrationGit.js";
@@ -43,6 +44,67 @@ const context = async (
   };
 };
 
+it.each(["ordinary checkout", "linked worktree"])(
+  "returns the observed paths for %s",
+  async (kind) => {
+    const selected = await context();
+    const primaryRoot = await realpath(selected.cwd);
+    const commonDirectory = join(primaryRoot, ".git");
+    const linked = kind === "linked worktree";
+    const root = linked ? join(primaryRoot, "linked checkout") : primaryRoot;
+    const gitDirectory = linked
+      ? join(commonDirectory, "worktrees", "linked")
+      : commonDirectory;
+    const activeDirectory = join(root, "nested");
+    await mkdir(activeDirectory, { recursive: true });
+    if (linked) {
+      await mkdir(gitDirectory, { recursive: true });
+      await writeFile(join(root, ".git"), `gitdir: ${gitDirectory}\n`);
+    }
+    const paths = new Map([
+      ["--show-toplevel", root],
+      ["--git-dir", gitDirectory],
+      ["--git-common-dir", commonDirectory],
+    ]);
+    vi.mocked(exec.execFileBytes).mockImplementation(async (_command, args) => {
+      const path =
+        args[0] === "rev-parse" ? paths.get(args[1] ?? "") : undefined;
+      if (path !== undefined)
+        return { stdout: Buffer.from(`${path}\n`), stderr: Buffer.alloc(0) };
+      if (linked && args[0] === "worktree")
+        return {
+          stdout: Buffer.from(
+            `worktree ${primaryRoot}\0HEAD fixture\0\0worktree ${root}\0HEAD fixture\0\0`,
+          ),
+          stderr: Buffer.alloc(0),
+        };
+      throw new Error(`Unexpected Git query: ${args.join(" ")}`);
+    });
+    expect(
+      await resolveKiloRegistrationWorktree({
+        ...selected,
+        cwd: activeDirectory,
+      }),
+    ).toEqual({
+      ok: true,
+      value: { activeDirectory, root, primaryRoot },
+    });
+  },
+);
+
+it("returns a configuration failure for a Git path missing its protocol terminator", async () => {
+  const selected = await context();
+  vi.mocked(exec.execFileBytes).mockResolvedValueOnce({
+    stdout: Buffer.from(selected.cwd),
+    stderr: Buffer.alloc(0),
+  });
+  const result = await resolveKiloRegistrationWorktree(selected);
+  if (result.ok)
+    throw new Error("Expected malformed Git metadata to be refused");
+  expect(result.error).toBeInstanceOf(ConfigurationError);
+  expect(result.error.message).toContain("no protocol terminator");
+});
+
 it("keeps an observed Git failure primary when cancellation arrives during completion", async () => {
   const abort = new AbortController();
   const opaque = { operator: "cancel", detail: new Error("opaque reason") };
@@ -53,9 +115,11 @@ it("keeps an observed Git failure primary when cancellation arrives during compl
     abort.abort(opaque);
     throw failure;
   });
-  const observed: unknown = await resolveKiloRegistrationWorktree(
+  const result = await resolveKiloRegistrationWorktree(
     await context(abort.signal),
-  ).catch((cause: unknown) => cause);
+  );
+  if (result.ok) throw new Error("Expected Git failure");
+  const observed = result.error;
   if (!(observed instanceof ConfigurationError)) throw observed;
   expect(observed.cause).toBe(failure);
   expect(observed.secondaryFailures).toEqual([
@@ -68,9 +132,9 @@ it("retains primary cancellation and its opaque caller reason", async () => {
   vi.mocked(exec.execFileBytes).mockRejectedValue(
     new exec.ExecFileOutputCancelledError(opaque),
   );
-  const observed: unknown = await resolveKiloRegistrationWorktree(
-    await context(),
-  ).catch((cause: unknown) => cause);
+  const result = await resolveKiloRegistrationWorktree(await context());
+  if (result.ok) throw new Error("Expected cancellation failure");
+  const observed = result.error;
   expect(observed).toBeInstanceOf(AnalysisCancelledError);
   if (!(observed instanceof AnalysisCancelledError))
     throw new Error("Primary cancellation lost its classification");
@@ -80,7 +144,7 @@ it("retains primary cancellation and its opaque caller reason", async () => {
 it("runs each Git query as a stoppable process group with the caller's environment", async () => {
   const selected = await context();
   vi.mocked(exec.execFileBytes).mockRejectedValue(new Error("stop here"));
-  await resolveKiloRegistrationWorktree(selected).catch(() => undefined);
+  await resolveKiloRegistrationWorktree(selected);
   expect(exec.execFileBytes).toHaveBeenCalledWith(
     "git",
     ["rev-parse", "--show-toplevel"],
@@ -138,7 +202,7 @@ it("preserves a native location access failure and late cancellation through sel
     .spyOn(locations, "present")
     .mockImplementationOnce(async () => {
       controller.abort(reason);
-      throw failure;
+      return err(failure);
     });
   try {
     const selected = await context(controller.signal);

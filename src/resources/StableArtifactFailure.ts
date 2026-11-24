@@ -11,12 +11,16 @@ import {
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
-import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
+import {
+  completedStableArtifactObservation,
+  type CompletedStableArtifact,
+} from "./StableArtifactObservation.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
+  AnalysisMalformedTargetError,
   AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
@@ -80,12 +84,22 @@ export const projectOwnedArtifactInputFailure = (
     return new AnalysisUnsupportedTargetError(operation, path, cause.message, {
       cause,
     });
-  if (
-    cause.reason === "malformed" ||
-    cause.reason === "truncated" ||
-    cause.reason === "format" ||
-    cause.reason === "path"
-  )
+  // A parser's malformed or truncated bytes keep the format owner's parsed
+  // facts and are a target refusal; the request that selected the file is not
+  // at fault. The reader records those facts only for its own malformed or
+  // truncated reason, so a cancelled read whose opaque abort reason happens to
+  // be a parser failure stays a cancellation.
+  if (cause.parseFailure !== undefined)
+    return new AnalysisMalformedTargetError(
+      operation,
+      path,
+      cause.parseFailure,
+      { cause },
+    );
+  // Only a path-kind refusal (a symlink, directory or other non-regular file)
+  // is the caller's selection. Byte faults without parsed facts are left to
+  // the reader's own artifact-operation classification.
+  if (cause.reason === "path")
     return stableArtifactInputFailure(cause, operation, field);
   return undefined;
 };
@@ -141,7 +155,7 @@ export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
       }
     : {};
 
-/** Report a rejected artifact path or format with its source-provided recovery. */
+/** Report a rejected artifact path with its source-provided recovery. */
 export const stableArtifactInputFailure = (
   cause: ArtifactReaderFailure,
   operation: string,
@@ -194,7 +208,7 @@ export const projectStableArtifactFailure = (
   path: string,
   providerId: string,
   operation: string,
-  snapshot?: StableArtifactSnapshot,
+  snapshot?: CompletedStableArtifact,
 ): AnalysisError => {
   const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);

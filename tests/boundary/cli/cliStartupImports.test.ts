@@ -107,12 +107,8 @@ const DEFERRED_IMPORTS = [
     path: "/dist/application/javascript/JavaScriptRuntimeReconciliationService.js",
   },
   {
-    name: "android-application",
-    path: "/dist/application/android/AndroidApplicationService.js",
-  },
-  {
-    name: "apple-application",
-    path: "/dist/application/apple/AppleApplicationService.js",
+    name: "application-inventory-projection",
+    path: "/dist/application/InventoryProjectionEvidence.js",
   },
   {
     name: "reconstruction-coverage",

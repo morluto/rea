@@ -1,4 +1,5 @@
 import { PCAP_CAPTURE_UNSUPPORTED_HOST_REASON } from "../domain/pcap/pcapAnalysis.js";
+import { WABT_RELEASE_LINE } from "../domain/wasm/wasmArtifact.js";
 import { DEFAULT_CALL_RELATIONSHIP_DIRECTION } from "../contracts/enhancedInputs.js";
 import {
   FIRMWARE_OPERATION_ENGINES,
@@ -329,7 +330,9 @@ export const buildCapabilityInventory = (
   const descriptors = new Map<string, ProviderDescriptor>(
     status.capabilities.map((descriptor) => [descriptor.operation, descriptor]),
   );
-  return TOOL_CONTRACTS.map((contract): ToolAvailability => {
+  const advertised: ToolAvailability[] = [];
+  for (const contract of TOOL_CONTRACTS) {
+    if (!isToolAdvertised(contract.name)) continue;
     const availability = availabilityFor({
       name: contract.name,
       kind: contract.kind,
@@ -386,25 +389,28 @@ export const buildCapabilityInventory = (
         open_world: annotations.openWorldHint,
       },
     };
-    return availability.reason === "available"
-      ? {
-          ...facts,
-          available: true,
-          reason: availability.reason,
-          remediation: null,
-        }
-      : {
-          ...facts,
-          available: false,
-          reason: availability.reason,
-          remediation: availability.remediation,
-          ...(availability.alternatives === undefined
-            ? {}
-            : { alternatives: [...availability.alternatives] }),
-        };
-  })
-    .filter(({ name }) => isToolAdvertised(name))
-    .sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
+    advertised.push(
+      availability.reason === "available"
+        ? {
+            ...facts,
+            available: true,
+            reason: availability.reason,
+            remediation: null,
+          }
+        : {
+            ...facts,
+            available: false,
+            reason: availability.reason,
+            remediation: availability.remediation,
+            ...(availability.alternatives === undefined
+              ? {}
+              : { alternatives: [...availability.alternatives] }),
+          },
+    );
+  }
+  return advertised.sort((left, right) =>
+    compareUnicodeCodePoints(left.name, right.name),
+  );
 };
 
 type ClientRequirements = ToolAvailability["client_requirements"];
@@ -436,9 +442,14 @@ export function compactToolAvailability(
 ): ToolAvailabilityInventory | ToolAvailabilitySummaryInventory {
   const clientRequirements =
     availability[0]?.client_requirements ?? emptyClientRequirements();
+  let clientRequirementsJson: string | undefined;
   const groups = new Map<string, { names: string[] }>();
 
   for (const entry of availability) {
+    const sameClientRequirements =
+      entry.client_requirements === clientRequirements ||
+      JSON.stringify(entry.client_requirements) ===
+        (clientRequirementsJson ??= JSON.stringify(clientRequirements));
     const statusFacts = {
       available: entry.available,
       reason: entry.reason,
@@ -453,8 +464,7 @@ export function compactToolAvailability(
       ...(entry.available || entry.alternatives === undefined
         ? {}
         : { alternatives: [...entry.alternatives] }),
-      ...(JSON.stringify(entry.client_requirements) ===
-      JSON.stringify(clientRequirements)
+      ...(sameClientRequirements
         ? {}
         : { client_requirements: entry.client_requirements }),
     };
@@ -583,8 +593,7 @@ const workflowAvailabilityFor = (
       ? { reason: "available", remediation: null }
       : {
           reason: "provider_missing",
-          remediation:
-            "Supply WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY. No active binary target is required; tools are checked at execution.",
+          remediation: `Supply ${WABT_RELEASE_LINE} via absolute REA_WABT_BIN_DIRECTORY. No active binary target is required; tools are checked at execution.`,
         };
   if (kind === "android-provider")
     return policy.androidAnalysisAvailability?.status === "available"

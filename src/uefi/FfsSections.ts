@@ -78,10 +78,24 @@ function readCommonHeader(reader: BinaryReader, start: number, end: number) {
   };
 }
 
+const sectionReaders = new WeakMap<Buffer, BinaryReader>();
+
+const sectionReaderFor = (buffer: Buffer): BinaryReader => {
+  let reader = sectionReaders.get(buffer);
+  if (reader === undefined) {
+    reader = new BinaryReader(buffer, true, "FFS sections");
+    sectionReaders.set(buffer, reader);
+  }
+  return reader;
+};
+
 /** A bounded first frame establishes a section chain regardless of payload validity. */
 export function startsWithSectionFrame(region: ScanRegion): boolean {
-  const reader = new BinaryReader(region.buffer, true, "FFS sections");
-  return hasBoundedFrame(reader, region.start, region.end);
+  return hasBoundedFrame(
+    sectionReaderFor(region.buffer),
+    region.start,
+    region.end,
+  );
 }
 
 function hasBoundedFrame(
@@ -157,7 +171,7 @@ export function walkSections(
   nonzeroPadding: { start: number; end: number }[];
   remainder: { kind: "limited" | "unparsed"; start: number } | null;
 } {
-  const reader = new BinaryReader(region.buffer, true, "FFS sections");
+  const reader = sectionReaderFor(region.buffer);
   const sections: SectionDraft[] = [];
   const nonzeroPadding: { start: number; end: number }[] = [];
   const { start: localStart, end: localEnd } = region;

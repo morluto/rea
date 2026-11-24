@@ -104,7 +104,7 @@ it("uses the server-selected environment unless a provider environment overrides
       });
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
-        raw_result: { stdout: `${scenario.expected}\n` },
+        normalized_result: { stdout: `${scenario.expected}\n` },
         provider: { id: "rizin", ...scenario.tool },
         parameters: {
           provider_executable: "rizin",

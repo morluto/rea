@@ -8,6 +8,7 @@ import {
   type GoStringLiterals,
 } from "../domain/go/goBinary.js";
 import {
+  BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryReader,
   createFileMappingIndex,
@@ -16,7 +17,11 @@ import {
   type FileMappingIndex,
   type LoadRegion,
 } from "../domain/binaryContainer.js";
+import type { ByteSource } from "../domain/byteSource.js";
 
+const STREAM_CHUNK_BYTES = 64 * 1024;
+const TARGET_PAGE_BYTES = 4096;
+const TARGET_CACHE_PAGES = 8;
 const MAX_REJECTED_SLICE_CACHE = 4096;
 const PE_MEM_READ = 0x40000000;
 const PE_MEM_EXECUTE = 0x20000000;
@@ -40,16 +45,103 @@ interface HeaderScanSpan {
   readonly endOffset: number;
 }
 
-/**
- * Recover bounded printable UTF-8 Go string literals referenced by word-aligned
- * static `(ptr, len)` pairs in non-executable mapped data.
- */
-export const recoverGoStringLiterals = (
-  bytes: Buffer,
+type StringScanRead = {
+  readonly offset: number;
+  readonly length: number;
+  readonly kind: "header" | "target";
+};
+
+/** Read exactly the admitted header and candidate ranges from the file. */
+export const recoverGoStringLiteralsFromReader = async (
+  source: ByteSource,
   container: BinaryContainer,
   budgets: GoAnalysisBudgets = GO_ANALYSIS_BUDGET_DEFAULTS,
   checkActive?: () => void,
-): GoStringLiterals => {
+): Promise<GoStringLiterals> => {
+  const steps = recoverGoStringLiteralSteps(
+    source.size,
+    container,
+    budgets,
+    checkActive,
+  );
+  const pages = new Map<number, Buffer>();
+  let previousPage: number | undefined;
+  let consecutiveTargets = 0;
+  let readAheadCredit = 0;
+  const read = async (
+    offset: number,
+    length: number,
+    label: string,
+  ): Promise<Buffer> => {
+    const bytes =
+      source.prefix !== undefined && offset + length <= source.prefix.length
+        ? source.prefix.subarray(offset, offset + length)
+        : await source.readRange(offset, length);
+    if (bytes.length !== length)
+      throw new BinaryFormatFailure(
+        "truncated",
+        `${label} range is outside the file`,
+        { format: container.format, offset },
+      );
+    return bytes;
+  };
+  const readTarget = async ({
+    offset,
+    length,
+  }: StringScanRead): Promise<Buffer> => {
+    const pageOffset = offset - (offset % TARGET_PAGE_BYTES);
+    consecutiveTargets =
+      pageOffset === previousPage ? consecutiveTargets + 1 : 1;
+    previousPage = pageOffset;
+    const relative = offset - pageOffset;
+    const pageLength = Math.min(TARGET_PAGE_BYTES, source.size - pageOffset);
+    if (relative + length <= pageLength) {
+      const cached = pages.get(pageOffset);
+      if (cached !== undefined) {
+        pages.delete(pageOffset);
+        pages.set(pageOffset, cached);
+        return cached.subarray(relative, relative + length);
+      }
+      // Admit extra I/O only after observing locality. The total extra bytes
+      // can never exceed the header bytes read, even if every page is evicted.
+      const extra = pageLength - length;
+      if (consecutiveTargets >= 3 && readAheadCredit >= extra) {
+        readAheadCredit -= extra;
+        const bytes = await read(pageOffset, pageLength, "Go string literal");
+        if (pages.size === TARGET_CACHE_PAGES) {
+          const oldest = pages.keys().next();
+          if (!oldest.done) pages.delete(oldest.value);
+        }
+        pages.set(pageOffset, bytes);
+        return bytes.subarray(relative, relative + length);
+      }
+    }
+    return read(offset, length, "Go string literal");
+  };
+  let step = steps.next();
+  while (!step.done) {
+    const request = step.value;
+    if (request.kind === "header") {
+      const chunk = await read(
+        request.offset,
+        request.length,
+        "Go string header span",
+      );
+      readAheadCredit += chunk.length;
+      step = steps.next(chunk);
+    } else {
+      step = steps.next(await readTarget(request));
+    }
+  }
+  return step.value;
+};
+
+function* recoverGoStringLiteralSteps(
+  fileSize: number,
+  container: BinaryContainer,
+  budgets: GoAnalysisBudgets,
+  checkActive: (() => void) | undefined,
+): Generator<StringScanRead, GoStringLiterals, Buffer> {
   const limitsReached = new Set<GoStringBudgetKey>();
   const maxItems = budgets.max_string_literals;
   checkActive?.();
@@ -63,14 +155,14 @@ export const recoverGoStringLiterals = (
     checkActive,
   );
   const targets = selectTargetSpans(
-    bytes,
+    fileSize,
     container,
     index,
     readableRegions,
     checkActive,
   );
   const headerSpans = selectHeaderScanSpans(
-    bytes,
+    fileSize,
     container,
     index,
     readableRegions,
@@ -87,16 +179,13 @@ export const recoverGoStringLiterals = (
     };
 
   const { bits } = container;
-  const reader = new BinaryReader(
-    bytes,
-    container.byte_order === "little",
-    container.format,
-  );
+  const little = container.byte_order === "little";
   const wordBytes = bits === 64 ? 8 : 4;
   const firstTarget = targets[0] as FileMapping;
   const lastTarget = targets[targets.length - 1] as FileMapping;
   const minTargetAddr = firstTarget.address;
   const maxTargetEnd = lastTarget.address + BigInt(lastTarget.size);
+  const targetEnds = targets.map((t) => t.address + BigInt(t.size));
 
   const accepted = new Map<string, CandidateLiteral>();
   const rejected = new Set<string>();
@@ -111,83 +200,108 @@ export const recoverGoStringLiterals = (
       limitsReached.add("max_string_header_scan_bytes");
       break;
     }
-    remainingBudget -= wordBytes;
-    let word0 = reader.word(startOffset, bits);
+    const chunkLimit = STREAM_CHUNK_BYTES;
+    let cursor = startOffset;
+    let word0: bigint | undefined;
 
-    for (
-      let headerOffset = startOffset;
-      headerOffset + wordBytes * 2 <= endOffset;
-      headerOffset += wordBytes
-    ) {
-      if ((++steps & 0xffff) === 0) checkActive?.();
-      if (remainingBudget < wordBytes) {
+    while (cursor < endOffset) {
+      checkActive?.();
+      const admittedBytes = remainingBudget - (remainingBudget % wordBytes);
+      if (admittedBytes < wordBytes) {
         budgetTruncated = true;
         limitsReached.add("max_string_header_scan_bytes");
         break outer;
       }
-      remainingBudget -= wordBytes;
-      const word1 = reader.word(headerOffset + wordBytes, bits);
-      const ptr = word0;
-      const rawLen = word1;
-      word0 = word1;
-
-      if (rawLen < 1n) continue;
-      if (ptr < minTargetAddr || ptr >= maxTargetEnd) continue;
-      const targetIndex = lastSpanAtOrBelow(targets, ptr);
-      if (targetIndex < 0) continue;
-      const target = targets[targetIndex] as FileMapping;
-      if (ptr + rawLen > target.address + BigInt(target.size)) continue;
-
-      const byteLen = Number(rawLen);
-      const sliceOffset = target.offset + Number(ptr - target.address);
-      if (
-        headerOffset < sliceOffset + byteLen &&
-        sliceOffset < headerOffset + wordBytes * 2
-      )
-        continue;
-
-      if (byteLen > budgets.max_string_literal_bytes) {
-        limitsReached.add("max_string_literal_bytes");
-        budgetTruncated = true;
-        continue;
-      }
-
-      const key = `${String(sliceOffset)}:${String(byteLen)}`;
-      const existing = accepted.get(key);
-      if (existing !== undefined) {
-        existing.referenceCount += 1;
-        if (headerOffset < existing.firstHeaderOffset)
-          existing.firstHeaderOffset = headerOffset;
-        continue;
-      }
-      if (rejected.has(key)) continue;
-
-      if (remainingBudget < byteLen) {
-        limitsReached.add("max_string_header_scan_bytes");
-        budgetTruncated = true;
-        break outer;
-      }
-      remainingBudget -= byteLen;
-
-      const slice = bytes.subarray(sliceOffset, sliceOffset + byteLen);
-      if (!isPrintableGoUtf8(slice)) {
-        if (rejected.size >= MAX_REJECTED_SLICE_CACHE) rejected.clear();
-        rejected.add(key);
-        continue;
-      }
-      if (candidates.length >= budgets.max_string_candidates) {
-        limitsReached.add("max_string_candidates");
-        budgetTruncated = true;
-        break outer;
-      }
-      const entry: CandidateLiteral = {
-        offset: sliceOffset,
-        bytes: byteLen,
-        firstHeaderOffset: headerOffset,
-        referenceCount: 1,
+      const chunkLen = Math.min(chunkLimit, endOffset - cursor, admittedBytes);
+      const chunk = yield {
+        offset: cursor,
+        length: chunkLen,
+        kind: "header",
       };
-      accepted.set(key, entry);
-      candidates.push(entry);
+      const chunkReader = new BinaryReader(chunk, little, container.format);
+      let rel = 0;
+      if (word0 === undefined) {
+        word0 = chunkReader.word(0, bits);
+        remainingBudget -= wordBytes;
+        rel = wordBytes;
+      }
+      for (; rel + wordBytes <= chunkLen; rel += wordBytes) {
+        if ((++steps & 0xffff) === 0) checkActive?.();
+        if (remainingBudget < wordBytes) {
+          budgetTruncated = true;
+          limitsReached.add("max_string_header_scan_bytes");
+          break outer;
+        }
+        remainingBudget -= wordBytes;
+        const word1 = chunkReader.word(rel, bits);
+        const headerOffset = cursor + rel - wordBytes;
+        const ptr = word0;
+        const rawLen = word1;
+        word0 = word1;
+
+        if (rawLen < 1n) continue;
+        if (ptr < minTargetAddr || ptr >= maxTargetEnd) continue;
+        const targetIndex = lastSpanAtOrBelow(targets, ptr);
+        if (targetIndex < 0) continue;
+        const target = targets[targetIndex] as FileMapping;
+        if (ptr + rawLen > targetEnds[targetIndex]!) continue;
+
+        const byteLen = Number(rawLen);
+        const sliceOffset = target.offset + Number(ptr - target.address);
+        if (
+          headerOffset < sliceOffset + byteLen &&
+          sliceOffset < headerOffset + wordBytes * 2
+        )
+          continue;
+
+        if (byteLen > budgets.max_string_literal_bytes) {
+          limitsReached.add("max_string_literal_bytes");
+          budgetTruncated = true;
+          continue;
+        }
+
+        const key = `${String(sliceOffset)}:${String(byteLen)}`;
+        const existing = accepted.get(key);
+        if (existing !== undefined) {
+          existing.referenceCount += 1;
+          if (headerOffset < existing.firstHeaderOffset)
+            existing.firstHeaderOffset = headerOffset;
+          continue;
+        }
+        if (rejected.has(key)) continue;
+
+        if (remainingBudget < byteLen) {
+          limitsReached.add("max_string_header_scan_bytes");
+          budgetTruncated = true;
+          break outer;
+        }
+        remainingBudget -= byteLen;
+
+        const slice = yield {
+          offset: sliceOffset,
+          length: byteLen,
+          kind: "target",
+        };
+        if (!isPrintableGoUtf8(slice)) {
+          if (rejected.size >= MAX_REJECTED_SLICE_CACHE) rejected.clear();
+          rejected.add(key);
+          continue;
+        }
+        if (candidates.length >= budgets.max_string_candidates) {
+          limitsReached.add("max_string_candidates");
+          budgetTruncated = true;
+          break outer;
+        }
+        const entry: CandidateLiteral = {
+          offset: sliceOffset,
+          bytes: byteLen,
+          firstHeaderOffset: headerOffset,
+          referenceCount: 1,
+        };
+        accepted.set(key, entry);
+        candidates.push(entry);
+      }
+      cursor += chunkLen;
     }
   }
 
@@ -210,10 +324,13 @@ export const recoverGoStringLiterals = (
       outputTruncated = true;
       break;
     }
+    const slice = yield {
+      offset: candidate.offset,
+      length: candidate.bytes,
+      kind: "target",
+    };
     items.push({
-      value: bytes
-        .subarray(candidate.offset, candidate.offset + candidate.bytes)
-        .toString("utf8"),
+      value: slice.toString("utf8"),
       location: { offset: candidate.offset, bytes: candidate.bytes },
       first_header_offset: candidate.firstHeaderOffset,
       reference_count: candidate.referenceCount,
@@ -230,11 +347,12 @@ export const recoverGoStringLiterals = (
     truncated: budgetTruncated || outputTruncated,
     ...(limitsReached.size === 0 ? {} : { limits_reached: [...limitsReached] }),
   };
-};
+}
 
 const isPrintableGoUtf8 = (slice: Buffer): boolean => {
   let hasNonAscii = false;
-  for (const byte of slice) {
+  for (let i = 0; i < slice.length; i += 1) {
+    const byte = slice[i]!;
     if (byte >= 0x80) {
       hasNonAscii = true;
       continue;
@@ -251,7 +369,7 @@ const isPrintableGoUtf8 = (slice: Buffer): boolean => {
 };
 
 const admitMappedSpan = (
-  bytes: Buffer,
+  fileSize: number,
   container: BinaryContainer,
   index: FileMappingIndex,
   address: bigint,
@@ -261,8 +379,8 @@ const admitMappedSpan = (
   if (
     size <= 0 ||
     offset < 0 ||
-    offset > bytes.length ||
-    size > bytes.length - offset ||
+    offset > fileSize ||
+    size > fileSize - offset ||
     address < 0n ||
     address + BigInt(size) > 1n << BigInt(container.bits)
   )
@@ -342,7 +460,7 @@ const createReadableLoadRegionIndex = (
  * so `[ptr, ptr + len)` cannot cross section boundaries.
  */
 const selectTargetSpans = (
-  bytes: Buffer,
+  fileSize: number,
   container: BinaryContainer,
   index: FileMappingIndex,
   readableRegions: ReadableLoadRegionIndex,
@@ -371,7 +489,7 @@ const selectTargetSpans = (
           ? (container.image_base ?? 0n) + BigInt(section.virtual_address)
           : section.address;
       const admitted = admitMappedSpan(
-        bytes,
+        fileSize,
         container,
         index,
         address,
@@ -385,7 +503,7 @@ const selectTargetSpans = (
       if ((++steps & 0x3ff) === 0) checkActive?.();
       if (!region.read || region.write || region.execute) continue;
       const admitted = admitMappedSpan(
-        bytes,
+        fileSize,
         container,
         index,
         region.mapping.address,
@@ -416,7 +534,7 @@ const selectTargetSpans = (
 
 /** Select non-executable initialized data spans that may store static `(ptr, len)` pairs. */
 const selectHeaderScanSpans = (
-  bytes: Buffer,
+  fileSize: number,
   container: BinaryContainer,
   index: FileMappingIndex,
   readableRegions: ReadableLoadRegionIndex,
@@ -426,7 +544,7 @@ const selectHeaderScanSpans = (
   let steps = 0;
   const push = (address: bigint, offset: number, size: number): void => {
     const admitted = admitMappedSpan(
-      bytes,
+      fileSize,
       container,
       index,
       address,

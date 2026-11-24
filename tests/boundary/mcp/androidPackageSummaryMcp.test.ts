@@ -17,9 +17,14 @@ import { AndroidAnalysisService } from "../../../src/application/android/Android
 import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
-import { inspectAndroidPackage } from "../../../src/application/android/AndroidPackageInspection.js";
-import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
-import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
+import {
+  executeRetainedSummaryOperation,
+  inspectAnalysisView,
+} from "../../../src/application/analysisView/AnalysisViewService.js";
+import {
+  androidPackageInspectionInputSchema,
+  androidResultSchemas,
+} from "../../../src/domain/android/androidAnalysis.js";
 import {
   androidPackageSummaryViewResultSchema,
   androidManifestViewResultSchema,
@@ -522,8 +527,10 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
   const service = new AndroidAnalysisService(provider);
   const retention = { recordEvidence: undefined, evidenceById: undefined };
   expect(
-    await inspectAndroidPackage(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_android_package",
+      androidPackageInspectionInputSchema,
       { path: "/missing.apk", detail: "summary" },
       retention,
     ),
@@ -532,15 +539,19 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
     error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
   expect(
-    await inspectAndroidPackage(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_android_package",
+      androidPackageInspectionInputSchema,
       { path: "/missing.apk", detail: "other" },
       retention,
     ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const reason = { request: "cancel before Android admission" };
-  const cancelled = await inspectAndroidPackage(
+  const cancelled = await executeRetainedSummaryOperation(
     service,
+    "inspect_android_package",
+    androidPackageInspectionInputSchema,
     { path: "/missing.apk", detail: "summary" },
     retention,
     { signal: AbortSignal.abort(reason) },
@@ -550,8 +561,10 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
   expect(cancelled.error.cause).toBe(reason);
   for (const detail of [undefined, "complete"]) {
     expect(
-      await inspectAndroidPackage(
+      await executeRetainedSummaryOperation(
         service,
+        "inspect_android_package",
+        androidPackageInspectionInputSchema,
         {
           path: "/missing.apk",
           ...(detail === undefined ? {} : { detail }),
@@ -674,8 +687,10 @@ it("delivers the selected retained page in one analysis and reads it later witho
     fields: ["name"],
     limit: 1,
   };
-  const selected = await inspectAndroidPackage(
+  const selected = await executeRetainedSummaryOperation(
     service,
+    "inspect_android_package",
+    androidPackageInspectionInputSchema,
     { path: "/never-reopened.apk", detail: "summary", view },
     {
       recordEvidence: session.recordEvidence.bind(session),

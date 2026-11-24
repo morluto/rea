@@ -21,9 +21,9 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   effectiveClientServer,
-  clientConfigurationRecordSchema,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";

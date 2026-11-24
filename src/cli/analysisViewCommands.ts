@@ -19,7 +19,7 @@ import type { CliInstance } from "./types.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { contractNamed } from "./contractCliDescription.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { jsonInputArgument } from "./jsonInputArgument.js";
 

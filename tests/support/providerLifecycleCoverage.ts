@@ -294,13 +294,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "keeps whole-file identity and entropy while selecting unaligned blocks and a partial tail",
+        "keeps %i-byte blocks relative to an unaligned window across short physical reads",
       ),
     ),
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "honors cancellation before and during streaming",
+        "honors cancellation %s and closes any admitted descriptor",
       ),
     ),
   ),
@@ -1243,7 +1243,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/devicetreeCli.test.ts",
-        "rejects ambiguous Devicetree node paths in correctly hashed Evidence",
+        "inspects a relative DTB and preserves the source",
       ),
     ),
     covered(
@@ -1325,7 +1325,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/elfNotesCli.test.ts",
-        "resolves section note names from zlib and Zstandard string tables through the CLI",
+        "resolves section note names from a compressed string table through the CLI",
       ),
     ),
     typedFailures("tests/boundary/filesystem/elfNotes.test.ts"),
@@ -1643,7 +1643,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "reads signed TYPE_INT64 constants and rejects a truncated payload",
       ),
     ),
-    typedFailures("tests/boundary/filesystem/pythonPyc.test.ts"),
+    covered(
+      test(
+        "src/application/python/PythonPycService.test.ts",
+        "retains completed pyc Evidence and the opaque caller reason on late cancellation",
+      ),
+    ),
   ),
   "rea-release-exposure": inProcess(
     covered(
@@ -1663,8 +1668,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     covered(
       test(
-        "src/application/v8CodeCache/V8CodeCacheService.test.ts",
-        "retains a completed V8 code cache observation when the caller cancels as the provider completes",
+        "tests/boundary/filesystem/v8CodeCacheArtifact.test.ts",
+        "retains verified V8 Evidence during $stage",
       ),
     ),
   ),

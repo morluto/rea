@@ -77,7 +77,7 @@ it.each(["objdump", "rizin"] as const)(
             resources: ["run-id", "pid:42"],
           },
           partialObservation: {
-            raw_result: {
+            normalized_result: {
               stdout: "captured owned output",
               exit_code: null,
               signal: "SIGTERM",
@@ -86,6 +86,7 @@ it.each(["objdump", "rizin"] as const)(
               artifact_sha256_after: null,
               artifact_changed: null,
             },
+            raw_result: null,
             limitations: expect.arrayContaining([
               expect.stringContaining("max_output_bytes=16777216"),
             ]),
@@ -1007,10 +1008,11 @@ it("preserves a provider timeout when cancellation arrives during the final dige
           stderr: "timeout diagnostic",
         },
         partialObservation: {
-          raw_result: {
+          normalized_result: {
             stdout: "partial timeout output",
             completion_status: "unknown",
           },
+          raw_result: null,
           limitations: expect.arrayContaining([
             expect.stringContaining("AnalysisTimeoutError"),
           ]),
@@ -1079,12 +1081,13 @@ it("preserves completed command Evidence while its post-run digest awaits cleanu
       error: {
         _tag: "AnalysisOutputError",
         partialObservation: {
-          raw_result: {
+          normalized_result: {
             exit_code: 0,
             completion_status: "complete",
             artifact_sha256_after: null,
             artifact_changed: null,
           },
+          raw_result: null,
           limitations: expect.arrayContaining([
             expect.stringContaining(
               "owned provider cleanup was incomplete at observation time",
@@ -1177,7 +1180,8 @@ it("records an explicit loss marker when provider bytes are invalid UTF-8", asyn
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value).toMatchObject({
-        raw_result: { stdout: "captured � output" },
+        normalized_result: { stdout: "captured � output" },
+        raw_result: null,
       });
       expect(result.value.limitations).toContainEqual(
         expect.stringMatching(

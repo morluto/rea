@@ -29,10 +29,15 @@ interface ElfDeclaredTable {
   readonly width: number;
 }
 
+export interface ElfDeclaredRangeOptions {
+  readonly allowTruncatedSectionTable?: boolean;
+}
+
 export interface ElfTableDeclarations {
   readonly header: ElfFixedHeader;
   readonly programs: ElfDeclaredTable;
   readonly sections: ElfDeclaredTable & { readonly namesIndex: number };
+  readonly sectionTableTruncated?: boolean;
 }
 
 /** Zero-sized/inactive declarations own no file bytes. Arithmetic stays exact. */
@@ -144,6 +149,7 @@ export const validateElfSectionTableFields = (tables: {
 export function* readElfTableDeclarations(
   bytes: Buffer,
   fileSize: number,
+  options?: ElfDeclaredRangeOptions,
 ): Generator<ElfDeclarationRead, Result<ElfTableDeclarations, string>, Buffer> {
   const fixed = readElfFixedHeader(bytes, fileSize);
   if (!fixed.ok) return fixed;
@@ -183,6 +189,7 @@ export function* readElfTableDeclarations(
     if (!counts.ok) return counts;
     ({ programCount, sectionCount, namesIndex } = counts.value);
   }
+  let sectionTableTruncated = false;
   for (const [kind, offset, count, width] of [
     ["program", programOffset, programCount, programWidth],
     ["section", sectionOffset, sectionCount, sectionWidth],
@@ -193,9 +200,23 @@ export function* readElfTableDeclarations(
       header,
       fileSize,
     );
-    if (failure !== undefined) return err(failure);
+    if (failure !== undefined) {
+      if (
+        kind === "section" &&
+        options?.allowTruncatedSectionTable === true &&
+        failure.startsWith("truncated ELF section header table:")
+      ) {
+        sectionTableTruncated = true;
+        continue;
+      }
+      return err(failure);
+    }
   }
-  if (sectionCount !== 0n && BigInt(namesIndex) >= sectionCount)
+  if (
+    !sectionTableTruncated &&
+    sectionCount !== 0n &&
+    BigInt(namesIndex) >= sectionCount
+  )
     return err(
       "ELF section-name index lies outside the declared section table",
     );
@@ -213,6 +234,7 @@ export function* readElfTableDeclarations(
       width: sectionWidth,
       namesIndex,
     },
+    ...(sectionTableTruncated ? { sectionTableTruncated: true } : {}),
   });
 }
 
@@ -278,21 +300,44 @@ function* inspectTableRanges(
 export function* validateElfDeclaredRanges(
   prefix: Buffer,
   fileSize: number,
+  options?: ElfDeclaredRangeOptions,
 ): Generator<
   ElfDeclarationRead,
   Result<ElfDeclaredRangeFacts, string>,
   Buffer
 > {
-  const declarations = yield* readElfTableDeclarations(prefix, fileSize);
+  const declarations = yield* readElfTableDeclarations(
+    prefix,
+    fileSize,
+    options,
+  );
   if (!declarations.ok) return declarations;
-  const { header, programs, sections } = declarations.value;
+  const { header, programs, sections, sectionTableTruncated } =
+    declarations.value;
   let hasInterpreter = false;
   for (const [kind, table] of [
     ["program", programs],
     ["section", sections],
   ] as const) {
     if (table.count === 0) continue;
-    const inspected = yield* inspectTableRanges(kind, table, header, fileSize);
+    let inspectedTable = table;
+    if (kind === "section" && sectionTableTruncated) {
+      const capturedCount =
+        table.offset >= BigInt(fileSize)
+          ? 0
+          : Math.min(
+              table.count,
+              Number((BigInt(fileSize) - table.offset) / BigInt(table.width)),
+            );
+      if (capturedCount === 0) continue;
+      inspectedTable = { ...table, count: capturedCount };
+    }
+    const inspected = yield* inspectTableRanges(
+      kind,
+      inspectedTable,
+      header,
+      fileSize,
+    );
     if (!inspected.ok) return inspected;
     if (kind === "program") {
       hasInterpreter = inspected.value.hasInterpreter;

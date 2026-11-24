@@ -4,10 +4,11 @@ import type { Writable } from "node:stream";
 import { estimateTokenCount } from "tokenx";
 
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
-import type { ParsedCliOutputArguments } from "../cliOutput.js";
+import type { ParsedCliOutputArguments } from "./cliOutput.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
+  isCliCompletedFailureReport,
 } from "../cliLogging.js";
 import {
   AnalysisInputError,
@@ -310,7 +311,7 @@ export const createCliResultOutput = (
   async function writeResult(
     value: unknown,
     metadata: CliResultOutputMetadata,
-    operationFailure: unknown,
+    reportedFailure: unknown,
   ): Promise<boolean> {
     completed = {
       metadata,
@@ -320,11 +321,29 @@ export const createCliResultOutput = (
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
-    const failure = options.fullOutput ? operationFailure : undefined;
-    const ownsFilteredOutput =
-      operationFailure === undefined &&
+    // A completed report with a failed verdict, such as an unhealthy doctor
+    // report, is still the command's result: --filter-output selects from it.
+    // The selection then stands in for the report in the full-output envelope.
+    // Whether the outcome failed is decided before selection, so a selection
+    // that omits the health signal, or selects nothing, never turns it into a
+    // success. JSONL frames every classified failure whole.
+    const reportSelection =
+      reportedFailure !== undefined &&
       filterPaths !== undefined &&
-      filterPaths.length > 0;
+      format !== "csv" &&
+      format !== "tsv" &&
+      format !== "jsonl" &&
+      isCliCompletedFailureReport(value)
+        ? applyCliOutputFilter(value, filterPaths)
+        : undefined;
+    // An invalid selection is reported as a filter error below instead.
+    const failureReported =
+      reportedFailure !== undefined && reportSelection?.ok !== false;
+    const operationFailure =
+      reportSelection?.ok === true ? reportSelection.value : reportedFailure;
+    const envelopeFailed = options.fullOutput && failureReported;
+    const ownsFilteredOutput =
+      !failureReported && filterPaths !== undefined && filterPaths.length > 0;
     if (
       (format === "toon" || format === "yaml") &&
       value == null &&
@@ -337,7 +356,7 @@ export const createCliResultOutput = (
     // Suppressed human presentation must never erase
     // the typed failure that this boundary already owns.
     if (
-      operationFailure === undefined &&
+      !failureReported &&
       metadata.renderOutput === false &&
       format !== "jsonl" &&
       !options.fullOutput &&
@@ -346,7 +365,7 @@ export const createCliResultOutput = (
       return false;
     if (format === "csv" || format === "tsv") {
       const meta = resultMeta(metadata);
-      if (operationFailure !== undefined) {
+      if (failureReported) {
         const parsedFailure =
           analysisErrorProjectionSchema.safeParse(operationFailure);
         error = parsedFailure.success
@@ -411,9 +430,10 @@ export const createCliResultOutput = (
       }
       return true;
     }
-    const selection =
-      operationFailure !== undefined || filterPaths === undefined
-        ? ok(operationFailure ?? value)
+    const selection = failureReported
+      ? ok(operationFailure)
+      : filterPaths === undefined
+        ? ok(value)
         : applyCliOutputFilter(value, filterPaths);
     if (!selection.ok) {
       error = projectAnalysisError(
@@ -500,16 +520,21 @@ export const createCliResultOutput = (
       return true;
     };
     if (
-      (format === "toon" || format === "md") &&
+      format === "md" &&
       !options.tokenCount &&
-      (!options.tokenWindow ||
-        format === "md" ||
-        operationFailure !== undefined) &&
-      (format === "md"
-        ? containsUnrepresentableMarkdown(selected)
-        : containsUnpairedSurrogate(selected))
+      containsUnrepresentableMarkdown(selected)
     )
       return refuseUnrepresentableText();
+    if (format === "toon") {
+      // Scalar strings can be counted or sliced directly. Structured TOON
+      // documents must be representable before the encoder can produce text.
+      const usesRawString =
+        typeof selected === "string" &&
+        !failureReported &&
+        (options.tokenCount ? !options.fullOutput : options.tokenWindow);
+      if (!usesRawString && containsUnpairedSurrogate(selected))
+        return refuseUnrepresentableText();
+    }
     const filtered =
       (format === "json" || format === "jsonl") &&
       ownsFilteredOutput &&
@@ -517,7 +542,7 @@ export const createCliResultOutput = (
         ? normalizeJsonArrayValues(selected)
         : selected;
     const ownsSuccessfulTokenWindow =
-      operationFailure === undefined &&
+      !failureReported &&
       options.tokenWindow &&
       !options.tokenCount &&
       format !== "json" &&
@@ -531,7 +556,7 @@ export const createCliResultOutput = (
             source: value,
             selected: filtered,
             filterPaths,
-            operationFailure,
+            operationFailure: failureReported ? operationFailure : undefined,
             command: metadata.command,
             duration: metadata.duration,
             ...(metadata.cliControls === undefined
@@ -547,18 +572,17 @@ export const createCliResultOutput = (
       return true;
     }
     const meta = resultMeta(metadata);
-    const errorDocument =
-      options.fullOutput && failure !== undefined
-        ? fullFailureEnvelope(
-            failure,
-            meta,
-            format,
-            options.tokenLimit,
-            options.tokenOffset,
-          )
-        : undefined;
+    const errorDocument = envelopeFailed
+      ? fullFailureEnvelope(
+          operationFailure,
+          meta,
+          format,
+          options.tokenLimit,
+          options.tokenOffset,
+        )
+      : undefined;
     const document = options.fullOutput
-      ? failure !== undefined
+      ? envelopeFailed
         ? errorDocument
         : filtered === undefined
           ? { ok: true, meta }
@@ -576,20 +600,13 @@ export const createCliResultOutput = (
       // require a complete formatted string.
       const tokenValue = document;
       let characters = 0;
-      if (
-        tokenValue !== undefined &&
-        tokenValue !== null &&
-        typeof tokenValue !== "function" &&
-        typeof tokenValue !== "symbol"
-      ) {
-        if (format === "json") {
-          for (const part of jsonOutputParts(
-            tokenValue,
-            format,
-            isTerminalOutput(destination),
-          ))
-            characters += part.length;
-        }
+      if (format === "json") {
+        for (const part of jsonOutputParts(
+          tokenValue,
+          format,
+          isTerminalOutput(destination),
+        ))
+          characters += part.length;
       }
       if (characters <= constants.MAX_STRING_LENGTH) {
         let formatted: string;
@@ -603,7 +620,7 @@ export const createCliResultOutput = (
             isTerminalOutput(destination),
           ))
             formatted += part;
-        } else formatted = formatCliOutput(tokenValue, format);
+        } else formatted = `${formatCliOutput(tokenValue, format)}\n`;
         const count = estimateTokenCount(formatted);
         handled = true;
         try {
@@ -653,6 +670,8 @@ export const createCliResultOutput = (
       const sliced = window.truncated
         ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`
         : formatted;
+      if (format === "toon" && hasUnpairedSurrogate(sliced))
+        return refuseUnrepresentableText();
       const outputDocument = options.fullOutput
         ? formatCliOutput(
             window.truncated
@@ -670,8 +689,6 @@ export const createCliResultOutput = (
             format,
           )
         : sliced;
-      if (format === "toon" && hasUnpairedSurrogate(outputDocument))
-        return refuseUnrepresentableText();
       handled = true;
       try {
         await writeOutputText(

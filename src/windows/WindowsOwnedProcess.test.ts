@@ -250,11 +250,27 @@ describe("Windows Job Object memory limits", () => {
           memoryLimitReached: false,
           peakJobMemoryBytes: 300 * 1024 * 1024,
         },
+        {
+          ...settledPoll,
+          exitCode: null,
+          stdoutEnded: false,
+          stderrEnded: false,
+          activeProcesses: 1,
+          memoryLimitReached: true,
+          peakJobMemoryBytes: LIMIT,
+        },
         { ...settledPoll, memoryLimitReached: true, peakJobMemoryBytes: LIMIT },
       ],
     });
     const child = launch(native, LIMIT);
     expect(calls[0]?.arguments_.slice(4)).toEqual([false, LIMIT]);
+    const notifications: { exitCode: number | null; reached: boolean }[] = [];
+    child.on("memory-limit", () => {
+      notifications.push({
+        exitCode: child.exitCode,
+        reached: child.memoryLimitReached,
+      });
+    });
     const closed = once(child, "close");
     const exited = new Promise((resolve) => {
       child.once("exit", (code: number) =>
@@ -264,6 +280,7 @@ describe("Windows Job Object memory limits", () => {
     expect(await exited).toEqual({ code: 3, reached: true });
     expect(child.peakJobMemoryBytes).toBe(LIMIT);
     await closed;
+    expect(notifications).toEqual([{ exitCode: null, reached: true }]);
     expect(calls.at(-1)?.operation).toBe("process_close");
   });
 

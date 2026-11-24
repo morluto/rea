@@ -108,7 +108,7 @@ export const inspectKunaProvider = async (
         code: null,
         detail: `REA_KUNA_COMMAND ${command} is an executable regular file.`,
         remediation: null,
-        classification: "config_drift",
+        classification: "healthy",
         details: { command },
       },
       version.check,
@@ -174,7 +174,7 @@ const versionCheck = async (
           : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified. ${versionGuidance}`
       }`,
       remediation: versionGuidance,
-      classification: "config_drift",
+      classification: "healthy",
       details: {
         executable: value.executable,
         version: value.version,
@@ -206,7 +206,7 @@ const admissionFailure = (
 
 /** An installation check whose inspection left cleanup unconfirmed. */
 const cleanupIncompleteCheck = (
-  check: Omit<DoctorProviderCheck, "details">,
+  check: Omit<Extract<DoctorProviderCheck, { readonly ok: false }>, "details">,
   diagnostics: Readonly<Record<string, JsonValue>> | undefined,
   cleanupResources: readonly string[] | undefined,
 ): DoctorProviderCheck => ({
@@ -257,7 +257,9 @@ const probeCleanupFailure = (
 };
 
 /** A failed version probe of an admitted command. */
-const probeFailure = (failure: KunaReadinessFailure): DoctorProviderCheck => ({
+const probeFailure = (
+  failure: KunaReadinessFailure,
+): Extract<DoctorProviderCheck, { readonly ok: false }> => ({
   name: "version",
   ok: false,
   code: failure.code,
@@ -303,7 +305,7 @@ const cacheCheck = async (
             code: null,
             detail: `REA creates the Kuna project cache at ${cacheRoot} on first use.`,
             remediation: null,
-            classification: "config_drift",
+            classification: "healthy",
             details,
           }
         : {
@@ -334,7 +336,7 @@ const cacheCheck = async (
     code: null,
     detail: `Kuna project exports are cached in ${cacheRoot} (at most ${String(cacheMaxBytes)} bytes).`,
     remediation: null,
-    classification: "config_drift",
+    classification: "healthy",
     details,
   };
 };

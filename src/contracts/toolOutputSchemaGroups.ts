@@ -366,6 +366,10 @@ export const enhancedOutputSchemas = {
         name: z.string(),
         address: z.string(),
         xrefs: nativeAddressListSchema,
+        observed_xrefs: z.int().nonnegative().optional(),
+        total_xrefs: z.int().nonnegative().nullable().optional(),
+        provider_truncated: z.boolean().nullable().optional(),
+        truncated: z.boolean().nullable().optional(),
       }),
       z.object({
         status: z.literal("unresolved"),

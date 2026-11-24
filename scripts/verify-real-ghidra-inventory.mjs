@@ -22,6 +22,7 @@ export async function call(client, operation, parameters) {
     parameters.mode === "literal" &&
     parameters.case_sensitive === false
     ? filterGhidraLiteralCandidates(parsed.value.value, parameters.pattern)
+        .value
     : parsed.value.value;
 }
 

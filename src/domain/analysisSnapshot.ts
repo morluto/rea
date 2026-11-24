@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "./canonicalDigest.js";
 import { z } from "zod";
 
 import {
@@ -427,7 +427,7 @@ const snapshotExecutionProjection = (
   });
 
 const canonicalJsonValidated = (value: unknown): string => {
-  const encoded = canonicalize(value);
+  const encoded = serializeCanonicalValue(value);
   if (encoded === undefined)
     throw new TypeError("RFC 8785 canonicalization rejected snapshot data");
   return encoded;

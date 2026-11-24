@@ -1,4 +1,5 @@
 import { indexPeSectionRvas } from "../pe/peSectionRvaIndex.js";
+import { hasDosMzMagic } from "../dosMz.js";
 import { BinaryReader } from "../binaryContainer.js";
 import { observeMzWindowsHeader } from "../dosMz.js";
 import {
@@ -458,7 +459,7 @@ const readCliDirectory = (
 /** Parse the file-backed PE and CLI layout without loading target code. */
 export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
   requireRange(bytes, 0, 64, "pe.dos-header");
-  if (bytes[0] !== 0x4d || bytes[1] !== 0x5a)
+  if (!hasDosMzMagic(bytes))
     throw managedFailure(
       "invalid-directory",
       "pe.dos-header",

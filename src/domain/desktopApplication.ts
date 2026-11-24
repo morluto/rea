@@ -14,6 +14,7 @@ export const desktopFamilySchema = z.enum([
   "godot",
   "gamemaker",
   "electron",
+  "native",
 ]);
 export const inspectDesktopApplicationInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema,
@@ -158,7 +159,12 @@ export const desktopCandidateSchema = z.strictObject({
 export const desktopComponentSchema = z.strictObject({
   component_id: prefixedDigestSchema("dsm"),
   name: z.string(),
-  category: z.enum(["mod-loader", "protection"]),
+  category: z.enum([
+    "mod-loader",
+    "protection",
+    "ui-framework",
+    "runtime-library",
+  ]),
   basis_file_ids: z.array(prefixedDigestSchema("dsf")).min(1),
   confidence: z.literal("inferred"),
   runtime_presence: z.literal("unknown"),
@@ -171,11 +177,28 @@ export const desktopProbeSchema = z.strictObject({
     "inspect_il2cpp_metadata",
     "open_binary",
     "analyze_javascript_application",
+    "inspect_pe_imports",
+    "inspect_pe_resources",
+    "inspect_binary_hardening",
   ]),
   path: localPathStringSchema,
   file_id: prefixedDigestSchema("dsf"),
   rationale: z.string(),
   confidence: z.literal("inferred"),
+  /**
+   * `application` probes read code the release names as its own;
+   * `dependency` probes read everything else that is not a runtime facade.
+   * Probes are ordered by priority.
+   */
+  priority: z.enum(["application", "dependency"]),
+});
+/** Probes left out of `next_probes` as one counted group. */
+export const desktopDeferredProbeSchema = z.strictObject({
+  operation: desktopProbeSchema.shape.operation,
+  reason: z.literal("runtime-facade"),
+  count: z.number().int().positive(),
+  example_file_id: prefixedDigestSchema("dsf"),
+  rationale: z.string(),
 });
 export const desktopCoverageSchema = z.strictObject({
   status: z.enum(["complete-within-scan", "partial"]),
@@ -205,6 +228,7 @@ export const desktopApplicationSchema = z.strictObject({
   candidates: z.array(desktopCandidateSchema),
   components: z.array(desktopComponentSchema),
   next_probes: z.array(desktopProbeSchema),
+  deferred_probes: z.array(desktopDeferredProbeSchema),
   coverage: desktopCoverageSchema,
   limitations: z.array(z.string()),
 });

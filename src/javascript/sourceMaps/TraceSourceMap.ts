@@ -43,6 +43,10 @@ export const traceSourceMap = (
   const matched = greatestPosition(decodedLeaves, position);
   let bytes = 0;
   const matches: WebSourceMapReport["matches"] = [];
+  const contentFactsCache = new Map<
+    number,
+    { readonly utf8_sha256: string; readonly utf8_bytes: number }
+  >();
   let sourceBase = 0;
   for (const { leaf, map, rows } of decodedLeaves) {
     if (matched !== null) {
@@ -61,6 +65,7 @@ export const traceSourceMap = (
               url,
               inspected.declarations,
               sourceBase,
+              contentFactsCache,
             );
             bytes += Buffer.byteLength(JSON.stringify(match)) + 1;
             if (bytes > limits.outputBytes)
@@ -198,6 +203,10 @@ const originalMatch = (
   mapUrl: string,
   declarations: readonly SourceMapSourceDeclaration[],
   sourceBase: number,
+  contentFactsCache: Map<
+    number,
+    { readonly utf8_sha256: string; readonly utf8_bytes: number }
+  >,
 ): WebSourceMapReport["matches"][number] => {
   if (segment.length === 1) return { state: "generated-only" };
   const sourceIndex = sourceBase + segment[1];
@@ -228,13 +237,24 @@ const originalMatch = (
     content:
       declaration.content === null
         ? { state: "unavailable", reason: "sourcesContent-not-retained" }
-        : {
-            state: "embedded",
-            text: declaration.content,
-            utf8_sha256: sha256Hex(declaration.content),
-            utf8_bytes: Buffer.byteLength(declaration.content),
-            representation: "UTF-8 encoding of decoded sourcesContent text",
-          },
+        : (() => {
+            let cached = contentFactsCache.get(sourceIndex);
+            if (cached === undefined) {
+              cached = {
+                utf8_sha256: sha256Hex(declaration.content),
+                utf8_bytes: Buffer.byteLength(declaration.content),
+              };
+              contentFactsCache.set(sourceIndex, cached);
+            }
+            return {
+              state: "embedded" as const,
+              text: declaration.content,
+              utf8_sha256: cached.utf8_sha256,
+              utf8_bytes: cached.utf8_bytes,
+              representation:
+                "UTF-8 encoding of decoded sourcesContent text" as const,
+            };
+          })(),
     original_position: {
       ...original,
       offset: offset ?? null,

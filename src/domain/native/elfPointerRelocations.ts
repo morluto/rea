@@ -32,6 +32,13 @@ import { ParseFailureError } from "../parseFailure.js";
 export const ELF_POINTER_RELOCATION_FORMAT = "elf-pointer-relocations";
 
 /**
+ * Limit name of the caller-selected virtual pointer index allowance, so a
+ * consumer can name its own control for it. The loader's fixed allowances keep
+ * `native-index-capacity` as their limit name.
+ */
+export const ELF_VIRTUAL_POINTER_INDEX_LIMIT = "virtual-pointer-index-bytes";
+
+/**
  * Shared loader interpretation; language adapters choose their public errors.
  * The stable `reason` names the loader rule; `native-index-capacity` is a
  * ParseFailure `limit` carrying the exceeded maximum.
@@ -53,6 +60,7 @@ export class ElfPointerRelocationFailure extends ParseFailureError<
     message: string,
     maximum: number,
     unit: "entries" | "bytes",
+    limitName?: typeof ELF_VIRTUAL_POINTER_INDEX_LIMIT,
   );
   constructor(
     readonly reason:
@@ -63,11 +71,12 @@ export class ElfPointerRelocationFailure extends ParseFailureError<
     message: string,
     maximum?: number,
     unit?: "entries" | "bytes",
+    limitName: string = reason,
   ) {
     const facts = { format: ELF_POINTER_RELOCATION_FORMAT, detail: message };
     super(
       maximum !== undefined
-        ? { ...facts, kind: "limit", limit: { name: reason, maximum } }
+        ? { ...facts, kind: "limit", limit: { name: limitName, maximum } }
         : reason === "malformed-container"
           ? { ...facts, kind: "malformed" }
           : {
@@ -978,30 +987,43 @@ export function* readElfRelocationWritesSteps(
     const start = relrSize === 0n ? 0 : fileOffset(relr, Number(relrSize));
     if (start === null) return malformed("RELR table is not file-backed");
     let next: bigint | undefined;
-    for (let at = start; at < start + Number(relrSize); at += word) {
+    const wordBig = BigInt(word);
+    const addrSpace = 1n << BigInt(input.bits);
+    const maxAddr = addrSpace - wordBig;
+    const strideBig = BigInt((input.bits - 1) * word);
+    const end = start + Number(relrSize);
+    const add = (address: bigint, recordOffset: number) => {
+      if (address > maxAddr)
+        malformed("RELR destination overflows the ELF address space");
+      const slot = target(address, word);
+      return write(address, word, slot === null ? 0n : rawWord(slot), {
+        source: {
+          encoding: "relr",
+          record_file_offset: recordOffset,
+          kind: null,
+        },
+        symbol_index: null,
+        addend: null,
+      });
+    };
+    for (let at = start; at < end; at += word) {
       if ((at - start) % (word * 4096) === 0) yield;
       const entry = rawWord(at);
-      const add = (address: bigint) => {
-        if (address > (1n << BigInt(input.bits)) - BigInt(word))
-          malformed("RELR destination overflows the ELF address space");
-        const slot = target(address, word);
-        return write(address, word, slot === null ? 0n : rawWord(slot), {
-          source: { encoding: "relr", record_file_offset: at, kind: null },
-          symbol_index: null,
-          addend: null,
-        });
-      };
       if ((entry & 1n) === 0n) {
-        yield add(entry);
-        next = entry + BigInt(word);
+        yield add(entry, at);
+        next = entry + wordBig;
       } else {
         if (next === undefined)
           return malformed("RELR bitmap has no preceding address");
-        for (let bit = 1; bit < input.bits; bit++)
-          if ((entry & (1n << BigInt(bit))) !== 0n)
-            yield add(next + BigInt((bit - 1) * word));
-        next += BigInt((input.bits - 1) * word);
-        if (next > 1n << BigInt(input.bits))
+        let bits = entry >> 1n;
+        let addr = next;
+        while (bits !== 0n) {
+          if ((bits & 1n) !== 0n) yield add(addr, at);
+          bits >>= 1n;
+          addr += wordBig;
+        }
+        next += strideBig;
+        if (next > addrSpace)
           malformed("RELR bitmap overflows the ELF address space");
       }
     }
@@ -1046,6 +1068,8 @@ class ElfVirtualWriteIndex {
     readonly word: 4 | 8,
     readonly little: boolean,
     readonly maximumBytes: number,
+    /** Set when the caller selected `maximumBytes` and names its own control. */
+    readonly selectedLimit?: typeof ELF_VIRTUAL_POINTER_INDEX_LIMIT,
   ) {}
   add({
     address,
@@ -1064,6 +1088,7 @@ class ElfVirtualWriteIndex {
           `ELF virtual pointer index exceeds ${this.maximumBytes} estimated representation bytes (${ELF_POINTER_INDEX_ENTRY_BYTES} reserved per virtual address, including lookup workspace)`,
           this.maximumBytes,
           "bytes",
+          this.selectedLimit,
         );
       this.#reservedBytes += ELF_POINTER_INDEX_ENTRY_BYTES;
     }
@@ -1286,6 +1311,8 @@ export function* readElfPointerRelocationsSteps(
 
 /** Value-only consumers keep input-bounded file-backed writes without per-record
  * provenance, with a separate allowance for unresolved and zero-fill state.
+ * `maximumIndexBytes` is the caller's selected allowance: its refusal carries
+ * `ELF_VIRTUAL_POINTER_INDEX_LIMIT` so the caller can name its control.
  */
 export function* readElfPointerValuesSteps(
   bytes: Buffer,
@@ -1297,6 +1324,7 @@ export function* readElfPointerValuesSteps(
     input.bits === 64 ? 8 : 4,
     input.little,
     maximumIndexBytes,
+    ELF_VIRTUAL_POINTER_INDEX_LIMIT,
   );
   const zeroFill = new Set<bigint>();
   const steps = readElfRelocationWritesSteps(bytes, input, {
