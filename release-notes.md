@@ -773,6 +773,7 @@
 * **elf:** retire obsolete note buffer parsers ([#13995](https://github.com/morluto/rea/issues/13995)) ([a8fa445](https://github.com/morluto/rea/commit/a8fa445c416c4bb3fc67faec1ef289dcda177649))
 * **elf:** retire the obsolete unwind buffer parser ([#14007](https://github.com/morluto/rea/issues/14007)) ([5acdeb7](https://github.com/morluto/rea/commit/5acdeb79fb4d5bedbf83d9a63f324cf7599bd0aa))
 * **elf:** retire the test-only dependency buffer driver ([0f4c4a7](https://github.com/morluto/rea/commit/0f4c4a7fb4c8d0f9da0ae896f43488d470b69bff))
+* **elf:** share magic and declared section range checks ([#14429](https://github.com/morluto/rea/issues/14429)) ([e71f097](https://github.com/morluto/rea/commit/e71f09742c0e1a83f7b912f084709fa17c4b43b8))
 * **environment:** retain the latest replay interference event ([#13408](https://github.com/morluto/rea/issues/13408)) ([b96e2e1](https://github.com/morluto/rea/commit/b96e2e10e751f1026a6a828503b3709e6795897f))
 * **environment:** scan replay observations without copying the timeline ([#13409](https://github.com/morluto/rea/issues/13409)) ([54121e2](https://github.com/morluto/rea/commit/54121e2f2a3d461fdf30ba1b5ee31fd3a35656b0))
 * **environment:** share response status checks and write plan fixtures ([#14336](https://github.com/morluto/rea/issues/14336)) ([e170334](https://github.com/morluto/rea/commit/e17033450eac90ffc8e791ae4e52beea66d84357))
