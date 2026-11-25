@@ -48,7 +48,7 @@ describe("the real IDA lane's feature trace assertions", () => {
           [
             {
               target_address: "0x1000",
-              containing_procedure: containing(true),
+              containing_procedure: containing(false),
             },
             // A substring match such as main_helper, referenced from code.
             {
@@ -58,23 +58,6 @@ describe("the real IDA lane's feature trace assertions", () => {
             // A string containing the query, referenced from data outside functions.
             {
               target_address: "0x3000",
-              containing_procedure: containing(false),
-            },
-          ],
-        ),
-        procedure,
-      ),
-    ).not.toThrow();
-  });
-
-  it("accepts a reference to the selected procedure from data outside functions", () => {
-    expect(() =>
-      assertFeatureTrace(
-        trace(
-          [SELECTED],
-          [
-            {
-              target_address: "0x1000",
               containing_procedure: containing(false),
             },
           ],
@@ -98,11 +81,13 @@ describe("the real IDA lane's feature trace assertions", () => {
         ),
         procedure,
       ),
-    ).toThrow();
+    ).toThrow("A reference targets 0x9999, which is not a match.");
   });
 
   it("rejects a trace without the selected procedure's match", () => {
-    expect(() => assertFeatureTrace(trace([STRING], []), procedure)).toThrow();
+    expect(() => assertFeatureTrace(trace([STRING], []), procedure)).toThrow(
+      "The trace omitted the selected procedure's match.",
+    );
   });
 
   it("rejects a containment answer that is neither found nor a known reason", () => {
@@ -156,31 +141,18 @@ describe("the real IDA lane's mapped non-function probe", () => {
       return answers[address];
     };
 
-  it("skips a string inside a function chunk and uses the next one", async () => {
+  it("skips inline data and stops at the first qualifying string", async () => {
     const asked: string[] = [];
-
     await expect(
       findMappedNonFunction(
-        [{ address: "0x1100" }, { address: "0x3000" }],
-        resolver({ "0x1100": inFunction, "0x3000": data }, asked),
+        [{ address: "0x1100" }, { address: "0x3000" }, { address: "0x3100" }],
+        resolver(
+          { "0x1100": inFunction, "0x3000": data, "0x3100": data },
+          asked,
+        ),
       ),
     ).resolves.toBe("0x3000");
-    expect(asked, "strings are tried in order until one qualifies").toEqual([
-      "0x1100",
-      "0x3000",
-    ]);
-  });
-
-  it("stops at the first string that qualifies", async () => {
-    const asked: string[] = [];
-
-    await expect(
-      findMappedNonFunction(
-        [{ address: "0x3000" }, { address: "0x3100" }],
-        resolver({ "0x3000": data, "0x3100": data }, asked),
-      ),
-    ).resolves.toBe("0x3000");
-    expect(asked).toEqual(["0x3000"]);
+    expect(asked).toEqual(["0x1100", "0x3000"]);
   });
 
   it("reports no qualifying string when every string is inside a function", async () => {
@@ -207,6 +179,8 @@ describe("the real IDA lane's mapped non-function probe", () => {
           "0x3000": data,
         }),
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(
+      "The listed string at 0x4000 resolved as outside_segments.",
+    );
   });
 });

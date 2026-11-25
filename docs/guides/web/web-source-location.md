@@ -234,17 +234,17 @@ is `--source-map-bytes 8388608`; the other local flags are
 `--source-map-section-depth` and `--source-map-codec-heap-mib`.
 `analyze-web-bundle` instead offers `--source-map-fetch-bytes` and the shared
 output/record/depth flags. Raising only `decoded_records` does not raise the
-independent row or segment budgets. Failed local decoding returns no partial
-point evidence; completed browser map observations retain their existing
-partial/unknown semantics. Wait for retained cleanup to settle before retrying.
+independent row or segment budgets. A failure before local decoding produces
+a valid report leaves point evidence unavailable. Cancellation or incomplete
+cleanup after decoding can retain the finished report in partial Evidence.
+Wait for retained cleanup to settle before retrying.
 
-## Verification
+## Browser collection results
 
 Browser bundle collection uses absolute section offsets for nested inline maps.
 If caller cancellation stops browser map fetching after some items complete,
 the failed bundle request retains those items with the captured page in partial
-Evidence and marks bundle analysis `not_performed`. This is distinct from the
-local source-map decoder's failure semantics above.
+Evidence and marks bundle analysis `not_performed`.
 An enclosing column offset contributes only when the nested section starts on
 that enclosing section's first generated line. Parent boundaries still constrain
 preceding browser mappings when a nested section starts with a gap or has no
@@ -289,6 +289,8 @@ response whose text cannot fit that budget is refused before JSON parsing and
 source-map decoding, and retains the same
 completed-body identity. Successful and partial maps keep their full original
 text, including BOM and XSSI framing; only their parsing view removes it.
+
+## Verification
 
 Focused tests cover duplicate mappings, indexed offsets/overlap/local indexes,
 32-bit VLQ overflow, nullable content, UTF-16/CRLF positions, immutable artifact

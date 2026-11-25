@@ -1,12 +1,16 @@
-import { symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { createNativeInitializersService } from "../../../src/composition/binaryDiagnostics.js";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
+import { createNativeInitializersService } from "../../../src/composition/binaryDiagnostics/nativeInitializers.js";
 import {
   elf64PieInitializers,
   machoInitializerSymbolKinds,
 } from "../../../src/native/initializers/NativeInitializers.fixture.js";
+import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("native initializer stable filesystem boundary", () => {
   it.each([
@@ -41,30 +45,18 @@ describe("native initializer stable filesystem boundary", () => {
     },
   );
 
-  it("reports non-file and malformed selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-native-init-files-");
     const path = join(root, "program");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elf64PieInitializers());
-    await writeFile(malformed, Buffer.from("not an executable image"));
     await symlink(path, alias);
     const service = createNativeInitializersService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [malformed, "invalid_format"],
-      [join(root, "missing"), "invalid_value"],
-      [join(path, "child"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_native_initializers",
-        issues: [{ path: ["path"], reason, message: expect.any(String) }],
-      });
-    }
+    await expectFileSelectionErrors(service, "inspect_native_initializers", {
+      root,
+      alias,
+      path,
+    });
   });
 
   it("reads a stable file and returns typed budget and cancellation failures", async () => {
@@ -89,4 +81,48 @@ describe("native initializer stable filesystem boundary", () => {
     if (cancelled.ok) throw new Error("Expected cancellation");
     expect(cancelled.error._tag).toBe("AnalysisCancelledError");
   });
+});
+
+it("cancels ELF section-name decoding while retaining the initializer snapshot", async () => {
+  const root = await createTestTempDirectory("rea-native-init-zstd-cancel-");
+  const path = join(root, "program");
+  const bytes = elfFrameAllowanceFixture();
+  await writeFile(path, bytes);
+  const service = createNativeInitializersService();
+  const controller = new AbortController();
+  const reason = new Error("section-name reading cancelled");
+  const nativeYield = scheduler.yield.bind(scheduler);
+  const pause = vi
+    .spyOn(scheduler, "yield")
+    .mockImplementationOnce(async () => {
+      await nativeYield();
+      controller.abort(reason);
+    });
+  try {
+    const result = await service.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation during ELF names");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+      partialObservation: {
+        kind: "file-snapshot-hash",
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      },
+    });
+    const retry = await service.inspect({ path });
+    if (!retry.ok) throw retry.error;
+    expect(retry.value.normalized_result).toMatchObject({
+      format: "elf",
+      status: "parsed",
+    });
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  } finally {
+    pause.mockRestore();
+    await service.close();
+  }
 });

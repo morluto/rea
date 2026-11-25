@@ -87,7 +87,7 @@ it("bounds long array aliases without invoking the shared callable resolver", ()
     },
   });
   expect(results).toEqual([false, true, true]);
-  expect(state.valueResourceLimits).toContain("expression-depth");
+  expect(state.observations.valueResourceLimits).toContain("expression-depth");
 });
 
 it.each([

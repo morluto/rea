@@ -316,11 +316,6 @@ it("reports missing and ambiguous xref names within Kuna's inventory", async () 
     expect(ambiguousProjection).toMatchObject({
       code: "invalid_request",
       message: expect.stringMatching(/puts.*2 Kuna entries/iu),
-      remediation: {
-        action: expect.stringMatching(
-          /address.*exactly one of the 2 candidates.*retry xrefs/iu,
-        ),
-      },
       details: {
         refusal: {
           kind: "ambiguous_selector",

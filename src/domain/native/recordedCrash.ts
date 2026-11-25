@@ -143,12 +143,16 @@ export const RECORDED_LINUX_CORE_PROFILES: Record<
   },
 };
 
-const recordedCoreRegisterSets: Record<
+const recordedCoreRegisterIndices: Record<
   RecordedCrashArchitecture,
-  ReadonlySet<string>
+  ReadonlyMap<string, number>
 > = {
-  "x86_64-little-endian": new Set(RECORDED_LINUX_AMD64_REGISTERS),
-  "aarch64-little-endian": new Set(RECORDED_LINUX_AARCH64_REGISTERS),
+  "x86_64-little-endian": new Map(
+    RECORDED_LINUX_AMD64_REGISTERS.map((name, idx) => [name, idx]),
+  ),
+  "aarch64-little-endian": new Map(
+    RECORDED_LINUX_AARCH64_REGISTERS.map((name, idx) => [name, idx]),
+  ),
 };
 
 /** Select an explicit recording and optionally request debugger-derived mapping context. */
@@ -292,178 +296,262 @@ export const recordedCrashPayloadSchema = recordedCrashObjectSchema.omit({
   decoder_diagnostics: true,
 });
 
+const recordedCrashMetadataSchema = recordedCrashObjectSchema.pick({
+  artifact: true,
+  debugger: true,
+  decoder_diagnostics: true,
+  diagnostics: true,
+});
+
+const withinRange = (
+  item: z.output<typeof range>,
+  start: bigint,
+  end: bigint,
+): boolean => {
+  if (
+    item.offset.length <= 15 &&
+    item.bytes.length <= 15 &&
+    end <= 0xfffffffffffffn
+  ) {
+    const startNum = Number(start);
+    const endNum = Number(end);
+    const offset = Number(item.offset);
+    const bytes = Number(item.bytes);
+    return offset >= startNum && offset <= endNum && bytes <= endNum - offset;
+  }
+  const offset = BigInt(item.offset);
+  const bytes = BigInt(item.bytes);
+  return offset >= start && offset <= end && bytes <= end - offset;
+};
+
+const hasUniqueNoteIndices = (
+  rows: readonly { readonly note_index: number }[],
+): boolean => {
+  if (rows.length <= 1) return true;
+  const seen = new Set<number>();
+  for (let i = 0; i < rows.length; i += 1) {
+    const noteIndex = rows[i]!.note_index;
+    if (seen.has(noteIndex)) return false;
+    seen.add(noteIndex);
+  }
+  return true;
+};
+
+const hasExactProfileRegisters = (
+  registers: RecordedCrash["threads"][number]["registers"],
+  registerIndices: ReadonlyMap<string, number>,
+  expectedCount: number,
+): boolean => {
+  if (registers.length !== expectedCount) return false;
+  let seenLo = 0;
+  let seenHi = 0;
+  for (let i = 0; i < registers.length; i += 1) {
+    const bitIndex = registerIndices.get(registers[i]!.name);
+    if (bitIndex === undefined) return false;
+    if (bitIndex < 32) {
+      const mask = 1 << bitIndex;
+      if ((seenLo & mask) !== 0) return false;
+      seenLo |= mask;
+    } else {
+      const mask = 1 << (bitIndex - 32);
+      if ((seenHi & mask) !== 0) return false;
+      seenHi |= mask;
+    }
+  }
+  return true;
+};
+
+const validateRecordedCrashDebuggerMaps = (
+  debuggerContext: z.output<typeof recordedCrashDebuggerSchema>,
+  fail: (message: string) => void,
+): void => {
+  if (debuggerContext.status !== "available") return;
+  for (const map of debuggerContext.maps) {
+    if (BigInt(map.end) < BigInt(map.start))
+      fail("Debugger mapping end precedes its start.");
+    if (
+      map.permissions !== null &&
+      (map.permissions.read !== Boolean(map.reported_flags & 4) ||
+        map.permissions.write !== Boolean(map.reported_flags & 2) ||
+        map.permissions.execute !== Boolean(map.reported_flags & 1))
+    )
+      fail("Mapping permissions differ from reported flags.");
+    if (
+      (map.reported_flags === 0 || map.reported_flags > 7) !==
+      (map.permissions === null)
+    )
+      fail("Unreported or unfamiliar map flags require unknown permissions.");
+  }
+};
+
+const validateRecordedCrashSegmentsAndNotes = (
+  value: z.output<typeof recordedCrashObjectSchema>,
+  fail: (message: string) => void,
+): { threadNotes: number; signalNotes: number } => {
+  const artifactBytes = BigInt(value.artifact.bytes);
+  for (const [position, segment] of value.segments.entries()) {
+    if (typeof segment.type === "number" && segment.type !== segment.type_id)
+      fail("Numeric segment type differs from its source identity.");
+    if (
+      position !== segment.index ||
+      !withinRange(segment.header_location, 0n, artifactBytes)
+    )
+      fail("Invalid original segment identity or header range.");
+    if (
+      segment.file_backing === "file" &&
+      !withinRange(
+        { offset: segment.offset, bytes: segment.file_size },
+        0n,
+        artifactBytes,
+      )
+    )
+      fail("Recorded segment exceeds artifact bytes.");
+    if (
+      segment.type_id === 1 &&
+      BigInt(segment.file_size) > BigInt(segment.memory_size)
+    )
+      fail("Recorded PT_LOAD file size exceeds memory size.");
+  }
+  let threadNotes = 0;
+  let signalNotes = 0;
+  for (const [position, note] of value.notes.entries()) {
+    const segment = value.segments[note.segment_index];
+    if (position !== note.index || segment?.type_id !== 4) {
+      fail("Invalid original note identity or segment reference.");
+      continue;
+    }
+    let ownerLen: number;
+    let ownerDisplay: string | null;
+    if (note.owner_bytes_base64 === LINUX_CORE_OWNER_BASE64) {
+      ownerLen = 5;
+      ownerDisplay = "CORE";
+      if (note.type_id === 1) threadNotes += 1;
+      else if (note.type_id === 0x53494749) signalNotes += 1;
+    } else {
+      const ownerBytes = Buffer.from(note.owner_bytes_base64, "base64");
+      const terminator = ownerBytes.indexOf(0);
+      if (ownerBytes.length > 0 && terminator < 0)
+        fail("Note owner display differs from its retained bytes.");
+      ownerLen = ownerBytes.length;
+      ownerDisplay =
+        ownerLen === 0
+          ? null
+          : ownerBytes.subarray(0, terminator).toString("utf8");
+    }
+    if (note.owner_display !== ownerDisplay)
+      fail("Note owner display differs from its retained bytes.");
+    if (typeof note.type === "number" && note.type !== note.type_id)
+      fail("Numeric note type differs from its source identity.");
+    if (
+      note.owner_bytes_base64 !== LINUX_CORE_OWNER_BASE64 &&
+      note.type !== note.type_id
+    )
+      fail(
+        "Uninterpreted note owners must retain their numeric type identity.",
+      );
+    if (
+      BigInt(ownerLen) !== BigInt(note.owner_location.bytes) ||
+      BigInt(Buffer.byteLength(note.descriptor_bytes_base64, "base64")) !==
+        BigInt(note.descriptor_location.bytes)
+    )
+      fail("Raw note lengths differ from their source ranges.");
+    const start = BigInt(segment.offset);
+    const end = start + BigInt(segment.file_size);
+    const noteStart = BigInt(note.location.offset);
+    const noteEnd = noteStart + BigInt(note.location.bytes);
+    if (
+      !withinRange(note.location, start, end) ||
+      !withinRange(note.owner_location, noteStart, noteEnd) ||
+      !withinRange(note.descriptor_location, noteStart, noteEnd)
+    )
+      fail("Note source ranges exceed their recorded segment.");
+  }
+  return { threadNotes, signalNotes };
+};
+
+const validateRecordedCrashInvariants = (
+  value: z.output<typeof recordedCrashObjectSchema>,
+  fail: (message: string) => void,
+): void => {
+  for (const issue of recordedNoteCoverageIssues(
+    value.segments,
+    value.notes,
+    value.note_padding,
+  ))
+    fail(issue);
+  const { threadNotes, signalNotes } = validateRecordedCrashSegmentsAndNotes(
+    value,
+    fail,
+  );
+  for (const padding of value.note_padding) {
+    const segment = value.segments[padding.segment_index];
+    if (
+      segment?.type_id !== 4 ||
+      !withinRange(
+        padding.location,
+        BigInt(segment.offset),
+        BigInt(segment.offset) + BigInt(segment.file_size),
+      )
+    )
+      fail("Invalid recorded note padding range.");
+  }
+  if (
+    value.threads.length !== threadNotes ||
+    !hasUniqueNoteIndices(value.threads) ||
+    value.signals.length !== signalNotes ||
+    !hasUniqueNoteIndices(value.signals)
+  )
+    fail(
+      "Each supported raw note requires exactly one corresponding interpretation.",
+    );
+  const profile = RECORDED_LINUX_CORE_PROFILES[value.architecture];
+  const registerIndices = recordedCoreRegisterIndices[value.architecture];
+  for (const thread of value.threads) {
+    const note = value.notes[thread.note_index];
+    if (note === undefined || !isLinuxCoreNote(note, 1)) {
+      fail("Thread references a different note kind.");
+      continue;
+    }
+    if (
+      !hasExactProfileRegisters(
+        thread.registers,
+        registerIndices,
+        profile.registers.length,
+      )
+    )
+      fail(
+        "Each recorded thread requires every supported register exactly once.",
+      );
+    const descStart = BigInt(note.descriptor_location.offset);
+    const descEnd = descStart + BigInt(note.descriptor_location.bytes);
+    for (const register of thread.registers)
+      if (
+        BigInt(register.location.bytes) !== BigInt(profile.registerBytes) ||
+        !withinRange(register.location, descStart, descEnd)
+      )
+        fail("Register source exceeds its descriptor.");
+  }
+  for (const signal of value.signals) {
+    if (!isLinuxCoreNote(value.notes[signal.note_index], 0x53494749))
+      fail("Signal references a different note kind.");
+    const known =
+      signal.number === 11 && (signal.code === 1 || signal.code === 2);
+    if (
+      known !== (signal.fault_address !== null) ||
+      (signal.fault_address !== null) !==
+        (signal.fault_address_meaning === "recorded-sigsegv-address")
+    )
+      fail("Signal union meaning does not match recorded SIGSEGV code.");
+  }
+  validateRecordedCrashDebuggerMaps(value.debugger, fail);
+};
+
 /** Validate the next consumer's file ranges, note links and register representations. */
 export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
   (value, context) => {
-    const fail = (message: string) =>
-      context.addIssue({ code: "custom", message });
-    const within = (
-      item: z.output<typeof range>,
-      start = 0n,
-      end = BigInt(value.artifact.bytes),
-    ) => {
-      const offset = BigInt(item.offset);
-      const bytes = BigInt(item.bytes);
-      return offset >= start && offset <= end && bytes <= end - offset;
-    };
-    for (const issue of recordedNoteCoverageIssues(
-      value.segments,
-      value.notes,
-      value.note_padding,
-    ))
-      fail(issue);
-    for (const [position, segment] of value.segments.entries()) {
-      if (typeof segment.type === "number" && segment.type !== segment.type_id)
-        fail("Numeric segment type differs from its source identity.");
-      if (position !== segment.index || !within(segment.header_location))
-        fail("Invalid original segment identity or header range.");
-      if (
-        segment.file_backing === "file" &&
-        !within({ offset: segment.offset, bytes: segment.file_size })
-      )
-        fail("Recorded segment exceeds artifact bytes.");
-      if (
-        segment.type_id === 1 &&
-        BigInt(segment.file_size) > BigInt(segment.memory_size)
-      )
-        fail("Recorded PT_LOAD file size exceeds memory size.");
-    }
-    for (const [position, note] of value.notes.entries()) {
-      const segment = value.segments[note.segment_index];
-      if (position !== note.index || segment?.type_id !== 4) {
-        fail("Invalid original note identity or segment reference.");
-        continue;
-      }
-      const ownerBytes = Buffer.from(note.owner_bytes_base64, "base64");
-      const terminator = ownerBytes.indexOf(0);
-      const ownerDisplay =
-        ownerBytes.length === 0
-          ? null
-          : ownerBytes.subarray(0, terminator).toString("utf8");
-      if (
-        (ownerBytes.length > 0 && terminator < 0) ||
-        note.owner_display !== ownerDisplay
-      )
-        fail("Note owner display differs from its retained bytes.");
-      if (typeof note.type === "number" && note.type !== note.type_id)
-        fail("Numeric note type differs from its source identity.");
-      if (
-        note.owner_bytes_base64 !== LINUX_CORE_OWNER_BASE64 &&
-        note.type !== note.type_id
-      )
-        fail(
-          "Uninterpreted note owners must retain their numeric type identity.",
-        );
-      if (
-        BigInt(ownerBytes.length) !== BigInt(note.owner_location.bytes) ||
-        BigInt(Buffer.byteLength(note.descriptor_bytes_base64, "base64")) !==
-          BigInt(note.descriptor_location.bytes)
-      )
-        fail("Raw note lengths differ from their source ranges.");
-      const start = BigInt(segment.offset);
-      const end = start + BigInt(segment.file_size);
-      if (
-        !within(note.location, start, end) ||
-        !within(
-          note.owner_location,
-          BigInt(note.location.offset),
-          BigInt(note.location.offset) + BigInt(note.location.bytes),
-        ) ||
-        !within(
-          note.descriptor_location,
-          BigInt(note.location.offset),
-          BigInt(note.location.offset) + BigInt(note.location.bytes),
-        )
-      )
-        fail("Note source ranges exceed their recorded segment.");
-    }
-    for (const padding of value.note_padding) {
-      const segment = value.segments[padding.segment_index];
-      if (
-        segment?.type_id !== 4 ||
-        !within(
-          padding.location,
-          BigInt(segment.offset),
-          BigInt(segment.offset) + BigInt(segment.file_size),
-        )
-      )
-        fail("Invalid recorded note padding range.");
-    }
-    for (const [kind, rows] of [
-      [1, value.threads],
-      [0x53494749, value.signals],
-    ] as const) {
-      const matchingNotes = value.notes.filter((note) =>
-        isLinuxCoreNote(note, kind),
-      );
-      if (
-        rows.length !== matchingNotes.length ||
-        new Set(rows.map(({ note_index }) => note_index)).size !== rows.length
-      )
-        fail(
-          "Each supported raw note requires exactly one corresponding interpretation.",
-        );
-    }
-    const profile = RECORDED_LINUX_CORE_PROFILES[value.architecture];
-    const profileRegisters = recordedCoreRegisterSets[value.architecture];
-    for (const thread of value.threads) {
-      const note = value.notes[thread.note_index];
-      if (note === undefined || !isLinuxCoreNote(note, 1)) {
-        fail("Thread references a different note kind.");
-        continue;
-      }
-      if (
-        thread.registers.length !== profile.registers.length ||
-        !thread.registers.every(({ name }) => profileRegisters.has(name)) ||
-        new Set(thread.registers.map(({ name }) => name)).size !==
-          thread.registers.length
-      )
-        fail(
-          "Each recorded thread requires every supported register exactly once.",
-        );
-      for (const register of thread.registers)
-        if (
-          BigInt(register.location.bytes) !== BigInt(profile.registerBytes) ||
-          !within(
-            register.location,
-            BigInt(note.descriptor_location.offset),
-            BigInt(note.descriptor_location.offset) +
-              BigInt(note.descriptor_location.bytes),
-          )
-        )
-          fail("Register source exceeds its descriptor.");
-    }
-    for (const signal of value.signals) {
-      if (!isLinuxCoreNote(value.notes[signal.note_index], 0x53494749))
-        fail("Signal references a different note kind.");
-      const known =
-        signal.number === 11 && (signal.code === 1 || signal.code === 2);
-      if (
-        known !== (signal.fault_address !== null) ||
-        (signal.fault_address !== null) !==
-          (signal.fault_address_meaning === "recorded-sigsegv-address")
-      )
-        fail("Signal union meaning does not match recorded SIGSEGV code.");
-    }
-    if (value.debugger.status === "available")
-      for (const map of value.debugger.maps) {
-        if (BigInt(map.end) < BigInt(map.start))
-          fail("Debugger mapping end precedes its start.");
-        if (
-          map.permissions !== null &&
-          (map.permissions.read !== Boolean(map.reported_flags & 4) ||
-            map.permissions.write !== Boolean(map.reported_flags & 2) ||
-            map.permissions.execute !== Boolean(map.reported_flags & 1))
-        )
-          fail("Mapping permissions differ from reported flags.");
-        if (
-          (map.reported_flags === 0 || map.reported_flags > 7) !==
-          (map.permissions === null)
-        )
-          fail(
-            "Unreported or unfamiliar map flags require unknown permissions.",
-          );
-      }
+    validateRecordedCrashInvariants(value, (message) =>
+      context.addIssue({ code: "custom", message }),
+    );
   },
 );
 
@@ -471,6 +559,62 @@ export type InspectRecordedCrashInput = z.output<
   typeof inspectRecordedCrashInputSchema
 >;
 export type RecordedCrash = z.output<typeof recordedCrashSchema>;
+
+export type ProjectedRecordedCrashResult =
+  | { readonly success: true; readonly data: RecordedCrash }
+  | { readonly success: false; readonly error: z.ZodError };
+
+/** Validate envelope fields + cross-field invariants for an already-parsed payload. */
+export const safeParseProjectedRecordedCrash = (
+  payload: z.output<typeof recordedCrashPayloadSchema>,
+  metadata: {
+    readonly artifact: unknown;
+    readonly debugger: unknown;
+    readonly decoder_diagnostics: unknown;
+    readonly diagnostics: unknown;
+  },
+): ProjectedRecordedCrashResult => {
+  const checkedMeta = recordedCrashMetadataSchema.safeParse(metadata);
+  if (!checkedMeta.success) return { success: false, error: checkedMeta.error };
+  const combined: RecordedCrash = { ...payload, ...checkedMeta.data };
+  const issues: z.core.$ZodIssueCustom[] = [];
+  validateRecordedCrashInvariants(combined, (message) => {
+    issues.push({ code: "custom", message, path: [] });
+  });
+  if (issues.length > 0)
+    return { success: false, error: new z.ZodError(issues) };
+  return { success: true, data: combined };
+};
+
+/** Validate only debugger enrichment + diagnostics on an already-validated RecordedCrash. */
+export const safeParseRecordedCrashDebuggerEnrichment = (
+  base: RecordedCrash,
+  debuggerContext: unknown,
+  diagnosticsInput: unknown,
+): ProjectedRecordedCrashResult => {
+  const checkedDebugger =
+    recordedCrashDebuggerSchema.safeParse(debuggerContext);
+  if (!checkedDebugger.success)
+    return { success: false, error: checkedDebugger.error };
+  const checkedDiagnostics =
+    recordedCrashObjectSchema.shape.diagnostics.safeParse(diagnosticsInput);
+  if (!checkedDiagnostics.success)
+    return { success: false, error: checkedDiagnostics.error };
+  const issues: z.core.$ZodIssueCustom[] = [];
+  validateRecordedCrashDebuggerMaps(checkedDebugger.data, (message) => {
+    issues.push({ code: "custom", message, path: [] });
+  });
+  if (issues.length > 0)
+    return { success: false, error: new z.ZodError(issues) };
+  return {
+    success: true,
+    data: {
+      ...base,
+      debugger: checkedDebugger.data,
+      diagnostics: checkedDiagnostics.data,
+    },
+  };
+};
 
 /** Validated basic core evidence retained when requested debugger enrichment fails. */
 export type RecordedCrashPartialObservation = Omit<

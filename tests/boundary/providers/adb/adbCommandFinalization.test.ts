@@ -85,7 +85,7 @@ test.each([
   },
   {
     script: "process.stderr.write('device unauthorized'); process.exitCode=1",
-    tag: "AnalysisUnsupportedTargetError",
+    tag: "AnalysisTargetFailureError",
   },
   {
     script: "setInterval(()=>{},1000)",

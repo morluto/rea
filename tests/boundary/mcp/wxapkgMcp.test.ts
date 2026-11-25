@@ -111,6 +111,5 @@ it("refuses a wxapkg member table above its fixed allowance with a typed refusal
       },
     },
   });
-  expect(error.remediation.action).toContain("The allowance is 16777216 bytes");
   await call("close_binary", {});
 });

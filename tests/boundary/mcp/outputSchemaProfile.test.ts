@@ -198,14 +198,16 @@ it("rejects canonical-invalid output that the reduced advertisement accepts", as
       z.string().optional(),
     ]),
   );
-  const outputSchema = z.strictObject({
-    value: z.string(),
-    payload: z.object({
-      inner: z.string(),
-      count: z.number().int(),
-      ...nestedDetail,
-    }),
-  });
+  const outputSchema = z
+    .strictObject({
+      value: z.string(),
+      payload: z.object({
+        inner: z.string(),
+        count: z.number().int(),
+        ...nestedDetail,
+      }),
+    })
+    .describe("Fixture result envelope.");
   const server = createServer("compact");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -255,6 +257,7 @@ it("rejects canonical-invalid output that the reduced advertisement accepts", as
     const tools = (await client.listTools()).tools;
     const advertised = tools.find((tool) => tool.name === contract.name)!
       .outputSchema as Record<string, unknown>;
+    expect(advertised.description).toContain("Fixture result envelope.");
     expect(advertised.description).toContain("reduced form");
     expect((advertised.properties as Record<string, unknown>).payload).toEqual({
       type: "object",
@@ -270,6 +273,10 @@ it("rejects canonical-invalid output that the reduced advertisement accepts", as
       validateFormats: false,
     }).compile(advertised);
     expect(validateAdvertised(malformed)).toBe(true);
+    expect(validateAdvertised([])).toBe(false);
+    expect(validateAdvertised({ payload: malformed.payload })).toBe(false);
+    expect(validateAdvertised({ value: malformed.value })).toBe(false);
+    expect(validateAdvertised({ ...malformed, extra: true })).toBe(false);
 
     const success = await client.callTool({
       name: contract.name,

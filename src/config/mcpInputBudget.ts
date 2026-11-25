@@ -11,12 +11,18 @@ import { err, ok, type Result } from "../domain/result.js";
  */
 export const DEFAULT_MCP_MAX_INPUT_ELEMENTS = 1_024;
 
+/** One element is the smallest admission that still accepts a call. */
+export const MINIMUM_MCP_MAX_INPUT_ELEMENTS = 1;
+
+/** Combined elements and members must stay exactly representable. */
+export const MAXIMUM_MCP_MAX_INPUT_ELEMENTS = Number.MAX_SAFE_INTEGER;
+
 const setting = "REA_MCP_MAX_INPUT_ELEMENTS";
 const constraint = `${setting} must be a positive decimal safe integer counting combined array elements and object members; the default is ${String(DEFAULT_MCP_MAX_INPUT_ELEMENTS)}.`;
 
 export const mcpInputBudgetSchema = positiveDecimalIntegerSchema(
-  1,
-  Number.MAX_SAFE_INTEGER,
+  MINIMUM_MCP_MAX_INPUT_ELEMENTS,
+  MAXIMUM_MCP_MAX_INPUT_ELEMENTS,
   constraint,
 );
 

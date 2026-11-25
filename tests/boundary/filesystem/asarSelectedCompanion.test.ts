@@ -38,22 +38,7 @@ const fixture = async () => {
 };
 
 it.skipIf(process.platform === "win32")(
-  "does not substitute the canonical archive companion for an absent selected companion",
-  async () => {
-    const { selected, canonical } = await fixture();
-    await rename(`${selected}.unpacked`, `${canonical}.unpacked`);
-    expect(() => extractFile(selected, "native.node")).toThrow();
-    const inventory = await inventoryArtifact(selected);
-    expect(
-      inventory.occurrences.find(
-        ({ logical_path }) => logical_path === "native.node",
-      )?.hash_status,
-    ).toBe("unavailable");
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "keeps differing selected companions distinct despite identical packed archive bytes",
+  "binds inventory and extraction to the selected companion even when a canonical one exists",
   async () => {
     const { root, selected, canonical } = await fixture();
     await mkdir(`${canonical}.unpacked`);
@@ -90,13 +75,29 @@ it.skipIf(process.platform === "win32")(
       join(`${selected}.unpacked`, "native.node"),
       "changed selected companion",
     );
-    await expect(inventoryArtifact(selected)).rejects.toThrow();
+    await expect(inventoryArtifact(selected)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+
+    await writeFile(join(`${canonical}.unpacked`, "native.node"), bytes);
+    await rm(`${selected}.unpacked`, { recursive: true });
+    const companion = async (archive: string) =>
+      (await inventoryArtifact(archive)).occurrences.find(
+        ({ logical_path }) => logical_path === "native.node",
+      );
+    expect(await companion(canonical)).toMatchObject({
+      hash_status: "verified",
+    });
+    expect(await companion(selected)).toMatchObject({
+      artifact_id: null,
+      hash_status: "unavailable",
+    });
   },
 );
 
 it
   .skipIf(process.platform === "win32")
-  .each(["canonical", "parent-symlink", "relative-alias"] as const)(
+  .each(["parent-symlink", "relative-alias"] as const)(
   "preserves ordinary ASAR companion lookup through %s selections",
   async (selection) => {
     const { root, selected, canonical } = await fixture();
@@ -105,12 +106,9 @@ it
       inputPath = relative(process.cwd(), selected);
     else {
       await rename(`${selected}.unpacked`, `${canonical}.unpacked`);
-      if (selection === "canonical") inputPath = canonical;
-      else {
-        const parentAlias = join(root, "parent-alias");
-        await symlink(root, parentAlias);
-        inputPath = join(parentAlias, "stored.asar");
-      }
+      const parentAlias = join(root, "parent-alias");
+      await symlink(root, parentAlias);
+      inputPath = join(parentAlias, "stored.asar");
     }
     expect(extractFile(inputPath, "native.node").equals(bytes)).toBe(true);
     const inventory = await inventoryArtifact(inputPath);
@@ -180,7 +178,7 @@ it.skipIf(process.platform === "win32")(
         throw new Error("Retargeted archive was unexpectedly admitted");
       expect(result.error).toMatchObject({
         reason: "integrity",
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
       });
     });
   },

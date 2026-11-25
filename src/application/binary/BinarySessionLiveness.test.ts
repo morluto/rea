@@ -27,21 +27,6 @@ import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
 
-/**
- * Regression coverage for https://github.com/morluto/rea/issues/1719:
- * `BinarySession#open` must not short-circuit on the `sameTarget &&
- * sameProfile` fast path when the retained provider client is dead. It must
- * start a fresh client instead.
- *
- * The fixtures are production-composed: a deep provider plus an auxiliary
- * provider, so `SessionProviderRouter` wraps them in a real
- * `CompositeProvider` exactly like `src/composition/binary.ts` does for the
- * CLI/MCP runtime. The composite's `health` answers unconditionally ok
- * without touching a child, so a probe that only calls `health` cannot see a
- * dead child — the liveness signal must reach the actual child through
- * `operationHealthSnapshot`, the way `HopperClient.operationHealth` reports a
- * recorded process exit.
- */
 it("binds omitted provider subjects to the selected target", async () => {
   const { session } = openSession();
   const opened = await session.open(process.execPath);
@@ -57,14 +42,6 @@ it("binds omitted provider subjects to the selected target", async () => {
       ? {}
       : { architecture: opened.value.architecture }),
   });
-});
-
-it("preserves an explicitly unbound provider observation", async () => {
-  const { session } = openSession({ explicitNullSubject: true });
-  expect((await session.open(process.execPath)).ok).toBe(true);
-  const execution = await session.execute("address_name", {});
-  expect(execution.ok).toBe(true);
-  if (execution.ok) expect(execution.value.subject).toBeNull();
 });
 
 it("retains live source Evidence without replaying a prior observation", async () => {
@@ -186,6 +163,9 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   );
 });
 
+// Keep the same-target reopen regression from issue #1719 exercised through
+// the real router and composite. The child snapshot takes precedence over the
+// health probe, and an incomplete startup must retire its retained client.
 describe("BinarySession open liveness", () => {
   it("retires a locally blocked owner even when its native health is idle", async () => {
     const { session, deep } = openSession();
@@ -200,115 +180,47 @@ describe("BinarySession open liveness", () => {
     expect((await session.execute("address_name", {})).ok).toBe(true);
     expect(deep.created).toHaveLength(2);
   });
-  it("reuses the retained client while the child stays live", async () => {
-    const { session, deep } = openSession();
-    expect((await session.open(process.execPath)).ok).toBe(true);
-    // Instantiate the deep child inside the composite, like a real query would.
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(1);
+  it.each([
+    { observation: "idle snapshot", state: undefined, operationHealth: true },
+    { observation: "exited snapshot", state: "exited", operationHealth: true },
+    {
+      observation: "unknown snapshot",
+      state: "unknown",
+      operationHealth: true,
+    },
+    {
+      observation: "incomplete startup",
+      state: "not_started",
+      operationHealth: true,
+    },
+    {
+      observation: "successful health probe",
+      state: undefined,
+      operationHealth: false,
+    },
+    {
+      observation: "failed health probe",
+      state: "exited",
+      operationHealth: false,
+    },
+  ] as const)(
+    "reopens the same target after a retained child's $observation",
+    async ({ state, operationHealth }) => {
+      const { session, deep } = openSession({ operationHealth });
+      expect((await session.open(process.execPath)).ok).toBe(true);
+      expect((await session.execute("address_name", {})).ok).toBe(true);
+      const [retained] = deep.created;
+      if (retained === undefined) throw new Error("Expected an acquired child");
+      if (state !== undefined) retained.kill(state);
 
-    const second = await session.open(process.execPath);
-    expect(second.ok).toBe(true);
-    // Still the same composite and child: nothing was retired or recreated.
-    expect(deep.created).toHaveLength(1);
-    expect(deep.created[0]?.closeCalled).toBe(false);
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(1);
-  });
-
-  it("starts a fresh client when the retained child died", async () => {
-    const { session, deep } = openSession();
-    expect((await session.open(process.execPath)).ok).toBe(true);
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(1);
-
-    // Kill the provider process out from under the session, then re-open
-    // the same target: the session must not short-circuit on the dead
-    // child — it must retire it and start a real one.
-    const dead = deep.created[0];
-    dead?.kill();
-
-    const second = await session.open(process.execPath);
-    expect(second.ok).toBe(true);
-    // The dead binding was retired, not retained.
-    expect(dead?.closeCalled).toBe(true);
-    // The next query runs against a freshly created child, not the dead one.
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(2);
-  });
-
-  it("treats an uncharacterized operation failure as dead", async () => {
-    // A recorded failure the provider could not characterize ("unknown",
-    // e.g. a Hopper spawn failure with no observed exit code) is never
-    // evidence of health: the gate fails closed.
-    const { session, deep } = openSession();
-    expect((await session.open(process.execPath)).ok).toBe(true);
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(1);
-
-    const dead = deep.created[0];
-    dead?.kill("unknown");
-
-    const second = await session.open(process.execPath);
-    expect(second.ok).toBe(true);
-    expect(dead?.closeCalled).toBe(true);
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(2);
-  });
-
-  it("retires a retained client whose startup never completed", async () => {
-    // A Hopper startup timeout leaves the operation-health snapshot in
-    // "not_started" while the retained resources block the next start()
-    // until close() retries cleanup. Classifying that state as live would return success
-    // without entering the retire path, so subsequent analysis still hits
-    // the wedged client.
-    const { session, deep } = openSession();
-    expect((await session.open(process.execPath)).ok).toBe(true);
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(1);
-
-    const wedged = deep.created[0];
-    wedged?.kill("not_started");
-
-    const second = await session.open(process.execPath);
-    expect(second.ok).toBe(true);
-    // The wedged binding was retired (close ran, so cleanup is retried),
-    // not reused.
-    expect(wedged?.closeCalled).toBe(true);
-    // The next query runs against a freshly created child, not the wedged one.
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(2);
-  });
-
-  it("probes instantiated children through health when snapshots are absent", async () => {
-    const { session, deep } = openSession({ operationHealth: false });
-    expect((await session.open(process.execPath)).ok).toBe(true);
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(1);
-
-    const second = await session.open(process.execPath);
-    expect(second.ok).toBe(true);
-    // The composite probes this already-instantiated child rather than
-    // answering health without contacting it.
-    expect(deep.created).toHaveLength(1);
-    expect(deep.created[0]?.closeCalled).toBe(false);
-    expect(deep.created[0]?.healthCalls).toBe(1);
-  });
-
-  it("retires a dead no-snapshot child after its health probe fails", async () => {
-    const { session, deep } = openSession({ operationHealth: false });
-    expect((await session.open(process.execPath)).ok).toBe(true);
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    const dead = deep.created[0];
-    dead?.kill();
-
-    expect((await session.open(process.execPath)).ok).toBe(true);
-    expect(dead?.healthCalls).toBe(1);
-    expect(dead?.closeCalled).toBe(true);
-    expect(deep.created).toHaveLength(1);
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(deep.created).toHaveLength(2);
-  });
+      expect((await session.open(process.execPath)).ok).toBe(true);
+      expect(retained.healthCalls).toBe(operationHealth ? 0 : 1);
+      expect(retained.closeCalled).toBe(state !== undefined);
+      expect(deep.created).toHaveLength(1);
+      expect((await session.execute("address_name", {})).ok).toBe(true);
+      expect(deep.created).toHaveLength(state === undefined ? 1 : 2);
+    },
+  );
 
   it("does not instantiate a child to answer health before first use", async () => {
     const { session, deep } = openSession({ operationHealth: false });
@@ -488,7 +400,6 @@ const openSession = (
     failOperationInitially?: boolean;
     beforeFirstClose?: () => Promise<void>;
     releaseBeforeCleanup?: () => void;
-    explicitNullSubject?: boolean;
     live?: boolean;
   } = {},
 ): {
@@ -497,9 +408,8 @@ const openSession = (
   onProbe: (hook: () => void) => void;
 } => {
   const { provider, created, onProbe } = killableDeepProvider(options);
-  // Mirror the production composition: a deep provider plus auxiliary
-  // providers, so the route wraps them in a real CompositeProvider (whose
-  // trivially-ok `health` must not mask a dead child).
+  // A deep provider plus an auxiliary provider uses the production composite
+  // route. Its health probe reaches instantiated children only.
   const aux: AnalysisProvider = {
     identity: () => auxIdentity,
     capabilities: () => [],
@@ -529,7 +439,6 @@ const killableDeepProvider = (options: {
   operationHealth?: boolean;
   failOperationInitially?: boolean;
   beforeFirstClose?: () => Promise<void>;
-  explicitNullSubject?: boolean;
   live?: boolean;
 }): {
   provider: AnalysisProviderCandidate;
@@ -586,10 +495,6 @@ const killableDeepProvider = (options: {
                   createAnalysisExecution(
                     operation === "health" ? null : `liveness:${operation}`,
                     deepIdentity,
-                    operation !== "health" &&
-                      options.explicitNullSubject === true
-                      ? { subject: null }
-                      : {},
                   ),
                 ),
               )

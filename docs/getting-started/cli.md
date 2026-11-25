@@ -55,6 +55,11 @@ relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
 is supported by the command.
 
+Command options use the kebab-case spelling that `rea <command> --help`
+lists, such as `--max-rows`. The camelCase spelling of an option, such as
+`--maxRows`, fails with `PARSE_ERROR` and names the documented flag:
+`Unknown flag: --maxRows. Did you mean --max-rows?`
+
 For a numeric option whose `--schema` also accepts decimal strings, the string
 branch carries the same numeric range as the integer branch, so a client that
 validates raw argv text rejects out-of-range tokens. Leading zeros remain
@@ -401,6 +406,13 @@ as archive corruption. The cap cannot be raised at runtime: recompress with a
 window of at most 128 MiB, or decompress externally before retrying.
 Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
 
+Extraction verifies each written file before publishing the output. REA syncs
+the file, reopens it, and checks its size and SHA-256 against the bytes it wrote.
+Each file adds filesystem work, so archives with many small files can take
+longer to extract even when their total size is modest. If you only need the
+archive inventory, run `rea inspect-artifact <path> --json` to get it without
+writing an extracted tree.
+
 Inventory and extract UF2 or DfuSe regions:
 
 ```sh
@@ -431,6 +443,16 @@ rea extract-artifact ./vendor_boot.img --json
 See [Android boot images](../android-boot-image.md) for header versions 0 through
 4, vendor ramdisk table entries, stored compression, and the unverified AVB
 footer. `ANDROID!` does not record boot versus init_boot versus recovery.
+
+Inventory and extract an ISO 9660 disc image without mounting it:
+
+```sh
+rea inspect-artifact ./installer.iso --detail summary --evidence_output installer.json --json
+rea extract-artifact ./installer.iso --json
+```
+
+See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
+names, multi-extent and interleaved files, and what is not decoded.
 
 Inspect local model declarations without loading weights:
 
@@ -757,7 +779,9 @@ entries record a refused kind, format, architecture, or role. An availability-on
 message describes the recorded rejections without claiming that every provider
 is unconfigured or that target support is known.
 For Hopper, Ghidra, IDA, JADX, and Kuna, run
-`rea doctor --provider ID --json` to diagnose the selected engine. Other adapters,
+`rea doctor --provider ID --json` to diagnose the selected engine;
+`--provider desktop_build` checks the desktop application build host instead of
+an analysis engine. Other adapters,
 such as `pwntools-elf`, report their configuration requirements directly and are
 not accepted by `doctor --provider`. See
 [task readiness](installation.md#check-readiness-for-your-task) and
@@ -856,11 +880,21 @@ rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/pat
 ```
 
 An exact CLI cache hit is normally read before starting a provider process.
-`decompile --provider ghidra --snapshot ...` also retains its single selected
-Program's pseudocode result, even without an explicit document selector. Old
+It returns the saved Evidence record itself, with the same `evidence_id` as the
+record in the snapshot's `evidence_bundle`.
+With Ghidra, every one-shot read-only query (for example `decompile`, `search`,
+`xrefs` and `procedure-references`) is retained for its
+single selected Program, even without an explicit document selector. Old
 snapshots that contain only the Evidence need one new query to add that replay
 entry. This does not retain every body from `decompile-all` or make a persistent
-session's implicit document replayable.
+session's implicit document replayable. `xrefs` with a symbol name resolves the
+name through the provider first, so pass the address to replay without starting
+it.
+
+A provider that declares its results live, such as Hopper, IDA and Kuna, is
+observed again on every call. With `--snapshot`, such a result carries the
+limitation `Not saved for snapshot replay: <provider> declares this result
+live ...`; the snapshot still records its Evidence.
 On Windows, Ghidra first admits the selected source through its native snapshot
 owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically
@@ -941,8 +975,7 @@ rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/righ
 rea compare left.json right.json --record_pairs '[{"left_evidence_id":"ev_<left-sha256>","right_evidence_id":"ev_<right-sha256>"}]' --json
 ```
 
-Migration: replace `rea compare-bundles` with `rea compare`; the former command
-has been removed. The MCP tool remains `compare_bundles`.
+`rea compare` is the CLI form of the MCP `compare_bundles` tool.
 
 `rea evidence-import` performs process-local bundle authentication and
 validation, reporting record and Unknown-revision counts. `unknowns_added`
@@ -967,6 +1000,20 @@ one-sided membership remains unknown; REA does not infer correspondence from
 position or display names.
 
 Exports preserve an existing destination unless `--overwrite` is explicit.
+
+To discover records in a saved bundle without returning their payloads, page
+its metadata with `inspect-evidence-bundle`:
+
+```bash
+rea inspect-evidence-bundle '{"path":"/absolute/path/to/evidence/bundle.json","detail":"summary","filters":{"operation":"analyze_function"},"offset":0,"limit":64}' --json
+```
+
+For paging defaults, continuation, ordering and counts, see the
+[retained Evidence discovery contract](../reference/mcp-contracts.md#tool-results).
+Use a discovered `evidence_id` with `detail: "records"` to read that complete
+record, or with `inspect-analysis-view` for a supported projection. The command
+still reads and authenticates the complete selected bundle before producing the
+metadata page.
 
 Atomic Evidence output stages on the selected destination's filesystem. If the
 OS pathname ceiling prevents its internal staging name, REA retries in a shorter
@@ -1019,8 +1066,7 @@ supplying a bundle does not make incompatible Evidence valid for a workflow.
 [member inspection options](#managed-assemblies-net) it applies to both sides,
 and `compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
 option above selects an input. Producers write a new bundle with
-`--evidence_output`; `inspect-managed-members` spelled that option
-`--evidence-bundle` in earlier releases.
+`--evidence_output`.
 File selectors remain available only on contracts that explicitly support them.
 
 Compare two artifact inventories with `compare-artifacts`. It takes the same
@@ -1214,8 +1260,8 @@ user permissions; consult the chosen guide for host requirements and effects.
 ## Start the MCP server
 
 Start REA's MCP server with `rea mcp` (or `rea --mcp`). The per-command
-`rea <command> --mcp` entry has been removed; it returns `MCP_MODE_REMOVED`
-and points to `rea mcp`. This is a breaking change from the earlier CLI.
+`rea <command> --mcp` form returns `MCP_MODE_REMOVED` and points to
+`rea mcp`.
 
 ## Serve MCP over streamable HTTP
 
@@ -1485,10 +1531,8 @@ does not fall back to global settings.
 
 `rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
 executable position is refused before any settings change; configure remote MCP
-transport in the client's own settings. Earlier delegated registration could
-interpret a URL as remote transport for some clients while storing it as an
-executable for Amp. That inconsistent URL interpretation and package acquisition
-are removed. Launcher arguments that happen to contain URLs remain arguments.
+transport in the client's own settings. Launcher arguments that happen to
+contain URLs remain arguments.
 
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
@@ -1518,7 +1562,10 @@ A document can exceed the runtime's string limit when each encoded line fits.
 Staging limits the encoded text kept in memory. The TOON encoder still
 normalizes the input tree before yielding lines, so working memory also
 depends on the size of the input and the longest encoded line.
-Token counting and token windows still require a complete formatted string.
+Token counting and token windows require a complete formatted string. For structured
+TOON output, every selected key and string must contain well-formed UTF-16,
+including values outside the requested token window. Use `--filter-output` to
+select a representable field, or JSON or YAML to retain unpaired surrogates.
 Use `--json` to stream the result without TOON staging or to save it for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
 `--token-limit`, `--token-offset`) accept `--flag value` or `--flag=value`; a
@@ -1597,8 +1644,6 @@ Cutter when available. This is separate from `--format json`, which selects the
 CLI result representation; the global `--json` flag selects that same CLI
 representation.
 
-Cutter no longer accepts command-local `--json=true` or `--json=false`.
-Replace these with `--json-output=true` or `--json-output=false`, respectively.
 Combine `--json-output` with bare `--json` when both Cutter command output and
 the CLI result should use JSON; either argument order is accepted.
 
@@ -1696,8 +1741,7 @@ rea inspect-artifact ./app.asar --json | jq . > inspection.json
 `--token-count` reports a tokenx estimate for the selected emitted document,
 including a requested full-output envelope and metadata. JSON uses the same
 terminal indentation or compact piped representation as normal output; JSONL
-uses its emitted line representation. The final newline is included (tokenx
-assigns whitespace no tokens). This is an estimate, not a model tokenizer count.
+uses its emitted line representation. The estimate includes the final newline. Its token cost depends on the preceding text.
 Counting retains the existing bounded formatted-string allocation after capacity
 admission; omit the flag to stream large JSON documents without materializing
 the complete formatted text. Exhausted token windows display an empty range at

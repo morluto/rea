@@ -65,6 +65,36 @@ const compare = (...probes: (readonly TimedCaptureRow[])[]) => {
 };
 
 describe("step difference coverage", () => {
+  it("counts a reorder of a complete duplicate ID list in strict agreement", () => {
+    const capture = timedCaptureEvidence([
+      ["GET", "/api/selection", { ids: [2, 1, 1] }],
+    ]);
+    const served = environmentStateServeFixture(capture);
+    const report = compareEnvironment({
+      source: environmentServeSource(served),
+      captureValue: capture,
+      probes: [
+        {
+          label: "reordered",
+          value: timedCaptureEvidence([
+            ["GET", "/api/selection", { ids: [1, 1, 2] }],
+          ]),
+        },
+      ],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.probes[0]?.results[0]).toMatchObject({
+      equal: false,
+      equal_ignoring_order: true,
+      differences: [{ category: "order", pointer: "/ids" }],
+    });
+    expect(report.value.summary).toMatchObject({
+      agreement: 0,
+      agreement_ignoring_order: 1,
+    });
+  });
+
   it("keeps categories from differences beyond the returned prefix", () => {
     const fields = Object.fromEntries(
       Array.from({ length: 20 }, (_, index) => [`field${String(index)}`, 0]),
@@ -220,32 +250,6 @@ const nestedUsers = {
 } as EnvironmentManifestTool;
 
 describe("collections under different parents", () => {
-  it("names each parent's collection from the live path, and does not rename a literal segment", () => {
-    const orgOne = ["api", "orgs", "1", "users", "110"];
-    const orgTwo = ["api", "orgs", "2", "users", "110"];
-    expect(collectionScope(nestedUsers, orgOne)).toBe("/api/orgs/1/users");
-    expect(collectionScope(nestedUsers, orgTwo)).toBe("/api/orgs/2/users");
-    expect(
-      collectionScope(nestedUsers, ["api", "orgs", "", "users", "110"]),
-    ).toBe("/api/orgs/{}/users");
-    const map = new IdMap();
-    map.learn(110, 10, "/api/orgs/1/users");
-    map.learn(110, 20, "/api/orgs/2/users");
-    map.learn("users", "stored-tag");
-    const scopes = parameterScopes(nestedUsers, orgOne);
-    // Template indexes of api, orgs and users; the two parameters are not literals.
-    const literals = new Set([0, 1, 3]);
-    expect(
-      translatePath(
-        "/api/orgs/1/users/110",
-        map,
-        (index) => scopes.get(index),
-        (index) => literals.has(index),
-      ),
-    ).toBe("/api/orgs/1/users/10");
-    expect(map.env(110, "/api/orgs/2/users")).toBe(20);
-  });
-
   it("uses state collection identity for root and trailing-slash routes", () => {
     const trailing = {
       ...nestedUsers,

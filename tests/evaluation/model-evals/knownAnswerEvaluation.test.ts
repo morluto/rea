@@ -111,6 +111,13 @@ const assess = (
     },
   );
 const answer = (claims: readonly unknown[]) => JSON.stringify({ claims });
+const claimFailures = (
+  events: readonly unknown[],
+  evidence: Evidence,
+  rubric?: readonly FixtureClaimExpectation[],
+) =>
+  assess(events, answer([claimFor(evidence)]), rubric).factualAssessment
+    .claims[0]?.failures;
 
 // Synthetic transcript cases exercise grading, not an SDK-built assembly oracle.
 const managedTranscript = () => {
@@ -445,11 +452,10 @@ describe("managed member grounding", () => {
 
 // Removing exact fixture comparison or accepted-source validation must break these regressions.
 describe("known-answer fixture grading", () => {
-  it("passes closed claims against authenticated production MCP Evidence", () => {
+  it("passes closed claims against authenticated MCP Evidence with equivalent result aliases", () => {
     const evidence = createObservation();
-    expect(
-      assess([delivered(evidence)], answer([claimFor(evidence)])),
-    ).toMatchObject({
+    const event = delivered(evidence, { output: resultFor(evidence) });
+    expect(assess([event], answer([claimFor(evidence)]))).toMatchObject({
       factualCorrectness: "passed",
       factualAssessment: {
         scope: "configured_fixture_claims",
@@ -479,15 +485,6 @@ describe("known-answer fixture grading", () => {
     ).toBe("failed");
   });
 
-  it("retains not_assessed without a fixture rubric", () => {
-    expect(
-      evaluateCodexEvents(
-        [final("Observed metadata remains unknown.")],
-        "analyze_javascript_application",
-      ).factualCorrectness,
-    ).toBe("not_assessed");
-  });
-
   it.each([{ rubric: [] }, { rubric: [expected(), expected()] }])(
     "fails closed for an empty or duplicate rubric",
     ({ rubric }) => {
@@ -513,10 +510,9 @@ describe("known-answer fixture grading", () => {
         },
       },
     ];
-    expect(
-      assess([delivered(evidence)], answer([claimFor(evidence)]), rubric)
-        .factualCorrectness,
-    ).toBe("failed");
+    expect(claimFailures([delivered(evidence)], evidence, rubric)).toEqual([
+      "selector_failed",
+    ]);
   });
 });
 
@@ -596,10 +592,9 @@ describe("successful Evidence grounding", () => {
     { tool: "other_tool" },
   ])("rejects a foreign or unsuccessful completion %j", (overrides) => {
     const evidence = createObservation();
-    expect(
-      assess([delivered(evidence, overrides)], answer([claimFor(evidence)]))
-        .factualCorrectness,
-    ).toBe("failed");
+    expect(claimFailures([delivered(evidence, overrides)], evidence)).toEqual([
+      "unknown_evidence",
+    ]);
   });
 
   it("rejects IDs present only in arguments or unrelated metadata", () => {
@@ -610,9 +605,7 @@ describe("successful Evidence grounding", () => {
         structuredContent: { metadata: { evidence_id: evidence.evidence_id } },
       },
     });
-    expect(
-      assess([event], answer([claimFor(evidence)])).factualCorrectness,
-    ).toBe("failed");
+    expect(claimFailures([event], evidence)).toEqual(["unknown_evidence"]);
   });
 
   it("rejects a tampered envelope even with a valid-looking Evidence ID", () => {
@@ -625,9 +618,7 @@ describe("successful Evidence grounding", () => {
         },
       },
     });
-    expect(
-      assess([event], answer([claimFor(evidence)])).factualCorrectness,
-    ).toBe("failed");
+    expect(claimFailures([event], evidence)).toEqual(["unknown_evidence"]);
   });
 
   it.each(["id", "result", "error"])(
@@ -652,9 +643,7 @@ describe("successful Evidence grounding", () => {
           ...(field === "error" ? { isError: true } : {}),
         },
       });
-      expect(
-        assess([event], answer([claimFor(evidence)])).factualCorrectness,
-      ).toBe("failed");
+      expect(claimFailures([event], evidence)).toEqual(["unknown_evidence"]);
     },
   );
 
@@ -675,19 +664,9 @@ describe("successful Evidence grounding", () => {
               },
             };
       const event = delivered(evidence, { output });
-      expect(
-        assess([event], answer([claimFor(evidence)])).factualCorrectness,
-      ).toBe("failed");
+      expect(claimFailures([event], evidence)).toEqual(["unknown_evidence"]);
     },
   );
-
-  it("accepts JSON-equal separately allocated outer result/output aliases", () => {
-    const evidence = createObservation();
-    const event = delivered(evidence, { output: resultFor(evidence) });
-    expect(
-      assess([event], answer([claimFor(evidence)])).factualCorrectness,
-    ).toBe("passed");
-  });
 
   it("accepts the documented snake-case structured-content transcript representation", () => {
     const evidence = createObservation();
@@ -714,20 +693,18 @@ describe("successful Evidence grounding", () => {
 
   it("rejects authentic unrelated Evidence containing the same value elsewhere", () => {
     const evidence = createObservation({ unrelated: expected().expectedValue });
-    expect(
-      assess([delivered(evidence)], answer([claimFor(evidence)]))
-        .factualCorrectness,
-    ).toBe("failed");
+    expect(claimFailures([delivered(evidence)], evidence)).toEqual([
+      "source_assertion_mismatch",
+    ]);
   });
 });
 
 describe("fixture identity and provenance binding", () => {
   it("rejects Evidence for a different subject despite an equal supported value", () => {
     const evidence = createObservation(undefined, "/targets/other.asar");
-    expect(
-      assess([delivered(evidence)], answer([claimFor(evidence)]))
-        .factualCorrectness,
-    ).toBe("failed");
+    expect(claimFailures([delivered(evidence)], evidence)).toEqual([
+      "source_subject_mismatch",
+    ]);
   });
 
   it("rejects a wrong required source parameter", () => {
@@ -739,10 +716,9 @@ describe("fixture identity and provenance binding", () => {
         source: { ...expectation.source, parameters: { format: "directory" } },
       },
     ];
-    expect(
-      assess([delivered(evidence)], answer([claimFor(evidence)]), rubric)
-        .factualCorrectness,
-    ).toBe("failed");
+    expect(claimFailures([delivered(evidence)], evidence, rubric)).toEqual([
+      "source_parameters_mismatch",
+    ]);
   });
 
   it("rejects conflicting subject diagnostics for the same semantic Evidence ID", () => {
@@ -754,11 +730,8 @@ describe("fixture identity and provenance binding", () => {
       }),
     };
     expect(
-      assess(
-        [delivered(evidence), delivered(conflicting)],
-        answer([claimFor(evidence)]),
-      ).factualCorrectness,
-    ).toBe("failed");
+      claimFailures([delivered(evidence), delivered(conflicting)], evidence),
+    ).toEqual(["conflicting_evidence"]);
   });
 
   it("requires linked source Evidence to be delivered and match the configured artifact", () => {

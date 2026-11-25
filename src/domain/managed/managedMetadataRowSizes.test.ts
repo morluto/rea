@@ -136,3 +136,22 @@ describe.each(memberLists)("$name metadata layout", (members) => {
     },
   );
 });
+
+it("reports an unsupported high table bit at its absolute file offset", () => {
+  const { bytes } = writeMemberList(memberLists[0], 1, 1, 2, 2);
+  const tablesOffset = bytes.readUInt32LE(32);
+  bytes.writeBigUInt64LE(1n << 63n, tablesOffset + 8);
+  const rootOffset = 13;
+  const artifact = Buffer.concat([Buffer.alloc(rootOffset), bytes]);
+  expect(() =>
+    readManagedMetadataLayout(artifact, rootOffset, bytes.length),
+  ).toThrow(
+    expect.objectContaining({
+      issue: expect.objectContaining({
+        code: "invalid-tables",
+        scope: "metadata.valid-mask",
+        offset: rootOffset + tablesOffset + 8,
+      }),
+    }),
+  );
+});

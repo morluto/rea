@@ -238,7 +238,13 @@ that cannot be read keeps its `error` in place of its rows, and changes to that
 database are marked incomplete. dconf
 databases are read with `dconf dump /` against a private file profile, so the
 live database and the dconf service are not touched; this needs `dconf-cli`, or
-`REA_DCONF_COMMAND`.
+`REA_DCONF_COMMAND`. A failed dconf read also sets `view_failure`: its `kind`
+(`not-installed`, `launch-failed`, `exited`, `descriptor-unavailable`,
+`profile-write`, `read-failed`, `timeout`, `output-limit`, `memory-limit`,
+`protocol`, `runtime-exhausted`, or `resource-signal`), the host errno `code`
+when the operating system reported one, `exit_code` when a child exited, the
+selected `command`, and the child's `stderr` when it wrote any. `view_error`
+stays the short explanation.
 
 A version has a `view_error` when its bytes were not retained, are over the 64
 MiB read limit, are missing or no longer match their digest, exceed a format's

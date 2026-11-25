@@ -6,6 +6,7 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   InesArtifactReader,
+  inesInventoryLimitation,
   type InesRegionScan,
 } from "../InesArtifactReader.js";
 
@@ -55,6 +56,7 @@ import {
 import type { ArtifactInventoryOptions } from "./types.js";
 import type { ArtifactContainerIntegrityPair } from "../../domain/artifactIntegrity.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
+import type { DirectoryRootDigest } from "../../domain/directoryTreeDigest.js";
 
 export interface TransferredArtifactInventorySource {
   readonly owner: ArtifactResourceOwner;
@@ -164,6 +166,7 @@ const scanCanonical = async (
       parentResolution,
       traversal,
       rootContradiction,
+      rootDigest: treeDigest,
     } = await scanReader(
       reader,
       ownedReaders,
@@ -192,6 +195,7 @@ const scanCanonical = async (
         traversal,
         rootContradiction,
         recognitionLimitations,
+        treeDigest,
       }),
     };
   } catch (cause: unknown) {
@@ -227,6 +231,7 @@ const scanCanonical = async (
             limitations: [],
           },
           rootContradiction: undefined,
+          treeDigest: undefined,
           traversal: {
             status: "unknown",
             limitations: [
@@ -283,6 +288,7 @@ const scanCanonical = async (
       rootSource !== undefined &&
       (isZipPackageFormat(rootFormat) ||
         rootFormat === "ines" ||
+        rootFormat === "asar" ||
         (readerAdmission !== undefined && "kind" in readerAdmission))
         ? "transfer"
         : "release",
@@ -431,6 +437,8 @@ interface SnapshotBuildInput {
   readonly parentResolution: ArtifactParentResolution;
   readonly traversal: ArtifactReaderTraversal;
   readonly rootContradiction: ArtifactContainerIntegrityPair | undefined;
+  /** A directory root's tree digest; absent for every other root. */
+  readonly treeDigest: DirectoryRootDigest | undefined;
 }
 
 const buildInventorySnapshot = async (
@@ -442,6 +450,7 @@ const buildInventorySnapshot = async (
   const rootNode = createRootNode({
     digest: rootDigest,
     occurrences: input.occurrences,
+    treeDigest: input.treeDigest,
   });
   input.nodes.set(rootNode.artifact_id, rootNode);
   rekeyOccurrences(rootNode.artifact_id, input.occurrences);
@@ -539,12 +548,16 @@ const buildInventorySnapshot = async (
     ...input.parentResolution.limitations,
     ...edgeResult.limitations,
   ];
+  const recognitionLimitations = input.recognitionLimitations ?? [];
   const coverage =
-    relationshipLimitations.length === 0
+    relationshipLimitations.length === 0 && recognitionLimitations.length === 0
       ? traversal.coverage
       : { ...traversal.coverage, status: "unknown" as const };
   return {
     manifest,
+    ...(input.treeDigest === undefined
+      ? {}
+      : { root_digest: input.treeDigest }),
     ...(ines === undefined ? {} : { ines }),
     nodes: orderedNodes,
     occurrences: orderedOccurrences,
@@ -554,6 +567,7 @@ const buildInventorySnapshot = async (
     coverage,
     limitations: buildLimitations(
       [
+        ...(ines === undefined ? [] : [inesInventoryLimitation(ines.header)]),
         ...traversal.limitations,
         ...relationshipLimitations,
         ...(input.recognitionLimitations ?? []),

@@ -1,17 +1,27 @@
-import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../domain/elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
   readElfProgramHeader,
   type ElfProgramHeader,
 } from "../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
+import { isElfRelocationSectionType } from "../domain/elfRelocation.js";
 import type { FileHandle } from "node:fs/promises";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import type {
-  MipsAbiFlags,
-  MipsElfMetadata,
-  MipsGnuAttributes,
+import {
+  mipsLimitationMessages,
+  type MipsAbiFlags,
+  type MipsElfLimitation,
+  type MipsElfMetadata,
+  type MipsGnuAttributes,
 } from "../domain/binaryTargetTypes.js";
-import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
+import {
+  elfFixedHeaderWidth,
+  readElfFixedHeader,
+} from "../domain/elfFixedHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readMipsElfSharedLoad,
@@ -26,26 +36,19 @@ const MIPS_GNU_ATTRIBUTES_MAX_BYTES = 4096;
 export interface MipsElfInspection {
   readonly abiFlags: MipsAbiFlags | null;
   readonly gnuAttributes: MipsGnuAttributes | null;
-  readonly limitations: readonly string[];
+  readonly limitations: readonly MipsElfLimitation[];
   readonly sharedLoad?: MipsElfMetadata["sharedLoad"];
 }
 
 /**
- * Read ELF32 MIPS ABI and shared-load declarations from the caller's already-open file.
- * Inspect both typed tables (not section names), including records beyond the
- * initial header probe. A missing record is unknown, not a default FP ABI.
+ * Build the bounded whole-region reader used for every declaration source.
  * The caller supplies its cancellation check so its tagged error is preserved.
  */
-export const readMipsElfMetadata = async (
+const createMipsRegionReader = (
   handle: FileHandle,
-  metadata: MipsElfMetadata,
+  fileSize: number,
   checkCancelled: () => void,
-): Promise<Result<MipsElfInspection, string>> => {
-  checkCancelled();
-  if (metadata.elfClass !== 32)
-    return err("MIPS ABI record inspection currently supports ELF32 only");
-  const fileSize = (await handle.stat()).size;
-  checkCancelled();
+) => {
   const read = async (
     offset: number,
     length: number,
@@ -80,6 +83,26 @@ export const readMipsElfMetadata = async (
     }
     return ok(bytes);
   };
+  return read;
+};
+
+/**
+ * Read ELF32 MIPS ABI and shared-load declarations from the caller's already-open file.
+ * Inspect both typed tables (not section names), including records beyond the
+ * initial header probe. A missing record is unknown, not a default FP ABI.
+ * The caller supplies its cancellation check so its tagged error is preserved.
+ */
+export const readMipsElfMetadata = async (
+  handle: FileHandle,
+  metadata: MipsElfMetadata,
+  checkCancelled: () => void,
+): Promise<Result<MipsElfInspection, string>> => {
+  checkCancelled();
+  if (metadata.elfClass !== 32)
+    return err("MIPS ABI record inspection currently supports ELF32 only");
+  const fileSize = (await handle.stat()).size;
+  checkCancelled();
+  const read = createMipsRegionReader(handle, fileSize, checkCancelled);
   const header = await read(0, 52, "ELF32 header");
   if (!header.ok) return header;
   const bytes = header.value;
@@ -94,7 +117,8 @@ export const readMipsElfMetadata = async (
     fixedHeader.value.flags !== metadata.flags
   )
     return err("MIPS ELF header no longer matches the resolved identity");
-  if (fixedHeader.value.headerSize !== 52)
+  const headerWidth = elfFixedHeaderWidth(32);
+  if (fixedHeader.value.headerSize !== headerWidth)
     return err("invalid MIPS ELF32 version or header size");
 
   const raw = readElfRawTableDeclarations(bytes, fixedHeader.value);
@@ -106,7 +130,7 @@ export const readMipsElfMetadata = async (
       offset: Number(programs.offset),
       count: programs.count,
       stride: programs.width,
-      entrySize: 32,
+      entrySize: elfProgramHeaderWidth(32),
       recordType: 0x70000003, // PT_MIPS_ABIFLAGS
       optional: false,
     },
@@ -115,7 +139,7 @@ export const readMipsElfMetadata = async (
       offset: Number(sections.offset),
       count: sections.count,
       stride: sections.width,
-      entrySize: 40,
+      entrySize: elfSectionHeaderWidth(32),
       recordType: 0x7000002a, // SHT_MIPS_ABIFLAGS
       optional: true,
     },
@@ -128,7 +152,7 @@ export const readMipsElfMetadata = async (
   let sharedLoad: MipsElfMetadata["sharedLoad"];
   let programHeaders: ElfProgramHeader[] | undefined;
   const relocationSections: MipsElfRelocationSection[] = [];
-  const limitations: string[] = [];
+  const limitations: MipsElfLimitation[] = [];
   let gnuAttributes: MipsGnuAttributes | null = null;
   for (const table of tables) {
     if (table.count === 0) {
@@ -136,7 +160,7 @@ export const readMipsElfMetadata = async (
         return err(`unsupported extended or inconsistent MIPS ${table.label}`);
       continue;
     }
-    if (table.offset < 52 || table.stride !== table.entrySize)
+    if (table.offset < headerWidth || table.stride !== table.entrySize)
       return err(`invalid MIPS ${table.label} offset or entry size`);
     const count = table.optional
       ? Math.min(
@@ -145,9 +169,13 @@ export const readMipsElfMetadata = async (
         )
       : table.count;
     if (count < table.count)
-      limitations.push(
-        `MIPS ${table.label} at file offset ${table.offset} extends beyond the captured file: examined ${count} of ${table.count} complete headers. ABI declarations in unavailable headers remain unknown.`,
-      );
+      limitations.push({
+        kind: "truncated_section_table",
+        offset: table.offset,
+        examined: count,
+        declared: table.count,
+        message: `MIPS ${table.label} at file offset ${table.offset} extends beyond the captured file: examined ${count} of ${table.count} complete headers. ABI declarations in unavailable headers remain unknown.`,
+      });
     if (count === 0) continue;
     // Counts are bounded by the ELF16 fields and strides by their exact ELF32
     // structure sizes. Never allocate according to an untrusted section size.
@@ -207,7 +235,7 @@ export const readMipsElfMetadata = async (
       if (
         metadata.type === 3 &&
         "entrySize" in declaration &&
-        (type === 4 || type === 9 || type === 19)
+        isElfRelocationSectionType(type)
       )
         relocationSections.push({
           type,
@@ -234,7 +262,7 @@ export const readMipsElfMetadata = async (
     if (limitations.length > 0)
       sharedLoad = {
         status: "unavailable",
-        reason: `MIPS shared-image relocation declaration sources are incomplete. ${limitations.join(" ")}`,
+        reason: `MIPS shared-image relocation declaration sources are incomplete. ${mipsLimitationMessages(limitations).join(" ")}`,
       };
     else {
       const shared = await readMipsElfSharedLoad(

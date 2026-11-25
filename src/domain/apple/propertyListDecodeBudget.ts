@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import {
   readBinaryPlistLayout,
   readBinaryPlistUnsigned64,
@@ -459,6 +460,11 @@ export const estimateBinaryPlistExpansion = (
   ];
   const scalarObjects = new Map<number, { object: number; uid: boolean }>();
   const sourceContainers = new Map<number, BinaryPlistContainer>();
+  const reader = new BinaryReader(
+    bytes.subarray(0, objectsEnd),
+    false,
+    "binary-plist",
+  );
   const dictionaryKeys = new Map<number, string>();
   const readDictionaryKey = (object: number): string => {
     const prior = dictionaryKeys.get(object);
@@ -501,9 +507,7 @@ export const estimateBinaryPlistExpansion = (
     let key = "";
     for (let index = 0; index < size; index += 1)
       key += String.fromCharCode(
-        type === 5
-          ? bytes[cursor + index]!
-          : bytes.readUInt16BE(cursor + index * 2),
+        type === 5 ? bytes[cursor + index]! : reader.u16(cursor + index * 2),
       );
     dictionaryKeys.set(object, key);
     return key;
@@ -802,11 +806,7 @@ export const estimateBinaryPlistExpansion = (
   );
   const precisionUnknownDateOffsets = [...overlappingDateOffsets]
     .filter((offset) => {
-      const seconds = new DataView(
-        bytes.buffer,
-        bytes.byteOffset,
-        bytes.byteLength,
-      ).getFloat64(offset + 1);
+      const seconds = reader.f64(offset + 1);
       return binaryDateRequiresExactSeconds(seconds);
     })
     .sort((left, right) => left - right);

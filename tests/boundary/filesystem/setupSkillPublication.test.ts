@@ -1,6 +1,7 @@
 import { constants as fsConstants } from "node:fs";
 import * as filesystem from "node:fs/promises";
 import {
+  appendFile,
   chmod,
   copyFile,
   mkdir,
@@ -8,6 +9,7 @@ import {
   readdir,
   rename,
   stat,
+  type FileHandle,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -207,57 +209,94 @@ it("preserves a destination created immediately before exclusive publication", a
   }
 });
 
-describe("skill publication recovery", () => {
-  it.each([
-    Buffer.alloc(0),
-    Buffer.from([0xff, 0xfe, 0x61, 0x00]),
-    Buffer.from("\ufefforiginal BOM instructions\r\n"),
-  ])(
-    "restores byte-exact originals and mode after ambiguous readback",
-    async (bytes) => {
-      const home = await createTestTempDirectory(
-        "rea-skill-readback-recovery-",
-      );
-      const manifest = skillManifest(home);
-      await mkdir(dirname(manifest), { recursive: true });
-      await writeFile(manifest, bytes, { mode: 0o640 });
-      const result = await installCanonicalSkill(
-        home,
-        [],
-        {},
-        process.platform,
-        {
-          ...skillPublicationOperations,
-          prepare: async (...args) => {
-            const publication = await SkillFilePublication.prepare(...args);
-            if (publication.path === manifest)
-              vi.spyOn(publication, "assertCurrent").mockRejectedValueOnce(
-                new Error("readback unavailable"),
-              );
-            return publication;
-          },
-        },
-      );
-      if (result.ok) throw new Error("Expected readback failure");
-      expect(result.error.stage).toBe("readback");
-      expect(result.error.reason).toBe("readback unavailable");
-      expect(Buffer.compare(await readFile(manifest), bytes)).toBe(0);
-      expect(
-        Buffer.compare(await readFile(`${manifest}.rea.backup`), bytes),
-      ).toBe(0);
-      if (process.platform !== "win32")
-        expect((await stat(manifest)).mode & 0o777).toBe(0o640);
-      expect(
-        result.error.rollbackFailures.every(({ reason }) =>
-          reason.includes("First-install skill recovery"),
-        ),
-      ).toBe(true);
-      expect(result.error.rollbackFailures).toHaveLength(
-        MANAGED_SKILL_FILES.length - 1,
-      );
-    },
-  );
+it.each([
+  { label: "empty", bytes: Buffer.alloc(0), edit: "" },
+  { label: "binary", bytes: Buffer.from([0xff, 0xfe, 0x61, 0x00]), edit: "" },
+  {
+    label: "BOM",
+    bytes: Buffer.from("\ufefforiginal BOM instructions\r\n"),
+    edit: "",
+  },
+  {
+    label: "concurrent append",
+    bytes: Buffer.from("original user instructions\n"),
+    edit: "added by another editor\n",
+  },
+])(
+  "checks restoration bytes, mode and recovery after ambiguous $label readback",
+  async ({ bytes, edit }) => {
+    const home = await createTestTempDirectory("rea-skill-readback-recovery-");
+    const manifest = skillManifest(home);
+    await mkdir(dirname(manifest), { recursive: true });
+    await writeFile(manifest, bytes, { mode: 0o640 });
+    let edited = false;
+    const result = await installCanonicalSkill(home, [], {}, process.platform, {
+      ...skillPublicationOperations,
+      prepare: async (...args) => {
+        const publication = await SkillFilePublication.prepare(...args);
+        if (publication.path !== manifest) return publication;
+        vi.spyOn(publication, "assertCurrent").mockRejectedValueOnce(
+          new Error("readback unavailable"),
+        );
+        if (edit === "") return publication;
+        const restore = publication.restore.bind(publication);
+        vi.spyOn(publication, "restore").mockImplementationOnce(async () => {
+          const probe = await filesystem.open(manifest);
+          const prototype = Object.getPrototypeOf(probe) as Pick<
+            FileHandle,
+            "read"
+          >;
+          await probe.close();
+          const native = prototype.read;
+          const read = vi
+            .spyOn(prototype, "read")
+            .mockImplementation(async function (this: FileHandle, ...args) {
+              const observed = await native.apply(this, args);
+              if (
+                !edited &&
+                Buffer.isBuffer(observed.buffer) &&
+                observed.buffer.subarray(0, observed.bytesRead).equals(bytes)
+              ) {
+                await appendFile(manifest, edit);
+                edited = true;
+              }
+              return observed;
+            });
+          try {
+            await restore();
+          } finally {
+            read.mockRestore();
+          }
+        });
+        return publication;
+      },
+    });
+    if (result.ok) throw new Error("Expected readback failure");
+    expect(result.error.stage).toBe("readback");
+    expect(result.error.reason).toBe("readback unavailable");
+    expect(edited).toBe(edit !== "");
+    expect(
+      (await readFile(manifest)).equals(
+        Buffer.concat([bytes, Buffer.from(edit)]),
+      ),
+    ).toBe(true);
+    expect((await readFile(`${manifest}.rea.backup`)).equals(bytes)).toBe(true);
+    if (process.platform !== "win32")
+      expect((await stat(manifest)).mode & 0o777).toBe(0o640);
+    const { rollbackFailures } = result.error;
+    const others = rollbackFailures.filter(({ path }) => path !== manifest);
+    expect(others).toHaveLength(MANAGED_SKILL_FILES.length - 1);
+    expect(
+      others.every(({ reason }) =>
+        reason.includes("First-install skill recovery"),
+      ),
+    ).toBe(true);
+    expect(rollbackFailures.some(({ path }) => path === manifest)).toBe(edited);
+    expect(await result.error.retryCleanup()).toEqual([]);
+  },
+);
 
+describe("skill publication recovery", () => {
   it("retains a first-install publication after failed verification", async () => {
     const home = await createTestTempDirectory(
       "rea-skill-first-install-readback-",

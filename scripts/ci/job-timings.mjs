@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ const STEP_COSTS = [
       "Upload complete static diagnostics",
       "Upload complete deep static diagnostics",
       "Retain available reverse tools diagnostics",
+      "Record affected-test prediction before the full suite",
       "Publish successful timing history",
       "Retain the exact qualified release package",
     ]),
@@ -27,6 +28,7 @@ const STEP_COSTS = [
     key: "artifactDownload",
     pattern: /download.*artifact/iu,
     names: new Set([
+      "Download the classifier's affected-test prediction",
       "Download previous timing report",
       "Download the original qualified package",
     ]),
@@ -45,20 +47,36 @@ export async function collectJobTimings({
   timeoutMs = TIMEOUT_MS,
 }) {
   const identity = validateIdentity({ repository, runId, runAttempt });
+  const reportPath = join(outputDirectory, "report.json");
+  const rawPath = join(outputDirectory, "jobs.json");
+  await rm(reportPath, { force: true });
+  await rm(rawPath, { force: true });
   const endpoint = `repos/${identity.repository}/actions/runs/${identity.runId}/attempts/${identity.runAttempt}/jobs?per_page=100`;
   const { stdout } = await execFileAsync(
     "gh",
     ["api", "--paginate", "--slurp", endpoint],
     { env, encoding: "utf8", maxBuffer: MAX_BUFFER, timeout: timeoutMs },
   );
-  const rawPath = join(outputDirectory, "jobs.json");
-  const reportPath = join(outputDirectory, "report.json");
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(rawPath, stdout, "utf8");
   const pages = parsePages(stdout);
   const jobs = pages.flatMap(({ jobs: pageJobs }, index) =>
-    validateJobs(pageJobs, index),
+    validateJobs(pageJobs, index, identity),
   );
+  if (
+    pages.some(
+      ({ total_count }) =>
+        total_count !== undefined && total_count !== jobs.length,
+    )
+  )
+    throw new Error(
+      "GitHub jobs API total_count does not match the collected jobs",
+    );
+  const ids = jobs
+    .map(({ id }) => id)
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+  if (new Set(ids).size !== ids.length)
+    throw new Error("GitHub jobs API contains duplicate job IDs");
   const report = normalizeReport({ identity, jobs, observedAt });
 
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -110,7 +128,7 @@ function parsePages(stdout) {
   return pages;
 }
 
-function validateJobs(jobs, pageIndex) {
+function validateJobs(jobs, pageIndex, { runId, runAttempt }) {
   return jobs.map((job, jobIndex) => {
     if (
       typeof job !== "object" ||
@@ -122,6 +140,10 @@ function validateJobs(jobs, pageIndex) {
     )
       throw new Error(
         `GitHub jobs API page ${String(pageIndex + 1)} job ${String(jobIndex + 1)} is malformed`,
+      );
+    if (job.run_id !== runId || job.run_attempt !== runAttempt)
+      throw new Error(
+        `GitHub jobs API page ${String(pageIndex + 1)} job ${String(jobIndex + 1)} belongs to a different workflow run or attempt`,
       );
     return job;
   });
@@ -221,6 +243,7 @@ function normalizeJob(job) {
     url: stringOrNull(job.html_url),
     name: job.name,
     workflowName: stringOrNull(job.workflow_name),
+    runnerId: Number.isSafeInteger(job.runner_id) ? job.runner_id : null,
     status: job.status,
     conclusion: stringOrNull(job.conclusion),
     createdAt: stringOrNull(job.created_at),
@@ -240,11 +263,19 @@ function normalizeStep(step) {
     typeof step.name !== "string"
   )
     throw new Error("GitHub jobs API contains a malformed job step");
+  if (step.conclusion === "skipped")
+    return {
+      name: step.name,
+      conclusion: "skipped",
+      costKey: null,
+      duration: unknownDuration("step was skipped"),
+    };
   const cost = STEP_COSTS.find(
     ({ pattern, names }) => names?.has(step.name) || pattern.test(step.name),
   );
   return {
     name: step.name,
+    conclusion: stringOrNull(step.conclusion),
     costKey: cost?.key ?? null,
     duration: duration(step.started_at, step.completed_at),
   };

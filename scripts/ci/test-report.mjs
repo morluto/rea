@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { z } from "zod";
 
+import { compareSelectionShadow } from "./selection-shadow.mjs";
 import { parseTestSelection } from "./test-selection.mjs";
 
 const root = process.cwd();
@@ -48,10 +49,23 @@ const groupResults = [
 const groupsCompleted = groupResults.every((state) =>
   ["success", "failure"].includes(state),
 );
-const passed =
+const failedFiles = files
+  .filter(({ state }) => state === "failed")
+  .map(({ name }) => name)
+  .sort();
+const incompleteFiles = files.filter(
+  ({ state }) => state === "queued" || state === "pending",
+);
+const workflowPassed =
   groupResults.every((state) => state === "success") &&
-  process.env.MERGE_RESULT === "success" &&
-  report.success;
+  process.env.MERGE_RESULT === "success";
+const passed =
+  workflowPassed &&
+  report.success &&
+  (report.reason === undefined || report.reason === "passed") &&
+  incompleteFiles.length === 0 &&
+  failedFiles.length === 0 &&
+  (report.unhandledErrors ?? 0) === 0;
 // Successful shards and merged reports must account for the complete portable
 // inventory, or exactly the selected subset. Coverage thresholds alone cannot
 // prove that every file ran.
@@ -88,15 +102,16 @@ if (passed && verifyInventory) {
 // A selected subset is not a timing baseline for the complete suite.
 const publishesHistory = passed && !selected;
 const skippedFiles = files.filter(({ state }) => state === "skipped");
-const failedFiles = files
-  .filter(({ state }) => state === "failed")
-  .map(({ name }) => name)
-  .sort();
 const failureListLimit = 20;
 const failureDetails =
   !passed || failedFiles.length > 0
     ? [
         `Failed test modules reported: ${failedFiles.length}.`,
+        ...(incompleteFiles.length
+          ? [
+              `Queued or pending test modules reported: ${incompleteFiles.length}.`,
+            ]
+          : []),
         ...failedFiles
           .slice(0, failureListLimit)
           .map((name) => `- ${JSON.stringify(name)}`),
@@ -110,6 +125,40 @@ const failureDetails =
           : [`Unhandled Vitest errors reported: ${report.unhandledErrors}.`]),
       ]
     : [];
+const shadowNotes = [];
+if (
+  process.env.CI_COMPARE_TEST_SHADOW === "true" &&
+  verifyInventory &&
+  !selected
+) {
+  try {
+    const resultPath = "test-selection-comparison.json";
+    await rm(resultPath, { force: true });
+    const prediction = JSON.parse(
+      await readFile(
+        ".cache/ci-test-shadow/test-selection-shadow.json",
+        "utf8",
+      ),
+    );
+    const comparison = compareSelectionShadow(
+      prediction,
+      process.env.GITHUB_SHA,
+      expected,
+      files,
+    );
+    await writeFile(resultPath, JSON.stringify(comparison), { flag: "wx" });
+    shadowNotes.push(
+      "### Affected-test prediction",
+      "",
+      `Reported ${comparison.observedCandidates} of ${comparison.candidates} predicted files. Full-suite inventory: ${comparison.completeInventory ? "complete" : "partial"}.`,
+      `Observed failing files inside the prediction: ${comparison.capturedFailures.length}. Outside: ${comparison.missedFailures.length}.`,
+      "",
+    );
+  } catch (error) {
+    console.warn("Test selection shadow unavailable:", error);
+    shadowNotes.push("Affected-test prediction unavailable.", "");
+  }
+}
 const summary = [
   groupsCompleted
     ? "## Merged test diagnostics"
@@ -128,6 +177,7 @@ const summary = [
   ...(failureDetails.length > 0
     ? ["", "```text", ...failureDetails, "```", ""]
     : []),
+  ...shadowNotes,
   `Skipped test modules: ${skippedFiles.length}. Their skip reasons and required coverage are not established by this report.`,
   ...(skippedFiles.length ? [""] : []),
   ...skippedFiles.map(({ name }) => `- ${name.replaceAll("|", "\\|")}`),
@@ -153,6 +203,9 @@ if (process.env.GITHUB_STEP_SUMMARY) {
   await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
   if (failureDetails.length > 0) console.log(failureDetails.join("\n"));
 } else console.log(summary);
+
+if (workflowPassed && !passed)
+  throw new Error("Merged test report does not confirm successful tests");
 
 if (publishesHistory) {
   await mkdir(historyDirectory, { recursive: true });

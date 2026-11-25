@@ -174,7 +174,15 @@ try {
       "truncated-owner",
       "nonzero-note-tail",
     ]) {
-      await basic.inspect(mode, fixtures[name], { category: "invalid_input" });
+      // Damaged recordings are target failures, not invalid requests.
+      const error = await basic.inspect(mode, fixtures[name], {
+        category: "unsupported_target",
+      });
+      assert.equal(
+        error.details.failure_kind,
+        name === "truncated-header" ? "truncated" : "malformed",
+        JSON.stringify(error),
+      );
       cases++;
     }
     const opaque = await basic.inspect(mode, fixtures["opaque-owner"]);

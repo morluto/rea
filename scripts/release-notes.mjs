@@ -9,7 +9,6 @@ import {
   contributionSummary,
   readReleaseHistory,
   releaseInventorySchema,
-  selectedReleaseNotes,
   verifyInventoryHistory,
   verifyReleaseNotes,
 } from "./lib/release-notes.mjs";
@@ -119,7 +118,11 @@ async function main() {
   const body = values["pr-body"]
     ? await readFile(values["pr-body"], "utf8")
     : undefined;
-  const report = verifyReleaseNotes(inventory, notes, body);
+  const { notes: rendered, report } = verifyReleaseNotes(
+    inventory,
+    notes,
+    body,
+  );
   if (command === "check") {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return;
@@ -128,7 +131,6 @@ async function main() {
     throw new Error(
       "render requires --output (an existing file is never overwritten)",
     );
-  const rendered = selectedReleaseNotes(notes, inventory.version);
   await writeFile(values.output, `${rendered}\n`, { flag: "wx" });
 }
 

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { access } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 
@@ -76,8 +75,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { createWebTextArtifact } from "../domain/webContentArtifact.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
+import { webBundleWorkerScript as makeScript } from "../../tests/fixtures/webBundleAnalysis.js";
 import {
   AnalysisOutputError,
   AnalysisCancelledError,
@@ -91,26 +89,6 @@ import {
 import { OwnedWorkerRuntime } from "../process/OwnedWorkerRuntime.js";
 import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
-
-const makeScript = (text: string): IncludedScript => ({
-  script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
-  frame_id: "frame-1",
-  url: "https://app.example.test/app.js",
-  origin: "https://app.example.test",
-  cdp_hash: null,
-  length: Buffer.byteLength(text),
-  is_module: false,
-  language: "JavaScript",
-  source_map_url: null,
-  resource_reconciliation: {
-    status: "unmatched",
-    reason: "no_exact_sanitized_url",
-  },
-  source: {
-    included: true,
-    artifact: createWebTextArtifact(text, "application/javascript"),
-  },
-});
 
 const ownedSourceLauncher = (
   failCleanupOnce = false,

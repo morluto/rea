@@ -4,6 +4,10 @@ import type { CoverageStatus } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 import { managedFieldConstantSchema } from "./managedFieldConstant.js";
+import {
+  unresolvedDefinitionsSchema,
+  validateUnresolvedDefinitions,
+} from "./managedUnresolvedDefinitions.js";
 
 /** Build-local ECMA-335 metadata token emitted as an eight-digit lowercase hex value. */
 export const managedMetadataTokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
@@ -630,6 +634,11 @@ export const managedMemberInspectionSchema = z
       .describe(
         "Examined zero-based MethodDef row interval before declaring-type selection; null means the row scope was not recorded. Row coordinates are build-local and cannot prove cross-build member absence for a page.",
       ),
+    unresolved_definitions: unresolvedDefinitionsSchema
+      .exactOptional()
+      .describe(
+        "Checked build-local TypeDef and MethodDef rows whose names could not be established. Omitted when the inspection did not record this projection.",
+      ),
     coverage: z.object({
       state: managedInspectionStateSchema,
       issues: z.array(managedParseIssueSchema),
@@ -637,6 +646,7 @@ export const managedMemberInspectionSchema = z
     limitations: z.array(z.string()),
   })
   .superRefine((result, context) => {
+    validateUnresolvedDefinitions(result, context);
     if (result.signature_resolution !== null) return;
     // Null resolution means member decoding exceeded capacity, so no member was
     // examined; a member beside it would carry an unattested signature digest.

@@ -1,12 +1,5 @@
-import {
-  chmod,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
@@ -43,10 +36,14 @@ const fixture = async (bytes = Buffer.from('import "./dep.js";')) => {
   const script = result.scripts[0];
   if (script?.content.state !== "exported")
     throw new Error("fixture needs source");
+  const { manifest: manifestFile, ...manifest } = result;
   return {
     root,
-    result,
-    manifestPath: result.manifest.path,
+    manifest,
+    manifestFile,
+    script,
+    content: script.content,
+    manifestPath: manifestFile.path,
     sourcePath: join(
       result.output_directory,
       "files",
@@ -56,118 +53,108 @@ const fixture = async (bytes = Buffer.from('import "./dep.js";')) => {
 };
 
 describe("selected captured module artifact boundary", () => {
-  it("reports selected unavailable source bytes as a capability limitation", async () => {
-    const f = await fixture();
-    const parsed: unknown = JSON.parse(await readFile(f.manifestPath, "utf8"));
-    const manifest = webScriptExportResultSchema
-      .omit({ manifest: true })
-      .parse(parsed);
-    const script = manifest.scripts[0];
-    if (script === undefined) throw new Error("fixture script missing");
-    script.content = {
-      state: "unavailable",
-      reason: "not-captured",
-      message: "Source bytes were not selected in this capture.",
-    };
-    await writeFile(f.manifestPath, JSON.stringify(manifest));
-    const response = await new LocalWebModuleArtifacts().load({
-      manifest_path: f.manifestPath,
-      script_index: 0,
-    });
-    if (response.ok) throw new Error("expected unavailable source");
-    expect(projectAnalysisError(response.error)).toMatchObject({
-      code: "capability_unavailable",
-      message: expect.stringContaining("not-captured"),
-    });
-  });
-  it("verifies original bytes and tolerates relocation without inventing URL paths", async () => {
-    const f = await fixture();
+  it("verifies relocated source identity before accepting the captured bytes", async () => {
+    const source = 'import "./dep.js";';
+    const f = await fixture(Buffer.from(source));
     const relocated = join(f.root, "relocated");
-    await rename(f.result.output_directory, relocated);
-    const response = await new LocalWebModuleArtifacts().load({
+    await rename(f.manifest.output_directory, relocated);
+    const sourcePath = join(relocated, "files", f.content.relative_path);
+    const input = {
       manifest_path: join(relocated, "manifest.json"),
       script_index: 0,
+    };
+    const artifacts = new LocalWebModuleArtifacts();
+    onTestFinished(() => artifacts.close());
+    const identity = (text: string) => ({
+      path: sourcePath,
+      sha256: createHash("sha256").update(text).digest("hex"),
+      bytes: Buffer.byteLength(text),
     });
+    const response = await artifacts.load(input);
     if (!response.ok) throw response.error;
-    expect(response.value.source).toBe('import "./dep.js";');
-    expect(response.value.sourceFile.path.startsWith(relocated)).toBe(true);
-    expect(response.value.manifest.output_directory).toBe(
-      f.result.output_directory,
-    );
-  });
-  it("reports actual and expected identities after source tampering", async () => {
-    const f = await fixture();
-    await writeFile(f.sourcePath, "changed");
-    const response = await new LocalWebModuleArtifacts().load({
-      manifest_path: f.manifestPath,
-      script_index: 0,
+    expect(response.value).toMatchObject({
+      source,
+      sourceFile: identity(source),
+      manifest: { output_directory: f.manifest.output_directory },
+      importMap: null,
     });
-    if (response.ok) throw new Error("expected mismatch");
-    expect(projectAnalysisError(response.error).code).toBe(
-      "artifact_integrity_mismatch",
-    );
-    expect(response.error.message).toContain("declared_sha256=");
+
+    for (const [bytes, declaredBytes] of [
+      ['import "./alt.js";', identity(source).bytes],
+      [source, identity(source).bytes + 1],
+    ] as const) {
+      f.content.bytes = declaredBytes;
+      await writeFile(input.manifest_path, JSON.stringify(f.manifest));
+      await writeFile(sourcePath, bytes);
+      const mismatch = await artifacts.load(input);
+      if (mismatch.ok) throw new Error("accepted a different source identity");
+      expect(projectAnalysisError(mismatch.error)).toMatchObject({
+        code: "artifact_integrity_mismatch",
+        details: {
+          integrity_check: "member-identity",
+          declared_sha256: identity(source).sha256,
+          calculated_sha256: identity(bytes).sha256,
+        },
+      });
+      expect(mismatch.error.partialObservation).toMatchObject({
+        files: [
+          { role: "manifest", admission: "manifest-validated" },
+          { role: "source", admission: "read", file: identity(bytes) },
+        ],
+      });
+    }
   });
 
-  it.each(["trace_web_module_imports", "trace_web_source_location"] as const)(
-    "attributes selected source UTF-8 failure to the artifact for %s",
-    async (operation) => {
-      const f = await fixture(Buffer.from([255, 254]));
-      const response = await new LocalWebScriptArtifacts(operation).load({
+  it("attributes invalid UTF-8 to the source artifact in both workflows", async () => {
+    const f = await fixture(Buffer.from([255, 254]));
+    for (const operation of [
+      "trace_web_module_imports",
+      "trace_web_source_location",
+    ] as const) {
+      const artifacts = new LocalWebScriptArtifacts(operation);
+      onTestFinished(() => artifacts.close());
+      const response = await artifacts.load({
         manifest_path: f.manifestPath,
         script_index: 0,
       });
       if (response.ok) throw new Error("expected invalid source bytes");
       expect(projectAnalysisError(response.error)).toMatchObject({
-        code: "artifact_operation_failed",
+        code: "unsupported_target",
         details: {
           operation,
-          reason: "format",
-          detail: expect.stringContaining(f.sourcePath),
+          path: expect.stringContaining(f.sourcePath),
+          failure_kind: "malformed",
         },
       });
-      expect(projectAnalysisError(response.error).details).not.toHaveProperty(
-        "issues",
-      );
-    },
-  );
-  it("rejects source symlinks even when bytes have the expected digest", async () => {
-    const f = await fixture();
-    const real = join(f.root, "original.js");
-    await rename(f.sourcePath, real);
-    await symlink(real, f.sourcePath);
-    const response = await new LocalWebModuleArtifacts().load({
-      manifest_path: f.manifestPath,
-      script_index: 0,
-    });
-    expect(response.ok).toBe(false);
+    }
   });
-  it("rejects directory symlinks and traversal in selected manifest paths", async () => {
+  it("rejects source links and manifest traversal across containment boundaries", async () => {
     const f = await fixture();
+    const artifacts = new LocalWebModuleArtifacts();
+    onTestFinished(() => artifacts.close());
+    const input = { manifest_path: f.manifestPath, script_index: 0 };
     const original = dirname(f.sourcePath);
-    const moved = join(f.root, "moved");
-    await rename(original, moved);
-    await symlink(moved, original, "dir");
-    const response = await new LocalWebModuleArtifacts().load({
-      manifest_path: f.manifestPath,
-      script_index: 0,
-    });
-    expect(response.ok).toBe(false);
-    const manifest: unknown = JSON.parse(
-      await readFile(f.manifestPath, "utf8"),
-    );
-    const result = webScriptExportResultSchema
-      .omit({ manifest: true })
-      .parse(manifest);
-    const selected = result.scripts[0];
-    if (selected?.content.state !== "exported")
-      throw new Error("fixture source missing");
-    selected.content.relative_path = "../capture.json";
-    await writeFile(f.manifestPath, JSON.stringify(result));
-    const escaped = await new LocalWebModuleArtifacts().load({
-      manifest_path: f.manifestPath,
-      script_index: 0,
-    });
+    const exportRoot = f.manifest.output_directory;
+    const links = [
+      [f.sourcePath, join(f.root, "outside.js"), "file"],
+      [f.sourcePath, join(exportRoot, "original.js"), "file"],
+      [original, join(exportRoot, "original-directory"), "dir"],
+    ] as const;
+    for (const [path, target, type] of links) {
+      await rename(path, target);
+      await symlink(target, path, type);
+      const response = await artifacts.load(input);
+      if (response.ok) throw new Error(`accepted a source ${type} symlink`);
+      expect(response.error).toMatchObject({
+        _tag: "ArtifactOperationError",
+        reason: "path",
+      });
+      await rm(path);
+      await rename(target, path);
+    }
+    f.content.relative_path = "../capture.json";
+    await writeFile(f.manifestPath, JSON.stringify(f.manifest));
+    const escaped = await artifacts.load(input);
     if (escaped.ok) throw new Error("expected malformed source path");
     expect(projectAnalysisError(escaped.error)).toMatchObject({
       code: "artifact_operation_failed",
@@ -178,37 +165,56 @@ describe("selected captured module artifact boundary", () => {
       },
     });
   });
-  it("reads only an explicit local map and rejects non-object JSON", async () => {
-    const f = await fixture();
-    const map = join(f.root, "map.json");
-    await writeFile(map, '{"imports":{"blocked":null}}');
-    const input = {
-      manifest_path: f.manifestPath,
-      script_index: 0,
-      import_map: { path: map, base_url: "https://map.test/base/" },
-    };
-    const response = await new LocalWebModuleArtifacts().load(input);
-    if (!response.ok) throw response.error;
-    expect(response.value.importMap?.value).toEqual({
-      imports: { blocked: null },
-    });
-    await writeFile(map, "[]");
-    expect((await new LocalWebModuleArtifacts().load(input)).ok).toBe(false);
-  });
 });
 
 describe("caller-selected web module files", () => {
-  const selectionIssue = (field: readonly string[], message: string) => ({
-    code: "invalid_request",
-    details: {
-      issues: [
+  it("keeps completed source reads when the selected import map is missing or malformed", async () => {
+    const f = await fixture();
+    const artifacts = new LocalWebModuleArtifacts();
+    onTestFinished(() => artifacts.close());
+    const path = join(f.root, "map.json");
+    const baseUrl = "https://map.test/base/";
+    const input = {
+      manifest_path: f.manifestPath,
+      script_index: 0,
+      import_map: { path, base_url: baseUrl },
+    };
+    const selected = { imports: { blocked: null } };
+    for (const [contents, reason] of [
+      [null, "invalid_value"],
+      ["[]", "invalid_format"],
+    ] as const) {
+      if (contents !== null) await writeFile(path, contents);
+      const response = await artifacts.load(input);
+      if (response.ok) throw new Error(`admitted map with ${reason}`);
+      expect(projectAnalysisError(response.error)).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["import_map", "path"], reason }] },
+      });
+      const files = [
         {
-          path: field,
-          reason: "invalid_value",
-          message: expect.stringContaining(message),
+          role: "manifest",
+          admission: "manifest-validated",
+          file: f.manifestFile,
         },
-      ],
-    },
+        {
+          role: "source",
+          admission: "source-verified",
+          file: { path: f.sourcePath },
+        },
+      ];
+      if (contents !== null)
+        files.push({ role: "import-map", admission: "read", file: { path } });
+      expect(response.error.partialObservation).toMatchObject({ files });
+    }
+
+    await writeFile(path, JSON.stringify(selected));
+    const response = await artifacts.load(input);
+    if (!response.ok) throw response.error;
+    expect(response.value.importMap).toMatchObject({
+      baseUrl,
+      value: selected,
+    });
   });
 
   it("reports a missing or non-file manifest selection as invalid input", async () => {
@@ -216,19 +222,28 @@ describe("caller-selected web module files", () => {
     const missing = join(root, "missing.json");
     const directory = join(root, "directory");
     await mkdir(directory);
-    for (const [manifest_path, message] of [
-      [missing, `(ENOENT): ${missing}`],
-      [join(missing, "manifest.json"), "(ENOENT)"],
-      [directory, `Expected a regular file without a symlink: ${directory}`],
-    ] as const) {
+    for (const manifest_path of [
+      missing,
+      join(missing, "manifest.json"),
+      directory,
+    ]) {
       const response = await new LocalWebModuleArtifacts().load({
         manifest_path,
         script_index: 0,
       });
       if (response.ok) throw new Error("expected selection failure");
-      expect(projectAnalysisError(response.error)).toMatchObject(
-        selectionIssue(["manifest_path"], message),
-      );
+      expect(projectAnalysisError(response.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["manifest_path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(manifest_path),
+            },
+          ],
+        },
+      });
     }
   });
 
@@ -249,20 +264,6 @@ describe("caller-selected web module files", () => {
       });
     },
   );
-
-  it("reports a missing import map selection as invalid input", async () => {
-    const { root, manifestPath } = await fixture();
-    const map = join(root, "missing-import-map.json");
-    const response = await new LocalWebModuleArtifacts().load({
-      manifest_path: manifestPath,
-      script_index: 0,
-      import_map: { path: map, base_url: "https://app.test/" },
-    });
-    if (response.ok) throw new Error("expected missing import map");
-    expect(projectAnalysisError(response.error)).toMatchObject(
-      selectionIssue(["import_map", "path"], `(ENOENT): ${map}`),
-    );
-  });
 
   it("keeps a missing manifest-derived source as an artifact fault", async () => {
     const { manifestPath, sourcePath } = await fixture();
@@ -287,55 +288,58 @@ describe("caller-selected web module files", () => {
 });
 
 describe("selected captured script index", () => {
-  it("reports an index past the manifest's scripts as an out-of-range selection", async () => {
+  it("distinguishes an out-of-range index, unavailable source, empty and malformed manifests", async () => {
     const f = await fixture();
-    const response = await new LocalWebModuleArtifacts().load({
-      manifest_path: f.manifestPath,
-      script_index: 5,
-    });
-    if (response.ok) throw new Error("expected an out-of-range index");
-    expect(projectAnalysisError(response.error)).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["script_index"],
-            reason: "out_of_range",
-            minimum: 0,
-            maximum: 0,
-          },
-        ],
-      },
-    });
-  });
-
-  it("distinguishes an empty valid manifest from a malformed manifest", async () => {
-    const f = await fixture();
-    const parsed: unknown = JSON.parse(await readFile(f.manifestPath, "utf8"));
-    const manifest = webScriptExportResultSchema
-      .omit({ manifest: true })
-      .parse(parsed);
-    manifest.scripts = [];
-    await writeFile(f.manifestPath, JSON.stringify(manifest));
-
+    f.script.content = {
+      state: "unavailable",
+      reason: "not-captured",
+      message: "Source bytes were not selected in this capture.",
+    };
     const artifacts = new LocalWebModuleArtifacts();
+    onTestFinished(() => artifacts.close());
     const input = { manifest_path: f.manifestPath, script_index: 0 };
-    const empty = await artifacts.load(input);
-    if (empty.ok) throw new Error("expected an empty-manifest selection fault");
-    expect(projectAnalysisError(empty.error)).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [{ path: ["script_index"], reason: "invalid_value" }],
-      },
+    const singleScript = JSON.stringify(f.manifest);
+    await writeFile(f.manifestPath, singleScript);
+    const unavailable = await artifacts.load(input);
+    if (unavailable.ok) throw new Error("expected unavailable source");
+    expect(projectAnalysisError(unavailable.error)).toMatchObject({
+      code: "capability_unavailable",
+      details: { reason: "selected_source_unavailable" },
     });
 
+    for (const [text, index, field, issue] of [
+      [
+        singleScript,
+        5,
+        "script_index",
+        { reason: "out_of_range", minimum: 0, maximum: 0 },
+      ],
+      [
+        JSON.stringify({ ...f.manifest, scripts: [] }),
+        0,
+        "script_index",
+        { reason: "invalid_value" },
+      ],
+    ] as const) {
+      await writeFile(f.manifestPath, text);
+      const response = await artifacts.load({ ...input, script_index: index });
+      if (response.ok) throw new Error(`unexpected ${issue.reason} acceptance`);
+      expect(projectAnalysisError(response.error)).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: [field], ...issue }] },
+      });
+    }
+    // Malformed manifest bytes are the selected file's fault, not the request's.
     await writeFile(f.manifestPath, "{");
     const malformed = await artifacts.load(input);
-    if (malformed.ok) throw new Error("expected a malformed manifest fault");
+    if (malformed.ok)
+      throw new Error("unexpected malformed manifest acceptance");
     expect(projectAnalysisError(malformed.error)).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
+      retryable: false,
       details: {
-        issues: [{ path: ["manifest_path"], reason: "invalid_format" }],
+        path: f.manifestPath,
+        failure_kind: "malformed",
       },
     });
   });

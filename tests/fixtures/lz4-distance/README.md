@@ -41,4 +41,5 @@ At audited base `a8527d43b`, removing the distance high-byte shift in
 passing. This new CLI case fails: the decoder still produces 1,031 bytes, but
 their hash becomes
 `59b9ff4f061bda8b8a290713edc203b75463ed6d38a4b1b8a7a778a5fde33c0f`.
-The production mutation is not part of the contribution.
+The production mutation is not part of the contribution. The decoder now lives
+at `src/compression/Lz4Block.ts`.

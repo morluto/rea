@@ -25,6 +25,7 @@ import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
 let upstream: typeof import("release-please");
+let githubApi: typeof import("release-please/build/src/github-api.js");
 let githubRuntime: typeof import("release-please/build/src/github.js");
 const baseline = "a".repeat(40);
 const latest = "b".repeat(40);
@@ -46,8 +47,21 @@ it("reports an HTTP status when a release proposal error has no message", () => 
   expect(describeReleaseProposalError(new Error("broken"))).toBe("broken");
 });
 
+it("reports a gateway error without logging the HTML response page", () => {
+  const failure = Object.assign(
+    new Error("<!DOCTYPE html>\n<html><title>Unicorn!</title></html>"),
+    {
+      status: 504,
+    },
+  );
+  expect(describeReleaseProposalError(failure)).toBe(
+    "GitHub returned an HTML error response (HTTP 504)",
+  );
+});
+
 beforeAll(async () => {
   upstream = await import("release-please");
+  githubApi = require("release-please/build/src/github-api.js");
   githubRuntime = require("release-please/build/src/github.js");
 });
 
@@ -71,9 +85,9 @@ it("preserves the existing overflow notes if their replacement fails", async () 
     createNewBranch,
     forkBranch,
     octokit: { repos: { getContent, createOrUpdateFileContents: write } },
-  } as unknown as Awaited<ReturnType<typeof upstream.GitHub.create>>;
+  } as unknown as InstanceType<typeof githubApi.GitHubApi>;
   const update = () =>
-    upstream.GitHub.prototype.createFileOnNewBranch.call(
+    githubApi.GitHubApi.prototype.createFileOnNewBranch.call(
       github,
       "release-notes.md",
       "Notes: café",
@@ -115,9 +129,9 @@ it("creates overflow notes on a new branch without requiring an existing file", 
         createOrUpdateFileContents: write,
       },
     },
-  } as unknown as Awaited<ReturnType<typeof upstream.GitHub.create>>;
+  } as unknown as InstanceType<typeof githubApi.GitHubApi>;
   await expect(
-    upstream.GitHub.prototype.createFileOnNewBranch.call(
+    githubApi.GitHubApi.prototype.createFileOnNewBranch.call(
       github,
       "release-notes.md",
       "Notes",
@@ -303,6 +317,8 @@ type HistoryFailure = {
   cursor?: string;
   errors: { message: string; type?: string }[];
   status?: number;
+  html?: string;
+  disconnect?: boolean;
 };
 const internalError = {
   message:
@@ -482,6 +498,15 @@ async function releaseFixture({
         const failure = failures[0];
         if (failure && failure.cursor === query.variables.cursor) {
           failures.shift();
+          if (failure.disconnect)
+            throw new TypeError("fetch failed", {
+              cause: new Error("other side closed"),
+            });
+          if (failure.html !== undefined)
+            return new Response(failure.html, {
+              status: failure.status ?? 504,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
           return respond(
             {
               ...historyPage(commits, query.variables, pullRequest),
@@ -956,6 +981,44 @@ it("uses a tag-only manifest release and excludes older version overrides", asyn
   ).toBe(true);
 });
 
+it("recuts the abandoned patch from the last published manifest version", async () => {
+  const fixture = await releaseFixture({
+    releasedVersions: { ".": "6.10.0" },
+    releases: [releaseRecord("6.10.0")],
+    commits: [
+      {
+        sha: latest,
+        message:
+          "fix(release): restore the previous manifest\n\nRelease-As: 6.10.1",
+        files: [".release-please-manifest.json"],
+      },
+      {
+        sha: "b".repeat(40),
+        message: "fix: correct candidate regression",
+        files: ["src/change.ts"],
+      },
+      {
+        sha: "c".repeat(40),
+        message: "chore(main): release rea-agents 6.10.1",
+        files: [".release-please-manifest.json"],
+      },
+      {
+        sha: baseline,
+        message: "chore(main): release rea-agents 6.10.0",
+        files: [".release-please-manifest.json"],
+      },
+    ],
+  });
+  const [candidate] = await fixture.manifest.buildPullRequests();
+  expect(candidate?.body.toString()).toContain("correct candidate regression");
+  const version = candidate?.updates.find(
+    (update) => update.path === "version.txt",
+  );
+  expect(
+    version?.updater.updateContent("6.10.0 // x-release-please-version"),
+  ).toContain("6.10.1");
+});
+
 it.each(["omitted", "0.0.0"])(
   "preserves initial bootstrap with an %s manifest version",
   async (version) => {
@@ -998,9 +1061,16 @@ it.each([
     status: 200,
   },
   { name: "HTTP 502 error", error: internalError, status: 502 },
+  { name: "transport disconnect", error: internalError, disconnect: true },
+  {
+    name: "HTTP 504 HTML error",
+    error: internalError,
+    status: 504,
+    html: "<!DOCTYPE html><html><title>Unicorn!</title></html>",
+  },
 ])(
   "retries the same history cursor after $name and discards partial data",
-  async ({ error, status }) => {
+  async ({ error, status, html, disconnect }) => {
     const sleep = vi
       .spyOn(githubRuntime, "sleepInMs")
       .mockResolvedValue(undefined);
@@ -1012,7 +1082,15 @@ it.each([
     commits.push({ sha: baseline, message: "chore: release 6.7.0", files: [] });
     const fixture = await releaseFixture({
       commits,
-      historyFailures: [{ cursor: "10", errors: [error], status }],
+      historyFailures: [
+        {
+          cursor: "10",
+          errors: [error],
+          ...(status === undefined ? {} : { status }),
+          ...(disconnect === undefined ? {} : { disconnect }),
+          ...(html === undefined ? {} : { html }),
+        },
+      ],
     });
     const candidates = await fixture.manifest.buildPullRequests();
     const body = candidates[0]?.body.toString();
@@ -1022,7 +1100,7 @@ it.each([
       "10",
       "10",
     ]);
-    expect(fixture.pages[1]).toEqual(fixture.pages[2]);
+    expect(fixture.pages[2]).toEqual({ ...fixture.pages[1], num: 5 });
     expect(fixture.historyQueries[1]).toBe(fixture.historyQueries[2]);
     expect(sleep.mock.calls).toEqual([[1000]]);
   },
@@ -1083,6 +1161,21 @@ it.each([
       (request) => request.method === "GET" || request.pathname === "/graphql",
     ),
   ).toBe(true);
+});
+
+it("does not mistake an HTTP 500 response for a history transport disconnect", async () => {
+  const sleep = vi
+    .spyOn(githubRuntime, "sleepInMs")
+    .mockResolvedValue(undefined);
+  const fixture = await releaseFixture({
+    historyFailures: [{ errors: [], html: "other side closed", status: 500 }],
+  });
+  await expect(fixture.manifest.buildPullRequests()).rejects.toMatchObject({
+    status: 500,
+    message: "other side closed",
+  });
+  expect(fixture.pages).toHaveLength(1);
+  expect(sleep).not.toHaveBeenCalled();
 });
 
 it("exhausts bounded history retries without creating a partial proposal", async () => {
@@ -1165,9 +1258,9 @@ const releasePatchFixture = async (outsideProject = false) => {
     require.resolve("release-please/package.json"),
   );
   const source = fileURLToPath(new URL("../../../", import.meta.url));
-  const patchPath = join(project, "patches/release-please+17.3.0.patch");
+  const patchPath = join(project, "patches/release-please+17.11.2.patch");
   const patch = await readFile(
-    join(source, "patches/release-please+17.3.0.patch"),
+    join(source, "patches/release-please+17.11.2.patch"),
     "utf8",
   );
   const members = [...patch.matchAll(/^\+\+\+ b\/(.+)$/gmu)].map((match) => {
@@ -1187,7 +1280,7 @@ const releasePatchFixture = async (outsideProject = false) => {
     project,
     source,
   );
-  for (const dependency of ["semver", "zod"])
+  for (const dependency of ["markdown-it", "semver", "zod"])
     await symlink(
       dirname(require.resolve(`${dependency}/package.json`)),
       join(dependencies, dependency),
@@ -1250,7 +1343,7 @@ it("rejects a different dependency version before patching", async () => {
     JSON.stringify({ version: "17.4.0" }),
   );
   await expect(applyReleasePleasePatch(fixture)).rejects.toThrow(
-    "requires release-please 17.3.0",
+    "requires release-please 17.11.2",
   );
 });
 

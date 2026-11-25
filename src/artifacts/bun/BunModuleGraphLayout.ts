@@ -5,7 +5,7 @@ import {
   declaredFileRange,
 } from "../../domain/binaryContainer.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   observePeCoffFrame,
   PE_COFF_FRAME_BYTES,
@@ -17,7 +17,10 @@ import {
 } from "../../domain/peSectionHeader.js";
 import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
 import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   readFatContainerHeader,
@@ -31,10 +34,12 @@ import {
 } from "../../domain/apple/machoLoadCommands.js";
 import {
   machoSectionBacking,
+  machoSectionHeaderSize,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
 import {
   admitMachoSegmentCommand,
+  machoSegmentSectionTableFits,
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
 import type { FileHandle } from "node:fs/promises";
@@ -45,6 +50,8 @@ import {
 } from "../../domain/artifactReaderLimits.js";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   abortIfNeeded,
   artifactReaderLimitFailure,
 } from "../../resources/index.js";
@@ -62,8 +69,6 @@ export const BUN_RECORD_BYTES_1_3_3 = 36;
 export const BUN_RECORD_BYTES_1_3_9 = 52;
 
 const MAX_PE_SECTIONS = 96;
-const SECTION_64_BYTES = 80;
-const SECTION_32_BYTES = 68;
 
 export const BUN_LAYOUT_REVISIONS = ["bun-1.3.3", "bun-1.3.9"] as const;
 export type BunLayoutRevision = (typeof BUN_LAYOUT_REVISIONS)[number];
@@ -363,8 +368,14 @@ export const bunModuleCountLimit = (
   );
 
 export const bunFormatFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
+  malformedArtifact(
+    "bun-standalone",
+    `Bun standalone module graph is malformed: ${detail}`,
+  );
+
+const bunTruncatedFailure = (detail: string): ArtifactReaderFailure =>
+  truncatedArtifact(
+    "bun-standalone",
     `Bun standalone module graph is malformed: ${detail}`,
   );
 
@@ -379,10 +390,10 @@ const evaluateSection = async (
   const { handle, signal, limits } = source;
   if (claim.truncated)
     return presentFailure(
-      bunFormatFailure("section extends past the end of the file"),
+      bunTruncatedFailure("section extends past the end of the file"),
     );
   if (claim.available < BUN_LENGTH_PREFIX_BYTES)
-    return presentFailure(bunFormatFailure("trailer is truncated"));
+    return presentFailure(bunTruncatedFailure("trailer is truncated"));
   const prefix = new BinaryReader(
     await readExact(handle, claim.fileOffset, BUN_LENGTH_PREFIX_BYTES, signal),
     true,
@@ -415,7 +426,7 @@ const evaluateSection = async (
     payloadLength < BigInt(BUN_GRAPH_SUFFIX_BYTES) ||
     payloadLength > BigInt(claim.available - prefixBytes)
   )
-    return presentFailure(bunFormatFailure("trailer is truncated"));
+    return presentFailure(bunTruncatedFailure("trailer is truncated"));
   const length = Number(payloadLength);
   const payloadOffset = claim.fileOffset + prefixBytes;
   // The legacy width is selected only after its suffix has been validated.
@@ -493,7 +504,7 @@ const evaluateAppendedTrailer = async (
   )
     return { status: "absent" };
   if (payloadStart < 0n)
-    return presentFailure(bunFormatFailure("trailer is truncated"));
+    return presentFailure(bunTruncatedFailure("trailer is truncated"));
   if (payloadLength > BigInt(limits.payload_bytes))
     return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
   return {
@@ -515,7 +526,7 @@ const readBunSuffix = (
   payloadLength: number,
 ): Result<BinaryReader, ArtifactReaderFailure> => {
   if (suffix.length < BUN_GRAPH_SUFFIX_BYTES)
-    return err(bunFormatFailure("trailer is truncated"));
+    return err(bunTruncatedFailure("trailer is truncated"));
   if (!suffix.subarray(BUN_OFFSETS_BYTES).equals(BUN_TRAILER))
     return err(bunFormatFailure("trailer does not match the Bun sentinel"));
   const offsets = new BinaryReader(
@@ -644,8 +655,8 @@ const segmentClaims = (
   if (!parsedSegment.ok) return [];
   const segment = parsedSegment.value;
   const { headerSize, sectionCount } = segment;
-  const sectionBytes = wide ? SECTION_64_BYTES : SECTION_32_BYTES;
-  if (headerSize + sectionCount * sectionBytes > command.length) return [];
+  const sectionBytes = machoSectionHeaderSize(wide);
+  if (!machoSegmentSectionTableFits(segment, command.length, wide)) return [];
   const admission = admitMachoSegmentCommand(
     segment,
     command.length,
@@ -727,7 +738,7 @@ const peClaims = async (
 ): Promise<readonly SectionWindow[]> => {
   const { handle, fileSize, signal } = source;
   const dos = await tryRead(handle, 0, 64, fileSize, signal);
-  if (dos === null || dos[0] !== 0x4d || dos[1] !== 0x5a) return [];
+  if (dos === null || !hasDosMzMagic(dos)) return [];
   const probe = observePeCoffFrame(
     dos,
     fileSize,
@@ -808,7 +819,7 @@ const elfClaims = async (
   const declarations = readElfRawTableDeclarations(header, format.value);
   if (!declarations.ok) return [];
   const { offset, width, count, namesIndex } = declarations.value.sections;
-  const sectionWidth = elfClass === 64 ? 64 : 40;
+  const sectionWidth = elfSectionHeaderWidth(elfClass);
   // Unsupported extended numbering does not establish a Bun graph.
   if (
     (width !== 0 && width !== sectionWidth) ||
@@ -966,7 +977,14 @@ const readExact = async (
       position + offset,
     );
     abortIfNeeded(signal);
-    if (read.bytesRead === 0) throw bunFormatFailure("trailer is truncated");
+    // Every caller checked the range against the measured file size, so a
+    // short read means the file changed underneath the read.
+    if (read.bytesRead === 0)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Bun standalone carrier ended before its measured extent",
+        { integrityCheck: "read-coverage" },
+      );
     offset += read.bytesRead;
   }
   return bytes;

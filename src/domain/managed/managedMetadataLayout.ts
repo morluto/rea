@@ -1,5 +1,6 @@
 import { isUtf8 } from "node:buffer";
 
+import { BinaryReader } from "../binaryContainer.js";
 import type { ManagedParseIssue } from "./managedArtifact.js";
 
 import {
@@ -222,14 +223,15 @@ const readMetadataStreams = (
   rootOffset: number,
   budget: ManagedDecodeBudget,
 ): ParsedStreams => {
-  if (bytes.readUInt32LE(0) !== 0x424a_5342)
+  const reader = new BinaryReader(bytes, true, "managed");
+  if (reader.u32(0) !== 0x424a_5342)
     throw managedFailure(
       "invalid-metadata-root",
       "metadata.signature",
       "CLI metadata signature is not BSJB",
       rootOffset,
     );
-  const versionLength = bytes.readUInt32LE(12);
+  const versionLength = reader.u32(12);
   requireRange(bytes, rootOffset, 16, versionLength, "metadata.version");
   const versionBytes = bytes.subarray(16, 16 + versionLength);
   const zero = versionBytes.indexOf(0);
@@ -246,7 +248,7 @@ const readMetadataStreams = (
   const version = versionText.toString("utf8");
   let cursor = align4(16 + versionLength);
   requireRange(bytes, rootOffset, cursor, 4, "metadata.stream-count");
-  const streamCount = bytes.readUInt16LE(cursor + 2);
+  const streamCount = reader.u16(cursor + 2);
   if (streamCount === 0 || streamCount > 64)
     throw managedFailure(
       "invalid-stream",
@@ -266,8 +268,8 @@ const readMetadataStreams = (
   for (let index = 0; index < streamCount; index += 1) {
     requireRange(bytes, rootOffset, cursor, 8, "metadata.stream-header");
     const headerOffset = rootOffset + cursor;
-    const relativeOffset = bytes.readUInt32LE(cursor);
-    const streamSize = bytes.readUInt32LE(cursor + 4);
+    const relativeOffset = reader.u32(cursor);
+    const streamSize = reader.u32(cursor + 4);
     const named = readStreamName(bytes, rootOffset, cursor + 8);
     const trackedHeap =
       named.name === "#GUID" ||
@@ -415,7 +417,7 @@ const readTablesHeader = (
     guid: (heapSizes & 0x02) === 0 ? (2 as const) : (4 as const),
     blob: (heapSizes & 0x04) === 0 ? (2 as const) : (4 as const),
   };
-  const valid = tableBytes.readBigUInt64LE(8);
+  const valid = new BinaryReader(tableBytes, true, "managed").word(8, 64);
   if ((valid & ~SUPPORTED_TABLE_MASK) !== 0n)
     throw managedFailure(
       "invalid-tables",
@@ -431,6 +433,7 @@ const readRowCounts = (
   tablesOffset: number,
   valid: bigint,
 ): readonly number[] => {
+  const reader = new BinaryReader(tableBytes, true, "managed");
   const rowCounts = Array<number>(METADATA_TABLE_NAMES.length).fill(0);
   let tableCursor = 24;
   for (let index = 0; index < METADATA_TABLE_NAMES.length; index += 1) {
@@ -442,7 +445,7 @@ const readRowCounts = (
       4,
       "metadata.table-row-count",
     );
-    const count = tableBytes.readUInt32LE(tableCursor);
+    const count = reader.u32(tableCursor);
     rowCounts[index] = count;
     tableCursor += 4;
   }

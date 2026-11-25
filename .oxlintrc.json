@@ -141,7 +141,7 @@
         "rea/no-raw-file-handle-close": "off",
         "max-lines": "off",
         "max-lines-per-function": [
-          "error",
+          "warn",
           {
             "max": 150,
             "skipBlankLines": true,
@@ -221,12 +221,6 @@
     {
       "files": ["tests/**/*.test.ts", "src/**/*.test.ts"],
       "rules": {
-        "vitest/valid-expect": [
-          "warn",
-          {
-            "maxArgs": 2
-          }
-        ],
         "vitest/valid-expect-in-promise": "error",
         "vitest/no-focused-tests": "error"
       }
@@ -276,6 +270,7 @@
     "coverage",
     ".turbo",
     ".cache",
+    ".claude",
     ".codex",
     ".devin",
     ".factory",

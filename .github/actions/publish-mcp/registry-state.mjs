@@ -3,6 +3,24 @@ import { appendFile, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+function readRegistryPage(page) {
+  assert(Array.isArray(page?.servers), "Registry response omitted servers");
+  const { servers, metadata } = page;
+  assert(
+    metadata && typeof metadata === "object" && !Array.isArray(metadata),
+    "Registry response omitted or malformed metadata",
+  );
+  if (metadata.count !== undefined)
+    assert.equal(
+      metadata.count,
+      servers.length,
+      "Registry page count does not match its server records",
+    );
+  const cursor = metadata.nextCursor ?? "";
+  assert(typeof cursor === "string", "Registry returned an invalid cursor");
+  return { servers, nextCursor: cursor || undefined };
+}
+
 /** Exact-version routes currently return false 404s; enumerate the filtered listing. */
 export async function registryPublicationState(server, request = fetch) {
   assert.equal(typeof server?.name, "string");
@@ -26,13 +44,8 @@ export async function registryPublicationState(server, request = fetch) {
     });
     if (!response.ok)
       throw new Error(`Registry lookup failed: HTTP ${response.status}`);
-    const page = await response.json();
-    assert(Array.isArray(page?.servers), "Registry response omitted servers");
-    assert(
-      page.metadata && typeof page.metadata === "object",
-      "Registry response omitted metadata",
-    );
-    for (const entry of page.servers) {
+    const { servers, nextCursor } = readRegistryPage(await response.json());
+    for (const entry of servers) {
       assert(
         typeof entry?.server?.name === "string" &&
           typeof entry.server.version === "string",
@@ -44,12 +57,9 @@ export async function registryPublicationState(server, request = fetch) {
       )
         matches.push(entry);
     }
-    cursor = page.metadata.nextCursor;
+    cursor = nextCursor;
     if (cursor !== undefined) {
-      assert(
-        typeof cursor === "string" && cursor.length > 0 && !cursors.has(cursor),
-        "Registry returned a non-advancing cursor",
-      );
+      assert(!cursors.has(cursor), "Registry returned a non-advancing cursor");
       cursors.add(cursor);
     }
   } while (cursor !== undefined);

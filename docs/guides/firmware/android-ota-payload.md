@@ -74,8 +74,9 @@ present. Any other operation type leaves the occurrence inventoried with
 Delta payloads therefore inventory completely and fail a full extract.
 
 A truncated file whose header and manifest still fit keeps the partition
-table and records that the blob was truncated. Bytes past end of file are
-not invented as zeros.
+table and records that the blob was truncated. An incomplete signature is
+skipped, with its declared size retained and its count left unknown. Manifest
+and signature size limits apply only when those regions fit in the file.
 
 ## Bounded work
 

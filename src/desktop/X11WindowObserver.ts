@@ -1,6 +1,6 @@
 import { ArtifactReaderFailure } from "../resources/index.js";
 import {
-  X11_WINDOW_PROPERTY_NAMES,
+  X11_WINDOW_PROPERTY_ARGUMENTS,
   parseX11ClientList,
   parseX11WindowProperties,
   type X11WindowProperties,
@@ -100,7 +100,7 @@ export class X11WindowObserver implements DesktopWindowObserver {
         continue;
       }
       const output = await this.#xprop(
-        ["-id", id, "-notype", ...X11_WINDOW_PROPERTY_NAMES],
+        ["-id", id, ...X11_WINDOW_PROPERTY_ARGUMENTS],
         signal,
       );
       if (output === undefined) continue;

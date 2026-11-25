@@ -2,6 +2,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
   streamChunkToBuffer,
+  yieldArtifactRead,
   ZipArtifactReader,
 } from "../resources/index.js";
 import type {
@@ -11,6 +12,7 @@ import type {
   AndroidJniLibraryCheckpoint,
 } from "../domain/android/androidJniBindings.js";
 import { compileAndroidJniLibrarySelection } from "../domain/android/androidJniBindings.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { inspectAndroidJniLibrary } from "../domain/android/androidJniLibrary.js";
@@ -18,7 +20,6 @@ import {
   JadxInterruption,
   throwIfJadxInterrupted,
 } from "./JadxInterruption.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
@@ -43,6 +44,7 @@ export interface AndroidJniLibraries {
 const jniReadFailure = (
   cause: unknown,
 ): NonNullable<AndroidJniLibraryObservation["failure"]> => {
+  if (cause instanceof AnalysisError) throw cause;
   const message = errorMessage(cause);
   if (!(cause instanceof ArtifactReaderFailure)) return { kind: "io", message };
   // The library report has only a message, so a reader-named ceiling's
@@ -209,6 +211,7 @@ export const readAndroidJniLibraries = async (input: {
               };
               const parsed = await inspectAndroidJniLibrary(bytes, {
                 signal: input.signal,
+                pause: () => yieldArtifactRead(input.signal),
               });
               throwIfJadxInterrupted(input.signal);
               observation = {

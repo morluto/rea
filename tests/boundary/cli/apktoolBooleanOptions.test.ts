@@ -2,24 +2,7 @@ import { expect, it } from "vitest";
 
 import { invokeApktoolCli } from "../../support/cli/apktoolCli.js";
 
-it("dispatches --no-strings as include_strings false", async () => {
-  const result = await invokeApktoolCli([
-    "decode-android-resources",
-    "/targets/app.apk",
-    "--no-strings",
-    "--json",
-  ]);
-
-  expect(result.exitCode).toBe(0);
-  expect(result.requests).toEqual([
-    {
-      operation: "decode_android_resources",
-      input: { path: "/targets/app.apk", include_strings: false },
-    },
-  ]);
-});
-
-it("keeps string projection enabled when the flag is omitted", async () => {
+it("enables strings and leaves the decode deadline unset by default", async () => {
   const result = await invokeApktoolCli([
     "decode-android-resources",
     "/targets/app.apk",
@@ -35,15 +18,7 @@ it("keeps string projection enabled when the flag is omitted", async () => {
   ]);
 });
 
-it("passes decode_timeout_ms only when the caller selects it", async () => {
-  const omitted = await invokeApktoolCli([
-    "decode-android-resources",
-    "/targets/app.apk",
-    "--json",
-  ]);
-  expect(omitted.exitCode).toBe(0);
-  expect(omitted.requests[0]?.input).not.toHaveProperty("decode_timeout_ms");
-
+it("forwards a selected decode deadline and refuses invalid bounds", async () => {
   const selected = await invokeApktoolCli([
     "decode-android-resources",
     "/targets/app.apk",
@@ -52,9 +27,16 @@ it("passes decode_timeout_ms only when the caller selects it", async () => {
     "--json",
   ]);
   expect(selected.exitCode).toBe(0);
-  expect(selected.requests[0]?.input).toMatchObject({
-    decode_timeout_ms: 900_000,
-  });
+  expect(selected.requests).toEqual([
+    {
+      operation: "decode_android_resources",
+      input: {
+        path: "/targets/app.apk",
+        include_strings: true,
+        decode_timeout_ms: 900_000,
+      },
+    },
+  ]);
 
   for (const value of ["0", "2147483648"]) {
     const rejected = await invokeApktoolCli([

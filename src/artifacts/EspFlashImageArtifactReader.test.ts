@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -18,6 +19,7 @@ import {
   espFlashDump,
   otaData,
   otaRecord,
+  partitionEntry,
   partitionTable,
 } from "../domain/firmware/espFlash.fixture.js";
 import {
@@ -57,12 +59,6 @@ const root = (
 ) =>
   snapshot.occurrences.find(({ logical_path }) => logical_path === ".")
     ?.format_metadata;
-
-const list = async (reader: EspFlashImageArtifactReader) => {
-  const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
-};
 
 describe("ESP flash layout inventory", () => {
   it("inventories the bootloader, table and partitions with app and otadata facts", async () => {
@@ -106,7 +102,7 @@ describe("ESP flash layout inventory", () => {
         flash_address: 0x8000,
         method: "default",
         partition_count: 6,
-        md5: { status: "valid" },
+        md5: { status: "valid", entries_after_checksum: 0 },
       },
       partitions_outside_dump: [],
       otadata: { partition_index: 1 },
@@ -173,6 +169,30 @@ describe("ESP flash layout inventory", () => {
     expect(snapshot.limitations).toContainEqual(
       expect.stringMatching(/0xa000.*0x1000.*MD5.*does not record/iu),
     );
+  });
+
+  it("reports partition entries after the MD5 record as a count", async () => {
+    const [first, second, third] = TWO_OTA_PARTITIONS;
+    const prefix = partitionTable([first!]);
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeDump(
+        espFlashDump({
+          bootloader: { at: 0, bytes: BOOTLOADER },
+          table: Buffer.concat([
+            prefix.subarray(0, 64),
+            partitionEntry(second!),
+            partitionEntry(third!),
+            prefix.subarray(64),
+          ]),
+        }),
+      ),
+    );
+    expect(root(snapshot)).toMatchObject({
+      partition_table: {
+        flash_address: 0x8000,
+        md5: { status: "valid", entries_after_checksum: 2 },
+      },
+    });
   });
 });
 
@@ -377,7 +397,7 @@ describe("ESP flash layout reader identity", () => {
     const path = await writeDump(DUMP);
     const reader = new EspFlashImageArtifactReader(path);
     try {
-      const entry = (await list(reader)).find(
+      const entry = (await collectEntries(reader)).find(
         ({ path: name }) => name === "partitions/nvs.bin",
       );
       if (entry === undefined) throw new Error("Missing nvs partition");
@@ -407,7 +427,7 @@ describe("ESP flash layout reader identity", () => {
     const cut = DUMP.subarray(0, 0x2_8000);
     const reader = new EspFlashImageArtifactReader(await writeDump(cut));
     try {
-      const entry = (await list(reader)).find(
+      const entry = (await collectEntries(reader)).find(
         ({ path }) => path === "partitions/ota_1.bin",
       );
       if (entry === undefined) throw new Error("Missing entry");
@@ -788,7 +808,7 @@ describe("ESP flash layout app images of overlapping partitions", () => {
     );
     const decode = vi.spyOn(regionReads, "decodeEspFlashImage");
     try {
-      await list(reader);
+      await collectEntries(reader);
       // The bootloader, the whole image and the image cut at 0x80000.
       expect(decode).toHaveBeenCalledTimes(3);
       const apps = reader.formatMetadata()?.apps ?? [];

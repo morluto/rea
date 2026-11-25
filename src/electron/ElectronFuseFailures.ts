@@ -1,4 +1,7 @@
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "./ElectronFuseProviderIdentity.js";
 import {
   ArtifactReaderFailure,
@@ -16,7 +19,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -81,13 +83,12 @@ export const electronFuseFailure = (
   if (cause instanceof ElectronFuseResourceFailure) {
     const { name, maximum } = cause.limit;
     const fileSize = name === "maximum_input_bytes";
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       operation,
       fileSize ? "file-size" : "capacity",
-      cause.message,
-      { [name]: maximum },
+      cause,
       {
-        cause,
+        legacyMaximumKey: name,
         ...fixedAllowanceOptions(
           fileSize
             ? "the Electron fuse input allowance"

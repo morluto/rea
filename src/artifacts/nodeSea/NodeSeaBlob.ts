@@ -3,6 +3,8 @@ import { setImmediate } from "node:timers/promises";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   artifactReaderLimitFailure,
 } from "../../resources/index.js";
 import {
@@ -10,6 +12,7 @@ import {
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
+import type { NodeSeaMainCodeFormat } from "../../domain/formatMetadata/packageAndGameMetadata.js";
 import { hostRangeErrorKind } from "../../domain/parseFailure.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
@@ -69,7 +72,7 @@ export interface NodeSeaAsset {
 
 export type NodeSeaExecArgvExtension = "none" | "env" | "cli";
 
-/** Decoded Node 24 SEA blob. Ranges are relative to the start of the blob. */
+/** Decoded SEA blob. Ranges are relative to the start of the blob. */
 export interface DecodedNodeSeaBlob {
   readonly magic: typeof NODE_SEA_MAGIC;
   readonly flags: number;
@@ -79,6 +82,7 @@ export interface DecodedNodeSeaBlob {
   readonly includeAssets: boolean;
   readonly includeExecArgv: boolean;
   readonly execArgvExtension: NodeSeaExecArgvExtension;
+  readonly mainCodeFormat?: NodeSeaMainCodeFormat;
   readonly codePath: string;
   readonly mainScript: NodeSeaByteRange | null;
   readonly snapshot: NodeSeaByteRange | null;
@@ -97,14 +101,13 @@ const formatFailure = (
   message: string,
   cause?: unknown,
 ): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
-    message,
-    cause === undefined ? undefined : { cause },
-  );
+  malformedArtifact("node-sea", message, cause === undefined ? {} : { cause });
+
+const truncatedFailure = (message: string): ArtifactReaderFailure =>
+  truncatedArtifact("node-sea", message);
 
 /**
- * Decode one SEA blob the way Node 24's `SeaDeserializer` reads it.
+ * Decode either SEA layout with an exec-argv extension byte.
  * Lengths are 64-bit little-endian `size_t` values. Trailing zero padding is
  * admitted; any other trailing byte fails closed. 32-bit `size_t` producers
  * are outside this reader.
@@ -124,13 +127,14 @@ export const decodeNodeSeaBlob = async (
       "memory",
     );
   const cursor = new BlobCursor(bytes, limits);
-  if (cursor.remaining < 4) throw formatFailure(NODE_SEA_TRUNCATED);
+  if (cursor.remaining < 4) throw truncatedFailure(NODE_SEA_TRUNCATED);
   const magic = cursor.u32();
   if (magic !== NODE_SEA_MAGIC) throw formatFailure(NODE_SEA_BAD_MAGIC);
-  if (cursor.remaining < 5) throw formatFailure(NODE_SEA_TRUNCATED);
+  if (cursor.remaining < 5) throw truncatedFailure(NODE_SEA_TRUNCATED);
   const flags = cursor.u32();
   if ((flags & ~KNOWN_FLAGS) !== 0) throw formatFailure(NODE_SEA_UNKNOWN_FLAGS);
   const execArgvExtension = extensionName(cursor.u8());
+  const mainCodeFormat = cursor.mainCodeFormat();
   const useSnapshot = (flags & FLAG_USE_SNAPSHOT) !== 0;
   const useCodeCache = (flags & FLAG_USE_CODE_CACHE) !== 0;
   const includeAssets = (flags & FLAG_INCLUDE_ASSETS) !== 0;
@@ -144,6 +148,8 @@ export const decodeNodeSeaBlob = async (
     NODE_SEA_EMPTY_CODE_PATH,
     SIZE_BYTES + afterBody,
   );
+  if (codePath.startsWith("\0"))
+    throw formatFailure("Node SEA code path begins with a NUL byte");
   const body = cursor.byteRange(afterBody);
   const codeCache = useCodeCache
     ? cursor.byteRange(collectionHeaderBytes)
@@ -164,6 +170,7 @@ export const decodeNodeSeaBlob = async (
     includeAssets,
     includeExecArgv,
     execArgvExtension,
+    ...(mainCodeFormat === undefined ? {} : { mainCodeFormat }),
     codePath,
     mainScript: useSnapshot ? null : body,
     snapshot: useSnapshot ? body : null,
@@ -240,6 +247,19 @@ class BlobCursor {
 
   u8(): number {
     return this.bytes[this.#takeOffset(1)]!;
+  }
+
+  /** The byte after the legacy size field is either the first path byte or the
+   * high byte of the newer size field. A producer cannot open a path that
+   * starts with NUL, and a readable blob cannot fit a size of 2^56 or more.
+   */
+  mainCodeFormat(): NodeSeaMainCodeFormat | undefined {
+    if (this.bytes[this.#offset + SIZE_BYTES] !== 0) return undefined;
+
+    const value = this.u8();
+    if (value === 0) return "commonjs";
+    if (value === 1) return "module";
+    throw formatFailure("Node SEA main code format is unknown");
   }
 
   /** `charge` sees the raw byte length before decoding allocates a string. */
@@ -366,7 +386,7 @@ class BlobCursor {
   #size(minimumTailBytes: number): number {
     const value = this.#readSizeField();
     if (value > BigInt(this.remaining - minimumTailBytes))
-      throw formatFailure(NODE_SEA_TRUNCATED);
+      throw truncatedFailure(NODE_SEA_TRUNCATED);
     return Number(value);
   }
 
@@ -380,7 +400,7 @@ class BlobCursor {
       value >
       BigInt(Math.floor((this.remaining - minimumTailBytes) / minimumRowBytes))
     )
-      throw formatFailure(NODE_SEA_TRUNCATED);
+      throw truncatedFailure(NODE_SEA_TRUNCATED);
     const count = Number(value);
     if (count > this.limits[field])
       throw artifactReaderLimitFailure(
@@ -393,7 +413,7 @@ class BlobCursor {
   }
 
   #takeOffset(length: number): number {
-    if (length > this.remaining) throw formatFailure(NODE_SEA_TRUNCATED);
+    if (length > this.remaining) throw truncatedFailure(NODE_SEA_TRUNCATED);
     const start = this.#offset;
     this.#offset += length;
     return start;
