@@ -42,6 +42,8 @@ import {
   androidOtaPayloadMetadataSchema,
   androidVbmetaEntryMetadataSchema,
   androidVbmetaMetadataSchema,
+  iso9660EntryMetadataSchema,
+  iso9660MetadataSchema,
   ntfsMftMetadataSchema,
 } from "./formatMetadata/androidAndSystemMetadata.js";
 import {
@@ -92,6 +94,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   androidBootImageEntryMetadataSchema,
   androidVbmetaMetadataSchema,
   androidVbmetaEntryMetadataSchema,
+  iso9660MetadataSchema,
+  iso9660EntryMetadataSchema,
   ddsMetadataSchema,
   glbMetadataSchema,
   ktxMetadataSchema,
@@ -246,6 +250,14 @@ const declarationsByKind: {
   "android-vbmeta-entry": {
     notCompared:
       "role restates the entry's path; its stored bytes are compared by content.",
+  },
+  iso9660: {
+    notCompared:
+      "Its fields come from the image's own volume descriptors, which content comparison covers.",
+  },
+  "iso9660-entry": {
+    notCompared:
+      "index, extent location and extent layout are layout; identifier restates the entry's path with its stored version suffix, and flags and dates come from directory records, which the image's content comparison covers.",
   },
   "android-ota-payload": {
     notCompared:

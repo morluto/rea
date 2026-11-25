@@ -455,6 +455,16 @@ See [Android Verified Boot vbmeta images](../guides/firmware/android-vbmeta.md)
 for the header, descriptors, stored public key, and the fact that nothing is
 verified.
 
+Inventory and extract an ISO 9660 disc image without mounting it:
+
+```sh
+rea inspect-artifact ./installer.iso --detail summary --evidence_output installer.json --json
+rea extract-artifact ./installer.iso --json
+```
+
+See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
+names, multi-extent and interleaved files, and what is not decoded.
+
 Inspect local model declarations without loading weights:
 
 ```bash

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { workflowFixtureEnvironment } from "../../support/workflowGit.js";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -146,7 +147,7 @@ it.each(["fast", "full"] as const)(
         ],
         {
           env: {
-            ...process.env,
+            ...workflowFixtureEnvironment(),
             CI_JOBS: JSON.stringify(needs),
             CI_QUALIFICATION_DIRECTORY: "",
           },
@@ -285,7 +286,7 @@ it("starts source feedback before build and requires both groups without waiving
       else context["test-source"] = { result };
       const run = execute(process.execPath, [required], {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           CI_JOBS: JSON.stringify(context),
           CI_QUALIFICATION_DIRECTORY: "",
         },
@@ -490,7 +491,10 @@ it("merges source and built reports exactly once using the workflow's shard matr
       ],
       {
         cwd: root,
-        env: { ...process.env, VITEST_BLOB_LABEL: labels[group]! },
+        env: {
+          ...workflowFixtureEnvironment(),
+          VITEST_BLOB_LABEL: labels[group]!,
+        },
         timeout: 20_000,
       },
     );

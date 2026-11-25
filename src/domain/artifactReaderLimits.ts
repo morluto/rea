@@ -97,6 +97,22 @@ export type AndroidVbmetaReaderLimits = z.output<
   typeof androidVbmetaReaderLimitsSchema
 >;
 
+export const DEFAULT_ISO9660_READER_LIMITS = {
+  descriptor_count: 64,
+  directory_depth: 64,
+  record_count: 262_144,
+  directory_bytes: 64 * 1024 * 1024,
+  path_bytes: 64 * 1024 * 1024,
+};
+export const iso9660ReaderLimitsSchema = z.strictObject({
+  descriptor_count: count,
+  directory_depth: count,
+  record_count: count,
+  directory_bytes: bytes,
+  path_bytes: bytes,
+});
+export type Iso9660ReaderLimits = z.output<typeof iso9660ReaderLimitsSchema>;
+
 /** Input selections preserve omission; only the producing operation resolves defaults. */
 export const artifactReaderLimitsInputSchema = z.strictObject({
   bun: z
@@ -182,6 +198,22 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Android vbmeta admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_VBMETA_READER_LIMITS)}. Header-declared block and descriptor-table sizes are admitted before the image is read; the descriptor count bounds the descriptor walk.`,
     ),
+  iso9660: z
+    .strictObject({
+      descriptor_count:
+        iso9660ReaderLimitsSchema.shape.descriptor_count.exactOptional(),
+      directory_depth:
+        iso9660ReaderLimitsSchema.shape.directory_depth.exactOptional(),
+      record_count:
+        iso9660ReaderLimitsSchema.shape.record_count.exactOptional(),
+      directory_bytes:
+        iso9660ReaderLimitsSchema.shape.directory_bytes.exactOptional(),
+      path_bytes: iso9660ReaderLimitsSchema.shape.path_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `ISO 9660 admission; omitted fields use ${JSON.stringify(DEFAULT_ISO9660_READER_LIMITS)}. Descriptor count bounds the volume descriptor set; directory depth, record count, directory bytes and path bytes bound directory-tree traversal.`,
+    ),
   expanded_bytes: bytes
     .exactOptional()
     .describe(
@@ -197,6 +229,7 @@ const resolvedArtifactReaderLimitsSchema = z.strictObject({
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
   android_vbmeta: androidVbmetaReaderLimitsSchema,
+  iso9660: iso9660ReaderLimitsSchema,
   expanded_bytes: bytes.exactOptional(),
 });
 export type ArtifactReaderLimits = z.output<
@@ -223,6 +256,7 @@ export const resolveArtifactReaderLimits = (
     ...DEFAULT_ANDROID_VBMETA_READER_LIMITS,
     ...selected?.android_vbmeta,
   },
+  iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
   ...(selected?.expanded_bytes === undefined
     ? {}
     : { expanded_bytes: selected.expanded_bytes }),
