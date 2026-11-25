@@ -931,6 +931,7 @@
 * **web:** remove the superseded single-query module matcher ([#14319](https://github.com/morluto/rea/issues/14319)) ([ab96130](https://github.com/morluto/rea/commit/ab96130f2277fa8a8571fb4bb4f210b6902acd5b))
 * **web:** reuse the shared map list appender ([#14531](https://github.com/morluto/rea/issues/14531)) ([8da1e56](https://github.com/morluto/rea/commit/8da1e562775eced153123b32cdace52c8030ef19))
 * **windows:** reuse the verified package argument encoder ([#14591](https://github.com/morluto/rea/issues/14591)) ([aad3c9c](https://github.com/morluto/rea/commit/aad3c9c45aa855e3c33fde4561a6e27f272cd695))
+* **workers:** share bounded JSON line writes ([#14585](https://github.com/morluto/rea/issues/14585)) ([1dfd0e5](https://github.com/morluto/rea/commit/1dfd0e5fb4774c9f064808533aeb2579fa163e55))
 * **xml:** share DOM element traversal helpers in xmlDocument ([#13799](https://github.com/morluto/rea/issues/13799)) ([4b648f2](https://github.com/morluto/rea/commit/4b648f23fd061417a7b0b57e560683e907f83020))
 
 
