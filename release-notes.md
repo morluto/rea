@@ -795,6 +795,7 @@
 * **doctor:** share client registration checks ([#14529](https://github.com/morluto/rea/issues/14529)) ([ff2f1c2](https://github.com/morluto/rea/commit/ff2f1c2f72a5cbe696086d64a28d450dcd7dc4b5))
 * **domain/pe:** unify Asn1BerFailure and PeBinaryFailure ([#13652](https://github.com/morluto/rea/issues/13652)) ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
 * **domain/pe:** unify Asn1BerFailure and PeBinaryFailure onto shared owners ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
+* **domain:** add CoverageAccumulator and ratchet ad-hoc completeness ternaries ([#14589](https://github.com/morluto/rea/issues/14589)) ([fdbfd85](https://github.com/morluto/rea/commit/fdbfd85c23613fbb3450932c389bf7380036e87c))
 * **domain:** compose cleanup dependencies through analysisErrorCleanup helpers ([#14064](https://github.com/morluto/rea/issues/14064)) ([65ee0e8](https://github.com/morluto/rea/commit/65ee0e80abc12b582a8d3158878bf444e2397e8a))
 * **domain:** one ByteSource representation for streaming parsers ([#14044](https://github.com/morluto/rea/issues/14044)) ([a324181](https://github.com/morluto/rea/commit/a324181cccd428618f1bb839121789720fb1395d))
 * **domain:** replace production prose/regex limitation matching with typed discriminators ([#14359](https://github.com/morluto/rea/issues/14359)) ([72bdcad](https://github.com/morluto/rea/commit/72bdcad49d1e6d89d935d1a493e0434b3f5d5fd7))
