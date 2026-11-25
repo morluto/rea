@@ -1,5 +1,5 @@
-import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { createHash } from "node:crypto";
 import {
   peImportImage,
