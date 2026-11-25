@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Readable } from "node:stream";
+import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
@@ -23,12 +23,6 @@ import {
   ktxFixture,
 } from "./gpuAsset.fixture.js";
 
-const collect = async (stream: Readable): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
-};
-
 const write = async (name: string, bytes: Buffer): Promise<string> => {
   const directory = await createTestTempDirectory("rea-gpu-asset-");
   const path = join(directory, name);
@@ -50,7 +44,7 @@ const read = async (format: GpuAssetFormat, bytes: Buffer) => {
       entries.push(entry);
     const contents = new Map<string, Buffer>();
     for (const entry of entries)
-      contents.set(entry.path, await collect(await reader.open(entry)));
+      contents.set(entry.path, await buffer(await reader.open(entry)));
     return { entries, coverage, contents, metadata: reader.formatMetadata() };
   } finally {
     await reader.close();
