@@ -218,7 +218,10 @@ import { artifactInventorySummaryViewResultSchema } from "./summarySchemas/artif
 import { batchDecompileSummaryViewResultSchema } from "./summarySchemas/batchDecompileSummarySchema.js";
 import { binaryLayoutSummaryViewResultSchema } from "./summarySchemas/binaryLayoutSummarySchema.js";
 import { browserScenarioSummaryViewResultSchema } from "./summarySchemas/browserScenarioSummarySchema.js";
-import { byteEntropySummaryViewResultSchema } from "./summarySchemas/byteEntropySummarySchema.js";
+import {
+  byteEntropyPageViewResultSchema,
+  byteEntropySummaryViewResultSchema,
+} from "./summarySchemas/byteEntropySummarySchema.js";
 import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummarySchema.js";
 import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
@@ -326,6 +329,7 @@ export {
   batchDecompileSummaryViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   browserScenarioSummaryViewResultSchema,
+  byteEntropyPageViewResultSchema,
   byteEntropySummaryViewResultSchema,
   dartAotSummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
@@ -814,6 +818,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   uefiFirmwarePageViewResultSchema,
   uefiExtractionPageViewResultSchema,
+  byteEntropyPageViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationTextViewResultSchema,
   erlangBeamTableViewResultSchema,

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import {
@@ -8,7 +9,6 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { estimateTokenCount } from "tokenx";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFile, writeFile, readdir, mkdir, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -151,12 +151,7 @@ await withVerifierFixture(root, async () => {
       requireMcpOutput(response, "inspect_packet_capture"),
     );
     const report = evidence.normalized_result;
-    assert.equal(
-      report.artifact.sha256,
-      createHash("sha256")
-        .update(await readFile(input.path))
-        .digest("hex"),
-    );
+    assert.equal(report.artifact.sha256, await sha256File(input.path));
     assert.equal(report.hardware_acquisition, "not-performed");
     assert.equal(report.limits.address_space_bytes, expectedAddressSpace);
     assert.equal(report.tool.configured_path, process.env.REA_TSHARK_COMMAND);
@@ -341,12 +336,7 @@ await withVerifierFixture(root, async () => {
     ).normalized_result;
     assert.equal(summary.summary.capture_start, expectedCaptureStart);
     assert.equal(summary.summary.capture_end, expectedCaptureEnd);
-    assert.equal(
-      summary.summary.target.sha256,
-      createHash("sha256")
-        .update(await readFile(capturePath))
-        .digest("hex"),
-    );
+    assert.equal(summary.summary.target.sha256, await sha256File(capturePath));
     const cli = parseEvidence(
       JSON.parse(
         (

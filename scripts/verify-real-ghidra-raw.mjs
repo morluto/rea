@@ -1,3 +1,4 @@
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { withCanonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -14,7 +15,7 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import {
   requireMcpLifecycleResult,
   requireMcpOutput,
@@ -47,13 +48,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 assert.equal(installation.status, "available", JSON.stringify(installation));
 
 const run = createVerifierRun();
@@ -926,12 +921,7 @@ async function fingerprintFiles(directory) {
       const name = join(relative, entry.name);
       if (entry.isDirectory()) await visit(name);
       else if (entry.isFile())
-        result.push([
-          name,
-          createHash("sha256")
-            .update(await readFile(join(directory, name)))
-            .digest("hex"),
-        ]);
+        result.push([name, await sha256File(join(directory, name))]);
       else throw new Error(`Unexpected project entry: ${name}`);
     }
   };
