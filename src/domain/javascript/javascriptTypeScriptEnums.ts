@@ -1,3 +1,4 @@
+import { commonJsExportName } from "./javascriptCommonJsExportReceivers.js";
 import * as t from "@babel/types";
 import {
   readExactJavaScriptLiteral,
@@ -52,6 +53,16 @@ export const typeScriptEnumInitializer = (
     : undefined;
 };
 
+/**
+ * The store around the enum's object may only publish it as a CommonJS
+ * export. Another object's member may be a setter, whose code would run
+ * inside the declaration that the caller's effect check skips.
+ */
+const isExportStore = (
+  target: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => commonJsExportName(target, state) !== undefined;
+
 /** `var E = function (E) {...}(E || {})`, or `let E = exports.E = ...({})`. */
 const initializedEnum = (
   initializer: t.Node,
@@ -61,7 +72,7 @@ const initializedEnum = (
   let call = unwrapJavaScriptExpression(initializer).node;
   while (
     t.isAssignmentExpression(call, { operator: "=" }) &&
-    t.isMemberExpression(call.left)
+    isExportStore(call.left, state)
   )
     call = unwrapJavaScriptExpression(call.right).node;
   if (
@@ -100,7 +111,7 @@ const assignedEnum = (
   const stored = state.parentsByNode.get(assignment);
   const operand =
     t.isAssignmentExpression(stored, { operator: "=" }) &&
-    t.isMemberExpression(stored.left)
+    isExportStore(stored.left, state)
       ? stored
       : assignment;
   const logical = state.parentsByNode.get(operand);

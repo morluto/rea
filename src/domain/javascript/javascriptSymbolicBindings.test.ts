@@ -445,6 +445,19 @@ it.each([
   ],
   ["a computed key", tscEnum.replace(`Channel["Ping"]`, "Channel[key]")],
   [
+    "a store through a setter around the Babel initializer",
+    `const holder = { set E(value) { value.Ping = "app:other"; } };\n${babelEnum
+      .replace("var Channel =", "var Channel = holder.E =")
+      .replace("(Channel || {})", "({})")}`,
+  ],
+  [
+    "a store through a setter around the tsc object",
+    `const holder = { set E(value) { value.Ping = "app:other"; } };\n${tscEnum.replace(
+      "(Channel = {})",
+      "(holder.E = Channel = {})",
+    )}`,
+  ],
+  [
     "a fixed key whose expression writes a member",
     tscEnum.replace(
       `] = "Retries";`,
