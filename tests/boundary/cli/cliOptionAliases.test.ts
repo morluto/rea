@@ -1,42 +1,21 @@
-import { Cli } from "incur";
+import { cliCommand, cliCommands } from "../../../src/cli/commandRegistry.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
-import { cliCommands } from "../../../src/cli/commandRegistry.js";
+import { serveInProcessCli as serve } from "../../support/cli/serveInProcessCli.js";
 import {
   cliCommandOptionNames,
   createCliInventory,
 } from "../../../scripts/lib/catalog-cli.mjs";
 
 type CliInstance = ReturnType<typeof createCli>;
-type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
-
-const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
-
-const serve = async (
-  cli: CliInstance,
-  argv: readonly string[],
-): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { stdout, exitCode };
-};
 
 const registeredAliases = (
   cli: CliInstance,
   command: string,
 ): Record<string, unknown> => {
-  const entry = registeredCommands.get(cli)?.get(command);
+  const entry = cliCommand(cli, command)?.definition;
   const alias: unknown =
     entry === undefined ? undefined : Reflect.get(entry, "alias");
   return typeof alias === "object" && alias !== null ? { ...alias } : {};
@@ -67,7 +46,7 @@ describe("CLI option aliases", () => {
       for (const match of help.stdout.matchAll(/(?:^|[\s,])-([a-z][\w-]+)/gmu))
         invalid.push(`${command} help: -${match[1] ?? ""}`);
       const options = /^Options:\n((?: {2}.*\n?)*)/mu.exec(help.stdout)?.[1];
-      const entry = registeredCommands.get(cli)?.get(command);
+      const entry = cliCommand(cli, command)?.definition;
       expect(entry, `${command} registration`).toBeDefined();
       const schema: unknown = entry && Reflect.get(entry, "options");
       if (schema !== undefined)
@@ -95,5 +74,24 @@ describe("CLI option aliases", () => {
     ]);
     expect(result.stdout).not.toContain("Unknown flag");
     expect(result.stdout).toContain("/nonexistent/REA.app");
+  });
+
+  it("refuses the schema key spelling with the documented flag", async () => {
+    // argvParser.test.ts covers each token shape (bare, inline value,
+    // negation) against the structured flag_spelling failure; this case
+    // checks the public CLI projection documented in getting-started/cli.md.
+    const result = await serve(createCli({}), [
+      "inspect-plist",
+      "/nonexistent/REA.app",
+      "--relativePath",
+      "Contents/Info.plist",
+      "--json",
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "PARSE_ERROR",
+      message: "Unknown flag: --relativePath. Did you mean --relative-path?",
+      retryable: false,
+    });
   });
 });

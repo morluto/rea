@@ -6,13 +6,16 @@ import {
   parseCliGlobalArguments,
 } from "./cliBuiltinArguments.js";
 import {
-  cliConfigurationError,
   parseCliOutputArguments,
   readCliOutputArguments,
   renderCliOutputArgumentError,
   renderEmptyFilteredCliOutput,
   renderVersionReport,
-} from "./cliOutput.js";
+} from "./cli/cliOutput.js";
+import { cliConfigurationError } from "./cliConfiguration.js";
+import { HOST_PLATFORM } from "./platform/HostPlatform.js";
+import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
+import { CLI_COMMANDS } from "./contracts/cliCommandNames.js";
 import type { VersionReportHost } from "./domain/versionReport.js";
 
 /**
@@ -22,6 +25,7 @@ import type { VersionReportHost } from "./domain/versionReport.js";
  */
 export interface OneShotCliHost {
   readonly environment: NodeJS.ProcessEnv;
+  readonly persistentUserConfig?: true;
   readonly runtime: VersionReportHost;
   readonly stdoutIsTerminal: boolean;
   /** Destination for result documents the command streams itself. */
@@ -38,9 +42,9 @@ export interface OneShotCliHost {
   ownCliResources(close: () => Promise<void>): void;
   /**
    * The command asked to end the process with `code`. The host owns that
-   * exit and must call `finishOutput` with the status it reports.
+   * exit and must drain `finishOutput` after closing the owned resources.
    */
-  exit(code: number, finishOutput: (status: number) => Promise<void>): void;
+  exit(code: number, finishOutput: () => Promise<void>): void;
   /** Whether `exit` has run. Its host then owns the pending result write. */
   exitRequested(): boolean;
 }
@@ -69,18 +73,18 @@ export const runOneShotCli = async (
       : readCliOutputArguments(global);
   const outputArguments = outputOptions.validation;
   // `--version` with an explicit format reports the runtime as a document;
-  // plain `--version` stays Incur's bare version string.
+  // plain `--version` stays a bare version string.
   const versionOutput = renderVersionReport(
     outputOptions,
     host.runtime,
     host.stdoutIsTerminal,
   );
   const configurationError = cliConfigurationError(host.environment);
-  // Doctor is the readiness report for this failure. Other commands still stop
-  // here so they do not run with an unusable log level.
+  // Only an admitted doctor can report this failure as readiness. A malformed
+  // command still stops at the same configuration boundary as other commands.
   if (
     configurationError !== undefined &&
-    (global === undefined || global.command[0] !== "doctor")
+    (global?.command[0] !== "doctor" || !outputArguments.ok)
   ) {
     host.writeStderr(`${configurationError}\n`);
     host.setExitCode(1);
@@ -122,11 +126,48 @@ export const runOneShotCli = async (
     return;
   }
 
+  let environment = host.environment;
+  let savedDefaults: ReadonlySet<string> | undefined;
+  // Config owns its file access. Uninstall uses registration and cache ownership
+  // independently of the saved provider defaults.
+  if (
+    host.persistentUserConfig === true &&
+    global !== undefined &&
+    global.command[0] !== CLI_COMMANDS.config &&
+    global.command[0] !== CLI_COMMANDS.uninstall &&
+    !global.flags.has("--help") &&
+    !global.flags.has("-h") &&
+    !global.flags.has("--version") &&
+    !global.flags.has("-v")
+  ) {
+    const { loadUserConfiguration } =
+      await import("./application/UserConfigurationStore.js");
+    const configuration = await loadUserConfiguration(
+      snapshotEnvironment(environment, HOST_PLATFORM.platform),
+    );
+    if (!configuration.ok) {
+      const format = outputOptions.format;
+      if (format === "json" || format === "jsonl" || format === "yaml")
+        host.writeStdout(
+          renderCliOutputArgumentError({
+            format,
+            code: "CONFIGURATION_INVALID",
+            message: configuration.error.message,
+          }),
+        );
+      else host.writeStderr(`${configuration.error.message}\n`);
+      host.setExitCode(1);
+      return;
+    }
+    ({ environment, savedDefaults } = configuration.value);
+  }
+
   // Loaded only now: the documents above answer without the command catalog.
-  const { loadCliRuntime } = await import("./cli/cliLoader.js");
-  const runtime = await loadCliRuntime(global, host.environment);
+  const { loadCliRuntime } = await import("./cliLoader.js");
+  const runtime = await loadCliRuntime(global, environment, savedDefaults);
   host.ownCliResources(runtime.closeCliResources);
-  const { createCliResultOutput } = await import("./cli/cliResultOutput.js");
+  const { createCliResultOutput, cliOutputCancellationStatus } =
+    await import("./cli/cliResultOutput.js");
   let wroteOutput = false;
   const resultOutput = createCliResultOutput(
     outputOptions,
@@ -141,21 +182,25 @@ export const runOneShotCli = async (
           return;
         }
         if (output.length > 0) wroteOutput = true;
-        if (resultOutput?.captureSdkOutput(output)) return;
         host.writeStdout(output);
       },
       exit: (code) => {
-        host.exit(typeof code === "number" ? code : 0, async (status) =>
-          resultOutput?.finishSdkOutput(status),
+        host.exit(typeof code === "number" ? code : 0, async () =>
+          resultOutput?.finish(),
         );
       },
     });
   } catch (cause) {
+    const cancelledStatus = cliOutputCancellationStatus(cause);
+    if (cancelledStatus !== undefined) {
+      host.exit(cancelledStatus, async () => resultOutput?.finish());
+      return;
+    }
     if (wroteOutput) throw cause;
     const recovered = await resultOutput
       ?.recoverFormattingFailure(cause)
       .catch((writeFailure: unknown) => {
-        // Recovery writes outside Incur's command boundary. A reader that
+        // Recovery writes outside the command boundary. A reader that
         // declined this document keeps the same quiet closed-pipe outcome.
         if (!host.stdoutClosed()) throw writeFailure;
         return true;
@@ -166,6 +211,5 @@ export const runOneShotCli = async (
   if (!wroteOutput && !resultOutput?.handled)
     host.writeStdout(renderEmptyFilteredCliOutput(outputOptions) ?? "");
   // A requested exit is finished by the host, which owns its pending write.
-  if (!host.exitRequested())
-    await resultOutput?.finishSdkOutput(host.exitCode());
+  if (!host.exitRequested()) await resultOutput?.finish();
 };

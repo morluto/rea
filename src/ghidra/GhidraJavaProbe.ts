@@ -14,12 +14,14 @@ import { randomUUID } from "node:crypto";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ownershipPreparationError } from "../providers/ownedProcessAvailability.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
@@ -272,27 +274,21 @@ const observeGhidraJava = async (
       });
     } else if (
       preparation !== undefined &&
-      commandFailure?.reason !== "timeout"
+      commandFailure?.reason !== "timeout" &&
+      preparationHostCapacityFailure(cause) === undefined
     ) {
-      primary = new ProviderAdapterError("ghidra", "ghidra:java", {
+      primary = ownershipPreparationError(
+        "ghidra",
+        "ghidra:java",
         cause,
-        ...(output === undefined ? {} : { capturedOutput: output }),
-        diagnostics: {
-          stage: "ownership_preparation",
-          ...(!(preparation instanceof DarwinProcessOwnershipInspectionError) ||
-          preparation.compilerOutcome === undefined
-            ? {}
-            : {
-                compiler_outcome: jsonValueSchema.parse(
-                  preparation.compilerOutcome,
-                ),
-              }),
-        },
-      });
+        output,
+      );
     } else if (cause instanceof AnalysisError) {
       primary = cause;
     }
-    const launch = launcherFailureOf(commandFailure?.processError ?? cause);
+    const launch =
+      preparationHostCapacityFailure(cause) ??
+      launcherFailureOf(commandFailure?.processError ?? cause);
     if (
       primary === undefined &&
       (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")

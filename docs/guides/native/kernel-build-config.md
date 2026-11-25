@@ -47,21 +47,23 @@ bytes were not searched.
 - `IKCFG_ST` is immediately followed by a gzip member (`1f 8b 08`).
 - The member inflates within `max_config_bytes` and its CRC-32 and ISIZE
   trailer match.
-- The member trailer ends exactly at the first `IKCFG_ED` after the gzip
-  header. Inflation reads only the bytes up to that marker.
+- The member trailer is immediately followed by `IKCFG_ED`. REA locates
+  that boundary using the bytes consumed by gzip, so literal marker bytes
+  inside the member do not end it.
 - Every non-blank line of the inflated text is a `#` comment,
   `# CONFIG_X is not set`, or `CONFIG_X=value`, and the text is valid UTF-8
   with no control bytes other than tab, CR, and LF.
 
-An `IKCFG_ST` string that is not followed by gzip magic, or whose complete
-member is not followed by `IKCFG_ED`, is skipped, so an ordinary string is never
-reported as a config. When `IKCFG_ST`, gzip magic, and a later `IKCFG_ED` frame
+REA skips `IKCFG_ST` text without gzip magic and complete members followed
+by unrelated bytes. If the searched bytes end before a closing marker that
+starts immediately after the member can be read in full, framing is incomplete. When `IKCFG_ST`, gzip magic, and a later `IKCFG_ED` frame
 a member that does not decode, a deflate stream cut off by that marker, a
 member that fails its CRC-32 or ISIZE check, or text that fails the grammar,
 the config is `malformed` with coverage
 `unknown`, and `marker`, `gzip`, and `end_marker` locate the blob. A
-malformed blob is never reported as an absent config. A valid config later in
-the searched bytes still wins. `marker`, `gzip`, and `end_marker` give
+malformed blob is never reported as an absent config. If the parser reaches an
+inflate or compressed-input bound and finds no closing marker, the search
+retains incomplete framing. A valid config later in the searched bytes still wins. `marker`, `gzip`, and `end_marker` give
 the three ranges. `sha256` hashes the inflated text. `option_count` counts
 every `CONFIG_*` line. `matched_count` counts the options that match the
 optional exact `name` filter, and `entries` is the `offset`/`limit` page of
@@ -72,11 +74,14 @@ Each entry has a `name`, a `kind`, and a `value`:
 | `kind`    | Source line                | `value`                   |
 | --------- | -------------------------- | ------------------------- |
 | `y`, `m`  | `CONFIG_X=y`, `CONFIG_X=m` | `y` or `m`                |
-| `number`  | decimal or `0x` hex        | the text as written       |
+| `number`  | Kconfig integer or hex     | the text as written       |
 | `string`  | `CONFIG_X="..."`           | decoded text (`\"`, `\\`) |
 | `not_set` | `# CONFIG_X is not set`    | `null`                    |
 
-Banner text and configuration values are target-derived and untrusted.
+Kconfig can write hexadecimal values without a `0x` prefix. REA preserves
+the spelling and leaves the numeric base unresolved when the value alone
+cannot establish it. Banner text and configuration values are target-derived
+and untrusted.
 
 ## bzImage payloads
 
@@ -126,8 +131,8 @@ at the next check. One inflate call runs to its output bound once started.
 Results that could not search or read the kernel bytes stay `incomplete`,
 `malformed`, or `unsupported` and are never
 reported as an absent config. `coverage.status` is `partial` when the config
-is known to extend past what was examined (`config_gzip_truncated`,
-`config_search_exhausted`), `unknown` when a framed config is malformed or the
+has incomplete framing or the search stops at its budget
+(`config_gzip_truncated`, `config_search_exhausted`), `unknown` when a framed config is malformed or the
 payload could not be searched (`examined_bytes` is 0), and `unsupported` for a
 payload codec REA does not inflate:
 
@@ -135,7 +140,7 @@ payload codec REA does not inflate:
 | ---------------------------------- | ---------------------------------------------------------------------------- |
 | `config_gzip_invalid`              | a framed `IKCFG_ST` gzip member does not decode or fails its CRC-32 or ISIZE |
 | `config_text_invalid`              | a framed `IKCFG_ST` gzip member is not `.config` text                        |
-| `config_gzip_truncated`            | an `IKCFG_ST` gzip member runs past the searched bytes                       |
+| `config_gzip_truncated`            | an `IKCFG_ST` gzip candidate has incomplete framing                          |
 | `config_search_exhausted`          | decoy candidates used up the config search budget                            |
 | `payload_truncated`                | the declared bzImage payload or its gzip member ends early                   |
 | `payload_gzip_invalid`             | the bzImage gzip payload fails to inflate or its trailer                     |

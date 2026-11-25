@@ -1,5 +1,6 @@
 {
   "archive_format": "xml-plist",
+  "archiver": "NSKeyedArchiver",
   "roots": {
     "root": {
       "CF$UID": 1

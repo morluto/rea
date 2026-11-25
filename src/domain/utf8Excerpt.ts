@@ -13,14 +13,21 @@ export const utf8TailExcerpt = (
   readonly bytes: number;
   readonly truncated: boolean;
 } => {
-  const encoded = Buffer.from(text, "utf8");
-  if (encoded.byteLength <= maximumBytes)
+  // A UTF-16 suffix needs at least one UTF-8 byte per code unit.
+  // Include one extra unit so the candidate cannot cut a surrogate pair
+  // that would fit in the result.
+  const candidateStart = Math.max(0, text.length - Math.ceil(maximumBytes) - 1);
+  const encoded = Buffer.from(text.slice(candidateStart), "utf8");
+  if (candidateStart === 0 && encoded.byteLength <= maximumBytes)
     return {
       text: excerptText(text),
       bytes: encoded.byteLength,
       truncated: false,
     };
-  let start = encoded.byteLength - Math.max(0, maximumBytes);
+  let start = Math.max(
+    0,
+    encoded.byteLength - Math.max(0, Math.floor(maximumBytes)),
+  );
   // UTF-8 continuation bytes are 0b10xxxxxx; start at the next character.
   while (start < encoded.byteLength && ((encoded[start] ?? 0) & 0xc0) === 0x80)
     start += 1;

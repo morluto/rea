@@ -1,7 +1,7 @@
 import type { InspectAppleIpsInput } from "../../domain/native/appleIps.js";
 import {
   APPLE_IPS_FORMAT,
-  AppleIpsResourceFailure,
+  appleIpsLimit,
   type AppleIpsFixedBoundary,
 } from "./AppleIps.errors.js";
 import {
@@ -33,7 +33,7 @@ const fixedAllowance =
   (boundary: AppleIpsFixedBoundary, maximum: number, noun: string) =>
   (count: number) => {
     if (count > maximum)
-      throw new AppleIpsResourceFailure(
+      throw appleIpsLimit(
         boundary,
         maximum,
         `Crash report lists more than ${String(maximum)} ${noun}`,
@@ -53,7 +53,7 @@ const selectedAllowances = (input: InspectAppleIpsInput) => {
     (boundary: keyof typeof counts, maximum: number, noun: string) => () => {
       counts[boundary] += 1;
       if (counts[boundary] > maximum)
-        throw new AppleIpsResourceFailure(
+        throw appleIpsLimit(
           boundary,
           maximum,
           `Crash report lists more than ${String(maximum)} ${noun}, above the selected ${String(maximum)}-entry ${boundary} allowance`,
@@ -240,13 +240,9 @@ export const consumeJson = (
       );
     return parsed.value;
   } catch (cause) {
-    if (
-      cause instanceof ParseFailureError ||
-      cause instanceof AppleIpsResourceFailure
-    )
-      throw cause;
+    if (cause instanceof ParseFailureError) throw cause;
     if (cause instanceof LosslessJsonFailure && cause.reason === "depth")
-      throw new AppleIpsResourceFailure(
+      throw appleIpsLimit(
         "nesting",
         cause.maximum ?? MAX_IPS_JSON_DEPTH,
         `${label}: ${cause.message}`,

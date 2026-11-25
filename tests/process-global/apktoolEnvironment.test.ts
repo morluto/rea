@@ -4,7 +4,7 @@ import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 
 import { createCli } from "../../src/cli.js";
 import { ApktoolProvider } from "../../src/apktool/ApktoolProvider.js";
-import { ApktoolResourceAnalysisService } from "../../src/application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../../src/application/ProviderOperationServices.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -16,37 +16,35 @@ afterEach(() => {
 
 // These executable probes validate the real CLI and process environment boundary;
 // they do not establish native Apktool decoding behavior.
-it.skipIf(process.platform === "win32").each([
-  { name: "missing", selected: {}, expected: "absent" },
-  {
-    name: "unset",
-    selected: { REA_APKTOOL_ENV_PROFILE: undefined },
-    expected: "absent",
-  },
-  {
-    name: "empty",
-    selected: { REA_APKTOOL_ENV_PROFILE: "" },
-    expected: "empty",
-  },
-  {
-    name: "selected",
-    selected: { REA_APKTOOL_ENV_PROFILE: "selected-profile" },
-    expected: "selected-profile",
-  },
-])(
-  "preserves $name Apktool settings after the ambient environment changes",
-  async ({ selected, expected }) => {
+it.skipIf(process.platform === "win32")(
+  "preserves selected Apktool settings after the ambient environment changes",
+  async () => {
     const root = await createTestTempDirectory(
       "rea-apktool-selected-environment-",
     );
     const command = join(root, "apktool");
     await writeFile(
       command,
-      '#!/bin/sh\nprofile=${REA_APKTOOL_ENV_PROFILE-absent}\n[ -n "$profile" ] || profile=empty\nprintf "2.11.1+%s\\n" "$profile"\n',
+      [
+        "#!/bin/sh",
+        'printf "2.11.1+%s.%s.%s.%s\\n" "${REA_APKTOOL_MISSING-absent}" "${REA_APKTOOL_UNSET-absent}" "empty-${REA_APKTOOL_EMPTY-absent}" "${REA_APKTOOL_SELECTED-absent}"',
+        "",
+      ].join("\n"),
       { mode: 0o755 },
     );
-    const cli = createCli({ REA_APKTOOL_COMMAND: command, ...selected });
-    vi.stubEnv("REA_APKTOOL_ENV_PROFILE", "late-ambient-profile");
+    const cli = createCli({
+      REA_APKTOOL_COMMAND: command,
+      REA_APKTOOL_UNSET: undefined,
+      REA_APKTOOL_EMPTY: "",
+      REA_APKTOOL_SELECTED: "selected-profile",
+    });
+    for (const key of [
+      "REA_APKTOOL_MISSING",
+      "REA_APKTOOL_UNSET",
+      "REA_APKTOOL_EMPTY",
+      "REA_APKTOOL_SELECTED",
+    ])
+      vi.stubEnv(key, "late-ambient-profile");
     let stdout = "";
     await cli.serve(["inspect-apktool-client", "--json"], {
       env: {},
@@ -57,7 +55,9 @@ it.skipIf(process.platform === "win32").each([
     });
     const evidence = parseEvidence(JSON.parse(stdout));
     expect(evidence.normalized_result).toMatchObject({
-      client: { apktool_version: `2.11.1+${expected}` },
+      client: {
+        apktool_version: "2.11.1+absent.absent.empty-.selected-profile",
+      },
     });
     expect(evidence.environment).toBeNull();
   },
@@ -77,7 +77,7 @@ it.skipIf(process.platform === "win32")(
     const provider = new ApktoolProvider();
     onTestFinished(() => provider.close());
     vi.stubEnv("REA_APKTOOL_COMMAND", command);
-    const result = await new ApktoolResourceAnalysisService(provider).execute(
+    const result = await createApktoolResourceAnalysisService(provider).execute(
       "inspect_apktool_client",
       {},
     );

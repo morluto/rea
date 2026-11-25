@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -11,7 +10,6 @@ import {
 } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -43,7 +41,12 @@ import {
   requireMcpOperationResult,
   requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
@@ -74,7 +77,6 @@ if (installation.status !== "available")
   throw new Error(
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -85,11 +87,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -105,6 +102,20 @@ const env = {
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
 }
+// CLI launches share one command owner, created before the lane starts a tool.
+const commands = await createVerifierCommands();
+
+/** stdout and stderr of an owned command that exited nonzero. */
+const commandFailureOutput = (cause) => {
+  const snapshot = cause?.snapshot;
+  if (typeof snapshot?.stdout?.text === "string")
+    return {
+      code: cause.code,
+      stdout: snapshot.stdout.text,
+      stderr: snapshot.stderr.text,
+    };
+  return cause;
+};
 
 /** Observe an existing project, and verify REA never alters the caller's copy. */
 async function verifyExistingMipsProject(fixture, byteOrder) {
@@ -483,7 +494,7 @@ try {
         assert.match(JSON.stringify(error), /PSP_EXTENSION_UNAVAILABLE/u);
         let cliError;
         try {
-          await execute(
+          await commands.exec(
             process.execPath,
             [
               entrypoint,
@@ -499,18 +510,19 @@ try {
         } catch (cause) {
           cliError = cause;
         }
+        const cliOutput = commandFailureOutput(cliError);
         assert.ok(
-          cliError && Number.isInteger(cliError.code) && cliError.code !== 0,
+          cliOutput && Number.isInteger(cliOutput.code) && cliOutput.code !== 0,
           "Expected a typed public rejection, not a timeout or success",
         );
         assert.match(
-          `${cliError.stdout}\n${cliError.stderr}`,
+          `${cliOutput.stdout}\n${cliOutput.stderr}`,
           /PSP_EXTENSION_UNAVAILABLE/u,
         );
         reports.push({
           path: fixture.path,
           status: "expected-missing-extension-refusal",
-          cli_exit: cliError.code,
+          cli_exit: cliOutput.code,
           mcp_error: error,
         });
         continue;
@@ -755,7 +767,7 @@ try {
       }
 
       // Same public operation through CLI, not a private injected provider.
-      const cli = await execute(
+      const cli = await commands.exec(
         process.execPath,
         [
           entrypoint,
@@ -813,7 +825,7 @@ try {
         assertMipsCarvedTargetRefusal(carvedError, openedPath, carve.reason);
         let carvedCliError;
         try {
-          await execute(
+          await commands.exec(
             process.execPath,
             [
               entrypoint,
@@ -829,14 +841,15 @@ try {
         } catch (cause) {
           carvedCliError = cause;
         }
+        const carvedOutput = commandFailureOutput(carvedCliError);
         assert.ok(
-          carvedCliError &&
-            Number.isInteger(carvedCliError.code) &&
-            carvedCliError.code !== 0,
+          carvedOutput &&
+            Number.isInteger(carvedOutput.code) &&
+            carvedOutput.code !== 0,
           "Expected a target-opening refusal, not a timeout or success",
         );
         assertMipsCarvedTargetRefusal(
-          JSON.parse(carvedCliError.stdout),
+          JSON.parse(carvedOutput.stdout),
           openedPath,
           carve.reason,
         );
@@ -847,7 +860,7 @@ try {
           section_header_offset: carve.sectionOffset,
           status: "expected-target-refusal",
           reason: carve.reason,
-          cli_exit: carvedCliError.code,
+          cli_exit: carvedOutput.code,
           mcp_error: carvedError,
         };
       }
@@ -901,17 +914,36 @@ try {
 } catch (cause) {
   primaryFailure = cause;
 }
-const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw retainWorkspace(
-    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
-    { cause: primaryFailure },
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw workspaceFixture.retainedError(
+    `MIPS command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [primaryFailure, cleanupFailure],
+              "MIPS verification and command cleanup both failed",
+            ),
+    },
   );
+const completed = await completeVerifierRun(run);
+try {
+  assertVerifierCleanupComplete(completed.process_lineage);
+} catch (cause) {
+  throw workspaceFixture.retainedError(
+    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
+    { cause: primaryFailure ?? cause },
+  );
+}
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS verification failed; retained workspace: ${workspace}`,
     {
       cause: primaryFailure,

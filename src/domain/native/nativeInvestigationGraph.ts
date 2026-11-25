@@ -236,22 +236,32 @@ export const traceNativeInvestigationGraph = (
     else entries.push(edge);
   }
 
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (current === undefined) break;
+  let queueHead = 0;
+  while (queueHead < queue.length) {
+    const current = queue[queueHead++]!;
     const adjacent = adjacency.get(current.id) ?? [];
 
     for (const edge of adjacent) {
+      const nextId =
+        edge.resolution === "unresolved"
+          ? null
+          : direction === "forward"
+            ? edge.to
+            : edge.from;
+      if (nextId !== null && !nodeById.has(nextId)) {
+        truncated = true;
+        reason ??= "edge_target_missing_from_graph";
+        continue;
+      }
       if (selectedEdges.size + unresolved.size >= limits.max_edges) {
         truncated = true;
         reason = "max_edges_reached";
         break;
       }
-      if (edge.resolution === "unresolved") {
+      if (nextId === null) {
         unresolved.set(edge.id, edge);
         continue;
       }
-      const nextId = direction === "forward" ? edge.to : edge.from;
       const alreadyVisited = visited.has(nextId);
       if (!alreadyVisited && current.depth >= limits.max_depth) {
         truncated = true;
@@ -267,11 +277,6 @@ export const traceNativeInvestigationGraph = (
       }
       selectedEdges.set(edge.id, edge);
       if (alreadyVisited) continue;
-      if (!nodeById.has(nextId)) {
-        truncated = true;
-        reason ??= "edge_target_missing_from_graph";
-        continue;
-      }
       visited.add(nextId);
       // A retained node has already been reached even if a later sibling
       // exhausts a budget before this node is dequeued for expansion.
@@ -304,6 +309,54 @@ export const traceNativeInvestigationGraph = (
   };
 };
 
+const indexTargetActionEdges = (
+  edges: readonly NativeInvestigationEdge[],
+  nodes: ReadonlyMap<string, NativeInvestigationGraph["nodes"][number]>,
+) => {
+  const selectorNodesByAction = new Map<string, string>();
+  const edgesByAction = new Map<string, NativeInvestigationEdge[]>();
+  for (const edge of edges) {
+    if (edge.resolution !== "observed" || edge.relation !== "target_action")
+      continue;
+    if (nodes.get(edge.to)?.kind === "objc_selector")
+      selectorNodesByAction.set(edge.from, edge.to);
+    const list = edgesByAction.get(edge.from);
+    if (list === undefined) edgesByAction.set(edge.from, [edge]);
+    else list.push(edge);
+  }
+  return { selectorNodesByAction, edgesByAction };
+};
+
+const indexInstanceImplementations = (
+  implementations: ObjcSwiftMetadata["objc_dispatch_implementations"],
+) => {
+  const bySelector = new Map<
+    string,
+    ObjcSwiftMetadata["objc_dispatch_implementations"]
+  >();
+  const bySelectorAndClass = new Map<
+    string,
+    Map<string, ObjcSwiftMetadata["objc_dispatch_implementations"]>
+  >();
+  for (const candidate of implementations) {
+    if (candidate.method_type !== "instance") continue;
+    const selectorCandidates = bySelector.get(candidate.selector);
+    if (selectorCandidates === undefined)
+      bySelector.set(candidate.selector, [candidate]);
+    else selectorCandidates.push(candidate);
+    let byClass = bySelectorAndClass.get(candidate.selector);
+    if (byClass === undefined) {
+      byClass = new Map();
+      bySelectorAndClass.set(candidate.selector, byClass);
+    }
+    const classCandidates = byClass.get(candidate.class_name);
+    if (classCandidates === undefined)
+      byClass.set(candidate.class_name, [candidate]);
+    else classCandidates.push(candidate);
+  }
+  return { bySelector, bySelectorAndClass };
+};
+
 /** Join authored UI actions to exact Objective-C method symbols when known. */
 export const joinInterfaceBuilderDispatch = (
   graph: NativeInvestigationGraph,
@@ -312,15 +365,13 @@ export const joinInterfaceBuilderDispatch = (
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const edges = [...graph.edges];
   const existingEdgeIds = new Set(edges.map(({ id }) => id));
-  const selectorNodesByAction = new Map<string, string>();
-  for (const edge of edges) {
-    if (
-      edge.resolution === "observed" &&
-      edge.relation === "target_action" &&
-      nodes.get(edge.to)?.kind === "objc_selector"
-    )
-      selectorNodesByAction.set(edge.from, edge.to);
-  }
+  const { selectorNodesByAction, edgesByAction } = indexTargetActionEdges(
+    edges,
+    nodes,
+  );
+  const { bySelector, bySelectorAndClass } = indexInstanceImplementations(
+    metadata.objc_dispatch_implementations,
+  );
 
   let examined = 0;
   let resolved = 0;
@@ -332,14 +383,12 @@ export const joinInterfaceBuilderDispatch = (
     const selectorNodeId = selectorNodesByAction.get(action.id);
     if (selectorNodeId === undefined) continue;
     examined += 1;
-    const destinationEdge = edges.find(
-      (edge) =>
-        edge.resolution === "observed" &&
-        edge.relation === "target_action" &&
-        edge.from === action.id &&
-        edge.to !== selectorNodeId &&
-        nodes.has(edge.to),
-    );
+    const destinationEdge = edgesByAction
+      .get(action.id)
+      ?.find(
+        (edge) =>
+          edge.to !== selectorNodeId && edge.to !== null && nodes.has(edge.to),
+      );
     if (
       destinationEdge === undefined ||
       destinationEdge.resolution !== "observed"
@@ -371,12 +420,10 @@ export const joinInterfaceBuilderDispatch = (
       owner?.kind !== "external_object"
         ? declaredClass
         : null;
-    const candidates = metadata.objc_dispatch_implementations.filter(
-      (candidate) =>
-        candidate.method_type === "instance" &&
-        candidate.selector === selector &&
-        (className === null || candidate.class_name === className),
-    );
+    const candidates =
+      className === null
+        ? (bySelector.get(selector) ?? [])
+        : (bySelectorAndClass.get(selector)?.get(className) ?? []);
     const implementation = candidates.length === 1 ? candidates[0] : undefined;
     const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;
     if (existingEdgeIds.has(edgeId)) continue;

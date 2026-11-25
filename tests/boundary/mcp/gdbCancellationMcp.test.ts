@@ -21,7 +21,7 @@ import { err, ok } from "../../../src/domain/result.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { gdbMcpServer } from "../../fixtures/debuggerMcp.js";
-import type { GdbToolOptions } from "../../../src/server/serviceToolBindings.js";
+import type { GdbToolOptions } from "../../../src/server/debuggerToolBindings.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,
@@ -40,11 +40,12 @@ import {
   fakeGdbStartupPreamble,
 } from "../providers/gdbTestHelpers.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
   "keeps a failed GDB startup closed through MCP and retries its retained owner before console admission",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-startup-"));
+    const directory = await createTestTempDirectory("rea-gdb-mcp-startup-");
     const provider = join(directory, "fake-gdb.mjs");
     await writeFile(
       provider,
@@ -135,11 +136,7 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          try {
-            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
-          } finally {
-            await rm(directory, { recursive: true, force: true });
-          }
+          await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
         },
       ]);
     }
@@ -149,7 +146,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "propagates MCP cancellation into a running GDB command",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-cancel-"));
+    const directory = await createTestTempDirectory("rea-gdb-mcp-cancel-");
     const provider = join(directory, "fake-gdb.mjs");
     const commandPath = join(directory, "command-started");
     await writeFile(
@@ -262,7 +259,6 @@ process.stdin.on("data", async (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
         },
       ]);
     }
@@ -272,7 +268,7 @@ process.stdin.on("data", async (chunk) => {
 it.skipIf(process.platform === "win32")(
   "accepts caller-selected inferior_tty and exposes verified sink status through MCP",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-tty-"));
+    const directory = await createTestTempDirectory("rea-gdb-mcp-tty-");
     const provider = join(directory, "fake-gdb.mjs");
     const tty = `${directory}/inferior-"terminal-Ω"`;
     await writeFile(
@@ -347,11 +343,7 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          try {
-            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
-          } finally {
-            await rm(directory, { recursive: true, force: true });
-          }
+          await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
         },
       ]);
     }
@@ -361,7 +353,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "exposes lossy GDB MI decoding through the strict status MCP contract",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-mi-utf8-"));
+    const directory = await createTestTempDirectory("rea-gdb-mcp-mi-utf8-");
     const provider = join(directory, "fake-gdb.mjs");
     await writeFile(
       provider,
@@ -419,11 +411,7 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          try {
-            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
-          } finally {
-            await rm(directory, { recursive: true, force: true });
-          }
+          await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
         },
       ]);
     }

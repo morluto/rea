@@ -1,9 +1,14 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
+import {
+  jsonPointerSyntaxProblem,
+  jsonPointerTokens,
+} from "../../src/domain/jsonPointer.js";
 
 import {
   schemaArrays as schemaArrayKeywords,
   schemaChildren as schemaChildKeywords,
   schemaMaps as schemaMapKeywords,
+  schemaSubschemas,
 } from "../../src/contracts/jsonSchemaKeywords.js";
 import { arrayItemSchemaError } from "./mcpClientSchemaConstraints.js";
 
@@ -31,6 +36,9 @@ export function advertisedSchemaErrors(
     strict: false,
     validateFormats: false,
     addUsedSchema: false,
+    // Keep shared definitions as compiled functions instead of expanding them
+    // at every reference, while still compiling every $ref target.
+    inlineRefs: false,
     // This check compiles schemas to detect invalid references but never runs
     // their validators. Generated-code optimization adds substantial work here
     // without checking another contract; actual SDK validators keep defaults.
@@ -67,11 +75,16 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /** Resolve a local JSON Pointer reference inside one schema document. */
 export function resolveReference(schema: unknown, reference: string): unknown {
-  if (reference === "#") return schema;
-  if (!reference.startsWith("#/")) return undefined;
+  if (!reference.startsWith("#")) return undefined;
+  let pointer: string;
+  try {
+    pointer = decodeURIComponent(reference.slice(1));
+  } catch {
+    return undefined;
+  }
+  if (jsonPointerSyntaxProblem(pointer) !== null) return undefined;
   let value = schema;
-  for (const token of reference.slice(2).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+  for (const key of jsonPointerTokens(pointer)) {
     if (
       typeof value !== "object" ||
       value === null ||
@@ -92,23 +105,17 @@ export function recursiveReferences(
       const schema = tool[kind];
       const found = new Set<string>();
       const visit = (node: unknown, active: readonly string[]): void => {
-        if (typeof node !== "object" || node === null) return;
-        for (const [key, child] of Object.entries(node)) {
-          if (
-            [
-              "$defs",
-              "definitions",
-              "examples",
-              "default",
-              "const",
-              "enum",
-            ].includes(key)
-          )
-            continue;
-          if (key !== "$ref" || typeof child !== "string") visit(child, active);
-          else if (active.includes(child)) found.add(child);
-          else visit(resolveReference(schema, child), [...active, child]);
+        if (!isRecord(node)) return;
+        const reference = node.$ref;
+        if (typeof reference === "string") {
+          if (active.includes(reference)) found.add(reference);
+          else
+            visit(resolveReference(schema, reference), [...active, reference]);
         }
+        for (const child of schemaSubschemas(node, {
+          includeDefinitions: false,
+        }))
+          visit(child, active);
       };
       visit(schema, []);
       return [...found].map(

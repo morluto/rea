@@ -134,16 +134,22 @@ it("retains malformed successful hdiutil inventory output as a typed producer pa
   }
   expect(calls).toEqual(["verify", "info"]);
   expect(failure).toMatchObject({
-    reason: "format",
+    reason: "io",
     message: expect.stringMatching(/hdiutil.*info.*inventory/iu),
     cause: { name: "ZodError" },
   });
   if (!(failure instanceof Error))
     throw new Error("Expected inventory failure");
   expect(
-    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+    projectAnalysisError(
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        failure,
+      ),
+    ),
   ).toMatchObject({
-    details: { reason: "format", detail: failure.message },
+    details: { reason: "io", detail: failure.message },
   });
 });
 
@@ -213,7 +219,11 @@ it("reports an hdiutil retained while the reader closes, after its own cleanup c
         /* consume */
       }
     })(),
-  ).rejects.toMatchObject({ reason: "format" });
+  ).rejects.toMatchObject({
+    reason: "unsupported",
+    // hdiutil's verdict carries its facts, so it projects as a target failure.
+    parseFailure: { kind: "unsupported", format: "dmg" },
+  });
   const refused = await reader.close().catch((cause: unknown) => cause);
   expect(refused).toBeInstanceOf(ArtifactReaderFailure);
   expect((refused as ArtifactReaderFailure).cleanup?.resources).toEqual([
@@ -254,7 +264,7 @@ it("classifies a verify exit from its diagnostics when the command's cleanup the
       }
     })().catch((cause: unknown) => cause);
     expect(failure).toMatchObject({
-      reason: "format",
+      reason: "unsupported",
       exitCode: 1,
       cause: exited,
     });

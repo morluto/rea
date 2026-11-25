@@ -6,16 +6,21 @@ import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
-import { isPathWithinRoot } from "../dist/domain/localPath.js";
+import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { containsText } from "./verify/clients/result-discovery.mjs";
+import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
   assertClientJavaScriptFixtureEvidence,
 } from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
@@ -55,6 +60,13 @@ let diagnosticsVerified = false;
 let lastTool;
 let catalogChecked = false;
 let catalogSize = null;
+// The native keyword search limit is uint8. Keep each query through partial
+// replies, then query missing canonical names and verify the complete union.
+const searchLimit = 255;
+const discovered = new Map();
+const searchedQueries = new Set();
+const discoveryPages = [];
+let pendingQuery = "rea";
 let schemasChecked = 0;
 let analysisRequested = false;
 let evidenceSeen = false;
@@ -107,36 +119,14 @@ await withVerifierCleanup(async () => {
             `export function extra${index}() { return { index: ${index}, tag: "GROK_LARGE_FIXTURE" }; }`,
         ).join("\n"),
     );
-    assert(
-      expectedNames.length <= 255,
-      "Native search_tool limit is uint8; this full-catalog query cannot cover more than 255 tools",
-    );
     const schemaValidator = new Ajv2020({
       strict: false,
       validateFormats: false,
     });
     const shellQuote = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
-    const containsText = (value, text) => {
-      if (typeof value === "string") return value.includes(text);
-      return (
-        value !== null &&
-        typeof value === "object" &&
-        Object.values(value).some((item) => containsText(item, text))
-      );
-    };
     const call = (name, args) => {
       lastTool = name;
-      return {
-        role: "assistant",
-        content: null,
-        tool_calls: [
-          {
-            id: `call_grok_${turn}`,
-            type: "function",
-            function: { name, arguments: JSON.stringify(args) },
-          },
-        ],
-      };
+      return toolCallMessage(`call_grok_${turn}`, name, args);
     };
     const verifyEvidence = async (bytes) => {
       const { evidence, shapes } = await assertClientJavaScriptFixtureEvidence(
@@ -253,10 +243,34 @@ await withVerifierCleanup(async () => {
             diagnosticsVerified = true;
           }
           if (discovery?.status !== "ready")
-            return call("search_tool", { query: "rea", limit: 255 });
-          const inventory = discovery.results
+            return call("search_tool", {
+              query: pendingQuery,
+              limit: searchLimit,
+            });
+          discoveryPages.push({ query: pendingQuery, response: discovery });
+          searchedQueries.add(pendingQuery);
+          for (const tool of discovery.results
             .filter((result) => result.server === "rea")
-            .flatMap((result) => result.tools);
+            .flatMap((result) => result.tools)) {
+            const previous = discovered.get(tool.tool_name);
+            if (previous !== undefined)
+              assert.deepEqual(
+                previous.input_schema,
+                tool.input_schema,
+                `${tool.tool_name}: native input schema changed between queries`,
+              );
+            discovered.set(tool.tool_name, tool);
+          }
+          const missing = expectedNames.filter((name) => !discovered.has(name));
+          const nextQuery = missing.find((name) => !searchedQueries.has(name));
+          if (nextQuery !== undefined) {
+            pendingQuery = nextQuery;
+            return call("search_tool", {
+              query: pendingQuery,
+              limit: searchLimit,
+            });
+          }
+          const inventory = [...discovered.values()];
           catalogSize = inventory.length;
           assert.deepEqual(
             inventory.map((tool) => tool.tool_name).sort(),
@@ -274,7 +288,10 @@ await withVerifierCleanup(async () => {
             );
             schemasChecked++;
           }
-          await writeFile(join(lab, "native-discovery.json"), last);
+          await writeFile(
+            join(lab, "native-discovery.json"),
+            JSON.stringify(discoveryPages),
+          );
           catalogChecked = true;
           analysisRequested = true;
           return call("use_tool", {
@@ -358,12 +375,6 @@ command = "unrelated-server"
 enabled = false
 `;
     await writeFile(configPath, original);
-    const rea = async (args) =>
-      commands.exec(
-        process.execPath,
-        [join(runtimeRoot, "scripts/rea.mjs"), ...args, "--json"],
-        { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-      );
     clientVersion = (
       await commands.exec(command, ["--version"], {
         env: environment,
@@ -371,61 +382,23 @@ enabled = false
         stdin: "pipe",
       })
     ).stdout.trim();
-    for (const args of [
-      ["setup", "--client", "grok_build", "--dry-run"],
-      ["setup", "--client", "grok_build", "--yes"],
-      ["doctor", "--client", "grok_build", "--skill"],
-    ]) {
-      const result = await rea(args);
-      await writeFile(
-        join(
-          lab,
-          `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`,
-        ),
-        result.stdout,
-      );
-      const parsed = JSON.parse(result.stdout);
-      if (args[0] === "doctor") assert.equal(parsed.healthy, true);
-      else {
-        assert.equal(
-          parsed.status,
-          args.includes("--dry-run") ? "planned" : "ready",
+    await verifyClientSetup({
+      client: "grok_build",
+      commands,
+      runtimeRoot,
+      environment,
+      workspace,
+      lab,
+      configPath,
+      original,
+      skillDirectory,
+      checkConfigured: (configured) => {
+        assert(
+          configured.includes("unrelated-server") &&
+            configured.includes("# Keep unrelated settings"),
         );
-        if (args.includes("--dry-run")) {
-          assert(
-            parsed.plannedActions.some(
-              (action) => action.target === configPath,
-            ),
-          );
-          assert(
-            parsed.plannedActions.some(
-              (action) => action.target === skillDirectory,
-            ),
-          );
-          assert(
-            parsed.plannedActions.every(
-              (action) =>
-                action.target === configPath ||
-                (isAbsolute(action.target) &&
-                  isPathWithinRoot(skillDirectory, action.target)),
-            ),
-            "Refuse writes outside the owned profile/skill",
-          );
-        }
-      }
-    }
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const configured = await readFile(configPath, "utf8");
-    assert(
-      configured.includes("unrelated-server") &&
-        configured.includes("# Keep unrelated settings"),
-    );
-    const repeated = JSON.parse(
-      (await rea(["setup", "--client", "grok_build", "--yes"])).stdout,
-    );
-    assert.deepEqual(repeated.appliedActions, []);
-    assert.equal(await readFile(configPath, "utf8"), configured);
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
+      },
+    });
     const skill = await readFile(join(skillDirectory, "SKILL.md"), "utf8");
     expectedSkill = skill
       .trimEnd()
@@ -524,9 +497,10 @@ enabled = false
       discovery:
         "native GROK_HOME, isolated additional skill directory, disabled foreign compatibility sources; default OS-home skill discovery and Windows unverified",
       interface:
-        "default native search_tool/use_tool with a complete explicit inventory query; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
+        "default native search_tool/use_tool with bounded keyword queries checked against the complete catalog; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
       catalogChecked,
       catalogSize,
+      discoveryQueries: discoveryPages.map((page) => page.query),
       schemasChecked,
       skillLoaded,
       diagnosticsRequested,
@@ -546,14 +520,6 @@ enabled = false
       fixtureFailure: fixture?.failure,
       verifier: lineage,
     };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    await publishClientReceipt(lab, receipt);
   },
 ]);

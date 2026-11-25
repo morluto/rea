@@ -5,7 +5,9 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
+  isObjectPrototypeSetter,
   isRuntimeJavaScriptClassProperty,
+  javaScriptExpressionWrapperTarget,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -15,6 +17,10 @@ import {
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import {
+  semanticArrayLiteralElementOwner,
+  semanticArrayLiteralLayout,
+} from "./javascriptSemanticArrayLayout.js";
 import {
   SemanticGetterQuery,
   type GetterQueryJob,
@@ -373,6 +379,13 @@ const objectReceiverReference = (
   while (true) {
     const parent = state.parentsByNode.get(current);
     if (
+      parent !== undefined &&
+      javaScriptExpressionWrapperTarget(parent) === current
+    ) {
+      current = parent;
+      continue;
+    }
+    if (
       t.isVariableDeclarator(parent) &&
       parent.init === current &&
       t.isIdentifier(parent.id)
@@ -397,21 +410,10 @@ const objectReceiverReference = (
         },
       ];
     if (t.isArrayExpression(parent)) {
-      let minimumIndex = 0;
-      let uncertainIndex = false;
-      for (const element of parent.elements) {
-        if (element === current) break;
-        if (t.isSpreadElement(element)) uncertainIndex = true;
-        else minimumIndex++;
-      }
-      // A spread contributes an unknown number of slots. Retain the known
-      // prefix without treating the element's syntax position as its index.
-      projection.unshift(
-        uncertainIndex
-          ? { excludedKeys: [], startIndex: minimumIndex }
-          : minimumIndex,
-      );
-      current = parent;
+      const slot = semanticArrayLiteralElementOwner(current, parent, state);
+      if (slot === undefined) break;
+      projection.unshift(slot.key);
+      current = slot.array;
       continue;
     }
     if (t.isObjectProperty(parent) && parent.value === current) {
@@ -545,18 +547,6 @@ const expandGetterResult = (
 };
 
 type ObjectLiteralMember = t.ObjectExpression["properties"][number];
-
-/** Only this colon-form definition selects an object literal's prototype. */
-const isObjectPrototypeSetter = (
-  property: ObjectLiteralMember,
-  name = t.isSpreadElement(property)
-    ? null
-    : semanticStaticPropertyKey(property.key, property.computed),
-): property is t.ObjectProperty =>
-  t.isObjectProperty(property) &&
-  !property.computed &&
-  !property.shorthand &&
-  name === "__proto__";
 
 /** Property positions grouped by whether an exact key can reach them. */
 interface ObjectPropertyIndex {
@@ -708,7 +698,11 @@ class ObjectReferenceWalk {
     property: t.ObjectMethod | t.ObjectProperty,
     name: string | null,
   ): boolean {
-    if (!isObjectPrototypeSetter(property, name)) return false;
+    if (
+      !t.isObjectProperty(property) ||
+      !isObjectPrototypeSetter(property, name)
+    )
+      return false;
     const selected = this.#key ?? null;
     if (this.accessor !== undefined && this.accessorLookup === "own")
       return true;
@@ -854,6 +848,7 @@ const objectExpressionDefinedKeys = (
 export const semanticArrayPropertyReferences = (
   node: t.ArrayExpression,
   path: PropertyPath,
+  state?: JavaScriptSemanticAnalysisState,
 ): readonly JavaScriptSemanticObjectReference[] => {
   const [key, ...remaining] = path;
   const selected = key ?? null;
@@ -863,8 +858,8 @@ export const semanticArrayPropertyReferences = (
   const references: JavaScriptSemanticObjectReference[] = [];
   let minimumIndex = 0;
   let uncertainIndex = false;
-  for (const element of node.elements) {
-    if (t.isSpreadElement(element)) {
+  for (const part of semanticArrayLiteralLayout(node, state)) {
+    if (part.kind === "opaque-spread") {
       if (selectedIndex === null || selectedIndex >= minimumIndex) {
         let sourceKey: PropertyPath[number] = null;
         if (!uncertainIndex) {
@@ -884,15 +879,16 @@ export const semanticArrayPropertyReferences = (
             };
         }
         references.push({
-          node: element.argument,
+          node: part.argument,
           path: [sourceKey, ...remaining],
-          capturedSelectionAt: element.argument,
+          capturedSelectionAt: part.argument,
           iterableFallbackPath: [],
         });
       }
       uncertainIndex = true;
       continue;
     }
+    const { element } = part;
     if (
       element !== null &&
       (uncertainIndex
@@ -909,13 +905,14 @@ export const semanticArrayPropertyReferences = (
 export const semanticNativePrototypeChain = (
   node: t.ObjectExpression | t.ArrayExpression,
   key: PropertyPath[number],
+  state?: JavaScriptSemanticAnalysisState,
 ): readonly ("Object" | "Array")[] => {
   const exact =
     key !== null && typeof key !== "object" ? String(key) : undefined;
   if (t.isArrayExpression(node)) {
     if (exact === "length") return [];
     if (exact !== undefined) {
-      const sources = semanticArrayPropertyReferences(node, [exact]);
+      const sources = semanticArrayPropertyReferences(node, [exact], state);
       if (
         sources.length > 0 &&
         sources.every((source) => source.capturedSelectionAt === undefined)
@@ -927,7 +924,8 @@ export const semanticNativePrototypeChain = (
   if (exact !== undefined && objectExpressionDefinedKeys(node).has(exact))
     return [];
   for (const property of node.properties) {
-    if (!isObjectPrototypeSetter(property)) continue;
+    if (!t.isObjectProperty(property) || !isObjectPrototypeSetter(property))
+      continue;
     const prototype = unwrapJavaScriptExpression(property.value).node;
     // Null removes the prototype. Objects select the explicitly retained
     // chain, while primitive values are ignored and unknowns may be primitive.

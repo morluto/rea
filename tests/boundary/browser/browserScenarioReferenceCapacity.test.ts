@@ -32,25 +32,28 @@ it.each(["query", "storage", "session-storage", "cookie"] as const)(
   },
 );
 
-it("reports each distinct undeclared identity once across query and storage uses", () => {
+it("reports each distinct undeclared identity once across query, cookie, and storage uses", () => {
   const input = browserScenarioReferences("query", 3);
   input.secrets = [];
+  const entry = (secret_id: string) => ({
+    name: secret_id,
+    value: { source: "secret", secret_id },
+  });
+  const origin = "http://127.0.0.1:1";
   input.storage.local_storage = [
-    {
-      origin: "http://127.0.0.1:1",
-      entries: [
-        { name: "one", value: { source: "secret", secret_id: "other" } },
-        { name: "two", value: { source: "secret", secret_id: "token" } },
-        { name: "three", value: { source: "secret", secret_id: "other" } },
-      ],
-    },
+    { origin, entries: [entry("local"), entry("token")] },
   ];
-  const result = browserScenarioSchema.safeParse(input);
-  expect(result.success).toBe(false);
-  expect(
-    result.error?.issues.map(({ path, message }) => ({ path, message })),
-  ).toEqual([
-    { path: ["secrets"], message: "Secret reference token is not declared" },
-    { path: ["secrets"], message: "Secret reference other is not declared" },
-  ]);
+  input.storage.session_storage = [{ origin, entries: [entry("session")] }];
+  input.storage.cookies = browserScenarioReferences(
+    "cookie",
+    1,
+  ).storage.cookies;
+  input.storage.cookies[0]!.destination.query = [entry("cookie")];
+  const { error } = browserScenarioSchema.safeParse(input);
+  expect(error?.issues.map(({ path, message }) => ({ path, message }))).toEqual(
+    ["token", "cookie", "local", "session"].map((id) => ({
+      path: ["secrets"],
+      message: `Secret reference ${id} is not declared`,
+    })),
+  );
 });

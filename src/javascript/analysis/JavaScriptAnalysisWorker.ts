@@ -5,6 +5,7 @@ import {
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   javaScriptMemberMutationAllowanceField,
+  isJavaScriptMemberMutationRefusal,
   javaScriptMemberMutationRefusal,
   reportsJavaScriptMemberMutationRefusal,
 } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
@@ -24,6 +25,10 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { Budget } from "../../domain/budget.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import { WorkerFrameSignal } from "../../process/WorkerFrameSignal.js";
+import {
+  Utf8NdjsonLineBuffer,
+  Utf8NdjsonOversizeError,
+} from "../../process/Utf8NdjsonLineBuffer.js";
 import type {
   JavaScriptSemanticProjectionCapacity,
   JavaScriptSemanticFileProjection,
@@ -32,7 +37,6 @@ import { randomUUID } from "node:crypto";
 import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeJavaScriptAnalysisSourceTransfer } from "./JavaScriptAnalysisSourceTransfer.js";
-import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
 import { z } from "zod";
@@ -76,10 +80,7 @@ import {
   processWorkerCleanup,
 } from "../../process/OwnedWorkerRuntime.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
-import {
-  ProviderStartupDeadline,
-  waitForAbortableDelay,
-} from "../../process/ProviderDeadline.js";
+import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
 import {
   readJavaScriptAnalysisTransfer,
   javaScriptForwardedTransferRemediation,
@@ -140,6 +141,20 @@ type WorkerPrimaryFailure =
     };
 
 /** One sequential owned worker, retained between source files and closed after analysis. */
+/**
+ * Preload discovery skips a source whose member-mutation allowance the worker
+ * refused and reported; the normal pass recomputes and reports it. That
+ * refusal leaves the process healthy, so it does not block reuse and the
+ * static checkpoints discovery retained survive.
+ */
+export const isRecoverableJavaScriptWorkerFailure = (
+  purpose: "analysis" | "preload-discovery" | "structure-only",
+  result: Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>,
+): boolean =>
+  purpose === "preload-discovery" &&
+  !result.ok &&
+  isJavaScriptMemberMutationRefusal(result.error.error);
+
 export class JavaScriptAnalysisWorker {
   readonly #runId = `rea-javascript-analysis-${randomUUID()}`;
   readonly #runtime: OwnedWorkerRuntime;
@@ -148,8 +163,7 @@ export class JavaScriptAnalysisWorker {
   #heapLimitBytes = 0;
   #frames: JavaScriptWorkerMessage[] = [];
   readonly #frameSignal = new WorkerFrameSignal();
-  #pending = "";
-  #decoder = new StringDecoder("utf8");
+  readonly #lines = new Utf8NdjsonLineBuffer(() => DEFAULTS.protocolBytes);
   #primaryFailure: WorkerPrimaryFailure | undefined;
   #activeJobId: string | undefined;
   #activeJobPhase = "startup";
@@ -181,33 +195,30 @@ export class JavaScriptAnalysisWorker {
     if (this.#deadline?.interruption !== undefined) return;
     this.#observeMemoryLimit();
     try {
-      this.#pending +=
-        typeof chunk === "string" ? chunk : this.#decoder.write(chunk);
-      let newline: number;
-      while ((newline = this.#pending.indexOf("\n")) >= 0) {
-        const line = this.#pending.slice(0, newline);
-        this.#pending = this.#pending.slice(newline + 1);
-        if (
-          Buffer.byteLength(line) > DEFAULTS.protocolBytes ||
-          this.#frames.length >= 16
-        ) {
+      for (const line of this.#lines.pushRaw(
+        typeof chunk === "string" ? Buffer.from(chunk) : chunk,
+      )) {
+        if (!line.ok) throw line.error;
+        if (this.#frames.length >= 16) {
           this.#latchOutputFailure(
             "JavaScript worker exceeded its control-frame budget",
           );
           return;
         }
-        const raw: unknown = JSON.parse(line);
+        const raw: unknown = JSON.parse(line.value);
         const frame = javaScriptWorkerMessageSchema.parse(raw);
         this.#frames.push(frame);
         this.#observeJobFrame(frame);
         this.#frameSignal.wake("frame");
       }
-      if (Buffer.byteLength(this.#pending) > DEFAULTS.protocolBytes)
-        this.#latchOutputFailure(
-          "JavaScript worker control frame is unterminated or oversized",
-        );
     } catch (cause: unknown) {
-      this.#latchOutputFailure(errorMessage(cause));
+      this.#latchOutputFailure(
+        cause instanceof Utf8NdjsonOversizeError
+          ? cause.boundary === "tail"
+            ? "JavaScript worker control frame is unterminated or oversized"
+            : "JavaScript worker exceeded its control-frame budget"
+          : errorMessage(cause),
+      );
     }
   };
 
@@ -238,6 +249,7 @@ export class JavaScriptAnalysisWorker {
         // budget or a stack trace that overflowed it cannot hide it.
         runtime: "v8",
         onDiagnostic: (event) => this.#observeProcessDiagnostic(event),
+        onMemoryLimit: () => this.#observeMemoryLimit(),
       },
       onInputFailure: (cause) => this.#latchInputFailure(cause),
     });
@@ -277,7 +289,7 @@ export class JavaScriptAnalysisWorker {
       this.#primaryFailure === undefined &&
       this.#lastFailure === undefined &&
       this.#frames.length === 0 &&
-      this.#pending === "" &&
+      this.#lines.pendingBytes === 0 &&
       this.#runtime.inputFailure === undefined &&
       !this.#runtime.hasPendingCleanup &&
       !this.#inspectionResources.hasPending &&
@@ -336,7 +348,7 @@ export class JavaScriptAnalysisWorker {
     signal?: AbortSignal,
     onPhase?: (phase: string) => Promise<void>,
     packageType: JavaScriptPackageType = "unknown",
-    purpose: "analysis" | "preload-discovery" = "analysis",
+    purpose: "analysis" | "preload-discovery" | "structure-only" = "analysis",
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
@@ -377,7 +389,7 @@ export class JavaScriptAnalysisWorker {
       const supervisor = this.#runtime.supervisor;
       if (rootPath === undefined || supervisor === undefined)
         throw new TypeError("JavaScript worker resources were not acquired");
-      if (this.#frames.length !== 0 || this.#pending !== "")
+      if (this.#frames.length !== 0 || this.#lines.pendingBytes !== 0)
         throw new AnalysisOutputError(
           OPERATION,
           "JavaScript worker has unsolicited or incomplete control frames",
@@ -626,7 +638,8 @@ export class JavaScriptAnalysisWorker {
       if (this.#deadline === deadline) this.#deadline = undefined;
       if (this.#activeJobId === id) this.#activeJobId = undefined;
     }
-    if (result.ok) this.#lastFailure = undefined;
+    if (result.ok || isRecoverableJavaScriptWorkerFailure(purpose, result))
+      this.#lastFailure = undefined;
     else if (!(result.error.error instanceof ProviderCleanupError))
       this.#lastFailure = result.error.error;
     // Child stop must be verified before temporary files are released. On
@@ -842,7 +855,7 @@ export class JavaScriptAnalysisWorker {
         if (outcome === "frame") continue;
         throw this.#selectedWorkerFailure(path);
       }
-      await waitForAbortableDelay(10, deadline.signal);
+      await this.#frameSignal.wait(deadline.signal);
     }
   }
 
@@ -1101,28 +1114,30 @@ export class JavaScriptAnalysisWorker {
       };
       this.#frameSignal.wake("failure");
     }
-    if (event.type === "exit" && (event.code !== 0 || event.signal !== null)) {
-      if (this.#primaryFailure === undefined)
-        this.#primaryFailure = {
-          kind: "exit",
-          code: event.code,
-          signal: event.signal,
-          heapExhaustion: event.snapshot.runtimeExhaustion !== undefined,
-          ...(event.snapshot.runtimeExhaustion === undefined
-            ? {}
-            : { exhaustion: event.snapshot.runtimeExhaustion }),
-        };
-      else if (
-        this.#primaryFailure.kind === "exit" &&
-        event.snapshot.runtimeExhaustion !== undefined
-      ) {
-        this.#primaryFailure = {
-          ...this.#primaryFailure,
-          heapExhaustion: true,
-          exhaustion: event.snapshot.runtimeExhaustion,
-        };
-        this.#frameSignal.wake("failure");
+    if (event.type === "exit") {
+      if (event.code !== 0 || event.signal !== null) {
+        if (this.#primaryFailure === undefined)
+          this.#primaryFailure = {
+            kind: "exit",
+            code: event.code,
+            signal: event.signal,
+            heapExhaustion: event.snapshot.runtimeExhaustion !== undefined,
+            ...(event.snapshot.runtimeExhaustion === undefined
+              ? {}
+              : { exhaustion: event.snapshot.runtimeExhaustion }),
+          };
+        else if (
+          this.#primaryFailure.kind === "exit" &&
+          event.snapshot.runtimeExhaustion !== undefined
+        ) {
+          this.#primaryFailure = {
+            ...this.#primaryFailure,
+            heapExhaustion: true,
+            exhaustion: event.snapshot.runtimeExhaustion,
+          };
+        }
       }
+      this.#frameSignal.wake("failure");
     }
   }
   #observeMemoryLimit(): void {
@@ -1245,10 +1260,11 @@ export class JavaScriptAnalysisWorker {
         this.limits.timeoutMs,
         this.limits.timeoutSource,
       ),
+      related: { parameters: ["source_paths"] },
       ...(withCapturedOutput ? { capturedOutput: this.#captured() } : {}),
       userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
       remediationAction:
-        "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms on the next call. Alternatively, reduce semantic limits or select exact inventoried source_paths (CLI: --source-path on that command). Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
+        "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms on the next call. Alternatively, reduce semantic limits or select exact inventoried source_paths. Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
     });
   }
   #workerExitFailure(
@@ -1545,8 +1561,7 @@ export class JavaScriptAnalysisWorker {
     this.#ready = false;
     this.#frames = [];
     this.#frameSignal.clear();
-    this.#pending = "";
-    this.#decoder = new StringDecoder("utf8");
+    this.#lines.reset();
     this.#primaryFailure = undefined;
     this.#activeJobId = undefined;
     this.#staticResponseId = undefined;

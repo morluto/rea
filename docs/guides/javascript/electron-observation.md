@@ -157,6 +157,8 @@ REA does not guess an entry point or remove arguments by filename patterns.
 
 `window_index` selects from Playwright's current Page list at the start of each action. REA resolves that Page to its corresponding BrowserWindow once; the action's `target` uses the BrowserWindow's capture-scoped `window_id`, matching the window inventory. Reordering either enumeration after selection does not retarget the action. Handle cleanup failures retain the completed action records and remain owned for provider cleanup retry.
 
+Once REA resolves the required window, the host clock controls the full wait even during a renderer crash.
+
 Run the real fixture verifier with an operator-provided Electron runtime:
 
 ```bash
@@ -202,7 +204,9 @@ never appears, or a `wait` without `window_index` in an app that opens no
 window, remains pending until cancelled. After cancellation, the final state
 read has 5 seconds before REA keeps the initial snapshot instead; the
 cancellation keeps the caller's reason and records that expiry in its
-diagnostics.
+diagnostics. When the caller interrupted an action and the final Inspector read
+fails, REA reports the cancellation with the initial snapshot, the action
+records, and the Inspector failure as a secondary diagnostic.
 The shell policy is owned by `blockedShellResults` in
 `scripts/electron-active-hook-boundaries.cjs`. Its synchronous blocks are:
 `showItemInFolder` returns `undefined` and `writeShortcutLink` returns `false`.
@@ -319,7 +323,7 @@ and do not establish IPC delivery or successful removal.
 
 Active scenario capture requires that the target Electron executable honors Node CLI inspector flags (`--inspect` or `--remote-debugging-port`) so that Playwright can establish its DevTools protocol session.
 
-When an Electron executable explicitly disables the `EnableNodeCliInspectArguments` fuse (or removes the capability), `capture-electron-scenario` fails immediately before process launch with an `AnalysisUnsupportedTargetError` ("unsupported_target") rather than waiting for the startup deadline. For targets with disabled inspector fuses, use passive CDP inspection via `inspect_electron_page` or run against an unrestricted development binary with the extracted `app.asar`.
+When an Electron executable explicitly disables the `EnableNodeCliInspectArguments` fuse (or removes the capability), `capture-electron-scenario` fails immediately before process launch with an `unsupported_target` error whose `details.failure_kind` is `unsupported` and `details.format` is `electron` rather than waiting for the startup deadline. For targets with disabled inspector fuses, use passive CDP inspection via `inspect_electron_page` or run against an unrestricted development binary with the extracted `app.asar`.
 
 The real verifier exercises compiled CLI and stdio MCP discovery, page/script
 inspection, static/runtime reconciliation, active observation, and CLI SIGTERM
@@ -341,7 +345,7 @@ budget used by static ASAR reads: 16 MiB / 16777216 bytes by default, seeded by
 `update_analysis_settings` can override `asar.max_header_bytes` for new
 operations without restarting REA. Cached headers are checked against each
 operation's admission, including after a decrease. See the
-[settings design](../../design/limits-and-recovery.md#failure-and-retry).
+[analysis settings and recovery](../../reference/limits-and-recovery.md#failure-and-retry).
 An oversized header is
 not parsed; selecting a member path does not bypass admission, and the page
 stays unauthorized. The header cache separately retains at most that many bytes

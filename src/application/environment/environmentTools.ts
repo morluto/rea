@@ -1,4 +1,6 @@
+import { isSuccessfulHttpStatus } from "../../domain/httpResponseStatus.js";
 import { advertiseToolInput } from "../../contracts/advertisedTool.js";
+import { formattedEllipsisExcerpt } from "../../domain/excerpt.js";
 import { jsonPointerTokens } from "../../domain/jsonPointer.js";
 import {
   ownMember,
@@ -142,12 +144,7 @@ const describeText = (
       low = mid + 1;
     } else high = mid - 1;
   }
-  // A lone surrogate is not a character. Step off a high surrogate so the prefix stays whole.
-  if (best > 0 && best < text.length) {
-    const unit = text.charCodeAt(best - 1);
-    if (unit >= 0xd8_00 && unit <= 0xdb_ff) best -= 1;
-  }
-  return `${show(text.slice(0, best))}… (${label} display truncated; full value in ${holder})`;
+  return `${formattedEllipsisExcerpt(text, best, show)} (${label} display truncated; full value in ${holder})`;
 };
 
 /** Sample whole values before joining; keep full lists in the Evidence that owns them. */
@@ -210,9 +207,6 @@ const describeJson = (value: JsonValue): string => {
   return `a JSON ${value === null ? "null" : typeof value}`;
 };
 
-const isSuccess = (status: number | null): boolean =>
-  status !== null && status >= 200 && status < 300;
-
 /** The first cited record replay answers as JSON, preferring a 2xx one; each body is parsed at most once. */
 const firstJson = (
   tool: EnvironmentManifestTool,
@@ -223,7 +217,10 @@ const firstJson = (
   for (const success of [true, false])
     for (const ordinal of tool.record_ordinals) {
       const exchange = exchanges.get(ordinal);
-      if (exchange === undefined || isSuccess(exchange.status) !== success)
+      if (
+        exchange === undefined ||
+        isSuccessfulHttpStatus(exchange.status) !== success
+      )
         continue;
       const body = replayedBody(exchange);
       if (body.kind === "json")
@@ -243,7 +240,7 @@ const describeResponses = (
       : `recorded statuses ${describeList(tool.statuses, tool.statuses.length)}`;
   const found = firstJson(tool, exchanges);
   if (found === undefined) return recorded;
-  const returns = isSuccess(found.status)
+  const returns = isSuccessfulHttpStatus(found.status)
     ? "returns"
     : found.status === null
       ? "a record without a status returns"

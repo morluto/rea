@@ -1,11 +1,10 @@
+import { defaultedNumberSettingParser } from "./optionalSetting.js";
 import {
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
 } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
-import { err, ok, type Result } from "../domain/result.js";
 import type { AsarListingAdmission } from "./asarListingAdmission.js";
 
 export const ASAR_HEADER_ADMISSION_SETTING = "REA_ASAR_MAX_HEADER_BYTES";
@@ -37,21 +36,11 @@ export const asarMaxHeaderBytesSchema = z
   );
 
 /** Resolve the effective admission from one environment value. */
-export const parseAsarHeaderAdmission = (
-  value: string | undefined,
-): Result<AsarHeaderAdmission, ConfigurationError> => {
-  if (value === undefined) return ok(DEFAULT_ASAR_HEADER_ADMISSION);
-  const parsed = asarMaxHeaderBytesSchema.safeParse(value);
-  return parsed.success
-    ? ok({ maximumBytes: parsed.data, source: "setting" })
-    : err(
-        new ConfigurationError(asarMaxHeaderBytesConstraint, {
-          settings: [
-            {
-              setting: ASAR_HEADER_ADMISSION_SETTING,
-              constraint: asarMaxHeaderBytesConstraint,
-            },
-          ],
-        }),
-      );
-};
+export const parseAsarHeaderAdmission =
+  defaultedNumberSettingParser<AsarHeaderAdmission>(
+    ASAR_HEADER_ADMISSION_SETTING,
+    asarMaxHeaderBytesSchema,
+    asarMaxHeaderBytesConstraint,
+    DEFAULT_ASAR_HEADER_ADMISSION,
+    (maximumBytes) => ({ maximumBytes, source: "setting" }),
+  );
