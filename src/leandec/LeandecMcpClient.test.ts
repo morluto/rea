@@ -28,10 +28,10 @@ rl.on("line", line => {
   }
 });
 `;
-const clientFor = async () => {
+const clientFor = async (source = fixture) => {
   const cwd = await createTestTempDirectory("leandec-mcp-");
   const server = join(cwd, "server.cjs");
-  await writeFile(server, fixture);
+  await writeFile(server, source);
   return new LeandecMcpClient({
     python: process.execPath,
     server,
@@ -58,6 +58,13 @@ describe.skipIf(process.platform === "win32")("Leandec stdio transport", () => {
     } finally {
       await client.close();
     }
+  });
+
+  it("rejects an incompatible handshake", async () => {
+    const client = await clientFor(fixture.replace("2024-11-05", "unsupported"));
+    try {
+      await expect(client.initialize()).rejects.toBeInstanceOf(LeandecRpcError);
+    } finally { await client.close(); }
   });
 
   it("rejects malformed MCP envelopes instead of returning empty output", async () => {

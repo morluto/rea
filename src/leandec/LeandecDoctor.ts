@@ -9,6 +9,11 @@ export const LEANDEC_DOCTOR_SETTINGS = [
   "LEANDEC_PYTHON",
   "PATH",
   "LEANDEC_HOME",
+  "LEANDEC_CALL_TIMEOUT_MS",
+  "LEANDEC_IMPORT_TIMEOUT_MS",
+  "LEANDEC_INVENTORY_LIMIT",
+  "LEANDEC_STRING_LIMIT",
+  "LEANDEC_AUTO_ANALYZE",
 ] as const;
 
 /** Side-effect-free configuration inspection; runtime analysis is a separate check. */

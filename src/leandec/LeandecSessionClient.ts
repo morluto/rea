@@ -160,12 +160,15 @@ const inventoryEntry = (row: JsonValue): InventoryEntry => {
   };
 };
 
+type RequestOptions = ExecutionOptions & { readonly operation: string };
+
 const waitShared = async <T>(
   promise: Promise<T>,
+  operation: string,
   signal?: AbortSignal,
 ): Promise<T> => {
   const result = await waitForAbortable(promise, signal);
-  if (result instanceof AbortedWait) throw cancelledBy("leandec", result);
+  if (result instanceof AbortedWait) throw cancelledBy(operation, result);
   return result;
 };
 
@@ -233,6 +236,7 @@ export class LeandecSessionClient implements AnalysisClient {
   readonly #progress = new Map<symbol, ProgressReporter>();
   #cleanupFailure: ProviderCleanupError | undefined;
   #cleanupReleased = false;
+  #closing: Promise<Result<null, AnalysisError>> | undefined;
 
   get cleanupReleased(): boolean {
     return this.#cleanupReleased;
@@ -262,6 +266,7 @@ export class LeandecSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options: ExecutionOptions = {},
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    if (this.#cleanupFailure?.cleanupIncomplete === true) return err(this.#cleanupFailure);
     if (this.#closed)
       return err(
         this.#unavailable(operation, "This Leandec session is already closed."),
@@ -276,7 +281,8 @@ export class LeandecSessionClient implements AnalysisClient {
         ),
       );
     try {
-      const answer = await this.#answer(operation, parameters, options);
+      const request = { ...options, operation };
+      const answer = await this.#answer(operation, parameters, request);
       return ok(
         createAnalysisExecution(answer.result, this.#identity(), {
           subject: {
@@ -317,9 +323,17 @@ export class LeandecSessionClient implements AnalysisClient {
     }
   }
 
-  async close(): Promise<Result<null, AnalysisError>> {
+  close(): Promise<Result<null, AnalysisError>> {
     this.#closed = true;
     this.#owner.abort(OwnerCancellation.ownerClosed);
+    this.#closing ??= this.#closeOwned().then(result => {
+      if (!result.ok) this.#closing = undefined;
+      return result;
+    });
+    return this.#closing;
+  }
+
+  async #closeOwned(): Promise<Result<null, AnalysisError>> {
     try {
       await this.#client.close();
       await Promise.allSettled([this.#session, this.#inventory, this.#strings]);
@@ -336,18 +350,22 @@ export class LeandecSessionClient implements AnalysisClient {
       this.#cleanupReleased = true;
       return ok(null);
     } catch (cause: unknown) {
-      this.#cleanupFailure ??= new ProviderCleanupError(
-        "leandec",
-        ["Leandec MCP process and owned input resources"],
-        { reason: errorMessage(cause) },
-        { cause },
-      ).bindCleanupReleaseClaim(this);
-      return err(this.#cleanupFailure);
+      return err(this.#retainCleanupFailure("close_binary", cause));
     }
   }
 
+  #retainCleanupFailure(operation: string, cause: unknown): ProviderCleanupError {
+    this.#cleanupFailure ??= new ProviderCleanupError(
+      "leandec",
+      ["Leandec MCP process and owned input resources"],
+      { reason: errorMessage(cause) },
+      { operation, cause },
+    ).bindCleanupReleaseClaim(this);
+    return this.#cleanupFailure;
+  }
+
   reuseReadiness(): "ready" | "blocked" | "unknown" {
-    return this.#closed ? "blocked" : "unknown";
+    return this.#closed || this.#cleanupFailure?.cleanupIncomplete === true ? "blocked" : "unknown";
   }
 
   #identity() {
@@ -361,7 +379,7 @@ export class LeandecSessionClient implements AnalysisClient {
   async #answer(
     operation: AnalysisOperation,
     parameters: Readonly<Record<string, JsonValue>>,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     if (operation === "health") return this.#health(options);
     const document = parameters.document;
@@ -402,7 +420,7 @@ export class LeandecSessionClient implements AnalysisClient {
     }
   }
 
-  async #health(options: ExecutionOptions): Promise<Answer> {
+  async #health(options: RequestOptions): Promise<Answer> {
     const key = await this.#ensureSession(options);
     const overview = record(
       await this.#call("overview", { target: key }, options),
@@ -425,7 +443,7 @@ export class LeandecSessionClient implements AnalysisClient {
 
   async #listProcedures(
     key: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const inventory = await this.#inventoryOf(key, options);
     return {
@@ -446,7 +464,7 @@ export class LeandecSessionClient implements AnalysisClient {
   async #searchProcedures(
     operation: string,
     parameters: Readonly<Record<string, JsonValue>>,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const query = this.#searchQuery(operation, parameters);
     const inventory = await this.#inventoryOf(
@@ -479,7 +497,7 @@ export class LeandecSessionClient implements AnalysisClient {
 
   async #listStrings(
     parameters: Readonly<Record<string, JsonValue>>,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const strings = await this.#stringsOf(options);
     const wanted =
@@ -512,7 +530,7 @@ export class LeandecSessionClient implements AnalysisClient {
   async #searchStrings(
     operation: string,
     parameters: Readonly<Record<string, JsonValue>>,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const query = this.#searchQuery(operation, parameters);
     const strings = await this.#stringsOf(options);
@@ -539,7 +557,7 @@ export class LeandecSessionClient implements AnalysisClient {
   async #procedureAddress(
     operation: string,
     parameters: Readonly<Record<string, JsonValue>>,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const entry = await this.#resolve(operation, parameters.procedure, options);
     return {
@@ -551,7 +569,7 @@ export class LeandecSessionClient implements AnalysisClient {
 
   async #addressName(
     parameters: Readonly<Record<string, JsonValue>>,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const key = await this.#ensureSession(options);
     const address =
@@ -606,7 +624,7 @@ export class LeandecSessionClient implements AnalysisClient {
     operation: string,
     parameters: Readonly<Record<string, JsonValue>>,
     key: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const entry = await this.#resolve(operation, parameters.procedure, options);
     const payload = record(
@@ -631,7 +649,7 @@ export class LeandecSessionClient implements AnalysisClient {
     operation: string,
     parameters: Readonly<Record<string, JsonValue>>,
     key: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const entry = await this.#resolve(operation, parameters.procedure, options);
     const payload = record(
@@ -652,7 +670,7 @@ export class LeandecSessionClient implements AnalysisClient {
     operation: "procedure_callers" | "procedure_callees",
     parameters: Readonly<Record<string, JsonValue>>,
     key: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const entry = await this.#resolve(operation, parameters.procedure, options);
     const payload = record(
@@ -680,7 +698,7 @@ export class LeandecSessionClient implements AnalysisClient {
   async #xrefs(
     parameters: Readonly<Record<string, JsonValue>>,
     key: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const address =
       canonicalAddress(parameters.address) ??
@@ -730,7 +748,7 @@ export class LeandecSessionClient implements AnalysisClient {
     operation: string,
     parameters: Readonly<Record<string, JsonValue>>,
     key: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Answer> {
     const address = canonicalAddress(parameters.address);
     if (address === undefined)
@@ -779,7 +797,7 @@ export class LeandecSessionClient implements AnalysisClient {
   async #resolve(
     operation: string,
     raw: JsonValue | undefined,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<InventoryEntry> {
     const key = await this.#ensureSession(options);
     if (typeof raw !== "string" || raw.trim().length === 0)
@@ -859,12 +877,14 @@ export class LeandecSessionClient implements AnalysisClient {
     };
   }
 
-  async #ensureSession(options: ExecutionOptions): Promise<string> {
+  async #ensureSession(options: RequestOptions): Promise<string> {
+    if (this.#cleanupFailure?.cleanupIncomplete === true) throw this.#cleanupFailure;
     const token = Symbol("leandec waiter");
     if (options.progress !== undefined)
       this.#progress.set(token, options.progress);
     try {
       this.#session ??= this.#open({
+        operation: "open_binary",
         signal: this.#owner.signal,
         progress: {
           report: async (update) => {
@@ -876,16 +896,18 @@ export class LeandecSessionClient implements AnalysisClient {
           },
         },
       }).catch((cause: unknown) => {
+        if (this.#failedHandles.size > 0 || this.#stagingRoots.size > 0)
+          throw this.#retainCleanupFailure("open_binary", cause);
         this.#session = undefined;
         throw cause;
       });
-      return await waitShared(this.#session, options.signal);
+      return await waitShared(this.#session, options.operation, options.signal);
     } finally {
       this.#progress.delete(token);
     }
   }
 
-  async #open(options: ExecutionOptions): Promise<string> {
+  async #open(options: RequestOptions): Promise<string> {
     await this.#client.initialize(options.signal);
     // Verify the complete admitted file and hash the selected slice independently.
     // A private copy is retained until all owned work and process cleanup finish.
@@ -913,7 +935,7 @@ export class LeandecSessionClient implements AnalysisClient {
   }
 
   async #verifiedInput(
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<{ path: string; digest: string }> {
     this.#runtime ??= await PrivateRuntimeRoot.create({
       prefix: "rea-leandec-",
@@ -983,7 +1005,7 @@ export class LeandecSessionClient implements AnalysisClient {
     return { path, digest: selected.digest("hex") };
   }
 
-  async #hashInput(path: string, options: ExecutionOptions): Promise<string> {
+  async #hashInput(path: string, options: RequestOptions): Promise<string> {
     const hash = createHash("sha256");
     for await (const chunk of createReadStream(path, {
       highWaterMark: 64 * 1024,
@@ -1000,7 +1022,7 @@ export class LeandecSessionClient implements AnalysisClient {
   async #persistInput(
     path: string,
     digest: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<string> {
     const environment = this.#settings.environment;
     const state = resolve(
@@ -1070,7 +1092,7 @@ export class LeandecSessionClient implements AnalysisClient {
 
   async #findByDigest(
     digest: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<string | undefined> {
     const response = await this.#call("targets", {}, options);
     const targets =
@@ -1107,7 +1129,7 @@ export class LeandecSessionClient implements AnalysisClient {
     return key;
   }
 
-  async #importTarget(path: string, options: ExecutionOptions): Promise<void> {
+  async #importTarget(path: string, options: RequestOptions): Promise<void> {
     const deadline = Deadline.after(this.#settings.importTimeoutMs);
     const job = record(
       await this.#call(
@@ -1169,20 +1191,21 @@ export class LeandecSessionClient implements AnalysisClient {
 
   async #inventoryOf(
     key: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Inventory> {
     this.#inventory ??= this.#loadInventory(key, {
+      operation: "list_procedures",
       signal: this.#owner.signal,
     }).catch((cause: unknown) => {
       this.#inventory = undefined;
       throw cause;
     });
-    return waitShared(this.#inventory, options.signal);
+    return waitShared(this.#inventory, options.operation, options.signal);
   }
 
   async #loadInventory(
     key: string,
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<Inventory> {
     const payload = record(
       await this.#call(
@@ -1216,19 +1239,19 @@ export class LeandecSessionClient implements AnalysisClient {
   }
 
   async #stringsOf(
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<{ items: readonly StringEntry[]; total: number }> {
-    this.#strings ??= this.#loadStrings({ signal: this.#owner.signal }).catch(
+    this.#strings ??= this.#loadStrings({ operation: "list_strings", signal: this.#owner.signal }).catch(
       (cause: unknown) => {
         this.#strings = undefined;
         throw cause;
       },
     );
-    return waitShared(this.#strings, options.signal);
+    return waitShared(this.#strings, options.operation, options.signal);
   }
 
   async #loadStrings(
-    options: ExecutionOptions,
+    options: RequestOptions,
   ): Promise<{ items: readonly StringEntry[]; total: number }> {
     const key = await this.#ensureSession(options);
     const payload = record(
@@ -1254,7 +1277,7 @@ export class LeandecSessionClient implements AnalysisClient {
   async #call(
     tool: string,
     argumentsValue: Readonly<Record<string, JsonValue>>,
-    options: ExecutionOptions,
+    options: RequestOptions,
     timeoutMs: number = this.#settings.defaultTimeoutMs,
   ): Promise<JsonValue> {
     return this.#client.call(tool, argumentsValue, {
@@ -1310,8 +1333,12 @@ export class LeandecSessionClient implements AnalysisClient {
           });
         return undefined;
       },
-      unclassified: (_cause, details) =>
-        new ProviderAdapterError("leandec", operation, details),
+      unclassified: (cause, details) =>
+        new ProviderAdapterError("leandec", operation, {
+          ...details,
+          cause,
+          diagnostics: { ...details.diagnostics, reason: errorMessage(cause) },
+        }),
     };
   }
 

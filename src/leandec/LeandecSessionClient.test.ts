@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as ownedRegularFile from "../filesystem/OwnedRegularFile.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import { LEANDEC_DOCTOR_SETTINGS, inspectLeandecProvider } from "./LeandecDoctor.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { LeandecProvider } from "./LeandecProvider.js";
 
@@ -28,11 +32,12 @@ rl.on("line", line => {
   else if (name === "read_bytes") result = {address:"100000000", length:2, dump:"100000000 aa bb |..|"};
   else if (name === "strings") result = {items:[{address:"00003000",value:"hello"}],total_strings:3};
   else return reply(r.id,{isError:true,content:[{type:"text",text:"unexpected fixture request: "+name}]});
-  reply(r.id,{content:[{type:"text",text:JSON.stringify(result)}]});
+  const send = () => reply(r.id,{content:[{type:"text",text:JSON.stringify(result)}]});
+  if (process.env.FIXTURE_DELAY === "1" && name === "sql") setTimeout(send, 350); else send();
 });
 `;
 
-const make = async () => {
+const make = async (overrides: NodeJS.ProcessEnv = {}) => {
   const root = await createTestTempDirectory("leandec-session-");
   const path = join(root, "sample");
   const server = join(root, "server.cjs");
@@ -48,6 +53,7 @@ const make = async () => {
     LEANDEC_INVENTORY_LIMIT: "1",
     FIXTURE_SHA: sha256,
     FIXTURE_PATH: path,
+    ...overrides,
   });
   const target = {
     path,
@@ -57,7 +63,7 @@ const make = async () => {
     architecture: "x86_64" as const,
     availableArchitectures: ["x86_64" as const],
   };
-  return { client: provider.createClient(target), path };
+  return { client: provider.createClient(target), path, server };
 };
 
 describe.skipIf(process.platform === "win32")(
@@ -118,6 +124,87 @@ describe.skipIf(process.platform === "win32")(
       } finally {
         expect(await client.close()).toEqual({ ok: true, value: null });
       }
+    });
+
+    it("retains an unconfirmed process close until a retry succeeds", async () => {
+      const { client } = await make();
+      const stop = vi.spyOn(ProviderProcessSupervisor.prototype, "stop");
+      try {
+        expect((await client.execute("list_procedures", {})).ok).toBe(true);
+        stop.mockResolvedValueOnce({ status: "incomplete", reason: "fixture cleanup failure" });
+        const first = await client.close();
+        expect(first).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
+        expect(client.reuseReadiness?.()).toBe("blocked");
+        expect(await client.close()).toEqual({ ok: true, value: null });
+        if (!first.ok) expect(first.error.cleanupIncomplete).toBe(false);
+        expect(stop).toHaveBeenCalledTimes(2);
+      } finally {
+        stop.mockRestore();
+        await client.close();
+      }
+    });
+
+    it("blocks replacement startup after an unconfirmed file close", async () => {
+      const { client } = await make();
+      const close = vi.spyOn(OwnedFileHandle.prototype, "close");
+      try {
+        close.mockRejectedValueOnce(new Error("fixture descriptor close failure"));
+        const first = await client.execute("list_procedures", {});
+        expect(first).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
+        expect(client.reuseReadiness?.()).toBe("blocked");
+        const next = await client.execute("list_procedures", {});
+        if (!first.ok && !next.ok) expect(next.error).toBe(first.error);
+        else throw new Error("Expected retained cleanup failure");
+        expect(await client.close()).toEqual({ ok: true, value: null });
+        if (!first.ok) expect(first.error.cleanupIncomplete).toBe(false);
+      } finally {
+        close.mockRestore();
+        await client.close();
+      }
+    });
+
+    it("keeps the original operation and abort reason when waiting for shared inventory", async () => {
+      const { client } = await make({ FIXTURE_DELAY: "1" });
+      try {
+        expect((await client.execute("health", {})).ok).toBe(true);
+        const cancellation = new AbortController();
+        const first = client.execute("list_procedures", {}, { signal: cancellation.signal });
+        const second = client.execute("list_procedures", {});
+        const reason = new Error("fixture caller cancellation");
+        setTimeout(() => cancellation.abort(reason), 30);
+        const result = await first;
+        expect(result).toMatchObject({ ok: false, error: { operation: "list_procedures", cause: reason } });
+        expect((await second).ok).toBe(true);
+      } finally {
+        await client.close();
+      }
+    });
+
+    it("preserves unexpected write failure diagnostics", async () => {
+      const { client } = await make();
+      const failure = Object.assign(new Error("fixture ENOSPC"), { code: "ENOSPC" });
+      const spy = vi.spyOn(ownedRegularFile, "withOwnedFileHandle").mockImplementationOnce(async (_path, owner) => {
+        await owner.close();
+        throw failure;
+      });
+      try {
+        const result = await client.execute("list_procedures", {});
+        expect(result).toMatchObject({ ok: false, error: { cause: failure, diagnostics: { reason: "fixture ENOSPC" } } });
+      } finally {
+        spy.mockRestore();
+        await client.close();
+      }
+    });
+
+    it("declares every configuration input used by doctor and rejects invalid settings", async () => {
+      const { client, server } = await make();
+      try {
+        for (const name of ["LEANDEC_CALL_TIMEOUT_MS", "LEANDEC_IMPORT_TIMEOUT_MS", "LEANDEC_INVENTORY_LIMIT", "LEANDEC_STRING_LIMIT", "LEANDEC_AUTO_ANALYZE"] as const) {
+          expect(LEANDEC_DOCTOR_SETTINGS).toContain(name);
+          const doctor = inspectLeandecProvider({ ...process.env, LEANDEC_MCP_SERVER: server, LEANDEC_PYTHON: process.execPath, [name]: "-1" }, process.platform);
+          expect(doctor.available).toBe(false);
+        }
+      } finally { await client.close(); }
     });
 
     it("rejects bytes changed after target admission", async () => {
