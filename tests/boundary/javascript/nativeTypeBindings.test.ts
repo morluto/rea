@@ -1,23 +1,25 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { javascriptSourceAnalysis } from "../../../src/composition/javascriptSourceAnalysis.js";
 
 import { expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { buildJavaScriptNativeHandoffs } from "../../../src/domain/javascript/javascriptNativeHandoff.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const analyzeFixture = async (source: string) => {
+const analyzeFixture = async (source: string, addonPath = "addon.node") => {
   const fixture = await createTestTempDirectory("rea-native-types-");
   const scope = new ArtifactResourceScope();
   try {
     await writeFile(join(fixture, "main.ts"), `${source}\n`);
-    await writeFile(join(fixture, "addon.node"), "");
+    await writeFile(join(fixture, addonPath), "");
     const result = await analyzeJavaScriptApplication(
       { input_path: fixture, format: "directory" },
       scope,
+      { sourceAnalysis: javascriptSourceAnalysis },
     );
     if (!result.ok) throw result.error;
     return javascriptApplicationAnalysisResultSchema.parse(
@@ -87,4 +89,58 @@ it("does not request native-addon members from erased TypeScript names", async (
     value.graph.nodes.filter((node) => node.kind === "native-export")[0]
       ?.observations[0]?.properties.requested_members,
   ).toEqual(["load"]);
-}, 30_000);
+});
+
+it.each(["node", "NODE", "Node"])(
+  "keeps path spelling while classifying .%s native requests",
+  async (extension) => {
+    const path = `AddOn-É.${extension}`;
+    const specifier = `./${path}`;
+    const result = await analyzeFixture(
+      `import { load } from ${JSON.stringify(specifier)}; load();`,
+      path,
+    );
+    expect(result.statistics.parse_failures).toBe(0);
+    expect(result.summary.native_addon_bindings).toBe(
+      extension === "node" ? 1 : 0,
+    );
+    expect(
+      result.graph.nodes.filter((node) => node.kind === "native-export"),
+    ).toEqual(
+      extension === "node"
+        ? [
+            expect.objectContaining({
+              observations: expect.arrayContaining([
+                expect.objectContaining({
+                  properties: expect.objectContaining({
+                    specifier,
+                    resolved_path: path,
+                    native_export_verification: "not-performed",
+                  }),
+                }),
+              ]),
+            }),
+          ]
+        : [],
+    );
+    expect(result.graph.edges).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({ specifier, resolved_path: path }),
+        evidence: expect.objectContaining({
+          extractor: expect.objectContaining({
+            operation: "map-static-relationship",
+          }),
+        }),
+      }),
+    );
+    expect(
+      result.graph.nodes
+        .filter((node) => node.kind === "native-addon")
+        .flatMap((node) => node.observations),
+    ).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({ path }),
+      }),
+    );
+  },
+);

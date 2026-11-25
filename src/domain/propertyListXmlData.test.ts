@@ -28,7 +28,7 @@ it.each(["é", "😀", "\u00a0", "\u0085", "\u2028", "\u2029"])(
       parseXmlPropertyList(`<plist><data>AQ${character}ID</data></plist>`),
     ).toThrow(
       expect.objectContaining({
-        _tag: "XmlPlistDataError",
+        name: "XmlPlistDataError",
         reason: "non-ascii",
         characterOffset: 2,
       }),
@@ -74,5 +74,20 @@ it.each(["\n", "\r\n", "\r", "\u0085", "\u2028", "\u2029"])(
       Uint8Array.from([235, 148, 8]),
       Uint8Array.from([1, 2, 3]),
     ]);
+  },
+);
+
+it.each([
+  ["", []],
+  ["AQI=", [1, 2]],
+] as const)(
+  "does not retain whitespace in the backing storage for %j",
+  (data, expected) => {
+    const { value } = parseXmlPropertyList(
+      `<plist><data>${" ".repeat(4 * 1024 * 1024)}${data}</data></plist>`,
+    );
+    expect(value).toEqual(Uint8Array.from(expected));
+    if (!(value instanceof Uint8Array)) throw new Error("Expected plist data");
+    expect(value.buffer.byteLength).toBe(expected.length);
   },
 );

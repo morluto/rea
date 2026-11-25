@@ -1,18 +1,27 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webSourceLocationResultSchema } from "../../dist/domain/webSourceLocation.js";
+import { PrivateRuntimeRoot } from "../../dist/process/PrivateRuntimeRoot.js";
 import { startBrowserSourceMapSite } from "../fixtures/browser-source-map-site.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { createPackageVerifierCommands } from "./verify-package-commands.mjs";
+import { importVerifierSource } from "./verifier-source-loader.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
+
+const { BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS } = await importVerifierSource(
+  new URL("./browser-process-startup.mts", import.meta.url).href,
+  import.meta.url,
+);
 
 /** Verify real Chrome capture → export → original compiler point through packaged CLI/MCP. */
 export async function verifyBrowserSourceMap(
@@ -21,21 +30,38 @@ export async function verifyBrowserSourceMap(
 ) {
   let site;
   let root;
+  let commands;
   let transport;
   let client;
+  const closeResource = async (owner, resource) => {
+    if (owner === undefined) return;
+    try {
+      await owner.close();
+    } catch (cause) {
+      commands?.adopt(owner, resource);
+      throw cause;
+    }
+  };
   return withVerifierCleanup(async () => {
     site = await startBrowserSourceMapSite();
-    root = await mkdtemp(join(tmpdir(), "rea-browser-source-map-"));
+    root = await PrivateRuntimeRoot.create({
+      prefix: "rea-browser-source-map-",
+    });
+    commands = await createPackageVerifierCommands({ workspace: root });
     const env = {
       ...process.env,
       REA_LOG_LEVEL: "silent",
       HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
     };
     const cli = async (...args) => {
-      const { stdout } = await promisify(execFile)(
+      const { stdout } = await commands.exec(
         process.execPath,
-        [entrypoint, ...args, "--json"],
-        { env, timeout: 45000, maxBuffer: 16 * 1024 * 1024 },
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([...args, "--json"])),
+        ],
+        // Allow the shared cold-start budget plus capture, cleanup and delivery.
+        { env, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
       );
       return parseEvidence(JSON.parse(stdout));
     };
@@ -45,11 +71,14 @@ export async function verifyBrowserSourceMap(
       env,
       stderr: "pipe",
     });
-    client = new Client({ name: "source-map-real-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "source-map-real-e2e", version: "1" }),
+    );
     const capture = await cli(
       "capture-browser-scenario",
       JSON.stringify({
         browser: { mode: "launch", executable_path: executable },
+        command_timeout_ms: BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
         start_url: { url: site.origin },
         actions: [
           {
@@ -66,12 +95,12 @@ export async function verifyBrowserSourceMap(
         capture: { network: { response_body: true } },
       }),
     );
-    const capturePath = join(root, "capture.json");
+    const capturePath = join(root.path, "capture.json");
     await writeFile(capturePath, JSON.stringify(capture));
     const exported = await cli(
       "export-web-scripts",
       capturePath,
-      join(root, "export"),
+      join(root.path, "export"),
     );
     const manifest = exported.normalized_result;
     const manifestBytes = await readFile(manifest.manifest.path);
@@ -86,7 +115,7 @@ export async function verifyBrowserSourceMap(
       scriptIndex >= 0,
       "Actual browser capture omitted compiled source",
     );
-    const mapPath = join(root, "app.js.map");
+    const mapPath = join(root.path, "app.js.map");
     await writeFile(mapPath, site.map);
     const before = site.mapRequests();
     await client.connect(transport);
@@ -132,13 +161,11 @@ export async function verifyBrowserSourceMap(
       public_point_cases: 4,
     };
   }, [
-    () => client?.close(),
-    () => transport?.close(),
-    () => site?.close(),
-    () =>
-      root === undefined
-        ? undefined
-        : rm(root, { recursive: true, force: true }),
+    () => closeResource(client, "source-map MCP client"),
+    () => closeResource(transport, "source-map stdio transport"),
+    () => closeResource(site, "source-map fixture site"),
+    () => commands?.close(),
+    () => (commands === undefined ? root?.close() : undefined),
   ]);
 }
 function assertPoint(evidence, { site, input, capture, identity }) {
@@ -189,7 +216,7 @@ async function assertPublicPair(cli, client, oracle) {
   const expected = assertPoint(evidence, oracle);
   const response = await client.callTool({
     name: "trace_web_source_location",
-    arguments: input,
+    arguments: { ...input, detail: "complete" },
   });
   assert.notEqual(response.isError, true, mcpTextValue(response));
   const mcpEvidence = parseEvidence(JSON.parse(mcpTextValue(response)));

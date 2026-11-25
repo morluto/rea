@@ -13,24 +13,25 @@ import { build } from "plist";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import {
-  ExecFileOutputCancelledError,
-  execFileOutput,
-} from "../../../../src/process/ExecFileOutput.js";
+import { execFileOutput } from "../../../../src/process/ExecFileOutput.js";
+import { OwnedCommandFailure } from "../../../../src/process/OwnedCommand.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOmission,
-} from "../../../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import { DirectoryArtifactReader } from "../../../../src/artifacts/DirectoryArtifactReader.js";
+} from "../../../../src/resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
 } from "../../../../src/artifacts/NativeDmgArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../../src/artifacts/inventory/scanCanonical.js";
+import {
+  DirectoryArtifactReader,
+  translateArtifactFailure,
+} from "../../../../src/resources/index.js";
 
 const createAttachedReader = async (
   path: string,
@@ -62,9 +63,10 @@ const createAttachedReader = async (
 
 const entryPaths = async (
   reader: NativeDmgArtifactReader,
+  signal?: AbortSignal,
 ): Promise<string[]> => {
   const paths: string[] = [];
-  for await (const entry of reader.entries()) paths.push(entry.path);
+  for await (const entry of reader.entries(signal)) paths.push(entry.path);
   return paths;
 };
 
@@ -242,7 +244,7 @@ describe("DMG inventory reader ownership", () => {
       .catch((cause: unknown) => cause);
 
     expect(failure).toMatchObject({
-      reason: "format",
+      reason: "io",
       cleanup: {
         resources: expect.arrayContaining([
           expect.stringMatching(/^DMG attachment ownership unknown/u),
@@ -459,7 +461,10 @@ describe("native DMG directory ownership", () => {
     await expect(realpath(mount.root() ?? "")).rejects.toMatchObject({
       code: "ENOENT",
     });
-    expect((await iterator.next()).done).toBe(true);
+    await expect(iterator.next()).rejects.toMatchObject({
+      reason: "unavailable",
+      message: "DMG reader is closed",
+    });
   });
 });
 
@@ -517,7 +522,10 @@ describe("native DMG traversal shutdown", () => {
       await Promise.resolve();
       expect(state.detachAttempts).toBe(4);
       releaseAdvance();
-      expect((await advancing).done).toBe(true);
+      await expect(advancing).rejects.toMatchObject({
+        reason: "unavailable",
+        message: "DMG reader is closed",
+      });
       await closing;
       expect(state.detachAttempts).toBe(5);
       await expect(realpath(state.mountRoot ?? "")).rejects.toMatchObject({
@@ -640,32 +648,6 @@ describe("native DMG artifact reader", () => {
     expect(calls).toContainEqual(["detach", "/dev/disk-fixture"]);
   });
 
-  // hdiutil localizes its diagnostics; en-GB and other English locales spell
-  // the refusal "recognised".
-  it.each(["recognized", "recognised"])(
-    "rejects non-zero verification results (image not %s)",
-    async (spelling) => {
-      await expect(
-        createAttachedReader("/tmp/image.dmg", process.env, undefined, {
-          run: () =>
-            Promise.resolve({
-              stdout: "verify output",
-              stderr: `hdiutil: verify failed - image not ${spelling}`,
-              exitCode: 1,
-            }),
-        }),
-      ).rejects.toMatchObject({
-        reason: "format",
-        message: expect.stringMatching(
-          new RegExp(
-            `"arguments":\\["verify","/tmp/image\\.dmg"\\].*"exitCode":1.*"stderr":"hdiutil: verify failed - image not ${spelling}"`,
-            "u",
-          ),
-        ),
-      });
-    },
-  );
-
   it("retains the root and reports unknown ownership when recovery discovery fails", async () => {
     const mount = createMountFixture();
     const host: NativeDmgHost = {
@@ -694,7 +676,7 @@ describe("native DMG artifact reader", () => {
     await expect(
       createAttachedReader("/tmp/image.dmg", process.env, undefined, host),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "io",
       cleanup: {
         resources: expect.arrayContaining([
           expect.stringMatching(
@@ -954,7 +936,15 @@ describe("DMG attach cancellation and preexisting mounts", () => {
       const reason = { request: "cancel DMG attach" };
       const commandFailure =
         kind === "owned cancellation"
-          ? new ExecFileOutputCancelledError(reason)
+          ? new OwnedCommandFailure(
+              "cancelled",
+              "Command cancelled.",
+              null,
+              null,
+              {
+                cancellation: { reason },
+              },
+            )
           : Object.assign(new Error("attach aborted"), { name: "AbortError" });
       const mount = createMountFixture();
       let markAttachStarted = (): void => {};
@@ -1154,57 +1144,6 @@ describe("native DMG command diagnostics", () => {
     });
   });
 
-  it("keeps unrecognized numeric verify failures unknown and maps the observed I/O diagnostic", async () => {
-    const unknown = await createAttachedReader(
-      "/tmp/image.dmg",
-      process.env,
-      undefined,
-      {
-        run: () =>
-          Promise.resolve({
-            stdout: "verify stdout",
-            stderr: "hdiutil: verify failed - an unrecognized system failure",
-            exitCode: 1,
-          }),
-      },
-    ).catch((cause: unknown) => cause);
-    expect(unknown).toBeInstanceOf(ArtifactReaderFailure);
-    if (!(unknown instanceof ArtifactReaderFailure)) return;
-    expect(unknown.reason).toBe("unavailable");
-    expect(unknown.message).toContain("do not establish the failure cause");
-    expect(unknown.message).toContain('"exitCode":1');
-    expect(unknown.message).toContain('"stdout":"verify stdout"');
-    expect(unknown.message).toContain("an unrecognized system failure");
-
-    await expect(
-      createAttachedReader("/tmp/image.dmg", process.env, undefined, {
-        run: () =>
-          Promise.resolve({
-            stdout: "",
-            stderr: "hdiutil: verify failed - Input/output error\n",
-            exitCode: 1,
-          }),
-      }),
-    ).rejects.toMatchObject({
-      reason: "io",
-      message: expect.stringContaining("Input/output error"),
-    });
-
-    await expect(
-      createAttachedReader("/tmp/image.dmg", process.env, undefined, {
-        run: () =>
-          Promise.resolve({
-            stdout: "checksum output",
-            stderr: "hdiutil: verify failed - image data corrupted\n",
-            exitCode: 1,
-          }),
-      }),
-    ).rejects.toMatchObject({
-      reason: "integrity",
-      message: expect.stringContaining("image data corrupted"),
-    });
-  });
-
   it("distinguishes child launch and host permission failures", async () => {
     await expect(
       createAttachedReader("/tmp/image.dmg", process.env, undefined, {
@@ -1246,11 +1185,16 @@ describe("native DMG verification resource availability", () => {
     exitCode: 1,
   };
 
-  it("retries the explicit transient refusal before attachment and retains both attempts", async () => {
+  it("settles an explicit transient refusal within the verification deadline before attaching", async () => {
     const { host, state } = createOmittedInventoryHost();
     state.inventoryMode = "listed";
     state.detachAttempts = 4;
-    const delays = vi.fn(async () => {});
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    onTestFinished(() => clock.mockRestore());
+    const delays = vi.fn(async (milliseconds: number) => {
+      now += milliseconds;
+    });
     const timeouts: number[] = [];
     let attempts = 0;
     const reader = await createAttachedReader(
@@ -1266,26 +1210,27 @@ describe("native DMG verification resource availability", () => {
             if (options === undefined)
               throw new Error("missing verify deadline");
             timeouts.push(options.timeoutMs);
-            if (attempts === 1) return transientFailure;
+            if (attempts < 5) return transientFailure;
           }
           return host.run(arguments_, signal, options);
         },
       },
     );
     onTestFinished(() => reader.close());
-    expect(attempts).toBe(2);
-    expect(delays.mock.calls).toEqual([[250]]);
+    expect(attempts).toBe(5);
+    expect(now).toBeGreaterThan(750);
     expect(timeouts[0]).toBeLessThanOrEqual(120_000);
-    expect(timeouts[1]).toBeLessThanOrEqual(timeouts[0]!);
-    expect(reader.provenance().slice(0, 2)).toMatchObject([
+    expect(timeouts.at(-1)).toBeLessThan(timeouts[0]!);
+    expect(
+      reader
+        .provenance()
+        .slice(0, 5)
+        .map(({ exit_code }) => exit_code),
+    ).toEqual([1, 1, 1, 1, 0]);
+    expect(reader.provenance().slice(0, 1)).toMatchObject([
       {
         arguments: ["verify", "/tmp/image.dmg"],
         exit_code: 1,
-        effects: ["read"],
-      },
-      {
-        arguments: ["verify", "/tmp/image.dmg"],
-        exit_code: 0,
         effects: ["read"],
       },
     ]);
@@ -1294,8 +1239,16 @@ describe("native DMG verification resource availability", () => {
   });
 
   it("bounds repeated transient refusals and never attaches an unverified image", async () => {
-    const run = vi.fn(async () => transientFailure);
-    const delay = vi.fn(async () => {});
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    onTestFinished(() => clock.mockRestore());
+    const run = vi.fn(async () => {
+      now += 40_000;
+      return transientFailure;
+    });
+    const delay = vi.fn(async (milliseconds: number) => {
+      now += milliseconds;
+    });
     const reader = new NativeDmgArtifactReader("/tmp/image.dmg", process.env, {
       run,
       delay,
@@ -1306,68 +1259,136 @@ describe("native DMG verification resource availability", () => {
     });
     await reader.close();
     expect(run.mock.calls).toHaveLength(3);
-    expect(delay.mock.calls).toEqual([[250], [500]]);
+    expect(now).toBeGreaterThanOrEqual(120_000);
+    expect(delay.mock.calls).toHaveLength(2);
     expect(reader.provenance().map(({ exit_code }) => exit_code)).toEqual([
       1, 1, 1,
     ]);
   });
 
-  it("honors cancellation during the wait without starting another command", async () => {
-    const controller = new AbortController();
-    const run = vi.fn(async () => transientFailure);
-    await expect(
-      createAttachedReader("/tmp/image.dmg", process.env, controller.signal, {
-        run,
-        async delay() {
-          controller.abort(new Error("cancel verification"));
+  it.each([
+    { phase: "inside the deadline", resumedAt: 119_750, cancelled: true },
+    { phase: "past the deadline", resumedAt: 120_001, cancelled: true },
+    { phase: "past the deadline", resumedAt: 120_001, cancelled: false },
+  ])(
+    "settles a verification wait $phase (cancelled: $cancelled)",
+    async ({ resumedAt, cancelled }) => {
+      const path = "/tmp/image.dmg";
+      const controller = new AbortController();
+      const reason = { request: "stop verification" };
+      const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+      onTestFinished(() => clock.mockRestore());
+      const commands: (readonly string[])[] = [];
+      const reader = new NativeDmgArtifactReader(
+        path,
+        {},
+        {
+          async run(arguments_) {
+            commands.push(arguments_);
+            if (commands.length > 1)
+              throw new Error("unexpected verification retry");
+            clock.mockReturnValue(119_500);
+            return transientFailure;
+          },
+          async delay() {
+            if (cancelled) controller.abort(reason);
+            clock.mockReturnValue(resumedAt);
+          },
         },
-      }),
-    ).rejects.toMatchObject({ reason: "cancelled" });
-    expect(run).toHaveBeenCalledTimes(1);
-  });
+      );
+      onTestFinished(() => reader.close());
+      await expect(entryPaths(reader, controller.signal)).rejects.toMatchObject(
+        cancelled
+          ? { reason: "cancelled", cancellation: { reason } }
+          : {
+              reason: "unavailable",
+              message: expect.stringContaining(
+                "Resource temporarily unavailable",
+              ),
+            },
+      );
+      expect(commands).toEqual([["verify", path]]);
+    },
+  );
+});
 
-  it("does not start another verification after the shared deadline", async () => {
-    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
-    const run = vi.fn(async () => transientFailure);
-    try {
-      await expect(
-        createAttachedReader("/tmp/image.dmg", process.env, undefined, {
+describe("native DMG permanent verification refusals", () => {
+  // hdiutil emits both English spellings depending on AppleLanguages.
+  it.each([
+    ["image not recognized", "unsupported"],
+    ["image not recognised", "unsupported"],
+    ["image data corrupted", "integrity"],
+    ["Permission denied", "io"],
+    ["Input/output error", "io"],
+    ["an unrecognized system failure", "unavailable"],
+  ])(
+    "classifies %s with its diagnostics and skips retry",
+    async (diagnostic, reason) => {
+      const path = "/tmp/image.dmg";
+      const stdout = "verify stdout";
+      const stderr = `hdiutil: verify failed - ${diagnostic}\n`;
+      const run = vi.fn(async () => ({ stdout, stderr, exitCode: 1 }));
+      const reader = new NativeDmgArtifactReader(
+        path,
+        {},
+        {
           run,
           async delay() {
-            clock.mockReturnValue(120_001);
+            throw new Error("permanent verification refusal was retried");
           },
-        }),
-      ).rejects.toMatchObject({
-        reason: "unavailable",
-        message: expect.stringContaining("Resource temporarily unavailable"),
+        },
+      );
+      onTestFinished(() => reader.close());
+      const failure = await entryPaths(reader).catch((cause: unknown) => cause);
+      expect(failure).toMatchObject({
+        reason,
+        integrityCheck: reason === "integrity" ? "image-checksum" : undefined,
+        parseFailure:
+          reason === "unsupported"
+            ? {
+                kind: "unsupported",
+                format: "dmg",
+                detail: expect.stringContaining(diagnostic),
+                undecodedContent: false,
+              }
+            : undefined,
+        cause: { command: "/usr/bin/hdiutil", exitCode: 1, stdout, stderr },
+        message: expect.stringContaining(
+          reason === "unavailable"
+            ? "do not establish the failure cause"
+            : diagnostic,
+        ),
       });
-      expect(run).toHaveBeenCalledTimes(1);
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  it.each([
-    ["image data corrupted", "integrity"],
-    ["image not recognized", "format"],
-    ["Permission denied", "io"],
-    ["an unknown failure", "unavailable"],
-  ])("does not retry %s", async (diagnostic, reason) => {
-    const run = vi.fn(async () => ({
-      stdout: "",
-      stderr: `hdiutil: verify failed - ${diagnostic}\n`,
-      exitCode: 1,
-    }));
-    const delay = vi.fn(async () => {});
-    await expect(
-      createAttachedReader("/tmp/image.dmg", process.env, undefined, {
-        run,
-        delay,
-      }),
-    ).rejects.toMatchObject({ reason });
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(delay).not.toHaveBeenCalled();
-  });
+      const translated = translateArtifactFailure(
+        "inventory_artifact",
+        path,
+        failure,
+      );
+      expect(translated).toMatchObject(
+        reason === "unsupported"
+          ? {
+              _tag: "AnalysisTargetFailureError",
+              operation: "inventory_artifact",
+              path,
+              failure: {
+                kind: "unsupported",
+                format: "dmg",
+                undecodedContent: false,
+                detail: expect.stringContaining(diagnostic),
+              },
+            }
+          : {
+              _tag: "ArtifactOperationError",
+              operation: "inventory_artifact",
+              reason,
+            },
+      );
+      expect(run.mock.calls).toHaveLength(1);
+      expect(reader.provenance()).toMatchObject([
+        { arguments: ["verify", path], exit_code: 1, effects: ["read"] },
+      ]);
+    },
+  );
 });
 
 // Captured from hdiutil with AppleLanguages set to es-419.
@@ -1485,7 +1506,6 @@ describe("native DMG localized verification diagnostics", () => {
       ).rejects.toMatchObject({ reason: "unavailable" });
       expect(run).toHaveBeenCalledTimes(3);
     },
-    10_000,
   );
 
   it("keeps a localized failure without an untranslated status line unavailable", async () => {
@@ -1595,6 +1615,8 @@ describe("native DMG checksum-free images", () => {
           ),
         ],
       },
+      // The mounted directory declares its own complete traversal.
+      { status: "complete", limitations: [] },
     ]);
     expect(
       reader
@@ -1625,7 +1647,7 @@ describe("native DMG real verification diagnostics", () => {
       // readable target stays unknown (see the localized diagnostics suite).
       expect(failure.reason).toBe(
         /verify failed - image not recogni[sz]ed/u.test(failure.message)
-          ? "format"
+          ? "unsupported"
           : "unavailable",
       );
       expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
@@ -1659,12 +1681,12 @@ describe("native DMG real verification diagnostics", () => {
           expect(failure.message).toContain('"exitCode":1');
           expect(failure.message).toContain('"stdout":""');
           expect(failure.message).toContain("unable to recognize");
-          expect(failure.cause).toBeInstanceOf(Error);
-          if (!(failure.cause instanceof Error)) continue;
-          expect(Reflect.get(failure.cause, "code")).toBe(1);
-          expect(Reflect.get(failure.cause, "stderr")).toContain(
-            expectedDiagnostic,
-          );
+          // The cause is the exit hdiutil reported, with its diagnostics.
+          expect(failure.cause).toMatchObject({
+            command: "/usr/bin/hdiutil",
+            exitCode: 1,
+            stderr: expect.stringContaining(expectedDiagnostic) as unknown,
+          });
         }
       } finally {
         await chmod(unreadablePath, 0o600);
@@ -1726,18 +1748,19 @@ describe("native DMG real verification diagnostics", () => {
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
       if (!(failure instanceof ArtifactReaderFailure)) return;
       expect(failure.reason).toBe("integrity");
+      expect(failure.integrityCheck).toBe("image-checksum");
       expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
       expect(failure.message).toContain('"arguments":["verify"');
       expect(failure.message).toContain('"exitCode":1');
       // hdiutil localizes the CRC labels and failure reason, but not this status line.
       expect(failure.message).toContain("CRC32");
       expect(failure.message).toContain("is INVALID");
-      expect(failure.cause).toBeInstanceOf(Error);
-      if (!(failure.cause instanceof Error)) return;
-      expect(Reflect.get(failure.cause, "code")).toBe(1);
-      expect(Reflect.get(failure.cause, "stderr")).toContain("is INVALID");
+      expect(failure.cause).toMatchObject({
+        command: "/usr/bin/hdiutil",
+        exitCode: 1,
+        stderr: expect.stringContaining("is INVALID") as unknown,
+      });
     },
-    60_000,
   );
 });
 

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
 import { JadxProvider } from "../../../src/android/JadxProvider.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -20,6 +21,8 @@ import {
   validateJadxConfiguration,
 } from "../../../src/android/JadxConfiguration.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   LinuxOwnedProcessPrerequisiteError,
   systemProcessOwnershipHost,
@@ -38,6 +41,7 @@ const inspectJadxAvailability = (
   signal?: AbortSignal,
 ) =>
   inspectAvailability(environment, {
+    host: HOST_PLATFORM,
     resourceOwner: inspectionOwner(),
     signal,
   });
@@ -51,6 +55,7 @@ const resolveConfiguration = async (
   const configuration = await resolveJadxConfigurationInputs(
     environment,
     operation,
+    HOST_PLATFORM,
   );
   await validateJadxConfiguration(configuration, environment, operation, {
     resourceOwner: inspectionOwner(),
@@ -358,13 +363,11 @@ it("cancels an in-flight Java readiness probe", async () => {
   );
   try {
     await expect
-      .poll(
-        () =>
-          readFile(marker, "utf8").then(
-            () => true,
-            () => false,
-          ),
-        { timeout: 10_000 },
+      .poll(() =>
+        readFile(marker, "utf8").then(
+          () => true,
+          () => false,
+        ),
       )
       .toBe(true);
     controller.abort();
@@ -431,6 +434,22 @@ const createFakeJdk = async (
   await chmod(java, 0o700);
   return javaHome;
 };
+
+test("keeps the JAR repair on an unconfigured analysis error", async () => {
+  const failure = await resolveJadxConfigurationInputs(
+    {},
+    "inspect_android_package",
+    HOST_PLATFORM,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+  const projected = projectAnalysisError(failure as AnalysisError);
+  // The observation and the repair stay separate fields.
+  expect(projected.message).toContain("REA_JADX_MCP_JAR is not set.");
+  expect(projected.remediation.action).toContain(
+    "set REA_JADX_MCP_JAR to its absolute path",
+  );
+  expect(projected.remediation.action).not.toBe("REA_JADX_MCP_JAR is not set.");
+});
 
 it("tags unavailable diagnostics with the boundary failure kind", async () => {
   const availability = await inspectJadxAvailability({});
@@ -510,7 +529,9 @@ const check = setInterval(() => {
   }
 }, 10);
 const watchdog = setTimeout(() => { process.exitCode = 99; clearInterval(check); }, 10000);
-fs.writeFileSync(ready, String(process.pid));
+// The test polls for this path; publish only the complete PID by renaming.
+fs.writeFileSync(ready + ".pending", String(process.pid));
+fs.renameSync(ready + ".pending", ready);
 `,
   );
   await chmod(java, 0o700);
@@ -628,38 +649,42 @@ it("reports the runtime JADX repair and restores invalid launch availability on 
   }
 });
 
-it("reports the owned-process prerequisite as JADX unavailability, not a probe failure", async () => {
-  const root = await createTestTempDirectory("rea-jadx-ps-prerequisite-");
-  const jar = join(root, "jadx-headless-mcp.jar");
-  const javaHome = await createFakeJdk(root);
-  await writeJadxJarInventory(jar);
-  const environment = { REA_JADX_MCP_JAR: jar, JAVA_HOME: javaHome };
-  await expect(inspectJadxAvailability(environment)).resolves.toMatchObject({
-    status: "available",
-  });
+it.each(["ENOENT", "EACCES"])(
+  "reports ps %s as JADX unavailability, not a probe failure",
+  async (code) => {
+    const root = await createTestTempDirectory("rea-jadx-ps-prerequisite-");
+    const jar = join(root, "jadx-headless-mcp.jar");
+    const javaHome = await createFakeJdk(root);
+    await writeJadxJarInventory(jar);
+    const environment = { REA_JADX_MCP_JAR: jar, JAVA_HOME: javaHome };
+    await expect(inspectJadxAvailability(environment)).resolves.toMatchObject({
+      status: "available",
+    });
 
-  vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
-    async () => {
-      throw new LinuxOwnedProcessPrerequisiteError(
-        new Error("spawn ps ENOENT"),
-      );
-    },
-  );
-  onTestFinished(() => {
-    vi.restoreAllMocks();
-  });
+    vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
+      async () => {
+        throw new LinuxOwnedProcessPrerequisiteError(
+          new Error(`spawn ps ${code}`),
+          { missing: code === "ENOENT", systemCode: code },
+        );
+      },
+    );
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
 
-  await expect(inspectJadxAvailability(environment)).resolves.toMatchObject({
-    status: "unavailable",
-    code: "runtime_unavailable",
-    reason: expect.stringContaining("procps-compatible ps") as unknown,
-    diagnostics: { stage: "ownership_preparation" },
-  });
-  await expect(
-    resolveConfiguration(environment, "inspect_android_package"),
-  ).rejects.toMatchObject({
-    _tag: "AnalysisCapabilityUnavailableError",
-    providerId: "process-ownership",
-    reason: expect.stringContaining("spawn ps ENOENT") as unknown,
-  });
-});
+    await expect(inspectJadxAvailability(environment)).resolves.toMatchObject({
+      status: "unavailable",
+      code: "runtime_unavailable",
+      reason: expect.stringContaining(`spawn ps ${code}`) as unknown,
+      diagnostics: { stage: "ownership_preparation", system_code: code },
+    });
+    await expect(
+      resolveConfiguration(environment, "inspect_android_package"),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "process-ownership",
+      reason: expect.stringContaining(`spawn ps ${code}`) as unknown,
+    });
+  },
+);

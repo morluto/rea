@@ -22,6 +22,8 @@ export interface ProviderSelectionRejection {
   readonly origin: ProviderRejectionOrigin;
   readonly code: string;
   readonly reason: string;
+  /** The readiness owner's repair; target-support refusals carry none. */
+  readonly remediation?: string;
   readonly diagnostics: Readonly<Record<string, JsonValue>>;
 }
 
@@ -68,7 +70,8 @@ export class ProviderSelectionError extends AnalysisError {
       ...rejection,
       diagnostics: structuredClone(rejection.diagnostics),
     }));
-    this.remediationAction = options.remediationAction;
+    this.remediationAction =
+      options.remediationAction ?? requestedProviderRepair(options);
     this.userMessage =
       options.userMessage ?? providerSelectionUserMessage(options);
   }
@@ -83,6 +86,21 @@ const providerSelectionDiagnostic = (
       : options.candidateIds.join(", ");
   return `Analysis provider selection failed (${options.reason}) for ${options.requestedProviderId}; candidates: ${candidates}`;
 };
+
+/**
+ * A concrete selection refused by its provider's readiness is repaired by
+ * that provider's own instruction, not by generic selection advice.
+ */
+const requestedProviderRepair = (
+  options: ProviderSelectionErrorOptions,
+): string | undefined =>
+  options.reason === "provider_unavailable"
+    ? options.rejections?.find(
+        ({ providerId, origin }) =>
+          providerId === options.requestedProviderId &&
+          origin === "availability",
+      )?.remediation
+    : undefined;
 
 /** True when every recorded rejection describes availability, not target support. */
 const providerAvailabilityOnly = (

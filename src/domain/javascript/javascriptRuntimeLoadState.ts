@@ -1,6 +1,9 @@
+import { appendToMapList } from "../appendToMapList.js";
+import { isJavaScriptModuleUnit } from "./javascriptModuleUnits.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
+import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
 import type {
   JavaScriptRuntimeReconciliationItem,
   JavaScriptStaticLoadState,
@@ -20,6 +23,7 @@ export interface StaticLoadStateProjection {
 /** Classify static code presence without claiming bundled module execution. */
 export const classifyStaticLoadStates = (
   layers: readonly ParsedStaticLayer[],
+  captures: readonly ParsedRuntimeCapture[],
   runtimeEntities: readonly RuntimeReconciliationEntity[],
   matches: readonly JavaScriptRuntimeReconciliationItem[],
   options: {
@@ -28,33 +32,43 @@ export const classifyStaticLoadStates = (
 ): StaticLoadStateProjection => {
   const states: JavaScriptStaticLoadState[] = [];
   for (const layer of layers) {
-    const projection = classifyLayer(layer, runtimeEntities, matches, {
-      reconciliationComplete: options.reconciliationComplete,
-    });
-    states.push(...projection.states);
+    const projection = classifyLayer(
+      layer,
+      captures,
+      runtimeEntities,
+      matches,
+      {
+        reconciliationComplete: options.reconciliationComplete,
+      },
+    );
+    for (const state of projection) states.push(state);
   }
   return { states, omittedStates: 0 };
 };
 
 const classifyLayer = (
   layer: ParsedStaticLayer,
+  captures: readonly ParsedRuntimeCapture[],
   runtimeEntities: readonly RuntimeReconciliationEntity[],
   matches: readonly JavaScriptRuntimeReconciliationItem[],
   options: {
     readonly reconciliationComplete: boolean;
   },
-): { readonly states: JavaScriptStaticLoadState[] } => {
+): readonly JavaScriptStaticLoadState[] => {
   const nodes = layer.graph.nodes.filter(isLoadStateNode);
   const direct = new Map<string, string[]>();
   const ambiguous = new Set<string>();
   const incomplete = new Set<string>();
-  for (const match of matches)
+  // A target's entry location establishes correspondence, not script presence.
+  for (const match of matches.filter(
+    ({ entity_kind }) => entity_kind === "script",
+  ))
     if (
       match.status === "matched" &&
       match.static_layer_id === layer.layerId &&
       match.static_node_id !== null
     )
-      append(direct, match.static_node_id, match.runtime_node_id);
+      appendToMapList(direct, match.static_node_id, match.runtime_node_id);
     else if (match.status === "ambiguous" || match.status === "unknown") {
       const uncertain = match.status === "ambiguous" ? ambiguous : incomplete;
       for (const candidate of match.candidate_static_nodes)
@@ -70,10 +84,13 @@ const classifyLayer = (
     options.reconciliationComplete &&
     layer.graph.coverage.status === "complete" &&
     scopedEntities.length > 0 &&
-    scopedEntities.every(
-      ({ capture }) => capture.codeInventoryCompleteWithinScope,
+    // An incomplete inventory may have omitted scripts that map into this
+    // layer, even when none of its reported entities map here.
+    captures.every(
+      ({ codeInventoryCompleteWithinScope }) =>
+        codeInventoryCompleteWithinScope,
     );
-  const states = nodes.map((node) => {
+  return nodes.map((node) => {
     const runtimeNodeIds = uniqueSorted(direct.get(node.node_id) ?? []);
     if (runtimeNodeIds.length > 0)
       return state(layer, node, {
@@ -111,7 +128,6 @@ const classifyLayer = (
           : "static-or-runtime-coverage-incomplete",
     });
   });
-  return { states };
 };
 
 const residentNodes = (
@@ -124,7 +140,7 @@ const residentNodes = (
   const children = new Map<string, string[]>();
   for (const edge of layer.graph.edges)
     if (edge.relation === "contains")
-      append(children, edge.source_node_id, edge.target_node_id);
+      appendToMapList(children, edge.source_node_id, edge.target_node_id);
   const pending = [...directlyLoaded].filter(
     (nodeId) => nodeKinds.get(nodeId) === "javascript-asset",
   );
@@ -141,24 +157,13 @@ const residentNodes = (
   return resident;
 };
 
-const append = (
-  values: Map<string, string[]>,
-  key: string,
-  value: string,
-): void => {
-  const current = values.get(key);
-  if (current === undefined) values.set(key, [value]);
-  else current.push(value);
-};
-
 const isLoadStateNode = (
   node: ApplicationNode,
 ): node is ApplicationNode & {
   readonly kind: "javascript-asset" | "javascript-chunk" | "javascript-module";
 } =>
-  node.kind === "javascript-asset" ||
   node.kind === "javascript-chunk" ||
-  node.kind === "javascript-module";
+  (isJavaScriptModuleUnit(node) && node.kind !== "source-module");
 
 const state = (
   layer: ParsedStaticLayer,

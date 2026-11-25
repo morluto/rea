@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFile,
@@ -11,22 +10,31 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../dist/process/OwnedCommand.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { isOwnershipPsExecution } from "./lib/ownership-ps-trace.mjs";
 import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const verifyLargeMcp = process.env.REA_VERIFY_LARGE_ELF_MCP === "1";
 const python = process.env.REA_PWNTOOLS_PYTHON;
@@ -38,42 +46,20 @@ if (
   !isAbsolute(strace ?? "")
 )
   throw new Error(
-    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld, strip and the i686/ARM/MIPS/MIPSel linux-gnu cross gcc and readelf must be available. No target is executed.",
+    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld, strip and the AArch64/i686/ARM/MIPS/MIPSel linux-gnu cross gcc and readelf must be available. No target is executed.",
   );
 const run = createVerifierRun();
-const execute = promisify(execFile);
-const ELF32_TOOLCHAINS = [
-  ["i686-linux-gnu", "EM_386", "little"],
-  ["arm-linux-gnueabi", "EM_ARM", "little"],
-  ["mips-linux-gnu", "EM_MIPS", "big"],
-  ["mipsel-linux-gnu", "EM_MIPS", "little"],
+const commands = await createVerifierCommands();
+const CROSS_TOOLCHAINS = [
+  ["aarch64-linux-gnu", "EM_AARCH64", 64, "little"],
+  ["i686-linux-gnu", "EM_386", 32, "little"],
+  ["arm-linux-gnueabi", "EM_ARM", 32, "little"],
+  ["mips-linux-gnu", "EM_MIPS", 32, "big"],
+  ["mipsel-linux-gnu", "EM_MIPS", 32, "little"],
 ];
-for (const command of [
-  "gcc",
-  "ld",
-  "strip",
-  "/usr/bin/prlimit",
-  strace,
-  ...ELF32_TOOLCHAINS.flatMap(([prefix]) => [
-    `${prefix}-gcc`,
-    `${prefix}-readelf`,
-  ]),
-]) {
-  try {
-    await execute(command, [command === strace ? "-V" : "--version"], {
-      timeout: 10_000,
-      maxBuffer: 1024 * 1024,
-    });
-  } catch (cause) {
-    throw new Error(
-      `verify:binary:layout prerequisite unavailable: ${command}`,
-      { cause },
-    );
-  }
-}
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-layout-verifier-",
 });
 const environment = Object.fromEntries(
@@ -86,7 +72,9 @@ const limitedEnvironment = (option) => ({
   REA_VERIFY_LIMITED_PYTHON: python,
   REA_VERIFY_LIMIT_OPTION: option,
 });
-const client = new Client({ name: "binary-layout-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "binary-layout-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -103,7 +91,30 @@ let cases = 0;
 let bootstrapCases = 0;
 const failures = [];
 try {
-  await execute(
+  for (const command of [
+    "gcc",
+    "ld",
+    "strip",
+    "/usr/bin/prlimit",
+    strace,
+    ...CROSS_TOOLCHAINS.flatMap(([prefix]) => [
+      `${prefix}-gcc`,
+      `${prefix}-readelf`,
+    ]),
+  ]) {
+    try {
+      await commands.exec(command, [command === strace ? "-V" : "--version"], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+    } catch (cause) {
+      throw new Error(
+        `verify:binary:layout prerequisite unavailable: ${command}`,
+        { cause },
+      );
+    }
+  }
+  await commands.exec(
     "gcc",
     [
       "-std=c11",
@@ -137,6 +148,24 @@ try {
     ),
     (error) => {
       assert.ok(error instanceof OwnedCommandFailure);
+      // This control exercises the real launcher's identity directly.
+      const supervisor = error.cleanupOwner;
+      if (supervisor !== undefined) {
+        commands.adopt(
+          {
+            async close() {
+              const stopped = await supervisor.stop();
+              assert.notEqual(
+                stopped.status,
+                "incomplete",
+                JSON.stringify(stopped),
+              );
+            },
+          },
+          limitedPython,
+        );
+      } else if (error.cleanupFailure !== null)
+        root.retain(error.cleanupFailure);
       assert.equal(error.reason, "timeout");
       assert.equal(error.cleanupFailure, null);
       assert.ok(error.snapshot.stdout.text.includes("limited child ready"));
@@ -163,7 +192,7 @@ try {
     const markerPath = join(bootstrapRoot, `failure-${bootstrapCases}`);
     let exitCode = 0;
     try {
-      await execute(
+      await commands.exec(
         python,
         ["-I", bootstrapPath, markerPath, "unused-request"],
         {
@@ -172,7 +201,7 @@ try {
         },
       );
     } catch (cause) {
-      assert.equal(typeof cause.code, "number");
+      if (cause?.name !== "VerifierCommandExitError") throw cause;
       exitCode = cause.code;
     }
     assert.equal(exitCode, status);
@@ -191,6 +220,8 @@ try {
         "-fPIE",
         "-pie",
         "-fstack-protector-all",
+        "-fcf-protection=full",
+        "-Wl,-z,ibtplt",
         "-Wl,-z,relro,-z,now",
         "-Wl,-z,noexecstack",
       ],
@@ -209,7 +240,7 @@ try {
     ["library", ["-shared", "-fPIC", "-fno-stack-protector"]],
     ["packed-relative", ["-shared", "-fPIC", "-Wl,-z,pack-relative-relocs"]],
   ])
-    await execute(
+    await commands.exec(
       "gcc",
       ["-O1", "-g", ...flags, source, "-o", join(root.path, name)],
       { timeout: 30_000, maxBuffer: 1024 * 1024 },
@@ -242,13 +273,17 @@ try {
   emptyBytes.writeBigUInt64LE(0n, unusedHeader + 40);
   await writeFile(join(root.path, "empty-segment"), emptyBytes);
   await copyFile(join(root.path, "protected"), join(root.path, "stripped"));
-  await execute("strip", ["--strip-all", join(root.path, "stripped")], {
+  await commands.exec("strip", ["--strip-all", join(root.path, "stripped")], {
     timeout: 10_000,
   });
-  await execute("gcc", ["-c", highSource, "-o", join(root.path, "high.o")], {
-    timeout: 10_000,
-  });
-  await execute(
+  await commands.exec(
+    "gcc",
+    ["-c", highSource, "-o", join(root.path, "high.o")],
+    {
+      timeout: 10_000,
+    },
+  );
+  await commands.exec(
     "ld",
     [
       "-Ttext=0x20000000000001",
@@ -347,27 +382,36 @@ try {
       cases++;
     }
   }
-  // ELF32 profiles: cross-compiled, never executed, checked against GNU readelf.
+  // Cross profiles: cross-compiled, never executed, checked against GNU readelf.
   for (const [
     prefix,
     machine,
+    bits,
     byteOrder,
     kind,
     flags,
-  ] of ELF32_TOOLCHAINS.flatMap((toolchain) => [
+  ] of CROSS_TOOLCHAINS.flatMap((toolchain) => [
     [...toolchain, "executable", ["-fPIE", "-pie"]],
     [...toolchain, "relocatable", ["-c", "-fPIC"]],
   ])) {
     const path = join(root.path, `${prefix}-${kind}`);
-    await execute(`${prefix}-gcc`, ["-O1", ...flags, source, "-o", path], {
-      timeout: 30_000,
-      maxBuffer: 1024 * 1024,
-    });
-    const { stdout } = await execute(`${prefix}-readelf`, ["-SWsr", path], {
-      timeout: 10_000,
-      maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, LC_ALL: "C" },
-    });
+    await commands.exec(
+      `${prefix}-gcc`,
+      ["-O1", ...flags, source, "-o", path],
+      {
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    const { stdout } = await commands.exec(
+      `${prefix}-readelf`,
+      ["-SWsr", path],
+      {
+        timeout: 10_000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, LC_ALL: "C" },
+      },
+    );
     const expectedSections = [
       ...stdout.matchAll(
         /^\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+[A-Za-z]*\s+(\d+)\s+\d+\s+\d+\s*$/gm,
@@ -423,16 +467,18 @@ try {
         `readelf relocation count: ${name}`,
       );
       for (const [entryIndex, [, offset, info]] of rows.entries()) {
-        // ELF32 r_info uses the low byte for type and the upper 24 bits for
-        // the symbol index. readelf has already decoded the file's byte order.
+        // ELF32 r_info packs an 8-bit type under a 24-bit symbol index;
+        // ELF64 packs a 32-bit type under a 32-bit index. readelf has already
+        // decoded the file's byte order.
         const decodedInfo = BigInt(`0x${info}`);
+        const typeBits = bits === 32 ? 8n : 32n;
         expectedRelocations.push({
           section_index: section.index,
           entry_index: entryIndex,
           reported_offset: BigInt(`0x${offset}`),
-          type: Number(decodedInfo & 0xffn),
+          type: Number(decodedInfo & ((1n << typeBits) - 1n)),
           symbol_table_index: section.link,
-          symbol_index: Number(decodedInfo >> 8n),
+          symbol_index: Number(decodedInfo >> typeBits),
         });
       }
     }
@@ -445,7 +491,7 @@ try {
       const value = await inspect(mode, path);
       assert.deepEqual(value.architecture, {
         machine,
-        bits: 32,
+        bits,
         byte_order: byteOrder,
       });
       assert.equal(
@@ -536,13 +582,14 @@ try {
   const overflowingTablePath = join(root.path, "overflowing-program-table");
   await writeFile(overflowingTablePath, overflowingTable);
   for (const mode of ["cli", "mcp"]) {
-    const error = await inspect(mode, overflowingTablePath, "invalid_input");
-    assert.equal(error.code, "invalid_request");
-    assert.ok(
-      error.details.issues.some(
-        ({ path, reason }) => path[0] === "path" && reason === "invalid_format",
-      ),
+    const error = await inspect(
+      mode,
+      overflowingTablePath,
+      "unsupported_target",
     );
+    assert.equal(error.code, "unsupported_target");
+    assert.equal(error.details.failure_kind, "malformed");
+    assert.equal(error.details.format, "elf");
     cases++;
   }
   assert.deepEqual(await readFile(overflowingTablePath), overflowingTable);
@@ -565,6 +612,36 @@ try {
   assert.equal(protectedReport.mitigations.executable_stack_indicator, false);
   assert.equal(plain.mitigations.stack_canary_indicator, false);
   assert.equal(plain.mitigations.relro, null);
+  // CET images carry .plt, .plt.got and .plt.sec. Upstream emulates each in
+  // its own 1 GiB Unicorn instance; under the default address-space limit the
+  // .plt.sec stubs must still be recovered rather than dropped with a warning.
+  const pltSections = new Map(
+    protectedReport.sections.map((section) => [section.name.display, section]),
+  );
+  for (const name of [".plt", ".plt.got", ".plt.sec"]) {
+    const section = pltSections.get(name);
+    assert.ok(
+      section !== undefined && BigInt(section.size) > 0n,
+      `the protected fixture must emit a nonempty ${name}`,
+    );
+  }
+  const pltSec = pltSections.get(".plt.sec");
+  assert.ok(
+    !protectedReport.diagnostics.stderr.includes("Could not populate PLT"),
+    protectedReport.diagnostics.stderr,
+  );
+  const pltSecStart = BigInt(pltSec.address);
+  const pltSecEnd = pltSecStart + BigInt(pltSec.size);
+  for (const name of ["snprintf", "__stack_chk_fail"]) {
+    const entry = protectedReport.linkage.plt.find(
+      (item) => item.display_name === name,
+    );
+    assert.ok(entry, `missing ${name} PLT entry`);
+    assert.ok(
+      BigInt(entry.address) >= pltSecStart && BigInt(entry.address) < pltSecEnd,
+      `${name} PLT entry ${entry.address} lies outside .plt.sec`,
+    );
+  }
   const relocatable = reports.get("relocatable");
   assert.equal(relocatable.entry_point.meaning, "not-applicable");
   assert.ok(relocatable.relocations.length > 0);
@@ -701,8 +778,8 @@ try {
           : await inspect(
               mode,
               path,
-              fixture.expectation === "invalid_input"
-                ? "invalid_input"
+              fixture.expectation === "malformed"
+                ? "unsupported_target"
                 : undefined,
             );
       if (fixture.expectation === "absent") {
@@ -767,7 +844,7 @@ try {
       const path = join(root.path, `invalid-dependency-${profile}-${problem}`);
       await writeFile(path, bytes);
       for (const mode of ["cli", "mcp"]) {
-        await inspect(mode, path, "invalid_input");
+        await inspect(mode, path, "unsupported_target");
         cases++;
       }
       assert.deepEqual(await readFile(path), bytes);
@@ -814,7 +891,7 @@ try {
       const path = join(root.path, `invalid-symbol-link-${type}-${problem}`);
       await writeFile(path, bytes);
       for (const mode of ["cli", "mcp"]) {
-        await inspect(mode, path, "invalid_input");
+        await inspect(mode, path, "unsupported_target");
         cases++;
       }
       assert.deepEqual(await readFile(path), bytes);
@@ -869,7 +946,7 @@ try {
       0n,
       Number(BigInt(section.header_location.offset)) + 56,
     );
-    return [`zero-entry-${type}`, bytes, "invalid_input"];
+    return [`zero-entry-${type}`, bytes, "unsupported_target"];
   });
   const undersizedSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
     const section = protectedReport.sections.find((item) => item.type === type);
@@ -878,7 +955,7 @@ try {
     const header = Number(BigInt(section.header_location.offset));
     bytes.writeBigUInt64LE(8n, header + 32);
     bytes.writeBigUInt64LE(8n, header + 56);
-    return [`undersized-entry-${type}`, bytes, "invalid_input"];
+    return [`undersized-entry-${type}`, bytes, "unsupported_target"];
   });
   const nonintegralSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
     const section = protectedReport.sections.find((item) => item.type === type);
@@ -888,7 +965,7 @@ try {
     const size = bytes.readBigUInt64LE(header + 32);
     assert.ok(size + 1n <= BigInt(bytes.length) - BigInt(section.offset));
     bytes.writeBigUInt64LE(size + 1n, header + 32);
-    return [`nonintegral-entry-count-${type}`, bytes, "invalid_input"];
+    return [`nonintegral-entry-count-${type}`, bytes, "unsupported_target"];
   });
   const relocationSection = relocatable.sections.find(
     (item) => item.type === "SHT_RELA",
@@ -903,7 +980,7 @@ try {
     bytes.writeUInt32LE(sectionType, header + 4);
     bytes.writeBigUInt64LE(8n, header + 32);
     bytes.writeBigUInt64LE(8n, header + 56);
-    return [`undersized-entry-${type}`, bytes, "invalid_input"];
+    return [`undersized-entry-${type}`, bytes, "unsupported_target"];
   });
   const nonintegralRelocationEntries = [
     ["RELA", 4, 24],
@@ -914,7 +991,7 @@ try {
     bytes.writeUInt32LE(sectionType, header + 4);
     bytes.writeBigUInt64LE(BigInt(entrySize + 1), header + 32);
     bytes.writeBigUInt64LE(BigInt(entrySize), header + 56);
-    return [`nonintegral-entry-count-${type}`, bytes, "invalid_input"];
+    return [`nonintegral-entry-count-${type}`, bytes, "unsupported_target"];
   });
   const invalidRelocationReferences = [
     ["missing-symbol-table", relocatable.sections.length + 100],
@@ -929,7 +1006,7 @@ try {
       const type = bytes.readBigUInt64LE(offset) & 0xffffffffn;
       bytes.writeBigUInt64LE((0xffffffffn << 32n) | type, offset);
     } else bytes.writeUInt32LE(link, header + 40);
-    return [name, bytes, "invalid_input"];
+    return [name, bytes, "unsupported_target"];
   });
   const inactiveTarget = relocatable.sections.find(
     (section) => section.name.display === ".comment",
@@ -1092,10 +1169,12 @@ try {
     ["--fsize=33554432", '"file_size_bytes": 33554432'],
   ]) {
     const selectedEnvironment = limitedEnvironment(option);
-    const limitedClient = new Client({
-      name: "limited-layout-verifier",
-      version: "1",
-    });
+    const limitedClient = completeEvidenceClient(
+      new Client({
+        name: "limited-layout-verifier",
+        version: "1",
+      }),
+    );
     const limitedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -1116,11 +1195,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await limitedClient.close();
-      } finally {
-        await limitedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => limitedClient.close(),
+        () => limitedTransport.close(),
+      ]);
     }
   }
   const unsupported = Buffer.from(object);
@@ -1171,10 +1250,12 @@ try {
   // Resource limits are result-affecting inputs: upstream PLT emulation may be
   // incomplete under this address-space budget. Compare adapters at that budget.
   const memoryEnvironment = limitedEnvironment("--as=100663296");
-  const memoryClient = new Client({
-    name: "memory-layout-verifier",
-    version: "1",
-  });
+  const memoryClient = completeEvidenceClient(
+    new Client({
+      name: "memory-layout-verifier",
+      version: "1",
+    }),
+  );
   const memoryTransport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -1220,11 +1301,11 @@ try {
     }
     assert.deepEqual(await readFile(memoryHeavyPath), memoryHeavy);
   } finally {
-    try {
-      await memoryClient.close();
-    } finally {
-      await memoryTransport.close();
-    }
+    // A close that fails keeps the root until release confirms it.
+    await root.closeEarly([
+      () => memoryClient.close(),
+      () => memoryTransport.close(),
+    ]);
   }
   // Extended section numbering keeps this valid while providing enough work
   // to reach the one-second CPU limit even on faster CI runners.
@@ -1240,7 +1321,9 @@ try {
   const cpuHeavyPath = join(root.path, "cpu-section-heavy.o");
   await writeFile(cpuHeavyPath, cpuHeavy);
   const cpuEnvironment = limitedEnvironment("--cpu=1:");
-  const cpuClient = new Client({ name: "cpu-layout-verifier", version: "1" });
+  const cpuClient = completeEvidenceClient(
+    new Client({ name: "cpu-layout-verifier", version: "1" }),
+  );
   const cpuTransport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -1265,18 +1348,20 @@ try {
     }
     assert.deepEqual(await readFile(cpuHeavyPath), cpuHeavy);
   } finally {
-    try {
-      await cpuClient.close();
-    } finally {
-      await cpuTransport.close();
-    }
+    // A close that fails keeps the root until release confirms it.
+    await root.closeEarly([
+      () => cpuClient.close(),
+      () => cpuTransport.close(),
+    ]);
   }
   for (const limit of [1024, 1]) {
     const fileEnvironment = limitedEnvironment(`--fsize=${limit}:`);
-    const fileClient = new Client({
-      name: "file-size-layout-verifier",
-      version: "1",
-    });
+    const fileClient = completeEvidenceClient(
+      new Client({
+        name: "file-size-layout-verifier",
+        version: "1",
+      }),
+    );
     const fileTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -1305,23 +1390,24 @@ try {
       }
       assert.deepEqual(await readFile(sectionHeavyPath), sectionHeavy);
     } finally {
-      try {
-        await fileClient.close();
-      } finally {
-        await fileTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => fileClient.close(),
+        () => fileTransport.close(),
+      ]);
     }
   }
-  unsupported.writeUInt16LE(183, 18);
+  // EM_RISCV: AArch64 (183) is now an admitted profile.
+  unsupported.writeUInt16LE(243, 18);
   const core = Buffer.from(object);
   core.writeUInt16LE(4, 16);
   for (const [name, bytes, category] of [
-    ["not-elf", Buffer.from("ordinary local text"), "invalid_input"],
-    ["truncated", object.subarray(0, 32), "invalid_input"],
+    ["not-elf", Buffer.from("ordinary local text"), "unsupported_target"],
+    ["truncated", object.subarray(0, 32), "unsupported_target"],
     [
       "truncated-tables",
       object.subarray(0, object.length - 1),
-      "invalid_input",
+      "unsupported_target",
     ],
     ...zeroSymbolEntries,
     ...undersizedSymbolEntries,
@@ -1329,15 +1415,19 @@ try {
     ...undersizedRelocationEntries,
     ...nonintegralRelocationEntries,
     ...invalidRelocationReferences,
-    ["unterminated-dynamic-segment", shortDynamic, "invalid_input"],
-    ["unterminated-interpreter", unterminatedInterpreter, "invalid_input"],
+    ["unterminated-dynamic-segment", shortDynamic, "unsupported_target"],
+    ["unterminated-interpreter", unterminatedInterpreter, "unsupported_target"],
     [
       "missing-relocation-target-section",
       missingTargetSection,
-      "invalid_input",
+      "unsupported_target",
     ],
-    ["undersized-program-header", undersizedProgramHeader, "invalid_input"],
-    ["arm64", unsupported, "unsupported_target"],
+    [
+      "undersized-program-header",
+      undersizedProgramHeader,
+      "unsupported_target",
+    ],
+    ["riscv64", unsupported, "unsupported_target"],
     ["core", core, "unsupported_target"],
   ]) {
     const path = join(root.path, name);
@@ -1356,7 +1446,7 @@ try {
   const badPackedPath = join(root.path, "relr-bitmap-without-anchor");
   await writeFile(badPackedPath, packedFile);
   for (const mode of ["cli", "mcp"]) {
-    await inspect(mode, badPackedPath, "invalid_input");
+    await inspect(mode, badPackedPath, "unsupported_target");
     assert.deepEqual(await readFile(badPackedPath), packedFile);
     cases++;
   }
@@ -1385,10 +1475,12 @@ try {
       ...environment,
       REA_PWNTOOLS_PYTHON: configuredPython,
     };
-    const selectedClient = new Client({
-      name: "unavailable-layout-verifier",
-      version: "1",
-    });
+    const selectedClient = completeEvidenceClient(
+      new Client({
+        name: "unavailable-layout-verifier",
+        version: "1",
+      }),
+    );
     const selectedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -1419,11 +1511,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await selectedClient.close();
-      } finally {
-        await selectedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => selectedClient.close(),
+        () => selectedTransport.close(),
+      ]);
     }
   }
   for (const mode of ["cli", "mcp"]) {
@@ -1432,7 +1524,7 @@ try {
   }
   for (const name of ["protected", "sectionless"]) {
     const trace = join(root.path, `exec.trace.${name}`);
-    await execute(
+    await commands.exec(
       strace,
       [
         "-ff",
@@ -1444,9 +1536,11 @@ try {
         trace,
         process.execPath,
         entrypoint,
-        "inspect-binary-layout",
-        join(root.path, name),
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "inspect-binary-layout",
+          join(root.path, name),
+          "--json",
+        ])),
       ],
       {
         env: { ...environment, PATH: "/usr/bin:/bin" },
@@ -1472,9 +1566,7 @@ try {
         line.endsWith(" = 0") || / = -1 [A-Z]+/.test(line),
         `Incomplete exec observation: ${line}`,
       );
-      const ownershipInspection =
-        ["/usr/bin/ps", "/bin/ps"].includes(match[1]) &&
-        line.includes('["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]');
+      const ownershipInspection = isOwnershipPsExecution(line);
       assert.ok(
         [process.execPath, python].includes(match[1]) || ownershipInspection,
         `Unexpected attempted host execution: ${line}`,
@@ -1487,37 +1579,54 @@ try {
   cases += 2;
 } catch (cause) {
   failures.push(cause);
-} finally {
-  for (const close of [
+}
+try {
+  await root.closeEarly([
     () => client.close(),
     () => transport.close(),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
-  }
+    () => commands.close(),
+  ]);
+} catch (cause) {
+  failures.push(cause);
 }
 const verifier = await completeVerifierRun(run);
 try {
-  assert.equal(verifier.process_lineage.status, "verified");
-  assert.deepEqual(verifier.process_lineage.descendants, []);
+  assertVerifierCleanupComplete(verifier.process_lineage);
 } catch (cause) {
   failures.push(cause);
+  root.releaseAfter(async () =>
+    assertVerifierCleanupComplete(
+      (await completeVerifierRun(run)).process_lineage,
+    ),
+  );
+}
+if (failures.length === 0) {
+  try {
+    await root.release();
+  } catch (cause) {
+    failures.push(cause);
+  }
 }
 if (failures.length > 0) {
   console.error(
     JSON.stringify(
-      { status: "failed", public_cases: cases, verifier },
+      {
+        status: "failed",
+        public_cases: cases,
+        retained_workspace: root.path,
+        verifier,
+      },
       null,
       2,
     ),
   );
-  throw new AggregateError(
-    failures,
-    "Offline binary layout verification failed; cleanup failures are retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      `Offline binary layout verification failed; retained workspace: ${root.path}`,
+    ),
+    // The caller can retry the retained root from the final failure.
+    root.released ? {} : { cleanupLeases: [root] },
   );
 }
 console.log(
@@ -1548,7 +1657,7 @@ async function inspect(
     const response = await selectedClient.callTool(
       {
         name: "inspect_binary_layout",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       },
       { timeout: 300_000 },
     );
@@ -1561,9 +1670,16 @@ async function inspect(
   } else {
     let response;
     try {
-      response = await execute(
+      response = await commands.exec(
         process.execPath,
-        [entrypoint, "inspect-binary-layout", path, "--json"],
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([
+            "inspect-binary-layout",
+            path,
+            "--json",
+          ])),
+        ],
         {
           env: selectedEnvironment,
           timeout: 40_000,
@@ -1572,8 +1688,8 @@ async function inspect(
       );
     } catch (cause) {
       if (category === undefined) throw cause;
-      if (typeof cause.code !== "number") throw cause;
-      const error = JSON.parse(cause.stdout);
+      if (cause?.name !== "VerifierCommandExitError") throw cause;
+      const error = JSON.parse(cause.snapshot.stdout.text);
       assert.equal(error.category, category, JSON.stringify(error));
       return error;
     }

@@ -19,6 +19,12 @@ export const ghidraProjectHistoryEvidence = (
     ...(info.mips_soft_float_storage === undefined
       ? {}
       : { mips_soft_float_storage: info.mips_soft_float_storage }),
+    ...(info.riscv_calling_convention === undefined
+      ? {}
+      : { riscv_calling_convention: info.riscv_calling_convention }),
+    ...(info.elf_load_preparation === undefined
+      ? {}
+      : { elf_load_preparation: info.elf_load_preparation }),
   };
   if (Object.keys(reports).length === 0) return undefined;
   return createEvidence(

@@ -12,15 +12,9 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { parseBinaryTarget } from "../../dist/application/BinaryTargetResolver.js";
 import { createAnalysisProfile } from "../../dist/domain/analysisProfile.js";
-import {
-  createAnalysisSnapshotEntry,
-  parseAnalysisSnapshot,
-  serializeAnalysisSnapshot,
-  snapshotBinding,
-  snapshotTarget,
-} from "../../dist/domain/analysisSnapshot.js";
-import { createEvidence } from "../../dist/domain/evidence.js";
-import { createEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
+import { serializeAnalysisSnapshot } from "../../dist/domain/analysisSnapshot.js";
+import { createLegacyGhidraSnapshot } from "./ghidra-legacy-snapshot-e2e.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 /** Reject a valid older snapshot whose instruction-only collector omitted a real edge. */
 export async function verifyLegacyGhidraReferenceSnapshot(
@@ -39,17 +33,17 @@ export async function verifyLegacyGhidraReferenceSnapshot(
       record.parameters.procedure === procedure,
   );
   assert.ok(observed);
-  const { function_references: coverage, ...legacyParameters } =
-    observed.analysis_profile.parameters;
-  assert.equal(
-    typeof coverage,
-    "string",
-    "Reference semantics must participate in snapshot identity",
+  // A snapshot from an earlier bridge: same profile, another producer digest.
+  const { producer } = observed.analysis_profile.parameters;
+  assert.match(
+    producer?.sources_sha256 ?? "",
+    /^[0-9a-f]{64}$/u,
+    "The producer identity must participate in snapshot identity",
   );
-  const legacyProfile = createAnalysisProfile(
-    observed.provider,
-    legacyParameters,
-  );
+  const legacyProfile = createAnalysisProfile(observed.provider, {
+    ...observed.analysis_profile.parameters,
+    producer: { ...producer, sources_sha256: "0".repeat(64) },
+  });
   assert.notEqual(legacyProfile.digest, observed.analysis_profile.digest);
   const parsed = await parseBinaryTarget(target.path, {
     cwd: process.cwd(),
@@ -69,39 +63,11 @@ export async function verifyLegacyGhidraReferenceSnapshot(
     result.incoming_references.length,
     observed.normalized_result.incoming_references.length - 1,
   );
-  const evidence = createEvidence(nativeTarget, observed.provider, {
-    operation: observed.operation,
-    parameters: observed.parameters,
+  const snapshot = createLegacyGhidraSnapshot({
+    nativeTarget,
+    observed,
     result,
-    rawResult: result,
-    analysisProfile: legacyProfile,
-    limitations: observed.limitations,
-    locations: observed.locations,
-  });
-  const binding = snapshotBinding(legacyProfile);
-  const identity = snapshotTarget(nativeTarget);
-  const snapshot = parseAnalysisSnapshot({
-    target: identity,
-    binding,
-    entries: [
-      createAnalysisSnapshotEntry({
-        target: identity,
-        binding,
-        operation: observed.operation,
-        parameters: observed.parameters,
-        execution: {
-          result,
-          rawResult: result,
-          provider: observed.provider,
-          analysisProfile: legacyProfile,
-          limitations: observed.limitations,
-          locations: observed.locations,
-          subject: nativeTarget,
-        },
-      }),
-    ],
-    workflow_entries: [],
-    evidence_bundle: createEvidenceBundle([evidence]),
+    legacyProfile,
   });
   assert.equal(
     snapshot.entries.length,
@@ -126,11 +92,11 @@ export async function verifyLegacyGhidraReferenceSnapshot(
     assert.equal(reply.isError, true);
     const mcpRejection = requireMcpToolError(reply);
     assert.equal(mcpRejection.code, "evidence_integrity_mismatch");
-    assert.match(mcpRejection.details.reason, /profile_mismatch/u);
-    assert.match(
-      mcpRejection.remediation.action,
-      /without this snapshot.*fresh snapshot/u,
-    );
+    assert.deepEqual(mcpRejection.details.binding_mismatch.profile_digest, {
+      snapshot: legacyProfile.digest,
+      selected: observed.analysis_profile.digest,
+    });
+    assert.match(mcpRejection.remediation.action, /fresh snapshot/u);
     assert.deepEqual(
       requireMcpLifecycleResult(
         await client.callTool({ name: "binary_session", arguments: {} }),
@@ -159,14 +125,16 @@ export async function verifyLegacyGhidraReferenceSnapshot(
         process.execPath,
         [
           entrypoint,
-          "function",
-          target.path,
-          procedure,
-          "--provider",
-          "ghidra",
-          "--snapshot",
-          path,
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            target.path,
+            procedure,
+            "--provider",
+            "ghidra",
+            "--snapshot",
+            path,
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
       ),

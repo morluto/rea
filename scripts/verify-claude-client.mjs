@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
+import { verifyClientSetupAndReadSkillBody } from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
-import { createCatalogIdentity } from "../dist/catalogIdentity.js";
-import {
-  compactPresentationForMcpInputSchemaProfile,
-  parseMcpInputSchemaProfile,
-} from "../dist/config/mcpInputSchemaProfile.js";
+import { createCatalogIdentity } from "../dist/contracts/catalog/catalogIdentity.js";
 import { parseMcpOutputSchemaProfile } from "../dist/config/mcpOutputSchemaProfile.js";
 import {
   TOOL_CONTRACTS,
@@ -17,6 +13,8 @@ import {
 } from "../dist/contracts/toolContracts.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -27,11 +25,14 @@ import {
   sortVerifierNames,
 } from "./lib/mcp-verifier-results.mjs";
 import {
+  containsText,
   findClientResult,
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createAnthropicModelFixture } from "./verify/clients/anthropic-model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { resolveMcpOutputSchemaProfile } from "../dist/contracts/mcpSchemaPresentation.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
@@ -42,7 +43,9 @@ assert(
   "Usage: verify-claude-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(tmpdir(), "rea-claude-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-claude-client-",
+});
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
 const configPath = join(profile, ".claude.json");
@@ -77,13 +80,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(command, ["--version"], {
-          env: environment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      clientVersion = await readClientVersion(commands, command, environment);
     } catch (cause) {
       // npm installs put only a claude.cmd shim on PATH, which Node does not spawn without a shell.
       const windowsHint =
@@ -102,14 +99,6 @@ await withVerifierCleanup(async () => {
       strict: false,
       validateFormats: false,
     });
-    const containsText = (value, text) => {
-      if (typeof value === "string") return value.includes(text);
-      if (value && typeof value === "object")
-        return Object.values(value).some((nested) =>
-          containsText(nested, text),
-        );
-      return false;
-    };
     const decodeClaudeResult = (text) =>
       JSON.parse(
         // Native Claude appends this resource hint. Original bodies remain in request artifacts.
@@ -185,24 +174,18 @@ await withVerifierCleanup(async () => {
               ...parsedStatus,
               result: expandMcpSessionStatus(parsedStatus.result),
             };
-            const inputProfile = parseMcpInputSchemaProfile(
-              environment.REA_MCP_INPUT_SCHEMA_PROFILE,
-            );
             const outputProfile = parseMcpOutputSchemaProfile(
               environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
             );
-            assert.ok(inputProfile.ok);
             assert.ok(outputProfile.ok);
             assert.deepEqual(
               status.result.server_identity.catalog,
               createCatalogIdentity({
-                compactPresentation:
-                  compactPresentationForMcpInputSchemaProfile(
-                    inputProfile.value,
-                  ),
-                outputSchemaProfile: outputProfile.value ?? "full",
+                outputSchemaProfile: resolveMcpOutputSchemaProfile(
+                  outputProfile.value,
+                ),
               }),
-              "binary_session must return the selected input/output profile's catalog identity",
+              "binary_session must return the selected output profile's catalog identity",
             );
             assert.equal(
               Object.hasOwn(status.result.server_identity.catalog, "tools"),
@@ -274,78 +257,20 @@ await withVerifierCleanup(async () => {
       2,
     );
     await writeFile(configPath, original);
-    for (const args of [
-      ["setup", "--client", "claude_code", "--dry-run"],
-      ["setup", "--client", "claude_code", "--yes"],
-      ["doctor", "--client", "claude_code", "--skill"],
-    ]) {
-      const result = await commands.exec(
-        process.execPath,
-        [join(runtimeRoot, "scripts/rea.mjs"), ...args, "--json"],
-        { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-      );
-      await writeFile(
-        join(
-          lab,
-          `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`,
-        ),
-        result.stdout,
-      );
-      const parsed = JSON.parse(result.stdout);
-      if (args[0] === "doctor") assert.equal(parsed.healthy, true);
-      else {
-        assert.equal(
-          parsed.status,
-          args.includes("--dry-run") ? "planned" : "ready",
-        );
-        if (args.includes("--dry-run")) {
-          assert(parsed.plannedActions.some((a) => a.target === configPath));
-          assert(
-            parsed.plannedActions.some((a) => a.target === skillDirectory),
-          );
-          assert(
-            parsed.plannedActions.every(
-              (a) =>
-                a.target === configPath || a.target.startsWith(skillDirectory),
-            ),
-          );
-        }
-      }
-    }
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const configured = await readFile(configPath, "utf8");
-    assert.equal(JSON.parse(configured).theme, "light");
-    const repeated = await commands.exec(
-      process.execPath,
-      [
-        join(runtimeRoot, "scripts/rea.mjs"),
-        "setup",
-        "--client",
-        "claude_code",
-        "--yes",
-        "--json",
-      ],
-      { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-    );
-    assert.deepEqual(JSON.parse(repeated.stdout).appliedActions, []);
-    assert.equal(await readFile(configPath, "utf8"), configured);
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const installedSkill = await readFile(
-      join(skillDirectory, "SKILL.md"),
-      "utf8",
-    );
-    assert(installedSkill.includes("name: reverse-engineer-anything"));
-    const lines = installedSkill.split("\n");
-    const headerEnd = lines.indexOf("---", 1);
-    assert(
-      lines[0] === "---" && headerEnd > 0,
-      "Installed skill must have its authored frontmatter",
-    );
-    expectedSkillBody = lines
-      .slice(headerEnd + 1)
-      .join("\n")
-      .trim();
-    assert(expectedSkillBody.length > 0);
+    expectedSkillBody = await verifyClientSetupAndReadSkillBody({
+      client: "claude_code",
+      commands,
+      runtimeRoot,
+      environment,
+      workspace,
+      lab,
+      configPath,
+      original,
+      skillDirectory,
+      checkConfigured: (configured) => {
+        assert.equal(JSON.parse(configured).theme, "light");
+      },
+    });
     const response = await saveVerifierCommandOutput(
       () =>
         commands.exec(
@@ -414,18 +339,12 @@ await withVerifierCleanup(async () => {
   passed = true;
 }, [
   async () => {
-    const receipt = {
+    await publishReceipt({
       client: "Claude Code",
       clientVersion,
       mode,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback Anthropic Messages/SSE; synthetic usage and native resource hints; no live API claim",
       discovery:
@@ -444,15 +363,6 @@ await withVerifierCleanup(async () => {
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: await completeVerifierRun(verifier),
-    };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    });
   },
 ]);

@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { execFile } from "node:child_process";
 import {
   access,
@@ -10,17 +11,16 @@ import {
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
 import { javascriptRecoveryResultSchema } from "../../../src/domain/javascript/javascriptRecovery.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { RECOVERY_LIMITS } from "../../../src/javascript/recovery/WakaruRelease.js";
-import {
-  assertRecoveryCleanup,
-  recoveryFixture,
-} from "../../fixtures/javascript-recovery/provider.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { recoveryFixture } from "../../fixtures/javascript-recovery/provider.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
+import { injectPublishedDirectoryCloseFailure } from "../../support/publishedDirectoryCloseFailure.js";
 
 const registerRecoveryProvenanceCases = () => {
   it("publishes exact bytes and mappings with source identity and no runtime-equivalence claim", async () => {
@@ -55,7 +55,7 @@ const registerRecoveryProvenanceCases = () => {
       "module.exports = 42;",
     );
     expect(result.value.confidence).toBe("derived");
-    await assertRecoveryCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   });
 
   it.each([
@@ -104,7 +104,7 @@ const registerRecoveryProvenanceCases = () => {
       await expect(access(fixture.output)).rejects.toMatchObject({
         code: "ENOENT",
       });
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     },
   );
 
@@ -118,7 +118,7 @@ const registerRecoveryProvenanceCases = () => {
     expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
       "UTF-8 byte range",
     );
-    await assertRecoveryCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   });
 };
 
@@ -158,7 +158,7 @@ const registerRecoveryReleaseAndPartialCases = () => {
         message: "future warning",
       },
     ]);
-    await assertRecoveryCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   });
 
   it("retains valid partial output and exact failure diagnostics", async () => {
@@ -177,7 +177,7 @@ const registerRecoveryReleaseAndPartialCases = () => {
       warnings: [{ is_error: true, kind: "parse_error" }],
     });
     expect(value.modules).toHaveLength(1);
-    await assertRecoveryCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   });
 };
 
@@ -240,7 +240,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       await expect(access(fixture.output)).rejects.toMatchObject({
         code: "ENOENT",
       });
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
 
     it("reports cleanup failure and retains the workspace named by the error", async () => {
@@ -278,7 +278,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       expect(projectAnalysisError(result.error).code).toBe(
         "capability_unavailable",
       );
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
   },
 );
@@ -340,18 +340,9 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
 
     it("returns completed recovery when retry closes a descriptor after commit", async () => {
       const fixture = await recoveryFixture();
-      const createTree = SafeOutputTree.create.bind(SafeOutputTree);
-      const create = vi
-        .spyOn(SafeOutputTree, "create")
-        .mockImplementationOnce(async (outputRoot, platform) => {
-          const tree = await createTree(outputRoot, platform);
-          const commit = tree.commit.bind(tree);
-          vi.spyOn(tree, "commit").mockImplementation(async () => {
-            await commit();
-            throw new Error("injected descriptor close failure");
-          });
-          return tree;
-        });
+      const failure = await injectPublishedDirectoryCloseFailure(
+        fixture.output,
+      );
       try {
         const result = await fixture.service.recover({
           path: fixture.path,
@@ -361,36 +352,29 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
         const published = javascriptRecoveryResultSchema.parse(
           result.value.normalized_result,
         );
+        expect(failure.wasInjected()).toBe(true);
+        expect(failure.owners).toHaveLength(2);
+        expect(failure.owners[1]).toBe(failure.owners[0]);
+        expect(failure.owners[0]?.handle.fd).toBe(-1);
         await expect(access(published.manifest.path)).resolves.toBeUndefined();
         expect(published.source.published_copy.path).toContain(fixture.output);
       } finally {
-        create.mockRestore();
+        failure.allowCleanup();
+        try {
+          await fixture.provider.close?.();
+        } finally {
+          failure.restore();
+        }
       }
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
 
     it("retains published recovery and its result while cleanup remains unresolved", async () => {
       const fixture = await recoveryFixture();
-      const createTree = SafeOutputTree.create.bind(SafeOutputTree);
-      let cleanupAttempts = 0;
-      const create = vi
-        .spyOn(SafeOutputTree, "create")
-        .mockImplementationOnce(async (outputRoot, platform) => {
-          const tree = await createTree(outputRoot, platform);
-          const commit = tree.commit.bind(tree);
-          vi.spyOn(tree, "commit").mockImplementation(async () => {
-            await commit();
-            throw new Error("injected descriptor close failure");
-          });
-          const rollback = tree.rollback.bind(tree);
-          vi.spyOn(tree, "rollback").mockImplementation(async () => {
-            cleanupAttempts += 1;
-            if (cleanupAttempts === 1)
-              throw new Error("injected cleanup refusal");
-            return rollback();
-          });
-          return tree;
-        });
+      const failure = await injectPublishedDirectoryCloseFailure(
+        fixture.output,
+        true,
+      );
       try {
         const result = await fixture.service.recover({
           path: fixture.path,
@@ -412,17 +396,29 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
         await expect(
           access(join(fixture.output, "manifest.json")),
         ).resolves.toBeUndefined();
+        expect(failure.wasInjected()).toBe(true);
+        expect(failure.owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+        if (fixture.provider.close === undefined)
+          throw new Error("Expected Wakaru cleanup capability");
+        failure.allowCleanup();
+        await fixture.provider.close();
+        expect(failure.owners.length).toBeGreaterThan(1);
+        expect(
+          failure.owners.every((owner) => owner === failure.owners[0]),
+        ).toBe(true);
+        expect(failure.owners[0]?.handle.fd).toBe(-1);
       } finally {
-        create.mockRestore();
+        failure.allowCleanup();
+        try {
+          await fixture.provider.close?.();
+        } finally {
+          failure.restore();
+        }
       }
-      if (fixture.provider.close === undefined)
-        throw new Error("Expected Wakaru cleanup capability");
-      await fixture.provider.close();
-      expect(cleanupAttempts).toBe(2);
       await expect(
         access(join(fixture.output, "manifest.json")),
       ).resolves.toBeUndefined();
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
   },
 );
@@ -463,14 +459,14 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       });
       expect(result.value.subject).toMatchObject({
         local_path: selected,
-        digest: { sha256: sources[0]!.sha256 },
+        identity: { sha256: sources[0]!.sha256 },
       });
       for (const [index, module] of value.modules.entries())
         expect(module.provenance).toMatchObject({
           original_path: sources[index]!.path,
           original_sha256: sources[index]!.sha256,
         });
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
   },
 );
@@ -535,7 +531,9 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       expect(await readFile(sources[1]!.published_copy.path, "utf8")).toBe(
         content,
       );
-      expect(result.value.subject?.digest.sha256).toBe(value.source.sha256);
+      expect(fileIdentity(result.value.subject).sha256).toBe(
+        value.source.sha256,
+      );
       for (const [index, module] of value.modules.entries()) {
         const source = sources[index]!;
         expect(source.published_copy.sha256).toBe(source.sha256);
@@ -549,7 +547,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       }
       const manifest = JSON.parse(await readFile(value.manifest.path, "utf8"));
       expect(manifest.additional_sources).toEqual(value.additional_sources);
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
 
     it.each([
@@ -571,7 +569,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       const code = projectAnalysisError(result.error).code;
       if (mode === "secondary-change" || mode === "redistribute")
         expect(code).toBe("artifact_changed");
-      else expect(code).toMatch(/execution_failure|unreadable_output/u);
+      else expect(["execution_failure", "unreadable_output"]).toContain(code);
       const reason =
         mode === "secondary-foreign"
           ? "does not bind the selected input snapshot"
@@ -584,7 +582,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       await expect(access(fixture.output)).rejects.toMatchObject({
         code: "ENOENT",
       });
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
 
     it("rejects aggregate input overflow before launching the engine", async () => {

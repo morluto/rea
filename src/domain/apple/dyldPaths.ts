@@ -12,6 +12,11 @@ const MAX_SYMLINK_HOPS = 32;
 
 export type PathLookup =
   | { readonly kind: "file"; readonly path: string }
+  | {
+      readonly kind: "undetermined";
+      readonly path: string;
+      readonly targetHex: string;
+    }
   | { readonly kind: "absent" | "escapes" | "not-file" };
 
 /**
@@ -40,6 +45,8 @@ export const resolveTreePath = async (
     const entry = await view.entry(path);
     if (entry === undefined) return { kind: "absent" };
     if (entry.kind === "symlink") {
+      if (entry.target === null)
+        return { kind: "undetermined", path, targetHex: entry.targetHex };
       hops += 1;
       if (hops > MAX_SYMLINK_HOPS) return { kind: "absent" };
       if (entry.target.startsWith("/")) return { kind: "escapes" };
@@ -70,7 +77,10 @@ export const directoryOf = (path: string): string => {
 export const joinPath = (directory: string, rest: string): string =>
   directory === "" ? rest : rest === "" ? directory : `${directory}/${rest}`;
 
-export type Expansion =
+export type Expansion = {
+  /** Recognized dyld token, owned by the same parse that expands the path. */
+  readonly prefix?: "loader_path" | "executable_path";
+} & (
   | {
       readonly scope: "target";
       /** Source-facing expansion retained in candidate Evidence. */
@@ -79,7 +89,8 @@ export type Expansion =
       readonly lookupPath?: string;
     }
   | { readonly scope: "outside"; readonly path: string }
-  | { readonly scope: "undetermined"; readonly path: string };
+  | { readonly scope: "undetermined"; readonly path: string }
+);
 
 /** Expand one dyld path prefix relative to its owning image. */
 export const expandPrefix = (
@@ -95,12 +106,17 @@ export const expandPrefix = (
   if (variable !== null) {
     const rest = variable[2] ?? "";
     if (variable[1] === "loader_path")
-      return { scope: "target", path: joinPath(context.ownerDirectory, rest) };
+      return {
+        scope: "target",
+        path: joinPath(context.ownerDirectory, rest),
+        prefix: "loader_path",
+      };
     return context.executable === null
-      ? { scope: "undetermined", path: raw }
+      ? { scope: "undetermined", path: raw, prefix: "executable_path" }
       : {
           scope: "target",
           path: joinPath(directoryOf(context.executable), rest),
+          prefix: "executable_path",
         };
   }
   if (raw.startsWith("/")) {

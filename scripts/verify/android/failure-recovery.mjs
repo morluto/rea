@@ -4,20 +4,17 @@ import {
   sortVerifierNames,
 } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
-import {
-  access,
-  mkdtemp,
-  mkdir,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, symlink, writeFile } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_CONTRACTS } from "../../../dist/contracts/toolContracts.js";
-import { analysisErrorProjectionSchema } from "../../../dist/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../dist/domain/analysisErrorProjectionSchema.js";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 /** Real unusable Java runtimes and selectors must lead to applicable recovery. */
 export async function verifyAndroidFailureRecovery({
@@ -30,10 +27,16 @@ export async function verifyAndroidFailureRecovery({
   execute,
   fixture,
 }) {
-  const root = await mkdtemp(join(tmpdir(), "rea-android-recovery-"));
+  const rootFixture = await VerifierFixture.open({
+    prefix: "rea-android-recovery-",
+    // A plain directory, as before: tools create directories beneath it,
+    // which a private root blocks on Windows.
+    private: false,
+  });
+  const root = rootFixture.path;
   const javaName = process.platform === "win32" ? "java.exe" : "java";
   const jlinkName = process.platform === "win32" ? "jlink.exe" : "jlink";
-  try {
+  await withVerifierFixture(rootFixture, async () => {
     const withoutJar = { ...environment };
     delete withoutJar.REA_JADX_MCP_JAR;
     await verifyAndroidReadiness({
@@ -115,23 +118,14 @@ export async function verifyAndroidFailureRecovery({
       {
         label: "missing java",
         env: { ...withoutJavaHome, PATH: empty },
-        observation:
-          process.platform === "win32" ? "Cannot find java.exe" : "ENOENT",
+        observation: `Cannot find an executable ${javaName}`,
         diagnostics: {
           failure_kind: "java_runtime",
           failure_code: "runtime_missing",
-          ...(process.platform === "win32"
-            ? {}
-            : { process_error_code: "ENOENT" }),
+          phase: "path-lookup",
         },
-        message:
-          process.platform === "win32"
-            ? /Cannot find java\.exe/u
-            : /selected Java runtime/u,
-        remediation:
-          process.platform === "win32"
-            ? /JAVA_HOME|PATH/u
-            : /selected launcher/u,
+        message: /Cannot find an executable java/u,
+        remediation: /JAVA_HOME|PATH/u,
       },
       {
         label: "invalid engine archive with a working JDK",
@@ -159,6 +153,8 @@ export async function verifyAndroidFailureRecovery({
             failure_kind: "java_probe",
             failure_code: "runtime_unavailable",
           },
+          availabilityReason: "provider_unavailable",
+          availabilityRemediation: /selected Java launcher/u,
           message: /selected Java runtime/u,
           remediation: /selected launcher/u,
         });
@@ -169,7 +165,14 @@ export async function verifyAndroidFailureRecovery({
       try {
         await execute(
           process.execPath,
-          [entrypoint, "inspect-android-package", path, "--json"],
+          [
+            entrypoint,
+            "inspect-android-package",
+            "--detail",
+            "complete",
+            path,
+            "--json",
+          ],
           {
             cwd: repository,
             env: scenario.env,
@@ -200,10 +203,8 @@ export async function verifyAndroidFailureRecovery({
         environment: scenario.env,
         repository,
         available: false,
-        remediation: new RegExp(
-          scenario.observation.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
-          "u",
-        ),
+        unavailableReason: scenario.availabilityReason ?? "provider_missing",
+        remediation: scenario.availabilityRemediation ?? scenario.remediation,
       });
       console.log(`PASS CLI applicable recovery: ${scenario.label}`);
     }
@@ -220,10 +221,12 @@ export async function verifyAndroidFailureRecovery({
       env: environment,
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "rea-real-android-failures",
-      version: "1",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "rea-real-android-failures",
+        version: "1",
+      }),
+    );
     try {
       await client.connect(transport);
       for (const name of [
@@ -260,6 +263,7 @@ export async function verifyAndroidFailureRecovery({
         {
           name: "inspect_android_method",
           arguments: {
+            detail: "complete",
             path,
             class_name: fixture.class_name,
             method_name: "noSuchMethod",
@@ -273,7 +277,10 @@ export async function verifyAndroidFailureRecovery({
       ]);
       await client.ping();
       const control = await client.callTool(
-        { name: "inspect_android_package", arguments: { path } },
+        {
+          name: "inspect_android_package",
+          arguments: { detail: "complete", path },
+        },
         { timeout: 150_000 },
       );
       assert.notEqual(control.isError, true, JSON.stringify(control));
@@ -286,9 +293,7 @@ export async function verifyAndroidFailureRecovery({
       await client.close();
       await transport.close();
     }
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  });
 }
 
 const verifyAndroidReadiness = async ({
@@ -297,6 +302,7 @@ const verifyAndroidReadiness = async ({
   repository,
   available,
   remediation,
+  unavailableReason = "provider_missing",
 }) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -305,7 +311,9 @@ const verifyAndroidReadiness = async ({
     env: environment,
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-android-readiness", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-android-readiness", version: "1" }),
+  );
   try {
     await client.connect(transport);
     const catalog = await client.listTools();
@@ -343,7 +351,7 @@ const verifyAndroidReadiness = async ({
         assert.equal(item.reason, "available");
         assert.equal(item.remediation, null);
       } else {
-        assert.equal(item.reason, "provider_missing");
+        assert.equal(item.reason, unavailableReason);
         assert.match(item.remediation, remediation);
       }
     }

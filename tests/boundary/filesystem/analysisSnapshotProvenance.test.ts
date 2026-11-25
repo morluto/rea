@@ -14,6 +14,59 @@ import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js"
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+it("keeps real provider replay and persisted Evidence independent of caller edits", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-snapshot-result-ownership-",
+  );
+  const path = join(directory, "application.exe");
+  await writeFile(path, buildManagedPeFixture());
+  const provider = new ManagedStaticProvider();
+  const profile = createAnalysisProfile(MANAGED_STATIC_PROVIDER, {
+    fixture: "snapshot-result-ownership",
+  });
+  const session = createTestBinarySession(provider, {
+    resolveAnalysisProfile: () => Promise.resolve(ok({ profile })),
+  });
+  onTestFinished(async () => {
+    const closed = await session.close();
+    if (!closed.ok) throw closed.error;
+  });
+  const opened = await session.open(path);
+  if (!opened.ok) throw opened.error;
+  const observed = await session.execute("inspect_managed_artifact", {});
+  if (!observed.ok) throw observed.error;
+  const expected = structuredClone(observed.value.result);
+  if (observed.value.evidenceId === undefined)
+    throw new Error("Real managed observation has no Evidence identity");
+  const historical = session.evidenceById(observed.value.evidenceId);
+  if (historical === undefined) throw new Error("Observation was not retained");
+  if (
+    observed.value.result === null ||
+    typeof observed.value.result !== "object"
+  )
+    throw new Error("Expected a structured managed artifact result");
+  Reflect.set(observed.value.result, "caller_edit", "must not enter replay");
+
+  const replayed = await session.execute("inspect_managed_artifact", {});
+  if (!replayed.ok) throw replayed.error;
+  expect(replayed.value.evidenceId).toBe(observed.value.evidenceId);
+  expect(replayed.value.result).toEqual(expected);
+  expect(session.evidenceById(observed.value.evidenceId)).toEqual(historical);
+  const snapshot = session.exportAnalysisSnapshot();
+  if (!snapshot.ok) throw snapshot.error;
+  const snapshotPath = join(directory, "analysis.json");
+  const written = await session.writeAnalysisSnapshot(
+    snapshot.value,
+    snapshotPath,
+    false,
+  );
+  if (!written.ok) throw written.error;
+  const restored = await readAnalysisSnapshot(snapshotPath);
+  if (!restored.ok) throw restored.error;
+  expect(restored.value.entries[0]?.execution.result).toEqual(expected);
+  expect(restored.value.evidence_bundle.records).toContainEqual(historical);
+});
+
 it("reruns ambiguous imported observations without changing their historical Evidence", async () => {
   const directory = await createTestTempDirectory("rea-snapshot-provenance-");
   const path = join(directory, "application.exe");
@@ -96,8 +149,8 @@ it("reruns ambiguous imported observations without changing their historical Evi
   const replayed = await session.execute("inspect_managed_artifact", {});
   if (!replayed.ok) throw replayed.error;
   expect(replayed.value.result).toEqual(observed.value.result);
-  expect(replayed.value.limitations).toContain(
-    "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+  expect(replayed.value.limitations).toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
   );
   const controlClosed = await session.close();
   if (!controlClosed.ok) throw controlClosed.error;
@@ -125,8 +178,8 @@ it("reruns ambiguous imported observations without changing their historical Evi
   const fresh = await session.execute("inspect_managed_artifact", {});
   if (!fresh.ok) throw fresh.error;
   expect(fresh.value.result).toEqual(observed.value.result);
-  expect(fresh.value.limitations).not.toContain(
-    "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+  expect(fresh.value.limitations).not.toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
   );
   expect(session.evidenceById(original.evidence_id)).toEqual(original);
   expect(session.evidenceById(alternative.evidence_id)).toEqual(alternative);

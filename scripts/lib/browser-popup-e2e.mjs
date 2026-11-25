@@ -16,18 +16,30 @@ import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
 import { compareBrowserScenarios } from "../../dist/domain/browserScenarioDiff.js";
 import { browserScenarioCaptureSchema } from "../../dist/domain/browserScenarioCapture.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
+// Readiness includes descendant document loads, so complete network capture
+// does not depend on whether an inline script runs before an iframe finishes.
 const document = (path) => {
+  const icon = '<link rel="icon" href="data:,">';
   if (path.startsWith("/nested"))
-    return `<script>throw new Error("nested popup failure")</script>
-      <script>opener.postMessage("nested-ready", "*")</script>`;
+    return `${icon}<script>throw new Error("nested popup failure")</script>
+      <script>addEventListener("load", () => opener.postMessage("nested-ready", "*"))</script>`;
   if (path.startsWith("/popup"))
-    return `<script>throw new Error("popup failure")</script>
-      <script>onmessage = e => {
-        if (e.data === "nested-ready") opener.postMessage("popup-ready", "*");
-      }; window.open("/nested");</script><iframe src="/child"></iframe>`;
-  if (path.startsWith("/child")) return "child frame";
-  return `<script>onmessage = e => {
+    return `${icon}<script>throw new Error("popup failure")</script>
+      <script>
+        let loaded = false, nested = false;
+        const ready = () => {
+          if (loaded && nested) opener.postMessage("popup-ready", "*");
+        };
+        addEventListener("load", () => { loaded = true; ready(); });
+        onmessage = e => {
+          if (e.data === "nested-ready") { nested = true; ready(); }
+        };
+        window.open("/nested");
+      </script><iframe src="/child"></iframe>`;
+  if (path.startsWith("/child")) return `${icon}child frame`;
+  return `${icon}<script>onmessage = e => {
     if (e.data === "popup-ready") document.body.dataset.ready = "true";
   }</script><button onclick="window.open('/redirect')">Open popup</button>`;
 };
@@ -75,7 +87,25 @@ const assertNetwork = (result, origin) => {
         1,
         `${kind} ${path} must be captured exactly once`,
       );
-  assert.equal(result.completeness.equality_eligible, true);
+  assert.equal(
+    result.completeness.equality_eligible,
+    true,
+    JSON.stringify({
+      limitations: result.limitations,
+      unfinished: result.events.items.filter(
+        (event) => event.kind === "request-unfinished",
+      ),
+    }),
+  );
+  assert.equal(
+    result.events.items.filter(
+      (event) =>
+        event.kind === "request-finished" &&
+        event.url?.url === origin + "/child",
+    ).length,
+    1,
+    "child document must finish before network capture ends",
+  );
   assert.equal(compareWithSelf(result).overall_status, "unchanged");
 };
 
@@ -139,6 +169,8 @@ const verifyTransports = async (executable, origin) => {
     [
       entrypoint,
       "capture-browser-scenario",
+      "--detail",
+      "complete",
       JSON.stringify(scenario),
       "--json",
     ],
@@ -156,11 +188,16 @@ const verifyTransports = async (executable, origin) => {
     env,
     stderr: "pipe",
   });
-  const client = new Client({ name: "popup-real-e2e", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "popup-real-e2e", version: "1" }),
+  );
   try {
     await client.connect(transport);
     const captured = await client.callTool(
-      { name: "capture_browser_scenario", arguments: scenario },
+      {
+        name: "capture_browser_scenario",
+        arguments: { ...scenario, detail: "complete" },
+      },
       { timeout: 60_000 },
     );
     assert.notEqual(captured.isError, true, JSON.stringify(captured));
@@ -180,13 +217,27 @@ const verifyTransports = async (executable, origin) => {
 
 /** Verify popup timing, selection, coverage, and shared-context isolation on Chromium. */
 export async function verifyPopupEventCoverage(executable) {
+  let slowChild = true;
+  let childTimer;
+  const childStarted = Promise.withResolvers();
   const server = createServer((request, response) => {
     if (request.url === "/redirect") {
       response.writeHead(302, { Location: "/popup" });
       response.end();
     } else {
       response.setHeader("Content-Type", "text/html");
-      response.end(document(request.url ?? "/"));
+      if (slowChild && request.url === "/child") {
+        // Keep one response open while the nested page can announce readiness.
+        // This exposes premature capture cutoff even on fast local browsers.
+        response.writeHead(200);
+        response.write(document("/child"));
+        childStarted.resolve();
+        childTimer = setTimeout(() => response.end(), 1500);
+      } else if (slowChild && request.url === "/nested") {
+        void childStarted.promise.then(() => response.end(document("/nested")));
+      } else {
+        response.end(document(request.url ?? "/"));
+      }
     }
   });
   server.listen(0, "127.0.0.1");
@@ -199,6 +250,7 @@ export async function verifyPopupEventCoverage(executable) {
       await capture(scenarioFor(executable, origin, ["network"])),
       origin,
     );
+    slowChild = false;
     const errors = await capture(
       scenarioFor(executable, origin, ["page-errors"]),
     );
@@ -240,6 +292,7 @@ export async function verifyPopupEventCoverage(executable) {
       stdio_mcp: true,
     };
   } finally {
+    clearTimeout(childTimer);
     server.closeAllConnections();
     await new Promise((resolve, reject) =>
       server.close((error) =>

@@ -1,9 +1,11 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BigIntStats } from "node:fs";
 import { lstat, readlink, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { resolveTreePath } from "../../domain/apple/dyldPaths.js";
+import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import {
   dylibResolutionInputSchema,
   dylibResolutionResultSchema,
@@ -18,19 +20,22 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 import {
   ArtifactReaderFailure,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  targetDigestChangedFailure,
+  DirectoryArtifactReader,
+  unsupportedArtifact,
+} from "../../resources/index.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { consumeWithOrderedReads } from "../OrderedReads.js";
 import {
   DylibFileAccess,
   classifyDylibReadFailure,
 } from "./DylibFileAccess.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
 
 const OPERATION = "trace_dylib_resolution";
-const WINDOWS = process.platform === "win32";
+// Resolution reads paths on this host's filesystem.
+const WINDOWS = HOST_PLATFORM.platform === "win32";
 /** Concurrent four-byte magic reads while enumerating bundle roots. */
 const MAGIC_READ_CONCURRENCY = 8;
 
@@ -77,6 +82,13 @@ class FilesystemTreeView implements DylibTreeView {
     return pending;
   }
 
+  /** Seed an already-verified Mach-O parse so follow-up resolution skips re-opening the file. */
+  seedImage(path: string, facts: MachoImageFacts, identity: BigIntStats): void {
+    if (this.#images.has(path)) return;
+    this.#images.set(path, Promise.resolve(facts));
+    this.#identities.set(path, identity);
+  }
+
   /** Identity of the file whose header bytes `image()` parsed. */
   identity(path: string): BigIntStats | undefined {
     return this.#identities.get(path);
@@ -113,7 +125,12 @@ class FilesystemTreeView implements DylibTreeView {
     try {
       const metadata = await lstat(absolute);
       if (metadata.isSymbolicLink()) {
-        const target = await readlink(absolute);
+        const observed = observedSymlinkTarget(
+          await readlink(absolute, { encoding: "buffer" }),
+        );
+        if (observed.text === null)
+          return { kind: "symlink", target: null, targetHex: observed.hex };
+        const target = observed.text;
         // Windows link text separates components with `\`.
         return {
           kind: "symlink",
@@ -201,9 +218,10 @@ export const traceDylibResolution = async (options: {
         digests.get(target) ??
         (await files.sha256(join(root, target), undefined));
       if (targetDigest !== options.targetSha256)
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `Active target digest changed: expected ${options.targetSha256}, observed ${targetDigest}`,
+        throw targetDigestChangedFailure(
+          "target",
+          options.targetSha256,
+          targetDigest,
         );
       assertArtifactReadActive(options.signal);
       return dylibResolutionResultSchema.parse({
@@ -252,7 +270,7 @@ const executableRoots = async (
   };
   try {
     await consumeWithOrderedReads(
-      reader.entries(signal, traversal),
+      traversal.entries(reader, signal),
       MAGIC_READ_CONCURRENCY,
       (entry) => {
         // The ordered-read owner skips consume() when read() returns undefined.
@@ -262,14 +280,14 @@ const executableRoots = async (
           firstSymlink ??= entry.path;
         }
         return entry.kind === "file"
-          ? files.startsWithMachoMagic(entry)
+          ? files.readMachoIfMagic(entry)
           : undefined;
       },
-      async (entry, macho) => {
-        if (!macho) return;
-        const facts = await view.image(entry.path);
-        if (facts.status === "malformed" || facts.status === "unsupported")
-          unclassified.push(entry.path);
+      async (entry, observed) => {
+        if (observed === undefined) return;
+        view.seedImage(entry.path, observed.facts, observed.identity);
+        const { facts } = observed;
+        if (facts.status === "failed") unclassified.push(entry.path);
         else if (
           facts.status === "parsed" &&
           machoImageSlices(facts).some(
@@ -292,7 +310,7 @@ const executableRoots = async (
   if (outcome.kind === "failed") throw outcome.cause;
   assertArtifactReadActive(signal);
   if (symlinks > 0)
-    traversal.onCoverage({
+    traversal.record({
       status: "unknown",
       limitations: [
         `Executable-root discovery did not follow ${symlinks} symlink(s); their root roles and possible descendants are unknown. First path: ${JSON.stringify(firstSymlink)}.`,
@@ -322,24 +340,31 @@ const requireMachoRoots = async (
   const resolved: string[] = [];
   for (const [index, path] of roots.entries()) {
     const reject = (
-      reason: "path" | "format",
+      reason: "path" | "unsupported",
       message: string,
     ): AnalysisInputError | ArtifactReaderFailure =>
       callerSelected
         ? new AnalysisInputError(OPERATION, undefined, [
             { path: ["roots", index], reason: "invalid_value", message },
           ])
-        : new ArtifactReaderFailure(reason, message);
+        : reason === "unsupported"
+          ? unsupportedArtifact("macho", message)
+          : new ArtifactReaderFailure(reason, message);
     const lookup = await resolveTreePath(view, path);
     if (lookup.kind === "escapes")
       throw reject("path", `Root ${path} resolves outside the analyzed root`);
+    if (lookup.kind === "undetermined")
+      throw reject(
+        "path",
+        `Root ${path} crosses symlink ${lookup.path} with non-UTF-8 target bytes ${lookup.targetHex}`,
+      );
     if (lookup.kind !== "file")
       throw reject(
         "path",
         `Root ${path} is not a regular file in the analyzed root`,
       );
     if ((await view.image(lookup.path)).status === "not-mach-o")
-      throw reject("format", `Root ${path} is not a Mach-O image`);
+      throw reject("unsupported", `Root ${path} is not a Mach-O image`);
     if (!resolved.includes(lookup.path)) resolved.push(lookup.path);
   }
   return resolved;

@@ -101,7 +101,7 @@ it("retains completed Evidence and resolved bundle identity after successful-clo
         cause: reason,
         cleanupIncomplete: false,
         partialObservation: {
-          subject: { local_path: path, architecture: "arm64" },
+          subject: { local_path: path, identity: { architecture: "arm64" } },
           parameters: { path: bundle },
           normalized_result: {
             artifact: { selected_path: bundle, resolved_path: path },
@@ -124,6 +124,7 @@ it.each([null, { caller: "already aborted" }, undefined])(
     const inspect = vi.fn();
     const service = new ElectronFuseService({
       identity: { id: "not-invoked", name: "not invoked", version: "1" },
+      close: async () => {},
       inspect,
     });
     const result = await service.inspect(

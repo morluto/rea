@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { runKunaCommand } from "../../dist/kuna/KunaCommand.js";
 import { kunaProjectDeadline } from "../../dist/kuna/KunaConfiguration.js";
 import { inspectKunaInstallation } from "../../dist/kuna/KunaInstallation.js";
+import { HOST_PLATFORM } from "../../dist/platform/HostPlatform.js";
 
 const entries = (path) =>
   readdir(path).catch((cause) => {
@@ -26,7 +27,7 @@ export const nativeKunaStrings = async ({
       REA_KUNA_COMMAND: executable,
       REA_KUNA_CACHE_DIR: cacheRoot,
     },
-    { resourceScope },
+    { platform: HOST_PLATFORM.platform, resourceScope },
   );
   assert.ok(installed.ok, "Native string oracle could not inspect Kuna");
   const input = await realpath(binary);
@@ -106,7 +107,7 @@ export const verifyKunaStrings = async ({
     entries(join(cacheRoot, "projects")),
     entries(join(cacheRoot, "staging")),
   ]);
-  const cold = await call("search_strings", { pattern });
+  const cold = await call("search_strings", { detail: "complete", pattern });
   assert.deepEqual(
     cold.value,
     selected,
@@ -128,18 +129,22 @@ export const verifyKunaStrings = async ({
       `Required string ${JSON.stringify(value)} was not recovered`,
     );
   assert.equal(complete.structured.raw_result.strings.sha256, source.sha256);
-  const repeated = await call("search_strings", { pattern });
+  const repeated = await call("search_strings", {
+    detail: "complete",
+    pattern,
+  });
   assert.deepEqual(repeated.value, selected);
   let exact;
   if (selected.length > 0) {
     const address = selected[0].address;
-    exact = await call("list_strings", { address });
+    exact = await call("list_strings", { detail: "complete", address });
     assert.deepEqual(
       exact.value,
       expected.filter((item) => item.address === address),
     );
   }
   const regex = await call("search_strings", {
+    detail: "complete",
     pattern: "^.{5,12}$",
     mode: "regex",
     case_sensitive: true,
@@ -149,6 +154,7 @@ export const verifyKunaStrings = async ({
     expected.filter(({ value }) => /^.{5,12}$/u.test(value)),
   );
   const missing = await call("search_strings", {
+    detail: "complete",
     pattern: "\u0000REA-negative-string-query\u0000",
   });
   assert.deepEqual(missing.value, []);

@@ -53,6 +53,7 @@ export const BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS = 60_000;
 
 /** Owned child process and startup policy for Chrome CDP discovery. */
 export interface BrowserStartupOptions {
+  /** Caller retains process error handling through its complete resource lifetime. */
   readonly child: ChildProcess;
   readonly executable: string;
   readonly activePortPath: string;
@@ -71,23 +72,30 @@ export const waitForBrowserDevtoolsPort = async (
   const terminal = childTermination(options, startedAt, timeoutMs);
   const deadline = startedAt + timeoutMs;
 
-  while (true) {
+  try {
     const terminalState = currentTerminalState(options.child);
     if (terminalState !== null)
       throw startupError(options, startedAt, timeoutMs, terminalState);
 
-    const port = await readDevtoolsPort(options.activePortPath);
-    if (port !== null) return port;
+    while (true) {
+      const port = await readDevtoolsPort(options.activePortPath);
+      if (terminal.failure !== undefined) throw terminal.failure;
+      if (port !== null) return port;
 
-    const remainingMs = deadline - performance.now();
-    if (remainingMs <= 0)
-      throw startupError(options, startedAt, timeoutMs, { failure: "timeout" });
+      const remainingMs = deadline - performance.now();
+      if (remainingMs <= 0)
+        throw startupError(options, startedAt, timeoutMs, {
+          failure: "timeout",
+        });
 
-    const outcome = await Promise.race([
-      terminal,
-      delay(Math.min(pollIntervalMs, remainingMs)).then(() => null),
-    ]);
-    if (outcome !== null) throw outcome;
+      const outcome = await Promise.race([
+        terminal.outcome,
+        delay(Math.min(pollIntervalMs, remainingMs)).then(() => null),
+      ]);
+      if (outcome !== null) throw outcome;
+    }
+  } finally {
+    terminal.close();
   }
 };
 
@@ -101,29 +109,41 @@ const childTermination = (
   options: BrowserStartupOptions,
   startedAt: number,
   startupTimeoutMs: number,
-): Promise<BrowserStartupError> =>
-  new Promise((resolve) => {
-    options.child.once("error", (cause: unknown) => {
-      resolve(
-        startupError(options, startedAt, startupTimeoutMs, {
-          failure: "spawn-error",
-          cause,
-        }),
+): {
+  readonly failure: BrowserStartupError | undefined;
+  readonly outcome: Promise<BrowserStartupError>;
+  close(): void;
+} => {
+  let failure: BrowserStartupError | undefined;
+  let onError: (cause: unknown) => void;
+  let onExit: () => void;
+  const outcome = new Promise<BrowserStartupError>((resolve) => {
+    const record = (state: TerminalState): void => {
+      failure ??= startupError(options, startedAt, startupTimeoutMs, state);
+      resolve(failure);
+    };
+    onError = (cause) => record({ failure: "spawn-error", cause });
+    onExit = () => {
+      record(
+        options.child.signalCode === null
+          ? { failure: "exited" }
+          : { failure: "signalled" },
       );
-    });
-    options.child.once("exit", () => {
-      resolve(
-        startupError(
-          options,
-          startedAt,
-          startupTimeoutMs,
-          options.child.signalCode === null
-            ? { failure: "exited" }
-            : { failure: "signalled" },
-        ),
-      );
-    });
+    };
+    options.child.once("error", onError);
+    options.child.once("exit", onExit);
   });
+  return {
+    get failure() {
+      return failure;
+    },
+    outcome,
+    close: () => {
+      options.child.off("error", onError);
+      options.child.off("exit", onExit);
+    },
+  };
+};
 
 const currentTerminalState = (child: ChildProcess): TerminalState | null => {
   if (child.signalCode !== null) return { failure: "signalled" };

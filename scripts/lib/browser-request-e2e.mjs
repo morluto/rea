@@ -17,6 +17,7 @@ import {
 } from "../fixtures/browser-request-site.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { createPackageVerifierCommands } from "./verify-package-commands.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 const authenticated = [
   { name: "X-CSRFToken", value: { source: "cookie", name: "csrftoken" } },
@@ -67,10 +68,13 @@ const writeSession = (executable, origin) =>
       read("list-1", "/api/items"),
       read("list-2", "/api/items"),
       read("item-1", "/api/items/1"),
-      write("create-1", "POST", "/api/items", {
-        json: { title: "Scratch item 1" },
-        status: 201,
-      }),
+      {
+        ...write("create-1", "POST", "/api/items", {
+          json: { title: "Scratch item 1" },
+          status: 201,
+        }),
+        query: [{ name: "org", value: { source: "literal", value: "1" } }],
+      },
       read("created-1", "/api/items/3"),
       read("list-created-1", "/api/items"),
       write("create-2", "POST", "/api/items", {
@@ -122,7 +126,10 @@ const cliOf = (commands, entrypoint) => async (args, maxBuffer) =>
 
 const captureOf = async (cli, scenario, maxBuffer) => {
   const stdout = await cli(
-    ["capture-browser-scenario", JSON.stringify(scenario)],
+    await completeEvidenceCliArguments([
+      "capture-browser-scenario",
+      JSON.stringify(scenario),
+    ]),
     maxBuffer,
   );
   const evidence = parseEvidence(JSON.parse(stdout));
@@ -337,6 +344,16 @@ export async function verifyBrowserRequestSteps(
     assertRequestsAttributed(scenario, capture);
     assert.equal(site.writes.length, 6);
     assert.ok(site.writes.every(({ csrf, bearer }) => csrf && bearer));
+    assert.deepEqual(site.writes[0], {
+      method: "POST",
+      path: "/api/items",
+      query: "?org=1",
+      body: { title: "Scratch item 1" },
+      contentType: "application/json",
+      cookie: true,
+      csrf: true,
+      bearer: true,
+    });
     assertPageValuesRedacted(evidence, capture);
 
     const capturePath = join(root.path, "items.capture.json");

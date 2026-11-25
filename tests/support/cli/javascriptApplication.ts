@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -6,7 +7,9 @@ import { z } from "zod";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import type { SharedMcpCall, TestCli } from "./cliFixture.js";
+import { COMPLETE_DETAIL } from "../completeDetail.js";
 
 const execute = promisify(execFile);
 
@@ -32,7 +35,7 @@ export const resolveJavaScriptApplicationMcpCall = async (
 ): Promise<SharedMcpCall> => {
   if (mcpCall !== undefined) return mcpCall;
   if (cli.sharedMcpCall !== undefined) return cli.sharedMcpCall();
-  return (await connectLocalToolsMcp()).call;
+  return (await connectLocalToolsMcp(INLINE_EVIDENCE_MCP_ENVIRONMENT)).call;
 };
 
 /**
@@ -54,10 +57,11 @@ export const analyzeJavaScriptDirectory = async (
 ) => {
   let document: unknown;
   if (surface === "CLI") {
-    const run = cli.sharedCliRun ?? ((invocation) => cli.run(invocation));
+    const run = cli.run.bind(cli);
     const response = await run({
       arguments: [
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         ...sourcePaths.flatMap((path) => ["--source-path", path]),
         "--format",
@@ -70,6 +74,7 @@ export const analyzeJavaScriptDirectory = async (
   } else {
     const call = await resolveJavaScriptApplicationMcpCall(cli, mcpCall);
     const response = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: root,
       format: "directory",
       ...(sourcePaths.length === 0 ? {} : { source_paths: sourcePaths }),
@@ -81,3 +86,29 @@ export const analyzeJavaScriptDirectory = async (
     .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
     .parse(document).normalized_result;
 };
+
+export const sourceEvidence = (
+  sourcePath: string,
+  source: string,
+  limitation?: string,
+): unknown =>
+  expect.objectContaining({
+    artifact: expect.objectContaining({
+      available: true,
+      sha256: createHash("sha256").update(source).digest("hex"),
+    }),
+    location: expect.objectContaining({
+      available: true,
+      value: expect.objectContaining({
+        kind: "source-range",
+        source: sourcePath,
+      }),
+    }),
+    ...(limitation === undefined
+      ? {}
+      : {
+          limitations: expect.arrayContaining([
+            expect.stringContaining(limitation),
+          ]),
+        }),
+  });

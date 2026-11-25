@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { uniqueSorted } from "./canonicalOrdering.js";
+import { firstDuplicateIndex, uniqueSorted } from "./canonicalOrdering.js";
 import {
   compositeKey,
   compareUnicodeCodePoints,
@@ -10,7 +10,10 @@ import {
   readComparisonResult,
   type ParsedComparisonEvidence,
 } from "./comparisonEvidenceResult.js";
-import { evidenceSchema, type Evidence } from "./evidence.js";
+import type { ComparisonEvidenceOperation } from "./comparisonEvidenceIdentity.js";
+import type { Evidence } from "./evidence.js";
+import { evidenceInputSchema } from "./evidenceReference.js";
+import { err, ok, type Result } from "./result.js";
 import type { AnalysisInputError } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
@@ -26,11 +29,36 @@ import {
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
+type ChangedBehaviorComparisonOperation = Exclude<
+  ComparisonEvidenceOperation,
+  "compare_web_screenshots"
+>;
+type ChangedBehaviorComparison =
+  ParsedComparisonEvidence<ChangedBehaviorComparisonOperation>;
 
 /** Input for aggregating existing comparison Evidence. */
 export const changedBehaviorInputSchema = z.strictObject({
-  comparisons: z.array(evidenceSchema).min(1),
+  comparisons: z.array(evidenceInputSchema).min(1),
 });
+
+const comparisonSelectionSchema = z.strictObject({
+  comparisons: z.array(z.unknown()).min(1),
+});
+
+/** Admit the selection envelope without copying or authenticating full records. */
+export const readChangedBehaviorSelection = (
+  input: unknown,
+): Result<readonly unknown[], AnalysisInputError> => {
+  const envelope = comparisonSelectionSchema.safeParse(input);
+  return envelope.success
+    ? ok(envelope.data.comparisons)
+    : err(
+        analysisInputErrorFromIssues(OPERATION, envelope.error.issues, input, {
+          cause: envelope.error,
+          userMessage: "Provide at least one comparison Evidence item.",
+        }),
+      );
+};
 
 const findingSchema = z.object({
   scope: z.enum(["runtime", "protocol", "resource", "static_candidate"]),
@@ -94,7 +122,8 @@ export const changedBehaviorResultSchema = z
 
 export type ChangedBehaviorResult = z.infer<typeof changedBehaviorResultSchema>;
 type Finding = z.infer<typeof findingSchema>;
-type RuntimeStatus = z.infer<typeof processCaptureComparisonSchema>["status"];
+type ProcessComparison = z.infer<typeof processCaptureComparisonSchema>;
+type RuntimeStatus = ProcessComparison["status"];
 
 /** Find observed runtime changes and separately report static change candidates. */
 interface FoundChangedBehavior {
@@ -107,20 +136,9 @@ export const findChangedBehavior = (input: unknown): FoundChangedBehavior => {
   // The public input schema remains available to clients; this internal
   // admission only checks the list shape because readEvidence below owns
   // validation and authentication of each retained Evidence item.
-  const envelope = z
-    .strictObject({ comparisons: z.array(z.unknown()).min(1) })
-    .safeParse(input);
-  if (!envelope.success)
-    throw analysisInputErrorFromIssues(
-      OPERATION,
-      envelope.error.issues,
-      input,
-      {
-        cause: envelope.error,
-        userMessage: "Provide at least one comparison Evidence item.",
-      },
-    );
-  const { comparisons } = envelope.data;
+  const selection = readChangedBehaviorSelection(input);
+  if (!selection.ok) throw selection.error;
+  const comparisons = selection.value;
   const evidence = comparisons.map((item, index) =>
     parseComparisonEvidence(item, input, index),
   );
@@ -136,7 +154,11 @@ export const findChangedBehavior = (input: unknown): FoundChangedBehavior => {
   const findings = evidence.flatMap(findingsFor).sort(compareFindings);
   const runtimeStatuses = evidence.flatMap((comparison) =>
     comparison.operation === "compare_process_captures"
-      ? [comparison.result.status]
+      ? [
+          unprovenEqualityReason(comparison.result) === undefined
+            ? comparison.result.status
+            : "unknown",
+        ]
       : [],
   );
   const links = uniqueSorted(
@@ -183,17 +205,20 @@ const parseComparisonEvidence = (
   input: unknown,
   fullInput: unknown,
   index: number,
-): ParsedComparisonEvidence => {
+): ChangedBehaviorComparison => {
   const parsedEvidence = readEvidence(input);
   if (!parsedEvidence.ok) throw parsedEvidence.error;
   const evidence = parsedEvidence.value;
-  if (!isComparisonEvidenceOperation(evidence.operation))
+  if (
+    !isComparisonEvidenceOperation(evidence.operation) ||
+    evidence.operation === "compare_web_screenshots"
+  )
     throw callerInputError(
       fullInput,
       ["comparisons", index],
       "Changed-behavior analysis requires process, artifact, or function comparison Evidence",
     );
-  const operation = evidence.operation;
+  const operation: ChangedBehaviorComparisonOperation = evidence.operation;
   if (!hasComparisonEvidenceIdentity(evidence))
     throw evidenceIntegrityError(
       "Comparison Evidence operation, predicate, and provider disagree",
@@ -211,7 +236,7 @@ const parseComparisonEvidence = (
   return result.value;
 };
 
-const findingsFor = (comparison: ParsedComparisonEvidence): Finding[] => {
+const findingsFor = (comparison: ChangedBehaviorComparison): Finding[] => {
   if (comparison.operation === "compare_process_captures")
     return processFindings(comparison);
   if (comparison.operation === "compare_functions")
@@ -221,7 +246,7 @@ const findingsFor = (comparison: ParsedComparisonEvidence): Finding[] => {
 
 const processFindings = (
   comparison: Extract<
-    ParsedComparisonEvidence,
+    ChangedBehaviorComparison,
     { readonly operation: "compare_process_captures" }
   >,
 ): Finding[] => {
@@ -233,7 +258,7 @@ const processFindings = (
     ["filesystem", result.filesystem, "resource"],
     ["process", result.process, "runtime"],
   ] as const;
-  return dimensions.flatMap(([dimension, status, scope]) =>
+  const findings = dimensions.flatMap(([dimension, status, scope]) =>
     status === "unchanged"
       ? []
       : [
@@ -244,43 +269,81 @@ const processFindings = (
             status,
             classification: isChange(status)
               ? "observed_change"
-              : "unresolved_branch",
+              : status === "contradiction"
+                ? "contradiction"
+                : "unresolved_branch",
             limitations: result.limitations,
           }),
         ],
   );
+  const reason = unprovenEqualityReason(result);
+  return reason === undefined
+    ? findings
+    : [
+        ...findings,
+        makeFinding({
+          evidence,
+          dimension: "first_divergence",
+          scope: "runtime",
+          status: "unknown",
+          classification: "unresolved_branch",
+          limitations: [...result.limitations, reason],
+        }),
+      ];
 };
+
+/** Unchanged dimensions do not establish equality while divergence stays unknown. */
+const unprovenEqualityReason = (
+  result: ProcessComparison,
+): string | undefined =>
+  result.status === "unchanged" && result.first_divergence.status === "unknown"
+    ? result.first_divergence.reason
+    : undefined;
 
 const functionFindings = (
   comparison: Extract<
-    ParsedComparisonEvidence,
+    ChangedBehaviorComparison,
     { readonly operation: "compare_functions" }
   >,
 ): Finding[] => {
   const { evidence, result } = comparison;
-  return result.dimensions.flatMap((dimension) =>
-    dimension.status === "unchanged"
-      ? []
-      : [
-          makeFinding({
-            evidence,
-            dimension: dimension.dimension,
-            scope: "static_candidate",
-            status: dimension.status,
-            classification:
-              dimension.status === "unknown"
-                ? "unresolved_branch"
-                : dimension.conclusion_kind,
-            limitations: dimension.limitations,
-            links: dimension.evidence_links,
-          }),
-        ],
-  );
+  return result.dimensions.flatMap((dimension) => {
+    const finding = (status: "changed" | "unknown") =>
+      makeFinding({
+        evidence,
+        dimension: dimension.dimension,
+        scope: "static_candidate",
+        status,
+        classification:
+          status === "unknown"
+            ? "unresolved_branch"
+            : dimension.conclusion_kind,
+        limitations:
+          status === "unknown" &&
+          dimension.dimension === "calls" &&
+          dimension.discovery_status === undefined
+            ? [
+                ...dimension.limitations,
+                "Static call discovery coverage was not recorded in the comparison.",
+              ]
+            : dimension.limitations,
+        links: dimension.evidence_links,
+      });
+    const findings =
+      dimension.status === "unchanged" ? [] : [finding(dimension.status)];
+    if (
+      dimension.dimension === "calls" &&
+      dimension.status !== "unknown" &&
+      dimension.discovery_status !== "complete"
+    )
+      findings.push(finding("unknown"));
+    return findings;
+  });
 };
 
 const artifactFindings = (
   comparison: Extract<
-    ParsedComparisonEvidence,
+    ChangedBehaviorComparison,
     { readonly operation: "compare_artifacts" }
   >,
 ): Finding[] => {
@@ -346,7 +409,8 @@ const behaviorStatus = (
 ): ChangedBehaviorResult["behavior_status"] => {
   if (statuses.length === 0) return "unknown";
   if (statuses.includes("truncated")) return "truncated";
-  if (statuses.includes("unknown")) return "unknown";
+  if (statuses.includes("unknown") || statuses.includes("contradiction"))
+    return "unknown";
   return statuses.some(isChange) ? "observed_changed" : "observed_unchanged";
 };
 
@@ -365,16 +429,6 @@ const compareFindings = (left: Finding, right: Finding): number =>
     compositeKey([left.scope, left.dimension, left.source_comparison_id]),
     compositeKey([right.scope, right.dimension, right.source_comparison_id]),
   );
-
-const firstDuplicateIndex = (values: readonly string[]): number | undefined => {
-  const seen = new Set<string>();
-  const index = values.findIndex((value) => {
-    if (seen.has(value)) return true;
-    seen.add(value);
-    return false;
-  });
-  return index < 0 ? undefined : index;
-};
 
 const OPERATION = "find_changed_behavior";
 

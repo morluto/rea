@@ -9,6 +9,7 @@ import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { classifyAndHashRoot } from "../../fixtures/artifactInventory.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 const injected = vi.hoisted(() => ({
   opened: undefined as
@@ -27,6 +28,98 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
   };
 });
+
+it.each(
+  [1, 2].flatMap((selectedOpen) =>
+    [
+      "failed close",
+      "cancelled failed close",
+      "cancelled closed",
+      "failed read",
+    ].map((outcome) => ({ selectedOpen, outcome })),
+  ),
+)(
+  "retains completed root identity at open $selectedOpen through $outcome",
+  async ({ selectedOpen, outcome }) => {
+    const root = await realpath(
+      await createTestTempDirectory("rea-root-completed-cleanup-"),
+    );
+    const path = join(root, "payload.bin");
+    const bytes = Buffer.from("completed selected root bytes");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await writeFile(path, bytes);
+    const client = new ArtifactProvider({}).createClient({
+      path,
+      sourcePath: path,
+      sha256,
+      kind: "artifact",
+      format: "javascript",
+    });
+    const controller = new AbortController();
+    const reason = { source: "root descriptor finalization" };
+    const physical = Object.assign(new Error("physical root read failed"), {
+      code: "EIO",
+      errno: -5,
+      syscall: "read",
+    });
+    let opened = 0;
+    let descriptor: FileHandle | undefined;
+    let blocked = outcome !== "cancelled closed";
+    injected.opened = (candidate, file) => {
+      if (String(candidate) !== path || ++opened !== selectedOpen) return;
+      descriptor = file;
+      if (outcome === "failed read")
+        vi.spyOn(file, "read").mockRejectedValueOnce(physical);
+      const close = file.close.bind(file);
+      vi.spyOn(file, "close").mockImplementation(async () => {
+        if (outcome !== "failed close") controller.abort(reason);
+        if (blocked) throw new Error("root descriptor close denied");
+        await close();
+      });
+    };
+    onTestFinished(async () => {
+      injected.opened = undefined;
+      blocked = false;
+      await client.close();
+      vi.restoreAllMocks();
+    });
+    const result = await client.execute(
+      "inventory_artifact",
+      {},
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected root finalization failure");
+    expect(result.error.partialObservation).toEqual(
+      outcome === "failed read"
+        ? undefined
+        : { kind: "file-snapshot-hash", path, sha256, bytes: bytes.length },
+    );
+    expect(
+      projectAnalysisError(result.error).details?.partial_observation,
+    ).toEqual(result.error.partialObservation);
+    if (outcome.startsWith("cancelled")) {
+      expect(result.error).toMatchObject({
+        reason: "cancelled",
+        cause: reason,
+      });
+    } else if (outcome === "failed read") {
+      expect(result.error).toMatchObject({
+        reason: "io",
+        detail: expect.stringContaining(physical.message),
+        cause: { cause: { cause: physical } },
+      });
+    }
+    expect(result.error.cleanupIncomplete).toBe(blocked);
+    if (blocked) {
+      expect((await client.close()).ok).toBe(false);
+      expect(descriptor!.fd).toBeGreaterThanOrEqual(0);
+      blocked = false;
+    }
+    expect((await client.close()).ok).toBe(true);
+    expect(descriptor!.fd).toBe(-1);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  },
+);
 
 it.each([false, true])(
   "preserves root admission failure and close authority (invalidated=%s)",

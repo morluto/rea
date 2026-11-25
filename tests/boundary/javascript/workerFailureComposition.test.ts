@@ -4,6 +4,8 @@ import { afterEach, expect, it, vi } from "vitest";
 
 const faults = vi.hoisted(() => ({
   lowHeadroom: false,
+  onCheckpointRead: undefined as (() => void) | undefined,
+  checkpointReadFailure: undefined as Error | undefined,
   sourceRemoval: false,
   removals: 0,
   onSourceRemoval: undefined as (() => void) | undefined,
@@ -19,7 +21,7 @@ vi.mock("node:v8", async (original) => {
         ? {
             ...observed,
             heap_size_limit:
-              observed.used_heap_size + 192 * 1024 * 1024 + 128 * 1024,
+              observed.used_heap_size + 192 * 1024 * 1024 + 64 * 1024,
           }
         : observed;
     },
@@ -30,14 +32,29 @@ vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      if (
+        String(args[0]).includes("rea-javascript-analysis-") &&
+        String(args[0]).endsWith(".static.json")
+      ) {
+        faults.onCheckpointRead?.();
+        if (faults.checkpointReadFailure !== undefined)
+          throw faults.checkpointReadFailure;
+      }
+      return actual.readFile(...args);
+    },
     rm: async (...args: Parameters<typeof actual.rm>) => {
+      if (
+        String(args[0]).includes("rea-javascript-analysis-") &&
+        String(args[0]).endsWith(".source")
+      )
+        faults.onSourceRemoval?.();
       if (
         faults.sourceRemoval &&
         String(args[0]).includes("rea-javascript-analysis-") &&
         String(args[0]).endsWith(".source")
       ) {
         faults.removals += 1;
-        faults.onSourceRemoval?.();
         throw Object.assign(
           new Error("controlled source-file removal failure"),
           { code: "EACCES" },
@@ -72,14 +89,27 @@ const ready =
 
 afterEach(() => {
   faults.lowHeadroom = false;
+  faults.onCheckpointRead = undefined;
+  faults.checkpointReadFailure = undefined;
   faults.sourceRemoval = false;
   faults.removals = 0;
   faults.onSourceRemoval = undefined;
 });
 
-it.each(["io", "output"] as const)(
-  "keeps worker %s failure classification distinct at the protocol boundary",
-  async (reason) => {
+it.each([
+  ["io", false, false],
+  ["output", false, false],
+  ["output", true, true],
+  ["output", false, true],
+] as const)(
+  "keeps worker %s failure classification distinct at the protocol boundary (cleanup: %s; cancellation: %s)",
+  async (reason, deniedCleanup, cancelCleanup) => {
+    const controller = new AbortController();
+    const cancellation = new Error("cancel during failed job cleanup");
+    faults.sourceRemoval = deniedCleanup;
+    faults.onSourceRemoval = cancelCleanup
+      ? () => controller.abort(cancellation)
+      : undefined;
     const worker = new JavaScriptAnalysisWorker(
       { heapMb: 128, timeoutMs: 30_000 },
       async (request) =>
@@ -92,13 +122,25 @@ it.each(["io", "output"] as const)(
         }),
     );
     try {
-      const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
-      expect(result.ok).toBe(false);
+      const result = await worker.analyze(
+        file,
+        { nodes: 100, unknowns: 100 },
+        controller.signal,
+      );
       if (result.ok) throw new Error("Expected worker failure");
-      expect(result.error.error._tag).toBe(
+      const failure = result.error.error.cleanupPrimary ?? result.error.error;
+      expect(result.error.error.cleanupIncomplete).toBe(deniedCleanup);
+      if (cancelCleanup) {
+        expect(failure.secondaryFailures).toHaveLength(1);
+        expect(failure.secondaryFailures[0]).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          cause: cancellation,
+        });
+      }
+      expect(failure._tag).toBe(
         reason === "io" ? "ProviderAdapterError" : "AnalysisOutputError",
       );
-      const projected = projectAnalysisError(result.error.error);
+      const projected = projectAnalysisError(failure);
       expect(projected.code).toBe(
         reason === "io" ? "execution_failure" : "unreadable_output",
       );
@@ -112,6 +154,7 @@ it.each(["io", "output"] as const)(
         expect(projected.message).toContain("storage failed");
       }
     } finally {
+      faults.sourceRemoval = false;
       await worker.close();
     }
   },
@@ -124,7 +167,9 @@ it.each([false, true])(
     faults.sourceRemoval = removalFailure;
     const controller = new AbortController();
     const reason = new Error("cancel during denied source-file cleanup");
-    faults.onSourceRemoval = () => controller.abort(reason);
+    faults.onSourceRemoval = removalFailure
+      ? () => controller.abort(reason)
+      : undefined;
     const sourceMapUrls = [
       {
         declared_url: "app.map",
@@ -273,5 +318,66 @@ it.each([
         "Owned analyzer did not expose its runtime root to launcher",
       );
     await expect(access(runtimeRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.each([
+  { readFailed: false, deniedCleanup: false },
+  { readFailed: true, deniedCleanup: false },
+  { readFailed: true, deniedCleanup: true },
+])(
+  "preserves checkpoint physical outcome before late cancellation (read failed: $readFailed; cleanup denied: $deniedCleanup)",
+  async ({ readFailed, deniedCleanup }) => {
+    const controller = new AbortController();
+    const cancellation = { source: "checkpoint read began" };
+    const physical = new Error("controlled physical checkpoint read failed");
+    faults.onCheckpointRead = () => controller.abort(cancellation);
+    faults.checkpointReadFailure = readFailed ? physical : undefined;
+    faults.sourceRemoval = deniedCleanup;
+    let retainedFailure: ProviderCleanupError | undefined;
+    const checkpoint = JSON.stringify(staticCheckpointFacts);
+    const worker = new JavaScriptAnalysisWorker(
+      { heapMb: 128, timeoutMs: 10_000 },
+      async (request) =>
+        spawnOwnedProviderProcess({
+          ...request,
+          arguments: [
+            "-e",
+            `${ready}const fs=require("node:fs");const {createHash}=require("node:crypto");const checkpoint=${JSON.stringify(checkpoint)};require("node:readline").createInterface({input:process.stdin}).on("line",line=>{const request=JSON.parse(line);if(request.file){fs.writeFileSync(request.id+".static.json",checkpoint);process.stdout.write(JSON.stringify({kind:"static",id:request.id,bytes:Buffer.byteLength(checkpoint),sha256:createHash("sha256").update(checkpoint).digest("hex")})+"\\n");}});`,
+          ],
+        }),
+    );
+    try {
+      const result = await worker.analyze(
+        file,
+        { nodes: 100, unknowns: 100 },
+        controller.signal,
+      );
+      if (result.ok)
+        throw new Error("Expected cancellation or physical read failure");
+      const failure = result.error.error;
+      const primary = failure.cleanupPrimary ?? failure;
+      expect(primary._tag).toBe(
+        readFailed ? "ProviderAdapterError" : "AnalysisCancelledError",
+      );
+      expect(primary.cause).toBe(readFailed ? physical : cancellation);
+      expect(failure.cleanupIncomplete).toBe(deniedCleanup);
+      if (failure instanceof ProviderCleanupError) retainedFailure = failure;
+      if (readFailed) {
+        expect(result.error.javascript).toBeNull();
+        expect(primary.secondaryFailures).toEqual([
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: cancellation,
+          }),
+        ]);
+      } else expect(result.error.javascript?.parse_status).toBe("complete");
+    } finally {
+      faults.sourceRemoval = false;
+      await worker.close();
+    }
+    expect(retainedFailure?.cleanupIncomplete).toBe(
+      deniedCleanup ? false : undefined,
+    );
   },
 );

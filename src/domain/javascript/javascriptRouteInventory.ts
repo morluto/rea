@@ -1,3 +1,7 @@
+import {
+  coverageStatusSchema,
+  knownCoverageStatusSchema,
+} from "../coverage.js";
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { z } from "zod";
@@ -20,7 +24,7 @@ import {
   type NextAppSourceContext,
 } from "./javascriptRoutePaths.js";
 
-const sourceStatus = z.enum(["complete", "partial", "unavailable", "unknown"]);
+const sourceStatus = z.enum([...coverageStatusSchema.options, "unavailable"]);
 const confidence = javaScriptRouteCandidateSchema.shape.confidence;
 const sourceShape = {
   id: z.string().regex(/^jss:[a-f0-9]{32}$/u),
@@ -57,7 +61,7 @@ export const javaScriptRouteOccurrenceSchema = z.strictObject({
 });
 export const javaScriptInventoryRouteSchema = z.strictObject({
   id: z.string().regex(/^jsr:[a-f0-9]{32}$/u),
-  path: z.string().startsWith("/"),
+  path: z.string().regex(/^\//u),
   classification: z.enum(["page", "system", "unknown"]),
   classification_basis: z.enum([
     "next-app-page",
@@ -102,8 +106,8 @@ const inventoryShape = z.strictObject({
   unknowns: z.array(javaScriptRouteGapSchema),
   coverage: z.strictObject({
     scope: z.literal("provided-code-sources"),
-    source_parsing: z.enum(["complete", "partial", "unknown"]),
-    candidate_enumeration: z.enum(["complete", "partial"]),
+    source_parsing: coverageStatusSchema,
+    candidate_enumeration: knownCoverageStatusSchema,
     application_routes: z.literal("unknown"),
   }),
   statistics: z.strictObject({

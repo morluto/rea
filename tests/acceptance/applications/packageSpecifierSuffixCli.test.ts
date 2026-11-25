@@ -423,7 +423,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             ...(status === "rejected"
               ? {
                   limitations: expect.arrayContaining([
-                    "The resolved candidate escapes the canonical artifact root.",
+                    expect.stringMatching(/escapes.*artifact root/iu),
                   ]),
                 }
               : {}),

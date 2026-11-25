@@ -4,10 +4,9 @@ import { FIRMWARE_TOOL_CONTRACTS } from "../../../src/contracts/firmware/firmwar
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import {
-  firmwareFixture,
-  assertFirmwareCleanup,
-} from "../../fixtures/firmware/provider.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { firmwareFixture } from "../../fixtures/firmware/provider.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -22,7 +21,10 @@ it("executes named firmware contracts with inline Evidence and no native binary 
       firmwareAnalysis: fixture.provider,
     },
   );
-  const client = new Client({ name: "firmware-regression", version: "1" });
+  const client = new Client(
+    { name: "firmware-regression", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -52,5 +54,5 @@ it("executes named firmware contracts with inline Evidence and no native binary 
     expect(evidence.operation).toBe(contract.name);
     expect(evidence.raw_result).not.toBeNull();
   }
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });

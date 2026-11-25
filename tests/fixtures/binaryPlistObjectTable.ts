@@ -1,4 +1,4 @@
-export interface BinaryPlistObjectTableLayout {
+interface BinaryPlistObjectTableLayout {
   readonly offsetWidth: number;
   readonly objectCount: number;
   readonly tableOffset: number;
@@ -60,6 +60,29 @@ export const binaryPlistObjectTable = (
   bytes.writeBigUInt64BE(0n, trailer + 16);
   bytes.writeBigUInt64BE(BigInt(tableOffset), trailer + 24);
   return bytes;
+};
+
+/** ASCII string object with a one-byte extended length for longer fixture strings. */
+export const binaryPlistAscii = (value: string): Buffer => {
+  const bytes = Buffer.from(value, "ascii");
+  return bytes.length < 15
+    ? Buffer.concat([Buffer.from([0x50 | bytes.length]), bytes])
+    : Buffer.concat([Buffer.from([0x5f, 0x10, bytes.length]), bytes]);
+};
+
+/** Lay out contiguous objects with a one-byte offset per entry and root object zero. */
+export const binaryPlistFromObjects = (objects: readonly Buffer[]): Buffer => {
+  const table =
+    8 + objects.reduce((length, object) => length + object.length, 0);
+  const bytes = Buffer.alloc(table + objects.length + 32);
+  let cursor = 8;
+  const offsets = objects.map((object) => {
+    const offset = cursor;
+    object.copy(bytes, cursor);
+    cursor += object.length;
+    return offset;
+  });
+  return binaryPlistObjectTable(bytes, offsets, table);
 };
 
 /** Date and empty-data objects deliberately share bytes in a valid offset table. */

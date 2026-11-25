@@ -10,6 +10,10 @@ import {
   electronActiveObservationResultSchema,
 } from "../dist/domain/javascript/electronActiveObservation.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 import { verifyElectronToolContracts } from "./verify/electron/tool-contracts.mjs";
 
 const executable = process.env.REA_ELECTRON_EXECUTABLE;
@@ -20,48 +24,65 @@ if (executable === undefined || executable.length === 0)
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 await verifyElectronToolContracts({ executable, repositoryRoot });
+const fixtureApplicationRoot = join(
+  repositoryRoot,
+  "tests/conformance/readiness/electron",
+);
 const applicationRoot =
-  process.env.REA_ELECTRON_APPLICATION_ROOT ??
-  join(repositoryRoot, "tests/conformance/readiness/electron");
+  process.env.REA_ELECTRON_APPLICATION_ROOT ?? fixtureApplicationRoot;
 const applicationPath =
   process.env.REA_ELECTRON_APPLICATION_PATH ?? join(applicationRoot, "main.js");
-const input = electronActiveObservationInputSchema.parse({
-  executable_path: executable,
-  application_path: applicationPath,
-  application_root: applicationRoot,
-  actions: [
-    { step_id: "ipc", kind: "click", selector: "#run", window_index: 0 },
-    {
-      step_id: "open-url",
-      kind: "deep-link",
-      delivery: "open-url",
-      url: "rea-readiness://open-url",
-    },
-    {
-      step_id: "second-instance",
-      kind: "deep-link",
-      delivery: "second-instance",
-      url: "rea-readiness://second-instance",
-    },
-    { step_id: "renderer-reload", kind: "renderer-reload", window_index: 1 },
-    { step_id: "renderer-crash", kind: "renderer-crash", window_index: 1 },
-    {
-      step_id: "renderer-restart",
-      kind: "wait",
-      duration_ms: 250,
-      window_index: 1,
-    },
-  ],
+const isReadinessFixture =
+  applicationRoot === fixtureApplicationRoot &&
+  applicationPath === join(fixtureApplicationRoot, "main.js");
+const profile = await VerifierFixture.open({
+  prefix: "rea-electron-readiness-",
+  private: false,
 });
 const verifierRun = createVerifierRun();
-const result = await captureElectronScenario(
-  new PlaywrightElectronActiveProvider(process.env),
-  input,
-);
-if (!result.ok) throw result.error;
-const capture = electronActiveObservationResultSchema.parse(
-  result.value.normalized_result,
-);
+const provider = new PlaywrightElectronActiveProvider(process.env);
+profile.releaseAfter(() => provider.close());
+const { input, capture } = await withVerifierFixture(profile, async () => {
+  const input = electronActiveObservationInputSchema.parse({
+    executable_path: executable,
+    application_path: applicationPath,
+    application_root: applicationRoot,
+    ...(isReadinessFixture
+      ? { args: [`--rea-verifier-profile=${profile.path}`] }
+      : {}),
+    actions: [
+      { step_id: "ipc", kind: "click", selector: "#run", window_index: 0 },
+      {
+        step_id: "open-url",
+        kind: "deep-link",
+        delivery: "open-url",
+        url: "rea-readiness://open-url",
+      },
+      {
+        step_id: "second-instance",
+        kind: "deep-link",
+        delivery: "second-instance",
+        url: "rea-readiness://second-instance",
+      },
+      { step_id: "renderer-reload", kind: "renderer-reload", window_index: 1 },
+      { step_id: "renderer-crash", kind: "renderer-crash", window_index: 1 },
+      {
+        step_id: "settle-after-crash",
+        kind: "wait",
+        duration_ms: 250,
+        window_index: 1,
+      },
+    ],
+  });
+  const result = await captureElectronScenario(provider, input);
+  if (!result.ok) throw result.error;
+  return {
+    input,
+    capture: electronActiveObservationResultSchema.parse(
+      result.value.normalized_result,
+    ),
+  };
+});
 const crashAction = capture.actions.find(
   ({ kind }) => kind === "renderer-crash",
 );
@@ -79,7 +100,11 @@ const output = {
   windows: capture.windows,
   verified:
     capture.coverage.status === "partial_attach" &&
-    capture.actions.every(({ status }) => status === "completed") &&
+    capture.actions.length === input.actions.length &&
+    capture.actions.every(
+      ({ step_id, status }, index) =>
+        step_id === input.actions[index].step_id && status === "completed",
+    ) &&
     capture.actions.some(
       ({ kind, window_index }) =>
         kind === "renderer-reload" && window_index === 1,

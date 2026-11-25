@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { RecordedCrashService } from "./RecordedCrashService.js";
 import {
@@ -5,6 +6,7 @@ import {
   RECORDED_CRASH_TEST_PROVIDER,
   recordedCrashDebuggerFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/recordedCrash.js";
+import { inspectionTestProvider } from "../../../tests/fixtures/binaryDiagnostics/inspectionProvider.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
@@ -12,13 +14,11 @@ import { err, ok } from "../../domain/result.js";
 it("labels an envelope containing debugger-derived maps as derived", async () => {
   const fixture = recordedCrashFixture();
   fixture.debugger = recordedCrashDebuggerFixture();
-  const service = new RecordedCrashService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: () => Promise.resolve(ok(fixture)),
-  });
+  const service = new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, () =>
+      Promise.resolve(ok(fixture)),
+    ),
+  );
   const result = await service.inspect({
     path: fixture.artifact.path,
     include_debugger_context: true,
@@ -37,19 +37,19 @@ it.each([
   "names the CPU family carried by a %s core on created Evidence",
   async (architecture, expected) => {
     const fixture = recordedCrashFixture("/selected.core", architecture);
-    const service = new RecordedCrashService({
-      inspectAndClose(input, options) {
-        return this.inspect(input, options);
-      },
-      identity: RECORDED_CRASH_TEST_PROVIDER,
-      inspect: () => Promise.resolve(ok(fixture)),
-    });
+    const service = new RecordedCrashService(
+      inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, () =>
+        Promise.resolve(ok(fixture)),
+      ),
+    );
     const result = await service.inspect({
       path: fixture.artifact.path,
       include_debugger_context: false,
     });
     if (!result.ok) throw result.error;
-    expect(parseEvidence(result.value).subject?.architecture).toBe(expected);
+    expect(fileIdentity(parseEvidence(result.value).subject).architecture).toBe(
+      expected,
+    );
   },
 );
 
@@ -61,15 +61,11 @@ it.each([
 ])(
   "rejects malformed selection before starting the provider: %j",
   async (input) => {
-    const service = new RecordedCrashService({
-      inspectAndClose(input, options) {
-        return this.inspect(input, options);
-      },
-      identity: RECORDED_CRASH_TEST_PROVIDER,
-      inspect: () => {
+    const service = new RecordedCrashService(
+      inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, () => {
         throw new Error("must not run");
-      },
-    });
+      }),
+    );
     const result = await service.inspect(input);
     expect(result).toMatchObject({
       ok: false,
@@ -91,13 +87,11 @@ it("preserves a provider's actionable unsupported reason", async () => {
     "inspect_recorded_crash",
     "ELF core belongs to recorded-crash analysis.",
   );
-  const service = new RecordedCrashService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: () => Promise.resolve(err(failure)),
-  });
+  const service = new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, () =>
+      Promise.resolve(err(failure)),
+    ),
+  );
   expect(await service.inspect({ path: "/source.elf" })).toEqual(err(failure));
 });
 
@@ -106,16 +100,12 @@ it("preserves the caller's exact abort reason before invocation", async () => {
   const reason = Object.freeze({ requested: "crash-stop" });
   controller.abort(reason);
   let calls = 0;
-  const service = new RecordedCrashService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: () => {
+  const service = new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, () => {
       calls++;
       return Promise.resolve(ok(recordedCrashFixture()));
-    },
-  });
+    }),
+  );
   const result = await service.inspect(
     { path: "/artifacts/source-owned.core" },
     { signal: controller.signal },
@@ -128,18 +118,14 @@ it("preserves the caller's exact abort reason before invocation", async () => {
   expect(calls).toBe(0);
 });
 
-it("cancels before invocation and after an acquired observation", async () => {
+it("retains the acquired observation when cancellation arrives during inspection", async () => {
   const controller = new AbortController();
-  const service = new RecordedCrashService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: () => {
+  const service = new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, () => {
       controller.abort();
       return Promise.resolve(ok(recordedCrashFixture()));
-    },
-  });
+    }),
+  );
   const late = await service.inspect(
     { path: "/artifacts/source-owned.core" },
     { signal: controller.signal },
@@ -161,21 +147,6 @@ it("cancels before invocation and after an acquired observation", async () => {
       normalized_result: recordedCrashFixture(),
     });
   }
-  const untouched = new RecordedCrashService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: () => {
-      throw new Error("must not run");
-    },
-  });
-  expect(
-    await untouched.inspect(
-      { path: "/source.elf" },
-      { signal: controller.signal },
-    ),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
 });
 
 it.each([
@@ -184,6 +155,8 @@ it.each([
   "outside-range",
   "owner-base64",
   "descriptor-base64",
+  "invalid-hex",
+  "fractional-bytes",
 ])("rejects provider evidence at the next boundary: %s", async (problem) => {
   const fixture = recordedCrashFixture();
   if (problem === "different-path") fixture.artifact.path = "/different.elf";
@@ -191,6 +164,8 @@ it.each([
   if (problem === "owner-base64") fixture.notes[0]!.owner_bytes_base64 = "A";
   if (problem === "descriptor-base64")
     fixture.notes[0]!.descriptor_bytes_base64 = "A";
+  if (problem === "invalid-hex") fixture.segments[0]!.offset = "not-hex";
+  if (problem === "fractional-bytes") fixture.artifact.bytes = 1.5;
   if (problem === "outside-range")
     fixture.segments.push({
       index: 0,
@@ -206,13 +181,11 @@ it.each([
       alignment: "0x1",
       flags: "0x5",
     });
-  const service = new RecordedCrashService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: () => Promise.resolve(ok(fixture)),
-  });
+  const service = new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, () =>
+      Promise.resolve(ok(fixture)),
+    ),
+  );
   expect(
     await service.inspect({ path: "/artifacts/source-owned.core" }),
   ).toMatchObject({
@@ -223,16 +196,12 @@ it.each([
     },
   });
   const controller = new AbortController();
-  const lateInvalid = await new RecordedCrashService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: () => {
+  const lateInvalid = await new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, () => {
       controller.abort();
       return Promise.resolve(ok(fixture));
-    },
-  }).inspect(
+    }),
+  ).inspect(
     { path: "/artifacts/source-owned.core" },
     { signal: controller.signal },
   );

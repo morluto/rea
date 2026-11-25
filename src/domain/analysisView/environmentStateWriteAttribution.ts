@@ -28,19 +28,21 @@ export type TouchedTargets = Map<string, Map<string, readonly string[] | null>>;
 /** Per target, when the latest modelled write since its last check ended, and each tool's latest call there. */
 export type PendingTargets = Map<
   string,
-  { until: number; readonly at: Map<string, number> }
+  { until: number | undefined; readonly at: Map<string, number> }
 >;
 
 /** Whether a write that ended at `until` was still running when a read began at `start`, so the read may show either state. */
-export const overlapsWrite = (until: number, start: number): boolean =>
-  until > start;
+export const overlapsWrite = (
+  until: number | undefined,
+  start: number | undefined,
+): boolean => until === undefined || start === undefined || until > start;
 
-/** What the gate tracks of the writes since each target's last check, and when each unmodelled write ran. */
+/** The writes since each target's last check and the last unmodelled write seen in timeline order. */
 export interface WriteHistory {
   readonly touched: TouchedTargets;
   readonly pending: PendingTargets;
   readonly checked: ReadonlyMap<string, number>;
-  readonly unmodelledAt: readonly number[];
+  readonly lastUnmodelledAt: number;
 }
 
 /** The tools a failed read's difference an unmodelled write may explain: it came after the tool's call on a target where its effect survives, and after every differing target's last check and pending writes. */
@@ -53,8 +55,7 @@ export const interference = (
   },
 ): ((tool: string) => boolean) => {
   const keys = [...read.targets, ...read.unheld];
-  const after = (since: number) =>
-    history.unmodelledAt.some((index) => index > since);
+  const after = (since: number) => history.lastUnmodelledAt > since;
   const explained = (read.differing ?? []).every((key) =>
     after(
       Math.max(
@@ -76,8 +77,11 @@ export const interference = (
 export const runningAt = (
   pending: PendingTargets,
   key: string,
-  start: number,
-): boolean => overlapsWrite(pending.get(key)?.until ?? -Infinity, start);
+  start: number | undefined,
+): boolean => {
+  const held = pending.get(key);
+  return held !== undefined && overlapsWrite(held.until, start);
+};
 
 /** The tools whose writes a read exercises: those that changed its targets since they were last checked, less those that borrowed the read to learn their effect. */
 export const exercisedBy = (
@@ -100,13 +104,18 @@ export const touchTarget = (
   write: {
     readonly index: number;
     readonly tool: string;
-    readonly end: number;
+    readonly end: number | undefined;
     readonly fields: readonly string[] | undefined;
   },
 ): void => {
   const held = pending.get(target);
   pending.set(target, {
-    until: Math.max(held?.until ?? -Infinity, write.end),
+    // One unknown completion keeps this target pending until a real check clears it.
+    until:
+      write.end === undefined ||
+      (held !== undefined && held.until === undefined)
+        ? undefined
+        : Math.max(held?.until ?? -Infinity, write.end),
     at: (held?.at ?? new Map()).set(write.tool, write.index),
   });
   const tools = touched.get(target) ?? new Map();
@@ -351,12 +360,21 @@ export const shownWrites = (
   const confirmed: string[] = [];
   const unseen = new Map<string, Set<string>>();
   for (const name of read.exercised) {
-    const on = read.keys.filter((key) => touched.get(key)?.has(name));
-    const seen = on.filter((key) => effects.shows(name, key, read.fields));
-    for (const key of on)
-      if (!seen.includes(key))
-        unseen.set(key, (unseen.get(key) ?? new Set()).add(name));
-    if (seen.length > 0) confirmed.push(name);
+    let showed = false;
+    for (const key of read.keys) {
+      if (!touched.get(key)?.has(name)) continue;
+      if (effects.shows(name, key, read.fields)) {
+        showed = true;
+      } else {
+        let bucket = unseen.get(key);
+        if (bucket === undefined) {
+          bucket = new Set<string>();
+          unseen.set(key, bucket);
+        }
+        bucket.add(name);
+      }
+    }
+    if (showed) confirmed.push(name);
   }
   return { confirmed, unseen };
 };

@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IDisposable, IPty } from "@lydell/node-pty";
 
-import type { RetainedResourceScope } from "../../src/application/AnalysisProvider.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { err, ok, type Result } from "../../src/domain/result.js";
 import {
   cleanupOwnedProcessGroup,
@@ -40,7 +38,7 @@ export interface VerifierTerminalOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface VerifierTerminalDependencies {
+interface VerifierTerminalDependencies {
   readonly loadPty?: () => Promise<typeof import("@lydell/node-pty")>;
   readonly cleanupProcessGroup?: typeof cleanupOwnedProcessGroup;
 }
@@ -59,7 +57,7 @@ type TerminalFailureReason =
   | "unsupported_platform";
 
 /** Expected terminal failures retain the decoded output observed at failure. */
-export class VerifierTerminalFailure extends Error {
+class VerifierTerminalFailure extends Error {
   readonly _tag = "VerifierTerminalFailure";
 
   constructor(
@@ -74,7 +72,7 @@ export class VerifierTerminalFailure extends Error {
 }
 
 /** The adopted owner remains the exact authority for retrying this release. */
-export class VerifierTerminalCleanupFailure extends Error {
+class VerifierTerminalCleanupFailure extends Error {
   readonly _tag = "VerifierTerminalCleanupFailure";
   readonly reason = "cleanup_incomplete";
 
@@ -107,15 +105,7 @@ class VerifierTerminalOwner implements VerifierCleanupOwner {
   readonly #runId = randomUUID();
   readonly #evidence = new ProcessOwnershipEvidenceOwner();
   readonly #preparationResources = new ArtifactResourceScope();
-  readonly #resourceOwner: RetainedResourceScope = {
-    run: (work) => this.#preparationResources.run(work),
-    retain: (owner, resource) =>
-      this.#preparationResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-  };
+  readonly #resourceOwner = this.#preparationResources.forCloseOwners();
   readonly #subscriptions = new Set<IDisposable>();
   readonly #maxOutputBytes: number;
   #output = "";

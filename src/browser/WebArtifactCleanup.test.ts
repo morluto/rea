@@ -1,155 +1,155 @@
-import { expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { LocalWebScriptArtifacts } from "./assets/LocalWebScriptArtifacts.js";
+import { expect, it } from "vitest";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { WebArtifactCleanup } from "./WebArtifactCleanup.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { LocalWebScriptArtifacts } from "./assets/LocalWebScriptArtifacts.js";
+import { LocalWebSourceLocationArtifacts } from "./assets/WebSourceLocationArtifacts.js";
+import { LocalWebModuleArtifacts } from "./modules/WebModuleArtifacts.js";
 
-it("closes a shared script/resource scope once", async () => {
+it("reports a refusal from the shared script and map scope once", async () => {
   const resources = new ArtifactResourceScope();
-  const close = vi.spyOn(resources, "close").mockResolvedValue();
+  const refusal = new Error("shared scope close refused");
+  let attempts = 0;
+  resources.addCloseHook(async () => {
+    if (++attempts === 1) throw refusal;
+  });
   const scripts = new LocalWebScriptArtifacts(
     "trace_web_module_imports",
     resources,
   );
+  const artifacts = new LocalWebModuleArtifacts(scripts, resources);
+  const failure = await artifacts.close().catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    operation: "trace_web_module_imports",
+    cause: refusal,
+    cleanupResources: ["web module artifacts"],
+    diagnostics: {
+      failures: [
+        { message: refusal.message, resource: ["web module artifacts"] },
+      ],
+    },
+  });
+  await artifacts.close();
+  expect(failure).toMatchObject({
+    cleanupIncomplete: false,
+    cleanupResources: [],
+  });
+  expect(attempts).toBe(2);
+});
 
-  await new WebArtifactCleanup(
-    "web-module-artifacts",
-    resources,
-    scripts,
-  ).close();
-
-  expect(close).toHaveBeenCalledTimes(1);
+it("reports independent untyped close refusals with their owner labels", async () => {
+  const mapScope = new ArtifactResourceScope();
+  const scriptScope = new ArtifactResourceScope();
+  const mapFailure = new Error("map close refused");
+  const scriptFailure = new Error("script close refused");
+  let denied = true;
+  mapScope.addCloseHook(async () => {
+    if (denied) throw mapFailure;
+  });
+  scriptScope.addCloseHook(async () => {
+    if (denied) throw scriptFailure;
+  });
+  const scripts = new LocalWebScriptArtifacts(
+    "trace_web_source_location",
+    scriptScope,
+  );
+  const artifacts = new LocalWebSourceLocationArtifacts(scripts, mapScope);
+  const failure = await artifacts.close().catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    operation: "trace_web_source_location",
+    cleanupResources: ["web source-location artifacts", "web scripts"],
+    cause: { errors: [mapFailure, scriptFailure] },
+    diagnostics: {
+      failures: [
+        {
+          message: mapFailure.message,
+          resource: ["web source-location artifacts"],
+        },
+        { message: scriptFailure.message, resource: ["web scripts"] },
+      ],
+    },
+  });
+  denied = false;
+  await artifacts.close();
+  expect(failure).toMatchObject({
+    cleanupIncomplete: false,
+    cleanupResources: [],
+  });
 });
 
 it.each([
-  ["web-module-artifacts", "trace_web_module_imports", "web module artifacts"],
+  ["trace_web_module_imports", LocalWebModuleArtifacts, "map", "script"],
   [
-    "web-source-location-artifacts",
     "trace_web_source_location",
-    "web source-location artifacts",
+    LocalWebSourceLocationArtifacts,
+    "script",
+    "map",
   ],
 ] as const)(
-  "attempts both cleanup owners and retries them for %s",
-  async (owner, operation, resource) => {
-    const resources = new ArtifactResourceScope();
-    let resourceCloseCalls = 0;
-    resources.addCloseHook(async () => {
-      resourceCloseCalls++;
-      if (resourceCloseCalls === 1)
-        throw new Error("artifact close refused once");
-    });
-    const scripts = new LocalWebScriptArtifacts(
-      "trace_web_module_imports",
-      new ArtifactResourceScope(),
-    );
-    let scriptCloseCalls = 0;
-    vi.spyOn(scripts, "close").mockImplementation(async () => {
-      scriptCloseCalls++;
-      if (scriptCloseCalls === 1) throw new Error("script close refused once");
-    });
+  "resolves exact child errors and retries only unresolved %s owners",
+  async (operation, Artifacts, released, retained) => {
+    const mapScope = new ArtifactResourceScope();
+    const scriptScope = new ArtifactResourceScope();
+    const scripts = new LocalWebScriptArtifacts(operation, scriptScope);
+    const failures = {
+      map: new ProviderCleanupError("fixture", ["selected-map-handle"], {}),
+      script: new ProviderCleanupError(
+        "fixture",
+        ["captured-script-handle"],
+        {},
+      ),
+    };
+    const labels = {
+      map: "selected-map-handle",
+      script: "captured-script-handle",
+    };
+    const refused = new Set(["map", "script"]);
+    const attempts = { map: 0, script: 0 };
+    for (const [owner, scope] of [
+      ["map", mapScope],
+      ["script", scriptScope],
+    ] as const) {
+      scope.addCloseHook(async () => {
+        attempts[owner]++;
+        if (refused.has(owner)) throw failures[owner];
+      });
+    }
+    const artifacts = new Artifacts(scripts, mapScope);
+    try {
+      const first = await artifacts.close().catch((cause: unknown) => cause);
+      expect(first).toMatchObject({
+        operation,
+        cleanupIncomplete: true,
+        cleanupResources: [labels.map, labels.script],
+      });
 
-    const cleanup = new WebArtifactCleanup(owner, resources, scripts);
-    await expect(cleanup.close()).rejects.toMatchObject({
-      operation,
-      cleanupResources: [resource, "web scripts"],
-      diagnostics: {
-        failures: [
-          {
-            message: "artifact close refused once",
-            resource: [resource],
-          },
-          {
-            message: "script close refused once",
-            resource: ["web scripts"],
-          },
-        ],
-      },
-    });
-    expect(resourceCloseCalls).toBe(1);
-    expect(scriptCloseCalls).toBe(1);
+      refused.delete(released);
+      const second = await artifacts.close().catch((cause: unknown) => cause);
+      expect(failures[released].cleanupIncomplete).toBe(false);
+      expect(failures[retained]).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [labels[retained]],
+      });
+      for (const error of [first, second]) {
+        expect(error).toMatchObject({
+          cleanupIncomplete: true,
+          cleanupResources: [labels[retained]],
+        });
+      }
 
-    await cleanup.close();
-    expect(resourceCloseCalls).toBe(2);
-    expect(scriptCloseCalls).toBe(2);
+      refused.clear();
+      await artifacts.close();
+      expect(failures[retained].cleanupIncomplete).toBe(false);
+      for (const error of [first, second]) {
+        expect(error).toMatchObject({
+          cleanupIncomplete: false,
+          cleanupResources: [],
+        });
+      }
+      await artifacts.close();
+      expect(attempts).toEqual({ [released]: 2, [retained]: 3 });
+    } finally {
+      refused.clear();
+      await artifacts.close();
+    }
   },
 );
-
-it.each(["resources", "scripts"] as const)(
-  "retries only unresolved %s and resolves prior aggregate errors",
-  async (failed) => {
-    const resources = new ArtifactResourceScope();
-    const scripts = new LocalWebScriptArtifacts(
-      "trace_web_module_imports",
-      new ArtifactResourceScope(),
-    );
-    const resourceClose = vi.spyOn(resources, "close").mockResolvedValue();
-    const scriptClose = vi.spyOn(scripts, "close").mockResolvedValue();
-    const denied = failed === "resources" ? resourceClose : scriptClose;
-    denied.mockRejectedValueOnce(new Error("controlled close refusal"));
-    const cleanup = new WebArtifactCleanup(
-      "web-module-artifacts",
-      resources,
-      scripts,
-    );
-    const first = await cleanup.close().catch((cause: unknown) => cause);
-    expect(first).toMatchObject({
-      cleanupIncomplete: true,
-      cleanupResources: [
-        failed === "resources" ? "web module artifacts" : "web scripts",
-      ],
-    });
-    await cleanup.close();
-    expect(first).toMatchObject({
-      cleanupIncomplete: false,
-      cleanupResources: [],
-    });
-    expect(resourceClose).toHaveBeenCalledTimes(failed === "resources" ? 2 : 1);
-    expect(scriptClose).toHaveBeenCalledTimes(failed === "scripts" ? 2 : 1);
-    await cleanup.close();
-    expect(denied).toHaveBeenCalledTimes(2);
-  },
-);
-
-it("retains exact child labels until every failed owner releases", async () => {
-  const resources = new ArtifactResourceScope();
-  const scripts = new LocalWebScriptArtifacts(
-    "trace_web_module_imports",
-    new ArtifactResourceScope(),
-  );
-  const resourceClose = vi.spyOn(resources, "close").mockResolvedValue();
-  const scriptClose = vi.spyOn(scripts, "close").mockResolvedValue();
-  resourceClose.mockRejectedValueOnce(
-    new ProviderCleanupError("fixture", ["selected-map-handle"], {}),
-  );
-  scriptClose.mockRejectedValueOnce(
-    new ProviderCleanupError("fixture", ["captured-script-handle"], {}),
-  );
-  const cleanup = new WebArtifactCleanup(
-    "web-module-artifacts",
-    resources,
-    scripts,
-  );
-  const first = await cleanup.close().catch((cause: unknown) => cause);
-  expect(first).toMatchObject({
-    cleanupResources: ["selected-map-handle", "captured-script-handle"],
-  });
-  scriptClose.mockRejectedValueOnce(
-    new ProviderCleanupError("fixture", ["captured-script-handle"], {}),
-  );
-  const second = await cleanup.close().catch((cause: unknown) => cause);
-  expect(first).toMatchObject({
-    cleanupIncomplete: true,
-    cleanupResources: ["captured-script-handle"],
-  });
-  await cleanup.close();
-  expect(first).toMatchObject({
-    cleanupIncomplete: false,
-    cleanupResources: [],
-  });
-  expect(second).toMatchObject({
-    cleanupIncomplete: false,
-    cleanupResources: [],
-  });
-  expect(resourceClose).toHaveBeenCalledTimes(2);
-  expect(scriptClose).toHaveBeenCalledTimes(3);
-});

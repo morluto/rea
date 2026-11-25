@@ -10,12 +10,17 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { DECOMPILE_DIRECTORY_JOURNAL_NAME } from "../../contracts/decompileDirectory.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
@@ -24,7 +29,29 @@ import {
   stableFileHashCause,
 } from "../../filesystem/StableFileHash.js";
 import type { OwnedLease } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
+
+/** Publication committed before its staging cleanup failed. */
+export class ExportPublishedCleanupFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly publishedPath: string,
+    failure: ArtifactReaderFailure,
+  ) {
+    super(
+      failure.reason,
+      failure.message,
+      {
+        cause: failure,
+        ...failure.primaryFacts(),
+        cancellation: failure.cancellation,
+        cleanup: failure.cleanup,
+        cleanupLeases: failure.cleanupLeases,
+        partialObservation: failure.partialObservation,
+      },
+      failure.details,
+    );
+  }
+}
 
 /** Own every descriptor and staging area until cleanup, then release the directory lease. */
 export class ExportResources {
@@ -97,14 +124,26 @@ export class ExportResources {
 
   /** Check existing output with bounded memory and the shared file identity owner. */
   async hashFile(path: string, signal?: AbortSignal): Promise<string> {
+    let cleanupLease: AnalysisCleanupLease | undefined;
     try {
       const hash = await hashStableFile(path, {
         ...(signal === undefined ? {} : { signal }),
-        retainFailedClose: (handle) =>
-          this.#files.retain({ kind: "file-handle", resource: path, handle }),
+        retainFailedClose: (handle) => {
+          cleanupLease = new AnalysisCleanupLease(() => handle.close(), [path]);
+          this.#files.retain({
+            kind: "lease",
+            resource: path,
+            lease: cleanupLease,
+          });
+        },
       });
       return hash.sha256;
     } catch (cause: unknown) {
+      if (
+        cause instanceof RegularFileCleanupFailure &&
+        cleanupLease !== undefined
+      )
+        throw new ArtifactFileCleanupFailure(cause, cleanupLease);
       throw stableFileHashCause(cause);
     }
   }
@@ -123,6 +162,11 @@ export class ExportResources {
       output: staging,
     };
     this.#files.retain(owner);
+    let outcome:
+      | { readonly kind: "completed" }
+      | { readonly kind: "failed"; readonly cause: unknown } = {
+      kind: "completed",
+    };
     try {
       const path = join(directory, "content");
       const handle = await open(path, "wx", 0o600);
@@ -136,10 +180,17 @@ export class ExportResources {
         await rename(path, destination);
         staging.recordPublishedRename();
       }
-    } finally {
-      const released = await this.#files.release(owner);
-      if (released.kind === "failed") throw released.cause;
+    } catch (cause: unknown) {
+      outcome = { kind: "failed", cause };
     }
+    const released = await this.#files.release(owner);
+    if (released.kind === "failed") {
+      const failure = this.#files.cleanupFailure(outcome, [released]);
+      throw outcome.kind === "completed"
+        ? new ExportPublishedCleanupFailure(destination, failure)
+        : failure;
+    }
+    if (outcome.kind === "failed") throw outcome.cause;
   }
 
   /** Keep the lease through all initialization cleanup, including any retry. */
@@ -151,11 +202,11 @@ export class ExportResources {
     return closed.ok
       ? err(error)
       : err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             error,
             closed.error,
             "decompile_all",
-          ).bindCleanupDependencies([closed.error]),
+          ),
         );
   }
 

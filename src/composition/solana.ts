@@ -1,14 +1,9 @@
 import { SolanaProgramService } from "../application/solana/SolanaProgramService.js";
 import { SolanaProgramBatchService } from "../application/solana/SolanaProgramBatchService.js";
 import { SolanaReceiptsService } from "../application/solana/SolanaReceiptsService.js";
+import type { SolanaToolServices } from "../application/solana/SolanaToolServices.js";
 import { SolanaProgramProvider } from "../solana/SolanaProgramProvider.js";
 import { SolanaReceiptsProvider } from "../solana/SolanaReceiptsProvider.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import {
-  ANALYZE_SOLANA_PROGRAM_CONTRACT,
-  ANALYZE_SOLANA_PROGRAMS_CONTRACT,
-  SOLANA_RECEIPTS_CONTRACT,
-} from "../contracts/solana/solanaToolContracts.js";
 
 /**
  * Compose the in-process Solana analyzer without import-time I/O. The
@@ -32,30 +27,26 @@ export const createSolanaProgramBatchService = (
 ): SolanaProgramBatchService =>
   new SolanaProgramBatchService(createSolanaProgramService(environment));
 
-/**
- * Static binding of the operation, command and fresh service factory.
- * Construction performs no acquisition, target I/O or import-time execution.
- */
-export const solanaProgramModule = {
-  contract: ANALYZE_SOLANA_PROGRAM_CONTRACT,
-  cliCommand: CLI_COMMANDS.analyzeSolanaProgram,
-  create: createSolanaProgramService,
-} as const;
-
-/** Static binding for the batch operation over the same provider stack. */
-export const solanaProgramBatchModule = {
-  contract: ANALYZE_SOLANA_PROGRAMS_CONTRACT,
-  cliCommand: CLI_COMMANDS.analyzeSolanaPrograms,
-  create: createSolanaProgramBatchService,
-} as const;
-
 /** Compose the receipts workflow: a pure join over caller-selected files. */
 export const createSolanaReceiptsService = (): SolanaReceiptsService =>
   new SolanaReceiptsService(new SolanaReceiptsProvider());
 
-/** Static binding for the receipts operation. */
-export const solanaReceiptsModule = {
-  contract: SOLANA_RECEIPTS_CONTRACT,
-  cliCommand: CLI_COMMANDS.solanaReceipts,
-  create: createSolanaReceiptsService,
-} as const;
+/**
+ * Compose every Solana tool service over one provider stack. Construction
+ * performs no acquisition, target I/O or import-time execution.
+ */
+export const createSolanaToolServices = (
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+): SolanaToolServices => {
+  const program = createSolanaProgramService(environment);
+  const batch = new SolanaProgramBatchService(program);
+  const receipts = createSolanaReceiptsService();
+  return {
+    program,
+    batch,
+    receipts,
+    close: async () => {
+      await Promise.all([batch.close(), receipts.close()]);
+    },
+  };
+};

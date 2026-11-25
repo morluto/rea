@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { trimTrailing } from "../kernel/trimEdges.js";
+
+const isZeroDigit = (character: string): boolean => character === "0";
 
 export interface OffsetDateTimeInstant {
   readonly epochSecond: number;
@@ -51,29 +54,34 @@ export const parseOffsetDateTimeInstant = (
     );
   return {
     epochSecond: wholeSecondMilliseconds / 1000,
-    fraction: fractionalDigits?.replace(/0+$/u, "") ?? "",
+    fraction:
+      fractionalDigits === undefined
+        ? ""
+        : trimTrailing(fractionalDigits, isZeroDigit),
   };
 };
 
-/** Parse recorded ISO spelling once, retaining its exact instant and formatting facts. */
-export const readRecordedDateTime = (
+export interface RecordedDateTimeReading {
+  readonly instant: OffsetDateTimeInstant;
+  readonly spelling: {
+    readonly separator: "T" | " ";
+    readonly secondsPresent: boolean;
+    readonly fractionDigits: number;
+    readonly zone: string;
+  };
+}
+
+/** Distinguish invalid supported spellings from formats this reader does not interpret. */
+const inspectRecordedDateTime = (
   value: string,
 ):
-  | {
-      readonly instant: OffsetDateTimeInstant;
-      readonly spelling: {
-        readonly separator: "T" | " ";
-        readonly secondsPresent: boolean;
-        readonly fractionDigits: number;
-        readonly zone: string;
-      };
-    }
-  | undefined => {
+  | { readonly kind: "valid"; readonly reading: RecordedDateTimeReading }
+  | { readonly kind: "invalid" | "unrecognized" } => {
   const match =
     /^(\d{4}-\d{2}-\d{2})([T ])(\d{2}:\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:?\d{2})?$/u.exec(
       value,
     );
-  if (match === null) return undefined;
+  if (match === null) return { kind: "unrecognized" };
   const [, date, separator, time, seconds, fraction = "", zone = ""] = match;
   const offset =
     zone === ""
@@ -84,16 +92,52 @@ export const readRecordedDateTime = (
   const normalized = offsetDateTimeSchema.safeParse(
     `${date}T${time}${seconds === undefined ? "" : `:${seconds}`}${fraction === "" ? "" : `.${fraction}`}${offset}`,
   );
-  if (!normalized.success) return undefined;
+  if (!normalized.success) return { kind: "invalid" };
   return {
-    instant: parseOffsetDateTimeInstant(normalized.data),
-    spelling: {
-      separator: separator as "T" | " ",
-      secondsPresent: seconds !== undefined,
-      fractionDigits: fraction.length,
-      zone,
+    kind: "valid",
+    reading: {
+      instant: parseOffsetDateTimeInstant(normalized.data),
+      spelling: {
+        separator: separator as "T" | " ",
+        secondsPresent: seconds !== undefined,
+        fractionDigits: fraction.length,
+        zone,
+      },
     },
   };
+};
+
+/** Parse recorded ISO spelling once, retaining its exact instant and formatting facts. */
+export const readRecordedDateTime = (
+  value: string,
+): RecordedDateTimeReading | undefined => {
+  const inspected = inspectRecordedDateTime(value);
+  return inspected.kind === "valid" ? inspected.reading : undefined;
+};
+
+/** Interpret recorded starts once, preserving exact ISO facts and legacy native-Date admission. */
+export const readRecordedStart = (
+  value: string,
+):
+  | {
+      readonly instant: OffsetDateTimeInstant;
+      readonly interpretation: "recorded-iso" | "native-date";
+    }
+  | undefined => {
+  const inspected = inspectRecordedDateTime(value);
+  if (inspected.kind === "valid")
+    return {
+      instant: inspected.reading.instant,
+      interpretation: "recorded-iso",
+    };
+  if (inspected.kind === "invalid") return undefined;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds)
+    ? {
+        instant: offsetDateTimeInstantFromEpochMilliseconds(milliseconds),
+        interpretation: "native-date",
+      }
+    : undefined;
 };
 
 /** Convert a Date.now-style integer into the same exact comparison shape. */
@@ -108,12 +152,14 @@ export const offsetDateTimeInstantFromEpochMilliseconds = (
   const millisecondsWithinSecond = epochMilliseconds - epochSecond * 1000;
   return {
     epochSecond,
-    fraction: fractionalSecondFromMilliseconds(millisecondsWithinSecond),
+    fraction: secondsFromMilliseconds(millisecondsWithinSecond).fraction,
   };
 };
 
-const fractionalSecondFromMilliseconds = (milliseconds: number): string => {
-  if (milliseconds === 0) return "";
+const secondsFromMilliseconds = (
+  milliseconds: number,
+): { readonly seconds: number; readonly fraction: string } => {
+  if (milliseconds === 0) return { seconds: 0, fraction: "" };
   const [coefficient = "", exponentText] = String(milliseconds)
     .toLowerCase()
     .split("e");
@@ -128,9 +174,46 @@ const fractionalSecondFromMilliseconds = (milliseconds: number): string => {
       : decimalPosition < digits.length
         ? `${digits.slice(0, decimalPosition)}.${digits.slice(decimalPosition)}`
         : `${digits}${"0".repeat(decimalPosition - digits.length)}`;
-  return (
-    fraction.includes(".") ? fraction.slice(fraction.indexOf(".") + 1) : ""
-  ).replace(/0+$/u, "");
+  const separator = fraction.indexOf(".");
+  return {
+    seconds: Number(separator < 0 ? fraction : fraction.slice(0, separator)),
+    fraction: (separator < 0 ? "" : fraction.slice(separator + 1)).replace(
+      /0+$/u,
+      "",
+    ),
+  };
+};
+
+/** Add a recorded nonnegative decimal millisecond duration without rounding away either fraction. */
+export const addOffsetDateTimeMilliseconds = (
+  start: OffsetDateTimeInstant,
+  milliseconds: number,
+): OffsetDateTimeInstant | undefined => {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return undefined;
+  if (milliseconds === 0) return start;
+  const duration = secondsFromMilliseconds(milliseconds);
+  const wholeSeconds = start.epochSecond + duration.seconds;
+  if (!Number.isSafeInteger(wholeSeconds)) return undefined;
+  const length = Math.max(start.fraction.length, duration.fraction.length);
+  const digits: string[] = [];
+  let carry = 0;
+  for (let index = length - 1; index >= 0; index--) {
+    const sum =
+      (start.fraction.charCodeAt(index) || 48) -
+      48 +
+      (duration.fraction.charCodeAt(index) || 48) -
+      48 +
+      carry;
+    digits.push(String(sum % 10));
+    carry = Math.floor(sum / 10);
+  }
+  const epochSecond = wholeSeconds + carry;
+  return Number.isSafeInteger(epochSecond)
+    ? {
+        epochSecond,
+        fraction: trimTrailing(digits.reverse().join(""), isZeroDigit),
+      }
+    : undefined;
 };
 
 /** Compare instants exactly while treating absent fraction digits as zeroes. */

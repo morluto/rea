@@ -1,4 +1,3 @@
-import type { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type {
   ReferenceSourceEntry,
   ReferenceSourceFailureCode,
@@ -14,18 +13,11 @@ export const failure = (
   message,
 });
 
-export const cancelled = (): ReferenceSourceReaderError =>
-  failure("cancelled", "Reference source traversal cancelled");
-
-/** Project resource failures into the reference-source error contract. */
-export const referenceSourceResourceFailure = (
-  cause: ArtifactReaderFailure,
+export const cancelled = (
+  signal?: AbortSignal,
 ): ReferenceSourceReaderError => ({
-  tag: "reference-source-reader",
-  code: cause.reason === "cancelled" ? "cancelled" : "io",
-  message: cause.message,
-  ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
-  cause,
+  ...failure("cancelled", "Reference source traversal cancelled"),
+  ...(signal?.aborted === true ? { cause: signal.reason } : {}),
 });
 
 export const safeSize = (size: bigint): number | undefined => {
@@ -33,7 +25,7 @@ export const safeSize = (size: bigint): number | undefined => {
   return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 };
 
-const FILESYSTEM_ERROR_CODES = new Set([
+export const FILESYSTEM_ERROR_CODES = new Set([
   "EACCES",
   "EBADF",
   "EEXIST",
@@ -76,26 +68,6 @@ export const filesystemFailureDetail = (
   return {
     message,
     ...(localDiagnostic === message ? {} : { localDiagnostic }),
-  };
-};
-
-/** Preserve root I/O detail while separating bad selections from access failures. */
-export const rootFilesystemFailure = (
-  cause: unknown,
-  operation: string,
-):
-  | {
-      readonly code: "invalid-root" | "io";
-      readonly message: string;
-    }
-  | undefined => {
-  if (!(cause instanceof Error)) return undefined;
-  const code: unknown = Reflect.get(cause, "code");
-  if (typeof code !== "string" || !FILESYSTEM_ERROR_CODES.has(code))
-    return undefined;
-  return {
-    code: code === "ENOENT" || code === "ENOTDIR" ? "invalid-root" : "io",
-    message: `${operation}: ${cause.message}`,
   };
 };
 

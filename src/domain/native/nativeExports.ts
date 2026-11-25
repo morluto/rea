@@ -1,6 +1,23 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import { isUtf8 } from "node:buffer";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { canonicalBase64Schema } from "../stringPatterns.js";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
+
+/** ELF strings declare bytes rather than an encoding; Latin-1 is only a lossless display fallback. */
+export const decodeElfExportName = (bytes: Buffer) => {
+  const utf8 = isUtf8(bytes);
+  return {
+    name: bytes.toString(utf8 ? "utf8" : "latin1"),
+    name_bytes_base64: bytes.some((byte) => byte >= 0x80)
+      ? bytes.toString("base64")
+      : null,
+    name_utf8_decodable: utf8,
+  };
+};
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const address = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -10,6 +27,8 @@ const MAX_PE_EXPORT_ORDINAL = 0xffffffff + 0xfffffffe;
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES = 536870912;
+/** Default allowance for the bytes the export reader reads. */
+export const DEFAULT_NATIVE_EXPORTS_READ_BYTES = 268435456;
 /** Fixed bound on reported export rows, so one library cannot flood a reply. */
 export const MAX_NATIVE_EXPORT_ROWS = 262144;
 
@@ -23,8 +42,10 @@ export const inspectNativeExportsInputSchema = z.strictObject({
     .int()
     .min(64)
     .max(MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES)
-    .default(268435456)
-    .describe("Maximum stable artifact bytes to read (default 256 MiB)"),
+    .default(DEFAULT_NATIVE_EXPORTS_READ_BYTES)
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, tables and the ranges they reference (default 256 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
 });
 export type InspectNativeExportsInput = z.infer<
   typeof inspectNativeExportsInputSchema
@@ -37,37 +58,47 @@ export type InspectNativeExportsInput = z.infer<
 const peExportSchema = z.strictObject({
   name: z.string().min(1).nullable(),
   ordinal: z.number().int().min(0).max(MAX_PE_EXPORT_ORDINAL),
+  rva: z
+    .number()
+    .int()
+    .min(1)
+    .max(0xffffffff)
+    .optional()
+    .describe(
+      "Export-address-table RVA as stored; address is the image base plus this RVA, and a forwarder's RVA locates its forwarder string. The parser always records it; Evidence saved before this field existed omits it.",
+    ),
   address: address.nullable(),
   forwarder: z.string().min(1).nullable(),
 });
 
 /**
  * One defined, default- or protected-visibility global, weak or unique
- * dynamic symbol. `version` is null when the symbol carries no version and
- * "unknown" when the version table could not be read; a hidden version is not
- * the default one a by-name lookup selects.
+ * dynamic symbol. `version` is null when the
+ * symbol carries no version and "unknown" when the version table could not be
+ * read; a hidden version is not the default one a by-name lookup selects.
  */
 const elfExportSchema = z.strictObject({
   name: z.string().min(1),
-  /** Exact non-ASCII name bytes; ELF string tables do not declare text encoding. */
-  name_bytes_base64: z.string().nullable().default(null),
-  /** Whether `name` was decoded as UTF-8; null means this field was not recorded in older Evidence. */
-  name_utf8_decodable: z.boolean().nullable().default(null),
+  /** Exact name bytes when any is non-ASCII; null means `name` is ASCII. ELF string tables do not declare text encoding. */
+  name_bytes_base64: canonicalBase64Schema.nullable(),
+  /** Whether the name bytes are valid UTF-8; otherwise `name` is their Latin-1 display. */
+  name_utf8_decodable: z.boolean(),
   /** `st_value` as stored; on 32-bit ARM, bit 0 of a function marks Thumb code. */
   value: address,
   size: z.string().regex(/^[0-9]+$/u),
   type: z.enum(["function", "ifunc", "object", "tls", "other"]),
   binding: z.enum(["global", "weak", "unique"]),
+  visibility: z.enum(["default", "protected"]),
   version: z.union([
     z.null(),
     z.literal("unknown"),
     z.strictObject({
       index: z.number().int().min(2).max(0x7fff),
       name: z.string().min(1).nullable(),
-      /** Exact non-ASCII version-name bytes; ELF strings do not declare encoding. */
-      name_bytes_base64: z.string().nullable().default(null),
-      /** Null means older Evidence did not retain version-name encoding facts. */
-      name_utf8_decodable: z.boolean().nullable().default(null),
+      /** Exact version-name bytes when any is non-ASCII; ELF strings do not declare encoding. */
+      name_bytes_base64: canonicalBase64Schema.nullable(),
+      /** Whether the version-name bytes are valid UTF-8; null exactly when `name` is unresolved. */
+      name_utf8_decodable: z.boolean().nullable(),
       hidden: z.boolean(),
     }),
   ]),
@@ -93,7 +124,7 @@ const artifactSchema = z.strictObject({
 
 const coverageSchema = z.strictObject({
   /** complete: every table entry was read; partial: issues name the gaps. */
-  status: z.enum(["complete", "partial", "unsupported"]),
+  status: z.enum([...knownCoverageStatusSchema.options, "unsupported"]),
   reason: z.string().min(1).nullable(),
   examined_entries: uint,
   exports: uint,
@@ -105,6 +136,7 @@ export const peNativeExportsSchema = z.strictObject({
   format: z.literal("pe"),
   architecture: z.string().min(1),
   bits: z.union([z.literal(32), z.literal(64)]),
+  image_base: peImageBaseSchema,
   /** Null when the image declares no export directory. */
   export_directory: z
     .strictObject({
@@ -118,6 +150,8 @@ export const peNativeExportsSchema = z.strictObject({
   exports: z.array(peExportSchema).max(MAX_NATIVE_EXPORT_ROWS),
   coverage: coverageSchema,
   issues: z.array(nativeExportIssueSchema),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 
@@ -143,6 +177,47 @@ export const nativeExportsSchema = z
         message:
           "Export coverage count must equal the retained export row count.",
       });
+    if (value.format !== "elf") return;
+    const checkName = (
+      row: {
+        name: string | null;
+        name_bytes_base64: string | null;
+        name_utf8_decodable: boolean | null;
+      },
+      path: (string | number)[],
+    ) => {
+      // Encoding facts must agree with the producer's UTF-8-or-Latin-1 display
+      // interpretation; an unresolved version name has none.
+      const expected =
+        row.name === null
+          ? { name: null, name_bytes_base64: null, name_utf8_decodable: null }
+          : row.name_bytes_base64 === null
+            ? /^[\x00-\x7f]*$/u.test(row.name)
+              ? {
+                  name: row.name,
+                  name_bytes_base64: null,
+                  name_utf8_decodable: true,
+                }
+              : undefined
+            : decodeElfExportName(Buffer.from(row.name_bytes_base64, "base64"));
+      if (
+        expected === undefined ||
+        expected.name !== row.name ||
+        expected.name_bytes_base64 !== row.name_bytes_base64 ||
+        expected.name_utf8_decodable !== row.name_utf8_decodable
+      )
+        context.addIssue({
+          code: "custom",
+          path,
+          message:
+            "ELF name text and encoding must agree with retained source bytes",
+        });
+    };
+    value.exports.forEach((row, index) => {
+      checkName(row, ["exports", index]);
+      if (row.version !== null && typeof row.version === "object")
+        checkName(row.version, ["exports", index, "version"]);
+    });
   });
 export type NativeExports = z.infer<typeof nativeExportsSchema>;
 export type PeExport = z.infer<typeof peExportSchema>;

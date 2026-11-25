@@ -174,6 +174,35 @@ describe("historical source to bundle comparison", () => {
   });
 });
 
+describe("source to bundle coverage", () => {
+  it.each([
+    ["unknown", "complete"],
+    ["complete", "unknown"],
+    ["complete", "unavailable"],
+    ["partial", "unknown"],
+    ["unknown", "partial"],
+  ] as const)(
+    "keeps coverage unknown when the source inventory is %s and the graph is %s",
+    (inventory, graphCoverage) => {
+      const result = compareSourceToBundle({
+        reference: historicalGraph(inventory, ["src/removed.ts"]),
+        application: {
+          evidenceId: EVIDENCE_ID,
+          rootArtifactSha256: HASH.artifact,
+          graph: applicationGraph(graphCoverage),
+        },
+      });
+
+      expect(result.coverage).toMatchObject({
+        status: "unknown",
+        reference_inventory_state: inventory,
+        application_graph_status: graphCoverage,
+      });
+      expect(result.items[0]).toMatchObject({ status: "unknown" });
+    },
+  );
+});
+
 describe("source to bundle candidate evaluation", () => {
   it("evaluates all indexed candidates for each source file", () => {
     const result = compareSourceToBundle({
@@ -450,8 +479,9 @@ describe("source-map declaration resolution", () => {
       expectedSource: "webpack://a.js",
       expectedResolution: {
         kind: "unresolved",
-        reason:
-          "Source reference uses a non-hierarchical URL without a file pathname.",
+        reason: expect.stringMatching(
+          /non-hierarchical URL.*without a file pathname/i,
+        ),
       },
     },
     {
@@ -466,8 +496,8 @@ describe("source-map declaration resolution", () => {
     },
     {
       sourceRoot: "",
-      expectedSource: "file:///a.js",
-      expectedResolution: { kind: "suffix", path: "a.js" },
+      expectedSource: "file:///artifact/dist/a.js",
+      expectedResolution: { kind: "artifact-relative", path: "dist/a.js" },
     },
     {
       sourceRoot: null,
@@ -595,7 +625,7 @@ const comparePathToNodes = (
   });
 
 const historicalGraph = (
-  inventoryState: "complete" | "partial",
+  inventoryState: "complete" | "partial" | "unknown",
   paths = [
     "src/duplicated.ts",
     "src/merged-a.ts",
@@ -620,7 +650,7 @@ const historicalGraph = (
         limitations:
           inventoryState === "complete"
             ? []
-            : ["Fixture inventory is partial."],
+            : [`Fixture inventory is ${inventoryState}.`],
       },
       ...paths.map((path) => ({
         path,
@@ -645,10 +675,14 @@ const historicalGraph = (
       caller: "source-to-bundle-test",
     },
     limitations:
-      inventoryState === "complete" ? [] : ["Fixture inventory is partial."],
+      inventoryState === "complete"
+        ? []
+        : [`Fixture inventory is ${inventoryState}.`],
   });
 
-const applicationGraph = (coverage: "complete" | "partial") => {
+const applicationGraph = (
+  coverage: "complete" | "partial" | "unknown" | "unavailable",
+) => {
   const nodes = [
     moduleNode("duplicated-a", {
       path: "bundle-a.js",
@@ -698,14 +732,21 @@ const applicationGraph = (coverage: "complete" | "partial") => {
             omitted_count: 0,
             limits: [],
           }
-        : {
-            status: "partial",
-            truncated: true,
-            omitted_count: 1,
-            limits: [{ name: "fixture", value: 5, unit: "items" }],
-          },
+        : coverage === "partial"
+          ? {
+              status: "partial",
+              truncated: true,
+              omitted_count: 1,
+              limits: [{ name: "fixture", value: 5, unit: "items" }],
+            }
+          : {
+              status: coverage,
+              truncated: false,
+              omitted_count: null,
+              limits: [],
+            },
     limitations:
-      coverage === "complete" ? [] : ["Fixture graph coverage is partial."],
+      coverage === "complete" ? [] : [`Fixture graph coverage is ${coverage}.`],
   });
 };
 

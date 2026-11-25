@@ -1,7 +1,8 @@
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { supportedClients } from "../dist/application/SupportedClients.js";
+import { packageVerifierHomeEnvironment } from "./verify-package-home.mjs";
 
 /** Create an isolated prefix, fake PATH, client configs, and environment. */
 export async function verifyPackageEnvironment({
@@ -41,7 +42,7 @@ export async function verifyPackageEnvironment({
   await writeFile(swVers, "#!/bin/sh\necho 14.5\n");
   await writeFile(
     npx,
-    '#!/bin/sh\nprintf "%s\\n" "$*" > "$REA_NPX_LOG"\necho "│ ✓ Cursor: isolated │"\n',
+    '#!/bin/sh\nexec "$REA_VERIFY_NODE" "$REA_VERIFY_NPX_SCRIPT" "$@"\n',
   );
   await writeFile(hopper, "#!/bin/sh\nexit 0\n");
   await Promise.all([
@@ -55,15 +56,15 @@ export async function verifyPackageEnvironment({
   )?.markerPath;
   if (claudeDir === undefined)
     throw new Error("Claude Desktop fixture has no configuration directory");
-  const codexDir = join(home, ".codex");
+  const homeEnvironment = packageVerifierHomeEnvironment(home);
   const cursorDir = join(home, ".cursor");
   await Promise.all([
     mkdir(claudeDir, { recursive: true }),
-    mkdir(codexDir, { recursive: true }),
+    mkdir(homeEnvironment.CODEX_HOME, { recursive: true }),
     mkdir(cursorDir, { recursive: true }),
   ]);
   const claudeConfig = join(claudeDir, "claude_desktop_config.json");
-  const codexConfig = join(codexDir, "config.toml");
+  const codexConfig = join(homeEnvironment.CODEX_HOME, "config.toml");
   const codexTarget = join(home, "managed-codex.toml");
   const cursorConfig = join(cursorDir, "mcp.json");
   const cursorTarget = join(home, "managed-cursor.json");
@@ -74,30 +75,21 @@ export async function verifyPackageEnvironment({
   await symlink(cursorTarget, cursorConfig);
   const environment = {
     ...process.env,
-    HOME: home,
-    USERPROFILE: home,
-    APPDATA: join(home, "AppData", "Roaming"),
-    LOCALAPPDATA: join(home, "AppData", "Local"),
-    CLAUDE_CONFIG_DIR: home,
-    CODEX_HOME: codexDir,
-    COPILOT_HOME: join(home, ".copilot"),
-    GROK_HOME: join(home, ".grok"),
-    SAND_DATA_ROOT: join(home, ".grokbot"),
-    OMP_PROFILE: undefined,
-    PI_CODING_AGENT_DIR: undefined,
-    PI_CONFIG_DIR: undefined,
-    PI_PROFILE: undefined,
+    ...homeEnvironment,
     QWEN_HOME: undefined,
     OPENCODE_CONFIG: undefined,
     OPENCODE_CONFIG_DIR: undefined,
     GEMINI_CLI_HOME: undefined,
     GEMINI_CLI_SYSTEM_SETTINGS_PATH: undefined,
     GEMINI_CLI_SYSTEM_DEFAULTS_PATH: undefined,
-    XDG_CONFIG_HOME: join(home, ".config"),
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     REA_ANALYSIS_PROVIDER: "auto",
     ...packageHopperEnvironment(root),
     REA_NPX_LOG: npxLog,
+    REA_VERIFY_NODE: process.execPath,
+    REA_VERIFY_NPX_SCRIPT: fileURLToPath(
+      new URL("./lib/verify-package-runner-fixture.mjs", import.meta.url),
+    ),
     REA_REFERENCE_SECRET_PATTERNS_JSON: JSON.stringify([".env"]),
   };
   return {
@@ -113,7 +105,7 @@ export async function verifyPackageEnvironment({
   };
 }
 
-export const packageHopperEnvironment = (root, platform = process.platform) => {
+const packageHopperEnvironment = (root, platform = process.platform) => {
   const fakeLauncher = join(root, "tests/fixtures/fakeLauncher.mjs");
   if (platform !== "linux")
     return {

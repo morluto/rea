@@ -17,7 +17,7 @@ import { nativeCallObservationInputSchema } from "../../../../src/domain/native/
 import {
   resolveXcrunTool,
   XcrunCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { observeProcessStartIdentity } from "../../../../src/process/ProcessOwnershipObservation.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -161,15 +161,12 @@ setTimeout(() => process.exit(0), 10000);
         controller.signal,
       );
       await expect
-        .poll(
-          async () => {
-            started = readySchema.parse(
-              JSON.parse(await readFile(readyPath, "utf8")),
-            );
-            return started.run_id;
-          },
-          { timeout: 5_000 },
-        )
+        .poll(async () => {
+          started = readySchema.parse(
+            JSON.parse(await readFile(readyPath, "utf8")),
+          );
+          return started.run_id;
+        })
         .toEqual(expect.any(String));
       if (started === undefined) throw new Error("Wrapper did not start");
       const identity = await observeProcessStartIdentity(
@@ -180,13 +177,13 @@ setTimeout(() => process.exit(0), 10000);
       expect(identity?.state).toBe("readable");
       controller.abort(reason);
       const result = await pending;
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected caller cancellation");
       expect(result.error).toMatchObject({
         _tag: "AnalysisCancelledError",
         cause: reason,
         cleanupIncomplete: false,
       });
+      expect(result.error.cause).toBe(reason);
       expect(await observeProcessStartIdentity(started.pid)).toBeUndefined();
       await expect(access(dirname(started.config_path))).rejects.toMatchObject({
         code: "ENOENT",
@@ -199,13 +196,70 @@ setTimeout(() => process.exit(0), 10000);
         // fixture self-exits. Do not bypass ownership with an unverified PID kill.
         const pid = started.pid;
         await expect
-          .poll(async () => await observeProcessStartIdentity(pid), {
-            timeout: 12_000,
-          })
+          .poll(async () => await observeProcessStartIdentity(pid))
           .toBeUndefined();
         expect((await tracer.close()).ok).toBe(true);
       } else expect(closed.ok).toBe(true);
     }
   },
-  15_000,
+);
+
+it.skipIf(process.platform !== "darwin")(
+  "reports why the host could not establish the launched target's identity",
+  async () => {
+    const root = await createTestTempDirectory("rea-lldb-identity-");
+    const tool = await externalToolchain(root, "lldb");
+    const child = join(dirname(tool.invocationPath), "identity-child.mjs");
+    // The fixture publishes the PID of a process that has already exited, as
+    // a bridge would if its target vanished before the host read its identity.
+    await writeFile(
+      child,
+      `import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+const command = process.argv.find(value => value.startsWith('rea_trace '));
+const config = JSON.parse(readFileSync(command.slice('rea_trace '.length), 'utf8'));
+for (const path of [config.observation_path, config.stdout_capture_path, config.stderr_capture_path])
+  writeFileSync(path, '');
+writeFileSync(config.pid_path, String(spawnSync(process.execPath, ['-e', '0']).pid));
+let ack;
+while (ack === undefined) {
+  try { ack = readFileSync(config.identity_ack_path, 'utf8').trim(); }
+  catch { await new Promise((resolve) => setTimeout(resolve, 25)); }
+}
+writeFileSync(config.result_path, JSON.stringify({
+  status: 'target-identity-unavailable',
+  error: 'host could not establish the launched process identity; target was stopped (ack ' + ack + ')',
+  target_process_created: true
+}));
+`,
+    );
+    const launcherText = `#!/bin/sh\nexec ${shellArgument(process.execPath)} "$(dirname "$0")/identity-child.mjs" "$@"\n`;
+    await writeFile(tool.resolvedPath, launcherText);
+    await chmod(tool.resolvedPath, 0o755);
+    const tracer = new LldbCallTracer(tool.environment);
+    try {
+      const result = await tracer.trace({
+        executable: "/fixture/target-is-never-launched",
+        architecture: "arm64",
+        expectedSha256: "b".repeat(64),
+        input: nativeCallObservationInputSchema.parse({
+          breakpoints: [{ kind: "function", name: "main" }],
+          duration_ms: 100,
+        }),
+      });
+      if (result.ok) throw new Error("Expected an unavailable target identity");
+      expect(result.error).toMatchObject({
+        _tag: "ProviderAdapterError",
+        diagnostics: {
+          reason: expect.stringContaining("(ack unavailable)"),
+          constraint: "target process start identity could not be verified",
+          identity_observation: expect.stringMatching(
+            /^PID \d+ had exited or was absent from the process table$/u,
+          ),
+        },
+      });
+    } finally {
+      expect((await tracer.close()).ok).toBe(true);
+    }
+  },
 );

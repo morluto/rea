@@ -1,9 +1,10 @@
+import { heldAmpersandSpellings } from "./environmentStateWriteCreateCalls.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
   ownMember,
   isObject,
-  locateItem,
+  locateItems,
   pointerTo,
   same,
   scalarText,
@@ -11,6 +12,8 @@ import {
   type StateEntity,
 } from "./environmentStateRules.js";
 import {
+  emptySpellings,
+  isBlankValue,
   siblingTrimmedClocks,
   type FieldRule,
   type InsertRule,
@@ -26,11 +29,15 @@ import {
   isUuid,
   readClock,
   sequenceNumber,
-  slugOf,
+  slugSpellings,
   sortedStrings,
   type ClockFormat,
+  type ClockReading,
 } from "./environmentStateWriteValues.js";
-import { createdComposer } from "./environmentStateWriteComposed.js";
+import {
+  composedValue,
+  createdComposer,
+} from "./environmentStateWriteComposed.js";
 import { referenceRule } from "./environmentStateWriteReferences.js";
 import {
   fittedClockFormat,
@@ -49,6 +56,7 @@ import {
   GENERATED,
 } from "./environmentStateWriteGenerated.js";
 import {
+  createdMadeObject,
   createdNestedClock,
   createdToken,
   isClockNear,
@@ -60,6 +68,8 @@ import {
   heldClock,
   sameSecondClocks,
   sentRule,
+  slugRule,
+  type SlugSource,
   type UpdateEvidence,
 } from "./environmentStateWriteChanges.js";
 
@@ -74,6 +84,8 @@ export interface CreateEvidence {
   readonly type: readonly JsonObject[];
   /** The entities of any type the state holds under an id. */
   readonly named?: (id: string) => readonly StateEntity[];
+  /** Composed rules another call of the tool learned, which explain a field here when they spell its value. */
+  readonly hints?: readonly FieldRule[];
 }
 
 /** What explaining a create looks values up in, built once per request body. */
@@ -81,8 +93,23 @@ interface BodyIndex {
   /** Each body string long enough to show a copy, at its shallowest pointer (breadth-first, members in order). */
   readonly copies: ReadonlyMap<string, string>;
   /** Each slug a top-level string member slugs to, other than its own value, from the first such member. */
-  readonly slugs: ReadonlyMap<string, string>;
+  readonly slugs: ReadonlyMap<string, SlugSource>;
 }
+
+/** Add a string's slugs to an index, keeping the first member that spells each; `own` keeps one equal to the string. */
+const addSlugs = (
+  slugs: Map<string, SlugSource>,
+  member: string,
+  sent: string,
+  own = false,
+): void => {
+  for (const { slug, ampersand } of slugSpellings(sent))
+    if ((own || slug !== sent) && !slugs.has(slug))
+      slugs.set(slug, {
+        from: member,
+        ...(ampersand === undefined ? {} : { ampersand }),
+      });
+};
 
 /** Index a request body once, so explaining each field looks values up rather than walking the body again. */
 const indexBody = (body: JsonObject): BodyIndex => {
@@ -109,12 +136,9 @@ const indexBody = (body: JsonObject): BodyIndex => {
         pointer: `${next.pointer}${pointerTo(key)}`,
       });
   }
-  const slugs = new Map<string, string>();
+  const slugs = new Map<string, SlugSource>();
   for (const [member, sent] of Object.entries(body))
-    if (typeof sent === "string") {
-      const slug = slugOf(sent);
-      if (slug !== sent && !slugs.has(slug)) slugs.set(slug, member);
-    }
+    if (typeof sent === "string") addSlugs(slugs, member, sent);
   return { copies, slugs };
 };
 
@@ -150,7 +174,7 @@ const requestRule = (
   index: BodyIndex,
   field: string,
   value: JsonValue,
-): FieldRule | undefined => {
+): FieldRule | "ambiguous-path" | undefined => {
   const { body, pathValues } = evidence.call;
   if (Object.hasOwn(body, field) && same(body[field], value))
     return { field, rule: "echo" };
@@ -161,14 +185,14 @@ const requestRule = (
     if (from !== undefined) return { field, rule: "copy", from };
   }
   const text = scalarText(value);
-  for (const [name, pathValue] of pathValues)
-    if (text !== undefined && text === pathValue)
-      return { field, rule: "path", from: name };
+  const paths = [...pathValues].filter(
+    ([, value]) => text !== undefined && text === value,
+  );
+  if (paths.length > 1) return "ambiguous-path";
+  if (paths.length === 1) return { field, rule: "path", from: paths[0]![0] };
   const slugged = typeof value === "string" && value.length >= 3;
-  const member = slugged ? index.slugs.get(value) : undefined;
-  return member === undefined
-    ? undefined
-    : { field, rule: "slug", from: member };
+  const source = slugged ? index.slugs.get(value) : undefined;
+  return source === undefined ? undefined : slugRule(field, source);
 };
 
 /** A clock's format, trimmed when the type's values of the field show its fraction trimmed and none shows a fixed width. */
@@ -261,7 +285,10 @@ const generatedRule = (
     return { field, rule: "unique" };
   if (createdToken(field, evidence.entity, evidence.type) === "independent")
     return { field, rule: "unique" };
-  return createdNestedClock(field, value, evidence);
+  return (
+    createdNestedClock(field, value, evidence) ??
+    createdMadeObject(field, value, evidence)
+  );
 };
 
 /** Pinned members less those a reference reads: it rebuilds the object they name for any held entity. */
@@ -290,6 +317,36 @@ const bodyOf = (
 });
 
 /** Explain every field of a created entity: echoed, copied, path, slug, generated, template or constant (unlisted). */
+/**
+ * A slug rule as the held entities spell `&`: as the word when the call slugged none and they spell it so, and no rule
+ * when they spell it both ways, or otherwise than the call did or in a way neither spelling gives. Other rules pass
+ * unchanged.
+ */
+const heldSlugRule = (
+  rule: FieldRule | undefined,
+  sent: JsonObject,
+  held: readonly JsonObject[],
+): FieldRule | undefined => {
+  if (rule?.rule !== "slug") return rule;
+  const shown = heldAmpersandSpellings(rule, held);
+  const source = ownMember(sent, rule.from);
+  if (typeof source === "string" && source.includes("&"))
+    return shown.has("unknown") ||
+      shown.has(rule.ampersand === "and" ? "dropped" : "and")
+      ? undefined
+      : rule;
+  if (shown.has("and") && shown.has("dropped")) return undefined;
+  return shown.has("and") && !shown.has("unknown")
+    ? { ...rule, ampersand: "and" }
+    : rule;
+};
+
+/** Whether a composed string spells a field besides the one a template rebuilds it around, such as a title's slug beside a generated id. */
+const spellsMore = (composed: FieldRule, template: FieldRule): boolean =>
+  composed.rule === "composed" &&
+  template.rule === "template" &&
+  composed.parts.some((part) => "from" in part && part.from !== template.from);
+
 export const explainCreate = (
   evidence: CreateEvidence,
 ): {
@@ -300,9 +357,21 @@ export const explainCreate = (
   const ruled: FieldRule[] = [];
   const unexplained: string[] = [];
   const index = indexBody(evidence.call.body);
+  // The member each slug the held entities' `&` spellings refused was slugged from.
+  const refusedSlugs = new Map<string, string>();
+  let ambiguousPath = false;
   for (const [field, value] of Object.entries(evidence.entity)) {
+    const requested = requestRule(evidence, index, field, value);
+    if (requested === "ambiguous-path") {
+      ambiguousPath = true;
+      unexplained.push(field);
+      continue;
+    }
+    const held = heldSlugRule(requested, evidence.call.body, evidence.type);
+    if (requested?.rule === "slug" && held === undefined)
+      refusedSlugs.set(field, requested.from);
     const rule =
-      requestRule(evidence, index, field, value) ??
+      held ??
       generatedRule(evidence, field, value) ??
       (evidence.named === undefined
         ? undefined
@@ -330,10 +399,26 @@ export const explainCreate = (
   const constants: string[] = [];
   const composed = createdComposer(evidence.entity, rules, evidence.type);
   for (const field of unexplained) {
-    const template =
-      templateRule(evidence.entity, field, sources) ?? composed(field);
-    if (template === undefined) constants.push(field);
-    else rules.push(template);
+    const hinted = evidence.hints?.find(
+      (rule) =>
+        rule.field === field &&
+        rule.rule === "composed" &&
+        composedValue(rule.parts, evidence.entity) ===
+          ownMember(evidence.entity, field),
+    );
+    if (hinted !== undefined) {
+      rules.push(hinted);
+      continue;
+    }
+    const template = templateRule(evidence.entity, field, sources);
+    const spelled = composed(field);
+    const rule =
+      spelled !== undefined &&
+      (template === undefined || spellsMore(spelled, template))
+        ? spelled
+        : template;
+    if (rule === undefined) constants.push(field);
+    else rules.push(rule);
   }
   const tokens = [...evidence.call.pathValues.values()].filter(
     (value) => value.length > 0,
@@ -358,6 +443,11 @@ export const explainCreate = (
       evidence.named ?? (() => []),
     ),
     ...instantMembers(evidence.call.body, evidence.entity, constants),
+    // A refused slug kept as recorded is right only for the name it was slugged from.
+    ...constants.flatMap((field) => {
+      const from = refusedSlugs.get(field);
+      return from === undefined ? [] : [from];
+    }),
   ]);
   const pinned = unreferenced(
     rules,
@@ -367,24 +457,33 @@ export const explainCreate = (
     rules.filter((rule) => !stranded.has(rule.field)),
     evidence.entity,
   );
+  // A member sent empty is one a form sends for a field left as it was, which a caller may leave out.
+  const blank = Object.entries(evidence.call.body).flatMap(([member, sent]) =>
+    isBlankValue(sent) ? [{ member, sent }] : [],
+  );
+  const shaped = bodyOf(
+    evidence.call.body,
+    new Set(
+      [...stored].filter(
+        (member) => !referenced.has(member) && !pinned.has(member),
+      ),
+    ),
+    Object.keys(evidence.call.body).filter(
+      (member) => !isBlankValue(evidence.call.body[member]),
+    ),
+  );
   return {
     rules,
-    body: bodyOf(
-      evidence.call.body,
-      new Set(
-        [...stored].filter(
-          (member) => !referenced.has(member) && !pinned.has(member),
-        ),
-      ),
-      Object.keys(evidence.call.body),
-    ),
+    body: blank.length === 0 ? shaped : { ...shaped, blank },
     // A template rebuilds only its generated value, so other text it keeps ties it like a constant.
-    tied: [
-      ...[...constants, ...templates].map((field) =>
-        ownMember(evidence.entity, field)!,
-      ),
-      ...literals,
-    ].some((text) => tokens.some((token) => containsDelimited(text, token))),
+    tied:
+      ambiguousPath ||
+      [
+        ...[...constants, ...templates].map((field) =>
+          ownMember(evidence.entity, field)!,
+        ),
+        ...literals,
+      ].some((text) => tokens.some((token) => containsDelimited(text, token))),
   };
 };
 
@@ -392,12 +491,11 @@ export const explainCreate = (
 const echoedSlugs = (
   body: JsonObject,
   echoed: ReadonlySet<string>,
-): Map<string, string> => {
-  const slugs = new Map<string, string>();
+): Map<string, SlugSource> => {
+  const slugs = new Map<string, SlugSource>();
   for (const member of echoed) {
     const sent = ownMember(body, member);
-    if (typeof sent === "string" && !slugs.has(slugOf(sent)))
-      slugs.set(slugOf(sent), member);
+    if (typeof sent === "string") addSlugs(slugs, member, sent, true);
   }
   return slugs;
 };
@@ -431,9 +529,12 @@ export const explainUpdate = (
   readonly unstamped: string[];
 } => {
   const { body } = evidence.call;
+  const knownEntities = [evidence.before, ...evidence.others];
   const rules: FieldRule[] = [];
   const echoed = new Set<string>();
   const unexplained: string[] = [];
+  // A whole-object PUT clears a member it leaves out: that value is the member's default.
+  const defaults: { readonly member: string; readonly value: JsonValue }[] = [];
   // A member the application replaces with a value it generates is accepted with any value.
   const generated = new Set<string>();
   let identity: string | null = null;
@@ -456,7 +557,15 @@ export const explainUpdate = (
       continue;
     }
     if (!Object.hasOwn(evidence.after, member)) continue;
-    const rule = sentRule(evidence, member, held);
+    const rule = heldSlugRule(
+      sentRule(evidence, member, held),
+      body,
+      knownEntities,
+    );
+    if (rule === undefined) {
+      unexplained.push(member);
+      continue;
+    }
     rules.push(rule);
     if (rule.rule === "echo") echoed.add(member);
     else if (rule.rule !== "constant") generated.add(member);
@@ -484,9 +593,27 @@ export const explainUpdate = (
       if (kept !== undefined) rules.push(kept);
       continue;
     }
-    const rule = changeRule(evidence, field, slugs);
-    if (rule === undefined) unexplained.push(field);
-    else rules.push(rule);
+    // An empty list or map one answer spells `null` and another `[]` or `{}` is unchanged.
+    if (
+      emptySpellings(
+        ownMember(evidence.before, field),
+        ownMember(evidence.after, field),
+      )
+    )
+      continue;
+    const rule = heldSlugRule(
+      changeRule(evidence, field, slugs),
+      body,
+      knownEntities,
+    );
+    if (rule !== undefined) rules.push(rule);
+    else if (
+      evidence.method === "PUT" &&
+      isBlankValue(ownMember(evidence.after, field)) &&
+      !isBlankValue(ownMember(evidence.before, field))
+    )
+      defaults.push({ member: field, value: evidence.after[field]! });
+    else unexplained.push(field);
   }
   rules.push(...pairedStamps(evidence, rules));
   // A member a reference reads names an entity, which any held one may be.
@@ -506,7 +633,11 @@ export const explainUpdate = (
   );
   return {
     rules,
-    body: { ...shaped, identity },
+    body: {
+      ...shaped,
+      identity,
+      ...(defaults.length === 0 ? {} : { defaults }),
+    },
     unexplained,
     unstamped: sameSecondClocks(evidence),
   };
@@ -525,8 +656,11 @@ export const responseShapeOf = (
 ): WriteResponse => {
   if (empty) return { ordinal, shape: "empty", pointer: null };
   if (body === undefined) return { ordinal, shape: "recorded", pointer: null };
-  const located = locateItem(body, entity.id);
-  if (located?.keys.includes(entity.idField) === true)
+  const candidates = locateItems(body, entity.id, entity.idField);
+  if (candidates.length > 1)
+    return { ordinal, shape: "recorded", pointer: null };
+  const located = candidates[0];
+  if (located !== undefined)
     return { ordinal, shape: "entity", pointer: located.pointer };
   if (scalarText(body) === entity.id)
     return { ordinal, shape: "identity", pointer: "" };
@@ -544,6 +678,11 @@ export const responseShapeOf = (
   return { ordinal, shape: "recorded", pointer: null };
 };
 
+const compareClockReadings = (
+  left: ClockReading,
+  right: ClockReading,
+): number => left.ms - right.ms || left.subMillisecond - right.subMillisecond;
+
 /** Order two field values as numbers, instants or text; undefined when they are not comparable. */
 export const compareValues = (
   left: JsonValue | undefined,
@@ -552,15 +691,14 @@ export const compareValues = (
   const [a, b] = [integerOf(left), integerOf(right)];
   if (a !== undefined && b !== undefined) return a - b;
   const [c, d] = [readClock(left), readClock(right)];
-  if (c !== undefined && d !== undefined)
-    return c.ms - d.ms || c.subMillisecond - d.subMillisecond;
+  if (c !== undefined && d !== undefined) return compareClockReadings(c, d);
   return typeof left === "string" && typeof right === "string"
     ? compare(left, right)
     : undefined;
 };
 
 /** Whether the members are strictly ordered by the field in the direction. */
-const orderedBy = (
+export const orderedBy = (
   members: readonly JsonObject[],
   field: string,
   direction: "ascending" | "descending",
@@ -582,7 +720,8 @@ const UUID_V4 =
 
 /**
  * Whether a collection's identities order nothing: version 4 UUIDs, or values every creation clock
- * lists in another order. Time-ordered ids (ObjectId, ULID, TSID, version 7 UUIDs) follow a clock.
+ * lists in another order. Only recognized clock observations establish that order.
+ * Time-ordered ids (ObjectId, ULID, TSID, version 7 UUIDs) follow a clock.
  */
 export const randomIdentities = (
   members: readonly JsonObject[],
@@ -598,16 +737,16 @@ export const randomIdentities = (
     (left, right) =>
       compareValues(ownMember(left, idField), ownMember(right, idField)) ?? 0,
   );
-  return clocks.every((clock) =>
-    byId.some(
-      (member, index) =>
-        index > 0 &&
-        (compareValues(
-          ownMember(byId[index - 1]!, clock),
-          ownMember(member, clock),
-        ) ?? 1) > 0,
-    ),
-  );
+  return clocks.every((clock) => {
+    const values = byId.flatMap((member) => {
+      const reading = readClock(ownMember(member, clock));
+      return reading === undefined ? [] : [reading];
+    });
+    return values.some((value, index) => {
+      if (index === 0) return false;
+      return compareClockReadings(values[index - 1]!, value) > 0;
+    });
+  });
 };
 
 /**
@@ -661,6 +800,41 @@ export const insertIndex = (
     );
   });
   return index < 0 ? members.length : index;
+};
+
+/**
+ * A sorted collection's members after writes move each entity whose sorted field changed to where its new value sorts,
+ * one after another, as replay applies them; other written entities keep their places.
+ */
+export const resortedMembers = <
+  Entity extends { readonly id: string; readonly fields: JsonObject },
+>(
+  rule: Extract<InsertRule, { rule: "sorted" }>,
+  members: readonly Entity[],
+  writes: readonly { readonly before: Entity; readonly after: Entity }[],
+): Entity[] => {
+  const order = [...members];
+  for (const { before, after } of writes) {
+    const at = order.findIndex((member) => member.id === before.id);
+    if (at < 0) continue;
+    order.splice(at, 1);
+    const moved = !same(
+      ownMember(before.fields, rule.field),
+      ownMember(after.fields, rule.field),
+    );
+    order.splice(
+      moved
+        ? insertIndex(
+            rule,
+            order.map((member) => member.fields),
+            after.fields,
+          )
+        : at,
+      0,
+      after,
+    );
+  }
+  return order;
 };
 
 /** The object in a document value, at the root or in one member, that holds most of a body's members. */

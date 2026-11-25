@@ -1,3 +1,5 @@
+import { appendToMapList } from "../appendToMapList.js";
+import { parseUrlQueryParameterNames } from "../recordedTransportUrl.js";
 import type { ObservedEntity } from "./environmentStateMerge.js";
 import { appliesOrder } from "./environmentStateOrderParameters.js";
 
@@ -5,10 +7,11 @@ import { appliesOrder } from "./environmentStateOrderParameters.js";
 const RANDOM = new Set(["random", "rand", "shuffle", "seed"]);
 
 /** Whether a recorded query leaves the order to the application: no sort, direction or random parameter. */
-const defaultOrder = (query: string | null | undefined): boolean =>
-  [...new URLSearchParams(query ?? "").keys()].every(
-    (name) => !appliesOrder(name) && !RANDOM.has(name.toLowerCase()),
-  );
+const defaultOrder = (query: string | null | undefined): boolean => {
+  for (const name of parseUrlQueryParameterNames(query ?? ""))
+    if (appliesOrder(name) || RANDOM.has(name.toLowerCase())) return false;
+  return true;
+};
 
 /**
  * Order each collection's entities as the earliest whole list line in the application's own order
@@ -22,9 +25,7 @@ export const orderByWholeLines = (
   const collections = new Map<string, ObservedEntity[]>();
   for (const entity of entities) {
     const key = `${entity.type}\u0000${entity.collection}`;
-    const members = collections.get(key);
-    if (members === undefined) collections.set(key, [entity]);
-    else members.push(entity);
+    appendToMapList(collections, key, entity);
   }
   for (const members of collections.values()) {
     const lines = new Map<number, { position: number; listed: number }>();

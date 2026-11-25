@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { compositeKey } from "../unicodeCodePointOrder.js";
 import {
   spelledLikeObserved,
@@ -5,6 +6,7 @@ import {
   type SpellingSummary,
 } from "./environmentManifestSpelling.js";
 import type { RouteRule } from "./webNetworkRouteTemplates.js";
+import { appendAll } from "../appendAll.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
 export const TEMPLATE_RULES = [
@@ -118,7 +120,7 @@ const earliest = (groups: readonly ToolGroup[]): ToolGroup =>
 /** Merge groups around `shape`; literal siblings of its templated positions become observed values. */
 const mergeGroups = (
   groups: readonly ToolGroup[],
-  shape = earliest(groups),
+  shape: ToolGroup,
 ): ToolGroup => {
   if (groups.length === 1) return groups[0]!;
   const primary = earliest(groups);
@@ -164,9 +166,7 @@ const rebucket = (
       group.origin,
       ...group.parts.map(keyOf),
     ]);
-    const bucket = buckets.get(key);
-    if (bucket === undefined) buckets.set(key, [group]);
-    else bucket.push(group);
+    appendToMapList(buckets, key, group);
   }
   return [...buckets.values()].map((bucket) =>
     mergeGroups(bucket, shapeOf(bucket)),
@@ -275,19 +275,37 @@ const mergeSiblings = (
   ];
 };
 
-/** Merge groups that differ in exactly one identifier-like segment at index two or later. */
-const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
+const mergeSiblingPositions = (
+  groups: readonly ToolGroup[],
+  width: 1 | 2,
+  keyFor: (group: ToolGroup, position: number) => string | undefined,
+  mergeBucket: (bucket: readonly ToolGroup[], position: number) => ToolGroup[],
+): ToolGroup[] => {
   let current = [...groups];
   const longest = Math.max(0, ...current.map((group) => group.parts.length));
-  for (let position = 2; position < longest; position += 1) {
+  for (let position = 2; position + width <= longest; position += 1) {
     const buckets = new Map<string, ToolGroup[]>();
     const output: ToolGroup[] = [];
     for (const group of current) {
-      if (position >= group.parts.length) {
-        output.push(group);
-        continue;
-      }
-      const key = compositeKey([
+      const key = keyFor(group, position);
+      if (key === undefined) output.push(group);
+      else appendToMapList(buckets, key, group);
+    }
+    for (const bucket of buckets.values())
+      appendAll(output, mergeBucket(bucket, position));
+    current = output;
+  }
+  return current;
+};
+
+/** Merge groups that differ in exactly one identifier-like segment at index two or later. */
+const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] =>
+  mergeSiblingPositions(
+    groups,
+    1,
+    (group, position) => {
+      if (position >= group.parts.length) return undefined;
+      return compositeKey([
         group.method,
         group.origin,
         group.parts.length,
@@ -295,16 +313,9 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
           index === position ? null : partKey(part),
         ),
       ]);
-      const bucket = buckets.get(key);
-      if (bucket === undefined) buckets.set(key, [group]);
-      else bucket.push(group);
-    }
-    for (const bucket of buckets.values())
-      output.push(...mergeSiblings(bucket, position));
-    current = output;
-  }
-  return current;
-};
+    },
+    mergeSiblings,
+  );
 
 /** Fewest distinct literal pairs that make two adjacent positions one templated pair. */
 export const SIBLING_PAIR_MINIMUM = 3;
@@ -370,18 +381,13 @@ const mergePairBucket = (
 };
 
 /** Merge groups that differ in two adjacent literals after a plural literal, such as `/repos/{owner}/{repo}/…`. */
-const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
-  let current = [...groups];
-  const longest = Math.max(0, ...current.map((group) => group.parts.length));
-  for (let position = 2; position + 1 < longest; position += 1) {
-    const buckets = new Map<string, ToolGroup[]>();
-    const output: ToolGroup[] = [];
-    for (const group of current) {
-      if (!pairCandidate(group, position)) {
-        output.push(group);
-        continue;
-      }
-      const key = compositeKey([
+const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] =>
+  mergeSiblingPositions(
+    groups,
+    2,
+    (group, position) => {
+      if (!pairCandidate(group, position)) return undefined;
+      return compositeKey([
         group.method,
         group.origin,
         group.parts.length,
@@ -389,16 +395,9 @@ const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
           index === position || index === position + 1 ? null : partKey(part),
         ),
       ]);
-      const bucket = buckets.get(key);
-      if (bucket === undefined) buckets.set(key, [group]);
-      else bucket.push(group);
-    }
-    for (const bucket of buckets.values())
-      output.push(...mergePairBucket(bucket, position));
-    current = output;
-  }
-  return current;
-};
+    },
+    mergePairBucket,
+  );
 
 /** A part by the rule that names it: a prefix-variance parameter keys as the parameter it shares. */
 const nameKey = (part: RoutePart): unknown =>
@@ -435,12 +434,11 @@ type SharedPosition = readonly (SharedDonor & {
 const sharedPositions = (
   groups: readonly ToolGroup[],
   position: number,
+  inRecordOrder: readonly number[],
 ): Map<string, SharedPosition> => {
   const donors = new Map<string, Map<string, SharedDonor>>();
-  const ordered = [...groups].sort(
-    (left, right) => (left.positions[0] ?? 0) - (right.positions[0] ?? 0),
-  );
-  for (const group of ordered) {
+  for (const index of inRecordOrder) {
+    const group = groups[index]!;
     const part = group.parts[position];
     if (!isShared(part)) continue;
     const key = prefixKey(group, position);
@@ -486,12 +484,23 @@ const sharedShape = (bucket: readonly ToolGroup[]): ToolGroup => {
   );
 };
 
-/** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method or length. */
+/** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method, on routes within the segment limit. */
 const mergePrefixVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
   let current = [...groups];
-  const longest = Math.max(0, ...current.map((group) => group.parts.length));
+  // Every pass keeps the groups in their original sequence. Keep the donor
+  // priority by first record without changing the order of output groups.
+  const inRecordOrder = groups
+    .map((_, index) => index)
+    .sort(
+      (left, right) =>
+        (groups[left]!.positions[0] ?? 0) - (groups[right]!.positions[0] ?? 0),
+    );
+  const longest = groups.reduce(
+    (length, group) => Math.max(length, group.parts.length),
+    0,
+  );
   for (let position = 0; position < longest; position += 1) {
-    const shared = sharedPositions(current, position);
+    const shared = sharedPositions(current, position, inRecordOrder);
     if (shared.size === 0) continue;
     current = current.map((group) => {
       const part = group.parts[position];

@@ -6,12 +6,18 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { pythonPycFixture } from "../../../src/python/PythonPyc.fixture.js";
 import { PythonPycProvider } from "../../../src/python/PythonPycProvider.js";
 import { PythonPycService } from "../../../src/application/python/PythonPycService.js";
 import { BeamService } from "../../../src/application/erlang/BeamService.js";
 import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
 import { erlangBeamFixture } from "../../../src/erlang/Beam.fixture.js";
+import { DevicetreeService } from "../../../src/application/binaryDiagnostics/DevicetreeService.js";
+import { DevicetreeProvider } from "../../../src/firmware/devicetree/DevicetreeProvider.js";
+import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
 
 const injected = vi.hoisted(() => ({
   opened: undefined as
@@ -49,7 +55,53 @@ const providers = [
     bytes: erlangBeamFixture(),
     create: () => new BeamService(new BeamProvider()),
   },
+  {
+    name: "devicetree",
+    operation: "inspect_devicetree",
+    bytes: devicetreeFixture(),
+    create: () => new DevicetreeService(new DevicetreeProvider()),
+  },
 ];
+
+const beamInput = (path: string, bytes: Buffer) => ({
+  path,
+  max_file_bytes: bytes.length,
+  max_chunks: 5,
+  max_atoms: 5,
+});
+
+const expectBeamEvidence = (
+  observation: unknown,
+  path: string,
+  bytes: Buffer,
+) => {
+  const evidence = parseEvidence(observation);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  expect(evidence).toMatchObject({
+    operation: "inspect_erlang_beam",
+    subject: { identity: { format: "file", sha256 }, local_path: path },
+    locations: [
+      { kind: "artifact-path", path },
+      { kind: "file-offset-range", start: 0, end: bytes.length },
+    ],
+    normalized_result: {
+      artifact: { path, sha256, bytes: bytes.length },
+      form: {
+        location: { offset: 0, bytes: bytes.length },
+        size: bytes.length - 8,
+      },
+      module: "beam_fixture",
+      lambdas: [{ function: "start", arity: 1, index: 0, old_unique: 42 }],
+      coverage: {
+        status: "complete",
+        examined_chunks: 5,
+        atoms: 5,
+        trailing_bytes: 0,
+      },
+    },
+  });
+  expect(evidence.parameters).toEqual(beamInput(path, bytes));
+};
 
 const outcomes = [
   { stage: "completed read", cancelDuringClose: false, failRead: false },
@@ -97,7 +149,7 @@ it.each(
     const service = create();
     try {
       const result = await service.inspect(
-        { path },
+        operation === "inspect_erlang_beam" ? beamInput(path, bytes) : { path },
         { signal: controller.signal },
       );
       if (result.ok) throw new Error("Expected incomplete descriptor cleanup");
@@ -111,7 +163,18 @@ it.each(
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
           };
-      expect(result.error.partialObservation).toEqual(expectedSnapshot);
+      const observation = result.error.partialObservation;
+      if (operation === "inspect_erlang_beam" && !failRead) {
+        expectBeamEvidence(observation, path, bytes);
+        expect(result.error.cleanupPrimary?.partialObservation).toBe(
+          observation,
+        );
+        expect(
+          projectAnalysisError(result.error).details?.partial_observation,
+        ).toEqual(observation);
+      } else {
+        expect(observation).toEqual(expectedSnapshot);
+      }
       if (failRead)
         expect(result.error.cleanupPrimary?.cause).toBe(readFailure);
       else if (cancelDuringClose) {
@@ -144,7 +207,11 @@ it.each(
         expect(failure.cleanupIncomplete).toBe(false);
         expect(failure.cleanupResources).toEqual([]);
       }
-      expect(result.error.partialObservation).toEqual(expectedSnapshot);
+      expect(result.error.partialObservation).toBe(observation);
+      expect(
+        projectAnalysisError(resolvedAnalysisError(result.error)).details
+          ?.partial_observation,
+      ).toEqual(observation);
     } finally {
       denyClose = false;
       await service.close();
@@ -152,3 +219,95 @@ it.each(
     }
   },
 );
+
+it.each([{ source: "BEAM successful close" }, null])(
+  "preserves BEAM cancellation during successful close with reason %j",
+  async (reason) => {
+    const root = await createTestTempDirectory("rea-beam-successful-close-");
+    const path = join(root, "selected.beam");
+    const bytes = erlangBeamFixture();
+    await fileSystem.writeFile(path, bytes);
+    const controller = new AbortController();
+    const handles: FileHandle[] = [];
+    injected.opened = (openedPath, handle) => {
+      if (String(openedPath) !== path) return;
+      handles.push(handle);
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        controller.abort(reason);
+        await close();
+      });
+    };
+    const service = new BeamService(new BeamProvider());
+    try {
+      const result = await service.inspect(beamInput(path, bytes), {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected finalization cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expectBeamEvidence(result.error.partialObservation, path, bytes);
+      expect(handles).toHaveLength(1);
+      expect(handles[0]?.fd).toBe(-1);
+      await service.close();
+      expect(handles).toHaveLength(1);
+    } finally {
+      await service.close();
+    }
+  },
+);
+
+it("refuses a short positional read of the selected BEAM lambda table", async () => {
+  const root = await createTestTempDirectory("rea-beam-table-eof-");
+  const path = join(root, "selected.beam");
+  const bytes = erlangBeamFixture();
+  await fileSystem.writeFile(path, bytes);
+  const payloadBytes = 28;
+  const payloadOffset = bytes.length - payloadBytes;
+  expect(bytes.toString("latin1", payloadOffset - 8, payloadOffset - 4)).toBe(
+    "FunT",
+  );
+  const service = new BeamService(new BeamProvider());
+  const handles: FileHandle[] = [];
+  let shortReads = 0;
+  injected.opened = (openedPath, handle) => {
+    if (String(openedPath) !== path) return;
+    handles.push(handle);
+    const read = handle.read.bind(handle) as (
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => Promise<{ bytesRead: number; buffer: Buffer }>;
+    const instrumented = handle as unknown as { read: typeof read };
+    instrumented.read = (buffer, offset, length, position) => {
+      if (position !== payloadOffset || length !== payloadBytes)
+        return read(buffer, offset, length, position);
+      shortReads += 1;
+      return Promise.resolve({ bytesRead: 0, buffer });
+    };
+  };
+  try {
+    const result = await service.inspect({ path });
+    expect(shortReads).toBe(1);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisArtifactChangedError",
+        integrityCheck: "read-coverage",
+        cleanupIncomplete: false,
+        partialObservation: {
+          kind: "file-snapshot-hash",
+          path,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.length,
+        },
+      },
+    });
+    expect(handles).toHaveLength(1);
+    expect(handles[0]?.fd).toBe(-1);
+  } finally {
+    await service.close();
+  }
+});

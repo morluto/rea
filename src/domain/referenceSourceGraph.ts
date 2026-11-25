@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "./coverage.js";
 import { posix } from "node:path";
 
 import { z } from "zod";
@@ -9,8 +10,8 @@ import {
   isPortableAbsoluteReferenceTarget,
 } from "./referenceSourcePathIdentity.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
-const boundedTextSchema = z.string().min(1);
+import { digestSchema, prefixedDigestSchema } from "./digests.js";
+import { nonEmptyTextSchema } from "./textSchemas.js";
 const relativePathSchema = z
   .string()
   .min(1)
@@ -38,9 +39,9 @@ const classificationSchema = z.enum([
 const entryBaseShape = {
   path: relativePathSchema,
   classifications: z.array(classificationSchema).min(1),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
   // Host presentation is retained evidence, separate from relocatable semantics.
-  local_diagnostics: z.array(boundedTextSchema).exactOptional(),
+  local_diagnostics: z.array(nonEmptyTextSchema).exactOptional(),
 };
 
 const sourceFileBaseShape = {
@@ -49,7 +50,7 @@ const sourceFileBaseShape = {
   language: z.string().min(1).nullable(),
 };
 
-const sourceFileSchema = z.union([
+const sourceFileSchema = z.discriminatedUnion("content_state", [
   z.strictObject({
     ...sourceFileBaseShape,
     sha256: digestSchema,
@@ -92,7 +93,7 @@ const symlinkTargetSchema = z
     "Expected a normalized POSIX symlink target",
   );
 
-const sourceSymlinkSchema = z.union([
+const sourceSymlinkSchema = z.discriminatedUnion("target_state", [
   z.strictObject({
     ...entryBaseShape,
     kind: z.literal("symlink"),
@@ -107,7 +108,7 @@ const sourceSymlinkSchema = z.union([
   }),
 ]);
 
-const sourceEntrySchema = z.union([
+const sourceEntrySchema = z.discriminatedUnion("kind", [
   sourceFileSchema,
   sourceDirectorySchema,
   sourceSymlinkSchema,
@@ -129,28 +130,24 @@ const sourceRelationshipSchema = z.strictObject({
 const parseFailureSchema = z.strictObject({
   path: relativePathSchema,
   parser: z.string().min(1),
-  reason: boundedTextSchema,
+  reason: nonEmptyTextSchema,
 });
 
 const exclusionSchema = z.discriminatedUnion("reason", [
   z.strictObject({
     path: relativePathSchema,
-    entry_kind: z
-      .enum(["file", "directory", "symlink", "other", "unknown"])
-      .exactOptional(),
+    entry_kind: z.enum(["file", "directory", "symlink", "other", "unknown"]),
     reason: z.enum([
       "configured-secret",
       "project-ignored",
       "default-ignored",
       "caller-excluded",
     ]),
-    pattern: boundedTextSchema,
+    pattern: nonEmptyTextSchema,
   }),
   z.strictObject({
     path: relativePathSchema,
-    entry_kind: z
-      .enum(["file", "directory", "symlink", "other", "unknown"])
-      .exactOptional(),
+    entry_kind: z.enum(["file", "directory", "symlink", "other", "unknown"]),
     reason: z.enum(["symlink-escape", "unreadable"]),
   }),
 ]);
@@ -180,7 +177,7 @@ const graphShape = {
   authority: z.literal("historical-reference"),
   root_alias: z.literal("$REFERENCE_ROOT"),
   root_sha256: digestSchema,
-  inventory_state: z.enum(["complete", "partial", "unknown"]),
+  inventory_state: coverageStatusSchema,
   entries: z.array(sourceEntrySchema),
   relationships: z.array(sourceRelationshipSchema),
   parse_failures: z.array(parseFailureSchema),
@@ -196,7 +193,7 @@ const graphShape = {
       .min(1)
       .regex(/^[\w .:@\x2f+\x2d]+$/u),
   }),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const historicalSourceGraphStructureSchema = z
@@ -226,7 +223,7 @@ const historicalSourceManifestBaseSchema = z.strictObject({
   manifest_id: prefixedDigestSchema("hsm"),
   graph_sha256: digestSchema,
   root_sha256: digestSchema,
-  inventory_state: z.enum(["complete", "partial", "unknown"]),
+  inventory_state: coverageStatusSchema,
   entry_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   relationship_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
@@ -366,7 +363,7 @@ const checkSymlinks = (
   );
   const excludedKinds = new Map<
     string,
-    Set<"file" | "directory" | "symlink" | "other" | "unknown" | undefined>
+    Set<"file" | "directory" | "symlink" | "other" | "unknown">
   >();
   for (const { path, entry_kind } of graph.exclusions) {
     const kinds = excludedKinds.get(path) ?? new Set();
@@ -566,11 +563,6 @@ export const createHistoricalSourceGraph = (
   });
 };
 
-/** Parse a graph and reject stale or caller-invented root commitments. */
-export const parseHistoricalSourceGraph = (
-  input: unknown,
-): HistoricalSourceGraph => historicalSourceGraphSchema.parse(input);
-
 /** Commit semantic graph facts while retaining host-local diagnostic metadata separately. */
 const computeHistoricalSourceGraphSha256 = (
   graph: HistoricalSourceGraph,
@@ -589,7 +581,7 @@ const computeHistoricalSourceGraphSha256 = (
 export const createHistoricalSourceManifest = (
   input: unknown,
 ): HistoricalSourceManifest => {
-  const graph = parseHistoricalSourceGraph(input);
+  const graph = historicalSourceGraphSchema.parse(input);
   const semantic = {
     schema: "HistoricalSourceManifest" as const,
     authority: "historical-reference" as const,

@@ -5,6 +5,14 @@ import type { JavaScriptStaticCoverage } from "./javascriptStaticCoverage.js";
 /** Token semantics shared by bundle producers and worker admission. */
 export const JAVASCRIPT_AST_FINGERPRINT_ALGORITHM = "babel-ast-v3";
 
+/**
+ * Marks a Vite preload dependency written relative to the build output
+ * directory (Vite's absolute-base form, such as `assets/chunk.js`). The
+ * runtime helper prefixes the configured base, so the path is not a module
+ * specifier and not relative to the importing chunk.
+ */
+export const VITE_OUTPUT_DEPENDENCY_PREFIX = "vite-output:";
+
 /** Static syntax context retained for later artifact path resolution. */
 export type JavaScriptStaticPathContext =
   | "module-specifier"
@@ -32,10 +40,18 @@ interface JavaScriptStaticReferenceState {
     | "worker"
     | "service-worker";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   /** Source-relative filename selected by a proven createRequire factory. */
   readonly resolution_base_path?: string;
+  /**
+   * Which loader produced this reference. A `factory-loader` specifier is a
+   * recovered bundle module key, so it names a module inside the artifact even
+   * when it reads like a package name.
+   */
+  readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
+  /** The literal is observed but the CommonJS loader is not established. */
+  readonly loader_authority?: "candidate";
   readonly location: JavaScriptSourceRange;
 }
 
@@ -59,7 +75,7 @@ export interface JavaScriptStaticEndpoint {
   /** The request target is unresolved source text rather than an exact value. */
   readonly resolution?: "partial";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -76,7 +92,7 @@ export interface JavaScriptStaticStorage {
   readonly name: string | null;
   readonly mechanism: string;
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -114,11 +130,14 @@ export interface JavaScriptBundlerRegistration {
 /** Static Electron role paths discovered from package or JavaScript syntax. */
 export interface JavaScriptRolePath {
   readonly role: "preload" | "renderer";
+  readonly loader_authority?: "candidate";
   readonly path: string;
   readonly resolution_context: JavaScriptStaticPathContext;
+  /** Inferred from intact source-directory intrinsics; not a runtime/bundler guarantee. */
+  readonly path_base?: "source-directory";
   readonly mechanism: string;
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -127,13 +146,15 @@ export interface JavaScriptRolePath {
 export interface JavaScriptStaticAnalysis {
   /** Established overall summary; syntax alone is reported in analysis_coverage. */
   readonly parse_status: "complete" | "partial" | "failed";
-  /** Historical facts omit this measurement; consumers must not infer it. */
-  readonly analysis_coverage?: JavaScriptStaticCoverage;
+  readonly analysis_coverage: JavaScriptStaticCoverage;
   readonly parse_error_count: number;
   readonly visited_ast_nodes: number;
   readonly references: readonly JavaScriptStaticReference[];
   readonly endpoints: readonly JavaScriptStaticEndpoint[];
-  /** Missing in historical analyses; absence means unmeasured route coverage. */
+  /**
+   * Absent when a worker checkpoint could not retain the route facts within
+   * its byte ceiling; absence means unmeasured route coverage.
+   */
   readonly routes?: JavaScriptRouteSourceFacts;
   readonly storage: readonly JavaScriptStaticStorage[];
   readonly bundler_registrations: readonly JavaScriptBundlerRegistration[];
@@ -144,6 +165,7 @@ export interface JavaScriptStaticAnalysis {
   }[];
   readonly vendors: readonly string[];
   readonly electron: ElectronStaticFindings;
+  readonly loaderCondition?: string;
   readonly limitations: readonly string[];
 }
 

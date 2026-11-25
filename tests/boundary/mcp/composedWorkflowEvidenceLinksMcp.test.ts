@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { createServer } from "../../../src/server/createServer.js";
@@ -5,21 +6,30 @@ import { silentLogger } from "../../../src/logger.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import { composedWorkflowFixture } from "../../fixtures/composedWorkflowEvidence.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("returns the same consumed atomic provenance through CLI application and MCP boundaries", async () => {
   const cli = await composedWorkflowFixture();
   const direct = parseEvidence(
-    await runDirectAnalysis(cli.dependencies, cli.path, "binary_overview", {}),
+    await runDirectAnalysis(
+      cli.dependencies,
+      cli.path,
+      "binary_overview",
+      {},
+    ).then(projectCliAnalysisResult),
   );
   const fixture = await composedWorkflowFixture();
   const server = createServer(
     { kind: "session", session: fixture.session },
     { logger: silentLogger },
   );
-  const client = new Client({
-    name: "workflow-evidence-links",
-    version: "1.0.0",
-  });
+  const client = new Client(
+    {
+      name: "workflow-evidence-links",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

@@ -1,8 +1,11 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
+import { mkdir, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 import { build } from "plist";
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
@@ -15,19 +18,8 @@ import {
   createNativeDispatchBinarySession,
 } from "../../../src/composition/binary.js";
 
-const temporaryDirectories: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
-
-it("routes a CLI app resource path through the resource session and preserves null target identity", async () => {
-  const bundlePath = await mkdtemp(join(tmpdir(), "rea-cli-resource-root-"));
-  temporaryDirectories.push(bundlePath);
+it("routes a CLI app resource path through the resource session and keeps the target identity unknown", async () => {
+  const bundlePath = await createTestTempDirectory("rea-cli-resource-root-");
   await mkdir(join(bundlePath, "Resources"));
   await writeFile(
     join(bundlePath, "Info.plist"),
@@ -59,10 +51,14 @@ it("routes a CLI app resource path through the resource session and preserves nu
     bundlePath,
     "inspect_keyed_archive",
     { path: "Resources/Archive.plist" },
-  );
+  ).then(projectCliAnalysisResult);
   expect(result).toMatchObject({
     operation: "inspect_keyed_archive",
-    subject: null,
+    subject: {
+      identity: unknownTarget("not-observed"),
+      name: null,
+      local_path: null,
+    },
     normalized_result: {
       target_sha256: null,
       resource_root: { canonical_path: bundlePath, executable_sha256: null },
@@ -71,8 +67,7 @@ it("routes a CLI app resource path through the resource session and preserves nu
 });
 
 it("reports resource capabilities from their providers on supported and unsupported hosts", async () => {
-  const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-capabilities-"));
-  temporaryDirectories.push(rootPath);
+  const rootPath = await createTestTempDirectory("rea-resource-capabilities-");
   await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
 
   for (const [platform, expected] of [

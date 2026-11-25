@@ -1,10 +1,15 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { NATIVE_INVENTORY_OPERATIONS } from "../../../src/domain/native/nativeInventory.js";
 import { ok } from "../../../src/domain/result.js";
@@ -12,6 +17,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const procedureRows = [
   {
@@ -25,11 +31,12 @@ const procedureRows = [
     procedure: { external: false, thunk: false, thunk_target: null },
   },
 ];
-// Ghidra 12.1.4 search_procedures capture from the source-owned PowerPC DOL.
+// Symbols came from the source-owned PowerPC DOL capture; classification models the updated bridge output.
 const searchProcedureRows = [
   {
     address: "0x80003100",
     value: "FUN_80003100",
+    procedure: { external: false, thunk: false, thunk_target: null },
     symbol: {
       primary: true,
       dynamic: false,
@@ -41,6 +48,7 @@ const searchProcedureRows = [
   {
     address: "0x80003130",
     value: "__start",
+    procedure: { external: false, thunk: false, thunk_target: null },
     symbol: {
       primary: true,
       dynamic: false,
@@ -82,9 +90,7 @@ it("shares complete/summary source identity and advertised contracts across all 
       if (operation === "search_procedures")
         return Promise.resolve(ok(searchProcedureRows));
       if (operation === "search_strings")
-        return Promise.resolve(
-          ok(stringRows.map(({ address, value }) => ({ address, value }))),
-        );
+        return Promise.resolve(ok(stringRows));
       const result =
         operation === "list_names"
           ? nameRows
@@ -98,50 +104,47 @@ it("shares complete/summary source identity and advertised contracts across all 
   const tools = (await harness.mcp.listTools()).tools;
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const viewTool = tools.find((tool) => tool.name === "inspect_analysis_view");
-  if (viewTool?.outputSchema === undefined)
-    throw new Error("Missing view schema");
+  if (viewTool === undefined) throw new Error("Missing view schema");
   const viewInputSchema: Record<string, unknown> = viewTool.inputSchema;
-  const viewOutputSchema: Record<string, unknown> = viewTool.outputSchema;
+  const viewOutputSchema: Record<string, unknown> = canonicalOutputSchema(
+    viewTool.name,
+  );
   expect(ajv.validateSchema(viewInputSchema)).toBe(true);
   expect(ajv.validateSchema(viewOutputSchema)).toBe(true);
   for (const operation of NATIVE_INVENTORY_OPERATIONS) {
     const contract = toolContract(operation);
     const advertised = tools.find((tool) => tool.name === operation);
-    if (advertised?.outputSchema === undefined)
-      throw new Error("Missing operation schema");
+    if (advertised === undefined) throw new Error("Missing operation schema");
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const parameters = operation.startsWith("search_")
       ? { pattern: ".", mode: "regex" }
       : {};
-    const completeReply = await harness.mcp.callTool({
-      name: operation,
-      arguments: parameters,
-    });
+    const completeReply = await harness.mcp.callTool(
+      { name: operation, arguments: parameters },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
     if (completeReply.isError) throw new Error(JSON.stringify(completeReply));
-    expect(
-      ajv.validate(outputSchema, completeReply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const complete = parseEvidence(
       contract.outputSchema.parse(completeReply.structuredContent),
     );
     if (!Array.isArray(complete.normalized_result))
       throw new Error("Expected complete row array");
+    expect(complete.normalized_result.length).toBeGreaterThan(0);
     if (operation === "search_procedures")
       expect(complete.normalized_result).toEqual(searchProcedureRows);
+    if (operation === "search_strings")
+      expect(complete.normalized_result).toEqual(stringRows);
     expect(complete.parameters).not.toHaveProperty("detail");
-    const summaryReply = await harness.mcp.callTool({
-      name: operation,
-      arguments: { ...parameters, detail: "summary" },
-    });
+    const summaryReply = await harness.mcp.callTool(
+      { name: operation, arguments: { ...parameters, detail: "summary" } },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
     if (summaryReply.isError) throw new Error(JSON.stringify(summaryReply));
-    expect(
-      ajv.validate(outputSchema, summaryReply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const summary = parseEvidence(
       contract.outputSchema.parse(summaryReply.structuredContent),
     );
@@ -172,21 +175,20 @@ it("shares complete/summary source identity and advertised contracts across all 
       offset < (complete.normalized_result as unknown[]).length;
       offset++
     ) {
-      const pageReply = await harness.mcp.callTool({
-        name: "inspect_analysis_view",
-        arguments: {
-          source: {
-            kind: "retained-evidence",
-            evidence_id: complete.evidence_id,
+      const pageReply = await harness.mcp.callTool(
+        {
+          name: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: complete.evidence_id,
+            },
+            view: { kind: "native-inventory", offset, limit: 1 },
           },
-          view: { kind: "native-inventory", offset, limit: 1 },
         },
-      });
+        { toolDefinition: withCanonicalOutputSchema(viewTool) },
+      );
       if (pageReply.isError) throw new Error(JSON.stringify(pageReply));
-      expect(
-        ajv.validate(viewOutputSchema, pageReply.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       const page = toolContract("inspect_analysis_view").outputSchema.parse(
         pageReply.structuredContent,
       ).normalized_result;
@@ -204,7 +206,7 @@ it("shares complete/summary source identity and advertised contracts across all 
   ).toHaveLength(10);
 });
 
-it("recovers an oversized complete inventory through a working retained page without another provider read", async () => {
+it("summarizes an inventory above the inline bound when detail is omitted, and recovers a requested complete one through a retained page", async () => {
   const items = Array.from({ length: 1000 }, (_, index) => ({
     address: `0x${(0x1000 + index * 0x2000).toString(16)}`,
     value: "x".repeat(7000),
@@ -214,13 +216,25 @@ it("recovers an oversized complete inventory through a working retained page wit
       byte_length: 7001,
     },
   }));
-  const harness = await connectGhidraMcp("native-inventory-capacity", () =>
-    Promise.resolve(ok(items)),
+  const harness = await connectGhidraMcp(
+    "native-inventory-capacity",
+    () => Promise.resolve(ok(items)),
+    { testDelivery: "budgeted" },
   );
   onTestFinished(() => harness.close());
-  const complete = await harness.mcp.callTool({
+  const omitted = await harness.mcp.callTool({
     name: "list_strings",
     arguments: {},
+  });
+  if (omitted.isError) throw new Error(JSON.stringify(omitted));
+  const sized = parseEvidence(omitted.structuredContent);
+  expect(sized).toMatchObject({
+    operation: "inspect_analysis_view",
+    normalized_result: { kind: "summary", summary: { row_count: 1000 } },
+  });
+  const complete = await harness.mcp.callTool({
+    name: "list_strings",
+    arguments: { detail: "complete" },
   });
   expect(complete.isError).toBe(true);
   const error = parseMcpToolError(complete).error;
@@ -248,7 +262,7 @@ it("recovers an oversized complete inventory through a working retained page wit
     throw new Error("Expected inventory page");
   expect(page.rows.map((row) => row.record)).toEqual(items.slice(0, 64));
   expect(page.coverage).toMatchObject({ total: 1000, next_offset: 64 });
-  expect(harness.calls).toEqual(["list_strings"]);
+  expect(harness.calls).toEqual(["list_strings", "list_strings"]);
   const summaryReply = await harness.mcp.callTool({
     name: "list_strings",
     arguments: { detail: "summary" },
@@ -257,6 +271,169 @@ it("recovers an oversized complete inventory through a working retained page wit
   expect(
     parseEvidence(summaryReply.structuredContent).normalized_result,
   ).toMatchObject({ summary: { row_count: 1000 } });
+});
+
+it("inlines a small inventory, summarizes a large one, and keeps it complete when no paged summary is available", async () => {
+  const rows = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      value: `procedure_${String(index).padStart(4, "0")}`,
+      procedure: { external: false, thunk: false, thunk_target: null },
+    }));
+  let result = rows(2);
+  const harness = await connectGhidraMcp(
+    "native-inventory-size-aware",
+    () => Promise.resolve(ok(result)),
+    { testDelivery: "budgeted" },
+  );
+  onTestFinished(() => harness.close());
+  const small = await harness.mcp.callTool({
+    name: "list_procedures",
+    arguments: {},
+  });
+  if (small.isError) throw new Error(JSON.stringify(small));
+  expect(parseEvidence(small.structuredContent)).toMatchObject({
+    operation: "list_procedures",
+    normalized_result: result,
+  });
+  result = rows(600);
+  const large = await harness.mcp.callTool({
+    name: "list_procedures",
+    arguments: {},
+  });
+  if (large.isError) throw new Error(JSON.stringify(large));
+  const summary = parseEvidence(large.structuredContent);
+  expect(summary).toMatchObject({
+    operation: "inspect_analysis_view",
+    normalized_result: { kind: "summary", summary: { row_count: 600 } },
+  });
+  const forced = await harness.mcp.callTool({
+    name: "list_procedures",
+    arguments: { detail: "complete" },
+  });
+  if (forced.isError) throw new Error(JSON.stringify(forced));
+  expect(parseEvidence(forced.structuredContent)).toMatchObject({
+    operation: "list_procedures",
+    normalized_result: result,
+  });
+
+  // A session scope without inspect_analysis_view could not page a summary.
+  const unpaged = await connectGhidraMcp(
+    "native-inventory-size-aware-unpaged",
+    () => Promise.resolve(ok(rows(600))),
+    {
+      environment: { REA_MCP_TOOL_FAMILIES: "session,direct,enhanced" },
+      testDelivery: "budgeted",
+    },
+  );
+  onTestFinished(() => unpaged.close());
+  const unpagedReply = await unpaged.mcp.callTool({
+    name: "list_procedures",
+    arguments: {},
+  });
+  if (unpagedReply.isError) throw new Error(JSON.stringify(unpagedReply));
+  expect(parseEvidence(unpagedReply.structuredContent)).toMatchObject({
+    operation: "list_procedures",
+  });
+
+  // Without a retaining session there is no summary to page, so omitted
+  // detail keeps the complete Evidence whatever its size.
+  const server = createServer({
+    kind: "fixed",
+    analysis: {
+      execute: async () =>
+        ok(
+          createAnalysisExecution(rows(600), {
+            id: "fixture",
+            name: "Fixture",
+            version: "1",
+          }),
+        ),
+    },
+  });
+  const client = new Client(
+    { name: "unretained-size-aware", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const unretained = await client.callTool({
+    name: "list_procedures",
+    arguments: {},
+  });
+  if (unretained.isError) throw new Error(JSON.stringify(unretained));
+  expect(parseEvidence(unretained.structuredContent)).toMatchObject({
+    operation: "list_procedures",
+  });
+});
+
+it("inlines small xrefs, summarizes large ones and pages them through native-observation", async () => {
+  const addresses = (count: number) =>
+    Array.from(
+      { length: count },
+      (_, index) => `0x${(0x401000 + index * 4).toString(16)}`,
+    );
+  let result = addresses(2);
+  const harness = await connectGhidraMcp(
+    "xrefs-agent-budget",
+    () => Promise.resolve(ok(result)),
+    { testDelivery: "budgeted" },
+  );
+  onTestFinished(() => harness.close());
+  const small = await harness.mcp.callTool({
+    name: "xrefs",
+    arguments: { address: "0x400000" },
+  });
+  if (small.isError) throw new Error(JSON.stringify(small));
+  expect(parseEvidence(small.structuredContent)).toMatchObject({
+    operation: "xrefs",
+    normalized_result: result,
+  });
+  result = addresses(4000);
+  const large = await harness.mcp.callTool({
+    name: "xrefs",
+    arguments: { address: "0x400000" },
+  });
+  if (large.isError) throw new Error(JSON.stringify(large));
+  const summary = parseEvidence(large.structuredContent);
+  expect(summary).toMatchObject({
+    operation: "inspect_analysis_view",
+    normalized_result: { kind: "summary", parent_operation: "xrefs" },
+  });
+  const parentId = (
+    summary.normalized_result as { readonly parent_evidence_id: string }
+  ).parent_evidence_id;
+  const page = await harness.mcp.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: parentId },
+      view: { kind: "native-observation", offset: 3998, limit: 10 },
+    },
+  });
+  if (page.isError) throw new Error(JSON.stringify(page));
+  expect(parseEvidence(page.structuredContent).normalized_result).toMatchObject(
+    {
+      kind: "native-observation",
+      parent_operation: "xrefs",
+      coverage: { examined: 2, total: 4000, next_offset: null },
+    },
+  );
+  const forced = await harness.mcp.callTool({
+    name: "xrefs",
+    arguments: { address: "0x400000", detail: "complete" },
+  });
+  if (forced.isError) throw new Error(JSON.stringify(forced));
+  expect(parseEvidence(forced.structuredContent)).toMatchObject({
+    operation: "xrefs",
+    evidence_id: parentId,
+    normalized_result: result,
+  });
 });
 
 it("refuses summary before provider work when no retaining session is configured", async () => {
@@ -276,10 +453,13 @@ it("refuses summary before provider work when no retaining session is configured
       },
     },
   });
-  const client = new Client({
-    name: "unretained-native-summary",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "unretained-native-summary",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -296,6 +476,7 @@ it("refuses summary before provider work when no retaining session is configured
     ["procedure_callers", { procedure: "fixture_main" }],
     ["resolve_containing_procedure", { address: "0x401001" }],
     ["get_call_graph", { address: "fixture_main" }],
+    ["xrefs", { address: "0x401001" }],
   ] as const) {
     const reply = await client.callTool({
       name,
@@ -312,7 +493,7 @@ it("projects imported inventories with an unknown artifact without inventing a p
     throw new Error("Retained views must not open a provider");
   });
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "borrowed.native", name: "Borrowed engine", version: "1" },
     {
       operation: "list_procedures",
@@ -326,7 +507,10 @@ it("projects imported inventories with an unknown artifact without inventing a p
   const recorded = session.recordEvidence(source);
   if (!recorded.ok) throw recorded.error;
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unbound-native-views", version: "1" });
+  const client = new Client(
+    { name: "unbound-native-views", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -351,7 +535,9 @@ it("projects imported inventories with an unknown artifact without inventing a p
     if (reply.isError) throw new Error(JSON.stringify(reply));
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence).toMatchObject({
-      subject: null,
+      subject: {
+        identity: { kind: "unknown", reason: "derived-from-linked-evidence" },
+      },
       locations: [],
       evidence_links: [source.evidence_id],
       normalized_result: {

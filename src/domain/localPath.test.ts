@@ -1,4 +1,6 @@
 import { isAbsolute, win32 } from "node:path";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
 
 import { expect, it } from "vitest";
 
@@ -6,6 +8,10 @@ import {
   absoluteLocalPathStringSchema,
   windowsAbsolutePathPattern,
 } from "./localPath.js";
+
+import { inspectErlangBeamInputSchema } from "./erlang/beam.js";
+import { inspectMavenGradleMetadataInputSchema } from "./java/mavenGradleMetadata.js";
+import { inspectNugetNupkgInputSchema } from "./nuget/nupkg.js";
 
 const PATHS = [
   "/absolute/path",
@@ -20,12 +26,80 @@ const PATHS = [
   "file:///absolute/path",
 ];
 
+it.each([
+  {
+    schema: inspectErlangBeamInputSchema,
+    name: "app.beam",
+    withNul: "/artifacts/app\0.beam",
+    description: "Absolute filesystem path to a BEAM file",
+  },
+  {
+    schema: inspectMavenGradleMetadataInputSchema,
+    name: "pom.xml",
+    withNul: "/artifacts/pom\0.xml",
+    description:
+      "Absolute filesystem path to a Maven pom.xml or Gradle .module metadata file",
+  },
+  {
+    schema: inspectNugetNupkgInputSchema,
+    name: "pkg.nupkg",
+    withNul: "/artifacts/pkg\0.nupkg",
+    description: "Absolute filesystem path to a NuGet .nupkg package",
+  },
+])(
+  "applies the shared absolute local-path policy to $name",
+  ({ schema, name, withNul, description }) => {
+    for (const path of [name, "", withNul])
+      expect(schema.safeParse({ path }).success).toBe(false);
+    expect(schema.safeParse({ path: `/artifacts/${name}` }).success).toBe(true);
+
+    const target = { target: "draft-2020-12" } as const;
+    const shared =
+      absoluteLocalPathStringSchema["~standard"].jsonSchema.input(target);
+    const advertised = schema["~standard"].jsonSchema.input(target);
+    const path = (
+      advertised.properties as Record<string, Record<string, unknown>>
+    ).path;
+    const {
+      $schema: _schema,
+      description: _sharedDescription,
+      ...sharedPolicy
+    } = shared;
+    const { description: pathDescription, ...pathPolicy } = path ?? {};
+    expect(pathPolicy).toEqual(sharedPolicy);
+    expect(pathDescription).toBe(description);
+  },
+);
+
+it("serializes portable path constraints for catalogs shipped to another host", () => {
+  const ajv = new Ajv2020({ strict: false });
+  for (const io of ["input", "output"] as const) {
+    const schema = JSON.parse(
+      JSON.stringify(z.toJSONSchema(absoluteLocalPathStringSchema, { io })),
+    );
+    const validate = ajv.compile(schema);
+    for (const path of PATHS.filter((path) => win32.isAbsolute(path)))
+      expect(validate(path), `${io}: ${path}`).toBe(true);
+    for (const path of ["", "relative/path", "C:relative/path", "/tmp/\0"])
+      expect(validate(path), `${io}: ${path}`).toBe(false);
+  }
+});
+
 it("matches the host path module for absolute local paths", () => {
+  const checked: string[] = [];
   for (const path of PATHS) {
+    checked.push(path);
     expect(absoluteLocalPathStringSchema.safeParse(path).success).toBe(
       isAbsolute(path),
     );
   }
+  expect(checked).toEqual(
+    expect.arrayContaining([
+      "/absolute/path",
+      "relative/path",
+      "file:///absolute/path",
+    ]),
+  );
   expect(absoluteLocalPathStringSchema.safeParse("").success).toBe(false);
   expect(
     absoluteLocalPathStringSchema.safeParse("/absolute/with\0nul").success,
@@ -40,8 +114,31 @@ it("keeps the Windows absolute-path pattern valid in every client mode", () => {
       () => new RegExp(windowsAbsolutePathPattern.source, flags),
       flags,
     ).not.toThrow();
-  for (const path of PATHS)
+  const checked: string[] = [];
+  for (const path of PATHS) {
+    checked.push(path);
     expect(windowsAbsolutePathPattern.test(path), path).toBe(
       win32.isAbsolute(path),
     );
+  }
+  expect(checked).toEqual(
+    expect.arrayContaining([
+      "C:\\absolute\\path",
+      "C:relative/path",
+      "/absolute/path",
+    ]),
+  );
+});
+
+it("rejects unpaired surrogates while preserving representable Unicode paths", () => {
+  for (const path of ["/tmp/\ud800", "/tmp/\udc00", "/tmp/\ud800x"]) {
+    expect(absoluteLocalPathStringSchema.safeParse(path).success, path).toBe(
+      false,
+    );
+  }
+  for (const path of ["/tmp/😀", "/tmp/�", "/tmp/ spaced name "]) {
+    expect(absoluteLocalPathStringSchema.safeParse(path).success, path).toBe(
+      true,
+    );
+  }
 });

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import type { z } from "zod";
-import type { functionBodySchema } from "../hopperValues.js";
+import type { functionBodySchema } from "../native/functionBody.js";
 import type { nativeByteReadSchema } from "./nativeByteRead.js";
 import { addressCoordinate } from "./addressCoordinate.js";
+import { invariantViolation } from "../internalInvariant.js";
 
 export type NativeMatchingCheckpoint = (bytes?: number) => Promise<void>;
 interface Interval {
@@ -89,7 +90,7 @@ export class FunctionByteCoverage {
     evidenceId: string,
   ): Promise<void> {
     if (this.#prepared)
-      throw new TypeError(
+      throw invariantViolation(
         "Cannot append byte observations after fingerprinting",
       );
     if (read.returned_bytes === 0) return;

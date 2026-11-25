@@ -1,8 +1,10 @@
+import { createTestProcessCaptureResourceScope } from "../../../tests/fixtures/processCaptureResourceScope.js";
 import { requirePermissionDenial } from "../../../tests/fixtures/permissionDenial.js";
 import {
   chmod,
   mkdir,
   mkdtemp,
+  realpath,
   readFile,
   rm,
   symlink,
@@ -173,7 +175,7 @@ it.skipIf(process.platform === "win32")(
       expect(
         snapshot.files.find(({ path }) => path === "root_0:readable.txt")
           ?.sha256,
-      ).not.toBeNull();
+      ).toEqual(expect.any(String));
       expect(
         snapshot.files.find(({ path }) => path === "root_0:unreadable.txt"),
       ).toMatchObject({ type: "file", size: 17, sha256: null });
@@ -576,6 +578,7 @@ it("allocates the observer directory before baseline and excludes it before entr
       createTemporaryRoot: () => mkdtemp(join(root, "rea-process-")),
       cleanup: (path) => rm(path, { recursive: true, force: true }),
     },
+    createTestProcessCaptureResourceScope(),
   );
   try {
     const after = await snapshotRoots(scenario, undefined, prepared.before, {
@@ -597,6 +600,123 @@ it("allocates the observer directory before baseline and excludes it before entr
     await rm(prepared.temporaryRoot, { recursive: true, force: true });
   }
 });
+
+it.each(["nested", "outside", "no-roots"] as const)(
+  "treats a removed observer directory as absent during the final snapshot (%s)",
+  async (placement) => {
+    const fixture = await createTestTempDirectory("rea-observer-removed-");
+    const root = join(fixture, "selected");
+    await mkdir(root);
+    await writeFile(join(root, "kept.txt"), "retain me");
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      filesystem_observation_paths: placement === "no-roots" ? [] : [root],
+      limits: { files: 2 },
+    });
+    const prepared = await prepareProcessCapture(
+      scenario,
+      undefined,
+      snapshotRoots,
+      {
+        createTemporaryRoot: () =>
+          mkdtemp(
+            join(placement === "nested" ? root : fixture, "rea-process-"),
+          ),
+        cleanup: (path) => rm(path, { recursive: true, force: true }),
+      },
+      createTestProcessCaptureResourceScope(),
+    );
+    try {
+      const expectedPaths =
+        placement === "no-roots" ? [] : ["root_0:.", "root_0:kept.txt"];
+      expect(prepared.before.files.map(({ path }) => path).sort()).toEqual(
+        [...expectedPaths].sort(),
+      );
+      expect(prepared.before.truncated).toBe(false);
+
+      await rm(prepared.temporaryRoot, { recursive: true, force: true });
+      const final = await snapshotRoots(scenario, undefined, prepared.before, {
+        observerPaths: [prepared.temporaryRoot],
+      });
+
+      expect(final.files.map(({ path }) => path).sort()).toEqual(
+        [...expectedPaths].sort(),
+      );
+      expect(final.truncated).toBe(false);
+      expect(final.coverage.unobserved_subtrees).toEqual([]);
+      if (placement !== "no-roots") {
+        expect(
+          final.files.find(({ path }) => path === "root_0:kept.txt"),
+        ).toEqual(
+          prepared.before.files.find(({ path }) => path === "root_0:kept.txt"),
+        );
+      }
+    } finally {
+      await rm(prepared.temporaryRoot, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "treats an observer path below a regular file as absent",
+  async () => {
+    const fixture = await createTestTempDirectory(
+      "rea-observer-not-directory-",
+    );
+    const root = join(fixture, "selected");
+    const blocker = join(fixture, "blocker.txt");
+    await mkdir(root);
+    await writeFile(join(root, "kept.txt"), "retain me");
+    await writeFile(blocker, "not a directory");
+    const observerPath = join(blocker, "capture");
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      filesystem_observation_paths: [root],
+    });
+    try {
+      await expect(realpath(observerPath)).rejects.toMatchObject({
+        code: "ENOTDIR",
+      });
+      const snapshot = await snapshotRoots(scenario, undefined, undefined, {
+        observerPaths: [observerPath],
+      });
+
+      expect(snapshot.files.map(({ path }) => path).sort()).toEqual([
+        "root_0:.",
+        "root_0:kept.txt",
+      ]);
+      expect(snapshot.coverage.unobserved_subtrees).toEqual([]);
+      expect(snapshot.truncated).toBe(false);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "propagates unexpected observer path resolution errors",
+  async () => {
+    const fixture = await createTestTempDirectory("rea-observer-symlink-loop-");
+    const root = join(fixture, "selected");
+    const loop = join(fixture, "observer-loop");
+    await mkdir(root);
+    await writeFile(join(root, "kept.txt"), "retain me");
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      filesystem_observation_paths: [root],
+    });
+    try {
+      await symlink(loop, loop);
+      await expect(
+        snapshotRoots(scenario, undefined, undefined, {
+          observerPaths: [loop],
+        }),
+      ).rejects.toMatchObject({ code: "ELOOP" });
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "excludes the exact observer path through parent aliases while retaining same-name target directories",
@@ -630,5 +750,92 @@ it.skipIf(process.platform === "win32")(
       "root_0:other/observer-run/target.txt",
     ]);
     expect(snapshot.coverage.enumeration_truncated).toBe(false);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves non-UTF-8 symlink target bytes through snapshot effects and schema parsing",
+  async () => {
+    const { processFilesystemSnapshotSchema } =
+      await import("../../domain/process/processCapture.js");
+    const root = await createTestTempDirectory("rea-fs-symlink-bytes-");
+    const path = join(root, "link");
+    const first = Buffer.from([0x61, 0xff]);
+    const second = Buffer.from([0x61, 0xfe]);
+    await symlink(first, path);
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      filesystem_observation_paths: [root],
+    });
+    const before = processFilesystemSnapshotSchema.parse(
+      await snapshotRoots(scenario),
+    );
+    await rm(path);
+    await symlink(second, path);
+    const after = processFilesystemSnapshotSchema.parse(
+      await snapshotRoots(scenario),
+    );
+    const link = before.files.find((file) => file.type === "symlink");
+    expect(link).toMatchObject({
+      symlink_target: null,
+      symlink_target_hex: "61ff",
+    });
+    expect(
+      classifyFilesystemEffects(before, after).find(
+        ({ path }) => path === "root_0:link",
+      )?.status,
+    ).toBe("modified");
+    expect(
+      classifyFilesystemEffects(before, before).find(
+        ({ path }) => path === "root_0:link",
+      )?.status,
+    ).toBe("unchanged");
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...before,
+        files: [{ ...link, symlink_target: "a�" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...before,
+        files: [{ ...link, symlink_target_hex: "f" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...before,
+        files: [{ ...link, symlink_target_hex: undefined }],
+      }).success,
+    ).toBe(false);
+    const textOnlyAdmissions: boolean[] = [];
+    for (const target of ["target", "a�"]) {
+      await rm(path);
+      await symlink(target, path);
+      const valid = processFilesystemSnapshotSchema.parse(
+        await snapshotRoots(scenario),
+      );
+      const observed = valid.files.find((file) => file.type === "symlink");
+      expect(observed).toMatchObject({
+        symlink_target: target,
+        symlink_target_hex: Buffer.from(target).toString("hex"),
+      });
+      expect(
+        classifyFilesystemEffects(valid, valid).find(
+          ({ path }) => path === "root_0:link",
+        )?.status,
+      ).toBe("unchanged");
+      textOnlyAdmissions.push(
+        processFilesystemSnapshotSchema.safeParse({
+          ...valid,
+          files: valid.files.map((file) =>
+            file.type === "symlink"
+              ? { ...file, symlink_target_hex: undefined }
+              : file,
+          ),
+        }).success,
+      );
+    }
+    expect(textOnlyAdmissions).toEqual([false, false]);
   },
 );

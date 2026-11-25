@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { FUNCTION_COMPARISON_EVIDENCE } from "../contracts/investigationExamples.js";
 import {
@@ -5,7 +6,11 @@ import {
   findChangedBehavior,
   type ChangedBehaviorResult,
 } from "./changedBehavior.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  evidenceSubjectInput,
+} from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 
@@ -33,7 +38,7 @@ const comparison = (
 ): Evidence => {
   const process = operation === "compare_process_captures";
   return createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: process ? "rea-process" : "rea-artifact-comparison",
       name: process
@@ -69,13 +74,21 @@ const comparison = (
   );
 };
 
+type FixtureStatus =
+  | "unchanged"
+  | "changed"
+  | "unknown"
+  | "truncated"
+  | "contradiction";
+
 const processResult = (
   overrides: Partial<{
-    status: "unchanged" | "changed" | "unknown" | "truncated";
-    terminal: "unchanged" | "changed" | "unknown" | "truncated";
-    interaction: "unchanged" | "changed" | "unknown" | "truncated";
-    exit: "unchanged" | "changed" | "unknown" | "truncated";
-    process: "unchanged" | "changed" | "unknown" | "truncated";
+    status: FixtureStatus;
+    terminal: FixtureStatus;
+    interaction: FixtureStatus;
+    exit: FixtureStatus;
+    process: FixtureStatus;
+    first_divergence: JsonValue;
   }> = {},
 ): JsonValue => ({
   status: overrides.status ?? "unchanged",
@@ -85,7 +98,8 @@ const processResult = (
   filesystem: "unchanged",
   process: overrides.process ?? "unchanged",
   first_divergence:
-    overrides.status === "changed"
+    overrides.first_divergence ??
+    (overrides.status === "changed"
       ? {
           status: "found",
           dimension: "terminal",
@@ -95,9 +109,11 @@ const processResult = (
           left: "left",
           right: "right",
         }
-      : overrides.status === "truncated" || overrides.status === "unknown"
+      : overrides.status === "truncated" ||
+          overrides.status === "unknown" ||
+          overrides.status === "contradiction"
         ? { status: "unknown", reason: "Incomplete fixture." }
-        : { status: "none" },
+        : { status: "none" }),
   limitations: [],
 });
 
@@ -228,14 +244,67 @@ describe("changed behavior", () => {
     });
     expect(aggregate([changed, unknown]).result).toEqual(result);
   });
+});
 
-  it("uses complete inline artifact deltas as static candidates", () => {
-    const complete = comparison("compare_artifacts", artifactResult());
-    expect(aggregate([complete]).result.findings.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ dimension: "artifact:main.js" }),
-      ]),
+describe("changed behavior withheld equality", () => {
+  it("withholds equality when residual unknowns prevent proving no divergence", () => {
+    const reason =
+      "Residual unknowns prevent proving that no divergence occurred.";
+    const evidence = comparison(
+      "compare_process_captures",
+      processResult({ first_divergence: { status: "unknown", reason } }),
     );
+    expect(aggregate([evidence]).result).toMatchObject({
+      behavior_status: "unknown",
+      summary: { observed_changes: 0, contradictions: 0, unresolved: 1 },
+      findings: {
+        items: [
+          {
+            scope: "runtime",
+            dimension: "first_divergence",
+            classification: "unresolved_branch",
+            status: "unknown",
+            source_comparison_id: evidence.evidence_id,
+            limitations: [reason],
+          },
+        ],
+      },
+    });
+  });
+
+  it("keeps a changed comparison observed when only its localization is unknown", () => {
+    const evidence = comparison(
+      "compare_process_captures",
+      processResult({
+        status: "changed",
+        terminal: "changed",
+        first_divergence: { status: "unknown", reason: "Unlocalized." },
+      }),
+    );
+    expect(aggregate([evidence]).result).toMatchObject({
+      behavior_status: "observed_changed",
+      summary: { observed_changes: 1, unresolved: 0 },
+    });
+  });
+
+  it("reports a process contradiction as a contradiction, never equality", () => {
+    const evidence = comparison(
+      "compare_process_captures",
+      processResult({ status: "contradiction", terminal: "contradiction" }),
+    );
+    expect(aggregate([evidence]).result).toMatchObject({
+      behavior_status: "unknown",
+      summary: { observed_changes: 0, contradictions: 1, unresolved: 0 },
+      findings: {
+        items: [
+          {
+            dimension: "terminal",
+            classification: "contradiction",
+            status: "contradiction",
+          },
+        ],
+      },
+    });
   });
 });
 
@@ -264,7 +333,7 @@ describe("changed-behavior input and Evidence validation", () => {
 
   it("rejects a comparison operation unsupported by this workflow", () => {
     const bundle = createEvidence(
-      undefined,
+      unknownTarget("derived-from-linked-evidence"),
       { id: "rea-bundle-comparison", name: "Bundle", version: "1" },
       {
         predicateType: "rea.bundle-comparison",
@@ -346,19 +415,23 @@ describe("changed-behavior input and Evidence validation", () => {
       ...dimension,
       evidence_links: [...dimension.evidence_links, `ev_${"f".repeat(64)}`],
     }));
-    const danglingNested = createEvidence(undefined, base.provider, {
-      predicateType: base.predicate_type,
-      operation: base.operation,
-      parameters: base.parameters,
-      result: functionComparisonResultSchema.parse({
-        ...result,
-        dimensions,
-        changes: dimensions.filter(({ status }) => status !== "unchanged"),
-      }),
-      confidence: base.confidence,
-      authority: base.authority,
-      evidenceLinks: base.evidence_links,
-    });
+    const danglingNested = createEvidence(
+      evidenceSubjectInput(base.subject),
+      base.provider,
+      {
+        predicateType: base.predicate_type,
+        operation: base.operation,
+        parameters: base.parameters,
+        result: functionComparisonResultSchema.parse({
+          ...result,
+          dimensions,
+          changes: dimensions.filter(({ status }) => status !== "unchanged"),
+        }),
+        confidence: base.confidence,
+        authority: base.authority,
+        evidenceLinks: base.evidence_links,
+      },
+    );
     expect(() => aggregate([danglingNested])).toThrowError(
       expect.toSatisfy(
         (error: { _tag?: unknown; message?: unknown; cause?: unknown }) =>

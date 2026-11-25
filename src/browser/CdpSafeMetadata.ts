@@ -1,7 +1,18 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import { cdpStringValue, type UnknownRecord } from "./CdpCaptureValues.js";
+import type { CdpResponseFacts } from "./CdpNetworkEventFacts.js";
 import { structuredFieldToken } from "./StructuredFieldToken.js";
+import { trimEdges } from "../kernel/trimEdges.js";
+
+const isInfraAsciiWhitespace = (character: string): boolean =>
+  character === "\t" ||
+  character === "\n" ||
+  character === "\f" ||
+  character === "\r" ||
+  character === " ";
+
+const isHttpWhitespace = (character: string): boolean =>
+  character === "\t" || character === " ";
 
 type ResponseMetadata = WebPageInspection["metadata"]["responses"][number];
 type LinkMetadata = ResponseMetadata["links"][number];
@@ -16,7 +27,7 @@ type ParsedLink = {
 export const safeResponseMetadata = (
   requestId: string,
   url: string,
-  response: UnknownRecord,
+  response: CdpResponseFacts,
   allowedOrigins: ReadonlySet<string>,
 ): {
   readonly response: ResponseMetadata;
@@ -26,7 +37,7 @@ export const safeResponseMetadata = (
   // RFC 9110 section 5.3: repeated field lines combine as one comma-separated value.
   const field = (name: string): string | undefined =>
     headers.get(name)?.join(", ");
-  const responseUrl = cdpStringValue(response.url) ?? url;
+  const responseUrl = response.url?.source ?? url;
   const parsedLinks = parseLinks(
     headers.get("link"),
     responseUrl,
@@ -53,7 +64,7 @@ export const safeResponseMetadata = (
     response: {
       request_id: requestId,
       url,
-      mime_type: mediaTypeDeclaration(cdpStringValue(response.mimeType)),
+      mime_type: mediaTypeDeclaration(response.mimeType),
       content_length: contentLength(field("content-length")),
       content_encoding: boundedHeader(field("content-encoding")),
       csp,
@@ -61,9 +72,11 @@ export const safeResponseMetadata = (
       policies: {
         coop: structuredFieldToken(field("cross-origin-opener-policy")),
         coep: structuredFieldToken(field("cross-origin-embedder-policy")),
-        corp: policyToken(field("cross-origin-resource-policy")),
+        corp: crossOriginResourcePolicy(field("cross-origin-resource-policy")),
         referrer_policy: referrerPolicy(field("referrer-policy")),
-        x_content_type_options: policyToken(field("x-content-type-options")),
+        x_content_type_options: xContentTypeOptions(
+          field("x-content-type-options"),
+        ),
         permissions_policy_features: permissionFeatures(
           field("permissions-policy"),
         ),
@@ -100,10 +113,15 @@ const normalizedHeaders = (
   return headers;
 };
 
+// CSP3 §2.3.1: base64-value is 1*(ALPHA / DIGIT / "+" / "/" / "-" / "_") *2("=").
+const cspNonceSource = /^'nonce-[a-z0-9+/_-]+={0,2}'$/u;
+const cspHashSource = /^'sha(?:256|384|512)-[a-z0-9+/_-]+={0,2}'$/u;
+
 /**
  * Each field line is a CSP3 serialized policy list, with policies separated by
  * commas. Directives of every policy are returned in order; the schema does not
- * record which policy a directive came from.
+ * record which policy a directive came from. Within one policy, CSP3 keeps the
+ * first directive of each name and ignores its repeats.
  */
 const parseCsp = (
   lines: readonly string[] | undefined,
@@ -114,29 +132,37 @@ const parseCsp = (
   let nonceCount = 0;
   let hashCount = 0;
   const policies = (lines ?? []).flatMap((line) => line.split(","));
-  for (const rawDirective of policies.flatMap((policy) => policy.split(";"))) {
-    const [rawName, ...tokens] = rawDirective.trim().split(/\s+/u);
-    const name = (rawName ?? "").toLowerCase();
-    if (!/^[a-z][a-z0-9\x2d]*$/u.test(name)) continue;
-    const sources: ResponseMetadata["csp"]["directives"][number]["sources"] =
-      [];
-    for (const token of tokens) {
-      const lower = token.toLowerCase();
-      if (lower.startsWith("'nonce-")) {
-        nonceCount += 1;
-        continue;
+  for (const policy of policies) {
+    const names = new Set<string>();
+    for (const rawDirective of policy.split(";")) {
+      // CSP3 rejects non-ASCII directives and uses Infra ASCII whitespace.
+      if (/[^\x00-\x7f]/u.test(rawDirective)) continue;
+      const [rawName, ...tokens] = trimEdges(
+        rawDirective,
+        isInfraAsciiWhitespace,
+      ).split(/[\t\n\f\r ]+/u);
+      const name = (rawName ?? "").toLowerCase();
+      if (!/^[a-z][a-z0-9\x2d]*$/u.test(name) || names.has(name)) continue;
+      names.add(name);
+      const sources: ResponseMetadata["csp"]["directives"][number]["sources"] =
+        [];
+      for (const token of tokens) {
+        const lower = token.toLowerCase();
+        // A nonce or hash lookalike is never retained, even when it is not a source.
+        if (
+          lower.startsWith("'nonce-") ||
+          lower.startsWith("'sha256-") ||
+          lower.startsWith("'sha384-") ||
+          lower.startsWith("'sha512-")
+        ) {
+          if (cspNonceSource.test(lower)) nonceCount += 1;
+          else if (cspHashSource.test(lower)) hashCount += 1;
+          continue;
+        }
+        sources.push(cspSource(token, baseUrl, allowedOrigins));
       }
-      if (
-        lower.startsWith("'sha256-") ||
-        lower.startsWith("'sha384-") ||
-        lower.startsWith("'sha512-")
-      ) {
-        hashCount += 1;
-        continue;
-      }
-      sources.push(cspSource(token, baseUrl, allowedOrigins));
+      directives.push({ name, sources });
     }
-    directives.push({ name, sources });
   }
   return { directives, nonce_count: nonceCount, hash_count: hashCount };
 };
@@ -219,7 +245,7 @@ const parseLinks = (
   // Quoted delimiters belong to one field line.
   for (const line of lines ?? []) {
     for (const entry of splitLinkHeader(line)) {
-      const match = /^\s*<([^>]*)>(.*)$/u.exec(entry);
+      const match = /^[\t ]*<([^>]*)>(.*)$/u.exec(entry);
       if (match === null) continue;
       const parameters = linkParameters(match[2] ?? "");
       const anchor = firstLinkParameter(parameters, "anchor");
@@ -240,7 +266,11 @@ const parseLinks = (
           destination_scope: destination.scope,
           context_url: context.url,
           context_scope: context.scope,
-          rel: rel.toLowerCase().split(/\s+/u).filter(Boolean),
+          // RFC 8288 Appendix B.2 uses HTTP RWS (SP / HTAB), not HTML whitespace.
+          rel: rel
+            .toLowerCase()
+            .split(/[\t ]+/u)
+            .filter(Boolean),
           as: boundedHeader(lastLinkParameter(parameters, "as")?.value),
           type: mediaTypeDeclaration(
             firstLinkParameter(parameters, "type")?.value,
@@ -287,15 +317,20 @@ const splitLinkHeader = (
   return entries;
 };
 
+// HTTP OWS/BWS never includes Unicode or HTML-only whitespace.
+const trimHttpWhitespace = (value: string): string =>
+  trimEdges(value, isHttpWhitespace);
+
 const linkParameters = (value: string): readonly LinkParameter[] => {
   const parameters: LinkParameter[] = [];
   for (const raw of splitLinkHeader(value, ";").slice(1)) {
     const separator = raw.indexOf("=");
-    const name = (separator < 0 ? raw : raw.slice(0, separator))
-      .trim()
-      .toLowerCase();
+    const name = trimHttpWhitespace(
+      separator < 0 ? raw : raw.slice(0, separator),
+    ).toLowerCase();
     if (!/^[a-z][a-z0-9\x2d]*$/u.test(name)) continue;
-    const parameter = separator < 0 ? "" : raw.slice(separator + 1).trim();
+    const parameter =
+      separator < 0 ? "" : trimHttpWhitespace(raw.slice(separator + 1));
     parameters.push({ name, value: decodeLinkParameter(parameter) });
   }
   return parameters;
@@ -348,7 +383,9 @@ const permissionFeatures = (value: string | undefined): string[] =>
     ...new Set(
       (value ?? "")
         .split(",")
-        .map((entry) => entry.split("=", 1)[0]?.trim().toLowerCase() ?? "")
+        .map((entry) =>
+          trimHttpWhitespace(entry.split("=", 1)[0] ?? "").toLowerCase(),
+        )
         .filter((feature) => /^[a-z][a-z0-9\x2d]*$/u.test(feature)),
     ),
   ].sort();
@@ -394,34 +431,57 @@ const referrerPolicies = new Set([
 const referrerPolicy = (value: string | undefined): string | null => {
   let policy: string | null = null;
   for (const raw of (value ?? "").split(",")) {
-    const token = raw.trim().toLowerCase();
+    const token = trimHttpWhitespace(raw);
     if (token === "") continue;
-    if (!/^[a-z\x2d]+$/u.test(token)) return null;
+    // Fetch header extraction first validates Referrer-Policy's ABNF;
+    // only syntactically valid extension tokens can be ignored as unknown.
+    if (!/^[A-Za-z\x2d]+$/u.test(token)) return null;
     if (referrerPolicies.has(token)) policy = token;
   }
   return policy;
 };
 
-const policyToken = (value: string | undefined): string | null => {
-  const token = (value ?? "").trim().toLowerCase();
-  return /^[a-z][a-z0-9_.\x2d]*$/u.test(token) ? token : null;
+// Fetch 3.7: `Cross-Origin-Resource-Policy = %s"same-origin" / %s"same-site" /
+// %s"cross-origin"`. The `%s` productions make the value case-sensitive, so `SAME-ORIGIN`
+// declares no policy rather than being folded into the enforced spelling.
+const crossOriginResourcePolicies: ReadonlySet<string> = new Set([
+  "same-origin",
+  "same-site",
+  "cross-origin",
+]);
+
+const crossOriginResourcePolicy = (
+  value: string | undefined,
+): string | null => {
+  const token = trimHttpWhitespace(value ?? "");
+  return crossOriginResourcePolicies.has(token) ? token : null;
+};
+
+// Fetch 3.6: `X-Content-Type-Options = "nosniff"` is case-insensitive, and "determine nosniff"
+// tests `values[0]` of the combined header. A response whose middleware and application each
+// send `nosniff` still declares it, and `nosniff, sniff` still takes the first member.
+const xContentTypeOptions = (value: string | undefined): string | null => {
+  const [first = ""] = (value ?? "").split(",");
+  return trimHttpWhitespace(first).toLowerCase() === "nosniff"
+    ? "nosniff"
+    : null;
 };
 
 // RFC 9110 section 8.6: Content-Length = 1*DIGIT. Other spellings declare no length.
 const contentLength = (value: string | undefined): number | null => {
-  const token = (value ?? "").trim();
+  const token = trimHttpWhitespace(value ?? "");
   if (!/^[0-9]+$/u.test(token)) return null;
   const length = Number(token);
   return Number.isSafeInteger(length) ? length : null;
 };
 
 const boundedHeader = (value: string | undefined): string | null =>
-  value === undefined ? null : value.trim().toLowerCase();
+  value === undefined ? null : trimHttpWhitespace(value).toLowerCase();
 
 // RFC 9110 section 8.3.1: type/subtype are case-insensitive; parameters may not be.
 const mediaTypeDeclaration = (value: string | undefined): string | null => {
   if (value === undefined) return null;
-  const declaration = value.trim();
+  const declaration = trimHttpWhitespace(value);
   const separator = declaration.indexOf(";");
   return separator < 0
     ? declaration.toLowerCase()

@@ -1,5 +1,6 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { expect, it } from "vitest";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { createEvidence, parseEvidence } from "../domain/evidence.js";
@@ -7,6 +8,7 @@ import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 const provider = {
   id: "dossier-fixture",
@@ -63,7 +65,7 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
       sha256: "b".repeat(64),
     };
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       provider,
       {
         operation: "health",
@@ -118,7 +120,8 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
         kind: "address",
         address: "0x401000",
       });
-      if (binding === "no-subject") expect(evidence.subject).toBeNull();
+      if (binding === "no-subject")
+        expect(evidence.subject.identity.kind).toBe("unknown");
       else
         expect(evidence.subject?.local_path).toBe(
           binding === "selected-target" ? target.path : subject.path,
@@ -157,6 +160,49 @@ it.each(["provider-failure", "invalid-dossier"] as const)(
         _tag: "AnalysisOutputError",
         operation: "analyze_function",
       });
-    expect(result.error.partialObservation).toBeUndefined();
+    if (kind === "provider-failure")
+      expect(result.error.partialObservation).toBeUndefined();
+    else {
+      const retained = parseEvidence(result.error.partialObservation);
+      expect(retained.normalized_result).toEqual({ procedure: "incomplete" });
+      expect(retained.subject?.local_path).toBe(target.path);
+    }
   },
 );
+
+it("retains malformed dossier facts and source links through public error projection", async () => {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
+    operation: "health",
+    parameters: {},
+    result: "retained source",
+  });
+  const malformed = { procedure: "incomplete", partial: ["caller fact"] };
+  const result = await executeFunctionAnalysisEvidence(
+    {
+      execute: async () =>
+        ok(
+          createAnalysisExecution(malformed, provider, {
+            subject: null,
+            rawResult: { text: "original provider output" },
+            limitations: ["Incomplete provider response"],
+            locations: [{ kind: "address", address: "0x401000" }],
+            sourceEvidence: [source],
+          }),
+        ),
+    },
+    parameters,
+    target,
+  );
+  if (result.ok) throw new Error("Expected invalid dossier failure");
+  expect(result.sourceEvidence).toEqual([source]);
+  const projected = projectAnalysisError(result.error);
+  const retained = parseEvidence(projected.details?.partial_observation);
+  expect(retained.normalized_result).toEqual(malformed);
+  expect(retained.raw_result).toEqual({ text: "original provider output" });
+  expect(retained.subject.identity.kind).toBe("unknown");
+  expect(retained.evidence_links).toEqual([source.evidence_id]);
+  expect(retained.locations).toEqual([
+    { kind: "address", address: "0x401000" },
+  ]);
+  expect(retained.limitations).toContain("Incomplete provider response");
+});

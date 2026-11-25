@@ -1,7 +1,8 @@
+import { isManagedUserStringLoad } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type {
   ManagedMemberInspection,
   ManagedParseIssue,
@@ -9,13 +10,13 @@ import type {
 import type {
   DecodedMethod,
   ManagedUserString,
-} from "./ManagedMemberInspectorCore.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
+import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import {
   readMetadataUserString,
   type MetadataTokenFact,
-} from "./ManagedMetadataHeaps.js";
-import { readManagedValue } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedMetadataHeaps.js";
+import { readManagedValue } from "../domain/managed/managedReaderFailure.js";
 
 type UserStringInventory = NonNullable<ManagedMemberInspection["user_strings"]>;
 
@@ -57,12 +58,15 @@ export const parseUserStrings = (
     (parsed.unreadableSelectedTypes ?? 0) === 0;
   const userStrings: ManagedUserString[] = [];
   const issues: ManagedParseIssue[] = [];
+  const declaration = layout.userStrings;
+  if (declaration?.issue)
+    issues.push(admitManagedProjection(declaration.issue, budget));
   const tokens = new Map<number, MetadataTokenFact>();
   try {
     // Only ldstr loads a literal; a malformed ldtoken can carry a 0x70 token.
     for (const { tokenInstructions } of methods)
       for (const { opcode, reference } of tokenInstructions)
-        if (opcode === "ldstr" && !tokens.has(reference.raw)) {
+        if (isManagedUserStringLoad(opcode) && !tokens.has(reference.raw)) {
           budget.admitTransient(USER_STRING_TOKEN_BYTES, null);
           tokens.set(reference.raw, reference);
         }
@@ -85,7 +89,7 @@ export const parseUserStrings = (
           ),
         );
     }
-    if (references.length > 0 && layout.userStrings === null) {
+    if (references.length > 0 && declaration === null) {
       // A missing stream is one fact about the metadata, not one per token.
       issues.push(
         admitManagedProjection(
@@ -100,6 +104,9 @@ export const parseUserStrings = (
       );
       return inventory(userStrings, issues, scanned);
     }
+    if (declaration?.kind === "ambiguous")
+      return inventory(userStrings, issues, scanned);
+
     for (const reference of references) {
       const failures: ManagedParseIssue[] = [];
       readManagedValue(() => {

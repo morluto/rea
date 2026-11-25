@@ -1,10 +1,6 @@
 import { parseAnalysisInput } from "../AnalysisInput.js";
-import { isAbsolute } from "node:path";
 
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
@@ -12,9 +8,9 @@ import {
   javascriptRecoveryResultSchema,
 } from "../../domain/javascript/javascriptRecovery.js";
 import { err, type Result } from "../../domain/result.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import type { JavaScriptRecoveryPort } from "./JavaScriptRecoveryPort.js";
+import type { JavaScriptRecoveryPort } from "../../ports/javascript/JavaScriptRecoveryPort.js";
 
 const OPERATION = "recover_javascript_sources";
 
@@ -38,27 +34,6 @@ export class JavaScriptRecoveryService {
       options?.signal,
     );
     if (!parsed.ok) return parsed;
-    const invalidPaths = (["path", "output_directory"] as const).filter(
-      (field) => !isAbsolute(parsed.value[field]),
-    );
-    const invalidAdditional = (parsed.value.additional_paths ?? []).filter(
-      (additional) => !isAbsolute(additional),
-    );
-    if (invalidPaths.length > 0 || invalidAdditional.length > 0)
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          ...invalidPaths.map((field) => ({
-            path: [field],
-            reason: "invalid_format" as const,
-            message: `${field} must be an absolute filesystem path on this host.`,
-          })),
-          ...invalidAdditional.map((additional) => ({
-            path: ["additional_paths"],
-            reason: "invalid_format" as const,
-            message: `additional_paths entries must be absolute filesystem paths on this host: ${additional}`,
-          })),
-        ]),
-      );
     const execution = await this.provider.recover(parsed.value, options);
     if (!execution.ok) return execution;
     const result = javascriptRecoveryResultSchema.safeParse(

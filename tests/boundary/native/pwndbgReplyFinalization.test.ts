@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
+import { resolvePwntoolsLimits } from "../../../src/domain/native/pwntoolsResourceLimits.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 const replyClose = vi.hoisted(() => ({
@@ -34,7 +34,7 @@ vi.mock("node:fs/promises", async (original) => {
   };
 });
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -43,6 +43,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { recordedCrashSchema } from "../../../src/domain/native/recordedCrash.js";
 import { PwntoolsRecordedCrashProvider } from "../../../src/native/pwntools/PwntoolsRecordedCrashProvider.js";
 import { runOwnedCommand } from "../../../src/process/OwnedCommand.js";
+import { snapshotEnvironment } from "../../../src/process/snapshotEnvironment.js";
 import {
   recordedCrashDebuggerFixture,
   recordedCrashFixture,
@@ -73,11 +74,15 @@ const fixture = async (
   replyClose.denied = false;
   replyClose.onClose = undefined;
   replyClose.handles = [];
-  const provider = new PwntoolsRecordedCrashProvider({
-    REA_PWNDBG_GDB: process.execPath,
-    REA_PWNDBG_GDBINIT: init,
-    REA_PWNDBG_VENV_PATH: venv,
-  });
+  const environment = snapshotEnvironment(
+    {
+      REA_PWNDBG_GDB: process.execPath,
+      REA_PWNDBG_GDBINIT: init,
+      REA_PWNDBG_VENV_PATH: venv,
+    },
+    process.platform,
+  );
+  const provider = new PwntoolsRecordedCrashProvider(environment);
   onTestFinished(async () => {
     replyClose.denied = false;
     replyClose.onClose = undefined;
@@ -96,15 +101,21 @@ const fixture = async (
   // Exercise the real projection and owned-process boundary on every host.
   // The child authors debugger output; this does not establish GDB/pwndbg support.
   const project = async (signal: AbortSignal) =>
-    provider.profile.project({
+    provider.profile.enrich!({
+      environment,
       input: { path, include_debugger_context: true },
-      payload,
+      report: provider.profile.project({
+        input: { path, include_debugger_context: true },
+        payload,
+        snapshot: { bytes, sha256 },
+        diagnostics: value.decoder_diagnostics,
+      }),
       snapshot: { bytes, sha256 },
       rootPath: workspace.root,
       resources,
-      diagnostics: value.decoder_diagnostics,
       options: { signal },
       timeoutMs: 10_000,
+      producerLimits: resolvePwntoolsLimits(),
       runCommand: async (spawn) => {
         const output = await runOwnedCommand(
           {
@@ -242,3 +253,30 @@ it.each(["malformed JSON", "malformed UTF-8", "producer refusal"])(
     expect(replyClose.handles.every((handle) => handle.fd === -1)).toBe(true);
   },
 );
+
+it("binds producer_limits.output_bytes when the debugger bridge reports its reply over budget", async () => {
+  const selected = await fixture(
+    Buffer.from(
+      JSON.stringify({
+        ok: false,
+        reason: "output-limit",
+        message: "authored debugger reply exceeded output_bytes",
+      }),
+    ),
+  );
+  const error: unknown = await selected
+    .project(new AbortController().signal)
+    .catch((cause: unknown) => cause);
+  if (!(error instanceof AnalysisError))
+    throw new Error("Expected debugger reply failure");
+  const projected = projectAnalysisError(error);
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "producer_limits.output_bytes",
+    effective_value: resolvePwntoolsLimits().output_bytes,
+  });
+  expect(projected.remediation.action).toContain(
+    "Increase producer_limits.output_bytes",
+  );
+  expect(projected.remediation.action).not.toContain("--");
+});

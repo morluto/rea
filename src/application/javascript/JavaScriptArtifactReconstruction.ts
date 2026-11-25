@@ -1,4 +1,10 @@
+import { javaScriptSemanticPrecisionControls } from "./JavaScriptSemanticPrecisionControls.js";
+import type { JavaScriptMemberMutationAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
+import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AnalysisSettingValues } from "../../domain/analysisSettings.js";
+import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
@@ -11,42 +17,50 @@ import {
 import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  unsupportedArtifact,
+} from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
+  unrecognizedTarget,
 } from "../../domain/analysisErrorCore.js";
 import { createJavaScriptArtifactReader as createReader } from "../../artifacts/javascript/JavaScriptArtifactReader.js";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSourceSelection } from "../../domain/javascript/javascriptSourceSelection.js";
 import {
+  JAVASCRIPT_ABSENT_INPUT_OPERATIONS,
+  javaScriptAbsentInputDiagnostics,
+  javaScriptApplicationInputPresence,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
+import {
   parseOwnedJavaScriptApplicationAnalysisSteps,
   type AnalyzeJavaScriptApplicationInput,
   type ElectronBoundarySummary,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { ArtifactInventoryPartialObservation } from "../../domain/artifactPartialObservation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import {
   isSkippedJavaScriptAnalysis,
   javascriptArtifactAnalysisScopes,
 } from "./JavaScriptArtifactAnalysisTypes.js";
-import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
+import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
 import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
-import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   checkpointJavaScriptAnalysis,
   completeJavaScriptAnalysisSteps,
@@ -84,10 +98,12 @@ export interface JavaScriptArtifactReconstructionResult {
 export const reconstructJavaScriptArtifact = async (
   input: AnalyzeJavaScriptApplicationInput,
   scope: ArtifactResourceScope,
+  sourceAnalysis: JavaScriptSourceAnalysisFactory,
   signal?: AbortSignal,
   progress?: ProgressReporter,
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
   overrides?: Readonly<Partial<AnalysisSettingValues>>,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Promise<JavaScriptArtifactReconstructionResult> =>
   scope.run(async () => {
     const reportPhase = async (
@@ -103,20 +119,31 @@ export const reconstructJavaScriptArtifact = async (
       await checkpointJavaScriptAnalysis(signal);
     };
     abortIfNeeded(signal);
-    const { path, metadata } = await resolveSelectedInput(input.input_path);
-    const format = resolveFormat(path, metadata, input);
-    const snapshot = await scanCanonicalArtifactInventoryInScope(path, {
-      resourceScope: scope,
-      signal,
-      integrity: { mode: input.integrity_policy },
-      asarHeaderAdmission,
-    });
+    const selectedPath = absoluteCallerPath(input.input_path);
+    const { path, metadata } = await resolveSelectedInput(selectedPath);
+    const format = resolveFormat(path, metadata, input, selectedPath);
+    const snapshot = await scanCanonicalArtifactInventoryInScope(
+      path,
+      {
+        resourceScope: scope,
+        signal,
+        integrity: input.integrity_policy,
+        asarHeaderAdmission,
+      },
+      undefined,
+      selectedPath,
+    );
     if (snapshot.manifest.root_format !== format)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw unsupportedArtifact(
+        format,
         `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
       );
-    const reader = createReader(path, format, asarHeaderAdmission);
+    const reader = createReader(
+      path,
+      format,
+      asarHeaderAdmission,
+      selectedPath,
+    );
     const readerOwner = {
       kind: "reader" as const,
       reader,
@@ -146,13 +173,20 @@ export const reconstructJavaScriptArtifact = async (
       const earlyCleanup = await scope.release(readerOwner);
       readerOpen = false;
       if (earlyCleanup.kind === "failed")
-        throw ArtifactReaderFailure.withCleanup(
-          earlyCleanup.cause,
-          ArtifactReaderFailure.cleanupObservation(
-            earlyCleanup.cause,
-            readerOwner.resource,
-          ),
-          { kind: "artifact-inventory", inventory: snapshot },
+        throw scope.cleanupFailure({ kind: "completed" }, [earlyCleanup], {
+          kind: "artifact-inventory",
+          inventory: snapshot,
+        });
+      if (javaScriptApplicationInputPresence(files, snapshot) === "absent")
+        throw unrecognizedTarget(
+          OPERATION,
+          path,
+          snapshot.manifest.root_format,
+          "the complete inventory has entries but no JavaScript, HTML, package.json, source map, or nested ASAR inputs; details.diagnostics.entries_by_format lists what it holds",
+          {
+            diagnostics: javaScriptAbsentInputDiagnostics(files, snapshot),
+            related: { operations: [...JAVASCRIPT_ABSENT_INPUT_OPERATIONS] },
+          },
         );
       await reportPhase(
         "parse_javascript_sources",
@@ -172,24 +206,47 @@ export const reconstructJavaScriptArtifact = async (
           ? {}
           : { fileNodes: input.max_semantic_nodes_per_file }),
       });
-      const worker = await createJavaScriptSourceAnalysis(
-        {
-          heapMb:
-            input.max_heap_mb ??
-            overrides?.["javascript.max_heap_mb"] ??
-            JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
-          timeoutMs:
-            input.analysis_timeout_ms ??
-            overrides?.["javascript.analysis_timeout_ms"] ??
-            JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
-        },
+      const heap = selectedAnalysisSetting(
+        input.max_heap_mb,
+        overrides?.["javascript.max_heap_mb"],
+        JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
+      );
+      const timeout = selectedAnalysisSetting(
+        input.analysis_timeout_ms,
+        overrides?.["javascript.analysis_timeout_ms"],
+        JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
+      );
+      const sourceLimits = {
+        ...(input.semantic_precision === undefined
+          ? {}
+          : { semanticPrecision: input.semantic_precision }),
+        ...(memberMutationAllowance === undefined
+          ? {}
+          : { memberMutationAllowance }),
+        heapMb: heap.value,
+        heapSource: heap.source,
+        timeoutMs: timeout.value,
+        timeoutSource: timeout.source,
+      };
+      const preloads = await discoverJavaScriptPreloadPaths(
+        files,
+        sourceLimits,
+        scope,
+        sourceAnalysis,
+        signal,
+      );
+      const worker = await sourceAnalysis(
+        sourceLimits,
         files.files.filter(
           (file) => file.kind === "javascript" && file.text.included,
         ).length,
         { scope },
       );
-      let outcome;
-      let cleanupFailure: AnalysisError | undefined;
+      let outcome!: Awaited<
+        ReturnType<typeof analyzeAndAdoptJavaScriptArtifactFiles>
+      >;
+      let analysisFailure: { readonly cause: unknown } | undefined;
+      let cleanupAttempt: Awaited<ReturnType<ArtifactResourceScope["release"]>>;
       try {
         outcome = await analyzeAndAdoptJavaScriptArtifactFiles(
           files,
@@ -221,19 +278,32 @@ export const reconstructJavaScriptArtifact = async (
             });
             abortIfNeeded(signal);
           },
+          preloads.paths,
+          preloads.limitations,
+          input.semantic_analysis === "structure-only",
         );
+      } catch (cause: unknown) {
+        analysisFailure = { cause };
       } finally {
-        try {
-          const cleanup = await scope.release({
-            kind: "javascript-source-analysis",
-            analysis: worker,
-            resource: `JavaScript source analyzer for ${path}`,
-          });
-          if (cleanup.kind === "failed") throw cleanup.cause;
-        } catch (cause: unknown) {
-          if (!(cause instanceof AnalysisError)) throw cause;
-          cleanupFailure = cause;
-        }
+        cleanupAttempt = await scope.release({
+          kind: "javascript-source-analysis",
+          analysis: worker,
+          resource: `JavaScript source analyzer for ${path}`,
+        });
+      }
+      if (analysisFailure !== undefined) {
+        if (cleanupAttempt.kind === "failed")
+          throw scope.cleanupFailure(
+            { kind: "failed", cause: analysisFailure.cause },
+            [cleanupAttempt],
+          );
+        throw analysisFailure.cause;
+      }
+      let cleanupFailure: AnalysisError | undefined;
+      if (cleanupAttempt.kind === "failed") {
+        if (!(cleanupAttempt.cause instanceof AnalysisError))
+          throw cleanupAttempt.cause;
+        cleanupFailure = cleanupAttempt.cause;
       }
       const analysis = outcome.analysis;
       let interruption = outcome.interruption;
@@ -272,7 +342,7 @@ export const reconstructJavaScriptArtifact = async (
         "seal_javascript_application_graph",
         "Sealing the validated application graph",
       );
-      const graph = await completeJavaScriptAnalysisSteps(
+      const { graph, electronSummary } = await completeJavaScriptAnalysisSteps(
         applicationGraphSteps,
       );
       await reportCompletedPhase(
@@ -282,6 +352,7 @@ export const reconstructJavaScriptArtifact = async (
       const semanticGraphSteps = semanticProjection.finishImmutableSteps(
         snapshot.manifest.root_sha256,
         graph,
+        javaScriptSemanticPrecisionControls(analysis.files),
       );
       await reportCompletedPhase(
         "seal_javascript_semantic_graph",
@@ -296,9 +367,10 @@ export const reconstructJavaScriptArtifact = async (
           .map(({ logical_path }) => logical_path),
       );
       const nextAppContext = createJavaScriptNextAppContext(
-        files.files,
+        files,
         analysis.jsonDocuments,
         directoryPaths,
+        snapshot.coverage,
       );
       const completed = {
         route_inventory: await completeJavaScriptAnalysisSteps(
@@ -356,7 +428,7 @@ export const reconstructJavaScriptArtifact = async (
           : { source_selection: files.source_selection }),
         graph,
         semantic_graph: semanticGraph,
-        electron_summary: summarizeElectronBoundaries(analysis, directoryPaths),
+        electron_summary: electronSummary,
         statistics: {
           relevant_files:
             files.files.length + files.unavailable_relevant_files.length,
@@ -382,11 +454,11 @@ export const reconstructJavaScriptArtifact = async (
           ? interruption
           : interruption === null
             ? cleanupFailure
-            : analysisErrorWithCleanupFailure(
+            : analysisErrorWithCleanupDependencies(
                 interruption,
                 cleanupFailure,
                 OPERATION,
-              ).bindCleanupDependencies([interruption, cleanupFailure]);
+              );
       if (failure !== null) {
         const { electron_summary: summary, ...application } = completed;
         const partial = await completeJavaScriptAnalysisSteps(
@@ -410,19 +482,13 @@ export const reconstructJavaScriptArtifact = async (
     if (readerOpen) {
       const cleanupAttempt = await scope.release(readerOwner);
       if (cleanupAttempt.kind === "failed") {
-        const cleanup = ArtifactReaderFailure.cleanupObservation(
-          cleanupAttempt.cause,
-          readerOwner.resource,
-        );
         const partialObservation: ArtifactInventoryPartialObservation = {
           kind: "artifact-inventory",
           inventory: snapshot,
         };
-        throw ArtifactReaderFailure.withCleanup(
-          reconstructionOutcome.kind === "failed"
-            ? reconstructionOutcome.cause
-            : cleanupAttempt.cause,
-          cleanup,
+        throw scope.cleanupFailure(
+          reconstructionOutcome,
+          [cleanupAttempt],
           partialObservation,
         );
       }
@@ -493,21 +559,22 @@ const resolveFormat = (
   path: string,
   metadata: Stats,
   input: AnalyzeJavaScriptApplicationInput,
+  selectedPath: string,
 ): "asar" | "directory" => {
   const observed = metadata.isDirectory()
     ? "directory"
-    : metadata.isFile() && path.toLowerCase().endsWith(".asar")
+    : metadata.isFile() &&
+        artifactNameForClassification(selectedPath, path)
+          .toLowerCase()
+          .endsWith(".asar")
       ? "asar"
       : undefined;
   if (observed === undefined)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       OPERATION,
       input.input_path,
-      "JavaScript application analysis accepts only a directory or an .asar file",
-      {
-        remediationAction:
-          "Select an extracted application directory, an app bundle, or an .asar file such as Contents/Resources/app.asar.",
-      },
+      "file",
+      "JavaScript application analysis accepts only a directory or an .asar file. Select an extracted application directory, an app bundle, or an .asar file such as Contents/Resources/app.asar.",
     );
   if (input.format !== "auto" && input.format !== observed)
     throw new AnalysisInputError(OPERATION, undefined, [
