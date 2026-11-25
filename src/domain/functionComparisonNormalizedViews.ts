@@ -201,6 +201,8 @@ export const normalizedViews = (
     readonly links: readonly string[];
     readonly providersDiffer: boolean;
     readonly callsStatus: "unchanged" | "changed" | "unknown";
+    /** Both sides are one Evidence record, so their projections are identical. */
+    readonly sameEvidence: boolean;
   },
 ): FunctionNormalizedViews => {
   const { links, providersDiffer } = options;
@@ -308,15 +310,17 @@ export const normalizedViews = (
         }),
         { added_lines: 0, removed_lines: 0, hunks: 0 },
       );
+      // One Evidence record on both sides cannot hide an endpoint difference.
+      const endpointUncertain = delta.hunks === 0 && !options.sameEvidence;
       if (
-        delta.hunks === 0 &&
+        endpointUncertain &&
         (leftText.maskedUncomparedCallee || rightText.maskedUncomparedCallee)
       )
         return unresolved(
           "Masked text references an incoming call source, or a call, tail-jump or thunk target, that the exact calls dimension does not compare; normalized equality cannot establish callee identity or call order.",
         );
       if (
-        delta.hunks === 0 &&
+        endpointUncertain &&
         options.callsStatus === "unknown" &&
         (leftText.maskedComparedCallee || rightText.maskedComparedCallee)
       )

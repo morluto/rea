@@ -187,6 +187,23 @@ describe("same-evidence comparison admission with normalized views", () => {
     ).toBe(false);
   });
 
+  it.each(["true", null, 1])(
+    "rejects a non-boolean include_normalized_views selection (%j)",
+    (selection) => {
+      const recorded = {
+        ...evidence(baseline()),
+        parameters: {
+          left_evidence_id: source,
+          right_evidence_id: source,
+          include_normalized_views: selection,
+        },
+      } as unknown as Evidence;
+      expect(readComparisonResult(recorded, "compare_functions").ok).toBe(
+        false,
+      );
+    },
+  );
+
   it("accepts views when the sources are recorded as lists", () => {
     const candidate = withViews([pseudocode(), assembly()]);
     const listed = {

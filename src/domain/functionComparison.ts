@@ -51,6 +51,7 @@ export const compareFunctions = (
           normalized_views: normalizedViews(left, right, {
             links,
             providersDiffer,
+            sameEvidence: match.method === "same-evidence",
             callsStatus:
               dimensions.find(({ dimension }) => dimension === "calls")
                 ?.status ?? "unknown",

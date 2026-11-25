@@ -68,15 +68,34 @@ const callEndpointAddresses = (snapshot: FunctionSnapshot) => {
     ]),
   ]);
   // The exact calls dimension compares caller and callee endpoints; it never
-  // reads their classifications, so their thunk targets stay uncompared.
+  // reads their classifications, so the thunk target of a listed endpoint or a
+  // referenced procedure stays uncompared even when its address is also listed.
+  // The function's own thunk target is its listed callee edge, which is compared.
   const callers = snapshot.dossier.callers;
-  const comparedCallEndpoints = new Set([
+  const thunkTargets = new Set(
+    parsedAddresses(
+      [
+        ...snapshot.dossier.callees,
+        ...callers,
+        ...snapshot.dossier.outgoing_references.map(
+          (edge) => edge.target_procedure,
+        ),
+        ...snapshot.dossier.incoming_references.map(
+          (edge) => edge.source_procedure,
+        ),
+      ].map((procedure) => procedure?.classification?.thunk_target),
+    ),
+  );
+  const listedEndpoints = [
     ...callees,
     ...parsedAddresses(callers.map((caller) => caller.address)),
-  ]);
+  ];
+  const comparedCallEndpoints = new Set(
+    listedEndpoints.filter((address) => !thunkTargets.has(address)),
+  );
   const callEndpoints = new Set([
     ...calleeAddresses,
-    ...comparedCallEndpoints,
+    ...listedEndpoints,
     ...parsedAddresses([
       ...callers.map((caller) => caller.classification?.thunk_target),
       ...incomingCallSources(snapshot),
@@ -243,10 +262,10 @@ const outgoingCallTargets = (
     const target = edge.target_procedure;
     const intoOtherProcedure =
       target !== null && parseAddress(target.address.toLowerCase()) !== entry;
-    // Producers attach call classifications only to call references, so any
-    // classification other than none names a call target.
-    const classifiedCall =
-      edge.call !== undefined && edge.call.classification !== "none";
+    // Producers attach a call reference only to calls they enumerated, so its
+    // presence names a call whatever its sub-classification (Hopper reports
+    // type 0 as none), as observedCallRoutes reads it when kind is unavailable.
+    const classifiedCall = edge.call !== undefined;
     const typedCall =
       edge.kind.available &&
       (edge.kind.call || (edge.kind.jump && intoOtherProcedure));
@@ -273,8 +292,7 @@ const incomingCallSources = (
     const source = edge.source_procedure;
     const fromOtherProcedure =
       source !== null && parseAddress(source.address.toLowerCase()) !== entry;
-    const classifiedCall =
-      edge.call !== undefined && edge.call.classification !== "none";
+    const classifiedCall = edge.call !== undefined;
     const typedCall =
       edge.kind.available &&
       (edge.kind.call || (edge.kind.jump && fromOtherProcedure));

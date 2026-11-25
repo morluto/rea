@@ -2503,7 +2503,10 @@ exact calls dimension is unknown and its text masks a listed caller or callee,
 when its text masks an incoming call source, or a call, tail-jump or thunk
 target, that the calls dimension does not compare, or when the bounded line
 diff gives up; it then keeps both digests and its masking record, without a
-text delta.
+text delta. The thunk target of a listed caller or callee, or of a referenced
+procedure, counts as uncompared even when it is also a listed endpoint, and a
+comparison of one Evidence record with itself skips both endpoint conditions
+because its two projections are identical.
 Each view returns its applied masking rules, counts, limitations, and both
 source Evidence links. Reconstruction claims and static/runtime function
 selectors can name `pseudocode_normalized` or `assembly_normalized` only when

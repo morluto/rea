@@ -144,15 +144,22 @@ export function readComparisonResult(
 const validateNormalizedViewOptIn = (
   evidence: Evidence,
   result: FunctionComparisonResult,
-): Result<void, EvidenceIntegrityError> =>
-  (evidence.parameters["include_normalized_views"] === true) ===
-  (result.normalized_views !== undefined)
+): Result<void, EvidenceIntegrityError> => {
+  const selection = evidence.parameters["include_normalized_views"];
+  if (selection !== undefined && typeof selection !== "boolean")
+    return err(
+      new EvidenceIntegrityError(
+        "Function comparison include_normalized_views selection is not a boolean",
+      ),
+    );
+  return (selection === true) === (result.normalized_views !== undefined)
     ? ok(undefined)
     : err(
         new EvidenceIntegrityError(
           "Function comparison normalized views disagree with the recorded include_normalized_views selection",
         ),
       );
+};
 
 type NormalizedView = NonNullable<
   FunctionComparisonResult["normalized_views"]

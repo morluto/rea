@@ -980,6 +980,24 @@ describe("normalized view callee identity", () => {
     });
   });
 
+  it("keeps a same-Evidence comparison unchanged when its text masks an uncompared endpoint", () => {
+    const dossier = syntheticDossier({
+      base: "0x411700",
+      name: "FUN_411700",
+      procedureThunkTarget: "0x411860",
+      pseudocode: "void thunk(void) {}",
+      assembly: ["0x411700: JMP 0x411860"],
+    });
+    const evidence = observe("7", dossier);
+    const result = compareFunctions(evidence, evidence, {
+      includeNormalizedViews: true,
+    });
+    expect(result.function_match).toMatchObject({ method: "same-evidence" });
+    expect(view(result, "assembly_normalized")).toMatchObject({
+      status: "unchanged",
+    });
+  });
+
   it("treats the procedure's own thunk target as a masked callee", () => {
     const make = (base: string, target: string, otherCallee: string) =>
       syntheticDossier({
@@ -1199,6 +1217,7 @@ describe("normalized view callee facts beyond typed edges", () => {
   it.each([
     { classification: "direct", providerType: 2 },
     { classification: "unknown", providerType: 1 },
+    { classification: "none", providerType: 0 },
   ] as const)(
     "treats a Hopper call reference classified $classification without reference flags as a masked callee",
     ({ classification, providerType }) => {
@@ -1364,6 +1383,18 @@ const comparisonEvidence = (
     },
   );
 
+/** One normalized view's recorded limitations, which consumers must carry. */
+const viewLimitations = (
+  comparison: Evidence,
+  dimension: "pseudocode_normalized" | "assembly_normalized",
+) => {
+  const selected = functionComparisonResultSchema
+    .parse(comparison.normalized_result)
+    .normalized_views?.views.find((item) => item.dimension === dimension);
+  if (selected === undefined) throw new Error(`Missing ${dimension} view`);
+  return selected.limitations;
+};
+
 const claim = (dimension: string, evidence: Evidence) => ({
   name: "Relocated function",
   claims: [
@@ -1438,9 +1469,18 @@ describe("normalized view consumers", () => {
       claim("pseudocode_normalized", evidence),
       bundle,
     );
-    expect(result.claims.items[0]?.limitations).toContain(
-      "Masked text references a dossier-listed caller, callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
-    );
+    const item = result.claims.items[0];
+    expect(item).toMatchObject({
+      observed_status: "unknown",
+      comparison_evidence_id: evidence.evidence_id,
+      evidence_links: expect.arrayContaining([
+        before.evidence_id,
+        after.evidence_id,
+      ]),
+    });
+    const selected = viewLimitations(evidence, "pseudocode_normalized");
+    expect(selected.length).toBeGreaterThan(0);
+    expect(item?.limitations).toEqual(expect.arrayContaining(selected));
   });
 
   it("reports unresolved normalized findings when relocation masks unknown callees", () => {
@@ -1571,11 +1611,20 @@ describe("normalized view static/runtime consumer", () => {
       uncertainRight,
       true,
     );
-    expect(
-      correlate("pseudocode_normalized", uncertainComparison).correlations
-        .items[0]?.limitations,
-    ).toContain(
-      "Masked text references a dossier-listed caller, callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
+    const uncertain = correlate("pseudocode_normalized", uncertainComparison)
+      .correlations.items[0];
+    expect(uncertain).toMatchObject({
+      observed_pattern: "unknown",
+      static: {
+        comparison_evidence_id: uncertainComparison.evidence_id,
+        status: "unknown",
+      },
+      evidence_links: expect.arrayContaining([uncertainComparison.evidence_id]),
+    });
+    expect(uncertain?.limitations).toEqual(
+      expect.arrayContaining(
+        viewLimitations(uncertainComparison, "pseudocode_normalized"),
+      ),
     );
 
     const outsideClosure = capture("9").evidence_id;
@@ -1831,6 +1880,34 @@ describe("normalized view targets outside the exact calls comparison", () => {
 });
 
 describe("normalized view callee thunk targets", () => {
+  // A named callee keeps its identity across builds.
+  const namedSymbol = {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "function",
+    source: "user_defined" as const,
+  };
+  const observeComplete = (digest: string, dossier: object): Evidence =>
+    createEvidence(
+      {
+        path: `/tmp/thunk-${digest}`,
+        sha256: digest.repeat(64),
+        format: "pe",
+        architecture: "x86",
+      },
+      G_HIDRA,
+      {
+        operation: "analyze_function",
+        parameters: enhancedInputSchemas.analyze_function.parse({
+          procedure: "fixture",
+        }),
+        result: functionDossierSchema.parse(wallaceDossier(dossier)),
+        confidence: "observed",
+        authority: "shipped-artifact",
+        relationshipCoverage: { status: "complete" },
+      },
+    );
   it("keeps a retargeted callee thunk unknown even when exact calls are unchanged", () => {
     const make = (base: string, callee: string, thunkTarget: string) => {
       const dossier = syntheticDossier({
@@ -1848,39 +1925,12 @@ describe("normalized view callee thunk targets", () => {
           callers: { available: true as const },
           callees: { available: true as const },
         },
-        // A named callee keeps its identity across builds.
         callees: dossier.callees.map((item) => ({
           ...item,
-          symbol: {
-            primary: true,
-            dynamic: false,
-            external: false,
-            type: "function",
-            source: "user_defined" as const,
-          },
+          symbol: namedSymbol,
         })),
       };
     };
-    const observeComplete = (digest: string, dossier: object): Evidence =>
-      createEvidence(
-        {
-          path: `/tmp/thunk-${digest}`,
-          sha256: digest.repeat(64),
-          format: "pe",
-          architecture: "x86",
-        },
-        G_HIDRA,
-        {
-          operation: "analyze_function",
-          parameters: enhancedInputSchemas.analyze_function.parse({
-            procedure: "fixture",
-          }),
-          result: functionDossierSchema.parse(wallaceDossier(dossier)),
-          confidence: "observed",
-          authority: "shipped-artifact",
-          relationshipCoverage: { status: "complete" },
-        },
-      );
     // The callee keeps its name while its thunk now points elsewhere.
     const before = observeComplete(
       "7",
@@ -1890,6 +1940,82 @@ describe("normalized view callee thunk targets", () => {
       "8",
       make("0x511700", "0x511800", "0x5118a0"),
     );
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(dimension(result, "calls")).toMatchObject({ status: "unchanged" });
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("exact calls dimension does not compare"),
+      ]),
+    });
+  });
+
+  it("keeps a relocated thunk function unchanged when its own thunk target is its listed callee", () => {
+    const make = (base: string) => {
+      const target = `0x${(BigInt(base) + 0x160n).toString(16)}`;
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        procedureThunkTarget: target,
+        pseudocode: "void thunk(void) {}",
+        assembly: [`${base}: JMP ${target}`],
+        callees: [{ address: target, name: "real_target" }],
+      });
+      return {
+        ...dossier,
+        facet_availability: {
+          callers: { available: true as const },
+          callees: { available: true as const },
+        },
+        callees: dossier.callees.map((item) => ({
+          ...item,
+          symbol: namedSymbol,
+        })),
+      };
+    };
+    const result = compareFunctions(
+      observeComplete("3", make("0x411700")),
+      observeComplete("4", make("0x511700")),
+      { includeNormalizedViews: true },
+    );
+    expect(dimension(result, "calls")).toMatchObject({ status: "unchanged" });
+    expect(view(result, "assembly_normalized")).toMatchObject({
+      status: "unchanged",
+    });
+  });
+
+  it("keeps a thunk target uncompared when it is also a listed callee", () => {
+    // Both destinations stay listed callees while the thunk moves between them.
+    const make = (base: string, thunkTarget: string) => {
+      const at = (offset: bigint) =>
+        `0x${(BigInt(base) + offset).toString(16)}`;
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) { FUN_${BigInt(thunkTarget).toString(16)}(); }`,
+        assembly: [`${base}: PUSH EBP`],
+        callees: [
+          { address: at(0x100n), name: "helper", thunk_target: thunkTarget },
+          { address: at(0x160n), name: "first_target" },
+          { address: at(0x1a0n), name: "second_target" },
+        ],
+      });
+      return {
+        ...dossier,
+        facet_availability: {
+          callers: { available: true as const },
+          callees: { available: true as const },
+        },
+        callees: dossier.callees.map((item) => ({
+          ...item,
+          symbol: namedSymbol,
+        })),
+      };
+    };
+    const before = observeComplete("5", make("0x411700", "0x411860"));
+    const after = observeComplete("6", make("0x511700", "0x5118a0"));
     const result = compareFunctions(before, after, {
       includeNormalizedViews: true,
     });
