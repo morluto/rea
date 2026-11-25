@@ -143,10 +143,20 @@ describe.skipIf(process.platform !== "darwin")(
           const expectedRefusal = {
             code: "unsupported_target",
             category: "unsupported_target",
-            remediation: { action: expect.stringContaining("linked Mach-O") },
+            retry: "none",
             details: {
               path,
-              reason: expect.stringMatching(diagnosticPattern),
+              failure_kind: "unsupported",
+              format: "macho",
+              field: "filetype",
+              // The refusal names the file types dyld_info reads; recovery
+              // comes from the shared target-failure table.
+              reason: expect.stringMatching(
+                new RegExp(
+                  `it reads linked executables and relocatable objects: ${diagnosticPattern.source}`,
+                  "u",
+                ),
+              ),
               captured_output: {
                 stdout: expect.stringMatching(diagnosticPattern),
                 exit_code: 1,
