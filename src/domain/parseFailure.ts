@@ -68,6 +68,11 @@ export class ParseFailureError<
   }
 }
 
+/** A parser error with its exact failure kind. */
+export type AnyParseFailureError = {
+  [Kind in ParseFailureKind]: ParseFailureError<Kind>;
+}[ParseFailureKind];
+
 /** Where the failure was found, and the failure that revealed it. */
 type ParseFailureSite = Pick<TargetFailureFacts, "offset" | "field"> & {
   readonly cause?: unknown;

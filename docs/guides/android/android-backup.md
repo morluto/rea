@@ -29,7 +29,9 @@ The archive's SHA-256 identifies the original acquisition. Each member retains
 its original path, content hash and TAR header/data offsets. For compressed
 backups those offsets address the decoded TAR stream, and `source_location`
 is null: they are not physical positions in the compressed carrier. Plain
-backups also retain physical member ranges. Header checksums validate TAR
+backups also retain physical member ranges. Structural errors identify the
+affected field and its byte offset when known. A field labeled `decoded TAR`
+uses the expanded stream's coordinates. Header checksums validate TAR
 headers, not the authenticity of the archived file contents. Stored modes
 are observations. Extraction writes member contents without restoring owners
 or applying archived modes.

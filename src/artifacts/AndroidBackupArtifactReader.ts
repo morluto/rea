@@ -3,21 +3,23 @@ import { inflate } from "node:zlib";
 import { setImmediate } from "node:timers/promises";
 
 import {
+  ANDROID_BACKUP_FORMAT,
   androidBackupTarEntries,
   parseAndroidBackupHeader,
-  type AndroidBackupDecodeFailure,
 } from "../domain/androidBackup.js";
 import {
   DEFAULT_ANDROID_BACKUP_READER_LIMITS,
   type AndroidBackupReaderLimits,
 } from "../domain/artifactReaderLimits.js";
 import type { AndroidBackupMetadata } from "../domain/formatMetadata/androidAndSystemMetadata.js";
+import type { AnyParseFailureError } from "../domain/parseFailure.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   ArtifactFileSource,
   ArtifactPathRegistry,
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  artifactParseFailure,
   artifactReaderLimitFailure,
   assertArtifactReadActive,
   assertProducedEntry,
@@ -25,7 +27,6 @@ import {
   malformedArtifact,
   normalizeArtifactPath,
   truncatedArtifact,
-  unsupportedArtifact,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
@@ -35,7 +36,6 @@ import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import { OwnedAsyncArtifactStreams } from "./OwnedAsyncArtifactStreams.js";
 
 const CHUNK_BYTES = 64 * 1024;
-const FORMAT = "android-backup";
 const LABEL = "Android backup";
 type BackupMember = { readonly entry: ArtifactEntry; readonly bytes: Buffer };
 
@@ -52,25 +52,25 @@ const backupLimitFailure = (
     "memory",
   );
 
-const decodeFailure = (
-  failure: AndroidBackupDecodeFailure,
-  limits: AndroidBackupReaderLimits,
-): ArtifactReaderFailure => {
-  if (failure.kind === "limit")
-    return backupLimitFailure(limits, "directory_bytes", failure.requiredBytes);
-  const detail = `${LABEL}: ${failure.message}`;
-  switch (failure.kind) {
-    case "malformed":
-      return malformedArtifact(FORMAT, detail);
-    case "truncated":
-      return truncatedArtifact(FORMAT, detail);
-    case "unsupported":
-      return unsupportedArtifact(FORMAT, detail, { undecodedContent: true });
-  }
+const projectBackupParseFailure = (
+  cause: AnyParseFailureError,
+  signal: AbortSignal | undefined,
+): unknown => {
+  const failure = cause.failure;
+  return failure.kind === "limit"
+    ? artifactReaderLimitFailure(
+        failure.limit.name,
+        failure.limit.maximum,
+        "bytes",
+        failure.limit.required,
+        "memory",
+      )
+    : artifactParseFailure(cause, signal);
 };
 
 const inflatePayload = (
   payload: Buffer,
+  payloadOffset: number,
   limits: AndroidBackupReaderLimits,
 ): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -85,14 +85,14 @@ const inflatePayload = (
               ? backupLimitFailure(limits, "expanded_bytes")
               : code === "Z_BUF_ERROR"
                 ? truncatedArtifact(
-                    FORMAT,
+                    ANDROID_BACKUP_FORMAT,
                     "Android backup zlib payload is truncated",
-                    { cause },
+                    { cause, offset: payloadOffset, field: "zlib payload" },
                   )
                 : malformedArtifact(
-                    FORMAT,
+                    ANDROID_BACKUP_FORMAT,
                     "Android backup has an invalid zlib payload",
-                    { cause },
+                    { cause, offset: payloadOffset, field: "zlib payload" },
                   ),
           );
           return;
@@ -105,8 +105,12 @@ const inflatePayload = (
         if (decoded.engine.bytesWritten !== payload.length) {
           reject(
             malformedArtifact(
-              FORMAT,
+              ANDROID_BACKUP_FORMAT,
               "Android backup has trailing compressed payload bytes",
+              {
+                offset: payloadOffset + decoded.engine.bytesWritten,
+                field: "zlib payload",
+              },
             ),
           );
           return;
@@ -118,7 +122,7 @@ const inflatePayload = (
 
 /** Bounded offline envelope/TAR reader; never invokes ADB or restores content. */
 export class AndroidBackupArtifactReader implements ArtifactReader {
-  readonly format = FORMAT;
+  readonly format = ANDROID_BACKUP_FORMAT;
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
@@ -250,7 +254,7 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
   async #prepare(signal?: AbortSignal): Promise<void> {
     const { handle, initial } = await this.#source.read(signal);
     const prefix = await readArtifactFileBytes(
-      FORMAT,
+      ANDROID_BACKUP_FORMAT,
       handle,
       0,
       Math.min(initial.size, 1024),
@@ -258,15 +262,9 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
       signal,
     );
     const parsed = parseAndroidBackupHeader(prefix);
-    if (!parsed.ok) throw decodeFailure(parsed.error, this.limits);
+    if (!parsed.ok) throw projectBackupParseFailure(parsed.error, signal);
     const header = parsed.value;
     const payloadOffset = header.payloadOffset;
-    if (header.encryption !== "none" && header.encryption !== "AES-256")
-      throw unsupportedArtifact(
-        FORMAT,
-        `Unsupported Android backup encryption method: ${header.encryption}`,
-        { undecodedContent: true },
-      );
     const metadata: AndroidBackupMetadata = {
       kind: "android-backup",
       format_version: header.version,
@@ -288,7 +286,7 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
     if (!header.compressed && encodedBytes > this.limits.expanded_bytes)
       throw backupLimitFailure(this.limits, "expanded_bytes", encodedBytes);
     const encoded = await readArtifactFileBytes(
-      FORMAT,
+      ANDROID_BACKUP_FORMAT,
       handle,
       payloadOffset,
       encodedBytes,
@@ -296,7 +294,7 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
       signal,
     );
     const tar = header.compressed
-      ? await inflatePayload(encoded, this.limits)
+      ? await inflatePayload(encoded, payloadOffset, this.limits)
       : encoded;
     this.#assertOpen(signal);
     const directoryLimit = this.limits.directory_bytes;
@@ -310,10 +308,14 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
     const names = new Set<string>();
     let directoryBytes = 0;
     let index = 0;
-    for (const decoded of androidBackupTarEntries(tar, directoryLimit)) {
+    for (const decoded of androidBackupTarEntries(
+      tar,
+      directoryLimit,
+      header.compressed ? null : payloadOffset,
+    )) {
       if (index % 256 === 0) await setImmediate();
       this.#assertOpen(signal);
-      if (!decoded.ok) throw decodeFailure(decoded.error, this.limits);
+      if (!decoded.ok) throw projectBackupParseFailure(decoded.error, signal);
       const member = decoded.value;
       // Charge worst-case JSON escaping and per-entry bookkeeping before retention.
       directoryBytes +=

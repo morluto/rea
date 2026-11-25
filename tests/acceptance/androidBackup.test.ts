@@ -99,6 +99,37 @@ cliTest.for([false, true])(
   },
 );
 
+cliTest.for([false, true])(
+  "locates a malformed TAR header in an Android backup (compressed=%s)",
+  async (compressed, { cli }) => {
+    const root = await createTestTempDirectory("rea-ab-bad-tar-");
+    const source = join(root, "bad.ab");
+    const tar = backupTar([
+      { path: "first.txt", data: "first" },
+      { path: "second.txt", data: "second" },
+    ]);
+    const headerOffset = 2 * TAR_BLOCK_BYTES;
+    tar[headerOffset] = 0x78;
+    const image = backupImage(tar, { compressed });
+    await writeFile(source, image);
+    const expectedOffset =
+      headerOffset + (compressed ? 0 : image.length - tar.length);
+
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(inspected.exitCode).toBe(1);
+    expect(inspected.json).toMatchObject({
+      details: {
+        format: "android-backup",
+        failure_kind: "malformed",
+        field: compressed ? "decoded TAR header" : "TAR header",
+        offset: expectedOffset,
+      },
+    });
+  },
+);
+
 cliTest(
   "reports encrypted coverage and refuses extraction before creating the selected destination",
   async ({ cli }) => {
