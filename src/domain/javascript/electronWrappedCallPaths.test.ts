@@ -2395,6 +2395,12 @@ describe("Webpack harmony export getters", () => {
         exports: `__unused_module.exports = { other: () => {} };\n__webpack_exports__ = __unused_module.exports;\n${DEFINE_HANDLE}`,
       },
     ],
+    [
+      "module.exports reconnected to the exports object",
+      {
+        exports: `__unused_module.exports = {};\n__unused_module.exports = __webpack_exports__;\n${DEFINE_HANDLE}`,
+      },
+    ],
   ] as const)("substitutes a wrapper exported through %s", (_name, parts) => {
     expect(pingRegistrations(harmonyBundle(parts))).toEqual([
       expect.objectContaining({
@@ -2476,6 +2482,12 @@ describe("Webpack harmony export getters", () => {
       "a replacement object that already owns the key",
       {
         exports: `__unused_module.exports = { handle: () => {} };\n__webpack_exports__ = __unused_module.exports;\n${DEFINE_HANDLE}`,
+      },
+    ],
+    [
+      "a reconnected exports object that already owns the key",
+      {
+        exports: `__unused_module.exports = {};\n__unused_module.exports = __webpack_exports__;\n__webpack_exports__.handle = () => {};\n${DEFINE_HANDLE}`,
       },
     ],
     [
