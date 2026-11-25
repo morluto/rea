@@ -73,8 +73,15 @@ describe.skipIf(process.platform !== "darwin")(
           );
         };
 
+        const nativeImports = await processes.run("/usr/bin/xcrun", [
+          "dyld_info",
+          "-imports",
+          probe,
+        ]);
+        expect(nativeImports.signal).toBeNull();
+        expect(nativeImports.stdout).toContain("missing LC_UUID load command");
         const missingUuid = await inspect(probe);
-        expect(missingUuid).toMatchObject({
+        expect(missingUuid, JSON.stringify(nativeImports)).toMatchObject({
           uuid: null,
           load_commands: { exhaustive: true },
           imports: {
@@ -98,7 +105,8 @@ describe.skipIf(process.platform !== "darwin")(
           provenance: expect.arrayContaining([
             expect.objectContaining({
               tool: "dyld_info",
-              exit: { code: 1, signal: null },
+              command: ["-imports", "$ARTIFACT"],
+              exit: { code: nativeImports.exitCode, signal: null },
             }),
           ]),
         });
