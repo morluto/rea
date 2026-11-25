@@ -128,7 +128,7 @@ export const classifyAndHashRootForInventory = async (
       "integrity",
       `Artifact root changed after target admission: expected an admitted file at ${path}, observed a directory`,
       {
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
         userMessage:
           "The opened file was replaced by a directory. Select the intended artifact and reopen it before retrying.",
       },
@@ -490,7 +490,8 @@ const classifyRootFormat = async (
       } catch (cause: unknown) {
         if (
           cause instanceof ArtifactReaderFailure &&
-          (cause.reason === "format" ||
+          (cause.reason === "malformed" ||
+            cause.reason === "truncated" ||
             (cause.reason === "limit" &&
               (cause.readerLimit?.parameter ===
                 "artifact_limits.node_sea.blob_bytes" ||
@@ -647,7 +648,7 @@ export const assertAdmittedRootDigest = (
       "integrity",
       `Artifact root changed after target admission at ${path}: expected ${expected}, observed ${observed}`,
       {
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
         userMessage:
           "The artifact changed after it was opened. Reopen the selected artifact, then retry.",
       },

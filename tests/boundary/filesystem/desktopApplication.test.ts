@@ -1176,7 +1176,7 @@ it.each(
       variant === "physical read"
         ? Object.assign(new Error("physical read denied"), { code: "EACCES" })
         : new ArtifactReaderFailure(
-            "format",
+            "malformed",
             "invalid later format declaration",
           );
     const validation = Object.assign(

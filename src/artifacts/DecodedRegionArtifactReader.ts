@@ -11,6 +11,7 @@ import type {
 } from "../domain/firmware/regionDecoder.js";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
   copyArtifactEntry,
   assertProducedEntry,
   type ArtifactEntry,
@@ -290,9 +291,9 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
+    return failure.kind === "malformed"
+      ? malformedArtifact(
+          this.format,
           `${this.#decoding.label} is malformed: ${failure.message}`,
         )
       : new ArtifactReaderFailure(

@@ -340,7 +340,7 @@ it("keeps a damaged NSKeyedArchiver archive a format failure", async () => {
   }).catch((cause: unknown) => cause);
   expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
   expect(rejected).toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("$objects array"),
   });
 });

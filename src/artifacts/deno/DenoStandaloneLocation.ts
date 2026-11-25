@@ -54,6 +54,7 @@ import {
 import {
   abortIfNeeded,
   ArtifactReaderFailure,
+  malformedArtifact,
   artifactParseFailure,
 } from "../../resources/index.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
@@ -157,8 +158,7 @@ export const locateDenoStandalone = async (
   } catch (cause) {
     if (
       cause instanceof ArtifactReaderFailure &&
-      (cause.reason === "format" ||
-        cause.reason === "malformed" ||
+      (cause.reason === "malformed" ||
         cause.reason === "truncated" ||
         cause.reason === "unsupported" ||
         cause.reason === "limit")
@@ -989,8 +989,8 @@ const fixedCString = (bytes: Uint8Array): string => {
 };
 
 const denoCarrierFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
+  malformedArtifact(
+    "deno-standalone",
     `Deno compile carrier is malformed: ${detail}`,
   );
 

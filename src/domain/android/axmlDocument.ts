@@ -106,7 +106,7 @@ export interface AxmlDocumentImage {
 }
 
 const formatFailure = (message: string): Result<never, RegionDecodeFailure> =>
-  err({ kind: "format", message });
+  err({ kind: "malformed", message });
 
 const limitFailure = (message: string): Result<never, RegionDecodeFailure> =>
   err({ kind: "limit", message, boundary: "capacity" });
@@ -442,7 +442,7 @@ export const renderTypedValue = (
 };
 
 const formatError = (message: string): RegionDecodeFailure => ({
-  kind: "format",
+  kind: "malformed",
   message,
 });
 
@@ -1201,7 +1201,7 @@ export const createAxmlDecoder = (
   fileBytes: number,
 ): Result<RegionDecoder<AxmlDocumentImage>, RegionDecodeFailure> => {
   if (!Number.isSafeInteger(fileBytes) || fileBytes < 0)
-    return err({ kind: "format", message: "invalid file size" });
+    return err({ kind: "malformed", message: "invalid file size" });
   if (fileBytes > AXML_MAX_FILE_BYTES)
     return err({
       kind: "limit",

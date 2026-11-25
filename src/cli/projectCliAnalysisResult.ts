@@ -80,19 +80,26 @@ export const projectCliInputFields = <Output>(
       ? [{ name: binding.operation, flags: binding.flags }]
       : orderedOperations(binding.operations, error.details.operation);
   const issues = renamedIssues(error, error.details, binding);
+  const inputs = renamedTargetInputs(error.details, binding);
   const limit = flaggedLimit(error.details.limit, operations);
   const relatedFlags =
     binding.operations === undefined &&
     error.details.operation !== binding.operation
       ? undefined
       : relatedCliFlagsFromOperations(error.details, operations);
-  if (issues === undefined && limit === undefined && relatedFlags === undefined)
+  if (
+    issues === undefined &&
+    inputs === undefined &&
+    limit === undefined &&
+    relatedFlags === undefined
+  )
     return output;
   return {
     ...error,
     details: {
       ...error.details,
       ...(issues === undefined ? {} : { issues }),
+      ...(inputs === undefined ? {} : { inputs }),
       ...(limit === undefined ? {} : { limit }),
       ...(relatedFlags === undefined
         ? {}
@@ -258,6 +265,29 @@ const renamedIssues = (
   // Keep retained output, partial Evidence and cleanup history by reference;
   // their source fields are not CLI parameter names.
   return changed ? issues : undefined;
+};
+
+/**
+ * A target conflict's inputs, each named by the request field that selected
+ * it, take this command's CLI spelling of that field.
+ */
+const renamedTargetInputs = (
+  details: Record<string, JsonValue>,
+  binding: CliInputFieldBinding,
+): JsonValue[] | undefined => {
+  if (details.operation !== binding.operation || !Array.isArray(details.inputs))
+    return undefined;
+  let changed = false;
+  const inputs = details.inputs.map((input) => {
+    if (!isObject(input) || typeof input.field !== "string") return input;
+    const alias = Object.hasOwn(binding.fields, input.field)
+      ? binding.fields[input.field]
+      : undefined;
+    if (alias === undefined || alias === input.field) return input;
+    changed = true;
+    return { ...input, field: alias };
+  });
+  return changed ? inputs : undefined;
 };
 
 /**

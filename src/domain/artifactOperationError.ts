@@ -27,7 +27,8 @@ export interface ArtifactAdmissionLimit {
  * not read the message: a member the reader did not produce, member metadata
  * that differs from inventory, a container or unpacked file whose identity
  * changed, a directory or archive member whose file identity or bytes
- * changed since inventory, short read coverage, bytes disagreeing with the
+ * changed since inventory, a selected target that no longer matches the
+ * one the session admitted, short read coverage, bytes disagreeing with the
  * declared size, a disk image whose stored checksum does not verify, a read
  * stream over a handle the reader does not own, a format-declared digest or
  * checksum that disagrees with content or cannot be checked, layout sources
@@ -42,6 +43,7 @@ export const ARTIFACT_INTEGRITY_CHECKS = [
   "foreign-entry",
   "entry-metadata",
   "container-identity",
+  "admitted-identity",
   "unpacked-entry-identity",
   "member-identity",
   "image-checksum",
@@ -57,6 +59,38 @@ export const ARTIFACT_INTEGRITY_CHECKS = [
   "traversal-coverage",
 ] as const;
 export type ArtifactIntegrityCheck = (typeof ARTIFACT_INTEGRITY_CHECKS)[number];
+
+/**
+ * Whether a failed integrity check means the target changed while REA read
+ * it (identity or coverage moved under the read), rather than bytes that
+ * contradict what the target itself declares or a REA-internal check.
+ */
+const INTEGRITY_CHECK_MEANS_CHANGED = {
+  "foreign-entry": false,
+  "entry-metadata": false,
+  "container-identity": true,
+  // The session's opened target no longer matches: reopening, not a repeat
+  // of the same request, is what helps.
+  "admitted-identity": false,
+  "unpacked-entry-identity": true,
+  "member-identity": true,
+  "image-checksum": false,
+  "read-coverage": true,
+  "declared-size": false,
+  "reader-ownership": false,
+  "declared-digest": false,
+  "layout-consistency": false,
+  reconstruction: false,
+  "inventory-node": false,
+  "output-readback": false,
+  "output-lifecycle": false,
+  "traversal-coverage": true,
+} as const satisfies Readonly<Record<ArtifactIntegrityCheck, boolean>>;
+
+/** The integrity checks whose failure is a changed target. */
+export const integrityCheckMeansChanged = (
+  check: ArtifactIntegrityCheck | undefined,
+): boolean => check !== undefined && INTEGRITY_CHECK_MEANS_CHANGED[check];
 
 /** Artifact inventory or extraction failed a typed safety boundary. */
 export class ArtifactOperationError extends AnalysisError {
@@ -108,7 +142,6 @@ export class ArtifactOperationError extends AnalysisError {
     readonly reason:
       | ParseFailureKind
       | "cancelled"
-      | "format"
       | "integrity"
       | "path"
       | "unavailable"

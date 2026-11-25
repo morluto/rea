@@ -6,7 +6,10 @@ import type {
   UImageMetadata,
 } from "../domain/formatMetadata/firmwareMetadata.js";
 import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
-import { ArtifactReaderFailure } from "../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../resources/index.js";
 import {
   PositionalArtifactReader,
   type PositionalArtifactEntries,
@@ -60,6 +63,7 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
   ): Promise<PositionalArtifactEntries<UImageMetadata>> {
     const { handle, initial } = await this.verifyCarrier(signal);
     const headerBytes = await readArtifactFileBytes(
+      "uimage",
       handle,
       0,
       Math.min(initial.size, UIMAGE_HEADER_SIZE),
@@ -81,6 +85,7 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
     let sizeTableLimitation: string | undefined;
     if (hasUImageSizeTable(header.type)) {
       const tablePrefix = await readArtifactFileBytes(
+        "uimage",
         handle,
         UIMAGE_HEADER_SIZE,
         Math.min(header.payloadSize, UIMAGE_MULTI_TABLE_WINDOW),
@@ -104,6 +109,7 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
     while (read < header.payloadSize) {
       this.assertOpen(signal);
       const chunk = await readArtifactFileBytes(
+        "uimage",
         handle,
         UIMAGE_HEADER_SIZE + read,
         Math.min(READ_CHUNK_BYTES, header.payloadSize - read),
@@ -149,11 +155,7 @@ const formatFailure = (
   detail: string,
   options?: ErrorOptions,
 ): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
-    `uImage is malformed: ${detail}`,
-    options,
-  );
+  malformedArtifact("uimage", `uImage is malformed: ${detail}`, options);
 
 const parseFailure = (failure: UImageParseError): ArtifactReaderFailure =>
   failure._tag === "UImageCapacityFailure"

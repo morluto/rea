@@ -1198,7 +1198,7 @@ describe("SQLite short-page truncation and reusable TextDecoder codecs", () => {
         }),
       ).toThrowError(
         expect.objectContaining({
-          reason: "format",
+          reason: "malformed",
           message: expect.stringContaining(`malformed ${encoding} text`),
         }),
       );

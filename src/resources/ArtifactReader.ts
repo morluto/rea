@@ -512,6 +512,77 @@ export const artifactFixedLimitFailure = (
     fixedAllowance: allowance,
   });
 
+/** Where in the format a structure failed, when the reader knows it. */
+export interface ArtifactFormatSite extends Omit<
+  ArtifactReaderFailureOptions,
+  "parseFailure"
+> {
+  readonly offset?: number;
+  readonly field?: string;
+}
+
+/** A truncated structure's measured extents, when the reader measured them. */
+export interface ArtifactTruncationSite extends ArtifactFormatSite {
+  readonly availableBytes?: number;
+  readonly requiredBytes?: number;
+}
+
+/**
+ * A container reader's byte-structure failure, raised once by the reader that
+ * owns `format`. The reason is the failure's own kind, so no consumer has to
+ * reinterpret the message.
+ */
+export const artifactFormatFailure = (
+  failure: MalformedTargetFailure,
+  options: Omit<ArtifactReaderFailureOptions, "parseFailure"> = {},
+): ArtifactReaderFailure =>
+  new ArtifactReaderFailure(failure.kind, failure.detail, {
+    ...options,
+    parseFailure: failure,
+  });
+
+const located = (offset: number | undefined, field: string | undefined) => ({
+  ...(offset === undefined ? {} : { offset }),
+  ...(field === undefined ? {} : { field }),
+});
+
+/** The bytes break `format`'s own rules. */
+export const malformedArtifact = (
+  format: string,
+  detail: string,
+  { offset, field, ...options }: ArtifactFormatSite = {},
+): ArtifactReaderFailure =>
+  artifactFormatFailure(
+    { kind: "malformed", format, detail, ...located(offset, field) },
+    options,
+  );
+
+/** The bytes end before a structure `format` declares. */
+export const truncatedArtifact = (
+  format: string,
+  detail: string,
+  {
+    offset,
+    field,
+    availableBytes,
+    requiredBytes,
+    ...options
+  }: ArtifactTruncationSite = {},
+): ArtifactReaderFailure =>
+  artifactFormatFailure(
+    {
+      kind: "truncated",
+      format,
+      detail,
+      ...located(offset, field),
+      // The model carries the measured end only as a complete pair.
+      ...(availableBytes === undefined || requiredBytes === undefined
+        ? {}
+        : { extent: { availableBytes, requiredBytes } }),
+    },
+    options,
+  );
+
 const combineCleanup = (
   primary: AnalysisCleanupObservation | undefined,
   cleanup: AnalysisCleanupObservation,

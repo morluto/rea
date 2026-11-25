@@ -10,7 +10,10 @@ import {
   parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
-import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
+import {
+  IL2CPP_METADATA_FORMAT,
+  Il2cppMetadataFormatFailure,
+} from "./Il2cppMetadataFormat.js";
 import { inspectIl2cppMetadataV108 } from "./Il2cppMetadataV108.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -42,10 +45,9 @@ import {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
@@ -89,27 +91,20 @@ const linkConflict = (
   binaryPath: string,
   metadataPath: string,
   cause: Il2cppBinaryFormatFailure,
-): AnalysisInputError =>
-  new AnalysisInputError(
+): AnalysisTargetFailureError =>
+  new AnalysisTargetFailureError(
     OPERATION,
+    metadataPath,
     {
-      cause,
-      conformsToInputContract: true,
-      remediationAction:
-        "Select the native binary and global-metadata.dat from the same build. If they are from the same build, either file may be damaged or the binary's registration layout may be outside coverage. Without the binary, the metadata alone can still be read.",
+      kind: "conflict",
+      format: IL2CPP_BINARY_FORMAT,
+      detail: `Selected metadata does not link to the selected binary: ${cause.message}`,
+      inputs: [
+        { field: "path", path: metadataPath },
+        { field: "binary_path", path: binaryPath },
+      ],
     },
-    [
-      {
-        path: ["path"],
-        reason: "invalid_value",
-        message: `Selected metadata ${metadataPath} does not link to the selected binary: ${cause.message}`,
-      },
-      {
-        path: ["binary_path"],
-        reason: "invalid_value",
-        message: `Selected binary ${binaryPath} does not link to the metadata: ${cause.message}`,
-      },
-    ],
+    { cause },
   );
 
 const failureForPrimary = (
@@ -522,10 +517,17 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         );
         assertArtifactReadActive(options?.signal);
         if (v108 !== null) {
-          const failure = new AnalysisUnsupportedTargetError(
+          const failure = new AnalysisTargetFailureError(
             OPERATION,
             input.path,
-            "unsupported-version: metadata version 108 has a partial header and string observation; type, method and binary layouts are not decoded",
+            {
+              kind: "unsupported",
+              format: IL2CPP_METADATA_FORMAT,
+              detail:
+                "unsupported-version: metadata version 108 has a partial header and string observation; type, method and binary layouts are not decoded",
+              field: "version",
+              undecodedContent: true,
+            },
           );
           failure.partialObservation = metadataSourceEvidence(
             artifact,

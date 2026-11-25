@@ -230,12 +230,12 @@ describe("GodotPckArtifactReader format 1", () => {
     [
       "out-of-pack data",
       { path: "bad.bin", data: "x", offset: 1n << 40n },
-      "format",
+      "malformed",
     ],
     [
       "oversized data",
       { path: "bad.bin", data: "x", size: 1n << 40n },
-      "format",
+      "malformed",
     ],
   ] as const)("refuses Godot 3 format 1 %s", async (_, member, reason) => {
     await withReader(buildGodotPck1([member]), async (reader) => {
@@ -246,7 +246,7 @@ describe("GodotPckArtifactReader format 1", () => {
   it("rejects a truncated Godot 3 format 1 directory", async () => {
     const pack = buildGodotPck1([{ path: "a.gd", data: "x" }]);
     await withReader(pack.subarray(0, 110), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 });
@@ -360,12 +360,13 @@ describe("GodotPckArtifactReader", () => {
     });
   });
 
-  it("reports an oversized path that cannot fit in the pack as malformed", async () => {
+  it("reports an oversized path that cannot fit in the pack as truncated", async () => {
     const bytes = buildGodotPck(2, members);
     bytes.writeUInt32LE(0xffff_ffff, 100);
     await withReader(bytes, async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "truncated",
+        parseFailure: { kind: "truncated", format: "godot-pck" },
       });
     });
   });
@@ -379,19 +380,23 @@ describe("GodotPckArtifactReader", () => {
     [
       "a member count that cannot fit",
       buildGodotPck(3, members, { fileCount: 0xffff_ffff }),
-      "format",
+      "malformed",
     ],
     [
       "member data beyond the pack",
       buildGodotPck(3, [{ path: "big.bin", data: "x", size: 1n << 40n }]),
-      "format",
+      "malformed",
     ],
     [
       "an unknown format 5 pack",
       Buffer.concat([Buffer.from("GDPC"), pckU32(5), Buffer.alloc(120)]),
       "unavailable",
     ],
-    ["bytes without a pack", Buffer.from("not a godot pack at all"), "format"],
+    [
+      "bytes without a pack",
+      Buffer.from("not a godot pack at all"),
+      "malformed",
+    ],
     [
       "a trailer pointing outside the file",
       Buffer.concat([
@@ -399,7 +404,7 @@ describe("GodotPckArtifactReader", () => {
         pckU64(1n << 40n),
         Buffer.from("GDPC"),
       ]),
-      "format",
+      "malformed",
     ],
   ])("refuses %s", async (_, bytes, reason) => {
     await withReader(bytes, async (reader) => {
@@ -673,7 +678,7 @@ it.each([
 ] as const)("refuses a member %s", async (_label, bytes, message) => {
   await withReader(bytes, async (reader) => {
     await expect(list(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(message),
     });
   });

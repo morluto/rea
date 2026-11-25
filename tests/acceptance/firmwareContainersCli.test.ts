@@ -203,7 +203,13 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      details: { operation: "inspect_artifact", reason: "format" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_artifact",
+        reason: "malformed",
+        failure_kind: "malformed",
+        format: "uf2",
+      },
     });
     expect(result.stdout + result.stderr).toMatch(
       /0xe48bff56.*RP2040.*0x10000000.*different values.*0-1.*0x01.*2.*0xff/iu,
