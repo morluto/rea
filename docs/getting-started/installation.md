@@ -408,6 +408,23 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
+Without a scope option, `healthy` also counts clients and providers you never
+set up, so a working setup can report `healthy: false`. The audit-wide report
+then includes `configured_scope`: the registered clients (any registration state
+except missing or manual), the configured or discovered providers, and the skill
+when any selected copy is installed, even partially. Its `healthy` is judged
+from the facts the matching explicit scope collects, so a single client's
+recorded provider settings and that client's skill copies apply rather than the
+terminal's, and it becomes false when doctor's own cleanup fails.
+`failing_checks` lists the checks that make it unhealthy, with their detail and
+remediation, and is empty when it is healthy. `argv` holds the exact arguments
+of the `rea doctor` invocation that reports that scope, starting with
+`npx -y rea-agents@<version>` or `bunx rea-agents@<version>`, pinned to the
+running release, when doctor was launched that way, and passing a target as
+one `--target=<path>` argument. `command` is the same invocation quoted for
+PowerShell on Windows and for POSIX shells elsewhere. `configured_scope` is
+omitted when no client or provider is set up.
+
 With one selected client, the Hopper, ilspycmd, Ghidra, IDA, JADX and Kuna
 checks use its recorded environment over the terminal it inherits. If Doctor cannot read the registration or resolve
 a setting a provider needs, the affected check reports `unknown`. For Ghidra,
