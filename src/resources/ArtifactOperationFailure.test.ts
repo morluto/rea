@@ -32,6 +32,7 @@ import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { artifactReaderLimitFailure } from "./index.js";
+import { targetDigestChangedFailure } from "./withArtifactTargetIdentity.js";
 import {
   malformedInput,
   truncatedInput,
@@ -420,6 +421,25 @@ it("keeps producer-owned recovery through cleanup wrapping and public projection
     cleanup_reason: "Owned staging cleanup needs retry",
     resources: ["owned staging"],
   });
+});
+
+it("projects a session digest mismatch as admitted identity, not a retryable change", () => {
+  const projected = projectAnalysisError(
+    translateArtifactFailure(
+      "inspect_keyed_archive",
+      targetDigestChangedFailure("archive", "a".repeat(64), "b".repeat(64)),
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "artifact_operation_failed",
+    category: "integrity_mismatch",
+    retryable: false,
+    details: {
+      reason: "integrity",
+      integrity_check: "admitted-identity",
+    },
+  });
+  expect(projected.retry).toBeUndefined();
 });
 
 it("names the failed integrity check through cleanup wrapping and public projection", () => {

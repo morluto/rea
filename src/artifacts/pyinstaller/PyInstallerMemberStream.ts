@@ -73,6 +73,7 @@ export const pyInstallerMemberStream = (
     options.expectedBytes ?? options.maxBytes,
   );
   let bytes = 0;
+  let consumedSourceBytes = 0;
   let headerSent = false;
   let completing = false;
   let failure: ArtifactReaderFailure | undefined;
@@ -107,12 +108,24 @@ export const pyInstallerMemberStream = (
         if (
           inflate !== undefined &&
           inflate.bytesWritten !== options.sourceBytes
-        )
+        ) {
+          // The declared span arrived and zlib left some of it unread: the
+          // member contains another stream or trailing junk, which a retry
+          // cannot repair. A source that ended first never delivered that
+          // span, so the file changed under the read.
+          const sourceEndedEarly = consumedSourceBytes < options.sourceBytes;
           throw new ArtifactReaderFailure(
             "integrity",
-            "Compressed PyInstaller member did not consume its complete declared source span",
-            { integrityCheck: "read-coverage" },
+            sourceEndedEarly
+              ? "Compressed PyInstaller member ended before its declared source span"
+              : "Compressed PyInstaller member left part of its declared source span unread",
+            {
+              integrityCheck: sourceEndedEarly
+                ? "read-coverage"
+                : "layout-consistency",
+            },
           );
+        }
         if (
           options.expectedBytes !== undefined &&
           bytes !== options.expectedBytes
@@ -193,10 +206,22 @@ export const pyInstallerMemberStream = (
           );
     output.destroy(failure);
   });
+  // Count bytes the source actually yielded. zlib's own counter stops at the
+  // first complete stream, so it cannot tell leftover input from a short read.
   const production = (
     inflate === undefined
       ? pipeline(source, output)
-      : pipeline(source, inflate, output)
+      : pipeline(
+          source,
+          new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              consumedSourceBytes += chunk.length;
+              callback(null, chunk);
+            },
+          }),
+          inflate,
+          output,
+        )
   )
     .catch((cause: unknown) => {
       // Pipeline can reject with the native error that caused a mapped output
