@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const offsetSchema = z
@@ -8,6 +9,32 @@ const offsetSchema = z
   .max(Number.MAX_SAFE_INTEGER);
 const entropySchema = z.number().min(0).max(8);
 
+/**
+ * The per-call `block_size` budget `inspect_byte_entropy` accepts, shared by
+ * its schema and refusals.
+ */
+export const BYTE_ENTROPY_BLOCK_SIZE_BOUNDS = {
+  minimum: 256,
+  maximum: 65536,
+  default_value: 4096,
+} as const;
+
+/**
+ * The per-call control that stopped a byte-entropy inspection, named by its
+ * contract field. The schema owns the same bounds, so the reported range is
+ * the one the next call accepts.
+ */
+export const byteEntropyBlockSizeLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "block_size",
+  effective_value: effectiveValue,
+  unit: "bytes",
+  ...BYTE_ENTROPY_BLOCK_SIZE_BOUNDS,
+  applies_at: "next_call",
+});
+
 /** Select blocks relative to an explicit byte window; identity remains file-wide. */
 export const inspectByteEntropyInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
@@ -16,13 +43,13 @@ export const inspectByteEntropyInputSchema = z.strictObject({
   block_size: z
     .number()
     .int()
-    .min(256)
-    .max(65536)
+    .min(BYTE_ENTROPY_BLOCK_SIZE_BOUNDS.minimum)
+    .max(BYTE_ENTROPY_BLOCK_SIZE_BOUNDS.maximum)
     .refine(
       (value) => (value & (value - 1)) === 0,
       "Block size must be a power of two.",
     )
-    .default(4096),
+    .default(BYTE_ENTROPY_BLOCK_SIZE_BOUNDS.default_value),
   offset: offsetSchema.default(0),
   length: offsetSchema.optional(),
 });

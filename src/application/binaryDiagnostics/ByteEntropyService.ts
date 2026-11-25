@@ -21,6 +21,7 @@ import {
   type Evidence,
 } from "../../domain/evidence.js";
 import {
+  byteEntropyBlockSizeLimit,
   byteEntropySchema,
   createBlockEntropyCalculator,
   entropyFromCounts,
@@ -251,6 +252,7 @@ export class ByteEntropyService {
               },
               {
                 retryable: false,
+                limit: byteEntropyBlockSizeLimit(input.block_size),
                 remediationAction:
                   "Reduce the selected window length or increase block_size so the selected window contains at most 32768 blocks.",
               },

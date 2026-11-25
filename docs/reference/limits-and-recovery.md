@@ -101,6 +101,11 @@ accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
 index of `binary_path`; its refusal reports the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 
+`inspect_byte_entropy` refuses a selected window above 32,768 blocks with
+`details.limit` naming `block_size` (`control_kind: "parameter"`), its
+effective value, default and range; raising `block_size` (or shortening the
+window) admits the same window.
+
 ### Static reader read allowance
 
 `inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,

@@ -424,6 +424,27 @@ it("refuses a block series above the output-row limit before scanning", async ()
       action: expect.stringMatching(/shorter window|increase block_size/i),
     },
   });
+  // The refusal names the per-call control that stopped it, so a caller
+  // can raise it without parsing the remediation text.
+  expect(projectAnalysisError(result.error).details).toMatchObject({
+    limit: {
+      control_kind: "parameter",
+      parameter: "block_size",
+      effective_value: 256,
+      unit: "bytes",
+      minimum: 256,
+      maximum: 65536,
+      default_value: 4096,
+      applies_at: "next_call",
+    },
+  });
+  // Raising block_size admits the same window.
+  const admitted = new ByteEntropyService();
+  try {
+    expect((await admitted.inspect({ path, block_size: 512 })).ok).toBe(true);
+  } finally {
+    await admitted.close();
+  }
   expect(reads).toBe(0);
   await service.close();
 });
