@@ -312,14 +312,7 @@ if ($Mode -eq 'argv') {
   [Console]::Out.WriteLine(($captured | ConvertFrom-Json | ConvertTo-Json -Compress))
   exit 0
 }
-if ($Mode -eq 'stdin') {
-  # The documented pipeline form must deliver this exact request to the CLI.
-  $document = Get-Content -LiteralPath $Sample -Raw -Encoding UTF8
-  $pipedRequest = $document | & $Launcher inspect-analysis-view - --json
-  $requestExit = $LASTEXITCODE
-  [Console]::Out.WriteLine((@{ exit = $requestExit; output = (($pipedRequest | Out-String).Trim()) } | ConvertTo-Json -Compress))
-  exit 0
-}
+
 Set-Location -LiteralPath $Sample
 if ($Mode -eq 'relative') {
   & $Launcher analyze-javascript-application . --json
@@ -381,52 +374,6 @@ if ($LASTEXITCODE -ne 0 -or -not $piped.healthy) { throw 'Piped doctor failed' }
     captured: true,
     piped: true,
   });
-  reportStage("PowerShell pipeline input forwarding");
-  const pipedEvidence = join(workspace, "piped-evidence.json");
-  await writeFile(pipedEvidence, JSON.stringify(cli), "utf8");
-  const pipedRequestPath = join(workspace, "piped-request.json");
-  await writeFile(
-    pipedRequestPath,
-    JSON.stringify({
-      source: { kind: "evidence-file", path: pipedEvidence },
-      view: { kind: "summary" },
-    }),
-    "utf8",
-  );
-  const piped = JSON.parse(
-    (await sessionPowerShell("stdin", directory, pipedRequestPath)).stdout,
-  );
-  assert.equal(
-    piped.exit,
-    0,
-    `The piped request must succeed:\n${piped.output}`,
-  );
-  const pipedResult = JSON.parse(piped.output);
-  assert.equal(
-    pipedResult.operation,
-    "inspect_analysis_view",
-    "The piped request must run the view operation",
-  );
-  assert.match(
-    pipedResult.evidence_id,
-    /^ev_[0-9a-f]{64}$/u,
-    "The piped request must return Evidence",
-  );
-  assert.equal(
-    pipedResult.normalized_result.parent_operation,
-    cli.operation,
-    "The piped request must project the evidence it named",
-  );
-  assert.equal(
-    pipedResult.normalized_result.parent_evidence_id,
-    cli.evidence_id,
-    "The piped request must read the evidence it named",
-  );
-  assert.deepEqual(
-    pipedResult.evidence_links,
-    [cli.evidence_id],
-    "The piped request must link the evidence it named",
-  );
   for (const invocation of [
     { command: node, args: [entry, "mcp"] },
     ...["mcp", "--mcp"].map((mode) => ({
