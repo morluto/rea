@@ -68,9 +68,12 @@ const fixture = async () => {
   );
   await writeFile(join(root, "package.json"), '{"type":"module"}\n');
   await writeFile(join(root, ".gitignore"), "node_modules\nselected.txt\n");
+  // Disable Vitest's disk module cache in nested fixture configs; root/node_modules
+  // symlinks the parent workspace's node_modules, so a lockfile mismatch would
+  // otherwise clear the parent runner's node_modules/.vitest-cache mid-run.
   await writeFile(
     join(root, "vitest.config.mjs"),
-    'export default { test: { projects: [{ test: { name: "domain", include: ["src/**/*.test.ts"] } }] } };\n',
+    'export default { test: { fsModuleCache: false, projects: [{ test: { name: "domain", fsModuleCache: false, include: ["src/**/*.test.ts"] } }] } };\n',
   );
   await writeFile(join(root, "src/value.ts"), "export const value = 1;\n");
   await writeFile(
@@ -143,7 +146,7 @@ describe("development test runner symlink aliases", () => {
         kind === "file" ? "src/value.test.ts" : "src/domain/value.test.ts";
       await writeFile(
         join(root, "vitest.config.mjs"),
-        `export default { test: { projects: [{ test: { name: "domain", include: ["${includedSelection}"] } }] } };\n`,
+        `export default { test: { fsModuleCache: false, projects: [{ test: { name: "domain", fsModuleCache: false, include: ["${includedSelection}"] } }] } };\n`,
       );
 
       await expect(
@@ -309,7 +312,7 @@ describe("development test runner exact selection", () => {
     );
     await writeFile(
       join(root, "vitest.config.mjs"),
-      'export default { test: { projects: [{ test: { name: "domain", include: ["src/value.test.ts"] } }] } };\n',
+      'export default { test: { fsModuleCache: false, projects: [{ test: { name: "domain", fsModuleCache: false, include: ["src/value.test.ts"] } }] } };\n',
     );
     await expect(
       testCommand(root, "focused", "src/value.test.ts", "src/excluded.test.ts"),
@@ -345,7 +348,7 @@ describe("development test runner exact selection", () => {
     );
     await writeFile(
       join(root, "vitest.config.mjs"),
-      'export default { test: { projects: ["domain", "evaluation"].map(name => ({ test: { name, env: { REA_TEST_PROJECT: name }, include: ["src/value.test.ts"] } })) } };\n',
+      'export default { test: { fsModuleCache: false, projects: ["domain", "evaluation"].map(name => ({ test: { name, fsModuleCache: false, env: { REA_TEST_PROJECT: name }, include: ["src/value.test.ts"] } })) } };\n',
     );
     await testCommand(root, "focused", "src/value.test.ts");
     for (const name of ["domain", "evaluation"])

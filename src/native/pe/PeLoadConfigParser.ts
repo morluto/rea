@@ -24,6 +24,7 @@ import {
   type PeImage,
 } from "../../domain/native/peImage.js";
 import { peSectionVirtualExtent } from "../../domain/peSectionHeader.js";
+import { peImageBaseHex } from "../../domain/native/peAddressSpace.js";
 import {
   peDirectorySizeAnomaly,
   type PeHeaderAnomaly,
@@ -311,6 +312,7 @@ const parsePeLoadConfigCore = async (
     machine: image.pe_machine,
     bits,
     architecture: image.architecture,
+    image_base: peImageBaseHex(base),
     tls,
     load_config: loadConfig,
     examined_callbacks: tls?.callbacks.length ?? 0,

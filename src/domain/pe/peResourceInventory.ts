@@ -380,6 +380,7 @@ const parsePeResourceInventory = async (
   return {
     format: layout.format,
     machine: layout.machine,
+    image_base: layout.imageBase,
     directory:
       layout.size === 0 || layout.directoryAt === null
         ? null

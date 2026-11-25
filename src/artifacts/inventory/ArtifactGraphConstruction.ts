@@ -11,6 +11,7 @@ import {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
+import type { DirectoryRootDigest } from "../../domain/directoryTreeDigest.js";
 import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
   artifactEdgeId,
@@ -151,6 +152,9 @@ export const createOccurrence = (
     ...(entry.formatMetadata === undefined
       ? {}
       : { format_metadata: { ...entry.formatMetadata } }),
+    ...(entry.linkTarget === undefined
+      ? {}
+      : { link_target: { ...entry.linkTarget } }),
   };
 };
 
@@ -224,10 +228,17 @@ export const createRootNode = (input: {
       } & ArtifactClassificationEvidence)
     | null;
   readonly occurrences: readonly MutableOccurrence[];
+  /** A directory root's tree digest, which names it when complete. */
+  readonly treeDigest?: DirectoryRootDigest | undefined;
 }): ArtifactNode =>
   createArtifactNode({
     sha256:
       input.digest?.sha256 ??
+      (input.treeDigest?.status === "complete"
+        ? input.treeDigest.sha256
+        : undefined) ??
+      // A partial walk has no tree identity. This listing commitment keeps
+      // the graph addressable, and the inventory reports the digest partial.
       digestCanonicalValue(
         {
           kind: "directory-root",
@@ -627,8 +638,13 @@ export const classifyArtifactHeader = (
   evidence: ArtifactClassificationEvidence,
   fileSize: number,
 ): Pick<ArtifactNode, "format" | "architecture"> => {
-  const { prefix, suffix, mzWindowsHeaderSignature, mzWindowsHeaderRecord } =
-    evidence;
+  const {
+    prefix,
+    suffix,
+    iso9660Descriptor,
+    mzWindowsHeaderSignature,
+    mzWindowsHeaderRecord,
+  } = evidence;
   const only = (format: ArtifactNode["format"]) => ({
     format,
     architecture: null,
@@ -636,10 +652,10 @@ export const classifyArtifactHeader = (
   // A refused claim falls through: a header-only iNES region, for example,
   // has the signature but not the declared cartridge extent, so it stays a
   // file instead of becoming another container. A claim that needs more
-  // bytes falls through too: the scan holds a bounded prefix and the trailer,
-  // so it cannot locate an ESP flash partition table, and a flash dump is
-  // classified by its first image.
-  const input = { prefix, fileSize, suffix };
+  // bytes falls through too: the scan holds a bounded prefix, the trailer and
+  // the ISO 9660 descriptor signature, so it cannot locate an ESP flash
+  // partition table, and a flash dump is classified by its first image.
+  const input = { prefix, fileSize, suffix, iso9660Descriptor };
   for (
     let recognition = recognizeArtifactFormat(input);
     recognition !== undefined;

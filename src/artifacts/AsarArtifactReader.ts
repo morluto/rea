@@ -1,6 +1,9 @@
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
+import {
+  DEFAULT_ASAR_HEADER_ADMISSION,
+  type AsarHeaderAdmission,
+} from "../config/asarHeaderAdmission.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -189,11 +192,13 @@ export class AsarArtifactReader implements ArtifactReader {
         }
       | { readonly ok: false; readonly cause: unknown };
     try {
-      const extents = await admitAsarHeader(
-        headerHandle,
-        signal,
-        this.options.headerAdmission,
-      );
+      const extents =
+        this.#reusableAdmittedExtents() ??
+        (await admitAsarHeader(
+          headerHandle,
+          signal,
+          this.options.headerAdmission,
+        ));
       admission = {
         ok: true,
         value: {
@@ -821,9 +826,31 @@ export class AsarArtifactReader implements ArtifactReader {
     });
   }
 
+  #reusableAdmittedExtents(): AsarHeaderExtents | undefined {
+    const admitted = this.options.admittedExtents;
+    if (admitted === undefined || this.options.openFile !== undefined)
+      return undefined;
+    const effective =
+      this.options.headerAdmission ?? DEFAULT_ASAR_HEADER_ADMISSION;
+    if (
+      admitted.headerAdmission.maximumBytes !== effective.maximumBytes ||
+      this.#snapshot?.bytes !== admitted.extents.archiveBytes
+    )
+      return undefined;
+    return admitted.extents;
+  }
+
   #resetArchiveState(): void {
     this.#extents = undefined;
   }
+}
+
+/** Validated ASAR header extents carried from root classification. */
+export interface AsarAdmission {
+  readonly kind: "asar";
+  readonly source: StableRegularFileDescriptor;
+  readonly extents: AsarHeaderExtents;
+  readonly headerAdmission: AsarHeaderAdmission;
 }
 
 type AsarEntryState = {
@@ -849,6 +876,11 @@ export type AsarArtifactReaderOptions = {
   readonly selectedPath?: string;
   /** Pre-opened source descriptor admitted during classification to avoid re-opening. */
   readonly admitted?: StableRegularFileDescriptor;
+  /** Pre-validated header extents from root classification when admission matches. */
+  readonly admittedExtents?: {
+    readonly extents: AsarHeaderExtents;
+    readonly headerAdmission: AsarHeaderAdmission;
+  };
   readonly openFile?: OpenAsarFile;
   readonly openUnpackedFile?: OpenAsarFile;
   readonly removeSnapshot?: (path: string) => Promise<void>;

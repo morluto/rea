@@ -115,14 +115,15 @@ cliTest(
       },
     });
 
-    // The language directory declares one more row than the admitted interval holds.
-    const [resourceRoot, , languages] = fixture.directoryOffsets;
-    if (resourceRoot === undefined || languages === undefined)
+    // Resource trees are read at their RVA whatever the directory Size
+    // declares, so damage the framing itself: the type directory's entry
+    // names a language directory outside the file-backed resource bytes. Its
+    // header cannot be read, which the reader reports before it counts rows
+    // against the entry allowance.
+    const [, typeDirectory] = fixture.directoryOffsets;
+    if (typeDirectory === undefined)
       throw new Error("Missing resource fixture directories");
-    fixture.bytes.writeUInt32LE(
-      languages - resourceRoot + 16 + 65_535 * 8 - 1,
-      fixture.directoryAt + 4,
-    );
+    fixture.bytes.writeUInt32LE(0x80000000 + 0x7fff_0000, typeDirectory + 20);
     await writeFile(path, fixture.bytes);
     const malformed = await cli.run({
       arguments: ["inspect-artifact", path, "--json"],

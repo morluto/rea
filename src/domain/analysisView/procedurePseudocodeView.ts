@@ -12,7 +12,10 @@ import {
   type NativeFacetAnalysisView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { completeWithinViewCoverage } from "./analysisViewCoverage.js";
 import { analysisTextPage } from "./analysisViewText.js";
 import { procedurePseudocodeSelectionSchema } from "./procedurePseudocodeSchemas.js";
@@ -36,15 +39,8 @@ export const projectProcedurePseudocodeView = (
     view === undefined ||
     (view.kind === "native" && view.facet !== "pseudocode")
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "procedure_pseudo_code Evidence supports summary or native pseudocode views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "procedure_pseudo_code Evidence supports summary or native pseudocode views.",
     );
   if (parent.artifact == null)
     return err(

@@ -21,6 +21,7 @@ import {
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 import {
   combineRelationshipDiscovery,
+  withRequiredLimitedDirections,
   type RelationshipCoverage,
   type RelationshipDiscoveryStatus,
 } from "../domain/relationshipCoverage.js";
@@ -229,10 +230,18 @@ const expandAddress = async (
   const { execution, related } = read;
   for (const limitation of execution.limitations)
     state.limitations.add(limitation);
-  const coverage = execution.relationshipCoverage ?? {
-    status: "unknown",
-    reason: "Provider did not report relationship coverage.",
-  };
+  const directionFallback =
+    relation === "callers" ? (["callers"] as const) : (["callees"] as const);
+  const coverage: RelationshipCoverage =
+    execution.relationshipCoverage === undefined
+      ? {
+          status: "unknown",
+          reason: "Provider did not report relationship coverage.",
+          limited_directions: [...directionFallback],
+        }
+      : withRequiredLimitedDirections(execution.relationshipCoverage, [
+          ...directionFallback,
+        ]);
   state.relationshipCoverage.set(address, coverage);
   state.discovery = combineRelationshipDiscovery(
     state.discovery,

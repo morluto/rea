@@ -23,12 +23,25 @@ import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
 import {
+  GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
+  GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
+  GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
   ghidraRiscvCallingConvention,
+  ghidraRiscvCallingConventionFailure,
   ghidraRiscvLimitations,
+  ghidraRiscvLoadPreparation,
+  ghidraRiscvLoadPreparationFailure,
+  ghidraRiscvLoadPreparationLimitations,
   ghidraRiscvUnsupportedReason,
   type GhidraRiscvCallingConventionReport,
+  type GhidraRiscvLoadPreparationReport,
 } from "./GhidraRiscvProfile.js";
-import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
+import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
+import { stating } from "../../tests/support/statingFacts.js";
+import {
+  GHIDRA_SESSION_CAPABILITIES,
+  type GhidraSessionInfo,
+} from "./GhidraSessionValues.js";
 import {
   createSimulatedInstallDirectory,
   ghidraProfileInstallationHost as host,
@@ -87,6 +100,7 @@ const target = (change: Partial<RiscvElfMetadata> = {}): BinaryTarget => ({
     byteOrder: "little",
     type: 2,
     flags: 0x5,
+    sectionOverlap: { status: "none" },
     ...change,
   },
 });
@@ -102,6 +116,12 @@ const ilp32 = (
     isa: riscvIsaDeclaration(arch),
     ...change,
   });
+// ESP-IDF 5.5 builds ESP32-H4 with -march=rv32imafc_zicsr_zifencei; LLVM records it so.
+const H4_ARCH = "rv32i2p1_m2p0_a2p1_f2p2_c2p0_zicsr2p0_zifencei2p0_zmmul1p0";
+const ilp32f = (
+  arch: string = H4_ARCH,
+  change: Partial<RiscvElfMetadata> = {},
+): BinaryTarget => ilp32(arch, { flags: 0x3, ...change });
 
 let installDir = "";
 let disposeInstallDir: (() => Promise<void>) | undefined;
@@ -334,8 +354,11 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     [{ flags: 0x1 }, "soft-float ABI (lp64) declared by e_flags"],
     [{ flags: 0x3 }, "single-float ABI (lp64f)"],
     [{ flags: 0x7 }, "quad-float ABI (lp64q)"],
-    [{ elfClass: 32, flags: 0x3 }, "single-float ABI (ilp32f)"],
-    [{ elfClass: 32, flags: 0x7 }, "the quad-float ABI declared by e_flags"],
+    [
+      { elfClass: 32, flags: 0x7 },
+      "declare the double-float, soft-float or single-float ABI; the quad-float ABI declared by e_flags",
+    ],
+    [{ elfClass: 32, flags: 0x3 }, "which was not inspected"],
     [{ elfClass: 32, flags: 0x1 }, "which was not inspected"],
     [{ elfClass: 32, flags: 0x1, isa: { status: "absent" } }, "declares none"],
     [
@@ -591,14 +614,139 @@ describe("RISC-V ilp32 admission", () => {
   });
 });
 
+describe("RISC-V ilp32f admission", () => {
+  it.each([
+    ["ESP32-H4 base", H4_ARCH],
+    [
+      "same base as GCC records it",
+      "rv32i2p1_m2p0_a2p1_f2p2_c2p0_zicsr2p0_zifencei2p0_zmmul1p0_zaamo1p0_zalrsc1p0_zca1p0_zcf1p0",
+    ],
+    ["bare F base", "rv32i2p1_f2p2_zicsr2p0"],
+  ])("admits the %s", (_label, arch) => {
+    const value = ilp32f(arch);
+    expect(ghidra().inspectTargetSupport(value).status).toBe("supported");
+    expect(ghidraPinnedLanguage(value)).toEqual({
+      languageId: "RISCV:LE:32:default",
+      compilerSpecId: "gcc",
+    });
+    expect(ghidraRiscvCallingConvention(value)).toBe("ilp32f-prototype-v1");
+  });
+
+  it.each([
+    [
+      "ESP-IDF's ESP32-P4 build with its PIE extension",
+      ilp32f(`${H4_ARCH}_xesppie1p0`),
+      "outside the set this lane decodes: xesppie.",
+    ],
+    [
+      "a declaration without F",
+      ilp32f(C3_ARCH),
+      `declares ${C3_ARCH} without f, which the single-float ABI (ilp32f) declared by e_flags requires.`,
+    ],
+    [
+      "the single-float ABI on D hardware",
+      ilp32f(
+        "rv32i2p1_m2p0_a2p1_f2p2_d2p2_c2p0_zicsr2p0_zmmul1p0_zca1p0_zcf1p0_zcd1p0",
+      ),
+      "with d, zcd: ilp32f then preserves only the low 32 bits of fs0-fs11",
+    ],
+    [
+      "Zcd declared without D",
+      ilp32f("rv32i2p1_f2p2_c2p0_zicsr2p0_zcd1p0"),
+      "with zcd: ilp32f then preserves only the low 32 bits of fs0-fs11",
+    ],
+    [
+      "an absent declaration",
+      ilp32f(H4_ARCH, { isa: { status: "absent" } }),
+      "declares none",
+    ],
+    [
+      "an RV64 string",
+      ilp32f("rv64i2p1_m2p0_a2p1_f2p2_c2p0"),
+      "requires the RV32I base",
+    ],
+  ])("refuses %s", async (_label, value, reason) => {
+    expect(ghidra().inspectTargetSupport(value)).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason: expect.stringContaining(reason),
+    });
+    expect((await ghidra().resolveAnalysisProfile(value)).ok).toBe(false);
+    expect(ghidraPinnedLanguage(value)).toBeUndefined();
+    expect(ghidraRiscvCallingConvention(value)).toBeUndefined();
+  });
+
+  it("commits the single-float lane, its declarations and its policy", async () => {
+    const resolved = await ghidra().resolveAnalysisProfile(ilp32f());
+    const soft = await ghidra().resolveAnalysisProfile(ilp32(H4_ARCH));
+    if (
+      !resolved.ok ||
+      !soft.ok ||
+      resolved.value.profile === null ||
+      soft.value.profile === null
+    )
+      throw new Error("expected ilp32f and ilp32 profiles");
+    const parameters = resolved.value.profile.parameters;
+    expect(parameters.riscv_elf).toEqual({
+      elf_class: 32,
+      byte_order: "little",
+      type: 2,
+      flags: 3,
+      float_abi_double: false,
+      float_abi: "single",
+      arch: H4_ARCH,
+      rvc_declared: true,
+      rve_declared: false,
+      tso_declared: false,
+    });
+    expect(parameters.riscv_calling_convention).toBe("ilp32f-prototype-v1");
+    expect(parameters.riscv_support_lane).toBe(
+      "elf32-exec-le-single-float-generic-v1",
+    );
+    expect(parameters.language_id).toBe("RISCV:LE:32:default");
+    // The same ISA under the soft-float ABI is another lane and profile.
+    expect(soft.value.profile.parameters.riscv_calling_convention).toBe(
+      "ilp32-prototype-v1",
+    );
+    expect(soft.value.profile.digest).not.toBe(resolved.value.profile.digest);
+  });
+
+  it("states the declared ABI and the applied prototype", () => {
+    const notes = ghidraRiscvLimitations(ilp32f());
+    // One note names the declared ABI, the ABI the pinned language models
+    // and the prototype REA applies, in any wording and order.
+    expect(notes).toContainEqual(
+      expect.stringMatching(
+        /^(?=.*\(ilp32f\))(?=.*\bilp32d\b)(?=.*`__rea_ilp32f`)/su,
+      ),
+    );
+    expect(notes).toContainEqual(expect.stringContaining(H4_ARCH));
+  });
+});
 const report: GhidraRiscvCallingConventionReport = {
   policy: "ilp32-prototype-v1",
   functions: 11,
   definitions: 11,
 };
+const singleReport: GhidraRiscvCallingConventionReport = {
+  policy: "ilp32f-prototype-v1",
+  functions: 17,
+  definitions: 16,
+};
+const refusal: GhidraRiscvCallingConventionReport = {
+  policy: "ilp32f-prototype-v1",
+  refused:
+    "1 of 17 functions and 1 function-pointer definition pass by-value types that __rea_ilp32f cannot express: rea_riscv_abi_half (_Float16).",
+};
+const languageRefusal: GhidraRiscvCallingConventionReport = {
+  policy: "ilp32-prototype-v1",
+  refused:
+    "DWARF compile units define 3 functions in Rust (DW_AT_language 0x1c), such as rea_riscv_entry. Their calling convention is not the C psABI this lane models, so REA cannot verify their storage.",
+};
 const sessionInfo = (
   value: BinaryTarget,
   reported?: GhidraRiscvCallingConventionReport,
+  prepared?: GhidraRiscvLoadPreparationReport,
 ) => ({
   name: "REA Ghidra bridge" as const,
   run_id: "11111111-1111-4111-8111-111111111111",
@@ -617,11 +765,13 @@ const sessionInfo = (
     sha256: "a".repeat(64),
   },
   ...(reported === undefined ? {} : { riscv_calling_convention: reported }),
+  ...(prepared === undefined ? {} : { elf_load_preparation: prepared }),
 });
 const session = async (
   value: BinaryTarget,
   reported: GhidraRiscvCallingConventionReport | undefined,
   profileFor: BinaryTarget = value,
+  prepared?: GhidraRiscvLoadPreparationReport,
 ) => {
   const counts = { starts: 0, calls: 0, closes: 0 };
   const launches: Parameters<GhidraProviderClientFactory>[0][] = [];
@@ -635,7 +785,7 @@ const session = async (
       return {
         start: () => {
           counts.starts++;
-          return Promise.resolve(ok(sessionInfo(value, reported)));
+          return Promise.resolve(ok(sessionInfo(value, reported, prepared)));
         },
         callTool: () => {
           counts.calls++;
@@ -680,6 +830,33 @@ describe("RISC-V calling-convention handshake", () => {
           "11 functions and 11 function definitions use __rea_ilp32.",
         ),
         expect.stringContaining("variadic call's arguments"),
+        GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
+        GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
+      ]),
+    );
+    expect(health.value.limitations).not.toContain(
+      GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
+    );
+  });
+
+  it("launches the single-float policy and reports its outcome", async () => {
+    const { client, launches } = await session(ilp32f(), singleReport);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.launcher).toMatchObject({
+      options: { riscvCallingConvention: "ilp32f-prototype-v1" },
+    });
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "installs a program-specific `__rea_ilp32f` prototype",
+        ),
+        expect.stringContaining(
+          "17 functions and 16 function definitions use __rea_ilp32f.",
+        ),
+        GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
+        GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
       ]),
     );
   });
@@ -718,7 +895,19 @@ describe("RISC-V calling-convention handshake", () => {
       reason: "a report from a double-float session",
       value: target(),
       reported: report,
-      operation: "health",
+      operation: "list_procedures",
+    },
+    {
+      reason: "an ilp32f refusal before any analysis call",
+      value: ilp32f(),
+      reported: refusal,
+      operation: "list_procedures",
+    },
+    {
+      reason: "an ilp32 refusal of another source language",
+      value: ilp32(),
+      reported: languageRefusal,
+      operation: "list_procedures",
     },
   ] as const)("rejects $reason", async ({ value, reported, operation }) => {
     const { counts, client } = await session(value, reported);
@@ -731,6 +920,14 @@ describe("RISC-V calling-convention handshake", () => {
         diagnostics: { reason: expect.any(String) },
       },
     });
+    // The handshake's reason is the user-facing message.
+    if (!failed.ok)
+      expect(failed.error.userMessage).toBe(
+        ghidraRiscvCallingConventionFailure(
+          ghidraRiscvCallingConvention(value),
+          reported,
+        ),
+      );
     expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
   });
 
@@ -743,5 +940,438 @@ describe("RISC-V calling-convention handshake", () => {
       expect((await client.execute("health", {})).ok).toBe(false);
       expect(counts.starts).toBe(0);
     }
+  });
+});
+
+// ESP-IDF v6.1 ESP32-C6 hello_world's sections, as the ELF reader records them.
+const C6_ARCH =
+  "rv32i2p1_m2p0_a2p1_c2p0_zicsr2p0_zifencei2p0_zmmul1p0_zaamo1p0_zalrsc1p0_zca1p0";
+const espOverlap = {
+  status: "code-reservation",
+  code: {
+    index: 15,
+    name: ".flash.text",
+    address: "0x42000020",
+    size: "0xfff2",
+    offset: "0xc020",
+  },
+  reservation: {
+    index: 16,
+    name: ".flash_rodata_dummy",
+    address: "0x42000020",
+    size: "0x18000",
+  },
+} as const;
+/** The same target before its section table is inspected. */
+const uninspected = (value: BinaryTarget): BinaryTarget => {
+  if (value.kind !== "executable" || value.architecture !== "riscv")
+    return value;
+  const { sectionOverlap: _uninspected, ...riscv } = value.riscv;
+  return { ...value, riscv };
+};
+const esp = (change: Partial<RiscvElfMetadata> = {}): BinaryTarget =>
+  ilp32(C6_ARCH, { sectionOverlap: espOverlap, ...change });
+const movedCode = {
+  name: ".flash.text",
+  address: "0x42000020",
+  size: "0xfff2",
+  file_offset: "0xc020",
+  space_before: ".flash.text",
+  space_after: "ram",
+} as const;
+const moved: GhidraRiscvLoadPreparationReport = {
+  policy: "nobits-reservation-overlay-v1",
+  outcome: "moved",
+  code: movedCode,
+  reservation: {
+    name: ".flash_rodata_dummy",
+    address: "0x42000020",
+    size: "0x18000",
+    space_before: "ram",
+    space_after: ".flash_rodata_dummy",
+  },
+  functions: 549,
+  entry_points: 331,
+  reservation_labels: 1,
+};
+const canonical: GhidraRiscvLoadPreparationReport = {
+  policy: "nobits-reservation-overlay-v1",
+  outcome: "canonical",
+  code: { ...movedCode, space_before: "ram" },
+};
+
+describe("RISC-V load preparation admission", () => {
+  it("commits no load preparation for an image without an overlap", async () => {
+    for (const value of [
+      ilp32(),
+      target(),
+      target({ type: 3, hasInterpreter: true }),
+    ]) {
+      const resolved = await ghidra().resolveAnalysisProfile(value);
+      if (!resolved.ok || resolved.value.profile === null)
+        throw new Error("expected a RISC-V profile");
+      expect(resolved.value.profile.parameters).not.toHaveProperty(
+        "elf_load_preparation",
+      );
+      expect(ghidraRiscvLoadPreparation(value)).toBeUndefined();
+    }
+  });
+
+  it("refuses a PIE whose sections need the reservation preparation", () => {
+    // The ELF64 double-float lane admits PIE, so its overlap decides.
+    const pie = target({
+      type: 3,
+      hasInterpreter: true,
+      sectionOverlap: espOverlap,
+    });
+    expect(ghidraRiscvLoadPreparation(pie)).toBeUndefined();
+    expect(ghidraRiscvUnsupportedReason(pie)).toContain(
+      "fixed-address ET_EXEC images only",
+    );
+    expect(
+      ghidraRiscvUnsupportedReason(
+        uninspected(target({ type: 3, hasInterpreter: true })),
+      ),
+    ).toContain("section table, which was not inspected");
+  });
+
+  it("commits ESP-IDF's code reservation to the profile", async () => {
+    const resolved = await ghidra().resolveAnalysisProfile(esp());
+    const plain = await ghidra().resolveAnalysisProfile(
+      esp({ sectionOverlap: { status: "none" } }),
+    );
+    if (
+      !resolved.ok ||
+      !plain.ok ||
+      resolved.value.profile === null ||
+      plain.value.profile === null
+    )
+      throw new Error("expected ilp32 profiles");
+    expect(resolved.value.profile.parameters.elf_load_preparation).toEqual({
+      policy: "nobits-reservation-overlay-v1",
+      code: espOverlap.code,
+      reservation: espOverlap.reservation,
+    });
+    expect(resolved.value.profile.digest).not.toBe(plain.value.profile.digest);
+  });
+
+  const unreadable = {
+    status: "unavailable",
+    reason: "truncated ELF section header table",
+  } as const;
+  const overlapping = {
+    status: "unsupported",
+    witnesses: [
+      {
+        index: 1,
+        name: ".text",
+        address: "0x1000",
+        size: "0x100",
+        nobits: false,
+        executable: true,
+      },
+      {
+        index: 2,
+        name: null,
+        address: "0x1080",
+        size: "0x100",
+        nobits: true,
+        executable: false,
+      },
+    ],
+  } as const;
+  it.each([
+    [
+      "not inspected",
+      [uninspected(target()), uninspected(ilp32())],
+      ["section table", "not inspected"],
+    ],
+    [
+      "unreadable",
+      [
+        target({ sectionOverlap: unreadable }),
+        ilp32(C3_ARCH, { sectionOverlap: unreadable }),
+      ],
+      ["section table", "truncated ELF section header table"],
+    ],
+    [
+      "an unsupported overlap",
+      [
+        target({ sectionOverlap: overlapping }),
+        ilp32(C3_ARCH, { sectionOverlap: overlapping }),
+      ],
+      [
+        "`.text`",
+        "section [2]",
+        "0x1000",
+        "0x1080",
+        "0x100",
+        "NOBITS",
+        "docs/providers/ghidra-riscv.md",
+      ],
+    ],
+  ] as const)(
+    "refuses a section table that is %s in every lane",
+    (_label, values, facts) => {
+      for (const value of values) {
+        expect(ghidraRiscvUnsupportedReason(value)).toEqual(stating(...facts));
+        expect(ghidraRiscvLoadPreparation(value)).toBeUndefined();
+      }
+    },
+  );
+
+  it("names the lane's ISA refusal before the section table", () => {
+    expect(
+      ghidraRiscvUnsupportedReason(uninspected(ilp32(`${C3_ARCH}_zcb1p0`))),
+    ).toContain("outside the set this lane decodes: zcb");
+  });
+});
+
+describe("RISC-V load preparation report check", () => {
+  it.each([
+    ["the committed outcome", true, moved, undefined],
+    ["a canonical outcome", true, canonical, undefined],
+    ["no preparation", false, undefined, undefined],
+    [
+      "a block other than the committed code",
+      true,
+      { ...moved, code: { ...movedCode, size: "0xfff0" } },
+      ["`.flash.text`", "size", "0xfff0", "0xfff2"],
+    ],
+    [
+      "a code block at another file offset",
+      true,
+      { ...canonical, code: { ...movedCode, file_offset: "0xc021" } },
+      ["file offset", "0xc021", "0xc020"],
+    ],
+    [
+      "a reservation other than the committed one",
+      true,
+      {
+        ...moved,
+        reservation: { ...moved.reservation, size: "0x10000" },
+      },
+      ["`.flash_rodata_dummy`", "size", "0x10000", "0x18000"],
+    ],
+    [
+      "blocks that Ghidra names differently",
+      true,
+      {
+        ...moved,
+        code: { ...movedCode, name: "section.15" },
+        reservation: { ...moved.reservation, name: "section.16" },
+      },
+      undefined,
+    ],
+    [
+      "moved code left outside the default space",
+      true,
+      { ...moved, code: { ...movedCode, space_after: ".flash.text" } },
+      ["`.flash.text`", "after", "`ram`"],
+    ],
+    [
+      "moved code that was already in the default space",
+      true,
+      { ...moved, code: { ...movedCode, space_before: "ram" } },
+      ["`.flash.text`", "`ram`", "before", "overlay"],
+    ],
+    [
+      "a reservation left in the default space",
+      true,
+      {
+        ...moved,
+        reservation: { ...moved.reservation, space_after: "ram" },
+      },
+      ["`.flash_rodata_dummy`", "`ram`", "after", "overlay"],
+    ],
+    [
+      "canonical code in an overlay",
+      true,
+      {
+        ...canonical,
+        code: { ...movedCode, space_after: ".flash.text" },
+      },
+      ["`.flash.text`", "before", "`ram`"],
+    ],
+    ["a missing report", true, undefined, ["nobits-reservation-overlay-v1"]],
+    ["an uncommitted report", false, moved, ["RISC-V load preparation"]],
+    [
+      "a refusal",
+      true,
+      { policy: "nobits-reservation-overlay-v1", refused: "no reservation" },
+      ["`.flash.text`", "no reservation"],
+    ],
+  ] as const)("checks %s", (_label, planned, reported, failure) => {
+    const reason = ghidraRiscvLoadPreparationFailure(
+      planned ? ghidraRiscvLoadPreparation(esp()) : undefined,
+      reported,
+      "ram",
+    );
+    if (failure === undefined) expect(reason).toBeUndefined();
+    else expect(reason).toEqual(stating(...failure));
+  });
+
+  it("prepares unnamed sections by their coordinates", () => {
+    const unnamed = esp({
+      sectionOverlap: {
+        ...espOverlap,
+        code: { ...espOverlap.code, name: "" },
+        reservation: { ...espOverlap.reservation, name: "" },
+      },
+    });
+    const prepared = ghidraRiscvLoadPreparation(unnamed);
+    expect(ghidraRiscvLoadPreparationFailure(prepared, moved, "ram")).toBe(
+      undefined,
+    );
+    expect(ghidraRiscvLoadPreparationLimitations(prepared, moved)[0]).toEqual(
+      stating("section [16]", "section [15]", "NOBITS"),
+    );
+  });
+});
+
+describe("RISC-V load preparation handshake", () => {
+  it("launches the preparation and reports its outcome as session limitations", async () => {
+    const { client, launches } = await session(esp(), report, esp(), moved);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.launcher).toMatchObject({
+      options: { riscvLoadPreparation: ghidraRiscvLoadPreparation(esp()) },
+    });
+    // The session reports the owning formatter's statements; each carries
+    // the sections, their coordinates and the bridge's counts.
+    const [layout, outcome] = ghidraRiscvLoadPreparationLimitations(
+      ghidraRiscvLoadPreparation(esp()),
+      moved,
+    );
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([layout, outcome]),
+    );
+    expect(layout).toEqual(
+      stating(
+        "`.flash_rodata_dummy`",
+        "`.flash.text`",
+        "0x42000020",
+        "0xfff2",
+        "NOBITS",
+      ),
+    );
+    expect(outcome).toEqual(
+      stating(
+        "`.flash.text`",
+        "`ram`",
+        "`.flash_rodata_dummy`",
+        "549",
+        "331",
+        "1",
+      ),
+    );
+    // The planned statement gives way to the reported outcome.
+    expect(health.value.limitations).not.toContainEqual(
+      ghidraRiscvLoadPreparationLimitations(
+        ghidraRiscvLoadPreparation(esp()),
+      )[1],
+    );
+  });
+
+  it("states that Ghidra already loaded the code where it belongs", async () => {
+    const { client } = await session(esp(), report, esp(), canonical);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    const outcome = ghidraRiscvLoadPreparationLimitations(
+      ghidraRiscvLoadPreparation(esp()),
+      canonical,
+    )[1];
+    expect(health.value.limitations).toContainEqual(outcome);
+    expect(outcome).toEqual(stating("`.flash.text`", "`ram`"));
+    const prepared = ghidraRiscvLoadPreparation(esp());
+    for (const other of [
+      ghidraRiscvLoadPreparationLimitations(prepared)[1],
+      ghidraRiscvLoadPreparationLimitations(prepared, moved)[1],
+    ])
+      expect(health.value.limitations).not.toContainEqual(other);
+  });
+
+  it("checks a double-float preparation before the first analysis call", async () => {
+    const value = target({ elfClass: 32, sectionOverlap: espOverlap });
+    const { counts, client } = await session(value, undefined, value, {
+      policy: "nobits-reservation-overlay-v1",
+      refused: "no reservation",
+    });
+    const failed = await client.execute("list_procedures", {});
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
+    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
+  });
+
+  it.each([
+    [
+      "a refused preparation",
+      esp(),
+      esp(),
+      {
+        policy: "nobits-reservation-overlay-v1",
+        refused: "no reservation",
+      } as const,
+    ],
+    ["a missing report", esp(), esp(), undefined],
+    ["a report the profile did not commit", ilp32(), ilp32(), moved],
+  ] as const)(
+    "closes the session on %s",
+    async (_label, value, profileFor, prepared) => {
+      const { counts, client } = await session(
+        value,
+        report,
+        profileFor,
+        prepared,
+      );
+      const failed = await client.execute("health", {});
+      expect(failed.ok).toBe(false);
+      expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
+    },
+  );
+
+  it("closes a session without a preparation that reports one, before any analysis call", async () => {
+    const { counts, client } = await session(
+      target(),
+      undefined,
+      target(),
+      moved,
+    );
+    const failed = await client.execute("list_procedures", {});
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
+    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
+  });
+
+  it("refuses a profile whose preparation disagrees with the target", async () => {
+    for (const [value, profileFor] of [
+      [esp(), esp({ sectionOverlap: { status: "none" } })],
+      [esp({ sectionOverlap: { status: "none" } }), esp()],
+    ] as const) {
+      const { counts, client } = await session(
+        value,
+        report,
+        profileFor,
+        moved,
+      );
+      expect((await client.execute("health", {})).ok).toBe(false);
+      expect(counts.starts).toBe(0);
+    }
+  });
+
+  it("keeps a caller project's stored preparation report as history", async () => {
+    const resolved = await ghidra().resolveAnalysisProfile(esp());
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected an ilp32 profile");
+    const info: GhidraSessionInfo = sessionInfo(esp(), report, moved);
+    expect(
+      ghidraProjectHistoryEvidence(esp(), resolved.value.profile, info)
+        ?.normalized_result,
+    ).toEqual({
+      origin: "caller-project",
+      riscv_calling_convention: report,
+      elf_load_preparation: moved,
+    });
   });
 });

@@ -290,13 +290,13 @@ describe("compiled Interface Builder traversal coverage", () => {
         value.includes(": omitted because "),
       );
       const sourceNotices = result.limitations.filter((value) =>
-        value.endsWith(": Symlink target was not followed or disclosed."),
+        value.endsWith(": Symlink target was recorded, not followed."),
       );
       expect(reasons).toHaveLength(64);
       expect(sourceNotices).toEqual(
         [0, 1, 2].map(
           (index) =>
-            `link-${String(index).padStart(3, "0")}.nib: Symlink target was not followed or disclosed.`,
+            `link-${String(index).padStart(3, "0")}.nib: Symlink target was recorded, not followed.`,
         ),
       );
       const reportedPaths = new Set(

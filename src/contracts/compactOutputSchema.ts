@@ -1,4 +1,3 @@
-import { isRecord } from "../kernel/isRecord.js";
 import {
   COMPACT_SCHEMA_MAX_DEPTH,
   inlineWithinBudget,
@@ -215,64 +214,6 @@ export const compactAdvertisedOutputSchema = (
     presentation: "reduced",
   };
 };
-
-const OBJECT_COMPOSITION_KEYS = ["oneOf", "anyOf", "allOf"] as const;
-const LOCAL_DEFINITION_REF = /^#\/(\$defs|definitions)\/([^/~%]+)$/;
-
-/**
- * Whether a typeless JSON Schema root is an object or a composition of
- * objects. This matches `@modelcontextprotocol/server` 2.4.0 `tools/list`,
- * which is not exported: a typeless object-shaped output root is stamped
- * `type: "object"`. A `$ref` is followed one hop into the root document's
- * `$defs` or `definitions` when that entry is `type: "object"`.
- */
-const isObjectShapedOutputRoot = (
-  schema: Record<string, unknown>,
-  root: Record<string, unknown> = schema,
-): boolean => {
-  if (
-    "properties" in schema ||
-    "patternProperties" in schema ||
-    "additionalProperties" in schema ||
-    "required" in schema
-  )
-    return true;
-  if (typeof schema.$ref === "string") {
-    const match = LOCAL_DEFINITION_REF.exec(schema.$ref);
-    const group = match?.[1];
-    const name = match?.[2];
-    const definitions = group === undefined ? undefined : root[group];
-    const target =
-      name !== undefined && isRecord(definitions)
-        ? definitions[name]
-        : undefined;
-    if (isRecord(target) && target.type === "object") return true;
-  }
-  for (const key of OBJECT_COMPOSITION_KEYS) {
-    const members = schema[key];
-    if (Array.isArray(members) && members.length > 0)
-      return members.every(
-        (member) =>
-          isRecord(member) &&
-          (member.type === "object" ||
-            isObjectShapedOutputRoot(member, "$id" in member ? {} : root)),
-      );
-  }
-  return false;
-};
-
-/**
- * The output JSON Schema `tools/list` emits before REA compacts it.
- * A schema that already has `type` is unchanged. A typeless root that is
- * provably object-shaped gains `type: "object"`, which is what the SDK lists
- * for a discriminated union of objects.
- */
-export const listedOutputJsonSchema = (
-  schema: Record<string, unknown>,
-): Record<string, unknown> =>
-  schema.type !== undefined || !isObjectShapedOutputRoot(schema)
-    ? schema
-    : { type: "object", ...schema };
 
 /** Return the JSON schema clients receive for the selected output presentation. */
 export const presentAdvertisedOutputSchema = (

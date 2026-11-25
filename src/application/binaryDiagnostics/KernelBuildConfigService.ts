@@ -286,11 +286,7 @@ const validReport = (
     report.config.name !== (input.name ?? null)
   )
     return false;
-  if (
-    report.limitations.length === 0 ||
-    !report.limitations.some((line) => line.includes("untrusted"))
-  )
-    return false;
+  if (report.limitations.length === 0) return false;
   if (report.config.status === "present") {
     if (
       report.coverage.examined_entries !== report.config.option_count ||

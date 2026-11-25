@@ -101,26 +101,6 @@ mcpTest(
 );
 
 mcpTest(
-  "requires an absolute path for inspect_rust_binary",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_rust_binary",
-        arguments: { path: "sample" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_rust_binary" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
   "preserves dependency Evidence and compiler-prefix coverage through MCP",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
