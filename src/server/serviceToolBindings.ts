@@ -5,6 +5,10 @@ import type {
   JebAnalysisService,
   PcapAnalysisService,
 } from "../application/ProviderOperationServices.js";
+import type { StructuredRasterExportService } from "../application/binaryDiagnostics/StructuredRasterExportService.js";
+import type { RawRasterDiscoveryService } from "../application/binaryDiagnostics/RawRasterDiscoveryService.js";
+import type { StructuredRasterDiscoveryService } from "../application/binaryDiagnostics/StructuredRasterDiscoveryService.js";
+import { appendStructuredRasterThumbnails } from "./indexThumbnailDelivery.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
@@ -217,6 +221,25 @@ type Bind<Service> = (
  */
 const SERVICE_TOOL_BINDINGS = {
   ...OFFLINE_INSPECTION_TOOL_BINDINGS,
+  structuredRasterExport: ((service) => ({
+    export_structured_raster_resources: {
+      admission: "sdk",
+      run: (input, options) => service.export(input, options),
+    },
+  })) satisfies Bind<StructuredRasterExportService>,
+  rawRaster: ((service) => ({
+    inspect_raw_raster_candidates: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<RawRasterDiscoveryService>,
+  structuredRaster: ((service) => ({
+    inspect_structured_raster_candidates: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+      presentResult: appendStructuredRasterThumbnails,
+    },
+  })) satisfies Bind<StructuredRasterDiscoveryService>,
   packetCapture: ((service) => ({
     inspect_packet_capture: {
       admission: "application",

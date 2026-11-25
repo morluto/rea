@@ -42,6 +42,34 @@ const bounds = (
       : typeof schema.maximum === "number"
         ? schema.maximum
         : Number.MAX_SAFE_INTEGER;
+  // A numeric branch can be a closed choice, not the whole interval. Select
+  // witnesses from that declared set instead of inventing zero below its values.
+  const choices = Object.hasOwn(schema, "const")
+    ? [schema.const]
+    : Array.isArray(schema.enum)
+      ? schema.enum
+      : undefined;
+  if (choices !== undefined) {
+    const admitted = choices.filter(
+      (value): value is number =>
+        typeof value === "number" &&
+        Number.isSafeInteger(value) &&
+        value >= min &&
+        value <= max,
+    );
+    if (typeof schema.default === "number" && admitted.includes(schema.default))
+      admitted.sort(
+        (a, b) => Number(b === schema.default) - Number(a === schema.default),
+      );
+    return [
+      ...nested,
+      ...admitted.map((value) => ({
+        min: value,
+        max: value,
+        candidate: value,
+      })),
+    ];
+  }
   const preferred =
     typeof schema.default === "number" &&
     schema.default >= min &&
@@ -81,6 +109,37 @@ const REQUIRED_NUMERIC_FIELDS = [
 
 /** Decimal argv tokens the parser admits as numbers, for fields advertised as strings. */
 const PROBE_TOKENS = ["0", "1"] as const;
+
+describe("numeric witness selection", () => {
+  it("respects numeric const and enum choices instead of inventing zero", () => {
+    expect(bounds({ type: "number", const: 4 })).toEqual([
+      { min: 4, max: 4, candidate: 4 },
+    ]);
+    expect(
+      bounds({
+        anyOf: [
+          { type: "number", const: 1 },
+          { type: "number", const: 2 },
+        ],
+      }),
+    ).toEqual([
+      { min: 1, max: 1, candidate: 1 },
+      { min: 2, max: 2, candidate: 2 },
+    ]);
+    expect(bounds({ type: "integer", enum: [1, 2, 4], default: 2 })).toEqual([
+      { min: 2, max: 2, candidate: 2 },
+      { min: 1, max: 1, candidate: 1 },
+      { min: 4, max: 4, candidate: 4 },
+    ]);
+  });
+  it("intersects numeric choices with declared bounds and does not invent a witness for an empty set", () => {
+    expect(
+      bounds({ type: "integer", enum: [1, 2, 4], minimum: 2, maximum: 3 }),
+    ).toEqual([{ min: 2, max: 2, candidate: 2 }]);
+    expect(bounds({ type: "integer", const: 1, minimum: 2 })).toEqual([]);
+    expect(bounds({ type: "integer", enum: [] })).toEqual([]);
+  });
+});
 
 describe("decimal integer CLI admission", () => {
   it("rejects 0x10 and 1e3 for every numeric input and keeps an in-range decimal", () => {
@@ -149,7 +208,8 @@ describe("decimal integer CLI admission", () => {
               // Decimal tokens are the only numeric spelling.
             }
           }
-          const range = bounds(item)[0];
+          const ranges = bounds(item);
+          const range = ranges[0];
           const candidate =
             range?.candidate ??
             (probed === undefined ? undefined : Number(probed));
@@ -160,7 +220,11 @@ describe("decimal integer CLI admission", () => {
           const decimal = String(candidate);
           if (range !== undefined) {
             for (const value of [range.min - 1, range.max + 1]) {
-              if (value < 0) continue;
+              if (
+                value < 0 ||
+                ranges.some(({ min, max }) => value >= min && value <= max)
+              )
+                continue;
               for (const token of [String(value), `000${value}`]) {
                 if (validate(token))
                   failures.push(

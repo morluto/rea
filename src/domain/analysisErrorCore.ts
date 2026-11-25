@@ -1,3 +1,4 @@
+import type { AnalysisParameterLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
@@ -181,6 +182,27 @@ const resourceConstraintRecoveryFrom = (
       : { retryable: options.retryable }),
   };
 };
+
+/** Refuse before a caller-selectable budget would be exceeded. */
+export const parameterBudgetConstraint = (
+  operation: string,
+  resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
+  reason: string,
+  reportedLimits: Readonly<Record<string, JsonValue>>,
+  limit: AnalysisParameterLimit,
+  remediationAction: string,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    resource,
+    reason,
+    reportedLimits,
+    {
+      limit,
+      remediationAction,
+      retryable: false,
+    },
+  );
 
 /**
  * Re-attribute a resource refusal to another operation. Recovery and the

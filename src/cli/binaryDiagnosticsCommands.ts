@@ -1,3 +1,5 @@
+import { registerRawRasterCommands } from "./rawRasterCommands.js";
+import { registerStructuredRasterCommands } from "./structuredRasterCommands.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -27,6 +29,8 @@ export const registerBinaryDiagnosticsCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
+  registerStructuredRasterCommands(cli, logger);
+  registerRawRasterCommands(cli, logger);
   registerContractCommand(
     cli,
     logger,

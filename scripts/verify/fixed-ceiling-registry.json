@@ -62,6 +62,12 @@
       "reason": "apktool output capture is a producer budget without a per-call control."
     }
   },
+  "src/application/binaryDiagnostics/StructuredRasterAnalysis.ts": {
+    "limit.name": {
+      "class": "forwarding",
+      "reason": "Relays the FGS parser and raster materializer's named representation limits for the selected byte buffer, dense logical span and retained mapping table; the caller-adjustable hash read budget is independent."
+    }
+  },
   "src/application/ntfs/NtfsJournalService.ts": {
     "\"The NTFS journal file allowance\"": {
       "class": "pending",

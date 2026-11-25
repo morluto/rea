@@ -54,6 +54,7 @@ import {
   type ValueToolRequest,
 } from "./contractToolHandler.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
 import {
   createProviderOperationToolHandler,
@@ -129,6 +130,11 @@ type EvidenceBinding<Input = unknown> = (
     }
 ) &
   ExclusiveBinding<"run"> & {
+    /** Optional content added after contract validation and Evidence delivery. */
+    readonly presentResult?: (
+      result: CallToolResult,
+      delivery: ToolResultDelivery,
+    ) => CallToolResult;
     /**
      * The source a view's response-overflow recovery may name again, read from
      * the raw request, when the operation projects a view of other Evidence.
@@ -599,14 +605,16 @@ export const registerContractTools = (
       retention,
     );
     const present =
-      binding.value === undefined ? undefined : binding.presentResult;
+      binding.value !== undefined || binding.run !== undefined
+        ? binding.presentResult
+        : undefined;
     server.registerTool(
       contract.name,
       registration,
       present === undefined
         ? handler
         : async (input: unknown, context: ServerContext) =>
-            present(await handler(input, context)),
+            present(await handler(input, context), server.delivery),
     );
   }
   if (unbound.length > 0)

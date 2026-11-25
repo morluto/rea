@@ -21,7 +21,11 @@ import type {
   ProjectedContract,
 } from "./contractCliDescriptionTypes.js";
 import { optionFlagName } from "./optionFields.js";
-import { cliDecimalField, cliDecimalShape } from "./options.js";
+import {
+  cliDecimalField,
+  cliDecimalShape,
+  publishArgvInput,
+} from "./options.js";
 
 /** The CLI key of a session target, which no contract field supplies. */
 export const SESSION_TARGET_KEY = "path";
@@ -121,6 +125,29 @@ export const jsonTextField = (declared: z.ZodType, flag: string): z.ZodType => {
     : admitted.describe(declared.description);
 };
 
+/** Nonnegative integer choices remain owned by the exact contract literal/union. */
+const numericLiteralValues = (field: z.ZodType): number[] | undefined => {
+  const value = core(field);
+  if (value instanceof z.ZodLiteral) {
+    const values = [...value.values];
+    return values.every(
+      (item): item is number =>
+        typeof item === "number" && Number.isSafeInteger(item) && item >= 0,
+    )
+      ? values
+      : undefined;
+  }
+  if (value instanceof z.ZodUnion) {
+    const choices = (value.options as readonly z.ZodType[]).map(
+      numericLiteralValues,
+    );
+    return choices.every((choice): choice is number[] => choice !== undefined)
+      ? choices.flat()
+      : undefined;
+  }
+  return undefined;
+};
+
 export const assertArgvField = (
   contract: string,
   field: string,
@@ -147,7 +174,8 @@ export const assertArgvField = (
     !(
       element instanceof z.ZodString ||
       element instanceof z.ZodEnum ||
-      element instanceof z.ZodNumber
+      element instanceof z.ZodNumber ||
+      (element !== null && numericLiteralValues(element) !== undefined)
     )
   )
     throw new Error(
@@ -185,23 +213,50 @@ export const inboundView = (field: z.ZodType): z.ZodType | undefined => {
  * The argv schema of a field: a number, or each element of an array of
  * numbers, takes decimal tokens only. An array keeps its own bounds.
  */
+/** Replace only the array element, retaining the declared array checks and wrappers. */
+const argvNumericArray = (field: z.ZodType, element: z.ZodType): z.ZodType => {
+  if (field instanceof z.ZodArray)
+    return z.clone(field, { ...field.def, element }, { parent: true });
+  if (
+    field instanceof z.ZodOptional ||
+    field instanceof z.ZodExactOptional ||
+    field instanceof z.ZodDefault ||
+    field instanceof z.ZodPrefault ||
+    field instanceof z.ZodNullable ||
+    field instanceof z.ZodReadonly
+  )
+    return z.clone(
+      field,
+      {
+        ...field.def,
+        innerType: argvNumericArray(field.unwrap() as z.ZodType, element),
+      },
+      { parent: true },
+    );
+  throw new Error("Expected a numeric array or its declared wrapper");
+};
+
 export const argvDecimal = (field: z.ZodType): z.ZodType => {
   const array = core(field);
-  if (
-    !(array instanceof z.ZodArray) ||
-    !(core(array.element as z.ZodType) instanceof z.ZodNumber)
-  )
-    return cliDecimalShape({ field }).field;
-  if (field instanceof z.ZodDefault)
-    throw new Error("A defaulted number array has no argv projection");
-  const decimal = new z.ZodArray({
-    ...array._zod.def,
-    element: cliDecimalField(array.element as z.ZodType),
-  });
-  const admitted = admitsOmission(field) ? decimal.optional() : decimal;
-  return field.description === undefined
-    ? admitted
-    : admitted.describe(field.description);
+  if (!(array instanceof z.ZodArray)) return cliDecimalShape({ field }).field;
+  const element = array.element as z.ZodType;
+  const literals = numericLiteralValues(element);
+  if (!(core(element) instanceof z.ZodNumber) && literals === undefined)
+    return field;
+  let decimalElement: z.ZodType;
+  if (literals === undefined) decimalElement = cliDecimalField(element);
+  else {
+    // Enumerate legal integer spellings, including leading zeroes, so the
+    // advertised input schema retains the same choices as runtime admission.
+    const token: z.ZodType = z
+      .string()
+      .regex(new RegExp(`^0*(?:${literals.join("|")})$`, "u"))
+      .transform(Number);
+    decimalElement = z.union([element, token.pipe(element)]);
+  }
+  // Keep an outer array: Incur collects repeated flags from that shape. Cloning
+  // the declared checks avoids applying array refinements twice via a pipe.
+  return publishArgvInput(argvNumericArray(field, decimalElement));
 };
 
 /**
