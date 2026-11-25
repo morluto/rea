@@ -1,3 +1,4 @@
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { createHash } from "node:crypto";
 import { inspectPeCertificatesInputSchema } from "../../domain/native/peCertificates.js";
@@ -11,10 +12,7 @@ import { PeCertificatesService } from "./PeCertificatesService.js";
 import { PE_CERTIFICATES_PROVIDER } from "../../domain/investigationProviders.js";
 import type { PeCertificates } from "../../domain/native/peCertificates.js";
 import { ok } from "../../domain/result.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 
 const identity = PE_CERTIFICATES_PROVIDER;
 const path = "/artifacts/app.exe";
@@ -29,26 +27,12 @@ const report = parsePeCertificates(
   inspectPeCertificatesInputSchema.parse({ path }),
 );
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new PeCertificatesService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "app.exe" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "app.exe",
+    (inspect) => new PeCertificatesService({ identity, inspect }),
+  ));
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const evidence = await lateCancellationEvidence(

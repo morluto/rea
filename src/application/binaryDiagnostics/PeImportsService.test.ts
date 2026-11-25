@@ -1,3 +1,4 @@
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { createHash } from "node:crypto";
 import {
@@ -14,10 +15,7 @@ import { expect, it } from "vitest";
 import { PeImportsService } from "./PeImportsService.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import { ok } from "../../domain/result.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 
 const identity = PE_IMPORTS_PROVIDER;
 const path = "/artifacts/app.exe";
@@ -32,26 +30,12 @@ const report = await parsePeImports(
   inspectPeImportsInputSchema.parse({ path }),
 );
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new PeImportsService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "app.exe" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "app.exe",
+    (inspect) => new PeImportsService({ identity, inspect }),
+  ));
 
 it.each(["imports", "delay_imports", "examined_dlls"] as const)(
   "rejects contradictory complete %s coverage",
