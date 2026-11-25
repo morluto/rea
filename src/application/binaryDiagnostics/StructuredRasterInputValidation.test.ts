@@ -47,7 +47,7 @@ it.each([
     }
   },
 );
-it("keeps container parse causes and invalid_format attribution through inspection", async () => {
+it("reports malformed FGS as a target failure with the parser cause", async () => {
   const root = await createTestTempDirectory("rea-raster-parse-"),
     path = join(root, "source");
   await writeFile(path, new Uint8Array(64));
@@ -56,8 +56,10 @@ it("keeps container parse causes and invalid_format attribution through inspecti
     const r = await service.inspect({ path, profile: "fgs-records" });
     if (r.ok) throw new Error("Expected parse failure");
     expect(r.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      issues: [{ path: ["path"], reason: "invalid_format" }],
+      _tag: "AnalysisTargetFailureError",
+      operation: "inspect_structured_raster_candidates",
+      path,
+      failure: { kind: "malformed", format: "fgs-records" },
       cause: { failure: { kind: "malformed", format: "fgs-records" } },
     });
   } finally {
@@ -93,7 +95,7 @@ it("does not flatten a logical-span decode limit into invalid input", async () =
     await service.close();
   }
 });
-it("attributes parsed mapping defects to segments while retaining their cause", async () => {
+it("reports a caller mapping outside the source as invalid segments", async () => {
   const root = await createTestTempDirectory("rea-raster-mapping-"),
     path = join(root, "source");
   await writeFile(path, new Uint8Array(4));
@@ -106,10 +108,7 @@ it("attributes parsed mapping defects to segments while retaining their cause", 
     if (r.ok) throw new Error("Expected mapping failure");
     expect(r.error).toMatchObject({
       _tag: "AnalysisInputError",
-      issues: [{ path: ["segments"], reason: "invalid_format" }],
-      cause: {
-        failure: { kind: "malformed", format: "raster-logical-segments" },
-      },
+      issues: [{ path: ["segments"], reason: "invalid_value" }],
     });
   } finally {
     await service.close();
@@ -135,8 +134,10 @@ it("preserves parser failures through export preparation without creating output
     });
     if (r.ok) throw new Error("Expected export parser refusal");
     expect(r.error).toMatchObject({
-      _tag: "AnalysisInputError",
+      _tag: "AnalysisTargetFailureError",
       operation: "export_structured_raster_resources",
+      path,
+      failure: { kind: "malformed", format: "fgs-records" },
       cause: { failure: { kind: "malformed", format: "fgs-records" } },
     });
     await expect(access(output_directory)).rejects.toMatchObject({

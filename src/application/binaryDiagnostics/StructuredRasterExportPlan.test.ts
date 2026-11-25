@@ -95,22 +95,39 @@ it("requires exact admitted descriptor/hypothesis identities", () => {
     ),
   ).toThrow();
 });
-it("retains every intersecting source segment beyond256 and marks holes", () => {
+it("retains all 600 intersecting segments and stops a reference at a hole", () => {
   const prepared = fixture();
-  prepared.logical.segments = Array.from({ length: 600 }, (_, i) => ({
+  const source = Buffer.alloc(2400);
+  const segments = Array.from({ length: 600 }, (_, i) => ({
     logicalOffset: 1000 + i * 2,
     fileOffset: i * 4,
     length: 2,
   }));
-  expect(reference(prepared, { offset: 1, length: 1198 })).toEqual({
+  expect(
+    reference(
+      { ...prepared, logical: materializeRasterSegments(source, segments) },
+      { offset: 1, length: 1198 },
+    ),
+  ).toEqual({
     offset: 1001,
     length: 1198,
     first_segment: 0,
     segment_count: 600,
     complete: true,
   });
-  prepared.logical.segments.splice(300, 1);
-  expect(reference(prepared, { offset: 0, length: 1200 }).complete).toBe(false);
+  const withHole = segments.filter((_, i) => i !== 300);
+  expect(
+    reference(
+      { ...prepared, logical: materializeRasterSegments(source, withHole) },
+      { offset: 0, length: 1200 },
+    ),
+  ).toEqual({
+    offset: 1000,
+    length: 1200,
+    first_segment: 0,
+    segment_count: 300,
+    complete: false,
+  });
 });
 it("does not silently substitute generic interpretation when requested family facts are unavailable", () => {
   expect(() =>
@@ -120,12 +137,15 @@ it("does not silently substitute generic interpretation when requested family fa
 
 it("keeps complete export references beyond the inspection span budget", () => {
   const prepared = fixture();
-  prepared.logical.segments = Array.from({ length: 300 }, (_, i) => ({
+  const segments = Array.from({ length: 300 }, (_, i) => ({
     logicalOffset: 1000 + i,
     fileOffset: i,
     length: 1,
   }));
-  expect(reference(prepared, { offset: 0, length: 300 })).toEqual({
+  const logical = materializeRasterSegments(Buffer.alloc(300), segments);
+  expect(
+    reference({ ...prepared, logical }, { offset: 0, length: 300 }),
+  ).toEqual({
     offset: 1000,
     length: 300,
     first_segment: 0,
