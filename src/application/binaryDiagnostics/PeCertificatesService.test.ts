@@ -1,81 +1,51 @@
-import { parseEvidence } from "../../domain/evidence.js";
-import { createHash } from "node:crypto";
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { inspectPeCertificatesInputSchema } from "../../domain/native/peCertificates.js";
 import {
   peCertificateFixture,
   peWithoutCertificateTableFixture,
 } from "../../native/pe/PeCertificates.fixture.js";
-import { parsePeCertificates } from "../../native/pe/PeCertificateParser.js";
+import { parsePeCertificateFixture } from "../../../tests/fixtures/binaryDiagnostics/peCertificates.js";
 import { expect, it } from "vitest";
 import { PeCertificatesService } from "./PeCertificatesService.js";
 import { PE_CERTIFICATES_PROVIDER } from "../../domain/investigationProviders.js";
 import type { PeCertificates } from "../../domain/native/peCertificates.js";
 import { ok } from "../../domain/result.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 
 const identity = PE_CERTIFICATES_PROVIDER;
-const path = "/artifacts/app.exe";
-const bytes = peWithoutCertificateTableFixture();
-const report = parsePeCertificates(
-  bytes,
-  {
-    path,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    bytes: bytes.length,
-  },
-  inspectPeCertificatesInputSchema.parse({ path }),
+const input = inspectPeCertificatesInputSchema.parse({
+  path: "/artifacts/app.exe",
+});
+const report = await parsePeCertificateFixture(
+  peWithoutCertificateTableFixture(),
+  input,
 );
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new PeCertificatesService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "app.exe" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "app.exe",
+    (inspect) => new PeCertificatesService({ identity, inspect }),
+  ));
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late PeCertificates cancellation" };
-  const service = new PeCertificatesService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late PeCertificates cancellation",
+    (inspect) => new PeCertificatesService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_pe_certificates",
     normalized_result: report,
   });
 });
 
 it("retains complete certificate provenance from the production parser", async () => {
-  const parsed = parsedCertificateReport();
+  const parsed = await parsePeCertificateFixture(
+    peCertificateFixture(false),
+    input,
+  );
   const result = await new PeCertificatesService({
     identity,
     inspect: () => Promise.resolve(ok(parsed)),
@@ -132,7 +102,10 @@ it.each([
 ] as const)(
   "rejects %s before creating observed Evidence",
   async (_label, mutate) => {
-    const parsed = parsedCertificateReport();
+    const parsed = await parsePeCertificateFixture(
+      peCertificateFixture(false),
+      input,
+    );
     mutate(parsed);
     const result = await new PeCertificatesService({
       identity,
@@ -142,19 +115,3 @@ it.each([
     if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
   },
 );
-
-function parsedCertificateReport(): PeCertificates {
-  const bytes = peCertificateFixture(false);
-  const input = inspectPeCertificatesInputSchema.parse({
-    path: report.artifact.path,
-  });
-  return parsePeCertificates(
-    bytes,
-    {
-      path: input.path,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      bytes: bytes.length,
-    },
-    input,
-  );
-}

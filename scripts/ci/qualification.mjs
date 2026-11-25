@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { normalizeWorkflowRun } from "./workflow-run.mjs";
 
 const ARTIFACT_NAME = "ci-full-qualification-v1";
+const FAST_ARTIFACT_NAME = "ci-fast-sweep-v1";
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const positiveId = (value) =>
   (typeof value === "string" || typeof value === "number") &&
@@ -13,8 +14,11 @@ const positiveId = (value) =>
 const commitSha = (value) =>
   typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
 
-/** Record only after the required gate has verified every full-tier obligation. */
-export function recordQualification(directory) {
+/** Record only after the required gate has verified every tier obligation. */
+export function recordQualification(directory, tier = "full") {
+  if (tier !== "full" && tier !== "fast")
+    throw new Error(`Unsupported qualification receipt tier: ${tier}`);
+  const artifactName = tier === "fast" ? FAST_ARTIFACT_NAME : ARTIFACT_NAME;
   const sourceSha = process.env.GITHUB_SHA;
   const runId = process.env.GITHUB_RUN_ID;
   const runAttempt = process.env.GITHUB_RUN_ATTEMPT;
@@ -40,7 +44,7 @@ export function recordQualification(directory) {
     `${JSON.stringify(
       {
         schemaVersion: 1,
-        tier: "full",
+        tier,
         sourceSha,
         repository,
         runId: Number(runId),
@@ -54,7 +58,7 @@ export function recordQualification(directory) {
   if (process.env.GITHUB_OUTPUT)
     appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `receipt_name=${ARTIFACT_NAME}\nreceipt_path=${path}\n`,
+      `receipt_name=${artifactName}\nreceipt_path=${path}\n`,
     );
 }
 
@@ -89,67 +93,81 @@ function admit() {
       }),
     );
   };
+  const qualificationTier =
+    process.env.CI_QUALIFICATION_TIER === "fast" ? "fast" : "full";
+  const acceptedArtifactNames =
+    qualificationTier === "fast"
+      ? [ARTIFACT_NAME, FAST_ARTIFACT_NAME]
+      : [ARTIFACT_NAME];
   try {
-    const { artifacts } = api(
-      `repos/${repository}/actions/artifacts`,
-      "-f",
-      `name=${ARTIFACT_NAME}`,
-      "-F",
-      "per_page=100",
-    );
-    if (!Array.isArray(artifacts))
-      throw new Error("Missing qualification artifact inventory");
-    const candidates = artifacts.filter((artifact) => {
-      const lineage = artifact?.workflow_run;
-      const age = now - Date.parse(artifact?.created_at);
-      return (
-        artifact?.name === ARTIFACT_NAME &&
-        artifact?.expired === false &&
-        typeof artifact?.created_at === "string" &&
-        Number.isFinite(age) &&
-        age >= 0 &&
-        age < MAX_AGE_MS &&
-        positiveId(lineage?.id) &&
-        String(lineage.id) !== process.env.GITHUB_RUN_ID &&
-        lineage?.repository_id === repositoryId &&
-        lineage?.head_repository_id === repositoryId &&
-        lineage?.head_branch === branch &&
-        lineage?.head_sha === head
+    for (const artifactName of acceptedArtifactNames) {
+      const { artifacts } = api(
+        `repos/${repository}/actions/artifacts`,
+        "-f",
+        `name=${artifactName}`,
+        "-F",
+        "per_page=100",
       );
-    });
-    // Artifact metadata narrows the search before run lookups. Never scan an
-    // unbounded history or treat a missing receipt as a successful qualification.
-    for (const artifact of candidates.slice(0, 3)) {
-      const run = normalizeWorkflowRun(
-        api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
-      );
-      // An old run can upload a new artifact when only its gate is rerun.
-      // Bound the original run age as well so retries cannot renew stale proof.
-      const runAge = Date.now() - Date.parse(run.created_at);
-      if (
-        typeof run.created_at === "string" &&
-        Number.isFinite(runAge) &&
-        runAge >= 0 &&
-        runAge < MAX_AGE_MS &&
-        run.id === artifact.workflow_run.id &&
-        run.status === "completed" &&
-        run.conclusion === "success" &&
-        run.workflowPath?.file === ".github/workflows/ci.yml" &&
-        ["schedule", "workflow_dispatch"].includes(run.event) &&
-        run.head_sha === head &&
-        run.head_branch === branch &&
-        run.head_repository?.full_name === repository
-      ) {
-        return {
-          run_full: false,
-          run_id: run.id,
-          reason: `Reusing full qualification from run ${run.id}; no fresh provider observation`,
-        };
+      if (!Array.isArray(artifacts))
+        throw new Error("Missing qualification artifact inventory");
+      const candidates = artifacts.filter((artifact) => {
+        const lineage = artifact?.workflow_run;
+        const age = now - Date.parse(artifact?.created_at);
+        return (
+          artifact?.name === artifactName &&
+          artifact?.expired === false &&
+          typeof artifact?.created_at === "string" &&
+          Number.isFinite(age) &&
+          age >= 0 &&
+          age < MAX_AGE_MS &&
+          positiveId(lineage?.id) &&
+          String(lineage.id) !== process.env.GITHUB_RUN_ID &&
+          lineage?.repository_id === repositoryId &&
+          lineage?.head_repository_id === repositoryId &&
+          lineage?.head_branch === branch &&
+          lineage?.head_sha === head
+        );
+      });
+      // Artifact metadata narrows the search before run lookups. Never scan an
+      // unbounded history or treat a missing receipt as a successful qualification.
+      for (const artifact of candidates.slice(0, 3)) {
+        let run;
+        try {
+          run = normalizeWorkflowRun(
+            api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
+          );
+        } catch {
+          // A listed artifact is not proof that its run can still be verified.
+          continue;
+        }
+        // An old run can upload a new artifact when only its gate is rerun.
+        // Bound the original run age as well so retries cannot renew stale proof.
+        const runAge = Date.now() - Date.parse(run.created_at);
+        if (
+          typeof run.created_at === "string" &&
+          Number.isFinite(runAge) &&
+          runAge >= 0 &&
+          runAge < MAX_AGE_MS &&
+          run.id === artifact.workflow_run.id &&
+          run.status === "completed" &&
+          run.conclusion === "success" &&
+          run.workflowPath?.file === ".github/workflows/ci.yml" &&
+          ["schedule", "workflow_dispatch"].includes(run.event) &&
+          run.head_sha === head &&
+          run.head_branch === branch &&
+          run.head_repository?.full_name === repository
+        ) {
+          return {
+            run_full: false,
+            run_id: run.id,
+            reason: `Reusing ${artifactName === FAST_ARTIFACT_NAME ? "fast main sweep" : "full qualification"} from run ${run.id}; no fresh provider observation`,
+          };
+        }
       }
     }
     return {
       run_full: true,
-      reason: "No trusted full qualification for this SHA within 24 hours",
+      reason: `No trusted ${qualificationTier === "fast" ? "main verification" : "full qualification"} for this SHA within 24 hours`,
     };
   } catch {
     return {

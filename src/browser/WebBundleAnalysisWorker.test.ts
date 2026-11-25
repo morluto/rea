@@ -1,10 +1,10 @@
 import { ProcessOwnershipInspectionCancelled } from "../process/ProcessInspectionCancellation.js";
 import { createHash, randomUUID } from "node:crypto";
-import { access } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { createWebTextArtifact } from "../domain/webContentArtifact.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
+import { webBundleWorkerScript as makeScript } from "../../tests/fixtures/webBundleAnalysis.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -37,26 +37,11 @@ import {
   WebBundleWorkerCleanup,
 } from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
-
-const makeScript = (text: string): IncludedScript => ({
-  script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
-  frame_id: "frame-1",
-  url: "https://app.example.test/app.js",
-  origin: "https://app.example.test",
-  cdp_hash: null,
-  length: Buffer.byteLength(text),
-  is_module: false,
-  language: "JavaScript",
-  source_map_url: null,
-  resource_reconciliation: {
-    status: "unmatched",
-    reason: "no_exact_sanitized_url",
-  },
-  source: {
-    included: true,
-    artifact: createWebTextArtifact(text, "application/javascript"),
-  },
-});
+import {
+  JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
+  javaScriptMemberMutationRefusal,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const sourceWorkerProgram = (
   hangMarker?: string,
@@ -65,7 +50,7 @@ const sourceWorkerProgram = (
 ): string => `
   const { serveWebBundleAnalysisWorker } = await import(${JSON.stringify(new URL("./WebBundleAnalysisWorkerServer.ts", import.meta.url).href)});
   const { analyzeCapturedWebScript } = await import(${JSON.stringify(new URL("../domain/webBundleAnalyzer.ts", import.meta.url).href)});
-  const analyze = (script) => {
+  const analyze = (script, precision, allowance) => {
     if (${JSON.stringify(hangMarker)} !== undefined && script.source.artifact.text === ${JSON.stringify(hangMarker)}) {
       for (;;) {}
     }
@@ -75,7 +60,7 @@ const sourceWorkerProgram = (
     }
     if (${JSON.stringify(stderrMarker)} !== undefined)
       process.stderr.write(${JSON.stringify(stderrMarker)} + "\\n");
-    return analyzeCapturedWebScript(script);
+    return analyzeCapturedWebScript(script, precision, allowance);
   };
   await serveWebBundleAnalysisWorker(analyze);
 `;
@@ -108,30 +93,31 @@ type TestMode =
         | "truncated-exit"
         | "abort-first-exit"
         | "tail-exit"
+        | "tail-exit-held-pipe"
         | "malformed"
         | "wrong-job-failure"
         | "resource-failure"
+        | "work-refusal"
         | "final-frame-held-pipe"
         | "zero-exit-held-pipe"
-        | "heap-exit";
+        | "heap-exit"
+        | "heap-exit-after-noise";
     };
 
+const tailRelease = "release-stderr-tail";
+const lateTailMarker = "late tail marker";
+const lateTailProgram = (holdPipe: boolean): string => `
+  const { existsSync } = require("node:fs");
+  const wait = setInterval(() => {
+    if (!existsSync(${JSON.stringify(tailRelease)})) return;
+    clearInterval(wait);
+    process.stderr.write(${JSON.stringify(lateTailMarker)});
+    ${holdPipe ? "setInterval(() => {}, 1000);" : ""}
+  }, 10);
+`;
+
 const protocolWorkerProgram = (
-  failure:
-    | "wrong-id"
-    | "oversized-control"
-    | "oversized-result"
-    | "late-failure"
-    | "exit-7"
-    | "truncated-exit"
-    | "abort-first-exit"
-    | "tail-exit"
-    | "malformed"
-    | "wrong-job-failure"
-    | "resource-failure"
-    | "final-frame-held-pipe"
-    | "zero-exit-held-pipe"
-    | "heap-exit",
+  failure: Extract<TestMode, { kind: "protocol" }>["failure"],
 ): string => `
   import { createInterface } from "node:readline";
   import { spawn } from "node:child_process";
@@ -142,17 +128,17 @@ const protocolWorkerProgram = (
   input.once("line", (line) => {
     const request = JSON.parse(line);
     ${
-      failure === "heap-exit"
-        ? `process.stderr.write("allocation failed\\n", () => process.exit(7));`
+      failure === "heap-exit" || failure === "heap-exit-after-noise"
+        ? // The 256 KiB retention budget keeps only the head of stderr.
+          `process.stderr.write(${failure === "heap-exit" ? '""' : '"x".repeat(300 * 1024) + "\\n"'} + "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n", () => process.exit(7));`
         : failure === "zero-exit-held-pipe"
           ? `const program = "setTimeout(() => process.exit(0), 300);";
            spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
            process.exit(0);`
           : failure === "exit-7"
             ? `process.stderr.write("controlled exit 7\\n", () => process.exit(7));`
-            : failure === "tail-exit"
-              ? `const lateProgram = "setTimeout(() => { process.stderr.write('late tail marker'); setTimeout(() => process.exit(0), 500); }, 50);";
-             spawn(process.execPath, ["-e", lateProgram], { stdio: ["ignore", "ignore", "inherit"] });
+            : failure === "tail-exit" || failure === "tail-exit-held-pipe"
+              ? `spawn(process.execPath, ["-e", ${JSON.stringify(lateTailProgram(failure === "tail-exit-held-pipe"))}], { stdio: ["ignore", "ignore", "inherit"] });
              process.stderr.write("early exit marker\\n", () => process.exit(7));`
               : failure === "truncated-exit"
                 ? `process.stderr.write("x".repeat(300 * 1024), () => process.exit(7));`
@@ -166,19 +152,22 @@ const protocolWorkerProgram = (
                       : failure === "resource-failure"
                         ? `send({ kind: "failure", id: request.id, reason: "resource", message: "bounded result capacity" });
                  setInterval(() => {}, 1_000);`
-                        : failure === "final-frame-held-pipe"
-                          ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
+                        : failure === "work-refusal"
+                          ? `send({ kind: "failure", id: request.id, reason: "resource", limits: { ${JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT}: request.member_mutation_allowance.alias_states, sent_source: request.member_mutation_allowance.source }, message: "work allowance" });
+                 setInterval(() => {}, 1_000);`
+                          : failure === "final-frame-held-pipe"
+                            ? `const frame = JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "final frame from descendant" });
                const program = "setTimeout(() => { process.stdout.write(" + JSON.stringify(frame + "\\n") + "); setInterval(() => {}, 1000); }, 100);";
                spawn(process.execPath, ["-e", program], { stdio: ["ignore", "inherit", "inherit"] });
                process.exit(7);`
-                          : failure === "late-failure"
-                            ? `process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "failure frame before abort" }) + "\\n");
+                            : failure === "late-failure"
+                              ? `process.stdout.write(JSON.stringify({ kind: "failure", id: request.id, reason: "output", message: "failure frame before abort" }) + "\\n");
            setInterval(() => {}, 1_000);`
-                            : failure === "wrong-id"
-                              ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
-                              : failure === "oversized-control"
-                                ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
-                                : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
+                              : failure === "wrong-id"
+                                ? `send({ kind: "phase", id: ${JSON.stringify(randomUUID())}, phase: "analyze" });`
+                                : failure === "oversized-control"
+                                  ? `process.stdout.write("x".repeat(70 * 1024) + "\\n");`
+                                  : `send({ kind: "complete", id: request.id, result: { bytes: request.result_budget_bytes + 1, sha256: "${"0".repeat(64)}" } });`
     }
   });
 `;
@@ -367,80 +356,118 @@ it.each(["reason", "normalized-exec"] as const)(
   },
 );
 
-it("retains ownership-helper cleanup until worker close retries it", async () => {
-  const controller = new AbortController();
-  const reason = { caller: "cancel" };
-  const cleanup = new ProviderCleanupError(
-    "process-ownership",
-    ["helper-root"],
-    {},
-    { operation: "prepare_owned_process" },
-  );
-  const owner = {
-    close: vi.fn(async () => {
-      cleanup.resolveCleanup();
-    }),
-  };
-  const prepare = vi
-    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
-    .mockImplementation(async () => {
-      controller.abort(reason);
-      throw new DarwinProcessOwnershipInspectionError("helper cleanup failed", {
-        cancellation: { reason },
+it.each([false, true])(
+  "retains the ownership helper through exact cleanup retry (caller cancelled: %s)",
+  async (cancelled) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancel" };
+    const cleanup = new ProviderCleanupError(
+      "process-ownership",
+      ["helper-root"],
+      {},
+      { operation: "prepare_owned_process" },
+    );
+    let closes = 0;
+    const failure = new DarwinProcessOwnershipInspectionError(
+      "helper cleanup failed",
+      {
+        ...(cancelled ? { cancellation: { reason } } : {}),
         cleanupFailure: cleanup,
-        cleanupOwner: owner,
+        cleanupOwner: {
+          close: async () => {
+            closes++;
+            releaseOwnedCleanup(cleanup);
+          },
+        },
+      },
+    );
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        if (cancelled) controller.abort(reason);
+        throw failure;
       });
-    });
-  const worker = new WebBundleAnalysisWorker();
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const error = failureOf(
+        await worker.analyze(makeScript("0"), 5_000, controller.signal),
+      );
+      const primary = primaryAnalysisError(error);
+      if (cancelled) {
+        expect(primary).toBeInstanceOf(AnalysisCancelledError);
+        expect(primary.cause).toBe(reason);
+      } else expect(primary.cause).toBe(failure);
+      expect(error).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: ["helper-root"],
+      });
+      expect(closes).toBe(0);
+      await worker.close();
+      expect(error).toMatchObject({
+        cleanupIncomplete: false,
+        cleanupResources: [],
+      });
+      expect(closes).toBe(1);
+    } finally {
+      try {
+        await worker.close();
+      } finally {
+        prepare.mockRestore();
+      }
+    }
+  },
+);
+
+it("keeps a refused script's syntax facts and states the allowance the host sent", async () => {
+  // Four conditional self-selections before one member write (#8294); the
+  // Map lookup makes the analyzer index member mutations.
+  const source = [
+    "/* __webpack_require__ */ function probe(input, env) { var m; if (env.first) m = env.first.info;",
+    ...Array.from(
+      { length: 4 },
+      (_, index) =>
+        `if (/case${String(index)}/.test(input)) m = m[${String(index % 2)}];`,
+    ),
+    "m[1] = input.length; var c = new Map(); c.get('k'); fetch('/refused'); return m; }",
+  ].join(" ");
+  const script = makeScript(source);
+  const allowance = { aliasStates: 8, source: "runtime" } as const;
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor({ kind: "source" }),
+  );
   try {
     const result = await worker.analyze(
-      makeScript("0"),
-      5_000,
-      controller.signal,
+      script,
+      10_000,
+      undefined,
+      undefined,
+      allowance,
     );
-    const error = failureOf(result);
-    expect(error.cleanupIncomplete).toBe(true);
-    expect(error.cleanupResources).toContain("helper-root");
-    await worker.close();
-    expect(owner.close).toHaveBeenCalledOnce();
-    expect(error.cleanupIncomplete).toBe(false);
+    if (!result.ok) throw result.error.error;
+    const refusal = javaScriptMemberMutationRefusal(
+      "analyze_web_bundle",
+      allowance,
+    );
+    expect(result.value).toEqual({
+      status: "unavailable",
+      script_key: script.script_key,
+      reason: "resource_constraint",
+      detail: expect.stringContaining("more than 8 alias states"),
+      limit: refusal.limit,
+      remediation: refusal.remediationAction,
+      partial: {
+        refused_phase: "member-mutations",
+        parse_status: "parsed",
+        inferences: [
+          expect.objectContaining({
+            kind: "bundle_runtime",
+            value: "webpack",
+          }),
+        ],
+      },
+    });
   } finally {
-    prepare.mockRestore();
-    await worker.close();
-  }
-});
-
-it("retains failed helper cleanup without caller cancellation", async () => {
-  const cleanup = new ProviderCleanupError(
-    "process-ownership",
-    ["helper-root"],
-    {},
-    { operation: "prepare_owned_process" },
-  );
-  const owner = {
-    close: vi.fn(async () => {
-      cleanup.resolveCleanup();
-    }),
-  };
-  const physical = new DarwinProcessOwnershipInspectionError(
-    "inspection failed",
-    { cleanupFailure: cleanup, cleanupOwner: owner },
-  );
-  const prepare = vi
-    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
-    .mockRejectedValue(physical);
-  const worker = new WebBundleAnalysisWorker();
-  try {
-    const result = await worker.analyze(makeScript("0"), 5_000);
-    const error = failureOf(result);
-    expect(primaryAnalysisError(error).cause).toBe(physical);
-    expect(error.cleanupIncomplete).toBe(true);
-    expect(error.cleanupResources).toContain("helper-root");
-    await worker.close();
-    expect(owner.close).toHaveBeenCalledOnce();
-    expect(error.cleanupIncomplete).toBe(false);
-  } finally {
-    prepare.mockRestore();
     await worker.close();
   }
 });
@@ -824,6 +851,42 @@ it("does not let a failure frame for another job replace cancellation", async ()
   }
 });
 
+it("sends the accepted member-mutation allowance and names its setting on refusal", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    128,
+    launcherFor({ kind: "protocol", failure: "work-refusal" }),
+  );
+  try {
+    const error = failureOf(
+      await worker.analyze(
+        makeScript("fetch('/work');"),
+        5_000,
+        undefined,
+        undefined,
+        { aliasStates: 2048, source: "setting" },
+      ),
+    );
+    if (!(error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected a worker resource constraint failure");
+    expect(error).toMatchObject({
+      resource: "cpu",
+      retryable: false,
+      limit: {
+        setting: "javascript.member_mutation_alias_states",
+        effective_value: 2048,
+        source: "setting",
+      },
+    });
+    expect(error.fixedAllowance).toBeUndefined();
+    expect(error.reportedLimits).toMatchObject({
+      [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: 2048,
+      sent_source: "setting",
+    });
+  } finally {
+    await worker.close();
+  }
+});
+
 it("keeps the resource budget on an observed worker resource frame", async () => {
   const reason = { opaque: "resource frame before abort" };
   const controller = new AbortController();
@@ -875,36 +938,57 @@ it("consumes a final frame before an inherited descendant pipe closes", async ()
   }
 });
 
-it("projects a heap-marker exit with the runtime's exhausted resource", async () => {
-  const heapMb = 256;
-  const worker = new WebBundleAnalysisWorker(
-    heapMb,
-    launcherFor({ kind: "protocol", failure: "heap-exit" }),
-  );
-  try {
-    const error = failureOf(
-      await worker.analyze(makeScript("report heap exit"), 15_000),
-    );
-    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
-    const exhaustion = webBundleMemoryExhaustion({
-      runtime: javaScriptRuntime(process.versions).id,
+it.each(["heap-exit", "heap-exit-after-noise"] as const)(
+  "projects a heap-marker exit with the runtime's exhausted resource (%s)",
+  async (failure) => {
+    const heapMb = 256;
+    const worker = new WebBundleAnalysisWorker(
       heapMb,
-      memoryLimitReached: false,
-      processMemoryLimitBytes: javaScriptWorkerMemoryLimitBytes(heapMb),
-    });
-    expect(error.message).toContain(webBundleHeapExhaustedReason(exhaustion));
-    expect(error).toMatchObject({
-      remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
-      reportedLimits: {
-        max_heap_mb: heapMb,
-        worker_process_memory_limit_bytes:
-          javaScriptWorkerMemoryLimitBytes(heapMb),
-      },
-    });
-  } finally {
-    await worker.close();
-  }
-});
+      launcherFor({ kind: "protocol", failure }),
+    );
+    try {
+      const error = failureOf(
+        await worker.analyze(makeScript("report heap exit"), 15_000),
+      );
+      expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+      const exhaustion = webBundleMemoryExhaustion({
+        runtime: javaScriptRuntime(process.versions).id,
+        heapMb,
+        memoryLimitReached: false,
+        processMemoryLimitBytes: javaScriptWorkerMemoryLimitBytes(heapMb),
+      });
+      expect(error.message).toContain(webBundleHeapExhaustedReason(exhaustion));
+      expect(error).toMatchObject({
+        remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
+        ...(exhaustion.kind === "bun-allocation"
+          ? {}
+          : {
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_heap_mb",
+                effective_value: heapMb,
+              },
+            }),
+        reportedLimits: {
+          max_heap_mb: heapMb,
+          worker_process_memory_limit_bytes:
+            javaScriptWorkerMemoryLimitBytes(heapMb),
+        },
+        // The runtime's own report survives even when it lies past the
+        // retained stderr.
+        diagnostics: {
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            stream: "stderr",
+            line_complete: true,
+          },
+        },
+      });
+    } finally {
+      await worker.close();
+    }
+  },
+);
 
 it("does not classify heap-marker stderr from a healthy worker as exhaustion", async () => {
   const worker = new WebBundleAnalysisWorker(
@@ -934,13 +1018,26 @@ it("projects late stderr tails with completeness from the actual selection point
     const worker = new WebBundleAnalysisWorker(
       128,
       launcherFor(
-        { kind: "protocol", failure: "tail-exit" },
         {
-          onSpawn: ({ process: child }) => {
-            if (abortAfterExit)
-              child.once("exit", () =>
-                setTimeout(() => controller.abort(reason), 150),
-              );
+          kind: "protocol",
+          failure: abortAfterExit ? "tail-exit-held-pipe" : "tail-exit",
+        },
+        {
+          onSpawn: ({ process: child, root }) => {
+            child.once("exit", () => {
+              if (root !== undefined)
+                void writeFile(join(root, tailRelease), "").catch(
+                  (cause: unknown) => controller.abort(cause),
+                );
+            });
+            if (!abortAfterExit) return;
+            let seen = "";
+            child.stderr?.on("data", function observe(chunk: Buffer) {
+              seen += chunk.toString("utf8");
+              if (!seen.includes(lateTailMarker)) return;
+              child.stderr?.off("data", observe);
+              queueMicrotask(() => controller.abort(reason));
+            });
           },
         },
       ),
@@ -954,7 +1051,7 @@ it("projects late stderr tails with completeness from the actual selection point
       const error = failureOf(result);
       expect(error).toBeInstanceOf(AnalysisOutputError);
       expect(error.capturedOutput?.stderr).toContain("early exit marker");
-      expect(error.capturedOutput?.stderr).toContain("late tail marker");
+      expect(error.capturedOutput?.stderr).toContain(lateTailMarker);
       expect(error.capturedOutput?.truncated).toBe(abortAfterExit);
       if (abortAfterExit)
         expect(error.secondaryFailures[0]?.cause).toBe(reason);

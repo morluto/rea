@@ -20,4 +20,14 @@ export const staticCheckpointFacts = {
     protocols: [],
   },
   limitations: [],
+  analysis_coverage: {
+    syntax: { status: "complete", error_count: 0 },
+    semantics: { unknown_findings: 0, uncertainty: [] },
+    examination: {
+      status: "complete",
+      semantic_resource_limits: [],
+      electron_call_paths_limited: false,
+    },
+    applicability: { electron: "unknown" },
+  },
 };

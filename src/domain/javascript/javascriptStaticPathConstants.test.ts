@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS } from "./javascriptSemanticPrecision.js";
+import { semanticPrecisionControl } from "./javascriptSemanticResourceLimits.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const SEMANTIC_EXPRESSION_DEPTH_LIMIT =
@@ -332,6 +333,7 @@ describe("constant resolution budget", () => {
     status: "limited",
     semantic_resource_limits: ["expression-depth"],
     electron_call_paths_limited: false,
+    controls: [semanticPrecisionControl("expression_depth")],
   };
   const alias = (previous: string) => previous;
   /** `length` constants after `c0`, each defined only by the one before it. */

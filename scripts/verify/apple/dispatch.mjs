@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { withVerifierArtifactScope } from "../../lib/verifier-artifact-scope.mjs";
 import { inspectAppleDispatchMetadata } from "../../../dist/native/AppleDispatchMetadata.js";
 import {
   artifactCliEvidence,
@@ -15,9 +14,13 @@ import {
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
 import { nativeDispatchMetadataResultSchema } from "../../../dist/domain/native/objcSwiftMetadata.js";
-import { analysisErrorProjectionSchema } from "../../../dist/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../dist/domain/analysisErrorProjectionSchema.js";
 import { cliOperationFailurePayload } from "../../../dist/cliLogging.js";
 import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
@@ -57,8 +60,7 @@ const fixupCoverage = (metadata) =>
 const inspect = async (path) => {
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw target.error;
-  const resources = new ArtifactResourceScope();
-  try {
+  return withVerifierArtifactScope(async (resources) => {
     return {
       target: target.value,
       metadata: (
@@ -67,10 +69,7 @@ const inspect = async (path) => {
         )
       ).result,
     };
-  } finally {
-    // Retry any descriptor whose close failed, surfacing unresolved cleanup.
-    await resources.close();
-  }
+  });
 };
 
 const checkObjc = (metadata, mode) => {
@@ -300,9 +299,10 @@ const checkSwiftSymbolAddresses = async (path, declarations) => {
   }
 };
 
-const root = await mkdtemp(join(tmpdir(), "rea-dispatch-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-dispatch-" });
+const root = fixture.path;
 let report;
-try {
+await withVerifierFixture(fixture, async () => {
   const results = [];
   const commands = 4097;
   const commandTable = Buffer.alloc(32 + commands * 16);
@@ -399,7 +399,12 @@ try {
     }
     assert.equal(cliFailure.code, "unsupported_target");
     assert.equal(cliFailure.category, "unsupported_target");
-    assert.deepEqual(cliFailure.details, {
+    // The refusal is the format owner's target failure: its kind and format
+    // are facts, beside the operation, path and the owner's description.
+    const { failure_kind: kind, format, ...located } = cliFailure.details;
+    assert.equal(kind, "malformed");
+    assert.equal(typeof format, "string");
+    assert.deepEqual(located, {
       operation: "inspect_native_dispatch_metadata",
       path: target.value.path,
       reason,
@@ -518,7 +523,5 @@ try {
     }
   }
   report = { ok: true, target_executed: false, fixtures: results };
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+});
 process.stdout.write(`${JSON.stringify(report)}\n`);

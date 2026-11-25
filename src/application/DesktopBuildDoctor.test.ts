@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
-import { createDoctorHostFixture } from "./Doctor.fixture.js";
-import { runDoctor, type DoctorCheck, type DoctorHost } from "./Doctor.js";
-import type { DesktopBuildFacts } from "./DesktopBuildDoctor.js";
+import { createDoctorHostFixture, scopeChecksOf } from "./Doctor.fixture.js";
+import { runDoctor, type DoctorHost } from "./Doctor.js";
+import type { DoctorCheck } from "../ports/DoctorProviderInspection.js";
+import type { DesktopBuildFacts } from "../ports/DesktopBuildHost.js";
 
 const ready: DesktopBuildFacts = {
   ps: { found: true, detail: "/usr/bin/ps" },
@@ -36,7 +37,7 @@ const buildHost = (
   createDoctorHostFixture({
     platform: "linux",
     architecture: "x64",
-    installationPaths: () => Promise.resolve([]),
+    installationLaunchers: () => Promise.resolve([]),
     clientRegistrations: () => Promise.resolve([]),
     desktopBuildFacts: () => Promise.resolve({ ...ready, ...facts }),
     ...overrides,
@@ -51,7 +52,7 @@ const failed = async (
 ): Promise<DoctorCheck & { readonly remediation: string }> => {
   const report = await diagnose(host);
   expect(report.healthy).toBe(false);
-  const check = report.scope_checks.find(
+  const check = scopeChecksOf(report).find(
     (candidate) => candidate.name === name,
   );
   expect(check).toMatchObject({ ok: false });
@@ -64,7 +65,7 @@ describe("rea doctor --provider desktop_build", () => {
 
     expect(report.healthy).toBe(true);
     expect(
-      report.scope_checks
+      scopeChecksOf(report)
         .map(({ name }) => name)
         .filter((name) => name.startsWith("desktop_build-")),
     ).toEqual([
@@ -257,7 +258,7 @@ describe("desktop build registration checks", () => {
         ],
       }),
     );
-    const check = report.scope_checks.find(
+    const check = scopeChecksOf(report).find(
       ({ name }) => name === "desktop_build-agent-env",
     );
     expect(check).toMatchObject({
@@ -279,7 +280,7 @@ describe("desktop build registration checks", () => {
       }),
     );
     expect(
-      report.scope_checks.find(
+      scopeChecksOf(report).find(
         ({ name }) => name === "desktop_build-agent-env",
       ),
     ).toMatchObject({
@@ -304,7 +305,7 @@ describe("desktop build registration checks", () => {
       }),
     );
     expect(
-      report.scope_checks.find(
+      scopeChecksOf(report).find(
         ({ name }) => name === "desktop_build-registration",
       ),
     ).toMatchObject({
@@ -387,7 +388,7 @@ describe("desktop build registration settings", () => {
         environmentSettings: ["REA_AGENT_ENV_COMMAND"],
       }),
     );
-    expect(report.scope_checks).toContainEqual(
+    expect(scopeChecksOf(report)).toContainEqual(
       expect.objectContaining({ name: "desktop_build-registration", ok: true }),
     );
   });

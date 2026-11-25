@@ -1,19 +1,18 @@
 import { desktopPathConventions } from "../domain/nativeConvention.js";
 import { basename, isAbsolute } from "node:path";
 import {
+  ArtifactReaderFailure,
+  artifactFileCompletion,
+  ArtifactResourceScope,
+  type ArtifactResourceOwner,
+  abortIfNeeded,
   DirectoryArtifactReader,
   DirectoryArtifactRootFailure,
   DirectoryArtifactTraversalLimit,
   type DirectoryArtifactEntry,
-} from "./DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { artifactFileCompletion } from "./ArtifactFileOperation.js";
-import {
-  ArtifactResourceScope,
-  type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+  translateArtifactFailure,
+} from "../resources/index.js";
+import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import {
   inspectDesktopFile,
   RETAINED_FACT_BYTES,
@@ -21,8 +20,8 @@ import {
   retainedTextBytes,
   type DesktopReadBudget,
 } from "./DesktopFileInspection.js";
-import type { DesktopApplicationPort } from "../application/artifacts/DesktopApplicationPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { DesktopApplicationPort } from "../ports/artifacts/DesktopApplicationPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   DesktopApplication,
   DesktopFact,
@@ -37,7 +36,7 @@ import { createDesktopApplicationEvidence } from "../domain/desktopApplicationEv
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../domain/analysisErrorCore.js";
 import type {
   AnalysisError,
@@ -104,6 +103,7 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
     } catch (cause: unknown) {
       const error = translateArtifactFailure(
         "inspect_desktop_application",
+        input.path,
         cause,
       );
       return err(error);
@@ -174,7 +174,7 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
           cleanup: cause.cleanup,
           cleanupLeases: cause.cleanupLeases,
           partialObservation: partial,
-          ...(cause.boundary === undefined ? {} : { boundary: cause.boundary }),
+          ...cause.primaryFacts(),
         },
         cause.details,
       );
@@ -190,9 +190,10 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
 }
 
 /**
- * The root is the caller's selection: a non-directory is an unsupported
- * target, and host failures keep the shared target-unavailable/access-denied
- * classification instead of becoming artifact I/O faults.
+ * The root is the caller's selection: a path that is not a directory is a
+ * selection failure, and host failures keep the shared
+ * target-unavailable/access-denied classification instead of becoming
+ * artifact I/O faults.
  */
 const selectedRootFailure = (
   path: string,
@@ -200,16 +201,15 @@ const selectedRootFailure = (
   partialObservation: AnalysisPartialObservation | undefined,
 ): AnalysisError =>
   failure.reason === "path"
-    ? new AnalysisUnsupportedTargetError(
+    ? new AnalysisTargetFailureError(
         "inspect_desktop_application",
         path,
-        failure.message,
         {
-          cause: failure,
-          partialObservation,
-          remediationAction:
-            "Select the application's local installation directory, such as a macOS .app bundle or the directory containing its executable.",
+          kind: "selection",
+          format: "desktop-application",
+          detail: `${failure.message}. Select the application's local installation directory, such as a macOS .app bundle or the directory containing its executable.`,
         },
+        { cause: failure, partialObservation },
       )
     : new BinaryTargetError(path, failure.message, {
         cause: failure.cause,
@@ -270,7 +270,7 @@ const scanDirectory = async (
     "Unity reference decoding stops after a witness in each Data/Managed directory; other assemblies' references are unexamined. Header facts remain per-file.",
   ];
   try {
-    for await (const entry of reader.entries(signal, {
+    for await (const entry of declaredArtifactEntries(reader, signal, {
       maximumEntries: input.max_entries,
       onOmission: (omission) => {
         if (omission.kind !== "directory-descendants") {
@@ -524,8 +524,13 @@ const pathConventions = (path: string, rootName: string) => {
   };
 };
 
+/**
+ * Files whose headers are read. Besides host executable marking, which
+ * Windows cannot apply to ELF or Mach-O files, a bundle's `Contents/MacOS/`
+ * entries and extensionless files at the root name conventional Unix mains.
+ */
 const probeSelected = (entry: DirectoryArtifactEntry): boolean =>
   entry.executable ||
-  /(?:\.(?:exe|dll|so|dylib|pck|utoc|bundle|ab|unity3d)|(?:^|\/)(?:global-metadata\.dat|data\.win|game\.(?:unx|ios)))$/iu.test(
+  /(?:\.(?:exe|dll|so|dylib|pck|utoc|bundle|ab|unity3d)|(?:^|\/)(?:global-metadata\.dat|data\.win|game\.(?:unx|ios))|(?:^|\/)Contents\/MacOS\/[^/]+|^[^/.]+)$/iu.test(
     entry.path,
   );

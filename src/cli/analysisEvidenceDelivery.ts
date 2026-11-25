@@ -1,10 +1,10 @@
-import { recordCliEvidencePublication } from "./cliEvidencePublication.js";
+import { explicitValuesOccurIn } from "../domain/explicitSensitiveValues.js";
 import {
-  analysisEvidenceSources,
-  undeliveredSourceClosure,
-} from "../application/AnalysisEvidenceSources.js";
-import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
-import { z } from "incur";
+  cliPublicationInvocation,
+  recordCliEvidencePublication,
+} from "./cliEvidencePublication.js";
+import { recordCliDeliveredEvidence } from "./cliResultControls.js";
+import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import {
   isImmutableEvidence,
   parseEvidence,
@@ -17,47 +17,33 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { parseCliJsonOption } from "./cliJsonOption.js";
-import {
-  createEvidenceBundle,
-  createImmutableEvidenceBundle,
-} from "../domain/evidenceBundle.js";
-import {
-  evidenceDeliveryCommitted,
-  publishEvidenceDelivery,
-} from "../application/EvidenceBundleCommands.js";
-import { inspectAnalysisViewValidated } from "../application/analysisView/AnalysisViewService.js";
-import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import {
+  cliEvidenceDeliveryInputError,
+  type CliDeliveryDetail,
+} from "./analysisEvidenceDeliveryOptions.js";
+import {
+  agentBudgetDelivery,
+  budgetedSummaryBytes,
+  currentAgentResultBudget,
+  type AgentBudgetDelivery,
+  type AgentBudgetRecovery,
+} from "../domain/agentResultBudget.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import {
   isObject,
   projectCliAnalysisResult,
 } from "./projectCliAnalysisResult.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import type { ZodSafeParseResult } from "zod";
 import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 import type { AnalysisResultWithSources } from "../application/investigation/recordEvidenceSources.js";
 
-export const analysisEvidenceDeliveryOptions = {
-  detail: z
-    .enum(["complete", "summary"])
-    .default("complete")
-    .describe("Deliver complete Evidence, or a summary with --evidence_output"),
-  evidence_output: localPathStringSchema
-    .optional()
-    .describe(
-      "Save complete Evidence as a bundle; required for summary delivery. Never overwrites.",
-    ),
-};
-
-interface CliEvidenceDelivery {
+/** How one CLI invocation publishes its Evidence. */
+interface CliEvidencePublication {
   readonly view?: AnalysisViewRequest;
-  readonly providerId: string;
   readonly operation: string;
   readonly signal: AbortSignal;
-  readonly detail: "complete" | "summary";
+  /** Undefined leaves delivery to the agent result budget. */
+  readonly detail: CliDeliveryDetail;
   readonly evidenceOutput: string | undefined;
   /** Exact one-shot CLI target spelling, when this invocation selects a file. */
   readonly callerInputPath?: string;
@@ -69,61 +55,10 @@ interface CliEvidenceDelivery {
   readonly sensitiveValues?: readonly string[];
 }
 
-export const cliEvidenceDeliveryInputError = (
-  input: Pick<CliEvidenceDelivery, "detail" | "evidenceOutput" | "operation">,
-): AnalysisInputError | undefined =>
-  input.detail === "summary" && input.evidenceOutput === undefined
-    ? new AnalysisInputError(input.operation, undefined, [
-        {
-          path: ["evidence_output"],
-          reason: "invalid_value",
-          message:
-            "Summary delivery requires --evidence_output so complete source Evidence remains available.",
-        },
-      ])
-    : undefined;
-
-/** Parse delivery JSON once and enforce its owning schema before opening a target. */
-export const parseCliAnalysisEvidenceDelivery = <
-  Delivery extends {
-    readonly detail: "complete" | "summary";
-    readonly view?: AnalysisViewRequest | undefined;
-  },
->(
-  operation: string,
-  options: {
-    readonly detail: "complete" | "summary";
-    readonly evidence_output?: string | undefined;
-    readonly view?: string | undefined;
-  },
-  schema: {
-    readonly safeParse: (input: unknown) => ZodSafeParseResult<Delivery>;
-  },
-): Result<
-  Delivery & { readonly evidenceOutput: string | undefined },
-  AnalysisError
-> => {
-  const decoded = parseCliJsonOption(
-    operation,
-    "view",
-    options.view,
-    "view must be valid JSON",
-  );
-  if (!decoded.ok) return decoded;
-  const view = decoded.value;
-  const raw = {
-    detail: options.detail,
-    ...(view === undefined ? {} : { view }),
-  };
-  const parsed = schema.safeParse(raw);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(operation, parsed.error.issues, raw),
-    );
-  const value = { ...parsed.data, evidenceOutput: options.evidence_output };
-  const invalid = cliEvidenceDeliveryInputError({ ...value, operation });
-  return invalid === undefined ? ok(value) : err(invalid);
-};
+/** A one-shot run whose provider cleanup the delivery finishes before publishing. */
+interface CliEvidenceDelivery extends CliEvidencePublication {
+  readonly providerId: string;
+}
 
 /** One-shot delivery owns report publication; analysis keeps its own cleanup owner. */
 export const deliverCliAnalysisEvidence = async (
@@ -154,14 +89,16 @@ export const deliverCliAnalysisEvidence = async (
       undefined,
       { redactFailure },
     ).then(projectCliAnalysisResult);
+  const callerInputPath =
+    input.callerInputPath === undefined ||
+    revealsSensitiveValue(input.callerInputPath, input)
+      ? undefined
+      : input.callerInputPath;
+  const callerInputPaths = safeCallerInputPaths(input);
   const complete = await finishAnalysisCommand(
-    input.callerInputPath === undefined
+    callerInputPath === undefined && callerInputPaths === undefined
       ? run
-      : bindCliEvidenceCallerPath(
-          input.callerInputPath,
-          run,
-          input.callerInputPaths,
-        ),
+      : bindCliEvidenceCallerPath(callerInputPath, run, callerInputPaths),
     service,
     providerId,
     operation,
@@ -170,7 +107,6 @@ export const deliverCliAnalysisEvidence = async (
     { redactFailure },
   );
   return publishCliAnalysisEvidence(complete, {
-    providerId,
     operation,
     signal,
     detail,
@@ -189,13 +125,16 @@ export const deliverCliAnalysisEvidence = async (
  * A requested bundle that never committed cannot silently drop what a completed
  * observation cites. Absent delivery or observation leaves the failure untouched.
  */
-const withUndeliveredSourceClosure = (
+const withUndeliveredSourceClosure = async (
   failure: JsonValue,
-  input: CliEvidenceDelivery,
-): JsonValue => {
+  input: CliEvidencePublication,
+): Promise<JsonValue> => {
   if (input.evidenceOutput === undefined || !isObject(failure)) return failure;
   const { details } = failure;
-  if (!isObject(details)) return failure;
+  if (!isObject(details) || details.partial_observation === undefined)
+    return failure;
+  const { undeliveredSourceClosure } =
+    await import("../application/AnalysisEvidenceSources.js");
   const closure = undeliveredSourceClosure(
     details.partial_observation,
     input.sourceEvidence ?? [],
@@ -211,7 +150,7 @@ const withUndeliveredSourceClosure = (
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
   result: AnalysisResultWithSources<Evidence, JsonValue>,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): Promise<JsonValue> => {
   const { detail, evidenceOutput } = input;
   // A composed result can retain source records separately from its parent.
@@ -237,59 +176,162 @@ export const publishCliAnalysisEvidence = async (
           closureInput,
         );
   const complete = parseEvidence(result.value);
+  // A summary delivery wraps the view; controls are read from this Evidence.
+  recordCliDeliveredEvidence(complete);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
     inputError.retainPartialObservation(complete);
     return projectFailure(inputError);
   }
-  if (evidenceOutput === undefined) return complete;
+  const overBudget = budgetDelivery(complete, input);
+  if (evidenceOutput === undefined) {
+    if (overBudget === undefined) return complete;
+    const summary = await overBudgetSummary(complete);
+    return summary === undefined
+      ? complete
+      : {
+          summary,
+          delivery: deliveryJson(overBudget({ kind: "not-retained" })),
+        };
+  }
+  const outputPath = absoluteCallerPath(evidenceOutput);
   const published = await publishDeliveredEvidence(
     complete,
     evidenceOutput,
     closureInput,
+    overBudget !== undefined,
   );
   if (!published.ok) {
     const failure = projectFailure(published.error.error);
-    return evidenceDeliveryCommitted(published.error.error)
+    return published.error.committed
       ? failure
       : withUndeliveredSourceClosure(failure, closureInput);
   }
-  return detail === "summary"
+  const delivery =
+    published.value.budgeted && overBudget !== undefined
+      ? overBudget({
+          kind: "evidence-file",
+          path: revealsSensitiveValue(outputPath, input)
+            ? undefined
+            : outputPath,
+        })
+      : undefined;
+  return published.value.summarized
     ? {
         summary: published.value.delivered,
         evidence_bundle: published.value.receipt,
+        ...(delivery === undefined ? {} : { delivery: deliveryJson(delivery) }),
       }
     : published.value.delivered;
+};
+
+/** Delivery facts are plain JSON by construction. */
+const deliveryJson = (delivery: AgentBudgetDelivery): JsonValue =>
+  delivery as unknown as JsonValue;
+
+/**
+ * For a caller that left `--detail` to the agent result budget, the
+ * delivery facts an over-budget result carries for each place the complete
+ * Evidence can be; undefined when complete Evidence fits or was chosen.
+ */
+const budgetDelivery = (
+  complete: Evidence,
+  input: CliEvidencePublication,
+): ((recovery: AgentBudgetRecovery) => AgentBudgetDelivery) | undefined => {
+  const invocation = cliPublicationInvocation();
+  // An explicit --filter-output selects fields directly from the command's
+  // Evidence; replacing it with {summary, delivery} would drop those paths.
+  if (invocation.hasFilterOutput === true) return undefined;
+  const budget = currentAgentResultBudget(invocation.agentBudgetSeed);
+  // The one-shot CLI can always publish and page the complete record: with
+  // --evidence_output through the bundle, without it by a rerun.
+  const completeBytes = budgetedSummaryBytes({
+    detail: input.detail,
+    evidence: complete,
+    budget,
+    retained: true,
+    pageable: true,
+  });
+  return completeBytes === undefined || budget === undefined
+    ? undefined
+    : (recovery) =>
+        agentBudgetDelivery({
+          operation: complete.operation,
+          evidenceId: complete.evidence_id,
+          completeBytes,
+          budget,
+          recovery,
+        });
+};
+
+/**
+ * The summary that replaces over-budget complete Evidence, answering this
+ * same invocation; undefined when the operation has no summary view, which
+ * keeps complete delivery.
+ */
+const overBudgetSummary = async (
+  complete: Evidence,
+): Promise<Evidence | undefined> => {
+  const { summarizeOverBudgetEvidence } =
+    await import("../application/analysisView/AnalysisViewService.js");
+  const summary = summarizeOverBudgetEvidence(complete);
+  if (!summary.ok) return undefined;
+  return complete.caller_input_path !== undefined ||
+    complete.caller_input_paths !== undefined
+    ? withEvidenceCallerInputPath(
+        summary.value,
+        complete.caller_input_path,
+        complete.caller_input_paths,
+      )
+    : summary.value;
 };
 
 /**
  * Project the requested view, then publish the complete bundle. Projection
  * runs first so a view failure cannot commit an unreported bundle;
- * publication then owns every post-commit outcome.
+ * publication then owns every post-commit outcome. An over-budget delivery
+ * publishes its summary when the operation has one, and complete Evidence
+ * otherwise.
  */
 const publishDeliveredEvidence = async (
   complete: Evidence,
   evidenceOutput: string,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
+  overBudget = false,
 ): Promise<
   Result<
-    { readonly delivered: Evidence; readonly receipt: JsonValue },
+    {
+      readonly delivered: Evidence;
+      readonly receipt: JsonValue;
+      /** Whether `delivered` is a summary of the published complete record. */
+      readonly summarized: boolean;
+      /** Whether that summary replaced over-budget complete Evidence. */
+      readonly budgeted: boolean;
+    },
     {
       readonly error: AnalysisError;
+      readonly committed: boolean;
       /** The projected view, once projection succeeded. */
       readonly delivered?: Evidence;
     }
   >
 > => {
+  const budgeted = overBudget ? await overBudgetSummary(complete) : undefined;
+  const summarized = input.detail === "summary" || budgeted !== undefined;
   const delivered =
     input.detail === "summary"
-      ? inspectAnalysisViewValidated({
+      ? (
+          await import("../application/analysisView/AnalysisViewService.js")
+        ).inspectAnalysisViewValidated({
           source: { kind: "inline", evidence: complete },
           view: input.view ?? { kind: "summary" },
         })
-      : ok(complete);
+      : ok(budgeted ?? complete);
   if (!delivered.ok)
-    return err({ error: delivered.error.retainPartialObservation(complete) });
+    return err({
+      error: delivered.error.retainPartialObservation(complete),
+      committed: false,
+    });
   // This projection answers the same direct invocation as its parent. Later
   // inspect_analysis_view calls own their own input and do not inherit it.
   const selected =
@@ -302,9 +344,22 @@ const publishDeliveredEvidence = async (
           complete.caller_input_paths,
         )
       : delivered.value;
+  const [
+    { analysisEvidenceSources },
+    { createEvidenceBundle, createImmutableEvidenceBundle },
+    { evidenceDeliveryCommitted, publishEvidenceDelivery },
+  ] = await Promise.all([
+    import("../application/AnalysisEvidenceSources.js"),
+    import("../domain/evidenceBundle.js"),
+    import("../application/EvidenceBundleCommands.js"),
+  ]);
   const inspectionSources = analysisEvidenceSources(complete);
   if (!inspectionSources.ok)
-    return err({ error: inspectionSources.error, delivered: selected });
+    return err({
+      error: inspectionSources.error,
+      committed: false,
+      delivered: selected,
+    });
   const records = [
     ...new Map(
       [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
@@ -326,25 +381,52 @@ const publishDeliveredEvidence = async (
     signal: input.signal,
   });
   if (!published.ok)
-    return err({ error: published.error, delivered: selected });
+    return err({
+      error: published.error,
+      committed: evidenceDeliveryCommitted(published.error),
+      delivered: selected,
+    });
   const { path, bytes } = published.value.evidenceBundle;
   const receipt = bundleReceipt(path, bytes, input);
   recordCliEvidencePublication(receipt);
-  return ok({ delivered: published.value.delivered, receipt });
+  return ok({
+    delivered: published.value.delivered,
+    receipt,
+    summarized,
+    budgeted: budgeted !== undefined,
+  });
+};
+
+/** Whether a caller-selected path contains an excluded sensitive literal. */
+const revealsSensitiveValue = (
+  path: string,
+  input: Pick<CliEvidenceDelivery, "sensitiveValues">,
+): boolean => explicitValuesOccurIn(path, input.sensitiveValues ?? []);
+
+/**
+ * The named caller paths the Evidence may retain: a choice that contains an
+ * excluded sensitive literal is omitted whole, so a repeated option never
+ * loses its order.
+ */
+const safeCallerInputPaths = (
+  input: Pick<CliEvidenceDelivery, "callerInputPaths" | "sensitiveValues">,
+): CallerInputPaths | undefined => {
+  if (input.callerInputPaths === undefined) return undefined;
+  const kept = Object.entries(input.callerInputPaths).filter(([, value]) =>
+    (typeof value === "string" ? [value] : value).every(
+      (path) => !revealsSensitiveValue(path, input),
+    ),
+  );
+  return kept.length === 0 ? undefined : Object.fromEntries(kept);
 };
 
 /** A receipt omits a path that contains an excluded sensitive literal. */
 const bundleReceipt = <Bytes extends JsonValue>(
   path: string | undefined,
   bytes: Bytes,
-  input: Pick<CliEvidenceDelivery, "sensitiveValues">,
+  input: Pick<CliEvidencePublication, "sensitiveValues">,
 ): { readonly path?: string; readonly bytes: Bytes } => ({
-  ...(path === undefined ||
-  input.sensitiveValues?.some(
-    (literal) => literal !== "" && path.includes(literal),
-  )
-    ? {}
-    : { path }),
+  ...(path === undefined || revealsSensitiveValue(path, input) ? {} : { path }),
   bytes,
 });
 
@@ -361,7 +443,7 @@ const bundleReceipt = <Bytes extends JsonValue>(
 const publishFailurePartialEvidence = async (
   failure: JsonValue,
   evidenceOutput: string,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): Promise<JsonValue> => {
   if (
     input.signal.aborted ||
@@ -379,6 +461,10 @@ const publishFailurePartialEvidence = async (
   } catch {
     return withUndeliveredSourceClosure(failure, input);
   }
+  // Publication replaces the inline partial with its delivery; controls
+  // are read from the partial Evidence of this operation.
+  if (partial.operation === input.operation)
+    recordCliDeliveredEvidence(partial);
   const published = await publishDeliveredEvidence(
     partial,
     evidenceOutput,
@@ -391,7 +477,7 @@ const publishFailurePartialEvidence = async (
       published.error,
       input,
     );
-    return evidenceDeliveryCommitted(published.error.error)
+    return published.error.committed
       ? refusal
       : withUndeliveredSourceClosure(refusal, input);
   }
@@ -421,7 +507,7 @@ const refusedPartialPublication = (
   failure: JsonObject,
   details: JsonObject,
   refused: { readonly error: AnalysisError; readonly delivered?: Evidence },
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): JsonValue => {
   const diagnostics = isObject(details.diagnostics) ? details.diagnostics : {};
   const refusal = projectAnalysisError(
@@ -473,7 +559,7 @@ const refusedPartialPublication = (
 /** Either committed receipt form, as {path, bytes}. */
 const committedReceipt = (
   refusalDetails: JsonObject,
-  input: CliEvidenceDelivery,
+  input: CliEvidencePublication,
 ): JsonValue | undefined => {
   if (refusalDetails.published === true && refusalDetails.bytes !== undefined)
     return bundleReceipt(

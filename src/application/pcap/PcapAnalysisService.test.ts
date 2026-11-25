@@ -1,20 +1,20 @@
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { expect, it } from "vitest";
 
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { pcapResultSchemas } from "../../domain/pcap/pcapAnalysis.js";
 import { err, ok } from "../../domain/result.js";
 
-import { PcapAnalysisService } from "./PcapAnalysisService.js";
+import { createPcapAnalysisService } from "../ProviderOperationServices.js";
 
 it("preserves the exact caller reason when pcap admission is already aborted", async () => {
   const reason = Object.freeze({ requested: "stop" });
   const controller = new AbortController();
   controller.abort(reason);
   let calls = 0;
-  const service = new PcapAnalysisService({
+  const service = createPcapAnalysisService({
     inspectAvailability: () => Promise.reject(new Error("unused")),
     close: () => Promise.resolve(),
     execute: () => {
@@ -107,7 +107,7 @@ it.each(["inspect_pcap_client", "inspect_pcap_capture"] as const)(
           rawResult: { selected_output: "preserved" },
         },
       );
-      const service = new PcapAnalysisService({
+      const service = createPcapAnalysisService({
         inspectAvailability: () => Promise.reject(new Error("unused")),
         close: async () => {},
         execute: async () => {
@@ -149,7 +149,7 @@ it.each(["inspect_pcap_client", "inspect_pcap_capture"] as const)(
         expect(evidence.authority).toBe("historical-reference");
         expect(evidence.subject).toMatchObject({
           local_path: path,
-          digest: { sha256: target.sha256 },
+          identity: { sha256: target.sha256 },
         });
       }
       pcapResultSchemas[operation].parse(evidence.normalized_result);
@@ -166,7 +166,7 @@ it.each(["inspect_pcap_client", "inspect_pcap_capture"] as const)(
       "The provider could not decode its output",
       { diagnostics: { provider_detail: "retained" } },
     );
-    const service = new PcapAnalysisService({
+    const service = createPcapAnalysisService({
       inspectAvailability: () => Promise.reject(new Error("unused")),
       close: async () => {},
       execute: async () => {
@@ -187,7 +187,7 @@ it.each(["inspect_pcap_client", "inspect_pcap_capture"] as const)(
 
 it("preserves pcap caller field constraints before provider execution", async () => {
   let calls = 0;
-  const service = new PcapAnalysisService({
+  const service = createPcapAnalysisService({
     inspectAvailability: () => Promise.reject(new Error("unused")),
     close: () => Promise.resolve(),
     execute: () => {
@@ -201,7 +201,10 @@ it("preserves pcap caller field constraints before provider execution", async ()
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "invalid_request",
     details: {
-      issues: [{ path: ["path"], reason: "out_of_range", minimum: 1 }],
+      issues: [
+        { path: ["path"], reason: "out_of_range", minimum: 1 },
+        { path: ["path"], reason: "invalid_format", expected: "regex" },
+      ],
     },
   });
   expect(calls).toBe(0);

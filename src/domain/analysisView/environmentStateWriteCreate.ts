@@ -298,7 +298,10 @@ const refineCreate = (
       earlierOf(draft, evidence.collection),
     ) ?? reexplained(draft, explained.rules, later, evidence.collection);
   if (widened === undefined) return false;
-  retainFixed(context, widened.body.fixed.slice(draft.plan.body!.fixed.length));
+  retainFixed(
+    context.io,
+    widened.body.fixed.slice(draft.plan.body!.fixed.length),
+  );
   draft.plan.rules = widened.rules;
   draft.plan.body = widened.body;
   draft.exemplarInput = undefined;
@@ -442,7 +445,7 @@ const buildCreate = (
       created: evidence.observed.object,
     },
   );
-  retainFixed(context, explained.body.fixed);
+  retainFixed(context.io, explained.body.fixed);
   for (const member of keptOrders(evidence.call.body, evidence.observed.object))
     draft.kept.add(member);
   Object.assign(draft.plan, {
@@ -474,7 +477,11 @@ const buildCreate = (
     insert: draft.candidates[0]!,
   });
   draft.observed = evidence.observed.object;
-  draft.exemplarInput = retainCreateExemplar(context, input, explained.rules);
+  draft.exemplarInput = retainCreateExemplar(
+    context.io,
+    input,
+    explained.rules,
+  );
   noteHeldAmpersands(draft.ampersands, explained.rules, held);
   noteAmpersands(draft.ampersands, explained.rules, evidence.observed.object);
   for (const entity of held) noteFixedWidths(draft.fixedWidth, entity);

@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const posix = it.skipIf(process.platform === "win32");
 posix.each([
@@ -16,15 +16,14 @@ posix.each([
 ] as const)(
   "requires CommandCode skill proof for %s",
   async (mode, allowed) => {
-    const state = await mkdtemp(join(tmpdir(), "rea-commandcode-skill-"));
-    try {
-      const account = join(state, "account");
-      await mkdir(account);
-      await writeFile(
-        join(account, ".rea-client-verification"),
-        "Disposable REA client verification account\n",
-      );
-      const commands = String.raw`
+    const state = await createTestTempDirectory("rea-commandcode-skill-");
+    const account = join(state, "account");
+    await mkdir(account);
+    await writeFile(
+      join(account, ".rea-client-verification"),
+      "Disposable REA client verification account\n",
+    );
+    const commands = String.raw`
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TOOL_CONTRACTS } from REPLACE_CONTRACTS;
@@ -74,66 +73,61 @@ export async function createVerifierCommands() {
   };
 }
 `.replace(
-        "REPLACE_CONTRACTS",
-        JSON.stringify(
-          new URL("../../../dist/contracts/toolContracts.js", import.meta.url)
-            .href,
-        ),
-      );
-      await writeFile(join(state, "commands.mjs"), commands);
-      await writeFile(
-        join(state, "fixture.mjs"),
-        "export async function createOpenAiModelFixture({onRequest}){globalThis.fakeRequest=onRequest;return {baseUrl:'http://127.0.0.1:1',async close(){}};}\n",
-      );
-      await writeFile(
-        join(state, "hook.mjs"),
-        "import{registerHooks}from'node:module';import{pathToFileURL}from'node:url';registerHooks({resolve(specifier,context,next){if(context.parentURL?.endsWith('/scripts/verify-commandcode-client.mjs')){let f;if(specifier==='node:os')f='os.mjs';if(specifier==='./lib/verify-commands.mjs')f='commands.mjs';if(specifier==='./verify/clients/model-fixture.mjs')f='fixture.mjs';if(f)return{url:pathToFileURL(process.env.STATE+'/'+f).href,shortCircuit:true};}return next(specifier,context);}});\n",
-      );
-      await writeFile(
-        join(state, "os.mjs"),
-        "export * from 'node:os';export function homedir(){return process.env.REA_VERIFY_COMMANDCODE_ACCOUNT_HOME;}\n",
-      );
-      const script = fileURLToPath(
-        new URL(
-          "../../../scripts/verify-commandcode-client.mjs",
-          import.meta.url,
-        ),
-      );
-      const result = spawnSync(
-        process.execPath,
-        ["--import", join(state, "hook.mjs"), script],
-        {
-          encoding: "utf8",
-          timeout: 10_000,
-          env: {
-            ...process.env,
-            STATE: state,
-            MODE: mode,
-            REA_VERIFY_COMMANDCODE_ACCOUNT_HOME: account,
-          },
+      "REPLACE_CONTRACTS",
+      JSON.stringify(
+        new URL("../../../dist/contracts/toolContracts.js", import.meta.url)
+          .href,
+      ),
+    );
+    await writeFile(join(state, "commands.mjs"), commands);
+    await writeFile(
+      join(state, "fixture.mjs"),
+      "export async function createOpenAiModelFixture({onRequest}){globalThis.fakeRequest=onRequest;return {baseUrl:'http://127.0.0.1:1',async close(){}};}\n",
+    );
+    await writeFile(
+      join(state, "hook.mjs"),
+      "import{registerHooks}from'node:module';import{pathToFileURL}from'node:url';registerHooks({resolve(specifier,context,next){if(context.parentURL?.endsWith('/scripts/verify-commandcode-client.mjs')){let f;if(specifier==='node:os')f='os.mjs';if(specifier==='./lib/verify-commands.mjs')f='commands.mjs';if(specifier==='./verify/clients/model-fixture.mjs')f='fixture.mjs';if(f)return{url:pathToFileURL(process.env.STATE+'/'+f).href,shortCircuit:true};}return next(specifier,context);}});\n",
+    );
+    await writeFile(
+      join(state, "os.mjs"),
+      "export * from 'node:os';export function homedir(){return process.env.REA_VERIFY_COMMANDCODE_ACCOUNT_HOME;}\n",
+    );
+    const script = fileURLToPath(
+      new URL(
+        "../../../scripts/verify-commandcode-client.mjs",
+        import.meta.url,
+      ),
+    );
+    const result = spawnSync(
+      process.execPath,
+      ["--import", join(state, "hook.mjs"), script],
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          STATE: state,
+          MODE: mode,
+          REA_VERIFY_COMMANDCODE_ACCOUNT_HOME: account,
         },
-      );
-      expect(result.status).not.toBe(0);
-      const observed = await readFile(
-        join(state, "observed.json"),
-        "utf8",
-      ).then(JSON.parse, () => null);
-      expect(observed !== null).toBe(allowed);
-      if (allowed)
-        expect(observed.second.tool_calls[0].function.name).toBe(
-          "search_tools",
-        );
-      expect(result.stderr).toContain(
-        allowed
-          ? "intentional stop before client output"
-          : mode === "empty"
-            ? "Installed skill must have authored frontmatter"
-            : mode === "empty body"
-              ? "Installed skill body must not be empty"
-              : "The model must receive the complete activated skill body",
-      );
-    } finally {
-      await rm(state, { recursive: true, force: true });
-    }
+      },
+    );
+    expect(result.status).not.toBe(0);
+    const observed = await readFile(join(state, "observed.json"), "utf8").then(
+      JSON.parse,
+      () => null,
+    );
+    expect(observed !== null).toBe(allowed);
+    if (allowed)
+      expect(observed.second.tool_calls[0].function.name).toBe("search_tools");
+    expect(result.stderr).toContain(
+      allowed
+        ? "intentional stop before client output"
+        : mode === "empty"
+          ? "Installed skill must have authored frontmatter"
+          : mode === "empty body"
+            ? "Installed skill body must not be empty"
+            : "The model must receive the complete activated skill body",
+    );
   },
 );

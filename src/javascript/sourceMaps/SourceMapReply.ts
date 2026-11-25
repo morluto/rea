@@ -10,6 +10,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import type { WebSourceMapReport } from "../../domain/webSourceLocation.js";
 import { sourceMapCodecReplySchema } from "./SourceMapCodecProtocol.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "trace_web_source_location";
 
@@ -27,7 +28,7 @@ export const parseSourceMapReply = (
     return err(
       new AnalysisOutputError(
         OPERATION,
-        `Malformed codec JSON reply: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Malformed codec JSON reply: ${errorMessage(cause)}`,
       ),
     );
   }
@@ -77,7 +78,7 @@ const codecRuntimeFailure = (
 
 const codecFailure = (
   path: string,
-  reason: "format" | "unsupported" | "limit",
+  reason: "malformed" | "unsupported" | "limit",
   detail: string,
 ): Result<never, AnalysisError> =>
   err(

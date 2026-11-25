@@ -15,6 +15,10 @@ import { NativeModuleResolver } from "../../dist/browser/modules/NativeModuleRes
 import { startBrowserModuleSite } from "../fixtures/browser-module-site.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 /** Check native URL resolution against an independently loaded module graph through CLI/MCP. */
 export async function verifyBrowserModules(
@@ -37,7 +41,10 @@ export async function verifyBrowserModules(
     const cli = async (...args) => {
       const { stdout } = await promisify(execFile)(
         process.execPath,
-        [entrypoint, ...args, "--json"],
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([...args, "--json"])),
+        ],
         { env, timeout: 45000, maxBuffer: 16 * 1024 * 1024 },
       );
       return parseEvidence(JSON.parse(stdout));
@@ -48,7 +55,9 @@ export async function verifyBrowserModules(
       env,
       stderr: "pipe",
     });
-    client = new Client({ name: "module-real-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "module-real-e2e", version: "1" }),
+    );
     const oracle = await loadingOracle(executable, site);
     const scenario = {
       browser: { mode: "launch", executable_path: executable },
@@ -114,7 +123,7 @@ export async function verifyBrowserModules(
     const mcpResult = assertTrace(mcpEvidence, oracle, site, scriptIndex);
     assert.deepEqual(mcpResult, cliResult, "CLI and MCP module traces differ");
     assert.equal(
-      cliEvidence.subject.digest.sha256,
+      cliEvidence.subject.identity.sha256,
       createHash("sha256").update(site.main).digest("hex"),
     );
     const mapBytes = await readFile(mapPath);

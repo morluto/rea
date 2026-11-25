@@ -43,7 +43,7 @@ export const readFileHandleChunks = (
     (end !== undefined && end < start)
   )
     throw new RangeError("Invalid file read range");
-  let readPending = false;
+  let readState: "idle" | "pending" | "failed" = "idle";
   let totalBytes = 0n;
   let coverage:
     | Extract<FileHandleReadCoverage, { kind: "complete" }>
@@ -65,12 +65,16 @@ export const readFileHandleChunks = (
             ? 64 * 1024
             : Number(remaining),
         );
-        readPending = true;
+        readState = "pending";
         let bytesRead: number;
         try {
           ({ bytesRead } = await handle.read(chunk, 0, chunk.length, position));
-        } finally {
-          readPending = false;
+          readState = "idle";
+        } catch (cause: unknown) {
+          // The generator's rejection still has to reach Readable.from. Keep
+          // it primary while cancellation races that asynchronous forwarding.
+          readState = "failed";
+          throw cause;
         }
         totalBytes += BigInt(bytesRead);
         if (bytesRead === 0)
@@ -98,7 +102,7 @@ export const readFileHandleChunks = (
   const onAbort = (): void => {
     // A native descriptor read cannot be interrupted. Its rejection remains
     // primary; a fulfilled read observes cancellation before yielding bytes.
-    if (!readPending && !source.destroyed)
+    if (readState === "idle" && !source.destroyed)
       source.destroy(cancellationFailure());
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });

@@ -1,12 +1,11 @@
 import { inspectApkSignatureInputSchema } from "../../domain/apkSignature/apkSignatureQuery.js";
 import {
   requireAnalysisViewRetention,
-  projectRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
+} from "../analysisView/AnalysisViewRetention.js";
 
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ApkSignaturePort } from "./ApkSignaturePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ApkSignaturePort } from "../../ports/apkSignature/ApkSignaturePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
@@ -76,14 +75,16 @@ export class ApkSignatureService {
       options?.signal,
     );
     if (!completed.ok) return completed;
-    return detail === "summary"
-      ? projectRetainedAnalysis(
-          completed.value,
-          retention,
-          view === undefined
-            ? { kind: "summary" }
-            : { kind: "apk-signature", ...view },
-        )
-      : completed;
+    if (detail !== "summary") return completed;
+    const service = await import("../analysisView/AnalysisViewService.js");
+    const ready = completeProviderEvidence(completed.value, options?.signal);
+    if (!ready.ok) return ready;
+    return service.projectRetainedAnalysis(
+      ready.value,
+      retention,
+      view === undefined
+        ? { kind: "summary" }
+        : { kind: "apk-signature", ...view },
+    );
   }
 }

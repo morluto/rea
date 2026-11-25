@@ -157,6 +157,7 @@ it.each([false, true])(
     const coverage = {
       status: "unknown",
       reason: "No call graph examined",
+      limited_directions: ["callers", "callees"] as ["callers", "callees"],
     } as const;
     const controller = new AbortController();
     const service = new WasmArtifactService({

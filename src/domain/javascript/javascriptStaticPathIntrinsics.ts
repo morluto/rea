@@ -11,7 +11,7 @@ import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues
 import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticAmbientWrites.js";
+} from "./javascriptSemanticGlobalReference.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 
@@ -73,7 +73,7 @@ export const createStaticPathIntrinsicQuery = (
    */
   const admitConstantSubstitution = (substituted: number): boolean => {
     if (substituted < index.bindings.precision.expression_depth) return true;
-    index.bindings.valueResourceLimits.add("expression-depth");
+    index.bindings.observations.valueResourceLimits.add("expression-depth");
     return false;
   };
   /** Follow constant aliases to the syntax whose identity is proven. */

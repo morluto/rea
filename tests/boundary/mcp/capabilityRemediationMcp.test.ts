@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterAll, expect, it, onTestFinished } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -52,14 +53,11 @@ const discoverTools = async (environment: NodeJS.ProcessEnv) => {
 };
 
 it("names the JEB discovery deadline setting instead of repeating the expired deadline", async () => {
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const toolListing = phaseGate();
   const fixture = await startJebMcpFixture(
     () => null,
     async () => {
-      await gate;
+      await toolListing.hold();
       return { tools: [] };
     },
   );
@@ -84,7 +82,7 @@ it("names the JEB discovery deadline setting instead of repeating the expired de
     );
     expect(entry?.remediation).not.toContain("deadlineExpired");
   } finally {
-    release();
+    toolListing.release();
     await fixture.close();
   }
 });
@@ -158,7 +156,10 @@ it("returns an unready IDA registration's repair from an explicit open_binary se
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "selection-remediation", version: "1" });
+  const client = new Client(
+    { name: "selection-remediation", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -230,7 +231,7 @@ it.skipIf(process.platform === "win32")(
 
       const failed = (await client.callTool({
         name: "inspect_with_objdump",
-        arguments: { operation: "architectures" },
+        arguments: { detail: "complete", operation: "architectures" },
       })) as CallToolResult;
       expect(failed.isError).toBe(true);
       const parsedFailure = parseMcpToolError(failed);
@@ -265,7 +266,7 @@ it.skipIf(process.platform === "win32")(
 
       const retried = await client.callTool({
         name: "inspect_with_objdump",
-        arguments: { operation: "architectures" },
+        arguments: { detail: "complete", operation: "architectures" },
       });
       expect(retried.isError).not.toBe(true);
 

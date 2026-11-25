@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import type { Client } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 import {
@@ -7,6 +9,8 @@ import {
   seedEndCapture,
 } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
 import {
   BUILD_REQUEST as REQUEST,
@@ -53,12 +57,7 @@ const listCapture = (): DesktopApplicationCapture => {
   };
 };
 
-it("returns each changed file's values, with what a value names, and guards outside the task's checks", async () => {
-  const { client } = await buildCaptureFakes({
-    recorded: listCapture(),
-    exportRefused: true,
-    extraContent: [SEED, END],
-  });
+const stopDraft = async (client: Client) => {
   const id = await startBuildComputer(client, REQUEST);
   await callOk(client, "start_build_capture", { computer_id: id });
   for (const name of ["seed", "end"])
@@ -68,6 +67,16 @@ it("returns each changed file's values, with what a value names, and guards outs
     (await callOk(client, "stop_build_capture", { computer_id: id }))
       .structuredContent,
   );
+  return draft;
+};
+
+it("returns each changed file's values, with what a value names, and guards outside the task's checks", async () => {
+  const { client } = await buildCaptureFakes({
+    recorded: listCapture(),
+    exportRefused: true,
+    extraContent: [SEED, END],
+  });
+  const draft = await stopDraft(client);
 
   const item = (name: string) => `/root/children/[name=item][@name=${name}]`;
   expect(draft?.files).toEqual([
@@ -127,4 +136,35 @@ it("returns each changed file's values, with what a value names, and guards outs
     check("guard-3", `${item("milk")}/attributes/qty`, "1"),
   ]);
   expect(draft?.notes).toEqual([]);
+});
+
+it("projects supported guest fields and supplies missing draft defaults", async () => {
+  const { client, outputs } = await buildCaptureFakes();
+  const file = { file: LIST, role: "document", change: { guest_detail: 1 } };
+  const task = { name: "edit", prompt: "Edit the list", checks: [] };
+  const guest = createEvidence(
+    unknownTarget("not-observed"),
+    { id: "fixture", name: "Guest fixture", version: null },
+    {
+      operation: "describe_desktop_application_task",
+      parameters: {},
+      result: {
+        seed_checkpoint: "guest-seed",
+        end_checkpoint: "guest-end",
+        guest_metadata: true,
+        files: [{ ...file, guest_metadata: true }],
+        task: { ...task, guest_metadata: true },
+      },
+    },
+  );
+  await writeFile(outputs.draft, JSON.stringify(guest));
+  expect(await stopDraft(client)).toEqual({
+    seed_checkpoint: "seed",
+    end_checkpoint: "end",
+    files: [{ ...file, values: [], values_cut: false }],
+    task,
+    guards: [],
+    notes: [],
+    withheld_files: [],
+  });
 });

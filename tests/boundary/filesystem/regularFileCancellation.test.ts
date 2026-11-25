@@ -11,9 +11,9 @@ import {
   retryRegularFileCleanupFailures,
   RetainedRegularFileCleanupFailure,
   bindRegularFileCleanup,
-} from "../../../src/application/RegularFileRead.js";
+} from "../../../src/process/RegularFileRead.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { RegularFileOperationCancelled } from "../../../src/filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import {

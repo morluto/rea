@@ -33,6 +33,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 it.each([
   { method: "lstat", code: "EACCES" },
@@ -48,7 +49,10 @@ it.each([
       );
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "javascript-filesystem", version: "1" });
+    const client = new Client(
+      { name: "javascript-filesystem", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -63,7 +67,11 @@ it.each([
       );
       const response = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: { input_path: root, format: "directory" },
+        arguments: {
+          detail: "complete",
+          input_path: root,
+          format: "directory",
+        },
       });
       expect(fault.calls).toBe(1);
       expect(response.isError).toBe(true);
@@ -98,7 +106,11 @@ it.each([
       fault.method = "";
       const control = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: { input_path: root, format: "directory" },
+        arguments: {
+          detail: "complete",
+          input_path: root,
+          format: "directory",
+        },
       });
       expect(control.isError, JSON.stringify(control)).not.toBe(true);
     } finally {

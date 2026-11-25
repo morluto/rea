@@ -1,5 +1,8 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 
 import pino from "pino";
 import { expect, it, vi } from "vitest";
@@ -7,45 +10,16 @@ import { expect, it, vi } from "vitest";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
-import type { CliInstance } from "../../../src/cli/types.js";
+import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+import { answerFakeGdbStartup } from "../providers/gdbTestHelpers.js";
 
-const registerGdbCommand = (
-  createManager: () => GdbSessionManager,
-): {
-  run(input: {
-    args: { command: string };
-    options: { inferiorTty: string };
-  }): Promise<unknown>;
-} => {
-  const commands = new Map<
-    string,
-    {
-      run(input: {
-        args: { command: string };
-        options: { inferiorTty: string };
-      }): Promise<unknown>;
-    }
-  >();
-  const cli = {
-    command: (
-      name: string,
-      definition: {
-        run(input: {
-          args: { command: string };
-          options: { inferiorTty: string };
-        }): Promise<unknown>;
-      },
-    ) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as CliInstance;
+const registerGdbCommand = (createManager: () => GdbSessionManager) => {
+  const cli = createCommandCli();
   registerReverseEngineeringCommands(cli, pino({ enabled: false }), {}, () =>
     createManager(),
   );
-  const command = commands.get(CLI_COMMANDS.debugWithGdb);
+  const command = cliCommand(cli, CLI_COMMANDS.debugWithGdb)?.definition;
   if (command === undefined)
     throw new Error("GDB CLI command was not registered");
   return command;
@@ -65,6 +39,7 @@ it.each([
   } as unknown as GdbSessionManager;
   const command = registerGdbCommand(() => manager);
   const result = await command.run({
+    formatExplicit: false,
     args: { command: inputCommand },
     options: { inferiorTty: "/dev/pts/42" },
   });
@@ -95,6 +70,7 @@ it("retries retained GDB cleanup when CLI session startup fails", async () => {
 
   try {
     const result = await command.run({
+      formatExplicit: false,
       args: { command: "info files" },
       options: { inferiorTty: "/dev/pts/42" },
     });
@@ -123,6 +99,7 @@ it("marks the CLI failed when retained GDB cleanup remains incomplete", async ()
 
   try {
     const result = await command.run({
+      formatExplicit: false,
       args: { command: "info files" },
       options: { inferiorTty: "/dev/pts/42" },
     });
@@ -143,12 +120,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
   "keeps selected GDB launch recovery in the public CLI for %s",
   async (code) => {
     const selected = "/selected/gdb command";
-    const launchFailure = Object.assign(
-      new Error(`spawn ${selected} ${code}`),
-      {
-        code,
-      },
-    );
+    const launchFailure = spawnFailure(code, selected);
     const spawnProcess = vi.fn(async () => {
       throw launchFailure;
     });
@@ -161,6 +133,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
     const previousExitCode = process.exitCode;
     try {
       const result = await command.run({
+        formatExplicit: false,
         args: { command: "show version" },
         options: { inferiorTty: "/dev/pts/42" },
       });
@@ -169,7 +142,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
         message: expect.stringContaining(JSON.stringify(selected)),
         remediation: { action: expect.stringContaining("REA_GDB_COMMAND") },
         details: {
-          reason: launchFailure.message,
+          reason: expect.stringContaining(JSON.stringify(selected)),
           diagnostics: {
             boundary: "provider-launch",
             command: selected,
@@ -250,6 +223,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         requests++;
         const token = match[1] ?? "";
         const tail = match[2] ?? "";
+        if (answerFakeGdbStartup(child.stdout, token, tail)) continue;
         const reply = modeledGdbReplies.get(tail);
         if (reply === undefined) unmodeled.push(line);
         child.stdout.write(
@@ -277,6 +251,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         if (mode === "incomplete" && !recovering)
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "synthetic stop remains pending",
           };
         child.kill("SIGTERM");
@@ -294,6 +269,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     try {
       process.exitCode = 0;
       const result = await command.run({
+        formatExplicit: false,
         args: { command: "info files" },
         options: { inferiorTty: "/dev/pts/7" },
       });

@@ -50,6 +50,62 @@ const dialectOf = (
         ? "draft-2020-12"
         : undefined;
 
+/**
+ * The fragment of a reference into the current resource: a bare fragment, or
+ * a URI whose resolution against the resource's absolute base names that same
+ * resource. Other resources are external.
+ */
+const sameResourceFragment = (
+  reference: string,
+  baseUri: string | undefined,
+): string | undefined => {
+  if (reference.startsWith("#")) return reference.slice(1);
+  if (baseUri === undefined || !URL.canParse(reference, baseUri))
+    return undefined;
+  const resource = new URL(reference, baseUri);
+  const base = new URL(baseUri);
+  resource.hash = "";
+  base.hash = "";
+  if (resource.href !== base.href) return undefined;
+  const hash = reference.indexOf("#");
+  return hash === -1 ? "" : reference.slice(hash + 1);
+};
+
+const pushObjectChildren = (
+  items: readonly unknown[],
+  scope: JsonSchemaScope,
+  pending: { value: unknown; scope: JsonSchemaScope }[],
+): void => {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (isObject(item)) pending.push({ value: item, scope });
+  }
+};
+
+const enqueueSchemaChildren = (
+  value: SchemaObject,
+  scope: JsonSchemaScope,
+  pending: { value: unknown; scope: JsonSchemaScope }[],
+): void => {
+  for (const key in value) {
+    if (!Object.hasOwn(value, key)) continue;
+    const child = value[key];
+    if (schemaMaps.has(key)) {
+      if (!isObject(child)) continue;
+      for (const name in child) {
+        if (!Object.hasOwn(child, name)) continue;
+        const item = child[name];
+        if (isObject(item)) pending.push({ value: item, scope });
+      }
+    } else if (schemaArrays.has(key)) {
+      if (Array.isArray(child)) pushObjectChildren(child, scope, pending);
+    } else if (schemaChildren.has(key)) {
+      if (Array.isArray(child)) pushObjectChildren(child, scope, pending);
+      else if (isObject(child)) pending.push({ value: child, scope });
+    }
+  }
+};
+
 /** Per-projection scope ownership; no external resource loading or dynamic-reference evaluation. */
 export class JsonSchemaReferences {
   readonly rootScope: JsonSchemaScope;
@@ -68,6 +124,10 @@ export class JsonSchemaReferences {
     Map<string, JsonSchemaScope>
   >();
   readonly #ambiguous = new WeakSet<JsonSchemaScope>();
+  readonly #resolved = new WeakMap<
+    JsonSchemaScope,
+    Map<string, LocalReference>
+  >();
 
   constructor(root: SchemaObject) {
     let baseUri: string | undefined;
@@ -84,7 +144,9 @@ export class JsonSchemaReferences {
     if (baseUri !== undefined) this.#identities.set(baseUri, this.rootScope);
     // Index resources before consumers resolve anything, so later duplicate IDs
     // cannot invalidate facts that have already escaped from the owner.
-    const pending = [{ value: root as unknown, scope: this.rootScope }];
+    const pending: { value: unknown; scope: JsonSchemaScope }[] = [
+      { value: root as unknown, scope: this.rootScope },
+    ];
     const visited = new WeakMap<JsonSchemaScope, WeakSet<object>>();
     while (pending.length > 0) {
       const { value, scope: parent } = pending.pop()!;
@@ -98,28 +160,41 @@ export class JsonSchemaReferences {
       }
       if (seen.has(value)) continue;
       seen.add(value);
-      for (const keyword of ["$ref", "$dynamicRef", "$recursiveRef"]) {
-        const reference = value[keyword];
-        if (typeof reference !== "string") continue;
-        this.#referenceSites.push({ scope, reference, keyword });
-        if (keyword !== "$ref") continue;
-        const target = this.resolve(scope, reference);
-        if (target.kind === "target")
-          pending.push({ value: target.value, scope });
-      }
-      for (const [key, child] of Object.entries(value)) {
-        if (schemaMaps.has(key) && isObject(child)) {
-          for (const item of Object.values(child))
-            pending.push({ value: item, scope });
-        } else if (
-          (schemaArrays.has(key) || schemaChildren.has(key)) &&
-          Array.isArray(child)
-        ) {
-          for (const item of child) pending.push({ value: item, scope });
-        } else if (schemaChildren.has(key))
-          pending.push({ value: child, scope });
-      }
+      this.#recordReferenceSites(value, scope, pending);
+      enqueueSchemaChildren(value, scope, pending);
     }
+  }
+
+  #recordReferenceSites(
+    value: SchemaObject,
+    scope: JsonSchemaScope,
+    pending: { value: unknown; scope: JsonSchemaScope }[],
+  ): void {
+    if (Object.hasOwn(value, "$ref") && typeof value.$ref === "string") {
+      const reference = value.$ref;
+      this.#referenceSites.push({ scope, reference, keyword: "$ref" });
+      const target = this.resolve(scope, reference);
+      if (target.kind === "target" && isObject(target.value))
+        pending.push({ value: target.value, scope });
+    }
+    if (
+      Object.hasOwn(value, "$dynamicRef") &&
+      typeof value.$dynamicRef === "string"
+    )
+      this.#referenceSites.push({
+        scope,
+        reference: value.$dynamicRef,
+        keyword: "$dynamicRef",
+      });
+    if (
+      Object.hasOwn(value, "$recursiveRef") &&
+      typeof value.$recursiveRef === "string"
+    )
+      this.#referenceSites.push({
+        scope,
+        reference: value.$recursiveRef,
+        keyword: "$recursiveRef",
+      });
   }
 
   enter(
@@ -215,36 +290,55 @@ export class JsonSchemaReferences {
     scope: JsonSchemaScope | undefined,
     reference: string,
   ): LocalReference {
+    // Re-check ambiguity before reading #resolved: a scope resolved during
+    // construction may later be marked ambiguous when a sibling ID collides.
     if (scope === undefined || this.enter(scope.root, scope) === undefined)
       return { kind: "unresolved", reason: "scope" };
-    if (!reference.startsWith("#"))
-      return { kind: "unresolved", reason: "external" };
-    let fragment: string;
-    try {
-      fragment = decodeURIComponent(reference.slice(1));
-    } catch {
-      return { kind: "unresolved", reason: "fragment" };
+    let cachedByRef = this.#resolved.get(scope);
+    if (cachedByRef !== undefined) {
+      const cached = cachedByRef.get(reference);
+      if (cached !== undefined) return cached;
+    } else {
+      cachedByRef = new Map();
+      this.#resolved.set(scope, cachedByRef);
     }
-    if (fragment === "") return { kind: "target", value: scope.root, path: [] };
-    if (!fragment.startsWith("/")) return { kind: "anchor" };
-    let value: unknown = scope.root;
-    const path: string[] = [];
-    for (const token of fragment.slice(1).split("/")) {
-      if (/~(?:[^01]|$)/u.test(token))
-        return { kind: "unresolved", reason: "pointer" };
-      const key = unescapeJsonPointerToken(token);
-      if (
-        value === null ||
-        typeof value !== "object" ||
-        !Object.hasOwn(value, key) ||
-        (Array.isArray(value) && !/^(?:0|[1-9][0-9]*)$/u.test(key))
-      )
-        return { kind: "unresolved", reason: "pointer" };
-      if (value !== scope.root && isObject(value) && "$id" in value)
-        return { kind: "unresolved", reason: "resource-boundary" };
-      path.push(key);
-      value = Reflect.get(value, key);
-    }
-    return { kind: "target", value, path };
+    const resolved = resolveLocalReference(scope, reference);
+    cachedByRef.set(reference, resolved);
+    return resolved;
   }
 }
+
+const resolveLocalReference = (
+  scope: JsonSchemaScope,
+  reference: string,
+): LocalReference => {
+  const local = sameResourceFragment(reference, scope.baseUri);
+  if (local === undefined) return { kind: "unresolved", reason: "external" };
+  let fragment: string;
+  try {
+    fragment = decodeURIComponent(local);
+  } catch {
+    return { kind: "unresolved", reason: "fragment" };
+  }
+  if (fragment === "") return { kind: "target", value: scope.root, path: [] };
+  if (!fragment.startsWith("/")) return { kind: "anchor" };
+  let value: unknown = scope.root;
+  const path: string[] = [];
+  for (const token of fragment.slice(1).split("/")) {
+    if (/~(?:[^01]|$)/u.test(token))
+      return { kind: "unresolved", reason: "pointer" };
+    const key = unescapeJsonPointerToken(token);
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      !Object.hasOwn(value, key) ||
+      (Array.isArray(value) && !/^(?:0|[1-9][0-9]*)$/u.test(key))
+    )
+      return { kind: "unresolved", reason: "pointer" };
+    if (value !== scope.root && isObject(value) && "$id" in value)
+      return { kind: "unresolved", reason: "resource-boundary" };
+    path.push(key);
+    value = Reflect.get(value, key);
+  }
+  return { kind: "target", value, path };
+};

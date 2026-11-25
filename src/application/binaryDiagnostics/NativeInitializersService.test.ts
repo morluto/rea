@@ -1,11 +1,10 @@
-import { parseEvidence } from "../../domain/evidence.js";
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { NativeInitializersService } from "./NativeInitializersService.js";
 import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProviders.js";
 import type { NativeInitializers } from "../../domain/native/nativeInitializers.js";
 import { ok } from "../../domain/result.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -101,7 +100,7 @@ it("records the selected image and each slot range as Evidence", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
     locations: [
       { kind: "artifact-path", path: report.artifact.path },
@@ -134,7 +133,9 @@ it.each(["arm64", "x86_64", undefined] as const)(
       return;
     }
     expect(result.value).toMatchObject({
-      subject: { format: "mach-o-universal", architecture: "arm64" },
+      subject: {
+        identity: { format: "mach-o-universal", architecture: "arm64" },
+      },
       normalized_result: parsed,
       parameters: { architecture: "arm64" },
     });
@@ -155,7 +156,8 @@ it("rejects an architecture selection when the report has no universal slice", a
 it.each([
   ["a page that does not match the request", { offset: 1 }],
   ["a returned count that differs from the entries", { returned_entries: 0 }],
-  ["complete coverage on an incomplete report", { status: "incomplete" }],
+  ["partial coverage on a parsed report", { status: "partial" }],
+  ["unknown coverage on a parsed report", { status: "unknown" }],
 ] as const)("rejects provider output with %s", async (_label, coverage) => {
   const result = await serviceFor({
     ...report,
@@ -176,23 +178,12 @@ it("rejects a slot offset outside the artifact", async () => {
 });
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late native initializer cancellation" };
-  const service = new NativeInitializersService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late native initializer cancellation",
+    (inspect) => new NativeInitializersService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_native_initializers",
     normalized_result: report,
   });
@@ -240,6 +231,30 @@ it("refuses a slice architecture label that disagrees with the selected image", 
     ok: false,
     error: { _tag: "AnalysisOutputError" },
   });
+});
+
+it("accepts an arm64e request only for a report of an arm64e slice", async () => {
+  const selected = await selectedArm64Report();
+  const inspect = (cpuSubtype: number) =>
+    serviceFor({
+      ...selected,
+      slice: { ...selected.slice, cpu_subtype: cpuSubtype },
+    }).inspect({ path: report.artifact.path, architecture: "arm64e" });
+  // arm64 (0x0) and arm64v8 (0x1) are not what arm64e names.
+  for (const cpuSubtype of [0, 1])
+    expect(await inspect(cpuSubtype)).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+  // arm64e with capability bits, and arm64e.x1.
+  for (const cpuSubtype of [0x80000002, 12])
+    expect((await inspect(cpuSubtype)).ok).toBe(true);
+  // A family name may read the family's only slice, such as /bin/ls's arm64e.
+  const lone = await serviceFor({
+    ...selected,
+    slice: { ...selected.slice, cpu_subtype: 0x80000002 },
+  }).inspect({ path: report.artifact.path, architecture: "arm64" });
+  expect(lone.ok).toBe(true);
 });
 
 it.each([

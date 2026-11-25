@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -9,24 +10,19 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js";
-import { renderCliDocument } from "../../../src/cliOutput.js";
+import { renderCliDocument } from "../../../src/cli/cliOutput.js";
 import { safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
+import { renderedText } from "../../support/cli/renderedText.js";
 
 afterAll(() => disposeMdItInstance());
 
 const renderedCells = (html: string): string[] => {
-  const text = (node: DefaultTreeAdapterTypes.Node): string =>
-    node.nodeName === "#text" && "value" in node
-      ? node.value
-      : "childNodes" in node
-        ? node.childNodes.map(text).join("")
-        : "";
   const cells: string[] = [];
   const visit = (node: DefaultTreeAdapterTypes.Node): void => {
     if ("tagName" in node && (node.tagName === "th" || node.tagName === "td"))
-      cells.push(text(node));
+      cells.push(renderedText(node));
     else if ("childNodes" in node) node.childNodes.forEach(visit);
   };
   visit(parseFragment(html));
@@ -34,12 +30,6 @@ const renderedCells = (html: string): string[] => {
 };
 
 const tableColumnByHeader = (html: string, header: string): string[] => {
-  const text = (node: DefaultTreeAdapterTypes.Node): string =>
-    node.nodeName === "#text" && "value" in node
-      ? node.value
-      : "childNodes" in node
-        ? node.childNodes.map(text).join("")
-        : "";
   const descendants = (
     node: DefaultTreeAdapterTypes.Node,
     tagName: string,
@@ -59,7 +49,7 @@ const tableColumnByHeader = (html: string, header: string): string[] => {
         (node): node is DefaultTreeAdapterTypes.Element =>
           "tagName" in node && (node.tagName === "th" || node.tagName === "td"),
       )
-      .map(text);
+      .map(renderedText);
 
   for (const table of descendants(parseFragment(html), "table")) {
     const rows = descendants(table, "tr");
@@ -120,6 +110,7 @@ cliTest(
     const row = {
       [literal]: literal,
       punctuation,
+      "List<T>": "&copy; <br> left|right\\path\r\nnext",
       nested: { text: literal, values: ["__name__", "plain"] },
       empty: "",
       zero: 0,
@@ -130,7 +121,7 @@ cliTest(
     };
     const result = { scalar: { [literal]: literal }, rows: [row] };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -166,6 +157,7 @@ cliTest(
       ...Object.keys(row),
       literal,
       punctuation,
+      "&copy; <br> left|right\\pathnext",
       JSON.stringify(row.nested),
       "",
       "0",
@@ -175,6 +167,7 @@ cliTest(
       ...Object.values(edgeSpaceEntries),
     ];
     expect(renderedCells(html)).toEqual(expectedCells);
+    expect(html).toContain("left|right\\path<br>next");
     expect(html).not.toMatch(/<(?:em|strong|s|code|img)(?:\s|>)/u);
 
     // Standalone reports share the same table owner as command output.
@@ -191,7 +184,7 @@ cliTest(
     const path = join(root, "bundle.json");
     const literal = `left${"\u00a0\u202f\u2003".repeat(80_000)}right`;
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "ordinary-json",
@@ -212,7 +205,6 @@ cliTest(
         "md",
         "--full-output",
       ],
-      timeoutMs: 20_000,
     });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     const renderer = await createMarkdownRenderer(root, { linkify: false });
@@ -231,7 +223,7 @@ cliTest(
   "preserves capability provider identities in rendered Markdown",
   async ({ cli }) => {
     const json = await cli.run({ arguments: ["capabilities", "--json"] });
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: ["capabilities", "--format", "md"],
     });
     expect(json.exitCode, json.stderr).toBe(0);
@@ -266,7 +258,7 @@ cliTest(
       after: "still visible",
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -277,7 +269,7 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: [...base, "--format", "md"],
     });
     const json = await cli.run({ arguments: [...base, "--json"] });
@@ -288,12 +280,6 @@ cliTest(
     });
     const renderer = await createMarkdownRenderer(root, { linkify: false });
     const html = renderer.render(markdown.stdout);
-    const text = (node: DefaultTreeAdapterTypes.Node): string =>
-      node.nodeName === "#text" && "value" in node
-        ? node.value
-        : "childNodes" in node
-          ? node.childNodes.map(text).join("")
-          : "";
     const children = parseFragment(html).childNodes;
     for (const [key, value] of Object.entries(result).filter(
       ([, value]) => typeof value === "string",
@@ -302,14 +288,17 @@ cliTest(
         (node) =>
           "tagName" in node &&
           node.tagName === "h2" &&
-          text(node).replaceAll("\u200b", "").trim().endsWith(`.${key}`),
+          renderedText(node)
+            .replaceAll("\u200b", "")
+            .trim()
+            .endsWith(`.${key}`),
       );
       expect(index, key).toBeGreaterThanOrEqual(0);
       const body = children.slice(index + 1).find((node) => "tagName" in node);
       expect(body && "tagName" in body ? body.tagName : undefined, key).toBe(
         "p",
       );
-      expect(body ? text(body) : undefined, key).toBe(value);
+      expect(body ? renderedText(body) : undefined, key).toBe(value);
     }
     expect(html).not.toMatch(/<(?:details|ol|li)(?:\s|>)/u);
     expect(renderedCells(html)).toContain(
@@ -343,7 +332,7 @@ cliTest(
     );
     const base = ["inspect-model-artifact", path, "--detail", "complete"];
     const json = await cli.run({ arguments: [...base, "--json"] });
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: [...base, "--format", "md"],
     });
     expect(json.exitCode, json.stderr).toBe(0);
@@ -387,7 +376,7 @@ cliTest(
       nested: { value: 1 },
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -398,7 +387,7 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: [...base, "--format", "md"],
     });
     const json = await cli.run({ arguments: [...base, "--json"] });
@@ -413,13 +402,7 @@ cliTest(
       renderCliDocument(result, "md", false),
     ]) {
       const html = renderer.render(document);
-      const text = (node: DefaultTreeAdapterTypes.Node): string =>
-        node.nodeName === "#text" && "value" in node
-          ? node.value
-          : "childNodes" in node
-            ? node.childNodes.map(text).join("")
-            : "";
-      expect(text(parseFragment(html))).toContain(literal);
+      expect(renderedText(parseFragment(html))).toContain(literal);
       expect(html).toContain("**key**<br># injected");
       expect(html).toContain("literal<br>- next<br># heading");
       expect(html).toContain("<p>1.</p>");
@@ -428,5 +411,59 @@ cliTest(
       expect(html).not.toContain('href="wrong"');
       expect(html).not.toContain("<h1");
     }
+  },
+);
+
+cliTest(
+  "scales linearly when escaping Markdown headings with long leading whitespace",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-markdown-heading-scale-");
+    const writeBundle = async (name: string, spaces: number) => {
+      const path = join(root, name);
+      const key = `${" ".repeat(spaces)}x`;
+      const record = createEvidence(
+        unknownTarget("not-observed"),
+        { id: "fixture", name: "Fixture", version: "1" },
+        {
+          operation: "ordinary-json",
+          parameters: {},
+          result: { [key]: { value: 1 } },
+        },
+      );
+      await writeFile(path, JSON.stringify(createEvidenceBundle([record])));
+      return path;
+    };
+    const warmupPath = await writeBundle("warmup.json", 8);
+    const smallPath = await writeBundle("small.json", 40_000);
+    const largePath = await writeBundle("large.json", 120_000);
+    const runMd = async (path: string) => {
+      const started = performance.now();
+      const result = await cli.run({
+        arguments: [
+          "inspect-evidence-bundle",
+          JSON.stringify({ path, detail: "complete" }),
+          "--filter-output",
+          "records.0.normalized_result",
+          "--format",
+          "md",
+        ],
+      });
+      const elapsedMs = performance.now() - started;
+      expect(result.exitCode, result.stderr).toBe(0);
+      return { stdout: result.stdout, elapsedMs };
+    };
+    const medianMs = async (path: string, expectedSpaces: number) => {
+      const runs = [await runMd(path), await runMd(path), await runMd(path)];
+      const expectedHeading = `## records.0.normalized_result.${" ".repeat(expectedSpaces)}x`;
+      expect(runs[0]?.stdout).toContain(expectedHeading);
+      const times = runs.map((run) => run.elapsedMs).sort((a, b) => a - b);
+      return times[1]!;
+    };
+
+    await runMd(warmupPath);
+    const smallMs = await medianMs(smallPath, 40_000);
+    const largeMs = await medianMs(largePath, 120_000);
+    // 3x input size grows ~9x under quadratic `$` regex backtracking vs ~1-3x linearly.
+    expect(largeMs / Math.max(smallMs, 1)).toBeLessThan(5);
   },
 );

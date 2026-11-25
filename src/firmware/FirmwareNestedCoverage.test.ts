@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
+import { sha256 as hash } from "../../tests/support/sha256.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import { ok } from "../domain/result.js";
 import { startFirmwareDeadline } from "./FirmwareDeadline.js";
@@ -15,8 +15,6 @@ import {
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import { normalizeUnblobReport } from "./FirmwareReports.js";
 
-const hash = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 const known = (id: string, start: number, end: number) => ({
   __typename__: "ChunkReport",
   id,

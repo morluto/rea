@@ -62,6 +62,12 @@ or a missing or empty `arch` is `uuid_unknown`. Image `source` letters keep thei
 documented meaning (`P` process, `S` shared cache, `C` shared cache library,
 `K` kernel, `U` kernel cache, `T` kernel text exec, `A` absolute). Keys the
 documentation does not list remain in `unlisted_keys` or `unlisted_body_keys`.
+Each examined thread, frame, and image row retains its immediate unknown key
+names in its own `unlisted_keys` array, including empty names. Unknown values
+are syntax-checked and discarded; their nested key names are not collected.
+Older retained reports may omit these row arrays; omission does not mean the
+row was examined and found to have no unknown keys.
+Like metadata and body keys, duplicate key names on these rows are refused.
 
 Each frame's `image_index` refers to its entry in `images`. Image architecture,
 UUID and `uuid_unknown` are retained once on that image. Resolve the reference
