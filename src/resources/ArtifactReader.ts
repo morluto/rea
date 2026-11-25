@@ -580,6 +580,19 @@ export const malformedArtifact = (
   );
 
 /**
+ * A reader of `label` bytes that break that format's own rules. Readers whose
+ * only difference is the format id and the label share this builder instead of
+ * restating the same sentence.
+ */
+export const malformedFormatFailure =
+  (
+    format: string,
+    label: string,
+  ): ((detail: string) => ArtifactReaderFailure) =>
+  (detail) =>
+    malformedArtifact(format, `${label} is malformed: ${detail}`);
+
+/**
  * The throwable for a failure a reader established. Bytes that came up short
  * after the file's size was measured mean the file changed during the read,
  * a read-coverage integrity failure; any other kind is the owner's parse

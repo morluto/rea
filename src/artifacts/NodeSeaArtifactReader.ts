@@ -12,6 +12,7 @@ import {
   normalizeArtifactPath,
   ArtifactReaderFailure,
   malformedArtifact,
+  malformedFormatFailure,
   artifactReaderLimitFailure,
 } from "../resources/index.js";
 import {
@@ -258,5 +259,4 @@ function* seaMembers(decoded: DecodedNodeSeaBlob): Generator<{
     };
 }
 
-const formatFailure = (detail: string): ArtifactReaderFailure =>
-  malformedArtifact("node-sea", `Node SEA blob is malformed: ${detail}`);
+const formatFailure = malformedFormatFailure("node-sea", "Node SEA blob");

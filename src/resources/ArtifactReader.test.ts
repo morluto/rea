@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
+  malformedFormatFailure,
   sameArtifactEntry,
   type ArtifactEntry,
 } from "./ArtifactReader.js";
@@ -71,4 +72,22 @@ it("requires an integrity failure to name its check, including when rebuilt", ()
   const reason: ArtifactReaderFailure["reason"] = primary.reason;
   // @ts-expect-error A rebuild with a non-literal reason carries the check.
   void new ArtifactReaderFailure(reason, "rebuilt without its check");
+});
+
+/**
+ * Three readers differ only in the format id and the label their malformed
+ * sentence names, so the shared builder must keep both parts exact.
+ */
+it("names the format and label a shared malformed sentence reports", () => {
+  const fit = malformedFormatFailure("fit", "FIT")("header size is zero");
+  expect(fit).toBeInstanceOf(ArtifactReaderFailure);
+  expect(fit.reason).toBe("malformed");
+  expect(fit.message).toContain("FIT is malformed: header size is zero");
+  expect(
+    malformedFormatFailure("godot-pck", "Godot PCK")("member overlaps").message,
+  ).toContain("Godot PCK is malformed: member overlaps");
+  expect(
+    malformedFormatFailure("node-sea", "Node SEA blob")("blob was not found")
+      .message,
+  ).toContain("Node SEA blob is malformed: blob was not found");
 });
