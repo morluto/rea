@@ -588,110 +588,149 @@ const plannedOutputs = (
   return files;
 };
 
-/**
- * Roll back an unpublished tree. When rollback cannot prove removal, the
- * tree stays owned by a cleanup lease bound to the returned cleanup error,
- * so the residual output is reported and a later release can retry it.
- */
-const rollbackRetained = async (
-  tree: SafeOutputTree,
-): Promise<AnalysisError | undefined> => {
-  const lease = new AnalysisCleanupLease(async () => {
-    await tree.rollback();
-  }, [tree.outputRoot]);
-  try {
-    await lease.release();
-    return undefined;
-  } catch (cause) {
-    const cleanup = new ProviderCleanupError(
-      SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
-      [tree.outputRoot],
-      { reason: errorMessage(cause) },
-      { cause, operation: OPERATION },
-    );
-    new AnalysisCleanupLeaseGroup(cleanup, [lease]);
-    return cleanup;
-  }
-};
-
-/**
- * Publish the analysis through the shared SafeOutputTree owner: out_dir must
- * be absent or an empty directory, every file is created exclusively and
- * digest-verified, and an incomplete tree is rolled back. A selected
- * directory that already holds the capture (or anything else) is refused,
- * so a successful analysis can never overwrite its own input.
- */
-const writeArtifacts = async (
-  input: AnalyzeSolanaProgramInput,
-  acquired: AcquiredProgram,
-  report: SolanaProgramAnalysis,
-  callResolutions: readonly SolanaCallResolution[],
-  instructions: readonly SbpfInstruction[],
-  signal: AbortSignal | undefined,
-): Promise<AnalysisError | undefined> => {
-  if (input.out_dir === undefined) return undefined;
-  const outDir = input.out_dir;
-  const files = plannedOutputs(
-    { ...input, out_dir: outDir },
-    acquired,
-    report,
-    callResolutions,
-    instructions,
-  );
-  let tree: SafeOutputTree | undefined;
-  try {
-    tree = await SafeOutputTree.create(outDir, undefined, {
-      acceptExistingEmpty: true,
-      createParents: true,
-    });
-    for (const file of files) {
-      const expected = sha256Hex(file.bytes);
-      const written = await tree.write(
-        file.relativePath,
-        Readable.from([file.bytes]),
-        { sha256: expected, bytes: file.bytes.length },
-        signal,
-      );
-      if (written.sha256 !== expected) throw new Error("digest mismatch");
-    }
-    await tree.commit(signal);
-    return undefined;
-  } catch (cause) {
-    if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
-    const refusal = outputDirectoryAdmissionRefusal(
-      OPERATION,
-      "out_dir",
-      cause,
-    );
-    // A refused destination was never claimed: there is nothing to roll back.
-    const cleanupFailure =
-      tree === undefined || tree.published || refusal instanceof AnalysisError
-        ? undefined
-        : await rollbackRetained(tree);
-    const primary = isAborted(signal)
-      ? cancelledBy(OPERATION, signal)
-      : refusal instanceof AnalysisError
-        ? refusal
-        : adapterError(cause);
-    return cleanupFailure === undefined
-      ? primary
-      : analysisErrorWithCleanupDependencies(
-          primary,
-          cleanupFailure,
-          OPERATION,
-        );
-  }
-};
-
 /** In-process Solana program analyzer: ELF intake, sBPF disassembly, Anchor dispatch scan. */
 export class SolanaProgramProvider implements SolanaProgramPort {
   readonly identity = SOLANA_PROGRAM_PROVIDER_IDENTITY;
+
+  /**
+   * Cleanup leases for output trees whose rollback could not prove
+   * removal. The provider owns them until release succeeds: `close()`
+   * retries every retained lease, so failed cleanup is never dropped.
+   */
+  #retainedCleanup: AnalysisCleanupLease[] = [];
 
   constructor(
     private readonly defaults: {
       readonly rpcUrl?: string;
     } = {},
   ) {}
+
+  /**
+   * Roll back an unpublished tree. When rollback cannot prove removal,
+   * the tree stays owned by a cleanup lease bound to the returned
+   * cleanup error and retained here, so the residual output is reported
+   * and `close()` can retry its release.
+   */
+  async #rollbackRetained(
+    tree: SafeOutputTree,
+  ): Promise<AnalysisError | undefined> {
+    const lease = new AnalysisCleanupLease(async () => {
+      await tree.rollback();
+    }, [tree.outputRoot]);
+    try {
+      await lease.release();
+      return undefined;
+    } catch (cause) {
+      this.#retainedCleanup.push(lease);
+      const cleanup = new ProviderCleanupError(
+        SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
+        [tree.outputRoot],
+        { reason: errorMessage(cause) },
+        { cause, operation: OPERATION },
+      );
+      new AnalysisCleanupLeaseGroup(cleanup, [lease]);
+      return cleanup;
+    }
+  }
+
+  /**
+   * Publish the analysis through the shared SafeOutputTree owner: out_dir
+   * must be absent or an empty directory, every file is created
+   * exclusively and digest-verified, and an incomplete tree is rolled
+   * back. A selected directory that already holds the capture (or
+   * anything else) is refused, so a successful analysis can never
+   * overwrite its own input.
+   */
+  async #writeArtifacts(
+    input: AnalyzeSolanaProgramInput,
+    acquired: AcquiredProgram,
+    report: SolanaProgramAnalysis,
+    callResolutions: readonly SolanaCallResolution[],
+    instructions: readonly SbpfInstruction[],
+    signal: AbortSignal | undefined,
+  ): Promise<AnalysisError | undefined> {
+    if (input.out_dir === undefined) return undefined;
+    const outDir = input.out_dir;
+    const files = plannedOutputs(
+      { ...input, out_dir: outDir },
+      acquired,
+      report,
+      callResolutions,
+      instructions,
+    );
+    let tree: SafeOutputTree | undefined;
+    try {
+      tree = await SafeOutputTree.create(outDir, undefined, {
+        acceptExistingEmpty: true,
+        createParents: true,
+      });
+      for (const file of files) {
+        const expected = sha256Hex(file.bytes);
+        const written = await tree.write(
+          file.relativePath,
+          Readable.from([file.bytes]),
+          { sha256: expected, bytes: file.bytes.length },
+          signal,
+        );
+        if (written.sha256 !== expected) throw new Error("digest mismatch");
+      }
+      await tree.commit(signal);
+      return undefined;
+    } catch (cause) {
+      if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
+      const refusal = outputDirectoryAdmissionRefusal(
+        OPERATION,
+        "out_dir",
+        cause,
+      );
+      // A refused destination was never claimed: there is nothing to roll back.
+      const cleanupFailure =
+        tree === undefined || tree.published || refusal instanceof AnalysisError
+          ? undefined
+          : await this.#rollbackRetained(tree);
+      const primary = isAborted(signal)
+        ? cancelledBy(OPERATION, signal)
+        : refusal instanceof AnalysisError
+          ? refusal
+          : adapterError(cause);
+      return cleanupFailure === undefined
+        ? primary
+        : analysisErrorWithCleanupDependencies(
+            primary,
+            cleanupFailure,
+            OPERATION,
+          );
+    }
+  }
+
+  /**
+   * Retry release of every output tree whose rollback failed. Trees that
+   * release are forgotten; any that still cannot be proven removed stay
+   * retained and are reported as a cleanup error naming their roots.
+   */
+  async close(): Promise<void> {
+    const retained = this.#retainedCleanup;
+    if (retained.length === 0) return;
+    this.#retainedCleanup = [];
+    const unreleased: AnalysisCleanupLease[] = [];
+    let reason = "";
+    for (const lease of retained) {
+      try {
+        await lease.release();
+      } catch (cause) {
+        unreleased.push(lease);
+        reason = errorMessage(cause);
+      }
+    }
+    if (unreleased.length === 0) return;
+    this.#retainedCleanup = unreleased;
+    throw new ProviderCleanupError(
+      SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
+      unreleased.flatMap((lease) => lease.cleanupResources ?? []),
+      { reason },
+      { operation: OPERATION },
+    );
+  }
 
   async analyze(
     input: AnalyzeSolanaProgramInput,
@@ -712,7 +751,7 @@ export class SolanaProgramProvider implements SolanaProgramPort {
       input.instruction_names ?? [],
     );
     if (!analyzed.ok) return analyzed;
-    const writeFailure = await writeArtifacts(
+    const writeFailure = await this.#writeArtifacts(
       input,
       acquired.value,
       analyzed.value.report,

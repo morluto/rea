@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
@@ -11,6 +11,7 @@ import {
   AnalysisInputError,
   AnalysisTargetFailureError,
 } from "../domain/analysisErrorCore.js";
+import { SafeOutputTree } from "../resources/index.js";
 import { SolanaProgramProvider } from "./SolanaProgramProvider.js";
 import type { SolanaHandoff } from "./SolanaHandoff.js";
 
@@ -232,6 +233,35 @@ it("refuses a code section that ends inside an instruction", async () => {
   expect((result.error as AnalysisTargetFailureError).failure.kind).toBe(
     "malformed",
   );
+});
+
+it("retains a tree whose rollback fails and releases it on close", async () => {
+  const root = await createTestTempDirectory("rea-solana-cleanup-");
+  const elfPath = join(root, "program.so");
+  const outDir = join(root, "out");
+  await writeFile(elfPath, buildElf());
+  const provider = new SolanaProgramProvider();
+  const writeSpy = vi
+    .spyOn(SafeOutputTree.prototype, "write")
+    .mockRejectedValueOnce(new Error("disk full"));
+  const rollbackSpy = vi
+    .spyOn(SafeOutputTree.prototype, "rollback")
+    .mockRejectedValueOnce(new Error("handle busy"));
+  try {
+    const result = await provider.analyze({ path: elfPath, out_dir: outDir });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(outDir);
+    // The residual tree is still on disk, owned by the provider.
+    await expect(stat(outDir)).resolves.toBeDefined();
+  } finally {
+    writeSpy.mockRestore();
+    rollbackSpy.mockRestore();
+  }
+  // close() retries the retained rollback and releases the tree.
+  await provider.close();
+  await expect(stat(outDir)).rejects.toThrow();
 });
 
 it("reports cancellation with the caller's reason instead of a provider failure", async () => {
