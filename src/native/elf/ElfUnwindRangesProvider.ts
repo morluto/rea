@@ -76,11 +76,7 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
           },
           (handle) =>
             parseElfUnwindRangesFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               { path: input.path, sha256: handle.sha256, bytes: handle.size },
               input,
               signal,

@@ -80,11 +80,7 @@ export class NativeExportsProvider implements NativeExportsPort {
           },
           (handle) =>
             parseNativeExportsFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               { path: input.path, sha256: handle.sha256, bytes: handle.size },
               () => yieldArtifactRead(signal),
             ),

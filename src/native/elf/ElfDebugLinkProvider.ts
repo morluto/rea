@@ -95,11 +95,7 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           },
           (handle) =>
             parseElfDebugLinkFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,

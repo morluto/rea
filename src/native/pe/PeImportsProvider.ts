@@ -72,11 +72,7 @@ export class PeImportsProvider implements PeImportsPort {
           async (handle) => {
             assertArtifactReadActive(options?.signal);
             const parsed = await parsePeImportsFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
