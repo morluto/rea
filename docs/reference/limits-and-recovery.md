@@ -93,6 +93,34 @@ page runs a fresh discovery on that device.
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
+`inspect_elf_notes` and `inspect_elf_debug_link` refuse a file above
+`max_file_bytes`, a decoded section-name table above it, or more notes than
+`max_entries` with `details.limit` naming that field
+(`control_kind: "parameter"`), its effective value, default and range. `inspect_il2cpp_metadata`
+accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
+index of `binary_path`; its refusal reports the same kind of limit. See
+[IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
+
+### Static reader read allowance
+
+`inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
+`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_binary_hardening` and
+`inspect_native_exports` bound the bytes they read, not the file size.
+`max_file_bytes` (CLI `--max-file-bytes`) counts each positional read of
+headers, directory tables and the ranges they reference. Defaults are 64 MiB
+(256 MiB for exports), with a floor of 64 bytes and a maximum of 512 MiB. The
+one streaming pass that hashes the file for its identity is not counted.
+
+An exhausted allowance is a `capacity` refusal. `details.limit` has
+`control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
+value, the bounds, the default and `applies_at: "next_call"`, and
+`details.reported_limits.required_read_bytes` holds the reads needed so far.
+Raise `max_file_bytes` and retry; `update_analysis_settings` does not change it.
+The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
+PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
+exports. A file above it is a `file-size` refusal naming that fixed allowance,
+which `max_file_bytes` does not raise.
+
 ### Producer limits
 
 Operations with an owned producer accept an optional
@@ -121,11 +149,12 @@ rejected.
 | `inspect_binary_layout`, `inspect_recorded_crash` (pwntools) | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
 | `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
 | `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+| `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
 
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
 Packet and signal results report the effective values as `limits`, where an
-inherited OS ceiling can appear as `0`. When pwntools or Rust work exhausts a
+inherited OS ceiling can appear as `0`. When pwntools, Rust or pcap work exhausts a
 budget, `details.limit` carries `control_kind: "parameter"`,
 `parameter: "producer_limits.<field>"`, `minimum: 1` and
 `applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
@@ -135,7 +164,11 @@ ceiling keeps that setting's limit instead. If the caller set the ceiling
 through `producer_limits.input_bytes`, the parameter limit is used, and its
 `default_value` is the ceiling that applies when the field is omitted. When
 omitting it would fail configuration, no default exists and the setting limit
-is reported.
+is reported. A pwntools memory allocation failure carries no
+`details.limit`, whether it comes as a structured reply or as the bridge's
+reserved exit: an allocation failure does not prove that
+`producer_limits.address_space_bytes` was exhausted. Its message states the
+selected allowance, and its remediation names the producer limits to review.
 
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those
@@ -263,6 +296,75 @@ same effective setting so readiness changes along with repair and reset.
 `REA_NATIVE_MATCHING_REPRESENTATION_BYTES` is validated the same way, by
 `match_native_functions` alone.
 
+## Agent result budget
+
+`delivery.agent_result_budget_bytes` is a delivery budget, not an admission
+limit. It defaults to 32,768 compact JSON bytes. Claude Code moves MCP
+results above 25,000 tokens out of context, and dense JSON (addresses,
+digests, identifiers) measured about 2.9 bytes per token there, so the
+default is about 11,000 tokens: under half the cap, with room for the
+delivery facts. Token figures in delivery facts use an estimate of 3 bytes
+per token, not a tokenizer measurement. The budget applies to tools with a
+`detail` selector when the caller omits `detail`, on MCP and the CLI; it is
+the only size that chooses between complete and summary delivery. An MCP
+session summarizes only when it retains Evidence and advertises
+`inspect_analysis_view`, which pages the summary; otherwise it delivers the
+complete Evidence. Its launch seed, `REA_AGENT_RESULT_BUDGET_BYTES`, also
+sets it for one-shot CLI invocations; an invalid seed leaves delivery
+unbudgeted (complete, as before) rather than falling back to the default,
+and settings inspection reports it. The stdio frame limit,
+`REA_MCP_MAX_RESPONSE_BYTES`, stays a separate transport safety net.
+
+When complete Evidence fits, it is delivered inline as before. When it does
+not, the work is never refused or truncated:
+
+- MCP retains the complete Evidence in the session and returns the
+  operation's summary view, the same record `detail: "summary"` returns, so
+  its identity holds wherever a summary is accepted. The delivery facts
+  travel beside it, in a second text block `{"delivery": …}` and in
+  `_meta["rea/agent-budget-delivery"]`: `budget_bytes`, `budget_source`, the
+  range, `complete_bytes`, `estimated_complete_tokens`, `evidence_id`,
+  `retained`, `next` (the exact `inspect_analysis_view` call that pages the
+  complete record) and a `note` with the recovery.
+- `inspect_analysis_view` with view
+  `{kind: "evidence-json", offset, limit}` pages the exact JSON text of the
+  retained record in UTF-16 code units. It is the recovery every client can
+  follow. Joining every page in offset order
+  reproduces it exactly, and no page splits a surrogate pair. With `limit`
+  omitted a page holds at most 24,576 bytes of escaped UTF-8 text, so with
+  its view Evidence it fits the default budget for any characters; an explicit `limit` counts code units,
+  up to 1,048,576. The producer's own views (`managed-members`, `inventory`
+  and so on) select facts more cheaply.
+- For clients that read MCP resources, the summary also carries a
+  `resource_link` to `rea://evidence/<evidence_id>`, named
+  `complete-evidence`, whose `size` is the complete record's UTF-8 JSON
+  bytes. `resources/read` returns the record's exact JSON in one read, the
+  same text the cursor pages. The `rea://evidence/{evidence_id}` template
+  appears in `resources/templates/list`, not `resources/list`, and reads any
+  record the session retains. An ID the session does not retain (unknown,
+  from another session, or cleared by `reset_investigation`) is refused with
+  `-32602`. A record whose escaped read is too large for one response on
+  the connection (`REA_MCP_MAX_RESPONSE_BYTES`, or REA's single-string
+  limit) gets no link, and a read of it is refused with `-32600` and
+  `data.next`, the cursor. The link and the read use the same check. Claude Code 2.1 shows the link
+  to the model as one line, about 70 tokens, and never reads it by itself;
+  when the model reads it, Claude Code saves a large read to a file and
+  shows a preview.
+- The CLI with `--evidence_output` prints
+  `{"summary", "evidence_bundle", "delivery"}`, whose `delivery.next` names
+  the bundle as an `evidence-file` source. Without it, the one-shot CLI
+  writes nothing to disk, no bundle, cache or spill file: it prints
+  `{"summary", "delivery"}` with `retained: "not-retained"`, and
+  `delivery.rerun` gives the arguments to add to the original command as argv
+  arrays for every invocation: `complete` (`["--detail", "complete"]`) and
+  `retained` (`["--evidence_output", "<new-bundle-path>"]`). Caller inputs are
+  never echoed, since they can carry access credentials; the note names both.
+
+Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
+inline on one call, or raise the setting for the runtime with
+`update_analysis_settings`. An operation without a summary view, or with no
+retained session, keeps complete delivery.
+
 ## Keep a fixed ceiling honest
 
 A fixed ceiling is the exception. Keep one only for a stated format, protocol,
@@ -278,6 +380,23 @@ and raising a provider deadline cannot make the client wait longer.
 
 The failure names the limit and the effective value. Say this release has no
 runtime override, and name what does not raise it. Do not invent a setting.
+
+Every fixed ceiling a refusal declares (`fixedAllowanceOptions`,
+`fixedProducerInputAllowance`, `artifactFixedLimitFailure` or an inline
+`fixedAllowance`) is listed in
+[`fixed-ceiling-registry.json`](https://github.com/morluto/rea/blob/main/scripts/verify/fixed-ceiling-registry.json)
+under its file and allowance, with its class and reason: `format`,
+`protocol`, `representation`, `derived` (grows with the admitted input or
+another control), `forwarding` (relays a ceiling declared elsewhere), or
+`pending` with the issue that tracks giving it a control.
+`npm run lint` runs `scripts/verify/fixed-ceilings.mjs`, which fails on an
+unregistered declaration and on a stale entry. A resource or admission limit
+is not a fixed ceiling: give it a setting or per-call parameter and report
+`details.limit`. The same script counts refusals whose only recovery is an
+authored `remediationAction`, with no `limit`, `fixedAllowance` or
+`measuredExhaustion`, against `scripts/verify/untyped-budget-refusal-baseline.json`;
+that count may only shrink, and `--shrink-baselines` lowers it
+([#14234](https://github.com/morluto/rea/issues/14234)).
 
 JSON values stop at `MAX_JSON_DEPTH` (1000) in
 [`jsonValue.ts`](https://github.com/morluto/rea/blob/main/src/domain/jsonValue.ts):

@@ -603,7 +603,7 @@ it("rejects stale retained IDs and unsupported parent operations", async () => {
   });
   expect(rejected).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
   expect(
     await inspectAnalysisView({
@@ -758,7 +758,7 @@ it("seals inferred and literal HAR pages, including a null artifact digest", asy
     }),
   ).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 
@@ -866,7 +866,7 @@ it("seals an inferred environment manifest and a derived manifest without templa
     }),
   ).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 
@@ -1713,7 +1713,7 @@ it.each(["file", "bundle"] as const)(
       expect(controller.signal.aborted).toBe(true);
       expect(result).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisUnsupportedTargetError" },
+        error: { _tag: "AnalysisTargetFailureError" },
       });
     } finally {
       interrupt.mockRestore();

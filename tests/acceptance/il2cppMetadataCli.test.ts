@@ -332,16 +332,13 @@ cliTest(
       });
       expect(output.exitCode).toBe(1);
       const expected = {
-        code: "invalid_request",
+        code: "unsupported_target",
         details: {
           operation: "inspect_il2cpp_metadata",
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: expect.stringContaining("record-size-mismatch"),
-            },
-          ],
+          path,
+          failure_kind: "malformed",
+          format: "il2cpp-metadata",
+          reason: expect.stringContaining("record-size-mismatch"),
         },
       };
       expect(output.json).toMatchObject(expected);
@@ -501,16 +498,12 @@ cliTest(
         "overlap.dat",
         corrupt,
         {
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
             operation: "inspect_il2cpp_metadata",
-            issues: [
-              {
-                path: ["path"],
-                reason: "invalid_format",
-                message: expect.stringContaining("section-overlap"),
-              },
-            ],
+            failure_kind: "malformed",
+            format: "il2cpp-metadata",
+            reason: expect.stringContaining("section-overlap"),
           },
         },
       ],
@@ -540,16 +533,13 @@ cliTest(
     await writeFile(path, bytes);
 
     const expected = {
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_il2cpp_metadata",
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("truncated-header"),
-          },
-        ],
+        path,
+        failure_kind: "truncated",
+        format: "il2cpp-metadata",
+        reason: expect.stringContaining("truncated-header"),
         partial_observation: {
           normalized_result: {
             artifact: {
@@ -1079,6 +1069,149 @@ cliTest(
     expect(projected.items).toEqual(
       expected.slice(2).map((row, offset) => ({ index: offset + 2, ...row })),
     );
+    await client.ping();
+  },
+);
+
+cliTest(
+  "names the input at fault in a metadata and binary pair through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-pair-fault-");
+    const { client, call } = await sharedMcp();
+    const linked = createLinkedIl2cppMetadataFixture();
+    const corruptMetadata = Buffer.from(linked.bytes);
+    corruptMetadata.writeInt32LE(
+      linked.section("typeDefinitions").offset + 4,
+      linked.header("images", "offset"),
+    );
+    const truncatedSlice = createUniversalFixture([
+      { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
+    ]);
+    // The lone slice keeps its Mach-O magic but declares only 8 bytes.
+    truncatedSlice.writeUInt32BE(8, 8 + 12);
+    // Methods 0 and 1 share an image; a version 31 token is at offset 24.
+    const tokenPair = createLinkedIl2cppMetadataFixture({ version: 31 });
+    const tokenAt = (method: number) =>
+      tokenPair.record("methods", method) + 24;
+    const duplicateToken = Buffer.from(tokenPair.bytes);
+    duplicateToken.writeUInt32LE(
+      duplicateToken.readUInt32LE(tokenAt(0)),
+      tokenAt(1),
+    );
+    // A valid MethodDef row past the binary module's 3 method pointers.
+    const tokenBeyondModule = Buffer.from(tokenPair.bytes);
+    tokenBeyondModule.writeUInt32LE(0x06000004, tokenAt(0));
+    const pairConflict =
+      (reason: string) =>
+      (
+        path: string,
+        binaryPath: string,
+        binaryField: string,
+        binaryRecoveryField: string,
+      ) => ({
+        code: "input_conflict",
+        remediation: {
+          action: expect.stringContaining(`(path, ${binaryRecoveryField})`),
+        },
+        details: {
+          failure_kind: "conflict",
+          path,
+          reason: expect.stringContaining(`${reason}:`),
+          // Both inputs, each by this adapter's spelling of its field.
+          inputs: [
+            { field: "path", path },
+            { field: binaryField, path: binaryPath },
+          ],
+        },
+      });
+    for (const [name, metadata, binary, expected] of [
+      [
+        "metadata",
+        corruptMetadata,
+        createIl2cppBinaryFixture(),
+        (path: string) => ({
+          code: "unsupported_target",
+          details: {
+            path,
+            failure_kind: "malformed",
+            format: "il2cpp-metadata",
+            reason: expect.stringContaining("section-overlap"),
+          },
+        }),
+      ],
+      [
+        "binary",
+        linked.bytes,
+        truncatedSlice,
+        (_: string, binaryPath: string) => ({
+          code: "unsupported_target",
+          details: {
+            path: binaryPath,
+            failure_kind: "truncated",
+            format: "macho",
+          },
+        }),
+      ],
+      [
+        "pair",
+        linked.bytes,
+        createIl2cppBinaryFixture({ codeRegistration: false }),
+        // Both files parse but do not agree: neither is blamed, both
+        // selecting fields are listed in each adapter's spelling.
+        pairConflict("code-registration-not-found"),
+      ],
+      [
+        // The reused row is the metadata's own fault, whatever the binary.
+        "duplicate-token",
+        duplicateToken,
+        createIl2cppBinaryFixture(),
+        (path: string) => ({
+          code: "unsupported_target",
+          details: {
+            path,
+            failure_kind: "malformed",
+            format: "il2cpp-metadata",
+            reason: expect.stringMatching(/^invalid-method-definition-token:/u),
+          },
+        }),
+      ],
+      [
+        // A well-formed row only this binary's module cannot hold.
+        "token-beyond-module",
+        tokenBeyondModule,
+        createIl2cppBinaryFixture(),
+        pairConflict("invalid-method-token"),
+      ],
+    ] as const) {
+      const path = join(root, `${name}-global-metadata.dat`);
+      const binaryPath = join(root, `${name}-GameAssembly.dylib`);
+      await writeFile(path, metadata);
+      await writeFile(binaryPath, binary);
+      // Only the universal binary takes an architecture selection.
+      const universal = binary === truncatedSlice;
+      const result = await cli.run({
+        arguments: [
+          "inspect-il2cpp-metadata",
+          path,
+          "--binary",
+          binaryPath,
+          ...(universal ? ["--architecture", "arm64"] : []),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, name).toBe(1);
+      expect(result.json, name).toMatchObject(
+        expected(path, binaryPath, "binary", "--binary"),
+      );
+      const response = await call("inspect_il2cpp_metadata", {
+        path,
+        binary_path: binaryPath,
+        ...(universal ? { binary_architecture: "arm64" } : {}),
+      });
+      expect(parseMcpToolError(response).error, name).toMatchObject(
+        expected(path, binaryPath, "binary_path", "binary_path"),
+      );
+    }
     await client.ping();
   },
 );

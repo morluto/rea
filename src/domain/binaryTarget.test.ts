@@ -119,12 +119,63 @@ describe("executable header parsing", () => {
   it("rejects malformed PE optional-header commitments", () => {
     const wrongMagic = pe(0x8664);
     wrongMagic.writeUInt16LE(0x10b, 64 + 24);
-    const truncatedDirectories = pe(0x8664);
+    const truncatedDirectories = pe(0x8664).subarray(0, 64 + 24 + 112);
     truncatedDirectories.writeUInt16LE(112, 64 + 20);
     truncatedDirectories.writeUInt32LE(16, 64 + 24 + 108);
 
     expect(parseExecutableHeader(wrongMagic, "x64").ok).toBe(false);
     expect(parseExecutableHeader(truncatedDirectories, "x64").ok).toBe(false);
+  });
+
+  it("admits PE images with short, oversized, or DOS-overlapping headers when fixed fields fit", () => {
+    const shortOptional = pe(0x8664);
+    shortOptional.writeUInt16LE(112, 64 + 20);
+    expect(parseExecutableHeader(shortOptional, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86_64" },
+    });
+
+    const largeOptional = pe(0x8664);
+    largeOptional.writeUInt16LE(5000, 64 + 20);
+    expect(parseExecutableHeader(largeOptional, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86_64" },
+    });
+
+    const overlappingPe = pe(0x014c, 4);
+    expect(parseExecutableHeader(overlappingPe, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86" },
+    });
+  });
+
+  it("admits DOS MZ targets from fixed 28-byte declarations without load-module rejection", () => {
+    const truncatedModule = dosMz(128).subarray(0, 64);
+    expect(parseExecutableHeader(truncatedModule, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+
+    const emptyModule = dosMz(128);
+    emptyModule.writeUInt16LE(20, 8); // headerBytes >= imageBytes
+    emptyModule.writeUInt32LE(0, 60); // no Windows new-header pointer
+    expect(parseExecutableHeader(emptyModule, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+
+    const outOfModuleEntry = dosMz(128);
+    outOfModuleEntry.writeUInt16LE(0xffff, 20); // entryOffset >= moduleBytes
+    expect(parseExecutableHeader(outOfModuleEntry, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+
+    const shortHeader = dosMz(128).subarray(0, 27);
+    expect(parseExecutableHeader(shortHeader, "x64")).toEqual({
+      ok: false,
+      error: "invalid or truncated DOS MZ header",
+    });
   });
 });
 
@@ -281,6 +332,31 @@ describe("FAT Mach-O slice selection", () => {
         (slice) => slice.offset === header.universalSlice.offset,
       ),
     ).toMatchObject({ cpuType: 0x01000007, cpuSubtype: 3 });
+  });
+
+  it("rejects overlapping FAT slices at container admission", () => {
+    const bytes = fat([0x01000007, 0x0100000c]);
+    const firstOffset = bytes.readUInt32BE(8 + 8);
+    // Point slice 1 into slice 0's range.
+    bytes.writeUInt32BE(firstOffset, 8 + 20 + 8);
+    expect(parseExecutableHeader(bytes, "arm64")).toMatchObject({
+      ok: false,
+      error: "Mach-O slices 0 and 1 overlap.",
+    });
+  });
+
+  it("isolates unselected-slice alignment while rejecting invalid selected-slice alignment", () => {
+    const bytes = fat([0x01000007, 0x0100000c]);
+    // Slice 0 is at offset 48 (aligned to 2^4=16, not 2^12=4096).
+    bytes.writeUInt32BE(12, 8 + 16);
+    expect(parseExecutableHeader(bytes, "arm64")).toMatchObject({
+      ok: true,
+      value: { format: "mach-o-universal", architecture: "arm64" },
+    });
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: false,
+      error: "FAT architecture 0 offset is not aligned to 2^12",
+    });
   });
 });
 

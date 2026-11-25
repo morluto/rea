@@ -80,7 +80,10 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
   const args = { capture_path: "/capture.har", format: "har" };
   expect(ajv.validate(inputSchema, args)).toBe(true);
   const response = await client.callTool(
-    { name: "inspect_web_network_capture", arguments: args },
+    {
+      name: "inspect_web_network_capture",
+      arguments: { ...args, detail: "complete" },
+    },
     { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
@@ -171,7 +174,11 @@ it.each([false, true])(
 
     const response = await client.callTool({
       name: "inspect_web_network_capture",
-      arguments: { capture_path: "/capture.har", format: "har" },
+      arguments: {
+        detail: "complete",
+        capture_path: "/capture.har",
+        format: "har",
+      },
     });
     expect(response.isError).not.toBe(true);
     const capture = webNetworkCaptureSchema.parse(

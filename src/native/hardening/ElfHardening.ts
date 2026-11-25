@@ -1,7 +1,6 @@
 import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import {
   assertArtifactReadActive,
-  ArtifactReaderFailure,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import {
@@ -1175,11 +1174,11 @@ function* readFeatureNotes(
     };
   } catch (cause) {
     // A parser budget keeps confirmed PIE/NX/RELRO while note features stay unknown.
+    // Malformed note framing is already the note parser's malformed-target
+    // failure, and cancellation stays a cancellation.
     if (isParseLimit(cause, "elf-notes"))
       return { words: new Map(), searched, incomplete: cause.message };
-    if (!(cause instanceof ArtifactReaderFailure)) throw cause;
-    if (cause.reason === "cancelled") throw cause;
-    throw new BinaryFormatFailure("malformed", cause.message);
+    throw cause;
   }
 }
 

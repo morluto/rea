@@ -18,6 +18,7 @@ import {
   readyProcessLedgerRequest,
   readyReviewedLedgerRequest,
 } from "../../../src/application/ReconstructionObligationLedger.fixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const execute = promisify(execFile);
 
@@ -233,7 +234,7 @@ cliTest(
       ].join("\n"),
     );
     const analyzed = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: completeApplicationAnalysis(root),
     });
     expect(analyzed.exitCode).toBe(0);
     const application = parseEvidence(analyzed.json);

@@ -13,6 +13,7 @@ import { writeOrderedZip } from "../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 const connect = async (environment: NodeJS.ProcessEnv) => {
   const session = createTestBinarySession(() => {
@@ -68,7 +69,7 @@ for (const { jarConfigured, setting } of [
         ...(jarConfigured ? { REA_JADX_MCP_JAR: jar } : {}),
       };
       const cliResult = await cli.run({
-        arguments: ["inspect-android-package", apk, "--json"],
+        arguments: completeArguments("inspect-android-package", apk),
         environment,
       });
       expect(cliResult.exitCode).toBe(1);
@@ -76,7 +77,7 @@ for (const { jarConfigured, setting } of [
       const client = await connect(environment);
       const response = await client.callTool({
         name: "inspect_android_package",
-        arguments: { path: apk },
+        arguments: { detail: "complete", path: apk },
       });
       expect(response.isError).toBe(true);
       expect(parseMcpToolError(response)).toEqual({ error: cliResult.json });
@@ -92,14 +93,14 @@ cliTest.skipIf(process.platform === "win32")(
     await writeOrderedZip(apk, ["AndroidManifest.xml"]);
     const run = async (environment: Record<string, string>) => {
       const cliResult = await cli.run({
-        arguments: ["inspect-android-package", apk, "--json"],
+        arguments: completeArguments("inspect-android-package", apk),
         environment: { REA_LOG_LEVEL: "silent", ...environment },
       });
       expect(cliResult.exitCode).toBe(1);
       const client = await connect({ REA_LOG_LEVEL: "silent", ...environment });
       const response = await client.callTool({
         name: "inspect_android_package",
-        arguments: { path: apk },
+        arguments: { detail: "complete", path: apk },
       });
       expect(response.isError).toBe(true);
       expect(parseMcpToolError(response)).toEqual({ error: cliResult.json });
@@ -289,7 +290,7 @@ cliTest.skipIf(process.platform === "win32")(
     });
     const request = {
       name: "inspect_android_package",
-      arguments: { path: apk },
+      arguments: { detail: "complete", path: apk },
     };
     const inspect = async () =>
       parseMcpToolError(await client.callTool(request)).error;

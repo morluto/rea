@@ -29,6 +29,7 @@ import {
   elfEhPointerEncodingName,
   MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
   MAX_ELF_UNWIND_SYMBOLS,
+  type ElfUnwindLimitationCode,
   type ElfUnwindRanges,
   type InspectElfUnwindRangesInput,
 } from "../../domain/native/elfUnwindRanges.js";
@@ -294,8 +295,9 @@ export const parseElfUnwindRangesFromHandle = async (
         : await source.readRange(offset, length);
     if (slice.length !== length)
       throw new ArtifactReaderFailure(
-        "format",
+        "integrity",
         "ELF unwind range ended before its admitted file extent.",
+        { integrityCheck: "read-coverage" },
       );
     next = steps.next(slice);
   }
@@ -327,15 +329,20 @@ function* elfUnwindRangesSteps(
   const little = directory.little;
   const bits = directory.bits;
   const addressSize = bits === 64 ? 8 : 4;
+  const limitationCodes: ElfUnwindLimitationCode[] = [];
   const limitations: string[] = [];
   let incomplete = false;
   let sawIndirect = false;
-  const note = (text: string): void => {
-    if (!limitations.includes(text)) limitations.push(text);
+  const noteCode = (code: ElfUnwindLimitationCode): void => {
+    if (!limitationCodes.includes(code)) limitationCodes.push(code);
   };
-  const fail = (text: string): void => {
+  const note = (text: string, code?: ElfUnwindLimitationCode): void => {
+    if (!limitations.includes(text)) limitations.push(text);
+    if (code !== undefined) noteCode(code);
+  };
+  const fail = (text: string, code?: ElfUnwindLimitationCode): void => {
     incomplete = true;
-    note(text);
+    note(text, code);
   };
 
   // Without section headers, sections outside every segment stay unknown.
@@ -410,7 +417,7 @@ function* elfUnwindRangesSteps(
     debugFrame = { status: "present", location: debugPlacement.location };
   else {
     debugFrame = { status: "incomplete", location: null };
-    fail(DEBUG_OUTSIDE);
+    fail(DEBUG_OUTSIDE, "debug_frame_outside_file");
   }
 
   // In-file bytes of each SHF_ALLOC section; a section running past EOF keeps
@@ -846,7 +853,7 @@ function* elfUnwindRangesSteps(
     );
   } else {
     frameStatus = "absent";
-    note(FRAME_ABSENT);
+    note(FRAME_ABSENT, "eh_frame_absent");
   }
 
   // The header is decoded from the .eh_frame_hdr section when one exists, so
@@ -1194,13 +1201,17 @@ function* elfUnwindRangesSteps(
   );
 
   if (header.status === "absent" && frameStatus !== "unknown")
-    note(HEADER_ABSENT);
-  note(CFA_LIMITATION);
-  if (debugFrame.status === "present") note(DEBUG_PRESENT);
-  else if (debugFrame.status === "absent") note(DEBUG_ABSENT);
-  else if (debugFrame.status === "unknown") note(DEBUG_UNKNOWN);
-  note(UNTRUSTED_LIMITATION);
-  if (sawIndirect) note(INDIRECT_LIMITATION);
+    note(HEADER_ABSENT, "eh_frame_hdr_absent");
+  note(CFA_LIMITATION, "cfa_not_evaluated");
+  if (debugFrame.status === "present")
+    note(DEBUG_PRESENT, "debug_frame_present_undecoded");
+  else if (debugFrame.status === "absent")
+    note(DEBUG_ABSENT, "debug_frame_absent");
+  else if (debugFrame.status === "unknown")
+    note(DEBUG_UNKNOWN, "debug_frame_unknown");
+  note(UNTRUSTED_LIMITATION, "untrusted_names");
+  if (sawIndirect)
+    note(INDIRECT_LIMITATION, "indirect_pointers_not_dereferenced");
 
   const returned: ElfUnwindRanges = {
     artifact,
@@ -1265,6 +1276,7 @@ function* elfUnwindRangesSteps(
       eh_frame_hdr_agreement: agreement,
       examined_records: examined,
     },
+    limitation_codes: limitationCodes,
     limitations,
   };
   return returned;
@@ -2251,7 +2263,7 @@ const headerAgreement = (
     readonly location: FileRange;
   }[],
   sectionAddress: bigint | undefined,
-  note: (text: string) => void,
+  note: (text: string, code?: ElfUnwindLimitationCode) => void,
 ): "agree" | "disagree" | "unavailable" => {
   // The only owner of the eh_frame_ptr check; it also runs for a header
   // whose search table was not fully decoded.
@@ -2264,24 +2276,24 @@ const headerAgreement = (
   // Exact row-for-FDE bijection: equal counts and every table row claims a
   // distinct decoded FDE by offset with matching start address.
   if (pointerMismatch || header.rows.length !== ranges.length) {
-    note(HEADER_MISMATCH);
+    note(HEADER_MISMATCH, "eh_frame_hdr_mismatch");
     return "disagree";
   }
   const fdeStarts = new Map<number, bigint>();
   for (const range of ranges)
     fdeStarts.set(range.location.offset, range.startValue);
   if (fdeStarts.size !== ranges.length) {
-    note(HEADER_MISMATCH);
+    note(HEADER_MISMATCH, "eh_frame_hdr_mismatch");
     return "disagree";
   }
   for (const row of header.rows) {
     if (row.fdeFileOffset === null) {
-      note(HEADER_MISMATCH);
+      note(HEADER_MISMATCH, "eh_frame_hdr_mismatch");
       return "disagree";
     }
     const expectedStart = fdeStarts.get(row.fdeFileOffset);
     if (expectedStart === undefined || expectedStart !== row.startValue) {
-      note(HEADER_MISMATCH);
+      note(HEADER_MISMATCH, "eh_frame_hdr_mismatch");
       return "disagree";
     }
     fdeStarts.delete(row.fdeFileOffset);

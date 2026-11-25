@@ -81,6 +81,7 @@ describe("Ghidra unresolved call locations", () => {
         relationship_coverage: {
           status: "partial",
           limitations: ["An unresolved call remains."],
+          limited_directions: ["callees"],
         },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
@@ -169,8 +170,13 @@ describe("Ghidra function-analysis result values", () => {
     {
       status: "partial",
       limitations: ["Only the first instruction range was examined."],
+      limited_directions: ["callees"],
     },
-    { status: "unknown", reason: "Relationship inventory was unavailable." },
+    {
+      status: "unknown",
+      reason: "Relationship inventory was unavailable.",
+      limited_directions: ["callers", "callees"],
+    },
     {
       status: "partial",
       limitations: ["Missing callers."],
@@ -193,6 +199,16 @@ describe("Ghidra function-analysis result values", () => {
     });
   });
 
+  it("validates Ghidra dossier uncertainty via typed limitation_codes without matching prose", () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    expect(
+      parseFunctionValueFixture("analyze_function", {
+        ...dossier,
+        limitations: ["Static analysis caveat."],
+      }).ok,
+    ).toBe(true);
+  });
+
   it("preserves omitted relationship coverage for legacy observations", () => {
     const parsed = parseGhidraFunctionResult("analyze_function", {
       value: ghidraFunctionDossier(),
@@ -206,7 +222,9 @@ describe("Ghidra function-analysis result values", () => {
 describe("Ghidra relationship metadata validation", () => {
   it.each([
     { status: "partial", limitations: [] },
+    { status: "partial", limitations: ["Missing directions."] },
     { status: "unknown", reason: "" },
+    { status: "unknown", reason: "Missing directions." },
     { status: "complete", limitations: ["Truncated."] },
     { status: "partial", limitations: ["Truncated."], limited_directions: [] },
     {
@@ -913,6 +931,33 @@ const malformedOutputs = (): Array<
         limitations: [],
       },
     ],
+    [
+      "missing required uncertainty limitation code",
+      "analyze_function",
+      {
+        ...dossier,
+        limitation_codes: ["unresolved_computed_or_indirect_flows"],
+      },
+    ],
+    [
+      "omitted limitation_codes field",
+      "analyze_function",
+      Object.fromEntries(
+        Object.entries(dossier).filter(([key]) => key !== "limitation_codes"),
+      ),
+    ],
+    [
+      "unrecognized limitation code",
+      "analyze_function",
+      {
+        ...dossier,
+        limitation_codes: [
+          "unresolved_computed_or_indirect_flows",
+          "provider_specific_representations",
+          "unknown_code",
+        ],
+      },
+    ],
   ];
 };
 
@@ -1322,4 +1367,31 @@ describe("Ghidra native facet coordinate admission", () => {
       }
     },
   );
+});
+
+it("accepts an address outside every function as an incoming-reference target, without function facts", () => {
+  const target = {
+    address: "0x18004a168",
+    name: "PTR_VirtualAlloc_18004a168",
+    symbol: null,
+    classification: null,
+    body: { available: false, reason: "outside every Ghidra function" },
+  };
+  const observation = (procedure: JsonValue) => ({
+    procedure,
+    direction: "incoming",
+    references: [ghidraReferenceEdge()],
+    reference_kinds_available: true,
+    unresolved_calls: [],
+  });
+  expect(
+    parseFunctionValueFixture("procedure_references", observation(target)),
+  ).toMatchObject({ ok: true, value: { procedure: target } });
+  // A function identity keeps its classification and body; mixing fails.
+  expect(
+    parseFunctionValueFixture(
+      "procedure_references",
+      observation({ ...ghidraFunctionIdentity(), classification: null }),
+    ),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 });

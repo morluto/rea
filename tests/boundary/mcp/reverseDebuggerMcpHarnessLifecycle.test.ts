@@ -1,5 +1,4 @@
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/server";

@@ -7,7 +7,9 @@ import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
   type ArtifactResourceScope,
-  bindArtifactFileCleanup,
+  withArtifactCleanupFailure,
+  artifactOperationReason,
+  artifactReaderTargetFailure,
 } from "../resources/index.js";
 import { publishWebScripts } from "./PublishWebScripts.js";
 import { selectScriptCapture } from "../domain/webScriptCaptureAdapters.js";
@@ -183,29 +185,18 @@ const mapExportFailure = (
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure) {
     const primary =
-      cause.cancellation === undefined
-        ? new WebScriptExportError(
-            cause.reason,
+      cause.cancellation !== undefined
+        ? cancelledBy(OPERATION, carriedReason(cause.cancellation.reason), {
+            partialObservation: cause.partialObservation,
+          })
+        : (artifactReaderTargetFailure(OPERATION, input.capture_path, cause) ??
+          new WebScriptExportError(
+            artifactOperationReason(cause),
             input.output_directory,
             cause.message,
             { cause, partialObservation: cause.partialObservation },
-          )
-        : cancelledBy(OPERATION, carriedReason(cause.cancellation.reason), {
-            partialObservation: cause.partialObservation,
-          });
-    if (cause.cleanup === undefined) return primary;
-    const error = analysisErrorWithCleanupFailure(
-      primary,
-      new ProviderCleanupError(
-        PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
-      ),
-      OPERATION,
-    );
-    bindArtifactFileCleanup(cause, error);
-    return error;
+          ));
+    return withArtifactCleanupFailure(cause, primary, PROVIDER.id, OPERATION);
   }
   if (cause instanceof z.ZodError)
     return new AnalysisOutputError(OPERATION, cause.message, { cause });

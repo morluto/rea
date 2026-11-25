@@ -21,6 +21,7 @@ import {
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (
   process.env.GHIDRA_INSTALL_DIR === undefined ||
@@ -38,11 +39,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -115,10 +111,12 @@ try {
         env,
         stderr: "pipe",
       });
-      const client = new Client({
-        name: "rea-mips16-shared-conformance",
-        version: "1",
-      });
+      const client = completeEvidenceClient(
+        new Client({
+          name: "rea-mips16-shared-conformance",
+          version: "1",
+        }),
+      );
       let stderr = "";
       transport.stderr?.on("data", (chunk) => {
         stderr = (stderr + chunk.toString()).slice(-262144);
@@ -364,7 +362,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS16 shared command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -384,7 +382,7 @@ try {
   lineageFailure = cause;
 }
 if (lineageFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained workspace: ${workspace}`,
     {
       cause:
@@ -397,13 +395,13 @@ if (lineageFailure !== undefined)
     },
   );
 if (failure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS16 shared verification failed; retained workspace: ${workspace}`,
     { cause: failure },
   );
 const interrupted = commandInterruption.reason();
 if (interrupted !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS16 shared verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );

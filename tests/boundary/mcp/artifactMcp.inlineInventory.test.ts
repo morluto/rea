@@ -306,7 +306,8 @@ const assertSummaryDelivery = async (
   session: ReturnType<typeof createTestBinarySession>,
   complete: Evidence,
 ) => {
-  expect(complete.parameters).not.toHaveProperty("detail");
+  // Explicit complete delivery is recorded with the caller's choice.
+  expect(complete.parameters).toMatchObject({ detail: "complete" });
   const reply = await client.callTool({
     name: "inspect_artifact",
     arguments: { detail: "summary" },
@@ -417,7 +418,7 @@ mcpTest(
     expect(opened.isError).not.toBe(true);
     const result = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(result.isError, JSON.stringify(result.structuredContent)).not.toBe(
       true,

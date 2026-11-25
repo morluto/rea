@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { mcpPhaseBudgetRecovery } from "../../dist/config/mcpStartupBudgets.js";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 const RSS_SAMPLE_INTERVAL_MS = 10;
 const MAXIMUM_PROFILE_BUFFER_BYTES = 2 * 1_024 * 1_024;
@@ -29,10 +30,12 @@ export async function measureMcpStartup({
     stderr = boundedAppend(stderr, chunk.toString());
   });
   const rss = createLinuxRssSampler(() => transport.pid);
-  const client = new Client({
-    name: "package-startup-probe",
-    version: "1.0.0",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "package-startup-probe",
+      version: "1.0.0",
+    }),
+  );
   const startedAt = performance.now();
   // One deadline for both phases. Each request also uses the time still left,
   // so a shorter first-catalog budget stops a pending initialize or tools/list
@@ -96,10 +99,12 @@ export async function profileMcpModuleLoading({
     stderr: "pipe",
   });
   transport.stderr?.on("data", (chunk) => profile.append(chunk.toString()));
-  const client = new Client({
-    name: "package-module-profile",
-    version: "1.0.0",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "package-module-profile",
+      version: "1.0.0",
+    }),
+  );
   try {
     await withPhaseBudget(policy.doctor, () =>
       client.connect(transport, {

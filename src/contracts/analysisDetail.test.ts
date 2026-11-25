@@ -133,3 +133,52 @@ it("advertises only that operation's summary from analysis detail outputs", () =
     ).toBe(false);
   }
 });
+
+/** The `detail` alternatives an input JSON Schema declares, with their defaults. */
+const detailAlternatives = (
+  schema: unknown,
+): {
+  readonly values: readonly unknown[];
+  readonly defaults: readonly unknown[];
+} => {
+  const values: unknown[] = [];
+  const defaults: unknown[] = [];
+  const visit = (node: unknown): void => {
+    if (typeof node !== "object" || node === null) return;
+    const record = node as Record<string, unknown>;
+    const detail = (record.properties as Record<string, unknown> | undefined)
+      ?.detail as Record<string, unknown> | undefined;
+    if (detail !== undefined) {
+      if (Array.isArray(detail.enum)) values.push(...detail.enum);
+      if ("const" in detail) values.push(detail.const);
+      if ("default" in detail) defaults.push(detail.default);
+    }
+    for (const key of ["anyOf", "oneOf", "allOf"])
+      if (Array.isArray(record[key]))
+        for (const child of record[key]) visit(child);
+  };
+  visit(schema);
+  return { values, defaults };
+};
+
+it("registers the agent result budget for every contract whose omitted detail is budgeted", async () => {
+  const [{ TOOL_CONTRACTS }, { AGENT_BUDGET_OPERATIONS }, { z }] =
+    await Promise.all([
+      import("./toolContracts.js"),
+      import("../domain/agentBudgetOperations.js"),
+      import("zod"),
+    ]);
+  const budgeted = TOOL_CONTRACTS.flatMap((contract) => {
+    if (contract.name === "get_evidence_bundle") return [];
+    const { values, defaults } = detailAlternatives(
+      z.toJSONSchema(contract.inputSchema, {
+        io: "input",
+        unrepresentable: "any",
+      }),
+    );
+    return values.includes("summary") && !defaults.includes("summary")
+      ? [contract.name]
+      : [];
+  });
+  expect([...AGENT_BUDGET_OPERATIONS].sort()).toEqual(budgeted.sort());
+});

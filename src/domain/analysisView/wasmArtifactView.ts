@@ -1,4 +1,8 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { err, ok } from "../result.js";
@@ -83,14 +87,8 @@ export const projectWasmArtifactView = (
     SummaryAnalysisView | z.output<typeof wasmViewRequestSchema>
   >(admitted, "summary", "wasm");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "WASM Evidence supports summary and wasm views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "WASM Evidence supports summary and wasm views.",
     );
   const parsed = readWasmArtifact(parent);
   if (!parsed.ok) return parsed;
@@ -101,15 +99,8 @@ export const projectWasmArtifactView = (
       evidenceSubjectTarget(parent.subject),
     )
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "WASM parent Evidence subject must identify the report's file format and SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "WASM parent Evidence subject must identify the report's file format and SHA-256.",
     );
   const limitations = uniqueSorted([
     ...parent.limitations,

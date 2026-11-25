@@ -14,6 +14,7 @@ import {
   renderVersionReport,
   parseCliOutputArguments,
 } from "../../../src/cli/cliOutput.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {
@@ -406,6 +407,31 @@ describe("CLI output filter slice validation", () => {
   );
 
   workspaceCliTest(
+    "preserves --filter-output selections on over-budget CLI Evidence instead of returning {}",
+    async ({ cli, workspace }) => {
+      const target = workspace.path("entropy-over-budget.bin");
+      await writeFile(target, Buffer.alloc(64 * 1024, 0x41));
+      const result = await cli.run({
+        delivery: "budgeted",
+        environment: { REA_AGENT_RESULT_BUDGET_BYTES: "4096" },
+        arguments: [
+          "inspect-byte-entropy",
+          target,
+          "--block-size",
+          "256",
+          "--json",
+          "--filter-output",
+          "normalized_result.file_entropy",
+        ],
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.json).toEqual({
+        normalized_result: { file_entropy: 0 },
+      });
+    },
+  );
+
+  workspaceCliTest(
     "retains closed slices and multiple filter paths",
     async ({ cli }) => {
       const result = await cli.run({
@@ -554,6 +580,7 @@ describe("compiled CLI filter results", () => {
       const result = await cli.run({
         arguments: [
           "analyze-javascript-application",
+          ...COMPLETE_DETAIL,
           "tests/conformance/readiness/javascript-cli",
           "--format",
           "json",
@@ -570,6 +597,7 @@ describe("compiled CLI filter results", () => {
       const nested = await cli.run({
         arguments: [
           "analyze-javascript-application",
+          ...COMPLETE_DETAIL,
           "tests/conformance/readiness/javascript-cli",
           "--format",
           "json",
@@ -585,6 +613,7 @@ describe("compiled CLI filter results", () => {
       const selected = await cli.run({
         arguments: [
           "analyze-javascript-application",
+          ...COMPLETE_DETAIL,
           "tests/conformance/readiness/javascript-cli",
           "--format",
           "json",

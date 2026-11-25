@@ -42,5 +42,7 @@ export const deliverInvestigationWorkflow = (
     evidence,
     contract,
     recorded.ok ? ok(evidence) : recorded,
+    undefined,
+    (summary) => session.recordEvidence(summary),
   );
 };

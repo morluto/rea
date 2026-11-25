@@ -39,6 +39,10 @@ import { ELECTRON_IDENTITY_LIMITATION } from "../../../src/domain/javascript/jav
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
 import type { JavaScriptSemanticQueryInput } from "../../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import {
+  COMPLETE_DETAIL,
+  completeApplicationAnalysis,
+} from "../../support/completeDetail.js";
 
 const execute = promisify(execFile);
 let cliSession: CliCommandSession | undefined;
@@ -214,6 +218,7 @@ const analyzeEvidenceThroughStdioMcp = async (
   const response = await client.callTool({
     name: "analyze_javascript_application",
     arguments: {
+      detail: "complete",
       input_path: inputPath,
       ...(sourcePaths === undefined ? {} : { source_paths: [...sourcePaths] }),
     },
@@ -231,9 +236,7 @@ const expectCliAnalysisParity = async (
 ): Promise<void> => {
   const cli = z
     .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
-    .parse(
-      await runCli(["analyze-javascript-application", root, "--json"]),
-    ).normalized_result;
+    .parse(await runCli(completeApplicationAnalysis(root))).normalized_result;
   expect(cli).toEqual(mcp);
 };
 
@@ -514,9 +517,7 @@ it("preserves source-map declarations while decoding each path once through CLI 
   );
   const { graph } = z
     .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
-    .parse(
-      await runCli(["analyze-javascript-application", root, "--json"]),
-    ).normalized_result;
+    .parse(await runCli(completeApplicationAnalysis(root))).normalized_result;
   const maps = graph.nodes.filter(({ kind }) => kind === "source-map");
   expect(
     maps.flatMap(({ observations }) =>
@@ -615,11 +616,7 @@ describe("JavaScript application path CLI", () => {
     const absoluteAnalysis = javascriptApplicationAnalysisResultSchema.parse(
       absolute.value.normalized_result,
     );
-    const fromCli = await runCli([
-      "analyze-javascript-application",
-      relativePath,
-      "--json",
-    ]);
+    const fromCli = await runCli(completeApplicationAnalysis(relativePath));
 
     expect(fromCli).toMatchObject({
       evidence_id: absolute.value.evidence_id,
@@ -637,11 +634,7 @@ describe("JavaScript application path CLI", () => {
     );
     await writeSelfImportFixture(root);
 
-    const analyzed = await runCli([
-      "analyze-javascript-application",
-      root,
-      "--json",
-    ]);
+    const analyzed = await runCli(completeApplicationAnalysis(root));
     const result = z
       .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
       .parse(analyzed);
@@ -660,9 +653,7 @@ describe("JavaScript application path CLI", () => {
 
     const cliResult = z
       .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
-      .parse(
-        await runCli(["analyze-javascript-application", root, "--json"]),
-      ).normalized_result;
+      .parse(await runCli(completeApplicationAnalysis(root))).normalized_result;
     expect(cliResult.summary).toMatchObject({
       browser_windows: 1,
       explicit_web_preferences: 1,
@@ -856,7 +847,7 @@ it("traces all endpoint carriers and their response consumers through CLI and MC
   const sourcePath = join(root, "app.js");
   await writeFile(sourcePath, source);
   const application = parseEvidence(
-    await runCli(["analyze-javascript-application", root, "--json"]),
+    await runCli(completeApplicationAnalysis(root)),
   );
   const graph = javascriptApplicationAnalysisResultSchema.parse(
     application.normalized_result,
@@ -973,11 +964,7 @@ describe("rest parameter semantic trace CLI", () => {
       join(root, "app.js"),
       "function collect(first, ...rest) { return rest; } collect('first', 'second', 'third');",
     );
-    const application = await runCli([
-      "analyze-javascript-application",
-      root,
-      "--json",
-    ]);
+    const application = await runCli(completeApplicationAnalysis(root));
     const graph = z
       .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
       .parse(application).normalized_result.semantic_graph;
@@ -1027,11 +1014,7 @@ it("links empty-key reads and destructuring to the same property slot through CL
       "const {'': pattern} = routes;",
     ].join("\n"),
   );
-  const evidence = await runCli([
-    "analyze-javascript-application",
-    root,
-    "--json",
-  ]);
+  const evidence = await runCli(completeApplicationAnalysis(root));
   const { semantic_graph: graph } = z
     .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
     .parse(evidence).normalized_result;
@@ -1101,6 +1084,7 @@ describe("Webpack factory CommonJS export keys", () => {
     const cliEvidence = applicationEvidenceSchema.parse(
       await runCli([
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         "--artifact-format",
         "directory",
@@ -1110,7 +1094,7 @@ describe("Webpack factory CommonJS export keys", () => {
     const client = await connectedMcpClient();
     const response = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: root, format: "directory" },
+      arguments: { detail: "complete", input_path: root, format: "directory" },
     });
     expect(response.isError).not.toBe(true);
     const mcpEvidence = applicationEvidenceSchema.parse(
@@ -1362,7 +1346,7 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
     // Retain a complete CLI analysis-to-comparison journey alongside MCP parity.
     const [left, right] = await Promise.all(
       (await writeComparisonSources(root, sources)).map((applicationRoot) =>
-        runCli(["analyze-javascript-application", applicationRoot, "--json"]),
+        runCli(completeApplicationAnalysis(applicationRoot)),
       ),
     );
     // Execute the authored fixtures independently of static analysis.
@@ -1723,7 +1707,7 @@ const analyzeComparisonSources = async (
       async (applicationRoot) => {
         const response = await client.callTool({
           name: "analyze_javascript_application",
-          arguments: { input_path: applicationRoot },
+          arguments: { detail: "complete", input_path: applicationRoot },
         });
         expect(response.isError).not.toBe(true);
         return response.structuredContent;
@@ -1759,7 +1743,7 @@ it("retains bundled isolated-world contextBridge APIs through dedicated and gene
     if (loader === "commonjs")
       await writeFile(join(root, "package.json"), '{"type":"commonjs"}');
     for (const arguments_ of [
-      ["analyze-javascript-application", root, "--json"],
+      completeApplicationAnalysis(root),
       ["analyze", root, "--format", "json"],
     ]) {
       const result = javascriptApplicationAnalysisResultSchema.parse(
