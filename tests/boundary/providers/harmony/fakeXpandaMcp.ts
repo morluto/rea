@@ -335,6 +335,8 @@ process.stdin.on("data", (chunk) => {
       } else if (name === "abc_export") {
         if (behavior.abc_export === "hang") return hang();
         if (behavior.abc_export === "error") return replyError(id, "export failed");
+        if (behavior.exportStderr === true)
+          process.stderr.write("xpanda export warning\n");
         if (behavior.abc_export === "escape") {
           const result = cannedExport(args.fileId, args.outDir);
           fs.writeFileSync(
@@ -395,6 +397,7 @@ process.on("disconnect", () => process.exit(0));
 
 export interface FakeXpandaBehavior {
   readonly hap?: boolean;
+  readonly exportStderr?: boolean;
   readonly load?: "ok" | "badmagic" | "hang" | "slow";
   readonly loadFacts?: Record<string, unknown>;
   readonly abc_list_classes?: "ok" | "error" | "hang" | "not-json";

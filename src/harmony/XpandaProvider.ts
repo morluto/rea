@@ -83,6 +83,12 @@ type Outcome = Awaited<ReturnType<HarmonyAbcAnalysisPort["execute"]>>;
 
 const IDLE_RETIRE_MS = 60_000;
 
+/** Test and composition seam for publication file operations. */
+export interface XpandaPublicationHooks {
+  readonly copyFile?: (source: string, target: string) => Promise<void>;
+  readonly remove?: (path: string) => Promise<void>;
+}
+
 /** The typed reason the combined operation signal aborted. */
 const interruptionError = (context: {
   readonly operation: string;
@@ -187,6 +193,8 @@ const publishStagedExport = async (options: {
   readonly signal: AbortSignal;
   /** Typed cancellation or deadline failure for the stopped operation. */
   readonly interruption: () => AnalysisError;
+  readonly copyFile?: (source: string, target: string) => Promise<void>;
+  readonly remove?: (path: string) => Promise<void>;
 }): Promise<readonly string[]> => {
   const {
     source,
@@ -196,6 +204,12 @@ const publishStagedExport = async (options: {
     signal,
     interruption,
   } = options;
+  const copy =
+    options.copyFile ??
+    ((from: string, to: string) => copyFile(from, to, constants.COPYFILE_EXCL));
+  const remove =
+    options.remove ??
+    ((path: string) => rm(path, { recursive: true, force: true }));
   const stop = (): void => {
     if (signal.aborted) throw signal.reason ?? new Error("aborted");
   };
@@ -252,11 +266,7 @@ const publishStagedExport = async (options: {
             operation,
             `The producer's export contains a non-regular entry at ${relativePath}.`,
           );
-        await copyFile(
-          join(source, relativePath),
-          target,
-          constants.COPYFILE_EXCL,
-        );
+        await copy(join(source, relativePath), target);
         published.push(relativePath);
       }
     }
@@ -280,7 +290,7 @@ const publishStagedExport = async (options: {
             { cause },
           );
     try {
-      await rm(destination, { recursive: true, force: true });
+      await remove(destination);
     } catch (cleanupCause: unknown) {
       const cleanup = new ProviderCleanupError(
         XPANDA_PROVIDER_ID,
@@ -369,6 +379,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
   readonly #shutdown = new AbortController();
   readonly #idleRetireMs: number;
   readonly #platform: NodeJS.Platform;
+  readonly #publication: XpandaPublicationHooks;
   constructor(
     readonly environment: Readonly<
       Record<string, string | undefined>
@@ -377,10 +388,12 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
     options: {
       readonly idleRetireMs?: number;
       readonly platform?: NodeJS.Platform;
+      readonly publication?: XpandaPublicationHooks;
     } = {},
   ) {
     this.#idleRetireMs = options.idleRetireMs ?? IDLE_RETIRE_MS;
     this.#platform = options.platform ?? HOST_PLATFORM.platform;
+    this.#publication = options.publication ?? {};
   }
 
   /** Execute one explicit HarmonyOS Ark bytecode operation. */
@@ -639,6 +652,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
           operation: request.operation,
           expectedWritten: exported.written,
           signal,
+          ...this.#publication,
           interruption: () =>
             interruptionError({
               operation: request.operation,

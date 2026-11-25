@@ -1,7 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { XpandaProvider } from "../../../../src/harmony/XpandaProvider.js";
+import {
+  XpandaProvider,
+  type XpandaPublicationHooks,
+} from "../../../../src/harmony/XpandaProvider.js";
 import type { OwnedMcpLauncher } from "../../../../src/process/OwnedMcpStdioTransport.js";
 import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -27,6 +30,7 @@ export const xpandaFixture = async (
     readonly version?: string;
     readonly environment?: Readonly<Record<string, string>>;
     readonly idleRetireMs?: number;
+    readonly publication?: XpandaPublicationHooks;
   } = {},
 ): Promise<XpandaFixture> => {
   const root = await createTestTempDirectory("rea-xpanda-checkout-");
@@ -73,13 +77,14 @@ export const xpandaFixture = async (
     callsPath,
     targetPath,
     environment,
-    provider: new XpandaProvider(
-      environment,
-      launcher,
-      options.idleRetireMs === undefined
+    provider: new XpandaProvider(environment, launcher, {
+      ...(options.idleRetireMs === undefined
         ? {}
-        : { idleRetireMs: options.idleRetireMs },
-    ),
+        : { idleRetireMs: options.idleRetireMs }),
+      ...(options.publication === undefined
+        ? {}
+        : { publication: options.publication }),
+    }),
   };
 };
 

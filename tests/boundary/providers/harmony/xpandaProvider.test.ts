@@ -1,4 +1,4 @@
-import { access, constants, mkdir } from "node:fs/promises";
+import { access, constants, copyFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it as test, onTestFinished } from "vitest";
 
@@ -11,6 +11,7 @@ import {
   AnalysisTimeoutError,
 } from "../../../../src/domain/analysisErrorCore.js";
 import type { HarmonyAbcRequest } from "../../../../src/domain/harmony/harmonyAbcAnalysis.js";
+import { processHasStopped } from "../../../support/process/observePosixProcess.js";
 import {
   fakeXpandaCalls,
   setFakeXpandaBehavior,
@@ -340,16 +341,7 @@ it("cancels a hung producer call and stops the owned bridge", async () => {
   expect((failure as AnalysisError).cause).toBeInstanceOf(Error);
   // The bridge is retired after a fatal hang: its process must be gone.
   const pid = Number((await fakeXpandaCalls(fixture.callsPath))[0]?.pid);
-  await expect
-    .poll(() => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    })
-    .toBe(false);
+  await expect.poll(() => processHasStopped(pid)).toBe(true);
   // A fresh bridge serves the next caller.
   await setFakeXpandaBehavior(fixture.behaviorPath, {});
   const execution = await run(fixture, {
@@ -381,16 +373,7 @@ it("retires an idle bridge and serves the next caller from a fresh one", async (
   });
   const firstPid = Number((await fakeXpandaCalls(fixture.callsPath))[0]?.pid);
   // Idle retirement stops the owned producer process without a close call.
-  await expect
-    .poll(() => {
-      try {
-        process.kill(firstPid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    })
-    .toBe(false);
+  await expect.poll(() => processHasStopped(firstPid)).toBe(true);
   const execution = await run(fixture, {
     operation: "inspect_harmony_abc",
     input: { path: fixture.targetPath },
@@ -563,4 +546,105 @@ it("keeps the bridge when an idle deadline elapses during a request", async () =
   });
   const calls = await fakeXpandaCalls(fixture.callsPath);
   expect(calls.filter(({ method }) => method === "initialize")).toHaveLength(1);
+});
+
+const deferred = (): {
+  readonly promise: Promise<void>;
+  resolve: () => void;
+} => {
+  let resolve = (): void => {};
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+};
+
+const heldExportFixture = async (remove?: (path: string) => Promise<void>) => {
+  const started = deferred();
+  const release = deferred();
+  const fixture = await xpandaFixture(
+    { abc_export: "ok", exportStderr: true },
+    {
+      publication: {
+        copyFile: async (source, target) => {
+          started.resolve();
+          await release.promise;
+          await copyFile(source, target, constants.COPYFILE_EXCL);
+        },
+        ...(remove === undefined ? {} : { remove }),
+      },
+    },
+  );
+  return { fixture, started: started.promise, release: release.resolve };
+};
+
+it("keeps caller cancellation, warnings and output cleanup while an export copy is held", async () => {
+  const { fixture, started, release } = await heldExportFixture();
+  onTestFinished(() => fixture.provider.close().catch(() => undefined));
+  const caller = new AbortController();
+  const destination = join(await tempRoot(), "held-export");
+  const pending = fixture.provider.execute(
+    {
+      operation: "decompile_harmony_abc",
+      input: {
+        path: fixture.targetPath,
+        output_directory: destination,
+        simplify: true,
+      },
+    },
+    { signal: caller.signal },
+  );
+  await started;
+  const reason = new Error("caller changed their mind");
+  caller.abort(reason);
+  release();
+  const failure = await pending.then((result) =>
+    result.ok ? undefined : result.error,
+  );
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  expect((failure as AnalysisError).cause).toBe(reason);
+  expect((failure as AnalysisError).capturedOutput?.stderr).toContain(
+    "xpanda export warning",
+  );
+  await expect(access(destination)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("keeps cancellation when removing unfinished export output fails", async () => {
+  const { fixture, started, release } = await heldExportFixture(async () => {
+    throw new Error("output removal failed");
+  });
+  onTestFinished(() => fixture.provider.close().catch(() => undefined));
+  const caller = new AbortController();
+  const destination = join(await tempRoot(), "held-export-removal");
+  const pending = fixture.provider.execute(
+    {
+      operation: "decompile_harmony_abc",
+      input: {
+        path: fixture.targetPath,
+        output_directory: destination,
+        simplify: true,
+      },
+    },
+    { signal: caller.signal },
+  );
+  await started;
+  const reason = new Error("caller changed their mind");
+  caller.abort(reason);
+  release();
+  const failure = await pending.then((result) =>
+    result.ok ? undefined : result.error,
+  );
+  expect(failure).toBeInstanceOf(AnalysisError);
+  expect((failure as AnalysisError).cleanupPrimary).toBeInstanceOf(
+    AnalysisCancelledError,
+  );
+  expect((failure as AnalysisError).cleanupPrimary?.cause).toBe(reason);
+  expect((failure as AnalysisError).capturedOutput?.stderr).toContain(
+    "xpanda export warning",
+  );
+  await access(destination).catch((cause: unknown) => {
+    throw new Error(
+      `unfinished output should remain for cleanup: ${String(cause)}`,
+    );
+  });
 });
