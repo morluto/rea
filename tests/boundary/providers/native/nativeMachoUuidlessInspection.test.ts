@@ -94,20 +94,20 @@ class UuidlessDyldRunner implements NativeCommandRunner {
   }
 }
 
-it.each([
-  { fileType: 4, diagnostic: "unknown mh.filetype 4", exitCode: 1 },
-  { fileType: 3, diagnostic: "unknown mh.filetype 3", exitCode: 1 },
-  { fileType: 4, diagnostic: "unknown filetype 4", exitCode: 1 },
-  { fileType: 3, diagnostic: "unknown filetype 3", exitCode: 1 },
-  { fileType: 4, diagnostic: "unknown filetype 4", exitCode: 0 },
-  { fileType: 3, diagnostic: "unknown filetype 3", exitCode: 0 },
-  {
-    fileType: 10,
-    diagnostic: unbackedTextDiagnostic,
-    exitCode: 1,
-  },
-])(
-  "classifies $diagnostic for Mach-O type $fileType before nm fallback with exit $exitCode",
+// Xcode 26 dyld_info exits 1 after a refusal; Xcode 16 exits 0.
+it.each(
+  [
+    { fileType: 4, diagnostic: "unknown mh.filetype 4" },
+    { fileType: 3, diagnostic: "unknown mh.filetype 3" },
+    { fileType: 4, diagnostic: "unknown filetype 4" },
+    { fileType: 3, diagnostic: "unknown filetype 3" },
+    {
+      fileType: 10,
+      diagnostic: unbackedTextDiagnostic,
+    },
+  ].flatMap((refusal) => [1, 0].map((exitCode) => ({ ...refusal, exitCode }))),
+)(
+  "classifies $diagnostic for Mach-O type $fileType with exit $exitCode before nm fallback",
   async ({ fileType, diagnostic, exitCode }) => {
     const runner = new UuidlessDyldRunner(diagnostic, "", null, exitCode);
     const target = await makeTarget("refused-type", fileType);
@@ -143,19 +143,13 @@ it.each([
 );
 
 it.each([
-  { fileType: 3, signal: null, exitCode: 1 },
-  { fileType: 3, signal: null, exitCode: 0 },
-  { fileType: 99, signal: null, exitCode: 1 },
-  { fileType: 4, signal: "SIGTERM", exitCode: 1 },
+  { fileType: 3, signal: null },
+  { fileType: 99, signal: null },
+  { fileType: 4, signal: "SIGTERM" },
 ])(
-  "keeps the dyld_info refusal as a failure for header $fileType and signal $signal with exit $exitCode",
-  async ({ fileType, signal, exitCode }) => {
-    const runner = new UuidlessDyldRunner(
-      "unknown mh.filetype 4",
-      "",
-      signal,
-      exitCode,
-    );
+  "keeps the dyld_info refusal as a failure for header $fileType and signal $signal",
+  async ({ fileType, signal }) => {
+    const runner = new UuidlessDyldRunner("unknown mh.filetype 4", "", signal);
     const target = await makeTarget("conflicting-type", fileType);
     const result = await new NativeMacOSProvider({}, runner, "darwin")
       .createClient(target)
@@ -165,7 +159,7 @@ it.each([
       ok: false,
       error: {
         _tag: signal === null ? "AnalysisOutputError" : "ProviderAdapterError",
-        capturedOutput: { exit_code: exitCode, signal },
+        capturedOutput: { exit_code: 1, signal },
       },
     });
   },
