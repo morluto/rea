@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../support/sha256.js";
 import { constants as bufferConstants } from "node:buffer";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 
@@ -20,9 +20,6 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { buildGodotPck } from "../fixtures/godotPck.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
-
-const digest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const readInspection = (value: unknown) => {
   const evidence = parseEvidence(value);

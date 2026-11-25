@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 import { buffer } from "node:stream/consumers";
@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { waitFor } from "../../../tests/support/testWait.js";
 
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   inventoryArtifact,
   materializeArtifactInventory,
@@ -32,12 +32,8 @@ import {
   type TarFixtureMember,
 } from "./tar.fixture.js";
 
-const write = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-tar-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const write = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-tar-", name, bytes);
 
 const read = async (bytes: Buffer, options: { expanded?: number } = {}) => {
   const reader = new TarArtifactReader(
