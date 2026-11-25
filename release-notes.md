@@ -952,6 +952,7 @@
 * **artifacts:** remove descriptor registry mirror checks ([#12796](https://github.com/morluto/rea/issues/12796)) ([c7353f4](https://github.com/morluto/rea/commit/c7353f42577038d0814719e62c6ffedb3bb2fcff))
 * **artifacts:** repair comparison evidence authenticity checks ([#12779](https://github.com/morluto/rea/issues/12779)) ([236f5ae](https://github.com/morluto/rea/commit/236f5ae3fae0d4c86a37dd6a75e1704dd5237b13))
 * **artifacts:** share inventory view and reader fixtures ([#14380](https://github.com/morluto/rea/issues/14380)) ([4255a96](https://github.com/morluto/rea/commit/4255a96e0fb227ff41314d860421e2f590135dcc))
+* **artifacts:** share thin Mach-O section fixtures ([#14480](https://github.com/morluto/rea/issues/14480)) ([2e1cc32](https://github.com/morluto/rea/commit/2e1cc32586c60ae59c0bea66ddd091be7f49df9b))
 * **artifacts:** verify cleanup at the physical ownership boundary ([#13486](https://github.com/morluto/rea/issues/13486)) ([809c550](https://github.com/morluto/rea/commit/809c550f502a47d3127bce2b4524b736bbb6efd1))
 * **asar:** consolidate CLI hash-uncertainty coverage ([#12951](https://github.com/morluto/rea/issues/12951)) ([2ff9917](https://github.com/morluto/rea/commit/2ff9917d20ef5e788c6d61c4a45db90c1bfde63e))
 * **asar:** consolidate companion identity coverage ([#12946](https://github.com/morluto/rea/issues/12946)) ([339b6b5](https://github.com/morluto/rea/commit/339b6b5750999def7fe2a9a8d55ed12f88a71a29))
