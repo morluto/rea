@@ -1217,6 +1217,7 @@
 * **mcp:** cover wrapped ENOTCONN connection loss ([68657d5](https://github.com/morluto/rea/commit/68657d55bb30521bf4388919c369ca13a6e45d5b)), refs [#11362](https://github.com/morluto/rea/issues/11362)
 * **mcp:** distinguish schema recursion from instance data ([#13249](https://github.com/morluto/rea/issues/13249)) ([61eabd2](https://github.com/morluto/rea/commit/61eabd25dcea5399bf74a8764cafc3f297bbb49c))
 * **mcp:** prove session detail admission before provider probes ([#13641](https://github.com/morluto/rea/issues/13641)) ([6fc05b7](https://github.com/morluto/rea/commit/6fc05b7a4d9fcaf1efe64b66b21f68ff328bc580))
+* **mcp:** share caller-owned in-memory handshakes ([#14424](https://github.com/morluto/rea/issues/14424)) ([efeac85](https://github.com/morluto/rea/commit/efeac85e0f2338b91d35c32ae2a67b75d96604ea))
 * **mcp:** strengthen portable pattern witnesses ([#13324](https://github.com/morluto/rea/issues/13324)) ([d08c523](https://github.com/morluto/rea/commit/d08c52384ac1e7dde8a5c1f0a4a320a83f082268))
 * **mitmproxy:** consolidate transport evidence checks ([#12935](https://github.com/morluto/rea/issues/12935)) ([f61c38c](https://github.com/morluto/rea/commit/f61c38c8208f33c2b0a7fd906b89d505cfd5a917))
 * **model:** consolidate historical layout and retained views ([#12878](https://github.com/morluto/rea/issues/12878)) ([6dde865](https://github.com/morluto/rea/commit/6dde865ccf11625aaafd4c1daed22b0e01aa8495))
