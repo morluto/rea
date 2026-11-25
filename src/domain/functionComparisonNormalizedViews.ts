@@ -249,26 +249,14 @@ export const normalizedViews = (
           ...limitations,
           ...facetLimitations,
         ]);
-      const leftText = normalizeText(
-        viewText(left, dimension),
-        leftProjection,
+      const texts = projectTexts(
+        [left, leftProjection],
+        [right, rightProjection],
         dimension,
       );
-      const rightText = normalizeText(
-        viewText(right, dimension),
-        rightProjection,
-        dimension,
-      );
-      if (leftText === null || rightText === null) {
-        const failed = [
-          ...(leftText === null ? ["Left"] : []),
-          ...(rightText === null ? ["Right"] : []),
-        ].join(" and ");
-        return unknownView(dimension, links, [
-          ...limitations,
-          `${failed} provider text contains an unsupported raw string or an unterminated string, character literal, or block comment, so normalization was skipped.`,
-        ]);
-      }
+      if (!texts.projected)
+        return unknownView(dimension, links, [...limitations, texts.reason]);
+      const { left: leftText, right: rightText } = texts;
       const masking: NonNullable<NormalizedTextView["masking"]> = {
         policy: POLICY,
         provider_id: left.evidence.provider.id,
@@ -337,6 +325,51 @@ export const normalizedViews = (
     }),
     limitations: [...limitations],
   };
+};
+
+type ProjectedText = NonNullable<ReturnType<typeof normalizeText>>;
+
+/** Both sides' projected text, or why normalization was skipped. */
+const projectTexts = (
+  [left, leftProjection]: readonly [FunctionSnapshot, AddressProjection],
+  [right, rightProjection]: readonly [FunctionSnapshot, AddressProjection],
+  dimension: NormalizedViewDimension,
+):
+  | {
+      readonly projected: true;
+      readonly left: ProjectedText;
+      readonly right: ProjectedText;
+    }
+  | { readonly projected: false; readonly reason: string } => {
+  const leftText = normalizeText(
+    viewText(left, dimension),
+    leftProjection,
+    dimension,
+  );
+  const rightText = normalizeText(
+    viewText(right, dimension),
+    rightProjection,
+    dimension,
+  );
+  const sides = (leftFailed: boolean, rightFailed: boolean) =>
+    [...(leftFailed ? ["Left"] : []), ...(rightFailed ? ["Right"] : [])].join(
+      " and ",
+    );
+  if (leftText === null || rightText === null)
+    return {
+      projected: false,
+      reason: `${sides(leftText === null, rightText === null)} provider text contains an unsupported raw string or an unterminated string, character literal, or block comment, so normalization was skipped.`,
+    };
+  const exhausted = sides(
+    leftProjection.namedSymbolWalkExhausted(),
+    rightProjection.namedSymbolWalkExhausted(),
+  );
+  return exhausted === ""
+    ? { projected: true, left: leftText, right: rightText }
+    : {
+        projected: false,
+        reason: `${exhausted} named-symbol matching reached its work limit before the text was projected, so normalization was skipped.`,
+      };
 };
 
 const viewText = (

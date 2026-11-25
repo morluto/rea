@@ -31,6 +31,8 @@ export interface AddressProjection {
   readonly isCallEndpointAddress: (address: bigint) => boolean;
   /** Whether the exact calls dimension compares this caller or callee. */
   readonly isComparedCallEndpointAddress: (address: bigint) => boolean;
+  /** Whether named-symbol matching stopped at its walk limit. */
+  readonly namedSymbolWalkExhausted: () => boolean;
 }
 
 interface BodyExtent {
@@ -127,6 +129,7 @@ export const createFunctionAddressProjection = (
       : null;
   };
   return {
+    namedSymbolWalkExhausted: () => namedSymbols.exhausted,
     isCallEndpointAddress: (address) => callEndpoints.has(address),
     isComparedCallEndpointAddress: (address) =>
       comparedCallEndpoints.has(address),
@@ -306,62 +309,88 @@ const incomingCallSources = (
   });
 };
 
-/** One node of the named symbols spelled backwards. */
-interface ReversedNameNode {
-  readonly next: Map<string, ReversedNameNode>;
-  ends: boolean;
-}
+/**
+ * Characters the named-symbol walks of one projection may examine. A long chain
+ * of repeated qualifiers would otherwise make every token walk back through all
+ * earlier ones before the bounded diff starts; past this work the projection
+ * stops matching and its views report unknown.
+ */
+const NAMED_SYMBOL_WALK_LIMIT = 1_000_000;
 
 interface NamedSymbolIndex {
   readonly names: ReadonlySet<string>;
-  readonly reversed: ReversedNameNode;
+  /** Named symbols spelled backwards, sorted by code unit. */
+  readonly reversed: readonly string[];
+  remainingSteps: number;
+  /** Whether a walk stopped at the limit, so a match may have been missed. */
+  exhausted: boolean;
 }
 
 /** Index named symbols once, spelled backwards, in space linear in their text. */
-const indexNamedSymbols = (names: ReadonlySet<string>): NamedSymbolIndex => {
-  const reversed: ReversedNameNode = { next: new Map(), ends: false };
-  for (const name of names) {
-    let node = reversed;
-    for (let position = name.length - 1; position >= 0; position -= 1) {
-      const character = name.charAt(position);
-      let child = node.next.get(character);
-      if (child === undefined) {
-        child = { next: new Map(), ends: false };
-        node.next.set(character, child);
-      }
-      node = child;
+const indexNamedSymbols = (names: ReadonlySet<string>): NamedSymbolIndex => ({
+  names,
+  // Code units, as the walk reads them, so surrogate pairs reverse consistently.
+  reversed: [...names].map((name) => name.split("").reverse().join("")).sort(),
+  remainingSteps: NAMED_SYMBOL_WALK_LIMIT,
+  exhausted: false,
+});
+
+/**
+ * The range of reversed names, within one that shares a prefix of `depth` code
+ * units, whose next code unit is `unit`. Names that end at `depth` sort first.
+ */
+const narrow = (
+  reversed: readonly string[],
+  range: readonly [number, number],
+  depth: number,
+  unit: number,
+): [number, number] => {
+  const at = (index: number) => {
+    const name = reversed[index] ?? "";
+    return name.length > depth ? name.charCodeAt(depth) : -1;
+  };
+  const bound = (inclusive: boolean) => {
+    let [low, high] = range;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (inclusive ? at(middle) <= unit : at(middle) < unit) low = middle + 1;
+      else high = middle;
     }
-    node.ends = true;
-  }
-  return { names, reversed };
+    return low;
+  };
+  return [bound(false), bound(true)];
 };
 
 /**
  * Whether the matched identifier spells a named symbol, alone or as the tail of
  * a qualified name whose exact qualifier precedes it in the same code segment.
- * The walk goes back from the token's end through the reversed names, so its
- * cost follows the longest spelling that matches, never how many names share
- * the token.
+ * The walk goes back from the token's end, narrowing the sorted reversed names,
+ * and stops for good once the projection has spent its walk limit.
  */
 const isNamedOccurrence = (
-  { names, reversed }: NamedSymbolIndex,
-  { code, index, match }: IdentifierOccurrence,
+  index: NamedSymbolIndex,
+  { code, index: start, match }: IdentifierOccurrence,
 ): boolean => {
-  if (names.has(match)) return true;
-  let node: ReversedNameNode | undefined = reversed;
-  for (
-    let position = match.length - 1;
-    position >= 0 && node !== undefined;
-    position -= 1
-  )
-    node = node.next.get(match.charAt(position));
-  for (
-    let position = index - 1;
-    position >= 0 && node !== undefined;
-    position -= 1
-  ) {
-    node = node.next.get(code.charAt(position));
-    if (node?.ends === true) return true;
+  if (index.names.has(match)) return true;
+  let range: [number, number] = [0, index.reversed.length];
+  for (let depth = 0; depth < start + match.length; depth += 1) {
+    if (index.remainingSteps <= 0) {
+      index.exhausted = true;
+      return false;
+    }
+    index.remainingSteps -= 1;
+    const unit =
+      depth < match.length
+        ? match.charCodeAt(match.length - 1 - depth)
+        : code.charCodeAt(start - 1 - (depth - match.length));
+    range = narrow(index.reversed, range, depth, unit);
+    if (range[0] >= range[1]) return false;
+    // A name that ends here covers the token and at least one qualifier unit.
+    if (
+      depth >= match.length &&
+      (index.reversed[range[0]] ?? "").length === depth + 1
+    )
+      return true;
   }
   return false;
 };

@@ -1766,6 +1766,45 @@ describe("normalized view opt-in integrity", () => {
 });
 
 describe("normalized view named symbol index", () => {
+  it("stops a repeated-qualifier chain at the walk limit and reports the view unknown", () => {
+    // Each token in the chain would otherwise walk back through every earlier qualifier.
+    const chain = `${"FUN_00009000::".repeat(8_000)}FUN_00009000`;
+    const make = (base: string) => {
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) { ${chain}(); }`,
+        assembly: [`${base}: PUSH EBP`],
+        callers: [{ address: "0x20000", name: chain }],
+      });
+      return {
+        ...dossier,
+        callers: dossier.callers.map((item) => ({
+          ...item,
+          symbol: {
+            primary: true,
+            dynamic: false,
+            external: false,
+            type: "function",
+            source: "user_defined" as const,
+          },
+        })),
+      };
+    };
+    const started = performance.now();
+    const [before, after] = syntheticPair(make("0x411700"), make("0x511700"));
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(performance.now() - started).toBeLessThan(4_000);
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("named-symbol matching reached its work limit"),
+      ]),
+    });
+  });
+
   it("checks many qualified names sharing one tail without scanning them per occurrence", () => {
     // Every name ends in the token, so a per-name scan would cost names x occurrences.
     const count = 10_000;
