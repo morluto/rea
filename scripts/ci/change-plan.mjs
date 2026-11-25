@@ -40,8 +40,16 @@ const FIXTURE_SOURCES = [
 // These reporters affect CI output only; they do not select a host or provider
 // verification lane when changed on their own.
 const PORTABLE_CI_REPORTERS = new Set([
+  "scripts/ci/artifacts.d.mts",
+  "scripts/ci/artifacts.mjs",
+  "scripts/ci/failure-report.d.mts",
+  "scripts/ci/failure-report.mjs",
+  "scripts/ci/github-api.d.mts",
+  "scripts/ci/github-api.mjs",
   "scripts/ci/job-timings.mjs",
   "scripts/ci/job-timings-batch.mjs",
+  "scripts/ci/pr-ci-health.d.mts",
+  "scripts/ci/pr-ci-health.mjs",
   "scripts/ci/test-report.mjs",
   "scripts/ci/test-timing-reporter.mjs",
   "scripts/ci/test-history.mjs",

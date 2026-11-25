@@ -1,5 +1,5 @@
 import { managedModuleRow } from "./managedModuleIdentity.js";
-import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
+import { joinCoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
@@ -45,9 +45,7 @@ export const buildComparisonCoverage = ({
 };
 
 /** Full MethodDef coverage is required before inferring cross-build absence. */
-export const hasCompleteMethodRows = (
-  result: ManagedMemberInspection,
-): boolean =>
+const hasCompleteMethodRows = (result: ManagedMemberInspection): boolean =>
   result.method_rows !== null &&
   result.method_rows.offset === 0 &&
   result.method_rows.count === result.method_rows.total;
@@ -118,7 +116,10 @@ const comparisonSideScope = (result: ManagedMemberInspection) => {
     emptyMemberNames,
     emptyFieldTokens,
     hasEmptyDefinitionName,
-    metadataComplete,
+    inventoryComplete: {
+      field: metadataComplete,
+      method: metadataComplete && hasCompleteMethodRows(result),
+    },
     selected:
       result.selection === null
         ? null

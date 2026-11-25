@@ -4,7 +4,7 @@ import {
 } from "../../domain/artifactReadBudget.js";
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   assertArtifactReadActive,
   ArtifactResourceScope,
@@ -40,16 +40,12 @@ export class PeImportsProvider implements PeImportsPort {
   readonly identity = PE_IMPORTS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PE_IMPORTS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PE_IMPORTS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPeImportsInput, options?: ExecutionOptions) {

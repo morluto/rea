@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): a386962e633481edf107e98ceec081e1071821ff5626add5ec1b72e753a96e61
+Runtime dependency fingerprint (SHA-256): ace4d479bfa0c00c686481331dd503029223c8c5f91c52f82613fd65032cf6dd
 
 ===== @babel/helper-string-parser@8.1.2 =====
 Declared license: MIT
@@ -4251,10 +4251,10 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
-===== isomorphic-git@1.44.16 =====
+===== isomorphic-git@1.44.17 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.44.16.tgz
-Integrity: sha512-ejYi++i9TdYwJoypfdNWEWQgltDqlDgvX9yX/QKa9ZSvny9iFwFXw0KgAqYxWHRqFsCacmJPiNtErfgaoq6W+Q==
+Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.44.17.tgz
+Integrity: sha512-jVTvfct/ZDqutRKOWSnTTLtbkKSXlvV5bWOkRpW143tsDfUxZsnNqSPq8BgNpsviuD9OuQ/1Sz8reNb/+daVSQ==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE.md ---

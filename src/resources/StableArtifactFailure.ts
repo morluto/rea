@@ -193,6 +193,19 @@ export const projectArtifactCloseFailure = (
   return error;
 };
 
+/** Close a provider's descriptor scope and preserve its cleanup leases on failure. */
+export const closeArtifactResources = async (
+  close: () => Promise<void>,
+  provider: { readonly id: string },
+  operation: string,
+): Promise<void> => {
+  try {
+    await close();
+  } catch (cause: unknown) {
+    throw projectArtifactCloseFailure(cause, provider.id, operation);
+  }
+};
+
 /** Preserve completed physical identity and exact cleanup ownership around a provider's primary failure. */
 export const projectStableArtifactFailure = (
   cause: unknown,

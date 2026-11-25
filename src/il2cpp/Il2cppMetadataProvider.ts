@@ -19,6 +19,7 @@ import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js"
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { setImmediate } from "node:timers/promises";
 import {
+  closeArtifactResources,
   readStableArtifact,
   type StableArtifactSnapshot,
   ArtifactResourceScope,
@@ -421,25 +422,15 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
     private readonly yieldControl: () => Promise<void> = setImmediate,
   ) {}
 
-  async close(): Promise<void> {
-    this.#admissionStopped = true;
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
-        IL2CPP_METADATA_PROVIDER_IDENTITY.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
-      );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => {
+        this.#admissionStopped = true;
+        return this.#resources.close();
+      },
+      IL2CPP_METADATA_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   /** Read every image, type and method name from one stable file snapshot. */

@@ -97,6 +97,7 @@ export type {
 } from "./ArtifactResourceScope.js";
 export {
   imageFileSizeRemediation,
+  closeArtifactResources,
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
   projectOwnedArtifactInputFailure,
