@@ -102,6 +102,7 @@ export type AsarHeaderProbeObservation =
       readonly extents: AsarHeaderProbeExtents;
       readonly signatureOffset: number;
       readonly scannedJsonBytes: number;
+      readonly admission: AsarHeaderAdmission;
     }
   | {
       readonly state: "rejected";
@@ -334,6 +335,7 @@ class AsarHeaderSignatureProbeImpl implements AsarHeaderSignatureProbe {
               : { archiveBytes, ...this.#stop.extents },
           signatureOffset: this.#stop.signatureOffset,
           scannedJsonBytes: this.#scannedJsonBytes,
+          admission: this.admission,
         };
       case "pending":
         if (archiveBytes !== undefined && this.#extents !== undefined) {

@@ -1,6 +1,9 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import {
   interfaceBuilderAnalysisSchema,
@@ -191,15 +194,8 @@ export const projectInterfaceBuilderView = (
     SummaryAnalysisView | z.output<typeof interfaceBuilderViewRequestSchema>
   >(admitted, "summary", "interface-builder");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Interface Builder decoding supports summary and interface-builder views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Interface Builder decoding supports summary and interface-builder views.",
     );
   const parsed = parseInterfaceBuilderReport(parent);
   if (!parsed.ok) return parsed;

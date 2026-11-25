@@ -81,6 +81,7 @@ const incompleteRight = (suffix: string) => {
       relationshipCoverage: {
         status: "unknown",
         reason: "The fixture omits call relationship coverage.",
+        limited_directions: ["callers", "callees"],
       },
     },
   );

@@ -8,18 +8,9 @@ import {
   debugFileNameIsSingleSegment,
   deriveDebugFileLookupPaths,
   elfDebugLinkSchema,
-  ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
-  ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
-  ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-  ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
-  ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
-  ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
-  ELF_DEBUG_LINK_LIMITATIONS,
-  ELF_DEBUG_LINK_MULTIPLE_BUILD_IDS_LIMITATION,
-  ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION,
-  ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION,
   inspectElfDebugLinkInputSchema,
   type ElfDebugLink,
+  type ElfDebugLinkLimitationCode,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
 import {
@@ -451,52 +442,47 @@ const coverageAgrees = (report: ElfDebugLink): boolean => {
   return true;
 };
 
-const limitationAgrees = (report: ElfDebugLink): boolean => {
-  if (
-    !ELF_DEBUG_LINK_LIMITATIONS.every((line) =>
-      report.limitations.includes(line),
-    )
-  )
+const CANDIDATE_VERIFICATION_LIMITATION_CODES: readonly ElfDebugLinkLimitationCode[] =
+  [
+    "candidate_prefix_only",
+    "candidate_budget_exceeded",
+    "candidate_unreadable",
+    "unavailable_check",
+    "cannot_verify",
+  ];
+
+const limitationAgrees = (
+  report: ElfDebugLink,
+  codes: ReadonlySet<ElfDebugLinkLimitationCode>,
+): boolean => {
+  if (report.limitations.length === 0 || !codes.has("standing_caveats"))
     return false;
   const filename = report.debuglink.filename?.text ?? null;
   const segmentLimited =
     filename !== null && !debugFileNameIsSingleSegment(filename);
-  if (
-    segmentLimited !==
-    report.limitations.includes(ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION)
-  )
-    return false;
+  if (segmentLimited !== codes.has("name_not_single_segment")) return false;
   if (
     (report.build_id.status === "conflict") !==
-    report.limitations.includes(ELF_DEBUG_LINK_MULTIPLE_BUILD_IDS_LIMITATION)
+    codes.has("multiple_build_ids")
   )
     return false;
   const verification = report.verification;
   if (verification === null)
-    return ![
-      ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
-      ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
-      ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
-      ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION,
-      ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
-    ].some((line) => report.limitations.includes(line));
+    return !CANDIDATE_VERIFICATION_LIMITATION_CODES.some((code) =>
+      codes.has(code),
+    );
   if (
     (verification.reason === "candidate_unreadable") !==
-    report.limitations.includes(ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION)
+    codes.has("candidate_unreadable")
   )
     return false;
   const partialMatch =
     verification.status === "matches" &&
     (verification.crc32.status === "unavailable" ||
       verification.build_id.status === "unavailable");
-  if (
-    partialMatch !==
-    report.limitations.includes(ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION)
-  )
-    return false;
+  if (partialMatch !== codes.has("unavailable_check")) return false;
   return (
-    (verification.status === "cannot_verify") ===
-    report.limitations.includes(ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION)
+    (verification.status === "cannot_verify") === codes.has("cannot_verify")
   );
 };
 
@@ -527,6 +513,7 @@ const validReport = (
     report.build_id.ids.length > input.max_entries
   )
     return false;
+  const codes = new Set(report.limitation_codes);
   if (
     !debuglinkConsistent(report.debuglink) ||
     !altConsistent(report.debugaltlink) ||
@@ -535,16 +522,12 @@ const validReport = (
     !examinedAgrees(report) ||
     !coverageAgrees(report) ||
     !lookupAgrees(report) ||
-    !limitationAgrees(report)
+    !limitationAgrees(report, codes)
   )
     return false;
   const { candidate, verification } = report;
-  const readIncomplete = report.limitations.includes(
-    ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-  );
-  const comparisonIncomplete = report.limitations.includes(
-    ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
-  );
+  const readIncomplete = codes.has("candidate_read_incomplete");
+  const comparisonIncomplete = codes.has("candidate_comparison_incomplete");
   if (input.candidate_path === undefined)
     return (
       candidate === null &&
@@ -572,16 +555,12 @@ const validReport = (
     !verificationAgrees(report, verification)
   )
     return false;
-  if (candidate === null)
-    return !report.limitations.includes(
-      ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
-    );
+  if (candidate === null) return !codes.has("candidate_prefix_only");
   // A candidate above max_file_bytes was streamed whole for CRC32 and SHA-256
   // but only its ELF header was decoded.
   const streamed = candidate.bytes > input.max_file_bytes;
   if (
-    streamed !==
-      report.limitations.includes(ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION) ||
+    streamed !== codes.has("candidate_prefix_only") ||
     (streamed &&
       candidate.format !== null &&
       (candidate.debug_info !== "unknown" || candidate.symtab !== "unknown"))

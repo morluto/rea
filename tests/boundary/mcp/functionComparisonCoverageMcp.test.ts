@@ -481,7 +481,11 @@ const assertChangedDespiteUnknownCalls = async (
       ),
       pseudocode: "return 1;",
     }),
-    { status: "unknown", reason: "Call graph unavailable." },
+    {
+      status: "unknown",
+      reason: "Call graph unavailable.",
+      limited_directions: ["callers", "callees"],
+    },
   );
   const changed = await call("compare_functions", {
     left,
@@ -538,7 +542,11 @@ it("keeps incomplete calls unknown through public comparison and verification wh
     FUNCTION_COMPARISON_EXAMPLE.right,
     "coverage-right",
     FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
-    { status: "unknown", reason: "Call graph unavailable." },
+    {
+      status: "unknown",
+      reason: "Call graph unavailable.",
+      limited_directions: ["callers", "callees"],
+    },
   );
   expect(left.subject.identity.kind).toBe("file");
   expect(right.subject.identity.kind).toBe("file");

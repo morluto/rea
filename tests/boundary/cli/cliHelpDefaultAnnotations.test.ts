@@ -1,26 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
-
-type CliInstance = ReturnType<typeof createCli>;
-
-const serve = async (
-  cli: CliInstance,
-  argv: readonly string[],
-): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { stdout, exitCode };
-};
+import { serveInProcessCli as serve } from "../../support/cli/serveInProcessCli.js";
 
 /**
  * Options whose owning field already declares a schema default. The help

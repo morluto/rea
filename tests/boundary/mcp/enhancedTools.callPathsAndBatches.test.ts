@@ -58,7 +58,11 @@ describe("enhanced MCP relationship limitations", () => {
           arguments_.procedure === "0x1" ? ["0x2"] : [],
           arguments_.procedure === "0x1" ? [limitation] : [],
           arguments_.procedure === "0x1"
-            ? { status: "partial", limitations: [limitation] }
+            ? {
+                status: "partial",
+                limitations: [limitation],
+                limited_directions: ["callees"],
+              }
             : { status: "complete" },
         );
       },
@@ -284,6 +288,7 @@ describe("trace_call_path MCP outcome semantics", () => {
         return relationshipExecution([], [], {
           status: "partial",
           limitations: ["one or more callees may be missing"],
+          limited_directions: ["callees"],
         });
       },
     });

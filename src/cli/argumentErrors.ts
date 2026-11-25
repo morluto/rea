@@ -2,10 +2,10 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
+  renderCliDocument,
   type ParsedCliOutputArguments,
 } from "./cliOutput.js";
 import { estimateTokenCount } from "tokenx";
-import { formatCliOutput } from "./cliOutputFormatter.js";
 import type { CliArgvFailure, CliFieldError } from "./argvParser.js";
 import type { CliCommandEntry } from "./commandRegistry.js";
 import { formatCommandHelp } from "./help.js";
@@ -152,7 +152,7 @@ export const renderCliCommandFailure = (
   // Preserve the ordinary command's established count policy. JSONL errors
   // remain diagnostic records; the common renderer owns their framing.
   if (controls.tokenCount && format !== "jsonl")
-    return `${estimateTokenCount(formatCliOutput(failure, format))}\n`;
+    return `${estimateTokenCount(renderCliDocument(failure, format, stdoutIsTerminal))}\n`;
   return renderFailure(
     failure,
     { command: input.entry.name, duration: input.duration },

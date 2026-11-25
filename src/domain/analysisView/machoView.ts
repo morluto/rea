@@ -1,4 +1,7 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
@@ -168,14 +171,8 @@ export const projectMachoView = (
     SummaryAnalysisView | z.output<typeof machoViewRequestSchema>
   >(admitted, "summary", "macho");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Mach-O inspection supports summary and macho views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Mach-O inspection supports summary and macho views.",
     );
   const parsed = parseMachoReport(parent);
   if (!parsed.ok) return parsed;

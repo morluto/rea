@@ -197,9 +197,7 @@ const buildReport = (
  * Why this file holds no file-backed .debug_info, or null when it declares
  * one. A declared section whose bytes went undecoded is unknown, never absent.
  */
-const debugInfoAbsence = (
-  availability: DebugInfoAvailability,
-): string | null =>
+const debugInfoAbsence = (availability: DebugInfoAvailability): string | null =>
   availability.state === "no_contents"
     ? NO_FILE_BACKED_DEBUG_INFO
     : availability.state === "absent"

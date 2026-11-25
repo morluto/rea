@@ -10,6 +10,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   executeWorkflowFixture,
   workflowGit,
+  workflowFixtureEnvironment,
 } from "../../support/workflowGit.js";
 
 const qualificationScript = fileURLToPath(
@@ -103,7 +104,7 @@ async function admissionFixture(
   const output = join(directory, "github-output");
   await writeFile(output, "");
   const env = {
-    ...process.env,
+    ...workflowFixtureEnvironment(),
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     GH_FIXTURE_RESPONSE: fixturePath,
     GH_API_ERROR: String(options.apiError ?? false),
@@ -295,7 +296,7 @@ async function requiredRun(
   const output = join(directory, "github-output");
   await writeFile(output, "");
   const env = {
-    ...process.env,
+    ...workflowFixtureEnvironment(),
     CI_JOBS: JSON.stringify(results),
     CI_QUALIFICATION_DIRECTORY: receiptDirectory,
     GITHUB_EVENT_NAME: overrides.event ?? "schedule",
@@ -404,3 +405,133 @@ it.each([
     expect(await readFile(outcome.output, "utf8")).not.toContain("receipt_");
   },
 );
+
+it("allows warm main-push tier only on push with code-only cache warming and requires static and build", async () => {
+  const { CI_FLAGS } = await import(
+    new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
+  );
+  const warmChanges: Record<string, string> = {
+    ...Object.fromEntries(CI_FLAGS.map((flag: string) => [flag, "false"])),
+    tier: "warm",
+    code: "true",
+  };
+  const passed = await requiredRun(warmChanges, { event: "push" });
+  await expect(passed.result).resolves.toMatchObject({
+    stdout: expect.stringContaining("Every selected CI lane passed"),
+  });
+  expect(await readFile(passed.output, "utf8")).not.toContain("receipt_");
+
+  // Missing build fails closed on warm push.
+  const missingBuild = await requiredRun(warmChanges, {
+    event: "push",
+    failed: "build",
+  });
+  await expect(missingBuild.result).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("build"),
+  });
+
+  // Warm tier is rejected on pull_request and when extra lanes are selected.
+  const onPr = await requiredRun(warmChanges, { event: "pull_request" });
+  await expect(onPr.result).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("Warm main-push tier"),
+  });
+  const withProvider = await requiredRun(
+    { ...warmChanges, sqlite: "true" },
+    { event: "push" },
+  );
+  await expect(withProvider.result).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("Warm main-push tier"),
+  });
+});
+
+it("records a fast-sweep receipt on scheduled fast runs without letting it satisfy full qualification", async () => {
+  const { CI_FLAGS } = await import(
+    new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
+  );
+  const fastChanges: Record<string, string> = {
+    ...Object.fromEntries(CI_FLAGS.map((flag: string) => [flag, "false"])),
+    tier: "fast",
+    code: "true",
+  };
+  const outcome = await requiredRun(fastChanges, { event: "schedule" });
+  await outcome.result;
+  expect(await readFile(outcome.output, "utf8")).toContain(
+    "receipt_name=ci-fast-sweep-v1\n",
+  );
+  const receipt = JSON.parse(
+    await readFile(
+      join(outcome.directory, ".cache", "receipt", "receipt.json"),
+      "utf8",
+    ),
+  );
+  expect(receipt).toMatchObject({ schemaVersion: 1, tier: "fast" });
+
+  // A fast-sweep artifact must NOT satisfy a full qualification lookup.
+  const fastArtifact = artifact({ name: "ci-fast-sweep-v1" });
+  const fullLookup = await decide(fastArtifact, run());
+  expect(fullLookup.decision).toMatchObject({ run_full: true });
+
+  // A scheduled fast sweep without the portable suite (code=false) fails closed.
+  const withoutCode = await requiredRun(
+    { ...fastChanges, code: "false", docs: "true" },
+    { event: "schedule" },
+  );
+  await expect(withoutCode.result).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("complete portable test suite"),
+  });
+  expect(await readFile(withoutCode.output, "utf8")).not.toContain("receipt_");
+});
+
+it("plans scheduled fast sweeps with code always enabled and all lanes on missing baseline", async () => {
+  const { planChanges } = await import(
+    new URL("../../../scripts/ci/change-plan.mjs", import.meta.url).href
+  );
+  const { CI_FLAGS } = await import(
+    new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
+  );
+  const head = "b".repeat(40);
+  const base = "a".repeat(40);
+  const repo = {
+    mergeBase: () => base,
+    isAncestor: () => true,
+    changedFiles: () => ["docs/testing-lanes.md"],
+    readFile: () => "",
+    listFiles: () => [],
+    readFiles: () => new Map(),
+  };
+  // Prose-only diff since ancestor still selects code for the portable suite.
+  const proseOnly = planChanges(
+    {
+      event: "schedule",
+      full: false,
+      skipFull: false,
+      scheduleFast: true,
+      base,
+      head,
+    },
+    repo,
+  );
+  expect(proseOnly.tier).toBe("fast");
+  expect(proseOnly.code).toBe(true);
+  expect(proseOnly.docs).toBe(true);
+  expect(proseOnly.sqlite).toBe(false);
+
+  // Missing baseline selects every canonical lane so providers cannot be skipped.
+  const missingBaseline = planChanges(
+    {
+      event: "schedule",
+      full: false,
+      skipFull: false,
+      scheduleFast: true,
+      base: "",
+      head,
+    },
+    repo,
+  );
+  expect(missingBaseline.tier).toBe("fast");
+  for (const flag of CI_FLAGS) expect(missingBaseline[flag]).toBe(true);
+});

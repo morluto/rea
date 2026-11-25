@@ -26,6 +26,7 @@ import {
 } from "../../../tests/fixtures/nativeHeaders.js";
 import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
+import { buildIso9660Image } from "../../domain/iso9660/iso9660.fixture.js";
 import {
   RP2040_FAMILY,
   patternBytes,
@@ -652,6 +653,26 @@ it("classifies a nested Unreal pak by the footer at its stream end", () => {
       bytes.length + 1,
     ),
   ).toMatchObject({ format: "file" });
+});
+
+it("classifies an ISO 9660 image by its sector 16 descriptor, under any name", () => {
+  const { bytes } = buildIso9660Image({
+    files: [{ path: "a.txt", bytes: Buffer.from("a") }],
+  });
+  expect(classifyArtifactBytesAtPath("media/disk.bin", bytes)).toEqual({
+    kind: "container",
+    format: "iso9660",
+  });
+  // Routing needs only the signature; parsing reports the truncation.
+  expect(
+    classifyArtifactBytesAtPath("media/disk", bytes.subarray(0, 32_768 + 7)),
+  ).toEqual({ kind: "container", format: "iso9660" });
+  const damaged = Buffer.from(bytes);
+  damaged.write("CD002", 32_769, "latin1");
+  expect(classifyArtifactBytesAtPath("media/disk.iso", damaged)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
 });
 
 it("classifies a $MFT stream by its FILE record header, under any name", () => {

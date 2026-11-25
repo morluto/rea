@@ -422,9 +422,16 @@ describe("macOS application projection", () => {
     const projection = appleApplicationProjectionResultSchema.parse(
       requireSuccessfulProjection(result).normalized_result,
     );
-    expect(
-      fileIdentity(requireSuccessfulProjection(result).subject).format,
-    ).toBe("directory");
+    // The selected .app directory is named by its complete tree digest.
+    expect(requireSuccessfulProjection(result).subject.identity).toEqual({
+      kind: "directory",
+      algorithm: "rea-directory-tree",
+      version: 1,
+      sha256:
+        inventory.subject.identity.kind === "directory"
+          ? inventory.subject.identity.sha256
+          : "unexpected",
+    });
     expect(projection).toMatchObject({
       root_format: "directory",
       platforms: ["macos"],
