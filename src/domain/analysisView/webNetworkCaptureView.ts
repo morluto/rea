@@ -1,3 +1,4 @@
+import { isRecord } from "../../kernel/isRecord.js";
 import {
   projectProtobufCapturePage,
   protobufViewRequestSchema,
@@ -92,9 +93,7 @@ export const captureSummarySchema = z.strictObject({
 });
 
 const object = (value: JsonValue): Readonly<Record<string, JsonValue>> | null =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : null;
+  isRecord(value) ? value : null;
 
 // Field names have different meanings across producers. In particular, HAR
 // entry extensions named `name` or `type` are not qlog or mitmproxy headlines.

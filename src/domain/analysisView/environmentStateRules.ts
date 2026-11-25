@@ -40,6 +40,9 @@ export interface StateRecordFacts {
   };
 }
 
+export const requestLine = (record: StateRecordFacts): string =>
+  record.path + (record.query ?? "");
+
 /** The manifest tool facts extraction uses. */
 export interface StateToolFacts {
   readonly name: string;
