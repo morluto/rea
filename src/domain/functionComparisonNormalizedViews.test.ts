@@ -1766,6 +1766,43 @@ describe("normalized view opt-in integrity", () => {
 });
 
 describe("normalized view named symbol index", () => {
+  it("checks many qualified names sharing one tail without scanning them per occurrence", () => {
+    // Every name ends in the token, so a per-name scan would cost names x occurrences.
+    const count = 10_000;
+    const make = (base: string) => {
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) {\n${"  FUN_00009000();\n".repeat(count)}}`,
+        assembly: [`${base}: PUSH EBP`],
+        callers: Array.from({ length: count }, (_, index) => ({
+          address: `0x${(0x20000 + index).toString(16)}`,
+          name: `n${String(index)}::FUN_00009000`,
+        })),
+      });
+      return {
+        ...dossier,
+        callers: dossier.callers.map((item) => ({
+          ...item,
+          symbol: {
+            primary: true,
+            dynamic: false,
+            external: false,
+            type: "function",
+            source: "user_defined" as const,
+          },
+        })),
+      };
+    };
+    const started = performance.now();
+    const [before, after] = syntheticPair(make("0x411700"), make("0x511700"));
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(view(result, "pseudocode_normalized")).toHaveProperty("status");
+    expect(performance.now() - started).toBeLessThan(4_000);
+  });
+
   it("recognizes a qualified named symbol whose tail contains punctuation", () => {
     const withSymbol = (address: string) => {
       const dossier = addressRelocationText(address);

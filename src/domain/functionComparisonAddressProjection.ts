@@ -306,57 +306,64 @@ const incomingCallSources = (
   });
 };
 
-interface NamedSymbolIndex {
-  readonly names: ReadonlySet<string>;
-  /** Named symbols keyed by their final run of word characters. */
-  readonly namesByLastRun: ReadonlyMap<string, readonly string[]>;
+/** One node of the named symbols spelled backwards. */
+interface ReversedNameNode {
+  readonly next: Map<string, ReversedNameNode>;
+  ends: boolean;
 }
 
-const WORD_CHARACTER = /^[0-9A-Za-z_]$/u;
+interface NamedSymbolIndex {
+  readonly names: ReadonlySet<string>;
+  readonly reversed: ReversedNameNode;
+}
 
-/**
- * The final run of word characters, found with one backward scan: an
- * end-anchored regex retries every start position when the value ends in
- * punctuation, which is quadratic in the length of the run before it.
- */
-const lastWordRun = (value: string): string | undefined => {
-  let start = value.length;
-  while (start > 0 && WORD_CHARACTER.test(value.charAt(start - 1))) start -= 1;
-  return start === value.length ? undefined : value.slice(start);
-};
-
-/** Index named symbols once, in linear space, so each token is a direct lookup. */
+/** Index named symbols once, spelled backwards, in space linear in their text. */
 const indexNamedSymbols = (names: ReadonlySet<string>): NamedSymbolIndex => {
-  const namesByLastRun = new Map<string, string[]>();
+  const reversed: ReversedNameNode = { next: new Map(), ends: false };
   for (const name of names) {
-    const run = lastWordRun(name);
-    if (run === undefined) continue;
-    const bucket = namesByLastRun.get(run) ?? [];
-    bucket.push(name);
-    namesByLastRun.set(run, bucket);
+    let node = reversed;
+    for (let position = name.length - 1; position >= 0; position -= 1) {
+      const character = name.charAt(position);
+      let child = node.next.get(character);
+      if (child === undefined) {
+        child = { next: new Map(), ends: false };
+        node.next.set(character, child);
+      }
+      node = child;
+    }
+    node.ends = true;
   }
-  return { names, namesByLastRun };
+  return { names, reversed };
 };
 
 /**
  * Whether the matched identifier spells a named symbol, alone or as the tail of
  * a qualified name whose exact qualifier precedes it in the same code segment.
+ * The walk goes back from the token's end through the reversed names, so its
+ * cost follows the longest spelling that matches, never how many names share
+ * the token.
  */
 const isNamedOccurrence = (
-  { names, namesByLastRun }: NamedSymbolIndex,
+  { names, reversed }: NamedSymbolIndex,
   { code, index, match }: IdentifierOccurrence,
 ): boolean => {
   if (names.has(match)) return true;
-  const run = lastWordRun(match);
-  return (
-    run !== undefined &&
-    (namesByLastRun.get(run) ?? []).some(
-      (name) =>
-        name.length > match.length &&
-        name.endsWith(match) &&
-        code.endsWith(name.slice(0, -match.length), index),
-    )
-  );
+  let node: ReversedNameNode | undefined = reversed;
+  for (
+    let position = match.length - 1;
+    position >= 0 && node !== undefined;
+    position -= 1
+  )
+    node = node.next.get(match.charAt(position));
+  for (
+    let position = index - 1;
+    position >= 0 && node !== undefined;
+    position -= 1
+  ) {
+    node = node.next.get(code.charAt(position));
+    if (node?.ends === true) return true;
+  }
+  return false;
 };
 
 /** A producer-reported named symbol is an identity even when it looks address-derived. */

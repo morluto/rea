@@ -51,7 +51,8 @@ export const compareFunctions = (
           normalized_views: normalizedViews(left, right, {
             links,
             providersDiffer,
-            sameEvidence: match.method === "same-evidence",
+            // A coordinate commitment can match one record as same-entry first.
+            sameEvidence: links[0] === links[1],
             callsStatus:
               dimensions.find(({ dimension }) => dimension === "calls")
                 ?.status ?? "unknown",
