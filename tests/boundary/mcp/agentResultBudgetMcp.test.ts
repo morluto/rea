@@ -1,8 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { randomBytes } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readdir } from "node:fs/promises";
 import { expect, it, onTestFinished } from "vitest";
 import { createCli } from "../../../src/cli.js";
 
@@ -391,6 +390,42 @@ it("keeps admission refusals unchanged by the delivery budget", async () => {
       error: { code: "resource_constraint" },
     });
   }
+});
+
+it("delivers a target failure unchanged by the delivery budget", async () => {
+  const client = await connect();
+  const updated = await client.callTool({
+    name: "update_analysis_settings",
+    arguments: {
+      changes: [
+        {
+          setting: AGENT_RESULT_BUDGET_SETTING,
+          action: "set",
+          value: MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+        },
+      ],
+    },
+  });
+  expect(updated.isError).not.toBe(true);
+  const root = await createTestTempDirectory("rea-agent-budget-failure-");
+  const path = join(root, "not-rust");
+  await writeFile(path, randomBytes(4096));
+  const omitted = await client.callTool({
+    name: "inspect_rust_binary",
+    arguments: { path },
+  });
+  const complete = await client.callTool({
+    name: "inspect_rust_binary",
+    arguments: { path, detail: "complete" },
+  });
+  expect(omitted.isError).toBe(true);
+  const [first] = omitted.content as { type: string; text: string }[];
+  expect(JSON.parse(first!.text)).toMatchObject({
+    error: { code: "unsupported_target" },
+  });
+  // The failure keeps its own projection: no summary, no delivery facts.
+  expect(omitted._meta?.[AGENT_BUDGET_DELIVERY_META]).toBeUndefined();
+  expect(omitted).toEqual(complete);
 });
 
 it("delivers the same over-budget summary through CLI publication, with complete Evidence in the bundle", async () => {
