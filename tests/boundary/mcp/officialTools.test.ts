@@ -278,7 +278,7 @@ describe("official Hopper proxy tools", () => {
 
     const result = await client.callTool({
       name: "list_procedures",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
 
     expect(result.structuredContent).toMatchObject({
@@ -313,7 +313,7 @@ describe("official Hopper proxy tools", () => {
 
     const result = await client.callTool({
       name: "search_strings",
-      arguments: { detail: "complete", pattern: "coffee" },
+      arguments: { pattern: "coffee" },
     });
 
     expect(result.structuredContent).toMatchObject({

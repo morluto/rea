@@ -243,7 +243,7 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
       (
         await harness.client.callTool({
           name: "inspect_dart_aot",
-          arguments: { ...arguments_, detail: "complete" },
+          arguments: arguments_,
         })
       ).isError,
     ).not.toBe(true);
@@ -262,7 +262,7 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
     );
     const refused = await harness.client.callTool({
       name: "inspect_dart_aot",
-      arguments: { ...arguments_, detail: "complete" },
+      arguments: arguments_,
     });
     expect(parseMcpToolError(refused).error).toMatchObject({
       code: "invalid_request",
@@ -320,11 +320,7 @@ it("advertises an exact valid Flutter schema and records inline evidence through
 
   const inspected = await client.callTool({
     name: "inspect_dart_aot",
-    arguments: {
-      detail: "complete",
-      path: "/targets/gallery.apk",
-      abi: "arm64-v8a",
-    },
+    arguments: { path: "/targets/gallery.apk", abi: "arm64-v8a" },
   });
   expect(inspected.isError).not.toBe(true);
   const inspectedText = (inspected.content as { readonly text?: string }[])

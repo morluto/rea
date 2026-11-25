@@ -12,7 +12,6 @@ import {
 } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
@@ -141,7 +140,6 @@ cliTest(
         const cliResult = await cli.run({
           arguments: [
             "capture-browser-scenario",
-            ...COMPLETE_DETAIL,
             JSON.stringify(input),
             "--json",
           ],
