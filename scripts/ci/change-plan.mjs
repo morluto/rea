@@ -1,7 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { matchesGlob } from "node:path";
 import { isLivingProsePath } from "../lib/docs-facts.mjs";
-import { mayGateTestToDarwin } from "./darwin-gate-candidates.mjs";
+import {
+  isMacOsOnlyTestSource,
+  mayGateTestToDarwin,
+} from "./darwin-gate-candidates.mjs";
 import {
   CI_FLAGS as flags,
   MANUAL_VERIFIERS,
@@ -498,7 +501,7 @@ export function planChanges(request, repository) {
   let checkedOutFiles;
   const listCheckedOutFiles = () =>
     (checkedOutFiles ??= repository.listFiles("HEAD", []));
-  const testSelection = planTestSelection({
+  let testSelection = planTestSelection({
     files,
     event,
     tier,
@@ -510,6 +513,28 @@ export function planChanges(request, repository) {
       read: (paths) => repository.readFiles("HEAD", paths),
     },
   });
+  // A portable selection whose every test is macOS-only can only report
+  // skipped modules on Linux. Require the Apple lane that runs those tests
+  // and fall back to the complete portable suite, as any undecidable
+  // selection does. A mixed selection keeps its portable tests.
+  if (testSelection.mode === "selected") {
+    const sources = repository.readFiles("HEAD", testSelection.files);
+    if (
+      testSelection.files.every((file) =>
+        isMacOsOnlyTestSource(sources.get(file) ?? ""),
+      )
+    ) {
+      selected.apple = true;
+      reasons.push(
+        `Every affected test is macOS-only: ${testSelection.files.join(", ")}`,
+      );
+      testSelection = {
+        version: 3,
+        mode: "full",
+        reason: "Every affected test is macOS-only; the Apple lane runs them",
+      };
+    }
+  }
   const typedLintFiles =
     event === "pull_request" && tier === "fast" && selected.code
       ? selectTypedLintFiles(files, listCheckedOutFiles)

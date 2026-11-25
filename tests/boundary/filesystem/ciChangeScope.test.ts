@@ -467,6 +467,72 @@ it("does not select the macOS lane for a deleted macOS-gated test", async () => 
   });
 });
 
+// A portable selection of only macOS-only tests can only report skipped
+// modules on Linux, so the plan runs the complete portable suite and
+// requires the macOS lane instead.
+it("runs the complete portable suite when every affected test is macOS-only", async () => {
+  const { directory, base } = await fixture();
+  const test = "tests/boundary/filesystem/gated.test.ts";
+  const head = await change(
+    directory,
+    [test],
+    `describe.skipIf(process.platform !== "darwin")("runs", () => {\n  it("x", () => {});\n});\n`,
+  );
+  expect(await classify(directory, base, head)).toMatchObject({
+    apple: true,
+    testSelection: { mode: "full" },
+  });
+});
+
+it("requires the macOS lane when a helper change selects only a macOS-only test", async () => {
+  const { directory } = await fixture();
+  const helper = "tests/support/gatedHelper.ts";
+  const test = "tests/boundary/filesystem/gated.test.ts";
+  await change(
+    directory,
+    [test],
+    `import "../../support/gatedHelper.js";\ndescribe.skipIf(process.platform !== "darwin")("runs", () => {\n  it("x", () => {});\n});\n`,
+  );
+  const base = await change(directory, [helper], "export const value = 1;\n");
+  const head = await change(directory, [helper], "export const value = 2;\n");
+  expect(await classify(directory, base, head)).toMatchObject({
+    apple: true,
+    testSelection: { mode: "full" },
+  });
+});
+
+it("keeps a mixed selection portable", async () => {
+  const { directory, base } = await fixture();
+  const gated = "tests/boundary/filesystem/gated.test.ts";
+  const portable = "tests/boundary/filesystem/portable.test.ts";
+  await change(
+    directory,
+    [gated],
+    `describe.skipIf(process.platform !== "darwin")("runs", () => {\n  it("x", () => {});\n});\n`,
+  );
+  const head = await change(
+    directory,
+    [portable],
+    `it("runs everywhere", () => {});\n`,
+  );
+  expect(await classify(directory, base, head)).toMatchObject({
+    testSelection: { mode: "selected", files: [gated, portable] },
+  });
+});
+
+it("keeps a test file with portable tests in the portable selection", async () => {
+  const { directory, base } = await fixture();
+  const test = "tests/boundary/filesystem/mixed.test.ts";
+  const head = await change(
+    directory,
+    [test],
+    `describe.skipIf(process.platform !== "darwin")("mac", () => {\n  it("x", () => {});\n});\nit("runs everywhere", () => {});\n`,
+  );
+  expect(await classify(directory, base, head)).toMatchObject({
+    testSelection: { mode: "selected", files: [test] },
+  });
+});
+
 it("does not credit a fixture test as coverage for an unrelated shared script", async () => {
   const { directory } = await fixture();
   const module = "scripts/lib/uncovered.mjs";
