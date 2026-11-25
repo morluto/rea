@@ -21,6 +21,7 @@ const browserSectionSchema = z.enum([
   "workers",
   "storage",
   "storage_keys",
+  "cache_storage_entries",
   "metadata",
   "webmcp_tools",
   "screenshot",

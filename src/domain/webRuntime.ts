@@ -113,6 +113,7 @@ export const webRuntimeTargetSchema = z.object({
 export const WEB_RUNTIME_LIMITS = {
   protocolBytes: 64 * 1024 * 1024,
   retainedEventBytes: 8 * 1024 * 1024,
+  cacheStorageEntryBytes: 8 * 1024 * 1024,
   sourceBytes: 32 * 1024 * 1024,
   commandTimeoutMs: DEFAULT_CDP_COMMAND_TIMEOUT_MS,
   cleanupTimeoutMs: CDP_CLEANUP_GRACE_MS,

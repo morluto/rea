@@ -2,7 +2,10 @@ import { expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
-import type { WebPageInspection } from "../../../src/domain/browserObservationSchemas.js";
+import {
+  webPageInspectionSchema,
+  type WebPageInspection,
+} from "../../../src/domain/browserObservationSchemas.js";
 import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import {
@@ -11,7 +14,11 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-const inspect = async (options: FakeOptions, includeFingerprints = true) => {
+const inspect = async (
+  options: FakeOptions,
+  includeFingerprints = true,
+  includeCacheEntries = false,
+) => {
   const browser = await startFakeCdpBrowser(options);
   trackBrowser(browser);
   const input = inspectWebPageInputSchema.parse({
@@ -21,13 +28,17 @@ const inspect = async (options: FakeOptions, includeFingerprints = true) => {
     observation_ms: 0,
     include_storage_keys: true,
     include_storage_fingerprints: includeFingerprints,
+    include_cache_storage_entries: includeCacheEntries,
   });
-  const capture = async () => {
-    const result = await new CdpBrowserProvider().inspectPage(input);
+  const capture = async (signal?: AbortSignal) => {
+    const result = await new CdpBrowserProvider().inspectPage(
+      input,
+      signal === undefined ? {} : { signal },
+    );
     if (!result.ok) throw result.error;
     return result.value;
   };
-  return { browser, capture };
+  return { browser, capture, commands: browser.commands };
 };
 
 const compareStorage = (before: WebPageInspection, after: WebPageInspection) =>
@@ -92,6 +103,573 @@ it("preserves unavailable storage-key coverage without requesting fingerprints",
     count: null,
   });
   expect(captured.storage.local_storage_keys).toEqual(["public-key"]);
+});
+
+const cacheEntryMetadata = {
+  requestURL: "https://app.example.test/cached.js",
+  requestMethod: "GET",
+  requestHeaders: [],
+  responseHeaders: [],
+  responseStatus: 200,
+  responseStatusText: "OK",
+  responseType: "basic",
+  responseTime: 1,
+};
+
+const threeCaches: FakeOptions["commandResult"] = ({ method, params }) => {
+  if (method === "CacheStorage.requestCacheNames")
+    return {
+      caches: ["before", "missing", "after"].map((name) => ({
+        cacheName: name,
+        cacheId: name,
+      })),
+    };
+  if (method === "CacheStorage.requestEntries")
+    return {
+      cacheDataEntries: [
+        {
+          ...cacheEntryMetadata,
+          requestURL: `https://app.example.test/${String(params.cacheId)}.js`,
+        },
+      ],
+      returnCount: 1,
+    };
+  return undefined;
+};
+
+it.each([
+  { includeFingerprints: false, includeCacheEntries: true },
+  { includeFingerprints: true, includeCacheEntries: false },
+  { includeFingerprints: true, includeCacheEntries: true },
+])(
+  "preserves peer caches after a per-cache entry rejection: %j",
+  async ({ includeFingerprints, includeCacheEntries }) => {
+    const { capture, commands } = await inspect(
+      {
+        commandResult: threeCaches,
+        commandError: ({ method, params }) =>
+          method === "CacheStorage.requestEntries" &&
+          params.cacheId === "missing"
+            ? { code: -32_000, message: "Unable to open cache: not found." }
+            : undefined,
+      },
+      includeFingerprints,
+      includeCacheEntries,
+    );
+    const captured = await capture();
+    expect(webPageInspectionSchema.safeParse(captured).success).toBe(true);
+    expect(captured.storage.local_storage_keys).toEqual(["public-key"]);
+    if (includeCacheEntries) {
+      expect(captured.storage.cache_entries.map(({ cache }) => cache)).toEqual([
+        "before",
+        "after",
+      ]);
+      expect(captured.completeness.excluded).toContainEqual({
+        section: "cache_storage_entries",
+        reason: "provider_unavailable",
+        count: null,
+      });
+    }
+    if (includeFingerprints) {
+      expect(captured.storage.fingerprints_complete).toBe(false);
+      expect(
+        captured.storage.content_fingerprints.filter(
+          ({ scope, complete }) => scope === "cache_entry" && complete,
+        ),
+      ).toHaveLength(2);
+    }
+    expect(
+      commands.filter(({ method }) => method === "CacheStorage.requestEntries"),
+    ).toHaveLength(includeFingerprints && includeCacheEntries ? 6 : 3);
+  },
+);
+
+it.each([-32_000, -32_601])(
+  "preserves earlier cache pages after an entry command rejects with %s",
+  async (code) => {
+    const { capture, commands } = await inspect(
+      {
+        commandResult: (command, origin, frameReads) => {
+          const reply = threeCaches(command, origin, frameReads);
+          return command.method === "CacheStorage.requestEntries" &&
+            command.params.cacheId === "missing"
+            ? { ...reply, returnCount: 2 }
+            : reply;
+        },
+        commandError: ({ method, params }) =>
+          method === "CacheStorage.requestEntries" &&
+          params.cacheId === "missing" &&
+          params.skipCount === 1
+            ? { code, message: "Cache read unavailable." }
+            : undefined,
+      },
+      true,
+      true,
+    );
+    const captured = await capture();
+    expect(webPageInspectionSchema.safeParse(captured).success).toBe(true);
+    expect(captured.storage.cache_entries.map(({ cache }) => cache)).toEqual(
+      code === -32_000 ? ["before", "missing", "after"] : ["before", "missing"],
+    );
+    expect(captured.completeness.excluded).toContainEqual({
+      section: "cache_storage_entries",
+      reason: "provider_unavailable",
+      count: null,
+    });
+    expect(captured.storage.fingerprints_complete).toBe(false);
+    expect(
+      captured.storage.content_fingerprints.filter(
+        ({ scope, complete }) => scope === "cache_entry" && complete,
+      ),
+    ).toHaveLength(code === -32_000 ? 3 : 0);
+    expect(
+      commands
+        .filter(({ method }) => method === "CacheStorage.requestEntries")
+        .map(({ params }) => [params.cacheId, params.skipCount]),
+    ).toEqual(
+      code === -32_000
+        ? [
+            ["before", 0],
+            ["missing", 0],
+            ["missing", 1],
+            ["after", 0],
+            ["before", 0],
+            ["missing", 0],
+            ["missing", 1],
+            ["after", 0],
+          ]
+        : [
+            ["before", 0],
+            ["missing", 0],
+            ["missing", 1],
+          ],
+    );
+  },
+);
+
+it("retains known identities and peer fingerprints when a cached response disappears", async () => {
+  const { capture } = await inspect(
+    {
+      commandResult: threeCaches,
+      commandError: ({ method, params }) =>
+        method === "CacheStorage.requestCachedResponse" &&
+        params.cacheId === "missing"
+          ? {
+              code: -32_000,
+              message: "Unable to read cached response: not found.",
+            }
+          : undefined,
+    },
+    true,
+    true,
+  );
+  const captured = await capture();
+  expect(captured.storage.cache_entries).toHaveLength(3);
+  expect(captured.completeness.unavailable_sections).not.toContain(
+    "cache_storage_entries",
+  );
+  const fingerprints = captured.storage.content_fingerprints.filter(
+    ({ scope }) => scope === "cache_entry",
+  );
+  expect(fingerprints).toHaveLength(3);
+  expect(fingerprints.filter(({ complete }) => complete)).toHaveLength(2);
+  expect(fingerprints.filter(({ complete }) => !complete)).toMatchObject([
+    { value_sha256: null },
+  ]);
+  expect(captured.storage.fingerprints_complete).toBe(false);
+});
+
+it.each([
+  { includeFingerprints: false, includeCacheEntries: true },
+  { includeFingerprints: true, includeCacheEntries: false },
+  { includeFingerprints: true, includeCacheEntries: true },
+])(
+  "probes an unsupported entry command once per capture across both walks: %j",
+  async ({ includeFingerprints, includeCacheEntries }) => {
+    let unsupported = true;
+    const { capture, commands } = await inspect(
+      {
+        commandResult: threeCaches,
+        commandError: ({ method }) =>
+          unsupported && method === "CacheStorage.requestEntries"
+            ? { code: -32_601, message: "Method not found" }
+            : undefined,
+      },
+      includeFingerprints,
+      includeCacheEntries,
+    );
+    for (let round = 1; round <= 2; round += 1) {
+      const captured = await capture();
+      expect(
+        commands.filter(
+          ({ method }) => method === "CacheStorage.requestEntries",
+        ),
+      ).toHaveLength(round);
+      expect(
+        captured.limitations.filter((text) =>
+          text.includes("CacheStorage.requestEntries was unavailable"),
+        ),
+      ).toHaveLength(1);
+      expect(captured.storage.cache_entries).toEqual([]);
+      if (includeFingerprints)
+        expect(captured.storage.fingerprints_complete).toBe(false);
+      if (includeCacheEntries)
+        expect(captured.completeness.excluded).toContainEqual({
+          section: "cache_storage_entries",
+          reason: "provider_unavailable",
+          count: null,
+        });
+    }
+    unsupported = false;
+    const recovered = await capture();
+    if (includeCacheEntries)
+      expect(recovered.storage.cache_entries).toHaveLength(3);
+    if (includeFingerprints)
+      expect(recovered.storage.fingerprints_complete).toBe(true);
+    expect(
+      recovered.limitations.some((text) =>
+        text.includes("CacheStorage.requestEntries was unavailable"),
+      ),
+    ).toBe(false);
+  },
+);
+
+it("probes an unsupported cached-body command once but retains all entry identities", async () => {
+  const { capture, commands } = await inspect(
+    {
+      commandResult: threeCaches,
+      unsupportedMethods: ["CacheStorage.requestCachedResponse"],
+    },
+    true,
+    true,
+  );
+  const captured = await capture();
+  expect(
+    commands.filter(
+      ({ method }) => method === "CacheStorage.requestCachedResponse",
+    ),
+  ).toHaveLength(1);
+  expect(captured.storage.cache_entries).toHaveLength(3);
+  expect(
+    captured.storage.content_fingerprints.filter(
+      ({ scope }) => scope === "cache_entry",
+    ),
+  ).toHaveLength(3);
+  expect(captured.storage.fingerprints_complete).toBe(false);
+  expect(
+    captured.limitations.filter((text) =>
+      text.includes("CacheStorage.requestCachedResponse was unavailable"),
+    ),
+  ).toHaveLength(1);
+});
+
+it.each(["CacheStorage.requestEntries", "CacheStorage.requestCachedResponse"])(
+  "propagates session loss and invalid parameters from %s",
+  async (method) => {
+    for (const error of [
+      { code: -32_001, message: "Session unavailable" },
+      { code: -32_000, message: "No session with given id" },
+      { code: -32_000, message: "Session with given id not found" },
+      { code: -32_602, message: "Invalid parameters" },
+    ]) {
+      const { capture } = await inspect(
+        {
+          commandResult: threeCaches,
+          commandError: (command) =>
+            command.method === method ? error : undefined,
+        },
+        true,
+        true,
+      );
+      await expect(capture()).rejects.toMatchObject({
+        reason: "protocol_error",
+      });
+    }
+  },
+);
+
+it.each(["CacheStorage.requestEntries", "CacheStorage.requestCachedResponse"])(
+  "propagates malformed transport, disconnect and caller cancellation from %s",
+  async (method) => {
+    for (const fault of [
+      { malformedMessageOnMethod: method },
+      { closeOnMethod: method },
+    ]) {
+      const { capture } = await inspect(
+        { ...fault, commandResult: threeCaches },
+        true,
+        true,
+      );
+      await expect(capture()).rejects.toMatchObject({
+        reason:
+          "malformedMessageOnMethod" in fault
+            ? "protocol_error"
+            : "disconnected",
+      });
+    }
+    const controller = new AbortController();
+    const abortReason = new Error("caller stopped cache capture");
+    const { capture } = await inspect(
+      {
+        commandResult: threeCaches,
+        commandError: (command) => {
+          if (command.method === method) controller.abort(abortReason);
+          return undefined;
+        },
+      },
+      true,
+      true,
+    );
+    await expect(capture(controller.signal)).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: abortReason,
+    });
+  },
+);
+
+it.each([42, null, undefined, "not-a-media-type", "", "application/ſcript"])(
+  "marks supplied malformed Content-Type %j incomplete without dropping the entry",
+  async (value) => {
+    const { capture } = await inspect(
+      {
+        commandResult: ({ method }) =>
+          method === "CacheStorage.requestEntries"
+            ? {
+                cacheDataEntries: [
+                  {
+                    ...cacheEntryMetadata,
+                    responseHeaders: [{ name: "Content-Type", value }],
+                  },
+                ],
+                returnCount: 1,
+              }
+            : undefined,
+      },
+      false,
+      true,
+    );
+    const captured = await capture();
+    expect(webPageInspectionSchema.safeParse(captured).success).toBe(true);
+    expect(captured.storage.cache_entries).toHaveLength(1);
+    expect(captured.storage.cache_entries[0]).toMatchObject({
+      content_type: null,
+      response_header_names: ["Content-Type"],
+      request_method: "GET",
+    });
+    expect(captured.completeness.excluded).toContainEqual({
+      section: "cache_storage_entries",
+      reason: "invalid_protocol_value",
+      count: null,
+    });
+  },
+);
+
+it.each([
+  { responseHeaders: [] },
+  { responseHeaders: [{ name: "X-Unselected", value: 42 }] },
+])(
+  "does not invent a Content-Type defect for absent or unselected headers: %j",
+  async ({ responseHeaders }) => {
+    const { capture } = await inspect(
+      {
+        commandResult: ({ method }) =>
+          method === "CacheStorage.requestEntries"
+            ? {
+                cacheDataEntries: [{ ...cacheEntryMetadata, responseHeaders }],
+                returnCount: 1,
+              }
+            : undefined,
+      },
+      false,
+      true,
+    );
+    const captured = await capture();
+    expect(captured.storage.cache_entries[0]?.content_type).toBeNull();
+    expect(captured.completeness.unavailable_sections).not.toContain(
+      "cache_storage_entries",
+    );
+  },
+);
+
+it("preserves cache-list and entry-budget failures through page capture", async () => {
+  const { capture } = await inspect(
+    {
+      commandResult: ({ method }) => {
+        if (method === "CacheStorage.requestCacheNames")
+          return { caches: [null, { cacheName: "assets", cacheId: "id" }] };
+        if (method === "CacheStorage.requestEntries")
+          return {
+            cacheDataEntries: [
+              cacheEntryMetadata,
+              {
+                ...cacheEntryMetadata,
+                responseStatusText: "x".repeat(8 * 1024 * 1024),
+              },
+            ],
+            returnCount: 2,
+          };
+        return undefined;
+      },
+    },
+    false,
+    true,
+  );
+  const captured = await capture();
+  expect(captured.storage.cache_entries).toHaveLength(1);
+  expect(captured.completeness.truncated_sections).toContain(
+    "cache_storage_entries",
+  );
+  expect(captured.completeness.unavailable_sections).toContain(
+    "cache_storage_entries",
+  );
+  for (const reason of ["invalid_protocol_value", "resource_budget_exhausted"])
+    expect(captured.completeness.excluded).toContainEqual({
+      section: "cache_storage_entries",
+      reason,
+      count: null,
+    });
+});
+
+it.each([
+  ["response_status", { responseStatus: Number.MAX_SAFE_INTEGER + 1 }],
+  ["response_status", { responseStatus: -1 }],
+  ["response_status_text", { responseStatusText: 42 }],
+  ["response_type", { responseType: false }],
+  ["response_time", { responseTime: "invalid" }],
+] as const)(
+  "keeps malformed %s nullable through the inspection contract",
+  async (field, malformed) => {
+    const { capture } = await inspect(
+      {
+        commandResult: ({ method }) =>
+          method === "CacheStorage.requestEntries"
+            ? {
+                cacheDataEntries: [{ ...cacheEntryMetadata, ...malformed }],
+                returnCount: 1,
+              }
+            : undefined,
+      },
+      false,
+      true,
+    );
+    const captured = webPageInspectionSchema.parse(await capture());
+    expect(captured.storage.cache_entries).toEqual([
+      expect.objectContaining({
+        request_url: cacheEntryMetadata.requestURL,
+        [field]: null,
+      }),
+    ]);
+    expect(captured.completeness.excluded).toContainEqual({
+      section: "cache_storage_entries",
+      reason: "invalid_protocol_value",
+      count: null,
+    });
+  },
+);
+
+it("keeps contradictory entry totals incomplete in metadata and fingerprints", async () => {
+  const { capture } = await inspect(
+    {
+      commandResult: ({ method }) =>
+        method === "CacheStorage.requestEntries"
+          ? { cacheDataEntries: [cacheEntryMetadata], returnCount: 0 }
+          : undefined,
+    },
+    true,
+    true,
+  );
+  const captured = await capture();
+  expect(captured.storage.cache_entries).toHaveLength(1);
+  expect(captured.storage.content_fingerprints).toContainEqual(
+    expect.objectContaining({ scope: "cache_entry", complete: true }),
+  );
+  expect(captured.storage.fingerprints_complete).toBe(false);
+  expect(captured.completeness.excluded).toContainEqual({
+    section: "cache_storage_entries",
+    reason: "invalid_protocol_value",
+    count: null,
+  });
+});
+
+it.each([
+  ["shrinking", [3, 2]],
+  ["growing", [2, 3, 3]],
+] as const)(
+  "keeps %s cache totals incomplete in both independent walks",
+  async (_label, totals) => {
+    const { capture } = await inspect(
+      {
+        commandResult: ({ method, params }) => {
+          if (method !== "CacheStorage.requestEntries") return undefined;
+          const offset = Number(params.skipCount);
+          return {
+            cacheDataEntries: [
+              {
+                ...cacheEntryMetadata,
+                requestURL: `https://app.example.test/${offset}.js`,
+              },
+            ],
+            returnCount: totals[offset],
+          };
+        },
+      },
+      true,
+      true,
+    );
+    const captured = webPageInspectionSchema.parse(await capture());
+    expect(captured.storage.cache_entries).toHaveLength(totals.length);
+    expect(
+      captured.storage.content_fingerprints.filter(
+        ({ scope }) => scope === "cache_entry",
+      ),
+    ).toHaveLength(totals.length);
+    expect(captured.storage.fingerprints_complete).toBe(false);
+    expect(captured.completeness.excluded).toContainEqual({
+      section: "cache_storage_entries",
+      reason: "invalid_protocol_value",
+      count: null,
+    });
+  },
+);
+
+it("does not contaminate a complete cache inventory with unrelated storage failures", async () => {
+  const { capture } = await inspect(
+    {
+      unsupportedMethods: [
+        "IndexedDB.requestDatabaseNames",
+        "DOMStorage.getDOMStorageItems",
+      ],
+      commandResult: ({ method }) =>
+        method === "CacheStorage.requestEntries"
+          ? { cacheDataEntries: [cacheEntryMetadata], returnCount: 1 }
+          : undefined,
+    },
+    false,
+    true,
+  );
+  const captured = await capture();
+  expect(captured.storage.cache_entries).toHaveLength(1);
+  expect(captured.completeness.unavailable_sections).toContain("storage_keys");
+  expect(
+    captured.completeness.excluded.filter(
+      ({ section }) => section === "cache_storage_entries",
+    ),
+  ).toEqual([]);
+});
+
+it("distinguishes unavailable cache names from a complete empty entry inventory", async () => {
+  const { capture } = await inspect(
+    { unsupportedMethods: ["CacheStorage.requestCacheNames"] },
+    false,
+    true,
+  );
+  const captured = await capture();
+  expect(captured.storage.cache_entries).toEqual([]);
+  expect(captured.completeness.excluded).toContainEqual({
+    section: "cache_storage_entries",
+    reason: "provider_unavailable",
+    count: null,
+  });
 });
 
 const validKey = { type: "string", value: "row-1" };
