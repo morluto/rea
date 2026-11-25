@@ -1004,6 +1004,7 @@
 * **artifacts:** prove output filename identity at the filesystem boundary ([#13463](https://github.com/morluto/rea/issues/13463)) ([35db86b](https://github.com/morluto/rea/commit/35db86b87eb046e4b96c22e9df90f120b3f400b8))
 * **artifacts:** remove descriptor registry mirror checks ([#12796](https://github.com/morluto/rea/issues/12796)) ([c7353f4](https://github.com/morluto/rea/commit/c7353f42577038d0814719e62c6ffedb3bb2fcff))
 * **artifacts:** repair comparison evidence authenticity checks ([#12779](https://github.com/morluto/rea/issues/12779)) ([236f5ae](https://github.com/morluto/rea/commit/236f5ae3fae0d4c86a37dd6a75e1704dd5237b13))
+* **artifacts:** reuse temp files in four reader suites ([#14559](https://github.com/morluto/rea/issues/14559)) ([83e7fe7](https://github.com/morluto/rea/commit/83e7fe789f41581d2d60f726442ec864cf425c75))
 * **artifacts:** share archive member stream lifecycle cases ([#14452](https://github.com/morluto/rea/issues/14452)) ([299399d](https://github.com/morluto/rea/commit/299399dda35f70f51f4de34f9c8df5cfe292eb79))
 * **artifacts:** share inventory view and reader fixtures ([#14380](https://github.com/morluto/rea/issues/14380)) ([4255a96](https://github.com/morluto/rea/commit/4255a96e0fb227ff41314d860421e2f590135dcc))
 * **artifacts:** share temporary fixture file writes ([#14540](https://github.com/morluto/rea/issues/14540)) ([7e12b4f](https://github.com/morluto/rea/commit/7e12b4f32d172ef6ff993461d54506a278743de4))
