@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../src/domain/analysisResourceLimits.js";
 import { elfNoteFixture } from "../../src/native/elf/ElfNotes.fixture.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../scripts/lib/mcp-verification-environment.mjs";
 import { elfFrameAllowanceFixture } from "../fixtures/binaryDiagnostics/elfFrameAllowance.js";
@@ -65,6 +69,8 @@ it("reports an ELF section-name frame refusal through each native diagnostic", a
           setting: "zstd.max_frames",
           effective_value: 1,
           source: "runtime",
+          minimum: MINIMUM_ZSTD_MAX_FRAMES,
+          maximum: MAXIMUM_ZSTD_MAX_FRAMES,
           unit: "count",
         },
       },

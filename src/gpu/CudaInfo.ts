@@ -92,6 +92,7 @@ export const readCudaParameters = (
     [];
   const byteDeclarations = new Set<number>();
   const limitations: string[] = [];
+  const reader = new BinaryReader(bytes, little, "cuda-nv-info");
   let complete = true;
   for (const record of readCudaInfo(bytes, little, budget)) {
     if (record.format === 3 && record.attribute === 0x19)
@@ -105,13 +106,16 @@ export const readCudaParameters = (
       complete = false;
       continue;
     }
-    const r = new BinaryReader(record.data, little, "cuda-nv-info");
-    if (r.u32(0) !== 0) complete = false;
+    const base = record.offset + 4;
+    if (reader.u32(base) !== 0) complete = false;
     const parameter = {
-      ordinal: r.u16(4),
+      ordinal: reader.u16(base + 4),
       name: null,
-      offset: r.u16(6),
-      size: record.attribute === 0x45 ? r.u32(8) : r.u32(8) >>> 18,
+      offset: reader.u16(base + 6),
+      size:
+        record.attribute === 0x45
+          ? reader.u32(base + 8)
+          : reader.u32(base + 8) >>> 18,
       type: null,
       hidden: null,
     };

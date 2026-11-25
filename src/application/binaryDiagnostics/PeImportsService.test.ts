@@ -1,18 +1,20 @@
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { createHash } from "node:crypto";
-import { peWithoutImportTableFixture } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
+import {
+  peImportImage,
+  peWithoutImportTableFixture,
+} from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
 import { parsePeImports } from "../../native/pe/PeImportParser.js";
 import {
   inspectPeImportsInputSchema,
   peImportsSchema,
   type PeImports,
 } from "../../domain/native/peImports.js";
-import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { PeImportsService } from "./PeImportsService.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import { ok } from "../../domain/result.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -106,23 +108,12 @@ it.each(["import_directory", "delay_import_directory"] as const)(
 );
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late PeImports cancellation" };
-  const service = new PeImportsService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late PeImports cancellation",
+    (inspect) => new PeImportsService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_pe_imports",
     normalized_result: report,
   });
@@ -221,3 +212,66 @@ it("retains examined unsupported descriptors without inventing DLL rows", async 
   });
   expect(normalized.delay_imports).toEqual([]);
 });
+
+const importBytes = peImportImage({ bits: 64 });
+const withImports = await parsePeImports(
+  importBytes,
+  {
+    path,
+    sha256: createHash("sha256").update(importBytes).digest("hex"),
+    bytes: importBytes.length,
+  },
+  inspectPeImportsInputSchema.parse({ path }),
+);
+
+const withFirstSlot = (
+  slot: { iat_va?: string },
+  imageBase: string | undefined,
+): PeImports => {
+  const [dll, ...dlls] = withImports.imports;
+  const [first, ...functions] = dll?.functions ?? [];
+  if (dll === undefined || first === undefined)
+    throw new Error("Expected an imported function");
+  const { image_base: _base, ...rest } = withImports;
+  return {
+    ...rest,
+    ...(imageBase === undefined ? {} : { image_base: imageBase }),
+    imports: [
+      { ...dll, functions: [{ ...first, ...slot }, ...functions] },
+      ...dlls,
+    ],
+  };
+};
+
+it("accepts IAT slot VAs that equal the image base plus their RVA", async () => {
+  const result = await new PeImportsService({
+    identity,
+    inspect: () => Promise.resolve(ok(withImports)),
+  }).inspect({ path });
+  if (!result.ok) throw result.error;
+  expect(withImports.imports[0]?.functions[0]?.iat_va).toBe(
+    `0x${(
+      BigInt(withImports.image_base ?? "0x0") +
+      BigInt(withImports.imports[0]?.functions[0]?.iat_rva ?? 0)
+    ).toString(16)}`,
+  );
+});
+
+it.each([
+  ["a slot VA off by one", { iat_va: "0x1" }, withImports.image_base],
+  [
+    "a slot VA without an image base",
+    { iat_va: withImports.imports[0]?.functions[0]?.iat_va ?? "0x0" },
+    undefined,
+  ],
+] as const)(
+  "rejects %s as inconsistent provider output",
+  async (_, slot, base) => {
+    const result = await new PeImportsService({
+      identity,
+      inspect: () => Promise.resolve(ok(withFirstSlot(slot, base))),
+    }).inspect({ path });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  },
+);

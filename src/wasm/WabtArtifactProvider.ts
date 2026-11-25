@@ -4,10 +4,11 @@ import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { randomUUID } from "node:crypto";
-import { access, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { access, stat, writeFile } from "node:fs/promises";
+import { constants, type BigIntStats } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { appendCallerPath } from "../filesystem/callerPath.js";
+import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import type {
   WasmArtifactExecutionOptions,
   WasmArtifactExecution,
@@ -49,6 +50,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   wasmArtifactSchema,
   WABT_SOURCE_COMMIT,
+  WABT_RELEASE_LINE,
   WABT_VERSION,
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   wasmResourceLimits,
@@ -65,11 +67,7 @@ import {
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
 import { WabtRuntime } from "./WabtRuntime.js";
-import {
-  WABT_PROVIDER_IDENTITY,
-  admitWabtVersion,
-  wabtReleaseLine,
-} from "./WabtRelease.js";
+import { WABT_PROVIDER_IDENTITY, admitWabtVersion } from "./WabtRelease.js";
 import {
   wabtFailureDialect,
   wabtConfigurationRecoveryAction,
@@ -261,6 +259,24 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       input.command_timeout_ms !== undefined
         ? "request"
         : options?.commandTimeoutSource;
+    const classifyFailure = (cause: unknown) =>
+      classifyProviderFailure(
+        cause,
+        wabtFailureDialect(
+          phase,
+          phase === "artifact" ? artifactInput.path : input.path,
+          {
+            commandTimeoutMs,
+            ...(commandTimeoutSource === undefined
+              ? {}
+              : { commandTimeoutSource }),
+            limits,
+            inputField: artifactInput.field,
+            observedOutput: capturedOutput,
+            ...(versionProbe === undefined ? {} : { versionProbe }),
+          },
+        ),
+      );
     try {
       if (isAborted(options?.signal))
         throw cancelledBy(OPERATION, options.signal);
@@ -271,6 +287,38 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           // Keep the caller's rejected selection; unset stays distinct.
           ...(directory === undefined ? {} : { configured: directory }),
         });
+      const toolNames = ["wasm-validate", "wasm-objdump", "wasm2wat"] as const;
+      const settledTools = await Promise.allSettled(
+        toolNames.map(async (tool) => {
+          const selection = await selectArtifactCommandPath(
+            appendCallerPath(
+              directory,
+              `${tool}${HOST_PLATFORM.platform === "win32" ? ".exe" : ""}`,
+            ),
+            options?.signal,
+          );
+          const path = selection.resolvedPath;
+          await access(path, constants.X_OK);
+          const initialStat = await stat(path, { bigint: true });
+          const binary = await readIdentity(path, limits.toolBytes);
+          return {
+            tool,
+            path,
+            selection,
+            initialStat,
+            sha256: binary.sha256,
+            version_banner: "",
+            arguments:
+              tool === "wasm-objdump"
+                ? ["-h", "-x", "module.wasm"]
+                : [
+                    "--enable-all",
+                    "--ignore-custom-section-errors",
+                    "module.wasm",
+                  ],
+          };
+        }),
+      );
       const commands: {
         tool: "wasm-validate" | "wasm-objdump" | "wasm2wat";
         path: string;
@@ -278,38 +326,24 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         version_banner: string;
         arguments: string[];
         selection: ArtifactCommandPath;
+        initialStat: BigIntStats;
       }[] = [];
-      for (const tool of [
-        "wasm-validate",
-        "wasm-objdump",
-        "wasm2wat",
-      ] as const) {
-        const selection = await selectArtifactCommandPath(
-          appendCallerPath(
-            directory,
-            `${tool}${HOST_PLATFORM.platform === "win32" ? ".exe" : ""}`,
-          ),
-          options?.signal,
-        );
-        const path = selection.resolvedPath;
-        await access(path, constants.X_OK);
-        const binary = await readIdentity(path, limits.toolBytes);
-        commands.push({
-          tool,
-          path,
-          selection,
-          sha256: binary.sha256,
-          version_banner: "",
-          arguments:
-            tool === "wasm-objdump"
-              ? ["-h", "-x", "module.wasm"]
-              : [
-                  "--enable-all",
-                  "--ignore-custom-section-errors",
-                  "module.wasm",
-                ],
-        });
+      let admissionFailure: AnalysisError | undefined;
+      for (const settled of settledTools) {
+        if (settled.status === "fulfilled") {
+          commands.push(settled.value);
+          continue;
+        }
+        const failure = classifyFailure(settled.reason);
+        if (admissionFailure === undefined) admissionFailure = failure;
+        else if (failure.cleanupIncomplete)
+          admissionFailure = analysisErrorWithCleanupDependencies(
+            admissionFailure,
+            failure,
+            OPERATION,
+          );
       }
+      if (admissionFailure !== undefined) throw admissionFailure;
       const root = await this.createRuntime();
       runtime = new WabtRuntime(root);
       const snapshotPath = join(root.path, "module.wasm");
@@ -332,7 +366,6 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       ) => {
         capturedOutput = undefined;
         await assertArtifactCommandPath(command.selection, OPERATION, options);
-        await verifySnapshot();
         const snapshot = await runOwnedCommand(
           {
             command: command.selection.invocationPath,
@@ -378,13 +411,21 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           ...(options?.signal === undefined ? {} : { signal: options.signal }),
           capturedOutput,
         });
-        const current = await readIdentity(command.path, limits.toolBytes);
-        if (current.sha256 !== command.sha256)
-          throw new AnalysisOutputError(
-            OPERATION,
-            "Configured WABT executable changed during inspection.",
-            { capturedOutput },
-          );
+        const currentStat = await stat(command.path, { bigint: true }).catch(
+          () => undefined,
+        );
+        if (
+          currentStat === undefined ||
+          !sameRegularFileState(command.initialStat, currentStat)
+        ) {
+          const current = await readIdentity(command.path, limits.toolBytes);
+          if (current.sha256 !== command.sha256)
+            throw new AnalysisOutputError(
+              OPERATION,
+              "Configured WABT executable changed during inspection.",
+              { capturedOutput },
+            );
+        }
         await verifySnapshot();
         return snapshot;
       };
@@ -394,7 +435,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           executable_path: command.path,
           tool: command.tool,
           expected_version: WABT_VERSION,
-          accepted_releases: wabtReleaseLine(),
+          accepted_releases: WABT_RELEASE_LINE,
         };
         const version = await execute(command, ["--version"]);
         const admission =
@@ -415,13 +456,13 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           );
         }
         if (admission === undefined || admission.status === "unsupported") {
-          const reason = `${admission?.message ?? `Unsupported ${command.tool} version banner`}; expected stdout from ${wabtReleaseLine()} with empty stderr.`;
+          const reason = `${admission?.message ?? `Unsupported ${command.tool} version banner`}; expected stdout from ${WABT_RELEASE_LINE} with empty stderr.`;
           rejectVersion(reason);
         }
         // All three tools come from one directory, so admit only banners that agree.
         if (observedRelease === undefined) observedRelease = admission.version;
         if (observedRelease !== admission.version) {
-          const reason = `Configured WABT tools report different releases (${observedRelease} and ${admission.version}); select one complete ${wabtReleaseLine()} installation.`;
+          const reason = `Configured WABT tools report different releases (${observedRelease} and ${admission.version}); select one complete ${WABT_RELEASE_LINE} installation.`;
           rejectVersion(reason);
         }
         if (admission.status === "compatible")
@@ -437,7 +478,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         source_commit:
           admittedVersion === WABT_VERSION ? WABT_SOURCE_COMMIT : null,
         commands: commands.map(
-          ({ selection: _selection, ...command }) => command,
+          ({ selection: _selection, initialStat: _initialStat, ...command }) =>
+            command,
         ),
         timeout_ms: commandTimeoutMs,
         output_budget_bytes: limits.outputBytes,
@@ -706,23 +748,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }),
       );
     } catch (cause: unknown) {
-      const failure = classifyProviderFailure(
-        cause,
-        wabtFailureDialect(
-          phase,
-          phase === "artifact" ? artifactInput.path : input.path,
-          {
-            commandTimeoutMs,
-            ...(commandTimeoutSource === undefined
-              ? {}
-              : { commandTimeoutSource }),
-            limits,
-            inputField: artifactInput.field,
-            observedOutput: capturedOutput,
-            ...(versionProbe === undefined ? {} : { versionProbe }),
-          },
-        ),
-      );
+      const failure = classifyFailure(cause);
       if (failure.partialObservation === undefined) {
         const partial = acquiredEvidence();
         if (partial !== undefined) failure.retainPartialObservation(partial);

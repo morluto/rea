@@ -1,0 +1,619 @@
+{
+  "src/adb/AdbCommand.ts": {
+    "name": {
+      "class": "forwarding",
+      "reason": "Relays the live adb capture allowance named by its caller; the ceiling is declared where the command's budget is chosen."
+    },
+    "{ name, kind: \"live\" as const, ...facts }": {
+      "class": "forwarding",
+      "reason": "Relays the live adb capture allowance named by its caller; the ceiling is declared where the command's budget is chosen."
+    }
+  },
+  "src/adb/AdbConfiguration.ts": {
+    "`The adb version-output capture allowance of ${String(VERSION_MAX_OUTPUT_BYTES)} bytes (this release has no runtime override)`": {
+      "class": "protocol",
+      "reason": "Bounds the reply to `adb version`, a short fixed-format banner; no analysis input passes through it."
+    }
+  },
+  "src/android/JadxSession.ts": {
+    "`The external DEX ${failure.stage} representation allowance`": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "External DEX representation retained from the JADX worker is a resource policy without a per-call control."
+    }
+  },
+  "src/apkSignature/apkSignatureFailures.ts": {
+    "\"The decoded APK signing report allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
+    },
+    "`The APK Signature Scheme ${scheme} allowance of ${String(maximum)} ${name} (this release has no runtime override)`": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
+    },
+    "`The APK Signing Block allowance of ${String(maximum)} pairs (this release has no runtime override)`": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
+    },
+    "`The APK v1 allowance of ${String(limit)} signers (this release has no runtime override)`": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
+    },
+    "`The APK v1 allowance of ${String(maximum)} META-INF signing entries (this release has no runtime override)`": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
+    }
+  },
+  "src/apktool/ApktoolConfiguration.ts": {
+    "\"The apktool version-output capture allowance (decode_timeout_ms does not raise it)\"": {
+      "class": "protocol",
+      "reason": "Bounds the reply to `apktool --version`, a short fixed-format banner; no analysis input passes through it."
+    }
+  },
+  "src/apktool/ApktoolProvider.ts": {
+    "\"The apktool output capture allowance (decode_timeout_ms does not raise it)\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "apktool output capture is a producer budget without a per-call control."
+    }
+  },
+  "src/application/ntfs/NtfsJournalService.ts": {
+    "\"The NTFS journal file allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "The NTFS journal file allowance bounds bytes read, a resource policy."
+    }
+  },
+  "src/artifacts/AndroidBootImageArtifactReader.ts": {
+    "ceiling.name": {
+      "class": "forwarding",
+      "reason": "Projects the boot-image parser's own named ceiling (`ceiling.name`); the value is declared by that parser."
+    }
+  },
+  "src/artifacts/DenoStandaloneArtifactReader.ts": {
+    "\"The Deno compile retained metadata allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Deno retained metadata bytes are a resource policy."
+    }
+  },
+  "src/artifacts/WxapkgArtifactReader.ts": {
+    "\"The wxapkg directory-and-chunk I/O work allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "wxapkg directory, member-table and I/O allowances are resource policies."
+    }
+  },
+  "src/artifacts/WxapkgStructures.ts": {
+    "\"The wxapkg directory representation allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "wxapkg directory, member-table and I/O allowances are resource policies."
+    },
+    "\"The wxapkg member table allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "wxapkg directory, member-table and I/O allowances are resource policies."
+    }
+  },
+  "src/artifacts/apple/AppleAssetCatalogAnalysis.ts": {
+    "\"The assetutil capture allowance\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "assetutil output capture is a producer budget without a per-call control."
+    }
+  },
+  "src/artifacts/deno/DenoSectionLayout.ts": {
+    "`The Deno compile ${scope} allowance`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
+    },
+    "`The Deno compile ${scope} record allowance`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
+    }
+  },
+  "src/artifacts/deno/DenoStandaloneLocation.ts": {
+    "parserLimit.name": {
+      "class": "forwarding",
+      "reason": "Projects a Deno parser limit declared at its owner (`parserLimit.name`)."
+    }
+  },
+  "src/artifacts/deno/DenoVirtualFs.ts": {
+    "\"The Deno compile virtual filesystem depth allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
+    },
+    "\"The Deno compile virtual filesystem entry allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
+    },
+    "\"The Deno compile virtual filesystem retained name allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
+    }
+  },
+  "src/artifacts/dotnet/DotnetBundle.ts": {
+    "\"The .NET bundle exact integer range\"": {
+      "class": "representation",
+      "reason": "A bundle offset or size above Number.MAX_SAFE_INTEGER cannot be represented exactly as a JavaScript number."
+    }
+  },
+  "src/artifacts/nodeSea/NodeSeaLocation.ts": {
+    "\"Node SEA duplicate-blob verification allowance\"": {
+      "class": "derived",
+      "reason": "Duplicate-blob verification work is bounded by the carrier's own file size, so the bound grows with the admitted input."
+    }
+  },
+  "src/artifacts/releaseExposure/releaseExposureFailures.ts": {
+    "\"The release exposure input allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "The release exposure input allowance bounds bytes read, a resource policy."
+    }
+  },
+  "src/artifacts/tar/TarWalk.ts": {
+    "\"The tar extended-header allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
+    },
+    "\"The tar member metadata allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
+    }
+  },
+  "src/browser/WebBundleAnalysisWorker.ts": {
+    "\"The web-bundle worker transfer allowance\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "Web-bundle worker transfer bytes are a resource policy."
+    }
+  },
+  "src/browser/execution/CdpRuntimeRetention.ts": {
+    "allowance": {
+      "class": "forwarding",
+      "reason": "Relays the live runtime-retention allowance its caller names."
+    }
+  },
+  "src/browser/history/playwrightTrace/PlaywrightTraceDecoder.ts": {
+    "`The Playwright trace archive input allowance of ${String(PLAYWRIGHT_TRACE_LIMITS.archiveBytes)} bytes`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Playwright trace archive input and record parser allowances are resource policies."
+    }
+  },
+  "src/browser/history/playwrightTrace/TraceStream.ts": {
+    "nesting ? \"The Playwright trace record nesting allowance\" : \"The Playwright trace record parser allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Playwright trace archive input and record parser allowances are resource policies."
+    }
+  },
+  "src/captures/TsharkCaptureProvider.ts": {
+    "\"The packet-field discovery record allowance\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "Packet-field discovery record capture is a producer budget."
+    }
+  },
+  "src/domain/analysisErrorCore.ts": {
+    "text(recovery.fixedAllowance.name)": {
+      "class": "forwarding",
+      "reason": "Copies a declared fixed allowance while redacting its text; declares no ceiling."
+    }
+  },
+  "src/domain/analysisView/WebNetworkProjectionAccumulator.ts": {
+    "\"The analysis-view projection allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "The analysis-view projection allowance is a resource policy."
+    }
+  },
+  "src/domain/apiContract/GraphqlDocuments.ts": {
+    "`The GraphQL AST nesting allowance of ${String(GRAPHQL_CONTRACT_LIMITS.astDepth)} levels`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "GraphQL AST nesting depth is a resource policy unless a recursion-stack reason is stated."
+    }
+  },
+  "src/domain/fixedAllowanceRemediation.ts": {
+    "allowance": {
+      "class": "forwarding",
+      "reason": "The fixed-ceiling helpers themselves; each caller names its own allowance."
+    }
+  },
+  "src/domain/native/nativeDeadlines.ts": {
+    "allowance": {
+      "class": "forwarding",
+      "reason": "`fixedNativeAllowance` relays the allowance its caller names."
+    }
+  },
+  "src/electron/ElectronFuseFailures.ts": {
+    "fileSize ? \"the Electron fuse input allowance\" : \"The Electron fuse sentinel inventory\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Electron fuse input bytes and sentinel inventory are resource policies."
+    }
+  },
+  "src/erlang/BeamProvider.ts": {
+    "\"BEAM table row ceiling\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The BEAM table row ceiling is a resource policy."
+    }
+  },
+  "src/flutter/FlutterBuildProvider.ts": {
+    "\"The Flutter ABI inventory allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
+    },
+    "\"The Flutter APK expansion allowance (derived from the APK size)\"": {
+      "class": "derived",
+      "reason": "Expansion work is derived from the admitted APK's own size."
+    },
+    "\"The Flutter APK metadata read allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
+    },
+    "\"The Flutter library path allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
+    },
+    "\"The Flutter snapshot-hash candidate allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
+    },
+    "\"the Flutter APK snapshot allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
+    },
+    "\"the Flutter cumulative extraction allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
+    },
+    "\"the Flutter library read allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
+    }
+  },
+  "src/ghidra/GhidraExecutableHeader.ts": {
+    "\"The header parser's exactly representable executable extent\"": {
+      "class": "representation",
+      "reason": "An executable extent above Number.MAX_SAFE_INTEGER cannot be represented exactly."
+    }
+  },
+  "src/ghidra/GhidraInstallationProperties.ts": {
+    "\"The Ghidra installation-properties read allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Bounds the read of an installation's properties file; a resource policy on an operator-owned file."
+    }
+  },
+  "src/go/GoBinaryProvider.ts": {
+    "\"The Go structural decoding allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Projects the shared native structural decoding allowance (BinaryResourceFailure), a resource policy."
+    }
+  },
+  "src/ida/IdaMcpConnection.ts": {
+    "{ ...outputLimit.ceiling, narrowing: \"Request a smaller result from IDA, such as a narrower address range or fewer items.\", }": {
+      "class": "protocol",
+      "reason": "REA bounds each stdio message from the upstream IDA MCP server at a fixed frame size; the transport, not the analysis, sets it."
+    }
+  },
+  "src/il2cpp/Il2cppGhidraSeeds.ts": {
+    "name": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "IL2CPP metadata input, native-link candidate and Ghidra seed allowances are resource policies; the ELF pointer index became max_native_index_bytes."
+    }
+  },
+  "src/il2cpp/Il2cppMetadataProvider.ts": {
+    "\"The IL2CPP native-link allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "IL2CPP metadata input, native-link candidate and Ghidra seed allowances are resource policies; the ELF pointer index became max_native_index_bytes."
+    },
+    "\"the fixed IL2CPP input allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "IL2CPP metadata input, native-link candidate and Ghidra seed allowances are resource policies; the ELF pointer index became max_native_index_bytes."
+    }
+  },
+  "src/java/MavenGradleMetadataProvider.ts": {
+    "Object.entries(REPORT_ALLOWANCE_SUBJECTS).find( ([key]) => key === name, )?.[1](maximum) ?? name": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Maven and Gradle XML node and report allowances are resource policies."
+    }
+  },
+  "src/kuna/KunaProjectReader.ts": {
+    "`Kuna's buffered function-text allowance of ${String(KUNA_FUNCTION_TEXT_BYTES)} bytes`": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "Kuna's buffered function-text allowance is a resource policy."
+    }
+  },
+  "src/native/NativeCommandAnalysisError.ts": {
+    "\"The native command output capture allowance\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "Native command output capture is a producer budget without a per-call control."
+    }
+  },
+  "src/native/SignatureTargetBinding.ts": {
+    "\"The exactly representable file size\"": {
+      "class": "representation",
+      "reason": "A file size above Number.MAX_SAFE_INTEGER cannot be represented exactly."
+    }
+  },
+  "src/native/apple/AppleIpsProvider.ts": {
+    "`The IPS ${name.replaceAll(\"_\", \" \")} allowance`": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/dwarf/DwarfUnitsProvider.ts": {
+    "\"The native structural decoding allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    },
+    "DWARF_DECOMPRESSED_SECTION_ALLOWANCE": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/elf/ElfDebugLinkProvider.ts": {
+    "\"The ELF structural decoding allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    },
+    "\"The whole-file debug candidate read allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The streamed candidate is hashed in bounded chunks; its 0xffffffff-byte whole-file ceiling states no format reason, so it is a policy awaiting a control or a stated reason."
+    },
+    "ELF_NOTE_TEXT_ALLOWANCE": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/elf/ElfDependenciesProvider.ts": {
+    "\"The ELF structural decoding allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "ELF dependency entry allowances are resource policies; the text budget is derived from the admitted image length."
+    },
+    "text ? \"The ELF dependency text budget fixed by the admitted image length\" : `The ELF dependency ${limit.name} allowance`": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "ELF dependency entry allowances are resource policies; the text budget is derived from the admitted image length."
+    }
+  },
+  "src/native/elf/ElfNotesProvider.ts": {
+    "ELF_NOTE_TEXT_ALLOWANCE": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/elf/ElfUnwindRangesProvider.ts": {
+    "\"The ELF structural decoding allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/elf/KernelModuleProvider.ts": {
+    "\"The ELF structural decoding allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/exports/NativeExportsProvider.ts": {
+    "\"The native export inventory allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    },
+    "\"The native export retained-text allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    },
+    "\"The native export structural decoding allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/hardening/BinaryHardeningProvider.ts": {
+    "\"The binary hardening structural allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/initializers/NativeInitializersProvider.ts": {
+    "\"The native initializer structural allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/parsers/lipo.ts": {
+    "\"The lipo field retention allowance\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "lipo field retention is a producer capture budget."
+    }
+  },
+  "src/native/parsers/plist.ts": {
+    "\"The native plist input allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    },
+    "\"The native plist nesting allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    },
+    "`The native ${encoding} plist decode allowance`": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    }
+  },
+  "src/native/pe/PeCertificatesProvider.ts": {
+    "selected.name": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
+    }
+  },
+  "src/native/pe/PeImportsProvider.ts": {
+    "\"The PE import retained-text allowance (max_file_bytes, max_dlls and max_functions do not raise it)\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
+    },
+    "\"The PE structural decoding allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
+    }
+  },
+  "src/native/pe/PeLoadConfigProvider.ts": {
+    "\"The PE structural decoding allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
+    }
+  },
+  "src/native/pe/PeUnwindRangesProvider.ts": {
+    "\"The PE exception-directory entry allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The 2,097,152-entry typed-array allowance bounds decoder memory like the other PE structural allowances; it is a resource policy pending #14235."
+    }
+  },
+  "src/native/pe/PeResourcesProvider.ts": {
+    "\"The PE resource metadata allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "PE resource metadata retention is a resource policy (the PE file-size admission is #14167)."
+    }
+  },
+  "src/pcap/PcapCommand.ts": {
+    "\"The packet-tool output capture allowance\"": {
+      "class": "protocol",
+      "reason": "Bounds only capinfos and tshark version and summary probes, whose replies are short fixed-format text; each tshark JSON pass reports producer_limits.output_bytes instead."
+    }
+  },
+  "src/pcap/PcapOutput.ts": {
+    "\"The packet-inventory retained-fact allowance\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
+    },
+    "\"The tshark JSON expansion allowance\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "The decoded-JSON work across both tshark passes bounds the in-process parse; raising it needs a streaming decoder or a heap-aware control, so it stays fixed until then."
+    }
+  },
+  "src/process/ArtifactAnalysisResources.ts": {
+    "`The retained command-output allowance of ${String(limits.output_bytes)} bytes (this release has no runtime override)`": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "Retained command output is a producer budget without a per-call control."
+    },
+    "allowanceName": {
+      "class": "forwarding",
+      "reason": "Declares a producer input allowance only for callers that offer no budget parameter; the value is the caller's selected maximum."
+    }
+  },
+  "src/process/capture/ProcessSensitiveOutput.ts": {
+    "\"Sensitive terminal redaction\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "Sensitive terminal redaction state is a resource policy."
+    }
+  },
+  "src/resources/ArtifactPaths.ts": {
+    "\"The artifact path depth allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Artifact path depth and tree-node allowances are resource policies."
+    },
+    "\"The artifact path tree allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "Artifact path depth and tree-node allowances are resource policies."
+    }
+  },
+  "src/resources/artifactReadBudget.ts": {
+    "ceiling.name": {
+      "class": "forwarding",
+      "reason": "Relays the whole-file identity ceiling its caller names: 4 GiB minus one byte for PE-only readers, whose file offsets are 32-bit (format), and the 512 MiB artifact-size bound of the hardening and exports result schemas. max_file_bytes, a per-call parameter with details.limit, bounds what the readers read."
+    }
+  },
+  "src/rust/RustBinaryProvider.ts": {
+    "\"The WebAssembly section-walk allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
+    },
+    "\"This Rust dependency parser allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
+    },
+    "\"This native container parser allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
+    }
+  },
+  "src/signals/SigrokRecordingProvider.ts": {
+    "\"The sigrok decoder-discovery line allowance\"": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "sigrok decoder-discovery line capture is a producer budget."
+    }
+  },
+  "src/sqlite/SqliteDatabaseFailures.ts": {
+    "`The SQLite worker diagnostic capture allowance of ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)} bytes (this release has no runtime override; worker_timeout_ms does not raise it)`": {
+      "class": "pending",
+      "issue": 14237,
+      "reason": "SQLite worker diagnostic capture is a producer budget."
+    }
+  }
+}

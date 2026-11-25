@@ -19,10 +19,11 @@ import type { ProviderReleaseVerification } from "../../domain/providerReleaseVe
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
-  AnalysisUnsupportedTargetError,
   isAborted,
   cancelledBy,
   carriedReason,
+  AnalysisTargetFailureError,
+  targetFailureOfKind,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
@@ -56,6 +57,7 @@ import {
 import { withCandidateRejections } from "./AnalysisProviderCandidateDiagnostics.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { ownedProcessPrerequisiteAvailability } from "../../providers/ownedProcessAvailability.js";
+import { targetFailureRecovery } from "../../domain/targetFailure.js";
 
 /** Where a selected provider's choice came from; never a priority or fallback. */
 export type AnalysisProviderSelectionSource =
@@ -639,16 +641,20 @@ export class AnalysisProviderRegistry {
     // A selected provider refusing the target is a selection outcome that keeps the
     // refusal's reason, recovery and evidence; unconfirmed cleanup stays with the refusal.
     if (
-      refusal instanceof AnalysisUnsupportedTargetError &&
+      refusal instanceof AnalysisTargetFailureError &&
+      targetFailureOfKind(refusal, "unsupported", "unrecognized") !==
+        undefined &&
       !refusal.cleanupIncomplete
     )
       return err(
         selectionError("target_unsupported", providerId, statuses, {
           refusal: {
             userMessage: refusal.message,
-            ...(refusal.remediationAction === undefined
-              ? {}
-              : { remediationAction: refusal.remediationAction }),
+            remediationAction: targetFailureRecovery(
+              refusal.operation,
+              refusal.failure,
+              refusal.related,
+            ),
             capturedOutput: refusal.capturedOutput,
             diagnostics: refusal.diagnostics,
             partialObservation: refusal.partialObservation,

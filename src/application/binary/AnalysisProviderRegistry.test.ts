@@ -21,8 +21,8 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   AnalysisCancelledError,
+  unsupportedTarget,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import { LinuxOwnedProcessPrerequisiteError } from "../../process/ProcessOwnershipObservation.js";
@@ -1013,11 +1013,12 @@ const capability = (provider: ProviderIdentity): CapabilityDescriptor => ({
 describe("analysis provider registry: explicit profile refusals", () => {
   const reason = "The configured extension supports x86-64 only.";
   const selectWithRefusal = async (
-    options: ConstructorParameters<typeof AnalysisUnsupportedTargetError>[3],
+    options: Parameters<typeof unsupportedTarget>[4],
   ) => {
-    const refusal = new AnalysisUnsupportedTargetError(
+    const refusal = unsupportedTarget(
       "resolve_analysis_profile",
       DATABASE_TARGET.path,
+      "fixture",
       reason,
       options,
     );
@@ -1055,7 +1056,7 @@ describe("analysis provider registry: explicit profile refusals", () => {
       ),
     } as const;
     const { refusal, failure } = await selectWithRefusal({
-      remediationAction: "Omit the extension setting for this target.",
+      related: { operations: ["open_binary"] },
       capturedOutput,
       diagnostics: { extension: "fixture" },
       partialObservation: partial,
@@ -1065,7 +1066,11 @@ describe("analysis provider registry: explicit profile refusals", () => {
     expect(projectAnalysisError(failure)).toMatchObject({
       code: "capability_unavailable",
       message: refusal.message,
-      remediation: { action: "Omit the extension setting for this target." },
+      // The refusal's recovery comes from the target-failure table and names
+      // the operation the refusing provider points to.
+      remediation: {
+        action: expect.stringContaining("Use open_binary for this target."),
+      },
       details: {
         selection_reason: "target_unsupported",
         requested_provider_id: "ghidra",

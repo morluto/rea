@@ -61,6 +61,11 @@ that share one unambiguous file translation. It stops at the first slot that
 cannot be admitted, even if later slots map independently. Later import
 versions remain unexamined and coverage is `partial`.
 
+When a GNU version requirement or definition is located through its dynamic
+address alone, decoding stays inside the starting load's contiguous
+file-mapped prefix. A conflict later in that span leaves earlier complete
+records available and limits the reported range to the admitted bytes.
+
 A missing `PT_DYNAMIC` is an observed empty load-time dependency inventory. It
 is not proof another overlay or container carried dynamic linking metadata.
 `DT_*` entries are the load-time facts. A section header can locate a table
@@ -109,8 +114,10 @@ Omitted or `complete` detail returns the inventory inline. `detail: "summary"`
 retains the complete Evidence and returns identity, counts, and source
 coverage. Query `inspect_analysis_view` with `kind: "elf-dependencies"` and
 collection `needed`, `versions`, `definitions`, `maxima`, or `imports`, using
-exact names (namespaces for `maxima`) or original indices, selected fields, and
-matching-row pagination. Collection `issues` accepts original indices and
+exact names (namespaces for `maxima`), `name_prefixes` such as `["Py"]`, or
+original indices, selected fields, and matching-row pagination. With both
+`names` and `name_prefixes`, a row must match both. `coverage.total` counts
+every matching row, so `limit: 1` returns a count. Collection `issues` accepts original indices and
 pagination only; its rows are returned whole and have no name filter. Summaries and pages report
 version-definition and derived-maximum counts; those rows are paged through
 their own collections. CLI summary

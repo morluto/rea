@@ -47,17 +47,14 @@ cliTest(
         arguments: ["inspect-il2cpp-metadata", path, "--json"],
       });
       const expected = {
-        code: "invalid_request",
+        code: "unsupported_target",
         details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: expect.stringContaining(
-                `record-size-mismatch: section ${name}`,
-              ),
-            },
-          ],
+          path,
+          failure_kind: "malformed",
+          format: "il2cpp-metadata",
+          reason: expect.stringContaining(
+            `record-size-mismatch: section ${name}`,
+          ),
         },
       };
       expect(invalid.exitCode).toBe(1);

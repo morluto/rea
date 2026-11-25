@@ -1,3 +1,4 @@
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -285,8 +286,7 @@ export class SafeOutputTree {
     try {
       this.#assertWritable();
       if (!Number.isSafeInteger(expected.bytes) || expected.bytes < 0)
-        throw new ArtifactReaderFailure(
-          "format",
+        throw invariantViolation(
           `Invalid expected extraction size for ${relativePath}`,
         );
       const path = normalizeDestinationPath(relativePath, this.platform);

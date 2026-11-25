@@ -1,3 +1,4 @@
+import { EVMOLE_VERSION } from "./EvmoleProviderIdentity.js";
 import { createRequire } from "node:module";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -51,7 +52,7 @@ it("recovers complete EVMole worker evidence for the same carrier after raising 
   const recovered = await inspect(4096, 1);
   expect(recovered).toMatchObject({
     ok: true,
-    version: "0.9.3",
+    version: EVMOLE_VERSION,
     bytecode: {
       bytes: 5,
       hex: "60006000f3",
@@ -59,5 +60,8 @@ it("recovers complete EVMole worker evidence for the same carrier after raising 
   });
   // A larger resource budget does not change the explicitly selected encoding contract.
   await writeFile(snapshot, "0xzz");
-  expect(await inspect(4096, 2)).toMatchObject({ ok: false, reason: "format" });
+  expect(await inspect(4096, 2)).toMatchObject({
+    ok: false,
+    reason: "malformed",
+  });
 });

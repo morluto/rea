@@ -1,5 +1,9 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
@@ -48,6 +52,47 @@ type Selection<C extends MemberCollection, T extends Row, K extends keyof T> = {
   readonly identity: readonly K[];
   readonly name?: keyof T;
   readonly declaringType?: keyof T;
+  readonly cacheOwner?: object;
+};
+
+interface CollectionFilterIndex {
+  readonly byValue: ReadonlyMap<string, readonly number[]>;
+  readonly unresolved: number;
+}
+
+const managedViewIndexes = new WeakMap<
+  readonly object[],
+  Map<PropertyKey, CollectionFilterIndex>
+>();
+
+const getCollectionFilterIndex = <T extends Row>(
+  cacheOwner: object | undefined,
+  rows: readonly T[],
+  key: keyof T,
+): CollectionFilterIndex | undefined => {
+  if (cacheOwner === undefined || !isImmutableJsonSnapshot(cacheOwner))
+    return undefined;
+  let indexes = managedViewIndexes.get(rows);
+  if (indexes === undefined) {
+    indexes = new Map();
+    managedViewIndexes.set(rows, indexes);
+  }
+  const cached = indexes.get(key);
+  if (cached !== undefined) return cached;
+  const byValue = new Map<string, number[]>();
+  let unresolved = 0;
+  for (const [index, row] of rows.entries()) {
+    const value = row[key];
+    if (typeof value !== "string") unresolved += 1;
+    else {
+      const bucket = byValue.get(value);
+      if (bucket === undefined) byValue.set(value, [index]);
+      else bucket.push(index);
+    }
+  }
+  const built = { byValue, unresolved };
+  indexes.set(key, built);
+  return built;
 };
 
 const collectionPage = (
@@ -63,6 +108,7 @@ const collectionPage = (
           rows: report.types,
           identity: ["token", "row_offset"],
           name: "name",
+          cacheOwner: report,
         },
         view,
       );
@@ -73,6 +119,7 @@ const collectionPage = (
           rows: report.exported_types,
           identity: ["token", "row_offset"],
           name: "name",
+          cacheOwner: report,
         },
         view,
       );
@@ -84,6 +131,7 @@ const collectionPage = (
           identity: ["token", "row_offset", "declaring_type_token"],
           name: "name",
           declaringType: "declaring_type",
+          cacheOwner: report,
         },
         view,
       );
@@ -95,6 +143,7 @@ const collectionPage = (
           identity: ["token", "row_offset", "declaring_type_token"],
           name: "name",
           declaringType: "declaring_type",
+          cacheOwner: report,
         },
         view,
       );
@@ -106,6 +155,7 @@ const collectionPage = (
           identity: ["token", "row_offset", "parent_token"],
           name: "name",
           declaringType: "parent_name",
+          cacheOwner: report,
         },
         view,
       );
@@ -117,6 +167,7 @@ const collectionPage = (
           identity: ["caller_token", "il_offset", "target_token", "opcode"],
           name: "target_name",
           declaringType: "target_declaring_type",
+          cacheOwner: report,
         },
         view,
       );
@@ -128,6 +179,7 @@ const collectionPage = (
           identity: ["method_token", "il_offset", "field_token", "opcode"],
           name: "field_name",
           declaringType: "field_declaring_type",
+          cacheOwner: report,
         },
         view,
       );
@@ -190,6 +242,53 @@ const selectRows = <
   if (!filtering && fields === undefined)
     return sliceMemberRows(source.collection, source.rows, view);
   const selected: (Partial<T> & Pick<T, K> & { source_index: number })[] = [];
+  if (names?.size === 0 || declaringTypes?.size === 0)
+    return {
+      page: {
+        collection: source.collection,
+        rows: selected,
+        source_count: source.rows.length,
+        unresolved_filter_rows: 0,
+      },
+      total: 0,
+    };
+
+  const filterKey =
+    declaringTypes === undefined
+      ? source.name
+      : names === undefined
+        ? source.declaringType
+        : undefined;
+  const filter = names ?? declaringTypes;
+  if (filterKey !== undefined && filter?.size === 1) {
+    const index = getCollectionFilterIndex(
+      source.cacheOwner,
+      source.rows,
+      filterKey,
+    );
+    const value = filter.values().next().value;
+    if (index !== undefined && value !== undefined) {
+      const matches = index.byValue.get(value) ?? [];
+      const end = Math.min(view.offset + view.limit, matches.length);
+      for (let ordinal = view.offset; ordinal < end; ordinal += 1) {
+        const rowIndex = matches[ordinal]!;
+        selected.push(
+          projectRow(source.rows[rowIndex]!, rowIndex, fields, source.identity),
+        );
+      }
+      return {
+        page: {
+          collection: source.collection,
+          rows: selected,
+          source_count: source.rows.length,
+          unresolved_filter_rows: index.unresolved,
+        },
+        total: matches.length,
+      };
+    }
+  }
+  // Combined and multi-value filters count matches in a single source-order
+  // scan, with temporary storage bounded by the requested page.
   const start = filtering ? 0 : Math.min(view.offset, source.rows.length);
   const end = filtering
     ? source.rows.length
@@ -322,15 +421,8 @@ export const projectManagedMemberView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "managed-members")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Managed member inspection supports summary and managed-members views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Managed member inspection supports summary and managed-members views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof managedMembersViewRequestSchema>

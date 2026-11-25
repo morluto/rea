@@ -18,6 +18,7 @@ import type { Readable } from "node:stream";
 import type {
   ArtifactCommand,
   ArtifactInventoryCoverage,
+  ArtifactLinkTarget,
   ArtifactTraversalOmissionKind,
 } from "../domain/artifactGraph.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
@@ -27,6 +28,7 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { LimitRef } from "../domain/parseFailure.js";
+import type { FormatTargetFailure } from "../domain/targetFailure.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
@@ -48,6 +50,11 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   readonly fixedAllowance?: ArtifactFixedLimit;
   /** For an `integrity` failure, the check that failed, when the reader names it. */
   readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
+  /**
+   * For a `malformed`, `truncated` or `unsupported` failure, the format
+   * owner's facts. Set by {@link artifactFormatFailure}.
+   */
+  readonly parseFailure?: FormatTargetFailure | undefined;
 }
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
@@ -68,6 +75,8 @@ export interface ArtifactEntry {
   readonly unpacked: boolean;
   readonly limitations: readonly string[];
   readonly adapterKey: string;
+  /** A symlink's stored target, when the adapter read it; never followed. */
+  readonly linkTarget?: ArtifactLinkTarget;
   /** Filesystem identity captured during traversal, when supplied by an adapter. */
   readonly sourceIdentity?: {
     readonly device: bigint;
@@ -111,6 +120,9 @@ export const copyArtifactEntry = (entry: ArtifactEntry): ArtifactEntry => ({
   ...(entry.sourceIdentity === undefined
     ? {}
     : { sourceIdentity: { ...entry.sourceIdentity } }),
+  ...(entry.linkTarget === undefined
+    ? {}
+    : { linkTarget: { ...entry.linkTarget } }),
 });
 
 /**
@@ -235,9 +247,15 @@ export interface ArtifactReader {
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
+    | "tar"
+    | "dds"
+    | "glb"
+    | "ktx"
+    | "ktx2"
     | "uimage"
     | "android-boot-image"
     | "android-ota-payload"
+    | "iso9660"
     | "uefi"
     | "pyinstaller"
     | "dotnet-bundle"
@@ -277,7 +295,9 @@ export type CleanupFailedRead = ArtifactReaderFailure & {
 };
 
 /** Why an artifact reader failed. */
-export type ArtifactReaderFailureReason = ArtifactOperationError["reason"];
+export type ArtifactReaderFailureReason =
+  | ArtifactOperationError["reason"]
+  | FormatTargetFailure["kind"];
 
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
@@ -294,6 +314,7 @@ export class ArtifactReaderFailure extends Error {
   readonly parserLimit: LimitRef | undefined;
   readonly fixedAllowance: ArtifactFixedLimit | undefined;
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
+  readonly parseFailure: FormatTargetFailure | undefined;
 
   /** An `integrity` failure names the check that failed. */
   constructor(
@@ -304,8 +325,20 @@ export class ArtifactReaderFailure extends Error {
     },
     details?: ArtifactIntegrityDetails,
   );
+  /** A format owner's refusal carries the owner's facts. */
   constructor(
-    reason: Exclude<ArtifactReaderFailureReason, "integrity">,
+    reason: FormatTargetFailure["kind"],
+    message: string,
+    options: ArtifactReaderFailureOptions & {
+      readonly parseFailure: FormatTargetFailure;
+    },
+    details?: ArtifactIntegrityDetails,
+  );
+  constructor(
+    reason: Exclude<
+      ArtifactReaderFailureReason,
+      "integrity" | FormatTargetFailure["kind"]
+    >,
     message: string,
     options?: ArtifactReaderFailureOptions,
     details?: ArtifactIntegrityDetails,
@@ -346,6 +379,12 @@ export class ArtifactReaderFailure extends Error {
     this.parserLimit = options?.parserLimit;
     this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
+    this.parseFailure =
+      reason === "malformed" ||
+      reason === "truncated" ||
+      reason === "unsupported"
+        ? options?.parseFailure
+        : undefined;
   }
 
   /**
@@ -361,6 +400,7 @@ export class ArtifactReaderFailure extends Error {
     | "readerLimit"
     | "parserLimit"
     | "fixedAllowance"
+    | "parseFailure"
   > & { readonly integrityCheck: ArtifactIntegrityCheck | undefined } {
     return {
       ...(this.userMessage === undefined
@@ -380,6 +420,9 @@ export class ArtifactReaderFailure extends Error {
       ...(this.fixedAllowance === undefined
         ? {}
         : { fixedAllowance: this.fixedAllowance }),
+      ...(this.parseFailure === undefined
+        ? {}
+        : { parseFailure: this.parseFailure }),
       integrityCheck: this.integrityCheck,
     };
   }
@@ -482,6 +525,102 @@ export const artifactFixedLimitFailure = (
     userMessage: outcome,
     fixedAllowance: allowance,
   });
+
+/** Where in the format a structure failed, when the reader knows it. */
+export interface ArtifactFormatSite extends Omit<
+  ArtifactReaderFailureOptions,
+  "parseFailure"
+> {
+  readonly offset?: number;
+  readonly field?: string;
+}
+
+/** A truncated structure's measured extents, when the reader measured them. */
+export interface ArtifactTruncationSite extends ArtifactFormatSite {
+  readonly availableBytes?: number;
+  readonly requiredBytes?: number;
+}
+
+/**
+ * A container reader's byte-structure failure, raised once by the reader that
+ * owns `format`. The reason is the failure's own kind, so no consumer has to
+ * reinterpret the message.
+ */
+export const artifactFormatFailure = (
+  failure: FormatTargetFailure,
+  options: Omit<ArtifactReaderFailureOptions, "parseFailure"> = {},
+): ArtifactReaderFailure =>
+  new ArtifactReaderFailure(failure.kind, failure.detail, {
+    ...options,
+    parseFailure: failure,
+  });
+
+const located = (offset: number | undefined, field: string | undefined) => ({
+  ...(offset === undefined ? {} : { offset }),
+  ...(field === undefined ? {} : { field }),
+});
+
+/** The bytes break `format`'s own rules. */
+export const malformedArtifact = (
+  format: string,
+  detail: string,
+  { offset, field, ...options }: ArtifactFormatSite = {},
+): ArtifactReaderFailure =>
+  artifactFormatFailure(
+    { kind: "malformed", format, detail, ...located(offset, field) },
+    options,
+  );
+
+/**
+ * The bytes use a form outside what this reader of `format` decodes.
+ * `undecodedContent` says the input holds the content in that form.
+ */
+export const unsupportedArtifact = (
+  format: string,
+  detail: string,
+  {
+    offset,
+    field,
+    undecodedContent = false,
+    ...options
+  }: ArtifactFormatSite & { readonly undecodedContent?: boolean } = {},
+): ArtifactReaderFailure =>
+  artifactFormatFailure(
+    {
+      kind: "unsupported",
+      format,
+      detail,
+      undecodedContent,
+      ...located(offset, field),
+    },
+    options,
+  );
+
+/** The bytes end before a structure `format` declares. */
+export const truncatedArtifact = (
+  format: string,
+  detail: string,
+  {
+    offset,
+    field,
+    availableBytes,
+    requiredBytes,
+    ...options
+  }: ArtifactTruncationSite = {},
+): ArtifactReaderFailure =>
+  artifactFormatFailure(
+    {
+      kind: "truncated",
+      format,
+      detail,
+      ...located(offset, field),
+      // The model carries the measured end only as a complete pair.
+      ...(availableBytes === undefined || requiredBytes === undefined
+        ? {}
+        : { extent: { availableBytes, requiredBytes } }),
+    },
+    options,
+  );
 
 const combineCleanup = (
   primary: AnalysisCleanupObservation | undefined,

@@ -1,6 +1,7 @@
 import { COMPARE_WASM_INTERFACES_CONTRACT } from "./wasmComparisonContracts.js";
 import {
   inspectWasmArtifactInputSchema,
+  WABT_RELEASE_LINE,
   wasmArtifactSchema,
 } from "../../domain/wasm/wasmArtifact.js";
 import type { ToolContract } from "../toolContractTypes.js";
@@ -30,8 +31,7 @@ export const INSPECT_WASM_ARTIFACT_CONTRACT = {
   ),
   kind: "artifact-provider",
   requiresActiveTarget: true,
-  description:
-    "Validate and inspect local WASM with caller-supplied WABT 1.0.42, without executing it or fetching dependencies. Returns artifact SHA-256, sections, import/export WAT forms and decoded WAT; custom-section interpretation warnings do not invalidate the core module. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind wasm using normalized_result.parent_evidence_id, with import/export rows or UTF-16 WAT pages. Delivery does not change analysis. Optional JavaScript glue associations preserve ambiguous candidates. Configure absolute REA_WABT_BIN_DIRECTORY. Per-call command_timeout_ms, input/tool/output, interface-precision and auxiliary-path budgets are independent; reported limit errors identify the control to adjust. No installation or original-source claim.",
+  description: `Validate and inspect local WASM with caller-supplied ${WABT_RELEASE_LINE}, without executing it or fetching dependencies. Returns artifact SHA-256, sections, import/export WAT forms and decoded WAT; custom-section interpretation warnings do not invalidate the core module. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind wasm using normalized_result.parent_evidence_id, with import/export rows or UTF-16 WAT pages. Delivery does not change analysis. Optional JavaScript glue associations preserve ambiguous candidates. Configure absolute REA_WABT_BIN_DIRECTORY. Per-call command_timeout_ms, input/tool/output, interface-precision and auxiliary-path budgets are independent; reported limit errors identify the control to adjust. No installation or original-source claim.`,
   inputSchema: wasmArtifactInspectionInputSchema,
   outputSchema: analysisDetailOutputSchemaOf(
     wasmArtifactSchema,

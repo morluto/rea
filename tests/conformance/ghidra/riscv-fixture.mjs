@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -9,7 +9,13 @@ import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
-/** One build per float ABI the lane verifies. */
+const FLOAT_ABI_SOURCES = [
+  "../c/riscv-float-abi.c",
+  "./riscv-probe.S",
+  "./riscv-isa-probe.S",
+];
+
+/** One build per float ABI the lane verifies, plus ESP-IDF's flash layout. */
 const BUILDS = {
   double: {
     sources: ["../c/riscv.c", "./riscv-probe.S"],
@@ -19,14 +25,63 @@ const BUILDS = {
   },
   // ESP-IDF's ESP32-C2 and C3 base string, built ilp32 as ESP-IDF does.
   soft: {
-    sources: [
-      "../c/riscv-float-abi.c",
-      "./riscv-probe.S",
-      "./riscv-isa-probe.S",
-    ],
+    sources: FLOAT_ABI_SOURCES,
     march: () => "rv32imc_zicsr_zifencei",
     mabi: () => "ilp32",
     flags: 1,
+  },
+  // ESP-IDF 5.5's ESP32-H4 base string, built ilp32f as ESP-IDF does.
+  single: {
+    sources: FLOAT_ABI_SOURCES,
+    march: () => "rv32imafc_zicsr_zifencei",
+    mabi: () => "ilp32f",
+    flags: 3,
+  },
+  // The same build with the shapes __rea_ilp32f cannot express.
+  unmodelled: {
+    sources: [...FLOAT_ABI_SOURCES, "../c/riscv-float-abi-empty.cpp"],
+    march: () => "rv32imafc_zicsr_zifencei",
+    mabi: () => "ilp32f",
+    defines: ["REA_RISCV_ABI_UNMODELLED"],
+    flags: 3,
+  },
+  // ESP-IDF's ESP32-C6 base string and flash layout: the NOBITS
+  // .flash_rodata_dummy reserves .flash.text's addresses.
+  esp: {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-shared-window.ld",
+  },
+  // The same image with the reservation first in the section table.
+  "esp-reservation-first": {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-reservation-first.ld",
+  },
+  // The same image with the reservation named like the default address space.
+  "esp-reservation-named-ram": {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-reservation-named-ram.ld",
+  },
+  // The same image with the reservation and a disjoint section named like the
+  // preparation's temporary blocks.
+  "esp-edge-names": {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-edge-names.ld",
   },
 };
 
@@ -37,7 +92,7 @@ const readerOptions = {
 };
 
 /** Independent reading of LLVM readelf's `-h -l -S -s -A` report. */
-const readRiscvElf = async (reader, path, floatAbi, run = execute) => {
+const readRiscvElf = async (reader, path, run = execute) => {
   const { stdout, stderr } = await run(
     reader,
     ["-h", "-l", "-S", "-s", "-A", "-W", path],
@@ -51,15 +106,17 @@ const readRiscvElf = async (reader, path, floatAbi, run = execute) => {
   };
   const sections = [
     ...stdout.matchAll(
-      /^\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+([\da-f]+)\s+([\da-f]+)\s+([\da-f]+)\s+[\da-f]+\s+(\S*)\s+\d+\s+\d+\s+\d+\s*$/gmu,
+      /^\s*\[\s*(\d+)\]\s+(\S+)\s+(\S+)\s+([\da-f]+)\s+([\da-f]+)\s+([\da-f]+)\s+[\da-f]+\s+(\S*)\s+\d+\s+\d+\s+\d+\s*$/gmu,
     ),
-  ].map(([, name, type, address, offset, size, flags]) => ({
+  ].map(([, index, name, type, address, offset, size, flags]) => ({
+    index: Number(index),
     name,
     type,
     address: Number.parseInt(address, 16),
     offset: Number.parseInt(offset, 16),
     size: Number.parseInt(size, 16),
     allocated: flags.includes("A"),
+    executable: flags.includes("X"),
   }));
   assert.ok(sections.length > 0, "Missing readelf section table");
   // LLVM readelf prints each attribute as Tag, TagName and Value lines.
@@ -82,7 +139,49 @@ const readRiscvElf = async (reader, path, floatAbi, run = execute) => {
       base: declared[2],
       extensions: tokens.map((token) => /^(.*?)(?:\d+p\d+)?$/u.exec(token)[1]),
     },
-    floatAbi,
+  };
+};
+
+/** REA's section-overlap fact, recomputed from LLVM readelf's section table. */
+const sectionOverlapOf = (sections) => {
+  const hex = (value) => `0x${value.toString(16)}`;
+  const allocated = sections.filter(
+    (section) => section.allocated && section.size > 0,
+  );
+  const pairs = allocated
+    .filter((code) => code.executable && code.type === "PROGBITS")
+    .flatMap((code) =>
+      allocated
+        .filter(
+          (other) =>
+            other !== code &&
+            code.address < other.address + other.size &&
+            other.address < code.address + code.size,
+        )
+        .map((other) => [code, other]),
+    );
+  if (pairs.length === 0) return { status: "none" };
+  assert.equal(pairs.length, 1, "A fixture declares more than one overlap");
+  const [[code, reservation]] = pairs;
+  assert.equal(reservation.type, "NOBITS");
+  assert.equal(reservation.executable, false);
+  assert.equal(reservation.address, code.address);
+  assert.ok(reservation.size >= code.size);
+  return {
+    status: "code-reservation",
+    code: {
+      index: code.index,
+      name: code.name,
+      address: hex(code.address),
+      size: hex(code.size),
+      offset: hex(code.offset),
+    },
+    reservation: {
+      index: reservation.index,
+      name: reservation.name,
+      address: hex(reservation.address),
+      size: hex(reservation.size),
+    },
   };
 };
 
@@ -91,19 +190,22 @@ const sha256 = async (path) =>
     .update(await readFile(path))
     .digest("hex");
 
-/** Build and independently inspect a source-owned ELF; never execute it. */
+/**
+ * Build and independently inspect a source-owned ELF; never execute it. The
+ * variant is a float ABI, or `unmodelled` for the refused single-float build.
+ */
 export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
   const {
-    floatAbi = "double",
+    variant = "double",
     pie = false,
     execute: run = execute,
   } = typeof buildOptions === "string"
-    ? { floatAbi: buildOptions }
+    ? { variant: buildOptions }
     : buildOptions;
   assert.ok(bits === 32 || bits === 64);
-  const build = BUILDS[floatAbi];
-  assert.ok(build !== undefined, `No ${floatAbi}-float RISC-V fixture`);
-  assert.ok(floatAbi === "double" || bits === 32);
+  const build = BUILDS[variant];
+  assert.ok(build !== undefined, `No ${variant} RISC-V fixture`);
+  assert.ok(variant === "double" || bits === 32);
   const compiler = fixtureCommand(FIXTURE_TOOLS.riscvClang);
   const linker = fixtureCommand(FIXTURE_TOOLS.riscvLinker);
   const reader = fixtureCommand(FIXTURE_TOOLS.riscvReadelf);
@@ -112,7 +214,7 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
   );
   const path = join(
     directory,
-    `rv${bits}${floatAbi === "double" ? "" : `-${floatAbi}`}${pie ? "-pie" : ""}.elf`,
+    `rv${bits}${variant === "double" ? "" : `-${variant}`}${pie ? "-pie" : ""}.elf`,
   );
   const interpreter =
     bits === 32
@@ -129,8 +231,16 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
       : ["-static", "-fno-pic"]),
     "-O0",
     "-g",
-    "-Wl,-e,rea_riscv_entry",
+    `-Wl,-e,${build.entry ?? "rea_riscv_entry"}`,
     "-Wl,--build-id=none",
+    ...(build.defines ?? []).map((name) => `-D${name}`),
+    ...(build.linkerScript === undefined
+      ? []
+      : [
+          `-Wl,-T,${fileURLToPath(new URL(build.linkerScript, import.meta.url))}`,
+          // ESP-IDF's reservation overlaps the code it reserves by design.
+          "-Wl,--no-check-sections",
+        ]),
     ...sources,
     "-o",
     path,
@@ -140,7 +250,7 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
   const linkerVersion = await run(linker, ["--version"], options);
   const readerVersion = await run(reader, ["--version"], options);
   await run(compiler, args, { ...options, timeout: 60000 });
-  const elf = await readRiscvElf(reader, path, floatAbi, run);
+  const elf = await readRiscvElf(reader, path, run);
   assert.equal(elf.class, `ELF${bits}`);
   assert.match(elf.data, /little endian/u);
   assert.match(elf.type, pie ? /^DYN\b/u : /^EXEC\b/u);
@@ -161,7 +271,7 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
   assert.equal(
     elf.flags,
     build.flags,
-    `Compiler did not declare RVC and the ${floatAbi}-float ABI`,
+    `Compiler did not declare RVC and the ${variant} build's float ABI`,
   );
   assert.equal(elf.isa.xlen, bits);
   // Every source-owned global; the verifier asserts the ones it needs.
@@ -172,7 +282,19 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
     assert.equal(symbols[name], undefined, `Ambiguous readelf symbol ${name}`);
     symbols[name] = `0x${BigInt(`0x${value}`).toString(16)}`;
   }
+  // Linker-script symbols, with the section index or ABS that readelf reports.
+  const linkerSymbols = {};
+  for (const [, value, section, name] of elf.stdout.matchAll(
+    /^\s*\d+:\s+([\da-f]+)\s+0\s+NOTYPE\s+GLOBAL\s+\S+\s+(ABS|\d+)\s+(_\w+)\s*$/gmu,
+  )) {
+    assert.equal(linkerSymbols[name], undefined, `Ambiguous symbol ${name}`);
+    linkerSymbols[name] = {
+      address: `0x${BigInt(`0x${value}`).toString(16)}`,
+      section: section === "ABS" ? section : Number(section),
+    };
+  }
   return {
+    variant,
     path,
     sha256: await sha256(path),
     riscv: {
@@ -182,8 +304,10 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
       flags: elf.flags,
       isa: elf.isa,
       ...(pie ? { hasInterpreter: true } : {}),
+      sectionOverlap: sectionOverlapOf(elf.sections),
     },
     symbols,
+    linkerSymbols,
     sections: elf.sections,
     toolchain: {
       compiler: { command: compiler, version: compilerVersion.stdout.trim() },
@@ -220,12 +344,7 @@ export async function stripRiscvFixture(directory, typed, run = execute) {
     timeout: 60000,
     maxBuffer: 1024 * 1024,
   });
-  const elf = await readRiscvElf(
-    typed.toolchain.reader.command,
-    path,
-    "soft",
-    run,
-  );
+  const elf = await readRiscvElf(typed.toolchain.reader.command, path, run);
   assert.equal(elf.flags, typed.riscv.flags);
   assert.deepEqual(elf.isa, typed.riscv.isa);
   assert.ok(
@@ -261,5 +380,158 @@ export async function stripRiscvFixture(directory, typed, run = execute) {
     stripped: true,
     sections: elf.sections,
     toolchain: { ...typed.toolchain, arguments: args },
+  };
+}
+
+const DW_AT_language = 0x13;
+const DW_TAG_compile_unit = 0x11;
+/** Fixed value sizes of the DWARF 4 and 5 forms a 32-bit unit may use. */
+const FIXED_FORM_BYTES = new Map([
+  [0x05, 2],
+  [0x06, 4],
+  [0x07, 8],
+  [0x0b, 1],
+  [0x0c, 1],
+  [0x0e, 4],
+  [0x10, 4],
+  [0x11, 1],
+  [0x12, 2],
+  [0x13, 4],
+  [0x14, 8],
+  [0x17, 4],
+  [0x19, 0],
+  [0x1c, 4],
+  [0x1d, 4],
+  [0x1e, 16],
+  [0x1f, 4],
+  [0x20, 8],
+  [0x21, 0],
+  [0x25, 1],
+  [0x26, 2],
+  [0x27, 3],
+  [0x28, 4],
+  [0x29, 1],
+  [0x2a, 2],
+  [0x2b, 3],
+  [0x2c, 4],
+]);
+// Forms whose value is one ULEB128 or SLEB128 number.
+const LEB_FORMS = new Set([0x0d, 0x0f, 0x15, 0x1a, 0x1b, 0x22, 0x23]);
+// Forms whose ULEB128 length precedes that many bytes.
+const BLOCK_FORMS = new Set([0x09, 0x18]);
+
+const leb = (bytes, at, end) => {
+  let value = 0;
+  let shift = 0;
+  for (let cursor = at; cursor < end; cursor += 1) {
+    value += (bytes[cursor] & 0x7f) * 2 ** shift;
+    shift += 7;
+    if ((bytes[cursor] & 0x80) === 0) return { value, next: cursor + 1 };
+    assert.ok(shift < 49, "DWARF LEB128 value is too long");
+  }
+  assert.fail("Truncated DWARF LEB128 value");
+};
+
+/**
+ * Rewrite the DW_AT_language of every C compile unit, so the same code reads
+ * as another language; assembly units keep theirs. Only 32-bit DWARF 4 and 5
+ * units with a data1 or data2 language are rewritten, and any other shape
+ * fails, because each value offset is computed from the unit's abbreviations.
+ */
+export async function relabelRiscvFixtureLanguage(directory, typed, language) {
+  const path = join(
+    directory,
+    typed.path.split("/").at(-1).replace(".elf", `-lang-${language}.elf`),
+  );
+  const bytes = Buffer.from(await readFile(typed.path));
+  const section = (name) => {
+    const found = typed.sections.filter((value) => value.name === name);
+    assert.equal(found.length, 1, `Fixture has no single ${name} section`);
+    const [{ offset, size }] = found;
+    assert.ok(offset + size <= bytes.length, `${name} lies outside the file`);
+    return { start: offset, end: offset + size };
+  };
+  const info = section(".debug_info");
+  const abbrev = section(".debug_abbrev");
+  /** The attribute forms of the compile-unit abbreviation at this offset. */
+  const unitForms = (offset, code) => {
+    let at = abbrev.start + offset;
+    for (;;) {
+      const entry = leb(bytes, at, abbrev.end);
+      assert.notEqual(entry.value, 0, "Compile-unit abbreviation not found");
+      const tag = leb(bytes, entry.next, abbrev.end);
+      at = tag.next + 1; // DW_CHILDREN_*
+      const attributes = [];
+      for (;;) {
+        const name = leb(bytes, at, abbrev.end);
+        const form = leb(bytes, name.next, abbrev.end);
+        at = form.next;
+        if (form.value === 0x21) at = leb(bytes, at, abbrev.end).next;
+        if (name.value === 0 && form.value === 0) break;
+        attributes.push({ name: name.value, form: form.value });
+      }
+      if (entry.value === code) {
+        assert.equal(tag.value, DW_TAG_compile_unit, "First DIE is not a unit");
+        return attributes;
+      }
+    }
+  };
+  const relabelled = [];
+  for (let unit = info.start; unit < info.end;) {
+    const length = bytes.readUInt32LE(unit);
+    assert.ok(length < 0xfffffff0, "64-bit DWARF units are not rewritten");
+    const end = unit + 4 + length;
+    assert.ok(end <= info.end, "DWARF unit overruns .debug_info");
+    const version = bytes.readUInt16LE(unit + 4);
+    assert.ok(version === 4 || version === 5, `DWARF ${version} unit`);
+    const abbrevOffset = bytes.readUInt32LE(unit + (version === 5 ? 8 : 6));
+    const addressSize = bytes[unit + (version === 5 ? 7 : 10)];
+    if (version === 5)
+      assert.equal(
+        bytes[unit + 6],
+        1,
+        "Only DW_UT_compile units are rewritten",
+      );
+    let at = unit + (version === 5 ? 12 : 11);
+    const code = leb(bytes, at, end);
+    at = code.next;
+    for (const { name, form } of unitForms(abbrevOffset, code.value)) {
+      if (name === DW_AT_language) {
+        assert.ok(
+          form === 0x0b || form === 0x05,
+          `DW_AT_language form ${form}`,
+        );
+        const read = form === 0x0b ? bytes[at] : bytes.readUInt16LE(at);
+        // C89, C, C99, C11 and C17; assembly (0x8001) keeps its label.
+        if ([0x01, 0x02, 0x0c, 0x1d, 0x2c].includes(read)) {
+          assert.ok(form === 0x05 || language <= 0xff, "Language does not fit");
+          if (form === 0x0b) bytes[at] = language;
+          else bytes.writeUInt16LE(language, at);
+          relabelled.push({ unit: unit - info.start, from: read });
+        }
+        break;
+      }
+      if (form === 0x01) at += addressSize;
+      else if (form === 0x08) at = bytes.indexOf(0, at) + 1;
+      else if (form === 0x0a) at += 1 + bytes[at];
+      else if (LEB_FORMS.has(form)) at = leb(bytes, at, end).next;
+      else if (BLOCK_FORMS.has(form)) {
+        const size = leb(bytes, at, end);
+        at = size.next + size.value;
+      } else {
+        assert.ok(FIXED_FORM_BYTES.has(form), `Unhandled DWARF form ${form}`);
+        at += FIXED_FORM_BYTES.get(form);
+      }
+      assert.ok(at > 0 && at <= end, "DWARF attribute overruns its unit");
+    }
+    unit = end;
+  }
+  assert.ok(relabelled.length > 0, "Fixture has no C compile unit to relabel");
+  await writeFile(path, bytes);
+  return {
+    ...typed,
+    path,
+    sha256: await sha256(path),
+    relabelled: { language, units: relabelled },
   };
 }

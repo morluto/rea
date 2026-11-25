@@ -424,7 +424,7 @@ cliTest(
         });
         expect(reply.exitCode, reply.stdout + reply.stderr).toBe(1);
         expect(reply.json).toMatchObject({
-          code: "truncated",
+          code: "partial",
           retryable: true,
           details: {
             reason: "limit",

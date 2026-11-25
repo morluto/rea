@@ -1,7 +1,7 @@
+import { expectResultValue } from "../../tests/support/expectResultValue.js";
 import { describe, expect, it } from "vitest";
 
 import {
-  ClientConfigurationShapeError,
   clientConfigurationSyntaxName,
   parseClientConfiguration,
   shadowedClientServers,
@@ -16,16 +16,11 @@ describe("parseClientConfiguration shape diagnostics", () => {
     ["array server table", '{"mcpServers":[],"keep":1}', "mcpServers"],
     ["string server table", '{"mcpServers":"x","keep":1}', "mcpServers"],
   ])("reports a non-object %s", (_label, text, location) => {
-    let error: unknown;
-    try {
-      parseClientConfiguration(text, "json");
-    } catch (cause: unknown) {
-      error = cause;
-    }
-    expect(error).toBeInstanceOf(ClientConfigurationShapeError);
-    if (!(error instanceof Error)) throw new Error("Expected shape error");
-    expect(error.message).toContain(location);
-    expect(error.message).toContain("object");
+    const result = parseClientConfiguration(text, "json");
+    expect(result).toMatchObject({ ok: false, error: { kind: "shape" } });
+    if (result.ok) throw new Error("Expected shape error");
+    expect(result.error.detail).toContain(location);
+    expect(result.error.detail).toContain("object");
   });
 
   // The diagnostic syntax name must describe what the reader actually admits.
@@ -49,14 +44,8 @@ describe("parseClientConfiguration shape diagnostics", () => {
     ["hermes", "YAML"],
   ] as const)("names %s configuration syntax %s", (format, name) => {
     expect(clientConfigurationSyntaxName(format)).toBe(name);
-    const accepts = (text: string): boolean => {
-      try {
-        parseClientConfiguration(text, format);
-        return true;
-      } catch {
-        return false;
-      }
-    };
+    const accepts = (text: string): boolean =>
+      parseClientConfiguration(text, format).ok;
     if (name === "TOML") expect(accepts("keep = 1\n")).toBe(true);
     if (name === "YAML") expect(accepts("keep: 1\n")).toBe(true);
     if (name === "JSON" || name === "JSONC") {
@@ -66,16 +55,19 @@ describe("parseClientConfiguration shape diagnostics", () => {
     }
   });
 
-  it("still rejects unparsable JSON with SyntaxError", () => {
-    expect(() => parseClientConfiguration("not-json", "json")).toThrow(
-      SyntaxError,
-    );
+  it("reports the syntax failure for unparsable JSON", () => {
+    expect(parseClientConfiguration("not-json", "json")).toMatchObject({
+      ok: false,
+      error: { kind: "syntax", cause: expect.any(SyntaxError) },
+    });
   });
 
   it("reports only duplicates in the effective server object", () => {
     const owned = '{"command":"rea","args":["mcp"]}';
     const activeTable = `{"mcpServers":{"rea":null,"rea":${owned}}}`;
-    const active = parseClientConfiguration(activeTable, "json");
+    const active = expectResultValue(
+      parseClientConfiguration(activeTable, "json"),
+    );
     expect(shadowedClientServers(activeTable, active, "rea")).toEqual({
       servers: [null],
       legacyServers: [],
@@ -86,7 +78,9 @@ describe("parseClientConfiguration shape diagnostics", () => {
     const inactiveParent =
       `{"mcpServers":{"rea":{"command":"/usr/bin/false"}},` +
       `"mcpServers":{"rea":${owned}}}`;
-    const parsed = parseClientConfiguration(inactiveParent, "json");
+    const parsed = expectResultValue(
+      parseClientConfiguration(inactiveParent, "json"),
+    );
     expect(shadowedClientServers(inactiveParent, parsed, "rea")).toEqual({
       servers: [],
       legacyServers: [],

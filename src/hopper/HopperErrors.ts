@@ -256,23 +256,86 @@ export interface HopperRemoteErrorContext extends AnalysisErrorOptions {
   readonly diagnosticType?: HopperDiagnosticType | undefined;
   readonly operation?: string | undefined;
   readonly requestId?: number | undefined;
+  readonly selector?: HopperSelectorResolution | undefined;
 }
+
+/**
+ * How the bridge resolved a selector that named no procedure: an unknown name,
+ * a symbol or address outside every procedure, or the cursor.
+ */
+export type HopperSelectorResolution =
+  | { readonly value: string; readonly source: "unresolved" }
+  | {
+      readonly value: string;
+      readonly source: "symbol" | "address";
+      readonly address: string;
+    }
+  | {
+      readonly value: null;
+      readonly source: "cursor";
+      readonly address: string;
+    };
+
+interface HopperSelectorMissRecovery {
+  readonly remediation: string;
+  readonly operations: readonly string[];
+}
+
+/**
+ * The recovery for a selector miss, naming operations by contract name; each
+ * adapter renders its own spelling. A name Hopper resolves outside every
+ * procedure, such as an import address-table slot, is answered by `xrefs` on
+ * its address.
+ */
+const hopperSelectorMissRecovery = (
+  selector: HopperSelectorResolution | undefined,
+): HopperSelectorMissRecovery => {
+  const inventory =
+    "Choose an observed procedure name or entry address from the current Hopper document; search_procedures or list_procedures reports them.";
+  if (selector === undefined || selector.source === "unresolved")
+    return {
+      remediation: `${inventory} An inventory miss leaves the function's presence in the artifact unknown.`,
+      operations: ["search_procedures", "list_procedures"],
+    };
+  if (selector.source === "symbol")
+    return {
+      remediation: `Name ${selector.value} resolves to ${selector.address}, which is not inside a Hopper procedure, such as an import address-table slot or a data label. Only procedure_callers and incoming procedure_references answer such a symbol, with the procedures containing its references; xrefs with address ${selector.address} lists the referencing addresses.`,
+      operations: ["procedure_callers", "procedure_references", "xrefs"],
+    };
+  return {
+    remediation: `No Hopper procedure contains ${selector.address}. ${inventory} To list references to ${selector.address} itself, call xrefs with that address.`,
+    operations: ["search_procedures", "list_procedures", "xrefs"],
+  };
+};
 
 export class HopperRemoteError extends HopperError {
   readonly _tag = providerErrorTag("HopperRemoteError");
   readonly diagnosticType: HopperDiagnosticType;
   readonly operation: string | undefined;
   readonly requestId: number | undefined;
+  readonly selector: HopperSelectorResolution | undefined;
 
   constructor(
     readonly code: number,
     readonly safeMessage: string,
     context: HopperRemoteErrorContext = {},
   ) {
-    super(`Hopper request failed (${String(code)}): ${safeMessage}`, context);
-    this.diagnosticType = context.diagnosticType ?? "remote";
+    const diagnosticType = context.diagnosticType ?? "remote";
+    super(`Hopper request failed (${String(code)}): ${safeMessage}`, {
+      ...context,
+      related:
+        context.related ??
+        (diagnosticType === "selector_not_found"
+          ? {
+              operations: hopperSelectorMissRecovery(context.selector)
+                .operations,
+            }
+          : undefined),
+    });
+    this.diagnosticType = diagnosticType;
     this.operation = context.operation;
     this.requestId = context.requestId;
+    this.selector = context.selector;
   }
 
   override providerRequest(): ProviderRequestFailure {
@@ -288,6 +351,7 @@ export class HopperRemoteError extends HopperError {
           operation,
           requestId: this.requestId,
           diagnosticType: this.diagnosticType,
+          selector: this.selector,
         }),
     };
   }
@@ -298,7 +362,7 @@ export class HopperRemoteError extends HopperError {
       ...hopperRemoteClassification(this.diagnosticType),
       message: `Hopper ${this.operation ?? "analysis"} failed (${String(this.code)}, ${this.diagnosticType}): ${this.safeMessage}`,
       remediation: lookupMiss
-        ? "Choose an observed name or address from the current Hopper document. For procedures, use CLI rea search <path> . --kind procedures --mode regex --provider hopper or MCP list_procedures. For other symbols, use list_names."
+        ? hopperSelectorMissRecovery(this.selector).remediation
         : this.diagnosticType === "invalid_request"
           ? "Correct the reported address, document, or arguments and retry."
           : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.",
@@ -306,14 +370,8 @@ export class HopperRemoteError extends HopperError {
         stage: "analysis",
         provider_code: this.code,
         diagnostic_type: this.diagnosticType,
-        ...(lookupMiss
-          ? {
-              related_operations: [
-                "list_procedures",
-                "search_procedures",
-                "list_names",
-              ],
-            }
+        ...(lookupMiss && this.selector !== undefined
+          ? { selector: { ...this.selector } }
           : {}),
         ...(this.operation === undefined ? {} : { operation: this.operation }),
         ...(this.requestId === undefined ? {} : { request_id: this.requestId }),

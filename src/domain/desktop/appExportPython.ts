@@ -1,5 +1,6 @@
 import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
 import { ZIP_SIGNATURES } from "../zipPackageFormat.js";
+import { SQLITE_HEADER } from "../sqliteFormat.js";
 import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
@@ -92,7 +93,7 @@ KEYFILE_CONTROL_LINE = re.compile(${JSON.stringify(KEYFILE_CONTROL_LINE)})
 KEYFILE_ENTRY_LINE = re.compile(${JSON.stringify(KEYFILE_ENTRY_LINE)})
 LINE_BREAK = re.compile(${JSON.stringify(DESKTOP_LINE_BREAK)})
 ECMASCRIPT_TRIM_CHARACTERS = ${PYTHON_ECMASCRIPT_TRIM_CHARACTERS}
-SQLITE_HEADER = b"SQLite format 3\x00"
+SQLITE_HEADER = bytes(${JSON.stringify([...SQLITE_HEADER].map((character) => character.charCodeAt(0)))})
 GVDB_HEADER = b"GVariant"
 ZIP_SIGNATURES = (${ZIP_SIGNATURES.map((signature) => `bytes(${JSON.stringify(signature)})`).join(", ")})
 ZIP_HEADER = ZIP_SIGNATURES[0]

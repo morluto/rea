@@ -35,6 +35,8 @@ export const semanticNormalizeCapturedSelections = (
   selections: readonly SemanticCapturedSelection[] | undefined,
   pathLength?: number,
 ): readonly SemanticCapturedSelection[] | undefined => {
+  // Most sources carry no capture; skip the map and sort that would return none.
+  if (selections === undefined || selections.length === 0) return undefined;
   const byDepth = new Map<number, SemanticCapturedSelection>();
   for (const capture of selections ?? [])
     if (
@@ -53,7 +55,8 @@ export const semanticShiftCapturedSelections = (
   selections: readonly SemanticCapturedSelection[] | undefined,
   delta: number,
 ): readonly SemanticCapturedSelection[] | undefined => {
-  const shifted = selections?.flatMap((selection) =>
+  if (selections === undefined || selections.length === 0) return undefined;
+  const shifted = selections.flatMap((selection) =>
     selection.depth + delta > 0
       ? [{ ...selection, depth: selection.depth + delta }]
       : [],
@@ -106,7 +109,7 @@ export const hasFreshProjectedReceiver = (
     paths.add(key);
     examined.set(node, paths);
     if (++selections > state.precision.alias_selections) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return false;
     }
     if (current.path.length === 0) {
@@ -130,7 +133,7 @@ export const hasFreshProjectedReceiver = (
       selections + pending.length + sources.length >
       state.precision.alias_selections
     ) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return false;
     }
     pending.push(

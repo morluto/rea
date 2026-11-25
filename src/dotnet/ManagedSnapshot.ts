@@ -106,7 +106,10 @@ export const readManagedSnapshot = async (
       const signal = options.signal;
       if (metadata.size > maxBytes)
         throw managedSnapshotCapacityError(operation, maxBytes);
-      const bytes = await readBoundedFileBytes(handle, maxBytes, { signal });
+      const bytes = await readBoundedFileBytes(handle, maxBytes, {
+        signal,
+        expectedSize: metadata.size,
+      });
       if (bytes === undefined)
         throw managedSnapshotCapacityError(operation, maxBytes);
       signal?.throwIfAborted();
@@ -135,7 +138,7 @@ export const hashManagedSource = async (
         throw managedSnapshotCapacityError(operation, maxBytes);
       const digest = createHash("sha256");
       let byteLength = 0;
-      const chunk = Buffer.allocUnsafe(64 * 1024);
+      const chunk = Buffer.allocUnsafe(256 * 1024);
       for (;;) {
         signal?.throwIfAborted();
         const { bytesRead } = await handle.read(
