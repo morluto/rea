@@ -1,8 +1,11 @@
 import { z } from "zod";
 import {
   DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+  DEFAULT_CLI_RETAINED_EVIDENCE_BYTES,
   MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
+  MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES,
   MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+  MINIMUM_CLI_RETAINED_EVIDENCE_BYTES,
 } from "./analysisResourceLimits.js";
 import { currentAnalysisSettingOverride } from "./analysisOperationSnapshot.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -37,6 +40,40 @@ export const agentResultBudgetBytesSchema = z
       .min(MINIMUM_AGENT_RESULT_BUDGET_BYTES, { error: seedConstraint })
       .max(MAXIMUM_AGENT_RESULT_BUDGET_BYTES, { error: seedConstraint }),
   );
+
+/** Registered setting that bounds the CLI's retained over-budget Evidence. */
+export const CLI_RETAINED_EVIDENCE_SETTING =
+  "delivery.cli_retained_evidence_bytes" as const;
+
+/** Its launch seed; `0` turns CLI retention off. */
+export const CLI_RETAINED_EVIDENCE_ENVIRONMENT =
+  "REA_CLI_RETAINED_EVIDENCE_BYTES";
+
+const retentionConstraint = `${CLI_RETAINED_EVIDENCE_ENVIRONMENT} must be a decimal integer from ${String(MINIMUM_CLI_RETAINED_EVIDENCE_BYTES)} to ${String(MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES)} bytes; 0 turns retention off and the default is ${String(DEFAULT_CLI_RETAINED_EVIDENCE_BYTES)}.`;
+
+/** Launch seed admission for the retained CLI Evidence cache size. */
+export const cliRetainedEvidenceBytesSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d*)$/u, { error: retentionConstraint })
+  .transform(Number)
+  .pipe(
+    z
+      .int()
+      .min(MINIMUM_CLI_RETAINED_EVIDENCE_BYTES, { error: retentionConstraint })
+      .max(MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES, { error: retentionConstraint }),
+  );
+
+/**
+ * Total bytes the CLI may keep in its retained-Evidence cache: the default
+ * when the seed is unset, and 0 (off) for `0` or an invalid seed, so an
+ * invalid seed writes nothing, as before retention existed. Settings
+ * inspection and doctor report an invalid seed.
+ */
+export const cliRetainedEvidenceBytes = (seed: string | undefined): number => {
+  if (seed === undefined) return DEFAULT_CLI_RETAINED_EVIDENCE_BYTES;
+  const parsed = cliRetainedEvidenceBytesSchema.safeParse(seed);
+  return parsed.success ? parsed.data : 0;
+};
 
 /** The budget in force for this operation and where it came from. */
 export interface AgentResultBudget {
@@ -130,7 +167,10 @@ export const failureEnvelopeBytes = (failure: {
 export type AgentBudgetRecovery =
   | { readonly kind: "session" }
   | { readonly kind: "evidence-file"; readonly path: string | undefined }
-  | { readonly kind: "not-retained" };
+  /** The CLI's private retained-Evidence cache, by default. */
+  | { readonly kind: "cache-file"; readonly path: string }
+  /** Nothing was written; `reason` says why when retention was attempted. */
+  | { readonly kind: "not-retained"; readonly reason?: string };
 
 /**
  * Delivery facts for a result replaced by its summary. They describe the
@@ -166,6 +206,8 @@ export interface AgentBudgetDelivery {
     readonly complete: readonly string[];
     readonly retained: readonly string[];
   };
+  /** Why the CLI's default retention wrote nothing, when it was attempted. */
+  readonly retention_failure?: string;
   readonly note: string;
 }
 
@@ -183,7 +225,10 @@ const pageSource = (
 ): Readonly<Record<string, string>> | undefined => {
   if (recovery.kind === "session")
     return { kind: "retained-evidence", evidence_id: evidenceId };
-  if (recovery.kind === "evidence-file" && recovery.path !== undefined)
+  if (
+    (recovery.kind === "evidence-file" || recovery.kind === "cache-file") &&
+    recovery.path !== undefined
+  )
     return {
       kind: "evidence-file",
       path: recovery.path,
@@ -197,7 +242,9 @@ const recoveryNote = (recovery: AgentBudgetRecovery): string => {
     return `It is retained in this session: next pages its exact JSON through inspect_analysis_view (follow coverage.next_offset); the producer's own views select facts more cheaply. Pass detail complete for all of it inline, or raise ${AGENT_RESULT_BUDGET_SETTING} with update_analysis_settings.`;
   if (recovery.kind === "evidence-file")
     return "It is in the --evidence_output bundle: rea inspect-analysis-view with next.arguments pages its exact JSON. Pass --detail complete for all of it inline.";
-  return `This invocation selected no --evidence_output, so it was not retained and nothing was written: rerun the same command with rerun.complete (--detail complete) for all of it inline, or with rerun.retained (--evidence_output ${EVIDENCE_OUTPUT_PLACEHOLDER}) to save it for inspect-analysis-view.`;
+  if (recovery.kind === "cache-file")
+    return `It was saved to REA's private retained-Evidence cache, named by its Evidence ID: rea inspect-analysis-view with next.arguments pages its exact JSON. The cache keeps at most ${CLI_RETAINED_EVIDENCE_SETTING} bytes in total and removes records unused for 7 days. Pass --detail complete for all of it inline, --evidence_output <path> to save it elsewhere, or --no-retain to write nothing.`;
+  return `This invocation retained nothing and wrote nothing (no --evidence_output, and --no-retain, ${CLI_RETAINED_EVIDENCE_SETTING} 0, or a failed save named by retention_failure): rerun the same command with rerun.complete (--detail complete) for all of it inline, or with rerun.retained (--evidence_output ${EVIDENCE_OUTPUT_PLACEHOLDER}) to save it for inspect-analysis-view.`;
 };
 
 /**
@@ -236,6 +283,9 @@ export const agentBudgetDelivery = (input: {
           },
         }),
     ...(recovery.kind === "not-retained" ? { rerun: RERUN_ARGUMENTS } : {}),
+    ...(recovery.kind === "not-retained" && recovery.reason !== undefined
+      ? { retention_failure: recovery.reason }
+      : {}),
     note: `Complete ${input.operation} Evidence ${evidenceId} is ${String(completeBytes)} bytes (about ${String(estimatedJsonTokens(completeBytes))} tokens, estimated at ${String(ESTIMATED_JSON_BYTES_PER_TOKEN)} bytes per token), over the agent result budget of ${String(budget.bytes)} bytes (${AGENT_RESULT_BUDGET_SETTING}, source ${budget.source}), so its summary was delivered. Nothing was truncated. ${recoveryNote(recovery)}`,
   };
 };

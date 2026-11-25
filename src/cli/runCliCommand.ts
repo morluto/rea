@@ -1,4 +1,13 @@
-import { AGENT_RESULT_BUDGET_ENVIRONMENT } from "../domain/agentResultBudget.js";
+import {
+  AGENT_RESULT_BUDGET_ENVIRONMENT,
+  CLI_RETAINED_EVIDENCE_ENVIRONMENT,
+  cliRetainedEvidenceBytes,
+} from "../domain/agentResultBudget.js";
+import {
+  cliRetainedEvidenceDirectory,
+  NO_RETAIN_FLAG,
+  type CliEvidenceRetention,
+} from "./cliEvidenceRetention.js";
 import { Writable } from "node:stream";
 
 import {
@@ -19,7 +28,10 @@ import {
 } from "./argumentErrors.js";
 import { parseCliArgv } from "./argvParser.js";
 import { cliCommand, cliCommands } from "./commandRegistry.js";
-import { withCliEvidencePublication } from "./cliEvidencePublication.js";
+import {
+  withCliEvidencePublication,
+  type CliPublicationInvocation,
+} from "./cliEvidencePublication.js";
 import { rebindLoggedCliFailure } from "../cliLogging.js";
 import { RECORDED_CLI_COMMAND_REGISTRATIONS } from "../recordedCliCommandRegistrations.js";
 import { projectCliCommandOutput } from "./projectCliAnalysisResult.js";
@@ -66,6 +78,44 @@ const destinationFor = (options: CliServeOptions): Writable => {
   });
   return destination;
 };
+
+/**
+ * Where this invocation keeps an over-budget result it was not told to save:
+ * the private cache, unless --no-retain or a 0 setting turns that off, or the
+ * environment names no home to put it under.
+ */
+const invocationRetention = (
+  global: CliGlobalArguments,
+  environment: UpdateEnvironment,
+): CliEvidenceRetention | undefined => {
+  if (global.flags.has(NO_RETAIN_FLAG)) return undefined;
+  const capBytes = cliRetainedEvidenceBytes(
+    environment.variables[CLI_RETAINED_EVIDENCE_ENVIRONMENT],
+  );
+  if (capBytes === 0) return undefined;
+  try {
+    return {
+      directory: cliRetainedEvidenceDirectory(
+        environment.variables,
+        environment.platform,
+      ),
+      capBytes,
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+/** What this invocation's delivery reads from its argv and environment. */
+const publicationInvocation = (
+  global: CliGlobalArguments,
+  environment: UpdateEnvironment,
+  controls: ReturnType<typeof readCliOutputArguments>,
+): CliPublicationInvocation => ({
+  agentBudgetSeed: environment.variables[AGENT_RESULT_BUDGET_ENVIRONMENT],
+  hasFilterOutput: controls.filterOutput !== undefined,
+  retention: invocationRetention(global, environment),
+});
 
 /** Bind, admit and run one registered command, retaining output/publication ownership. */
 export const runCliCommand = async (
@@ -148,10 +198,7 @@ export const runCliCommand = async (
               cta,
             });
         }),
-      {
-        agentBudgetSeed: environment.variables[AGENT_RESULT_BUDGET_ENVIRONMENT],
-        hasFilterOutput: controls.filterOutput !== undefined,
-      },
+      publicationInvocation(global, environment, controls),
     );
     if (output.error !== undefined) exit(options, 1);
   } catch (cause: unknown) {

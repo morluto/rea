@@ -33,6 +33,7 @@ export interface AnalysisSettingValues {
   readonly "windows.change_time_settle_max_polls": number;
   readonly "zstd.max_frames": number;
   readonly "delivery.agent_result_budget_bytes": number;
+  readonly "delivery.cli_retained_evidence_bytes": number;
 }
 export type AnalysisSettingId = keyof AnalysisSettingValues;
 export interface AnalysisSettingsSnapshot {
