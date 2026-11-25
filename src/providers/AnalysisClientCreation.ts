@@ -45,6 +45,8 @@ export class AnalysisClientCreation {
   #failure: AnalysisError | undefined;
   #closed = false;
   #clientLease: AnalysisCleanupLease | undefined;
+  /** A non-cleanup failure returned by the close that confirmed release. */
+  #confirmedCloseFailure: AnalysisError | undefined;
   #closing: Promise<Result<null, AnalysisError>> | undefined;
   #closeOptions: Parameters<AnalysisClient["close"]>[0];
 
@@ -95,6 +97,7 @@ export class AnalysisClientCreation {
     if (this.#clientLease?.released === true) {
       this.#client = undefined;
       this.#clientLease = undefined;
+      this.#confirmedCloseFailure = undefined;
     }
     let attempt = this.#attempt;
     const draining = attempt?.signal.aborted === true;
@@ -252,11 +255,21 @@ export class AnalysisClientCreation {
         this.providerId,
         this.#closeOptions,
       );
-      if (!result.ok) throw result.error;
+      if (result.ok) return;
+      // The client's owner confirmed every release and still failed for
+      // another reason (such as a diagnostic export). That failure is not
+      // unfinished cleanup: settle the lease and report the failure as is.
+      if (result.error.carriesCleanup && !result.error.cleanupIncomplete) {
+        this.#confirmedCloseFailure = result.error;
+        return;
+      }
+      throw result.error;
     });
     try {
       await this.#clientLease.release();
-      return ok(null);
+      return this.#confirmedCloseFailure === undefined
+        ? ok(null)
+        : err(this.#confirmedCloseFailure);
     } catch (cause: unknown) {
       const clientLease = this.#clientLease;
       const failure = new ProviderCleanupError(
