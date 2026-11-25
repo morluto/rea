@@ -867,6 +867,23 @@ it("keeps Apple's hidden ARM64 FAT row outside the raw declared slice list", asy
   });
 });
 
+it("reports a hidden ARM64 FAT row declared past the end of the file as truncated", async () => {
+  const armv7 = { type: 12, subtype: 9 };
+  const bytes = Buffer.from(
+    fatImage([
+      { cpu: armv7, bytes: machoImage({ cpu: armv7 }) },
+      { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+    ]),
+  );
+  bytes.writeUInt32BE(1, 4);
+  // The hidden row is the second table row; its size field sits at byte 40.
+  bytes.writeUInt32BE(bytes.length, 40);
+  expect(await readMachoImage(readerOf(bytes), bytes.length)).toMatchObject({
+    status: "failed",
+    failure: { kind: "truncated", format: "macho", field: "fat_arch[1]" },
+  });
+});
+
 describe("Mach-O load command reader: decodes thin-image load commands", () => {
   it("preserves leading U+FEFF in load-command strings", async () => {
     const image = machoImage({
@@ -1069,6 +1086,26 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload", () => {
     expect(universal.slices[0]?.dependencies[0]?.install_name).toBe(
       "@rpath/libl.dylib",
     );
+  });
+
+  it("reports a lazy-info payload read that comes up short of the measured slice as changed", async () => {
+    const image = machoImageWithLazyLoadDylibInfo({
+      path: "@rpath/libl.dylib",
+    });
+    const payloadAt =
+      image.length -
+      lazyLoadDylibInfoPayload({
+        path: "@rpath/libl.dylib",
+      }).length;
+    // The file measured `image.length` bytes but shrank before the payload read.
+    const shrunk = async (offset: number, length: number) =>
+      offset >= payloadAt
+        ? image.subarray(offset, offset + length - 1)
+        : image.subarray(offset, offset + length);
+    expect(await readMachoImage(shrunk, image.length)).toMatchObject({
+      status: "failed",
+      failure: { kind: "changed", format: "macho", offset: payloadAt },
+    });
   });
 
   it("rejects a lazy-info payload that is truncated, mis-pointed, or has unknown flags", async () => {

@@ -82,7 +82,7 @@ const readSliceIdentities = async (
   if (hidden !== null && hidden.status !== "declared")
     return { kind: "unreadable", reason: hidden.failure.detail };
   if (hidden?.status === "declared" && hidden.rangeIssue !== null)
-    return { kind: "unreadable", reason: hidden.rangeIssue };
+    return { kind: "unreadable", reason: hidden.rangeIssue.detail };
   const declarations = [
     ...header.slices,
     ...(hidden?.status === "declared" ? [hidden.declaration] : []),

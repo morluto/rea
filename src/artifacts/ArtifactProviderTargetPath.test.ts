@@ -28,6 +28,7 @@ it("names the bundle the caller selected, not its resolved target, in a target f
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unsupported_target",
       details: {
+        operation: "decode_interface_builder",
         path: "/fixture/Selected.app",
         failure_kind: "malformed",
         format: "nib-archive",

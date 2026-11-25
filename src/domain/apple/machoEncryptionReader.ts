@@ -6,7 +6,10 @@ import type {
   MachoEncryptionFacts,
   MachoSliceEncryption,
 } from "./machoEncryption.js";
-import { validateFatSliceIdentity } from "./machoContainer.js";
+import {
+  validateFatSliceIdentity,
+  type FatSliceRangeFailure,
+} from "./machoContainer.js";
 import {
   isMachoZeroFillSection,
   machoSectionHeaderSize,
@@ -85,11 +88,7 @@ export const readMachoEncryption = async (
             },
             budget,
           )
-        : unread(
-            declaration,
-            rangeIssue.kind === "unsupported" ? "unknown" : "malformed",
-            rangeIssue.detail,
-          ),
+        : unread(declaration, rangeIssue),
     );
   }
   if (hidden !== null)
@@ -104,29 +103,32 @@ export const readMachoEncryption = async (
             },
             budget,
           )
-        : unread(hidden.declaration, "malformed", hidden.rangeIssue),
+        : unread(hidden.declaration, hidden.rangeIssue),
     );
   return { status: "parsed", slices };
 };
 
 type FatDeclaration = Parameters<typeof validateFatSliceIdentity>[0];
 
+/** A FAT row whose own range cannot be read: unsupported layouts stay unknown. */
 const unread = (
   declaration: FatDeclaration,
-  status: "malformed" | "unknown",
-  reason: string,
-): MachoSliceEncryption => ({
-  architecture: null,
-  cpu_type: declaration.cpuType,
-  cpu_subtype: declaration.cpuSubtype,
-  container_file_offset: declaration.offset,
-  size: declaration.size,
-  status,
-  malformed_kind: status === "malformed" ? "structure" : null,
-  reason,
-  commands: [],
-  range: null,
-});
+  failure: FatSliceRangeFailure,
+): MachoSliceEncryption => {
+  const status = failure.kind === "unsupported" ? "unknown" : "malformed";
+  return {
+    architecture: null,
+    cpu_type: declaration.cpuType,
+    cpu_subtype: declaration.cpuSubtype,
+    container_file_offset: declaration.offset,
+    size: declaration.size,
+    status,
+    malformed_kind: status === "malformed" ? "structure" : null,
+    reason: failure.detail,
+    commands: [],
+    range: null,
+  };
+};
 
 const readSlice = async (
   readAt: ReadAt,

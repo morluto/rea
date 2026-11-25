@@ -231,7 +231,16 @@ cliTest(
     });
     const call = await cli.sharedMcpCall!();
     const response = await call("inspect_pe_certificates", { path });
-    expect(parseMcpToolError(response).error).toEqual(result.json);
+    // Both adapters report the same facts; only the recovery's names differ.
+    const { remediation: mcpRecovery, ...mcpFacts } =
+      parseMcpToolError(response).error;
+    const { remediation: cliRecovery, ...cliFacts } = result.json as {
+      remediation: { action: string };
+    };
+    expect(mcpFacts).toEqual(cliFacts);
+    expect(mcpRecovery.action).toContain("inspect_pe_certificates");
+    expect(cliRecovery.action).toContain("rea inspect-pe-certificates");
+    expect(cliRecovery.action).not.toContain("inspect_pe_certificates");
     expect(response.structuredContent).toBeUndefined();
     expect((await readFile(path)).equals(bytes)).toBe(true);
   },

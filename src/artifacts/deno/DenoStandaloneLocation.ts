@@ -230,7 +230,7 @@ const locateMachO = async (carrier: Carrier): Promise<SectionRange[]> => {
     );
   const hidden = container.hidden;
   if (hidden?.status === "declared")
-    await scan("hidden slice", hidden.rangeIssue, hidden.declaration);
+    await scan("hidden slice", hidden.rangeIssue?.detail, hidden.declaration);
   // A sibling that could not be examined may declare a different Deno
   // application, so a section found elsewhere cannot stand for the whole
   // universal image. With none found, the image stays with native inventory.
