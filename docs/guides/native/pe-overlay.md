@@ -24,7 +24,10 @@ nonempty section that also sets `IMAGE_SCN_CNT_CODE` or
 most 96 sections, the Windows loader limit the PE format documents. When
 `NumberOfSections` declares more, `section_coverage.status` is `partial`, a
 limitation names the declared count, and every declared section still counts
-toward the image end.
+toward the image end. `header_anomalies` carries the declared header values
+the shared PE reader accepted but the loader ignores or caps, such as a
+`SizeOfHeaders` that ends before the section table, so the reported
+`size_of_headers` keeps its warning.
 
 The overlay is the half-open span from the image end to the file size.
 `security_directory` records the declared `IMAGE_DIRECTORY_ENTRY_SECURITY`

@@ -4,6 +4,7 @@ import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { malformedInput, truncatedInput } from "../parseFailure.js";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 import {
   admitPeSecurityDirectory,
   PE_SECURITY_DIRECTORY_DEFECTS,
@@ -199,6 +200,7 @@ const peOverlayObjectSchema = z.strictObject({
     }),
   ]),
   ranges: z.array(rangeSchema).max(3),
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 export type PeOverlay = z.infer<typeof peOverlayObjectSchema>;

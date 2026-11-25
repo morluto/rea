@@ -126,6 +126,7 @@ export const parsePeOverlay = (
     section_coverage: layout.section_coverage,
     security_directory: layout.security_directory,
     ranges: layout.ranges.map((range) => describeRange(bytes, range)),
+    header_anomalies: [...image.pe_header_anomalies],
     limitations: [...layout.limitations],
   };
 };

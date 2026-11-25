@@ -62,6 +62,21 @@ describe("parsePeOverlay ranges", () => {
     });
   });
 
+  it("keeps the header anomaly when SizeOfHeaders ends before the section table", () => {
+    const bytes = peOverlayImage({ trailing: ZIP_LOCAL_HEADER });
+    // OPTIONAL_HEADER_OFFSET (0x98) + 60 holds SizeOfHeaders.
+    bytes.writeUInt32LE(0x100, 0x98 + 60);
+    const report = parse(bytes);
+    expect(report.size_of_headers).toBe(0x100);
+    expect(report.header_anomalies).toEqual([
+      expect.objectContaining({ code: "size_of_headers_inconsistent" }),
+    ]);
+  });
+
+  it("reports no header anomalies for consistent headers", () => {
+    expect(parse(peOverlayImage()).header_anomalies).toEqual([]);
+  });
+
   it("reports one zip range after an unsigned image", () => {
     const bytes = peOverlayImage({ trailing: ZIP_LOCAL_HEADER });
     const report = parse(bytes);
