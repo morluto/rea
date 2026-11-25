@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { compositeKey } from "../unicodeCodePointOrder.js";
 import { isTimestamp } from "./appTask.js";
 import {
   isGeneratedId,
@@ -6,6 +7,7 @@ import {
   isPlaceholder,
 } from "./attributeRank.js";
 import { MAX_INSIDE_STEPS, spellCondition } from "./viewSelector.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** A field naming a JSON record, as TreeLine's `uid`: `id`, `uid`, `uuid`, `guid`, `key`, or a name ending in `_id`, `-id` or `Id`. */
 const ID_FIELD = /^(?:_?id|uid|uuid|guid|key)$|[_-]id$|[a-z]Id$/u;
@@ -23,18 +25,10 @@ const MAX_NAME = 64;
 /** The most kind fields and paths a version's records are counted by, each a pass over them, so odd records cost no more. */
 const MAX_TALLIES = 64;
 
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isJsonRecord = (value: JsonValue): value is Record<string, JsonValue> =>
-  isRecord(value);
-
 /** Whether every member holds a string at a key a selector can carry, each its own. */
 const namesEach = (members: readonly JsonValue[], key: string) => {
   const values = members.map((member) =>
-    isJsonRecord(member) ? member[key] : undefined,
+    isRecord(member) ? member[key] : undefined,
   );
   return (
     values.every(
@@ -109,7 +103,7 @@ const tally = (members: readonly JsonValue[]) => {
       const sort = kind === undefined ? "" : stringAt(member, [kind]);
       return name === undefined || sort === undefined
         ? undefined
-        : `${sort}\u0000${name}`;
+        : compositeKey([sort, name]);
     };
     const id = JSON.stringify([kind ?? null, path]);
     let counts = counted.get(id);
@@ -222,7 +216,7 @@ export const pairRecordsById = (
     }
   | undefined => {
   const [first] = [...newer, ...older];
-  if (!isJsonRecord(first ?? null) || ![...newer, ...older].every(isJsonRecord))
+  if (!isRecord(first) || ![...newer, ...older].every(isRecord))
     return undefined;
   const key = Object.keys(first ?? {})
     .filter(
@@ -240,7 +234,7 @@ export const pairRecordsById = (
     })[0];
   if (key === undefined) return undefined;
   const idOf = (member: JsonValue) =>
-    isJsonRecord(member) ? String(member[key]) : "";
+    isRecord(member) ? String(member[key]) : "";
   const counts = { newer: tally(newer), older: tally(older) };
   const partnersOf = (
     members: readonly JsonValue[],

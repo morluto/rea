@@ -1,8 +1,12 @@
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createInflate } from "node:zlib";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
+import {
+  ArtifactReaderFailure,
+  abortIfNeeded,
+  malformedArtifact,
+} from "../../resources/index.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 
 interface MemberStreamOptions {
   readonly sourceBytes: number;
@@ -52,12 +56,24 @@ export const readPyInstallerMemberPrefix = async (
   return prefix.subarray(0, copied);
 };
 
+const declaredSizeMismatch = (): ArtifactReaderFailure =>
+  new ArtifactReaderFailure(
+    "integrity",
+    "PyInstaller member size disagrees with its declaration or previous observation",
+    { integrityCheck: "declared-size" },
+  );
+
 /** Backpressure bounds plaintext independently of the untrusted declared size. */
 export const pyInstallerMemberStream = (
   source: Readable,
   options: MemberStreamOptions,
 ): { readonly output: Readable; readonly completion: Promise<void> } => {
+  const plaintextBound = Math.min(
+    options.maxBytes,
+    options.expectedBytes ?? options.maxBytes,
+  );
   let bytes = 0;
+  let consumedSourceBytes = 0;
   let headerSent = false;
   let completing = false;
   let failure: ArtifactReaderFailure | undefined;
@@ -71,11 +87,13 @@ export const pyInstallerMemberStream = (
       try {
         abortIfNeeded(options.signal);
         bytes += chunk.length;
-        if (bytes > options.maxBytes)
-          throw new ArtifactReaderFailure(
-            "limit",
-            "PyInstaller member exceeds its plaintext budget",
-          );
+        if (bytes > plaintextBound)
+          throw options.expectedBytes === plaintextBound
+            ? declaredSizeMismatch()
+            : new ArtifactReaderFailure(
+                "limit",
+                "PyInstaller member exceeds its plaintext budget",
+              );
         options.charge?.(chunk.length);
         prependHeader();
         callback(null, chunk);
@@ -90,19 +108,29 @@ export const pyInstallerMemberStream = (
         if (
           inflate !== undefined &&
           inflate.bytesWritten !== options.sourceBytes
-        )
+        ) {
+          // The declared span arrived and zlib left some of it unread: the
+          // member contains another stream or trailing junk, which a retry
+          // cannot repair. A source that ended first never delivered that
+          // span, so the file changed under the read.
+          const sourceEndedEarly = consumedSourceBytes < options.sourceBytes;
           throw new ArtifactReaderFailure(
             "integrity",
-            "Compressed PyInstaller member did not consume its complete declared source span",
+            sourceEndedEarly
+              ? "Compressed PyInstaller member ended before its declared source span"
+              : "Compressed PyInstaller member left part of its declared source span unread",
+            {
+              integrityCheck: sourceEndedEarly
+                ? "read-coverage"
+                : "layout-consistency",
+            },
           );
+        }
         if (
           options.expectedBytes !== undefined &&
           bytes !== options.expectedBytes
         )
-          throw new ArtifactReaderFailure(
-            "integrity",
-            "PyInstaller member size disagrees with its declaration or previous observation",
-          );
+          throw declaredSizeMismatch();
         await options.complete?.(bytes);
         abortIfNeeded(options.signal);
         prependHeader();
@@ -128,7 +156,14 @@ export const pyInstallerMemberStream = (
   output.on("error", () => undefined);
   const onAbort = (): void => {
     // Verification and private-file cleanup own their accepted native I/O.
-    if (completing) return;
+    if (completing || output.destroyed) return;
+    // A producer can already own an error before its error event forwards it.
+    // Do not replace that established failure with a downstream cancellation.
+    if (
+      source.errored !== null ||
+      (inflate !== undefined && inflate.errored !== null)
+    )
+      return;
     // The descriptor source owns cancellation until its native read settles.
     // Retiring it downstream earlier would hide a native I/O rejection.
     if (!source.readableEnded && !source.destroyed) return;
@@ -141,6 +176,12 @@ export const pyInstallerMemberStream = (
     );
   };
   options.signal.addEventListener("abort", onAbort, { once: true });
+  const retired = new Promise<void>((resolve) => {
+    output.once("close", () => {
+      options.signal.removeEventListener("abort", onAbort);
+      resolve();
+    });
+  });
   const onSourceFailure = (cause: unknown): void => {
     failure ??=
       cause instanceof ArtifactReaderFailure
@@ -158,17 +199,29 @@ export const pyInstallerMemberStream = (
     failure ??=
       cause instanceof ArtifactReaderFailure
         ? cause
-        : new ArtifactReaderFailure(
-            "format",
+        : malformedArtifact(
+            "pyinstaller",
             "Compressed PyInstaller member is not a complete zlib stream",
             { cause },
           );
     output.destroy(failure);
   });
-  const completion = (
+  // Count bytes the source actually yielded. zlib's own counter stops at the
+  // first complete stream, so it cannot tell leftover input from a short read.
+  const production = (
     inflate === undefined
       ? pipeline(source, output)
-      : pipeline(source, inflate, output)
+      : pipeline(
+          source,
+          new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              consumedSourceBytes += chunk.length;
+              callback(null, chunk);
+            },
+          }),
+          inflate,
+          output,
+        )
   )
     .catch((cause: unknown) => {
       // Pipeline can reject with the native error that caused a mapped output
@@ -176,9 +229,17 @@ export const pyInstallerMemberStream = (
       throw failure ?? cause;
     })
     .finally(() => {
-      options.signal.removeEventListener("abort", onAbort);
       source.removeListener("error", onSourceFailure);
     });
+  // Production can finish with unread output. Both its cancellation listener
+  // and its owning reader operation survive until that readable side retires.
+  // Await both settlements even on failure before the reader operation settles.
+  const completion = Promise.allSettled([production, retired]).then(
+    ([produced]) => {
+      if (produced.status === "rejected") throw produced.reason;
+      if (output.errored !== null) throw output.errored;
+    },
+  );
   // Preserve rejection for the owning scope without an early unhandled promise.
   void completion.catch(() => undefined);
   if (options.signal.aborted) onAbort();
@@ -188,6 +249,6 @@ export const pyInstallerMemberStream = (
 const asError = (cause: unknown): Error =>
   cause instanceof Error
     ? cause
-    : new ArtifactReaderFailure("format", "PyInstaller member read failed", {
+    : invariantViolation("PyInstaller member read failed without an error", {
         cause,
       });

@@ -11,6 +11,68 @@ again.
 rea inspect-desktop-application-state ./mousepad-capture --format json
 ```
 
+Views use bounded defaults. When a view reports truncation or a byte-budget
+refusal, retry the same capture with `--view-policy` JSON overrides:
+
+```bash
+rea inspect-desktop-application-state ./mousepad-capture \
+  --state-path /home/ada/Documents/notes.txt \
+  --view-policy '{"text_lines":10000,"file_bytes":134217728}' --format json
+```
+
+`--state-path` selects an exact original captured path and can be repeated.
+Omitting it examines every captured path. Selection preserves the captured
+checkpoint and digest; it does not substitute the file's current contents.
+A path absent from the capture is an input error.
+
+`--view-policy` accepts positive safe-integer overrides for `file_bytes`,
+`sqlite_tables`, `sqlite_rows`, `sqlite_view_bytes`, `text_lines`, `xml_nodes`, `xml_depth`,
+`parsed_bytes`, `json_depth`, `zip_entries`, `zip_entry_bytes`, `zip_bytes`,
+and `zip_ratio`. Unspecified controls keep the defaults described below.
+A request that raises `zip_entries` past the classic ZIP count range still uses
+the selected entry limit. The host and exported readers encode the retained
+directory's exact count with Zip64 fields when the classic fields are full.
+`xml_depth` admits at most 494 and `json_depth` at most 991: these bounds
+follow the fixed Evidence JSON nesting limit, including the captured-version
+and ZIP-member wrappers and XML's element/children representation. A request
+above either bound is rejected before reading the capture.
+Evidence parameters retain only the supplied `view_policy` overrides; omission
+and an explicitly empty selection remain distinct. State inspection and task
+drafts report the resolved policy separately as
+`normalized_result.effective_view_policy`. Changes apply on this call, without
+a restart. File and ZIP byte counts refer to retained file bytes or uncompressed
+ZIP member bytes, not transport size. Gzip document views share `zip_entry_bytes`
+and `zip_ratio` with ZIP entry views; `zip_bytes` bounds a ZIP archive, not a
+gzip stream. These selections also apply to the decompressed document's format
+view. `sqlite_view_bytes` instead bounds each
+projected table's compact UTF-8 JSON, including column names, primary keys,
+rows and truncation metadata; it defaults to 16 MiB. Rows are charged before
+retention. A table that exceeds this allowance keeps an actionable `error`,
+while other tables remain readable. Increase this control and retry the same
+capture for a projected-view refusal. It does not raise the SQLite worker's
+separate fixed value/record or complete-reply limits, which may refuse earlier.
+Each reader counts its native compact JSON encoding. Float spelling can differ:
+Python emits `16.0` where JavaScript emits `16`, and exponent spelling also
+varies. Identical numeric facts can therefore cross this byte threshold at
+different settings. This is not a common transport-byte guarantee.
+
+The same option is available on `describe-desktop-application-task` and
+`export-desktop-application`. Export uses the accepted policy for task
+validation and emits it into the Python readers used by the environment's
+`data/get`; re-export with another policy to change those reader budgets.
+Task checks apply `file_bytes` to the actual scrubbed seed bytes, including any
+growth from replacing the capture home with `/home/user`. A seed over that
+view allowance may still be exported under the independent acquisition limit,
+but its unreadable view cannot establish a known task failure.
+The TypeScript and exported Python readers share the policy's defaults.
+These desktop capture workflows remain CLI-only.
+
+Raising a view budget cannot recover content the capture never retained,
+change numeric exactness, enable encrypted or unsupported archive formats,
+or raise SQLite worker, Evidence nesting, process-memory or transport limits.
+Keep increases specific to the exhausted budget. Truncation and incomplete
+comparison coverage remain visible until the requested facts were examined.
+
 The result is Evidence with operation `inspect_desktop_application_state` and
 predicate type `rea.desktop-application-state`. Its confidence is `inferred`,
 because roles come from heuristics; the views themselves are read from the
@@ -79,16 +141,26 @@ Views hold the captured bytes as they are, the capture host's name and user
 included; the export removes those from the bundle. A version records
 whether the file was present, the SHA-256 of its retained bytes, and a view:
 
-| Format    | Detected by                                                            | View                                                                                   |
-| --------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `sqlite`  | The `SQLite format 3` header                                           | Every ordinary table's columns, primary key and up to 500 rows                         |
-| `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups            |
-| `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                   |
-| `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
-| `xml`     | An XML name, a declaration or a leading element that parses            | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
-| `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                 |
-| `text`    | Other UTF-8 text                                                       | Lines, up to 5,000                                                                     |
-| `binary`  | NUL bytes or invalid UTF-8                                             | None                                                                                   |
+| Format    | Detected by                                                              | View                                                                                   |
+| --------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `sqlite`  | The `SQLite format 3` header                                             | Every ordinary table's columns, primary key and up to 500 rows                         |
+| `dconf`   | The `GVariant` header                                                    | Groups whose path names the application, plus the names of the other groups            |
+| `zip`     | A ZIP local file header or an empty archive signature, whatever the name | Its file entries in archive order, each with its own format and view                   |
+| `json`    | A `.json` name or a leading `{` or `[` that parses                       | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
+| `xml`     | An XML name, a declaration or a leading element that parses              | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
+| `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group   | Groups of `key` → string value, from files up to 4 MiB                                 |
+| `text`    | Other decoded text                                                       | Lines, up to 5,000                                                                     |
+| `binary`  | Content that cannot be read as text                                      | None                                                                                   |
+
+Text views decode UTF-8 or strictly valid UTF-16 with a leading byte-order
+mark. UTF-16 containing a NUL character stays binary. These rules also apply
+to documents inside gzip and ZIP files and to the exported task verifier.
+
+Keyfile views trim keys and skip spaces or tabs immediately after the first
+`=`. The rest of the value is preserved, including trailing whitespace and
+any additional `=` characters. Entries before the first group use the empty
+group name. Repeated groups share one view, and the last value for a key in
+that group wins. Capture and the exported verifier apply the same rules.
 
 A gzip file is read as the document inside it; see
 [compressed documents](#compressed-documents).
@@ -166,7 +238,13 @@ that cannot be read keeps its `error` in place of its rows, and changes to that
 database are marked incomplete. dconf
 databases are read with `dconf dump /` against a private file profile, so the
 live database and the dconf service are not touched; this needs `dconf-cli`, or
-`REA_DCONF_COMMAND`.
+`REA_DCONF_COMMAND`. A failed dconf read also sets `view_failure`: its `kind`
+(`not-installed`, `launch-failed`, `exited`, `descriptor-unavailable`,
+`profile-write`, `read-failed`, `timeout`, `output-limit`, `memory-limit`,
+`protocol`, `runtime-exhausted`, or `resource-signal`), the host errno `code`
+when the operating system reported one, `exit_code` when a child exited, the
+selected `command`, and the child's `stderr` when it wrote any. `view_error`
+stays the short explanation.
 
 A version has a `view_error` when its bytes were not retained, are over the 64
 MiB read limit, are missing or no longer match their digest, exceed a format's
@@ -212,8 +290,9 @@ database, or an archive, inside an archive keeps its format and `sha256` and
 has a `view_error` instead of a view: it is not read. The view lists at most
 1,000 entries; `entry_count` counts them all, and `truncated` is true when some
 are not listed. REA reads the central directory itself, a record at a time,
-through the Zip64 end record whenever a Zip64 locator precedes the end record,
-as Python's `zipfile` does, and hands the zip reader only the records it lists,
+and follows a Zip64 locator to the complete end-record span, including any
+extension bytes. The fixed-record fallback supports prepended archives
+whose offsets omit the prefix. REA hands the zip reader only the records it lists,
 so an archive of hundreds of thousands of entries costs no more to read
 than one of a thousand. An archive whose central directory cannot be read has a
 `view_error` of its own.

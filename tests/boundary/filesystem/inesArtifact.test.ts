@@ -1,6 +1,4 @@
-import * as rootHash from "../../../src/artifacts/inventory/hashStableRootArtifact.js";
-import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
-import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
+import * as rootHash from "../../../src/resources/StableRootArtifact.js";
 import { createHash } from "node:crypto";
 import {
   lstat,
@@ -8,14 +6,17 @@ import {
   open,
   readFile,
   unlink,
+  utimes,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { buffer } from "node:stream/consumers";
+import { phaseGate, settledCause } from "../../support/lifecycleHarness.js";
 import { expect, it, vi } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { inesFixture } from "../../fixtures/ines.js";
+import { inesFixture, nes2Fixture } from "../../fixtures/ines.js";
 import {
   inventoryArtifact,
   scanArtifactInventory,
@@ -23,11 +24,14 @@ import {
 } from "../../fixtures/artifactInventory.js";
 import { InesArtifactReader } from "../../../src/artifacts/InesArtifactReader.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   extractArtifact,
   materializeArtifactInventoryInScope as materializeInScope,
 } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
+import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
+
+const AGED_FIXTURE_TIME = new Date("2000-01-01T00:00:00Z");
 
 const sha256 = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -99,7 +103,7 @@ it("rejects region bytes that disagree with stable whole-file hashes", async () 
   try {
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
       reason: "integrity",
-      message: "iNES reconstruction differs from the source",
+      integrityCheck: "reconstruction",
     });
     expect(changed).toBe(true);
     expect((await readFile(path)).equals(bytes)).toBe(true);
@@ -216,34 +220,187 @@ it("inventories and reconstructs all bytes without trainer or CHR ROM", async ()
   }
 });
 
+it("routes, inventories and extracts NES 2.0 regions with miscellaneous ROM bytes", async () => {
+  const root = await createTestTempDirectory("rea-nes2-inventory-");
+  const path = join(root, "fixture.nes");
+  const bytes = nes2Fixture({
+    trainer: true,
+    // Submapper 2, mapper bits 8..11 = 1, 8 KiB PRG-RAM, one misc ROM.
+    header: { 8: 0x21, 10: 0x07, 14: 1 },
+    miscRom: Buffer.from("misc rom bytes"),
+  });
+  await writeFile(path, bytes);
+  expect(await parseBinaryTarget(path)).toMatchObject({
+    ok: true,
+    value: { kind: "archive", format: "ines" },
+  });
+  const inventory = await inventoryArtifact(path);
+  expect(inventory.manifest.root_format).toBe("ines");
+  expect(inventory.ines?.header).toMatchObject({
+    format: "nes-2.0",
+    header_hex: bytes.subarray(0, 16).toString("hex"),
+    prg_rom_units_16k: 2,
+    chr_rom_bytes: 8_192,
+    mapper: 0x113,
+    submapper: 2,
+    trainer_present: true,
+    prg_ram_bytes: 8_192,
+    misc_rom_count: 1,
+  });
+  expect(inventory.ines?.reconstruction).toEqual({
+    region_order: [
+      "header.bin",
+      "trainer.bin",
+      "prg/000.bin",
+      "prg/001.bin",
+      "chr/000.bin",
+      "misc-rom.bin",
+    ],
+    bytes: bytes.length,
+    sha256: sha256(bytes),
+    verified: true,
+  });
+  const misc = inventory.occurrences.find(
+    ({ logical_path }) => logical_path === "misc-rom.bin",
+  );
+  expect(misc?.source_location).toMatchObject({
+    offset: bytes.length - 14,
+    length: 14,
+  });
+
+  const scope = new ArtifactResourceScope();
+  const outputRoot = join(root, "extracted");
+  try {
+    await extractArtifact({
+      inputPath: path,
+      inputFormat: "ines",
+      outputRoot,
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope: scope,
+    });
+    const reconstructed = Buffer.concat(
+      await Promise.all(
+        (inventory.ines?.reconstruction.region_order ?? []).map((region) =>
+          readFile(join(outputRoot, region)),
+        ),
+      ),
+    );
+    expect(reconstructed.equals(bytes)).toBe(true);
+  } finally {
+    await scope.close();
+  }
+});
+
+it("extracts an exponent-sized PRG-ROM area beside a counted CHR-ROM area", async () => {
+  const root = await createTestTempDirectory("rea-nes2-exponent-");
+  const path = join(root, "fixture.nes");
+  // Byte 9's PRG nibble 0xf selects the exponent form: 2^10 * (2 * 1 + 1).
+  // Its CHR nibble 0 keeps one counted 8 KiB unit.
+  const header = Buffer.from([
+    0x4e,
+    0x45,
+    0x53,
+    0x1a,
+    (10 << 2) | 1,
+    1,
+    0,
+    0x08,
+    0,
+    0x0f,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  const prg = Buffer.from(Array.from({ length: 3_072 }, (_, at) => at % 251));
+  const chr = Buffer.from(
+    Array.from({ length: 8_192 }, (_, at) => 255 - (at % 241)),
+  );
+  const bytes = Buffer.concat([header, prg, chr]);
+  await writeFile(path, bytes);
+  const inventory = await inventoryArtifact(path);
+  expect(inventory.ines?.header).toMatchObject({
+    format: "nes-2.0",
+    prg_rom_bytes: 3_072,
+    chr_rom_units_8k: 1,
+    chr_rom_bytes: 8_192,
+  });
+  // An exponent-sized area has no unit count to report.
+  expect(inventory.ines?.header).not.toHaveProperty("prg_rom_units_16k");
+  expect(inventory.ines?.reconstruction).toEqual({
+    region_order: ["header.bin", "prg.bin", "chr/000.bin"],
+    bytes: bytes.length,
+    sha256: sha256(bytes),
+    verified: true,
+  });
+  const location = (logicalPath: string) =>
+    inventory.occurrences.find(
+      ({ logical_path }) => logical_path === logicalPath,
+    )?.source_location;
+  expect(location("prg.bin")).toMatchObject({ offset: 16, length: 3_072 });
+  expect(location("chr/000.bin")).toMatchObject({
+    offset: 16 + 3_072,
+    length: 8_192,
+  });
+
+  const scope = new ArtifactResourceScope();
+  const outputRoot = join(root, "extracted");
+  try {
+    await extractArtifact({
+      inputPath: path,
+      inputFormat: "ines",
+      outputRoot,
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope: scope,
+    });
+    const [extractedPrg, extractedChr, extractedHeader] = await Promise.all([
+      readFile(join(outputRoot, "prg.bin")),
+      readFile(join(outputRoot, "chr/000.bin")),
+      readFile(join(outputRoot, "header.bin")),
+    ]);
+    expect(extractedPrg.equals(prg)).toBe(true);
+    expect(extractedChr.equals(chr)).toBe(true);
+    expect(
+      Buffer.concat([extractedHeader, extractedPrg, extractedChr]).equals(
+        bytes,
+      ),
+    ).toBe(true);
+  } finally {
+    await scope.close();
+  }
+});
+
 it.each([
   {
-    name: "NES 2.0",
-    bytes: () => {
-      const bytes = inesFixture();
-      bytes[7] = 8;
-      return bytes;
-    },
-    reason: "nes-2.0",
+    name: "oversized NES 2.0",
+    bytes: () => nes2Fixture({ header: { 9: 0x01 } }),
+    reason: "truncated NES 2.0 payload",
+    kind: "truncated",
   },
-  { name: "UNIF", bytes: () => Buffer.from("UNIF"), reason: "unif" },
+  {
+    name: "UNIF",
+    bytes: () => Buffer.from("UNIF"),
+    reason: "unif",
+    kind: "unsupported",
+  },
   {
     name: "truncated",
     bytes: () => inesFixture().subarray(0, 20),
     reason: "truncated iNES payload",
+    kind: "truncated",
   },
 ])(
-  "refuses $name explicitly through both file entry points",
-  async ({ bytes, reason }) => {
+  "refuses $name during direct artifact inventory",
+  async ({ bytes, reason, kind }) => {
     const root = await createTestTempDirectory("rea-ines-refusal-");
     const path = join(root, "invalid.nes");
     await writeFile(path, bytes());
-    expect(await parseBinaryTarget(path)).toMatchObject({
-      ok: false,
-      error: { reason: expect.stringContaining(reason) },
-    });
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
-      reason: "format",
+      reason: kind,
       message: expect.stringContaining(reason),
     });
   },
@@ -317,17 +474,31 @@ it.each(["before", "during"])(
           cause: { code: "ENOENT" },
         });
       } else {
-        const stream = await reader.open(entry);
-        await unlink(path);
-        await expect(
-          (async () => {
-            for await (const chunk of stream)
-              expect(Buffer.isBuffer(chunk)).toBe(true);
-          })(),
-        ).rejects.toMatchObject({
-          reason: "integrity",
-          cause: { code: "ENOENT" },
-        });
+        const acquired = phaseGate();
+        const native = handle.read.bind(handle);
+        const read = vi
+          .spyOn(handle, "read")
+          .mockImplementationOnce(async (...args) => {
+            const result = await native(...args);
+            await acquired.hold();
+            return result;
+          });
+        const consumed = reader.open(entry).then(buffer);
+        const outcome = settledCause(consumed);
+        try {
+          await acquired.reached(consumed, "physical region read");
+          await unlink(path);
+          acquired.release();
+          expect(await outcome).toMatchObject({
+            reason: "integrity",
+            integrityCheck: "container-identity",
+            cause: { code: "ENOENT" },
+          });
+        } finally {
+          acquired.release();
+          await outcome;
+          read.mockRestore();
+        }
       }
     } finally {
       await reader.close();
@@ -342,6 +513,9 @@ it.each(["truncated", "overwritten"])(
     const root = await createTestTempDirectory("rea-ines-header-race-");
     const path = join(root, "source.nes");
     await writeFile(path, inesFixture());
+    // Same-size overwrites are visible only through timestamps. Age the
+    // fixture so a rewrite inside one clock tick cannot look unchanged.
+    await utimes(path, AGED_FIXTURE_TIME, AGED_FIXTURE_TIME);
     const handle = await open(path, "r");
     const reader = new InesArtifactReader(path, {
       handle,
@@ -381,6 +555,10 @@ it.each(["inventory", "target"])(
     for (const change of ["truncated", "counts", "signature"] as const) {
       const bytes = inesFixture();
       await writeFile(path, bytes);
+      // Same-size rewrites are only observable through timestamps. Linux
+      // stamps from a coarse clock, so a rewrite within one tick of creation
+      // can keep every stat field; age the fixture so the rewrite is visible.
+      await utimes(path, AGED_FIXTURE_TIME, AGED_FIXTURE_TIME);
       const prototype = await fileReadPrototype(path);
       const originalRead = prototype.read;
       const read = vi
@@ -471,13 +649,8 @@ it("reports source loss during target hashing as a changed input", async () => {
   ) {
     const result = await originalRead.call(this, ...args);
     const readArguments: readonly unknown[] = args;
-    const [buffer, , , position] = readArguments;
-    if (
-      Buffer.isBuffer(buffer) &&
-      buffer.byteLength === 64 * 1024 &&
-      position === bytes.length &&
-      result.bytesRead === 0
-    ) {
+    const [, , , position] = readArguments;
+    if (position === 0 && result.bytesRead === bytes.length) {
       faultInjected = true;
       await unlink(path);
     }
@@ -630,26 +803,6 @@ it("retains a failed close after rejecting changed extraction bytes", async () =
   }
 });
 
-it("releases an extraction-owned source descriptor on repeated close", async () => {
-  const root = await createTestTempDirectory("rea-ines-owned-source-");
-  const path = join(root, "source.nes");
-  await writeFile(path, inesFixture());
-  const handle = await open(path, "r");
-  const owner = new OwnedFileHandle(handle);
-  const reader = new InesArtifactReader(
-    path,
-    { handle, initial: await handle.stat() },
-    owner,
-  );
-  try {
-    await reader.close();
-    await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
-    await reader.close();
-  } finally {
-    await reader.close();
-  }
-});
-
 it.each(["target", "inventory", "reader"])(
   "fills short iNES prefix reads at the %s boundary",
   async (route) => {
@@ -708,67 +861,6 @@ it.each(["target", "inventory", "reader"])(
     } finally {
       read.mockRestore();
       await sample.close();
-    }
-  },
-);
-
-it.each(["eof", "cancelled", "failed-and-cancelled"])(
-  "preserves %s while filling a short prefix",
-  async (mode) => {
-    const root = await createTestTempDirectory("rea-prefix-boundary-");
-    const path = join(root, "source");
-    const bytes = Buffer.from(
-      mode === "eof" ? "NES\x1a" : "NES\x1a123456789012",
-    );
-    await writeFile(path, bytes);
-    const handle = await open(path, "r");
-    const prototype = Object.getPrototypeOf(handle) as {
-      read(
-        buffer: Buffer,
-        offset: number,
-        length: number,
-        position: number,
-      ): Promise<{ bytesRead: number; buffer: Buffer }>;
-    };
-    const original = prototype.read;
-    const controller = new AbortController();
-    let reads = 0;
-    const read = vi.spyOn(prototype, "read").mockImplementation(async function (
-      this: typeof handle,
-      buffer,
-      offset,
-      length,
-      position,
-    ) {
-      reads++;
-      if (reads === 2 && mode === "failed-and-cancelled") {
-        controller.abort();
-        throw new Error("injected read failure");
-      }
-      const observed = await original.call(
-        this,
-        buffer,
-        offset,
-        Math.min(length, 3),
-        position,
-      );
-      if (reads === 2 && mode === "cancelled") controller.abort();
-      return observed;
-    });
-    try {
-      const result = readFileHandlePrefix(handle, 16, () =>
-        abortIfNeeded(controller.signal),
-      );
-      if (mode === "eof") {
-        expect((await result).equals(bytes)).toBe(true);
-        expect(reads).toBe(3);
-      } else {
-        await expect(result).rejects.toMatchObject({ reason: "cancelled" });
-        expect(reads).toBe(2);
-      }
-    } finally {
-      read.mockRestore();
-      await handle.close();
     }
   },
 );

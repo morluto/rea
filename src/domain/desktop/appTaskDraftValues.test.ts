@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../jsonValue.js";
 import {
   draftOf,
+  jsonStateArchive,
   passing,
   pointerOf,
   statePath,
@@ -13,6 +14,15 @@ import { draftValues } from "./appTaskDraftValues.js";
 import { compactValue } from "./compactValue.js";
 import { resolvePointer } from "./viewPointer.js";
 import { zipEntry, zipView } from "./zipView.js";
+
+/** The expected preview: whole characters up to `limit`, then "…" when cut. */
+const wholeCut = (text: string, limit: number): string => {
+  if (text.length <= limit) return text;
+  const end = /[\uD800-\uDBFF]/u.test(text.charAt(limit - 1))
+    ? limit - 1
+    : limit;
+  return `${text.slice(0, Math.max(0, end))}…`;
+};
 
 it("cuts XML previews after escaping, including entity and surrogate boundaries", () => {
   const element = {
@@ -32,9 +42,9 @@ it("cuts XML previews after escaping, including entity and surrogate boundaries"
     complete.length,
     complete.length + 1,
   ])
-    expect(compactValue(element, limit, "xml")).toBe(
-      complete.length > limit ? `${complete.slice(0, limit)}…` : complete,
-    );
+    expect(compactValue(element, limit, "xml")).toBe(wholeCut(complete, limit));
+  // A cut inside the emoji's surrogate pair drops the whole character.
+  expect(compactValue(element, 11, "xml")).toBe('<n value="…');
   expect(
     compactValue(
       { name: "n", attributes: { value: "&".repeat(1_000_000) }, children: [] },
@@ -48,9 +58,8 @@ it("cuts JSON previews after escaping keys and values", () => {
   const value = { '😀"\n': ["a\n😀\\\ud800"] };
   const complete = JSON.stringify(value);
   for (let limit = 0; limit <= complete.length + 1; limit += 1)
-    expect(compactValue(value, limit, "json")).toBe(
-      complete.length > limit ? `${complete.slice(0, limit)}…` : complete,
-    );
+    expect(compactValue(value, limit, "json")).toBe(wholeCut(complete, limit));
+  expect(compactValue(value, 3, "json")).toBe('{"…');
 });
 
 /** A household book: accounts, payees and categories by key, and operations naming them. */
@@ -157,7 +166,9 @@ describe("draftTaskFiles values", () => {
       ["removed", `${paragraph}/2`, "by_position"],
     ]);
   });
+});
 
+describe("draftTaskFiles values budgets", () => {
   it("lists at most 20 values and 8 KB a file and 24 KB a draft, saying when it left any out", () => {
     const items = (count: number, value: (index: number) => string) =>
       `<doc>${Array.from({ length: count }, (_, index) => `<p id="${String(index)}" v="${value(index)}"/>`).join("")}</doc>`;
@@ -194,6 +205,47 @@ describe("draftTaskFiles values", () => {
       drafted[0]?.values.length ?? 0,
     );
   });
+
+  it.each([
+    { files: 1, width: 1989, exact: true, cut: false },
+    { files: 1, width: 1989, exact: false, cut: true },
+    { files: 4, width: 1477, exact: true, cut: false },
+    { files: 4, width: 1477, exact: false, cut: true },
+  ])(
+    "includes serialized array delimiters in the values budget ($files files, exact: $exact)",
+    ({ files, width, exact, cut }) => {
+      const keys = Array.from(
+        { length: 4 },
+        (_, index) =>
+          `${String(index)}${"a".repeat(width - (exact && index === 0 ? 1 : 0))}`,
+      );
+      const drafted = draftOf(
+        Object.fromEntries(
+          Array.from({ length: files }, (_, index) => [
+            `settings-${String(index)}.json`,
+            statePath(
+              "application_state",
+              "json",
+              Object.fromEntries(keys.map((key) => [key, "x"])),
+              Object.fromEntries(keys.map((key) => [key, "y"])),
+            ),
+          ]),
+        ),
+      );
+      const sizes = drafted.map(
+        (file) => new TextEncoder().encode(JSON.stringify(file.values)).length,
+      );
+      expect(sizes.every((size) => size <= 8192)).toBe(true);
+      expect(sizes.reduce((sum, size) => sum + size, 0)).toBeLessThanOrEqual(
+        24576,
+      );
+      expect(drafted.some((file) => file.values_cut)).toBe(cut);
+      if (exact)
+        expect(sizes.reduce((sum, size) => sum + size, 0)).toBe(
+          files === 1 ? 8192 : 24576,
+        );
+    },
+  );
 });
 
 it("preserves JSON objects whose keys resemble XML and archive views", () => {
@@ -232,30 +284,12 @@ it("uses the entry format for JSON within an archive", () => {
     children: ["437.8"],
     label: "keep me",
   };
-  const archive = (contents: unknown) => {
-    const bytes = new TextEncoder().encode(JSON.stringify(contents));
-    return zipView(
-      [
-        zipEntry(
-          {
-            name: "state.json",
-            size: bytes.length,
-            compressedSize: bytes.length,
-            method: 8,
-            encrypted: false,
-          },
-          bytes,
-        ),
-      ],
-      1,
-    );
-  };
   const file = draftOf({
     "Documents/state.zip": statePath(
       "document",
       "zip",
-      archive({}),
-      archive({ element }),
+      jsonStateArchive({}),
+      jsonStateArchive({ element }),
     ),
   })[0];
   const value = file?.values.find(({ pointer }) =>
@@ -266,30 +300,12 @@ it("uses the entry format for JSON within an archive", () => {
 });
 
 it("keeps JSON archive edits whose keys resemble XML attributes", () => {
-  const archive = (contents: unknown) => {
-    const bytes = new TextEncoder().encode(JSON.stringify(contents));
-    return zipView(
-      [
-        zipEntry(
-          {
-            name: "state.json",
-            size: bytes.length,
-            compressedSize: bytes.length,
-            method: 8,
-            encrypted: false,
-          },
-          bytes,
-        ),
-      ],
-      1,
-    );
-  };
   const file = draftOf({
     "Documents/state.zip": statePath(
       "document",
       "zip",
-      archive({ title: "old", attributes: { history: "first" } }),
-      archive({ title: "new", attributes: { history: "second" } }),
+      jsonStateArchive({ title: "old", attributes: { history: "first" } }),
+      jsonStateArchive({ title: "new", attributes: { history: "second" } }),
     ),
   })[0];
   expect(file?.suggested).toEqual(
@@ -319,31 +335,14 @@ it("suggests changes in a JSON archive entry shaped like an XML date", () => {
       attributes: {},
       children,
     });
-    const bytes = new TextEncoder().encode(
-      JSON.stringify(
-        element("root", [
-          element("mdate", [
-            element("year", [year]),
-            element("month", ["11"]),
-            element("day", ["7"]),
-          ]),
+    return jsonStateArchive(
+      element("root", [
+        element("mdate", [
+          element("year", [year]),
+          element("month", ["11"]),
+          element("day", ["7"]),
         ]),
-      ),
-    );
-    return zipView(
-      [
-        zipEntry(
-          {
-            name: "state.json",
-            size: bytes.length,
-            compressedSize: bytes.length,
-            method: 8,
-            encrypted: false,
-          },
-          bytes,
-        ),
-      ],
-      1,
+      ]),
     );
   };
   const file = draftOf({
@@ -380,7 +379,7 @@ describe("draftTaskFiles values' text and references", () => {
     ]);
   });
 
-  it("resolves a key the records of many archive entries share in time that grows with the records, not with their square", () => {
+  it("resolves a key the records of many archive entries share with work that grows with the records, not with their square", () => {
     // Copying the key's list of elements for each record took four seconds for 60,000 here.
     const entry = (name: string, text: string) => {
       const bytes = new TextEncoder().encode(text);
@@ -416,34 +415,57 @@ describe("draftTaskFiles values' text and references", () => {
     const pointer =
       "/entries/[name=book.xml]/view/root/children/[name=ope]/attributes/category";
 
-    const started = performance.now();
-    const { values } = draftValues(
-      {
-        added: [],
-        changed: [pointer],
-        removed: [],
-        added_count: 0,
-        changed_count: 1,
-        removed_count: 0,
+    // Each record is matched against the few elements its key already lists.
+    // Matching it against every earlier record makes records^2 comparisons;
+    // counting the elements `includes` scans stops that at the bound.
+    const allowed = 64 * records.length * 300;
+    let scanned = 0;
+    const array = Array.prototype;
+    const { includes } = array;
+    Object.defineProperty(array, "includes", {
+      configurable: true,
+      writable: true,
+      value(this: unknown[], ...args: [unknown, number?]) {
+        scanned += this.length;
+        if (scanned > allowed) throw new Error("records matched pairwise");
+        return includes.apply(this, args);
       },
-      {
-        ends,
-        listed: () => true,
-        noise: () => undefined,
-        format: () => "xml",
-        referenceRoots: (view) => (view === null ? [] : [view]),
-      },
-    );
-    const elapsed = performance.now() - started;
+    });
+    let drafted: ReturnType<typeof draftValues>;
+    try {
+      drafted = draftValues(
+        {
+          added: [],
+          changed: [pointer],
+          removed: [],
+          added_count: 0,
+          changed_count: 1,
+          removed_count: 0,
+        },
+        {
+          ends,
+          listed: () => true,
+          noise: () => undefined,
+          format: () => "xml",
+          referenceRoots: (view) => (view === null ? [] : [view]),
+        },
+      );
+    } finally {
+      Object.defineProperty(array, "includes", {
+        configurable: true,
+        writable: true,
+        value: includes,
+      });
+    }
 
-    expect(values[0]?.refers_to).toEqual([
+    expect(scanned).toBeLessThanOrEqual(allowed);
+    expect(drafted.values[0]?.refers_to).toEqual([
       {
         attribute: "category",
         value: "1",
         element: '<cat key="1" name="Rent"/>',
       },
     ]);
-    expect(elapsed).toBeLessThan(1000);
   });
 });
 

@@ -1,7 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { resolvePython3Executable } from "./fakeAgentEnvComputer.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 /**
@@ -133,10 +133,13 @@ elif command == "export-desktop-application":
             schema = json.load(handle)
         if os.environ.get("FAKE_REA_OLD_EXPORT"):
             schema["options"]["properties"].pop("syntheticSeed", None)
+        for name in os.environ.get("FAKE_REA_EXPORT_WITHOUT", "").split(","):
+            schema["options"]["properties"].pop(name, None)
         print(json.dumps(schema))
         sys.exit(0)
-    with open(option(args, "--task")) as handle:
-        note("tasks.jsonl", json.load(handle))
+    for path in options(args, "--task"):
+        with open(path) as handle:
+            note("tasks.jsonl", json.load(handle))
     with open(output(args[0], "EXPORT")) as handle:
         printed = handle.read()
     if "code" not in json.loads(printed):
@@ -155,7 +158,10 @@ const FAKE_APT_GET = String.raw`
 import os
 import re
 import sys
+import json
 
+with open(os.path.join(os.environ["FAKE_REA_NOTES"], "apt.jsonl"), "a") as handle:
+    handle.write(json.dumps({"argv": sys.argv[1:]}) + "\n")
 with open(os.environ["APT_CONFIG"]) as handle:
     conf = handle.read()
 lists = re.search(r'Dir::State::Lists "([^"]+)"', conf).group(1)
@@ -179,7 +185,7 @@ sys.exit(0)
 `;
 
 /** Prepared outputs of the real CLI for the fake REA to print. */
-export interface FakeReaOutputs {
+interface FakeReaOutputs {
   readonly capture: string;
   readonly draft: string;
   readonly export: string;
@@ -189,7 +195,7 @@ export interface FakeReaOutputs {
   readonly withheld?: string;
 }
 
-export interface FakeBuildComputerRea {
+interface FakeBuildComputerRea {
   readonly home: string;
   readonly bin: string;
   readonly env: Readonly<Record<string, string>>;
@@ -205,11 +211,7 @@ export const fakeBuildComputerRea = async (
   const bin = join(root, "bin");
   const notes = join(root, "notes");
   await Promise.all([home, bin, notes].map((path) => mkdir(path)));
-  const python = execFileSync(
-    "python3",
-    ["-c", "import sys; print(sys.executable)"],
-    { encoding: "utf8" },
-  ).trim();
+  const python = resolvePython3Executable();
   for (const [name, source] of [
     ["rea", FAKE_REA],
     ["apt-get", FAKE_APT_GET],

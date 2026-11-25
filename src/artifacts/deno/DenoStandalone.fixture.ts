@@ -1,7 +1,10 @@
+import { write32, write64 } from "../../native/BinaryInteger.fixture.js";
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 
-import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
+// https://github.com/denoland/deno/blob/v2.9.8/cli/lib/standalone/binary.rs
+// declares this section marker.
+export const DENO_FIXTURE_SECTION_MAGIC = Buffer.from("d3n0l4nd", "latin1");
 
 export interface DenoSpecifierFixture {
   readonly text?: string;
@@ -93,7 +96,7 @@ export const buildDenoSection = (options: DenoSectionFixture = {}): Buffer => {
   const vfsBytes = Buffer.from(JSON.stringify(vfs), "utf8");
   const parts: Buffer[] = [];
   if (options.openingMagic !== null)
-    parts.push(options.openingMagic ?? DENO_SECTION_MAGIC);
+    parts.push(options.openingMagic ?? DENO_FIXTURE_SECTION_MAGIC);
   parts.push(
     u64(options.metadataLength ?? metadataBytes.length),
     metadataBytes,
@@ -138,7 +141,7 @@ export const buildDenoSection = (options: DenoSectionFixture = {}): Buffer => {
   }
   parts.push(u64(vfsBytes.length), vfsBytes, u64(contents.length), contents);
   if (options.closingMagic !== null)
-    parts.push(options.closingMagic ?? DENO_SECTION_MAGIC);
+    parts.push(options.closingMagic ?? DENO_FIXTURE_SECTION_MAGIC);
   if (options.trailing !== undefined) parts.push(options.trailing);
   return Buffer.concat(parts);
 };
@@ -330,24 +333,4 @@ const thinMachOWithoutDenoSection = (): Buffer => {
 
 const writeName = (bytes: Buffer, offset: number, name: string): void => {
   bytes.write(name, offset, Math.min(name.length, 16), "latin1");
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(value, offset);
-  else bytes.writeUInt32BE(value, offset);
-};
-
-const write64 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeBigUInt64LE(BigInt(value), offset);
-  else bytes.writeBigUInt64BE(BigInt(value), offset);
 };

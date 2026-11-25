@@ -5,8 +5,8 @@ import {
   literalFeatureTraceSchema,
 } from "../native/literalFeatureTrace.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok } from "../result.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { ok } from "../result.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { selectViewRows } from "./selectViewRows.js";
 import {
   createAnalysisViewResultReader,
@@ -96,15 +96,8 @@ export const projectNativeFeatureTraceView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "native-feature-trace")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native feature traces support summary and native-feature-trace views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native feature traces support summary and native-feature-trace views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof nativeFeatureTraceViewRequestSchema>
@@ -143,9 +136,6 @@ export const projectNativeFeatureTraceView = (
       kind: "summary" as const,
       view,
       coverage: completeWithinViewCoverage(
-        trace.matches.length +
-          trace.references.length +
-          trace.residual_unknowns.length,
         trace.matches.length +
           trace.references.length +
           trace.residual_unknowns.length,

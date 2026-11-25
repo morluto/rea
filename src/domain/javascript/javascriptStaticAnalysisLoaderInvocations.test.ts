@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 import {
   analyzeJavaScriptStaticSource,
   analyzeParsedJavaScriptStaticSource,
-} from "./javascriptStaticAnalysis.js";
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { referenceSourceRequireCalls } from "../referenceSourceRequireBindings.js";
@@ -94,6 +94,44 @@ it.each([
     );
   },
 );
+
+it("does not keep a dependency when an immediate call returns a replaced member", () => {
+  const callsFor = (source: string) => {
+    const parsed = parseJavaScriptSource(source, "entry.cjs");
+    if (parsed === null) throw new Error("Expected CommonJS fixture");
+    return [...referenceSourceRequireCalls(parsed, "entry.cjs").values()].map(
+      ({ resolutionBase }) => resolutionBase,
+    );
+  };
+  expect(
+    callsFor(
+      'const box = { load: require }; box.load = () => {}; (() => box.load)()("./dep.cjs");',
+    ),
+  ).toEqual([]);
+  expect(
+    callsFor('const box = { load: require }; (() => box.load)()("./dep.cjs");'),
+  ).toEqual(["source-file"]);
+  expect(
+    callsFor(
+      'const box = { load: require }; box.load = () => {}; (() => (0, box.load))()("./dep.cjs");',
+    ),
+  ).toEqual([]);
+  expect(
+    callsFor(
+      'const box = { load: require }; (() => (0, box.load))()("./dep.cjs");',
+    ),
+  ).toEqual(["source-file"]);
+  expect(
+    callsFor(
+      'let f; const box = { load: require }; box.load = () => {}; (() => (f = box.load))()("./dep.cjs");',
+    ),
+  ).toEqual([]);
+  expect(
+    callsFor(
+      'let f; const box = { load: require }; (() => (f = box.load))()("./dep.cjs");',
+    ),
+  ).toEqual(["source-file"]);
+});
 
 const imported = "import {createRequire as make} from 'node:module';";
 it.each([

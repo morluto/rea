@@ -107,7 +107,12 @@ const exportTo = async (
   const directory = join(await createTestTempDirectory("build-out-"), "notes");
   const result = (await client.callTool({
     name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory, ...fields },
+    arguments: {
+      computer_id: id,
+      tasks: [{ task: TASK }],
+      directory,
+      ...fields,
+    },
   })) as CallToolResult;
   return { result, directory };
 };

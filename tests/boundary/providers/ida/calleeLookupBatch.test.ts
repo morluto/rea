@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
-import { IDA_CALLEE_DISCOVERY } from "../../../../src/ida/IdaCallGraph.js";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "../../../../src/ida/IdaCallGraph.js";
 import { IdaOperationRunner } from "../../../../src/ida/IdaOperationRunner.js";
 import { IdaSessionClient } from "../../../../src/ida/IdaSessionClient.js";
 import { createIdaTarget, RecordingIdaMcp } from "../../../fixtures/idaMcp.js";
@@ -12,13 +12,12 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 const queriesSchema = z.object({ queries: z.array(z.string()) });
-/**
- * An uncapped page is complete as a function-edge list and still reports
- * computed call sites as unknown discovery, which is what the runner emits.
- */
+/** An uncapped inventory still cannot establish every possible callee. */
 const uncappedCalleeCoverage = {
   status: "complete",
-  discovery: IDA_CALLEE_DISCOVERY,
+  discovery: {
+    callees: { status: "unknown", reason: UNCLASSIFIED_CALL_SITE_LIMITATION },
+  },
 };
 const addresses = Array.from(
   { length: 20 },
@@ -33,10 +32,10 @@ const row = (query: string) => ({
   },
   error: null,
 });
-const fixture = async () => {
+const fixture = async (mode: "attached" | "headless" = "headless") => {
   const { root, target } = await createIdaTarget();
   roots.push(root);
-  const producer = new RecordingIdaMcp(target, "headless");
+  const producer = new RecordingIdaMcp(target, mode);
   producer.overrideCall = (name, args) => {
     if (name === "lookup_funcs")
       return queriesSchema.parse(args).queries.map(row).reverse();
@@ -53,6 +52,7 @@ const fixture = async () => {
             { addr: "0x9000", name: "external", type: "external" },
           ],
           more: false,
+          ...(mode === "attached" ? { error: null } : {}),
         },
       ];
     return undefined;
@@ -60,122 +60,108 @@ const fixture = async () => {
   return { root, target, producer };
 };
 
-describe.each(["modern", "native"] as const)(
-  "%s IDA callee lookups",
-  (protocol) => {
-    it("batches unique internal queries, correlates reordered rows, and retains raw observations", async () => {
-      const { producer } = await fixture();
-      const runner = new IdaOperationRunner(
-        producer,
+it.each([
+  "missing",
+  "duplicate",
+  "unrequested",
+  "Not found",
+  "Not a function",
+  "database unavailable",
+])("preserves a producer fault for %s batch rows", async (failure) => {
+  const { producer } = await fixture();
+  const original = producer.overrideCall;
+  producer.overrideCall = (name, args) => {
+    if (
+      name !== "lookup_funcs" ||
+      queriesSchema.parse(args).queries.length === 1
+    )
+      return original?.(name, args);
+    const rows = addresses.map(row);
+    if (failure === "missing") return rows.slice(1);
+    if (failure === "duplicate") return [rows[0]!, ...rows.slice(0, -1)];
+    if (failure === "unrequested") return [row("0xdead"), ...rows.slice(1)];
+    return [
+      { query: addresses[0]!, fn: null, error: failure },
+      ...rows.slice(1),
+    ];
+  };
+  const runner = new IdaOperationRunner(producer, "modern", undefined, {
+    x86Only: true,
+  });
+  await expect(
+    runner.run("procedure_callees", { procedure: "main" }),
+  ).rejects.toMatchObject({ _tag: "AnalysisProtocolError" });
+});
+
+it("propagates cancellation after the batch reply without reporting partial success", async () => {
+  const { producer } = await fixture();
+  const controller = new AbortController();
+  producer.beforeCall = async (name, args) => {
+    if (name === "lookup_funcs" && queriesSchema.parse(args).queries.length > 1)
+      controller.abort();
+  };
+  const runner = new IdaOperationRunner(producer, "modern", undefined, {
+    x86Only: true,
+    signal: controller.signal,
+  });
+  await expect(
+    runner.run("procedure_callees", { procedure: "main" }),
+  ).rejects.toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(producer.calls).toHaveLength(3);
+  expect(runner.raw.at(-1)?.tool).toBe("lookup_funcs");
+});
+
+it.each([
+  { mode: "headless", protocol: "modern" },
+  { mode: "attached", protocol: "native" },
+] as const)(
+  "retains the correlated callee batch and upstream observations in the $mode session",
+  async ({ mode, protocol }) => {
+    const { producer, target, root } = await fixture(mode);
+    const client = new IdaSessionClient(
+      {
+        command: "fixture",
+        args: [],
+        env: {},
+        mode,
         protocol,
-        "selected-database",
-        { x86Only: true },
-      );
-      expect(
-        await runner.run("procedure_callees", { procedure: "main" }),
-      ).toEqual(["0x9000", ...addresses]);
+        timeoutMs: 1000,
+        workspaceRoot: root,
+      },
+      target,
+      producer,
+    );
+    try {
+      const result = await client.execute("procedure_callees", {
+        procedure: "main",
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toEqual(["0x9000", ...addresses]);
+      expect(result.value.relationshipCoverage).toEqual(uncappedCalleeCoverage);
+      if (mode === "headless")
+        expect(producer.database).toEqual(expect.any(String));
+      const scope = mode === "headless" ? { database: producer.database } : {};
       expect(
         producer.calls
           .filter(({ name }) => name === "lookup_funcs")
           .map(({ args }) => args),
       ).toEqual([
-        { queries: ["main"], database: "selected-database" },
-        { queries: addresses, database: "selected-database" },
+        { queries: ["main"], ...scope },
+        { queries: addresses, ...scope },
       ]);
-      expect(runner.raw.map(({ tool }) => tool)).toEqual([
-        "lookup_funcs",
-        "callees",
-        "lookup_funcs",
-      ]);
-      expect(runner.raw.at(-1)?.result).toEqual(addresses.map(row).reverse());
-      expect(runner.relationshipCoverage).toEqual(uncappedCalleeCoverage);
-    });
-
-    it.each([
-      "missing",
-      "duplicate",
-      "unrequested",
-      "Not found",
-      "Not a function",
-      "database unavailable",
-    ])("preserves a producer fault for %s batch rows", async (failure) => {
-      const { producer } = await fixture();
-      const original = producer.overrideCall;
-      producer.overrideCall = (name, args) => {
-        if (
-          name !== "lookup_funcs" ||
-          queriesSchema.parse(args).queries.length === 1
-        )
-          return original?.(name, args);
-        const rows = addresses.map(row);
-        if (failure === "missing") return rows.slice(1);
-        if (failure === "duplicate") return [rows[0]!, ...rows.slice(0, -1)];
-        if (failure === "unrequested") return [row("0xdead"), ...rows.slice(1)];
-        return [
-          { query: addresses[0]!, fn: null, error: failure },
-          ...rows.slice(1),
-        ];
-      };
-      const runner = new IdaOperationRunner(producer, protocol, undefined, {
-        x86Only: true,
+      expect(result.value.rawResult).toMatchObject({
+        observations: [
+          { tool: "lookup_funcs" },
+          { tool: "callees" },
+          {
+            tool: "lookup_funcs",
+            arguments: { queries: addresses, ...scope },
+            result: addresses.map(row).reverse(),
+          },
+        ],
       });
-      await expect(
-        runner.run("procedure_callees", { procedure: "main" }),
-      ).rejects.toMatchObject({ _tag: "AnalysisProtocolError" });
-      expect(producer.calls).toHaveLength(3);
-      expect(runner.raw).toHaveLength(3);
-    });
-
-    it("propagates cancellation after the batch reply without reporting partial success", async () => {
-      const { producer } = await fixture();
-      const controller = new AbortController();
-      producer.beforeCall = async (name, args) => {
-        if (
-          name === "lookup_funcs" &&
-          queriesSchema.parse(args).queries.length > 1
-        )
-          controller.abort();
-      };
-      const runner = new IdaOperationRunner(producer, protocol, undefined, {
-        x86Only: true,
-        signal: controller.signal,
-      });
-      await expect(
-        runner.run("procedure_callees", { procedure: "main" }),
-      ).rejects.toMatchObject({ _tag: "AnalysisCancelledError" });
-      expect(producer.calls).toHaveLength(3);
-      expect(runner.raw.at(-1)?.tool).toBe("lookup_funcs");
-    });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
   },
 );
-
-it("uses the batch through a modern session and preserves the observed callee Evidence", async () => {
-  const { producer, target, root } = await fixture();
-  const client = new IdaSessionClient(
-    {
-      command: "fixture",
-      args: [],
-      env: {},
-      mode: "headless",
-      timeoutMs: 1000,
-      workspaceRoot: root,
-    },
-    target,
-    producer,
-  );
-  try {
-    const result = await client.execute("procedure_callees", {
-      procedure: "main",
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toEqual(["0x9000", ...addresses]);
-    expect(result.value.relationshipCoverage).toEqual(uncappedCalleeCoverage);
-    expect(
-      producer.calls
-        .filter(({ name }) => name === "lookup_funcs")
-        .map(({ args }) => queriesSchema.parse(args).queries),
-    ).toEqual([["main"], addresses]);
-  } finally {
-    expect((await client.close()).ok).toBe(true);
-  }
-});

@@ -2,6 +2,8 @@ import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js"
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   DEFAULT_NATIVE_UI_DEADLINE_MS,
@@ -61,12 +63,11 @@ export class NativeUiInterruptionControl {
     operation: string,
     partialObservation?: AnalysisPartialObservation,
   ): AnalysisTimeoutError | AnalysisCancelledError {
-    if (this.#interruption === undefined)
-      this.#interrupt("deadline", this.#deadline.reason);
-    const error = this.error(operation, partialObservation);
-    if (error === undefined)
-      throw new Error("UI deadline failure requires an interruption.");
-    return error;
+    return this.#errorFor(
+      this.#interrupt("deadline", this.#deadline.reason),
+      operation,
+      partialObservation,
+    );
   }
 
   error(
@@ -74,15 +75,23 @@ export class NativeUiInterruptionControl {
     partialObservation?: AnalysisPartialObservation,
   ): AnalysisCancelledError | AnalysisTimeoutError | undefined {
     const interruption = this.#interruption;
-    if (interruption === undefined) return undefined;
+    return interruption === undefined
+      ? undefined
+      : this.#errorFor(interruption, operation, partialObservation);
+  }
+
+  #errorFor(
+    interruption: Interruption,
+    operation: string,
+    partialObservation: AnalysisPartialObservation | undefined,
+  ): AnalysisCancelledError | AnalysisTimeoutError {
     return interruption.kind === "deadline"
       ? new AnalysisTimeoutError(operation, this.#deadlineMs, {
           cause: interruption.reason,
           partialObservation,
           ...nativeDeadlineRecovery({
             timeoutMs: this.#deadlineMs,
-            setting: "native_ui_deadline_ms",
-            cliFlag: "--native-ui-deadline-ms",
+            parameter: "native_ui_deadline_ms",
             defaultMs: DEFAULT_NATIVE_UI_DEADLINE_MS,
             phase: "native UI observation deadline",
             detail: " A partial observation may already be retained.",
@@ -90,8 +99,7 @@ export class NativeUiInterruptionControl {
               "The 67108864-byte scenario output allowance and the 180000 ms cap on one wait step have no runtime override.",
           }),
         })
-      : new AnalysisCancelledError(operation, {
-          cause: interruption.reason,
+      : cancelledBy(operation, carriedReason(interruption.reason), {
           partialObservation,
         });
   }
@@ -101,9 +109,12 @@ export class NativeUiInterruptionControl {
     this.#deadline.removeEventListener("abort", this.#onDeadlineAbort);
   }
 
-  #interrupt(kind: Interruption["kind"], reason: unknown): void {
-    if (this.#interruption !== undefined) return;
-    this.#interruption = { kind, reason };
+  /** Record the first interruption; a later one leaves it primary. */
+  #interrupt(kind: Interruption["kind"], reason: unknown): Interruption {
+    if (this.#interruption !== undefined) return this.#interruption;
+    const interruption = { kind, reason };
+    this.#interruption = interruption;
     this.#controller.abort(reason);
+    return interruption;
   }
 }

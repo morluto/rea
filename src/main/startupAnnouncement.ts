@@ -2,7 +2,7 @@ import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvail
 import type {
   OptionalObservationProviders,
   OptionalProviderLoadFailures,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
 /**

@@ -14,9 +14,11 @@ import {
   dylibCommand,
   dylibUseCommand,
   fatImage,
+  fatSliceRange,
   lazyLoadDylibInfoCommand,
   lazyLoadDylibInfoPayload,
   machoImage,
+  machoImageWithUnknownCommand,
   machoImageWithLazyLoadDylibInfo,
   segmentCommand,
   readerOf,
@@ -24,16 +26,19 @@ import {
   versionMinCommand,
 } from "./MachoImage.fixture.js";
 import {
-  MAX_LAZY_INFO_DEPENDENCIES,
-  MAX_LAZY_INFO_SYMBOL_REFERENCES,
   MAX_LOAD_COMMAND_BYTES,
   readMachoImage,
-} from "./MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
 import { traceDylibResolution } from "./DylibResolutionReader.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
+import { MAX_JVM_CLASS_IDENTITY_BYTES } from "../../domain/apple/jvmClassFile.js";
+import { DirectoryArtifactReader } from "../../resources/index.js";
+
+// Independently exercise the dependency and reference budgets.
+const MAX_LAZY_INFO_DEPENDENCIES = 1024;
+const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
 
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
@@ -473,8 +478,12 @@ it.each([false, true] as const)(
   },
 );
 
+// dyld absolute paths start with "/". On Windows the test root is a drive path
+// (`E:\...`), so a load path built from it is not dyld-absolute there.
 describe("absolute dyld candidate paths at the filesystem reader boundary", () => {
-  it.each(["install-name", "rpath"] as const)(
+  it
+    .skipIf(process.platform === "win32")
+    .each(["install-name", "rpath"] as const)(
     "resolves an absolute in-root %s while preserving its source path",
     async (kind) => {
       const root = await createTestTempDirectory("rea-dylib-absolute-in-root-");
@@ -583,7 +592,13 @@ describe("absolute dyld candidate paths at the filesystem reader boundary", () =
       resolution: { status: "undetermined", image: null },
     });
     expect(trace.edges[1]).toMatchObject({
-      candidates: [{ outcome: "escapes-target", resolved_path: null }],
+      candidates: [
+        {
+          outcome:
+            process.platform === "win32" ? "undetermined" : "escapes-target",
+          resolved_path: null,
+        },
+      ],
       resolution: { status: "undetermined", image: null },
     });
     expect(trace.edges[2]).toMatchObject({
@@ -602,48 +617,52 @@ describe("absolute dyld candidate paths at the filesystem reader boundary", () =
 });
 
 describe("absolute dyld candidate traversal", () => {
-  it("maps an absolute candidate spelled through the selected root symlink", async () => {
-    const root = await createTestTempDirectory(
-      "rea-dylib-absolute-root-alias-",
-    );
-    const aliasRoot = join(root, "bundle-alias");
-    const bridgePath = "Frameworks/libBridge.dylib";
-    const bridgeAbsolute = `${aliasRoot}/${bridgePath}`;
-    const executable = machoImage({
-      commands: [
-        buildVersionCommand(1),
-        dylibCommand(LC.LOAD_DYLIB, bridgeAbsolute),
-      ],
-    });
-    const bridge = machoImage({
-      fileType: FILE_TYPE.dylib,
-      commands: [buildVersionCommand(1)],
-    });
-    await symlink(".", aliasRoot);
-    await mkdir(join(root, "Frameworks"), { recursive: true });
-    await writeFile(join(root, "App"), executable);
-    await writeFile(join(root, bridgePath), bridge);
+  // Needs symlink privilege, and its install name is built from a drive path.
+  it.skipIf(process.platform === "win32")(
+    "maps an absolute candidate spelled through the selected root symlink",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-dylib-absolute-root-alias-",
+      );
+      const aliasRoot = join(root, "bundle-alias");
+      const bridgePath = "Frameworks/libBridge.dylib";
+      const bridgeAbsolute = `${aliasRoot}/${bridgePath}`;
+      const executable = machoImage({
+        commands: [
+          buildVersionCommand(1),
+          dylibCommand(LC.LOAD_DYLIB, bridgeAbsolute),
+        ],
+      });
+      const bridge = machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      });
+      await symlink(".", aliasRoot);
+      await mkdir(join(root, "Frameworks"), { recursive: true });
+      await writeFile(join(root, "App"), executable);
+      await writeFile(join(root, bridgePath), bridge);
 
-    const trace = await traceDylibResolution({
-      rootPath: aliasRoot,
-      targetPath: `${aliasRoot}/App`,
-      targetSha256: createHash("sha256").update(executable).digest("hex"),
-      enumerateRoots: false,
-      parameters: { roots: ["App"] },
-    });
+      const trace = await traceDylibResolution({
+        rootPath: aliasRoot,
+        targetPath: `${aliasRoot}/App`,
+        targetSha256: createHash("sha256").update(executable).digest("hex"),
+        enumerateRoots: false,
+        parameters: { roots: ["App"] },
+      });
 
-    expect(trace.edges[0]).toMatchObject({
-      install_name: bridgeAbsolute,
-      candidates: [
-        {
-          path: bridgeAbsolute,
-          outcome: "resolved",
-          resolved_path: bridgePath,
-        },
-      ],
-      resolution: { status: "resolved", image: bridgePath },
-    });
-  });
+      expect(trace.edges[0]).toMatchObject({
+        install_name: bridgeAbsolute,
+        candidates: [
+          {
+            path: bridgeAbsolute,
+            outcome: "resolved",
+            resolved_path: bridgePath,
+          },
+        ],
+        resolution: { status: "resolved", image: bridgePath },
+      });
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "preserves symlink-then-parent traversal for an absolute in-root path",
@@ -922,49 +941,42 @@ describe("Mach-O load command reader: decodes thin-image load commands", () => {
     });
   });
 
-  it("decodes dylib_use_command flags", async () => {
-    const facts = await read(
-      machoImage({
-        commands: [
-          dylibUseCommand(LC.LOAD_DYLIB, "@rpath/libdelay.dylib", 0x8),
-          dylibUseCommand(LC.LOAD_DYLIB, "@rpath/libweakup.dylib", 0x1 | 0x4),
-          dylibUseCommand(LC.LOAD_DYLIB, "@rpath/libre.dylib", 0x2),
-        ],
-      }),
-    );
+  it("decodes modern flags while retaining the classic lazy dependency", async () => {
+    const image = machoImage({
+      commands: [
+        dylibUseCommand(LC.LOAD_DYLIB, "@rpath/delay", 0x8),
+        dylibUseCommand(LC.LOAD_DYLIB, "@rpath/weakup", 0x1 | 0x4),
+        dylibUseCommand(LC.LOAD_DYLIB, "@rpath/reexport", 0x2),
+        dylibUseCommand(LC.LAZY_LOAD_DYLIB, "@rpath/lazy", 0x09),
+      ],
+    });
+    const facts = await read(image);
     if (facts.status !== "parsed") throw new Error(facts.status);
+    const dependencies = facts.slices[0]?.dependencies;
     expect(
-      facts.slices[0]?.dependencies.map(
-        ({ encoding, weak, upward, reexport, delayed_init: delayed }) => ({
-          encoding,
-          weak,
-          upward,
-          reexport,
-          delayed,
-        }),
-      ),
+      dependencies?.map(({ command, install_name, encoding }) => [
+        command,
+        install_name,
+        encoding,
+      ]),
     ).toEqual([
-      {
-        encoding: "dylib_use_command",
-        weak: false,
-        upward: false,
-        reexport: false,
-        delayed: true,
-      },
-      {
-        encoding: "dylib_use_command",
-        weak: true,
-        upward: true,
-        reexport: false,
-        delayed: false,
-      },
-      {
-        encoding: "dylib_use_command",
-        weak: false,
-        upward: false,
-        reexport: true,
-        delayed: false,
-      },
+      ["LC_LOAD_DYLIB", "@rpath/delay", "dylib_use_command"],
+      ["LC_LOAD_DYLIB", "@rpath/weakup", "dylib_use_command"],
+      ["LC_LOAD_DYLIB", "@rpath/reexport", "dylib_use_command"],
+      ["LC_LAZY_LOAD_DYLIB", "@rpath/lazy", "dylib_command"],
+    ]);
+    expect(
+      dependencies?.map(({ weak, upward, reexport, delayed_init }) => [
+        weak,
+        upward,
+        reexport,
+        delayed_init,
+      ]),
+    ).toEqual([
+      [false, false, false, true],
+      [true, true, false, false],
+      [false, false, true, false],
+      [false, false, false, false],
     ]);
   });
 });
@@ -1116,107 +1128,128 @@ describe("LC_LAZY_LOAD_DYLIB_INFO image offsets", () => {
     expect(onPage.status).toBe("parsed");
   });
 
-  it("measures the VM range from __TEXT and ignores __LINKEDIT", async () => {
-    const text = segmentCommand({
-      name: "__TEXT",
-      vmaddr: 0x100000000n,
-      vmsize: 0x8000n,
-    });
-    const inside = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        flagImageOffset: 0x8000,
-        commandsBefore: [text],
-      }),
+  it("measures the mapped end from the first __TEXT even when data precedes it", async () => {
+    const base = 0x8000000100000000n;
+    const commandsBefore = (
+      [
+        ["__DATA", 0x6001n, 0x4000n],
+        ["__TEXT", 0n, 0x8000n],
+        ["__TEXT", 0x1000n, 0x1000n],
+        ["__LINKEDIT", 0x20000n, 0x8000n],
+      ] as const
+    ).map(([name, offset, vmsize]) =>
+      segmentCommand({ name, vmaddr: base + offset, vmsize }),
     );
-    expect(inside.status).toBe("parsed");
-    const outside = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        chainStartImageOffset: 0x8001,
-        commandsBefore: [text],
-      }),
-    );
-    expect(outside).toMatchObject({
+    const readAtOffset = (offset: number) =>
+      read(
+        machoImageWithLazyLoadDylibInfo({
+          path: "@rpath/libl.dylib",
+          flagImageOffset: offset,
+          chainStartImageOffset: offset,
+          commandsBefore,
+        }),
+      );
+    expect((await readAtOffset(0xa001)).status).toBe("parsed");
+    expect(await readAtOffset(0xa002)).toMatchObject({
       status: "malformed",
-      reason: expect.stringContaining("slice VM range 0x8000"),
+      reason: expect.stringContaining("slice VM range 0xa001"),
     });
-    const linkedit = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        flagImageOffset: 0x4001,
-        commandsBefore: [
-          segmentCommand({
-            name: "__LINKEDIT",
-            vmaddr: 0n,
-            vmsize: 0x100000n,
-          }),
-        ],
-      }),
-    );
-    expect(linkedit.status).toBe("malformed");
   });
 
-  it("does not alias a BOM-prefixed segment name to __LINKEDIT", async () => {
-    const result = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        flagImageOffset: 0x4001,
-        commandsBefore: [
-          segmentCommand({
-            name: "\uFEFF__LINKEDIT",
-            vmaddr: 0n,
-            vmsize: 0x100000n,
-          }),
-        ],
-      }),
-    );
-    expect(result.status).toBe("parsed");
+  it("excludes only the exact __LINKEDIT name when no __TEXT supplies a base", async () => {
+    const readNamed = (name: string) =>
+      read(
+        machoImageWithLazyLoadDylibInfo({
+          path: "@rpath/libl.dylib",
+          flagImageOffset: 0x4001,
+          commandsBefore: [
+            segmentCommand({ name, vmaddr: 0n, vmsize: 0x100000n }),
+          ],
+        }),
+      );
+    expect(await readNamed("__LINKEDIT")).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("slice VM range 0x4000"),
+    });
+    expect((await readNamed("\uFEFF__LINKEDIT")).status).toBe("parsed");
   });
+
   it("keeps a short segment parseable until a lazy-info command needs its VM range", async () => {
     const short = new Uint8Array(16);
     const view = new DataView(short.buffer);
-    view.setUint32(0, 0x19, true);
+    view.setUint32(0, LC.SEGMENT_64, true);
     view.setUint32(4, short.length, true);
     expect((await read(machoImage({ commands: [short] }))).status).toBe(
       "parsed",
     );
-    const withLazy = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        commandsBefore: [short],
-      }),
-    );
-    expect(withLazy).toMatchObject({
+    const readLazy = (commandsBefore: readonly Uint8Array[]) =>
+      read(
+        machoImageWithLazyLoadDylibInfo({
+          path: "@rpath/libl.dylib",
+          commandsBefore,
+        }),
+      );
+    expect(await readLazy([short])).toEqual({
       status: "malformed",
-      reason: expect.stringContaining("slice VM range"),
+      reason:
+        "load command 0 is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO",
+    });
+    const unterminated = rpathCommand("x");
+    unterminated.fill(0x61, 12);
+    expect(await readLazy([short, unterminated])).toEqual({
+      status: "malformed",
+      reason: "load command 1 has an unterminated string",
     });
   });
 });
 
+const imageWithLazyPayload = (
+  payload: Uint8Array,
+  windows: readonly (readonly [offset: number, size: number])[] = [
+    [0, payload.length],
+  ],
+): Uint8Array => {
+  const image = machoImage({
+    commands: windows.map(([, size]) => lazyLoadDylibInfoCommand(0, size)),
+  });
+  const bytes = new Uint8Array(image.length + payload.length);
+  bytes.set(image);
+  bytes.set(payload, image.length);
+  const view = new DataView(bytes.buffer);
+  windows.forEach(([offset], index) =>
+    view.setUint32(32 + index * 16 + 8, image.length + offset, true),
+  );
+  return bytes;
+};
+
+const readPayloadOnce = async (
+  payload: Uint8Array,
+  windows: Parameters<typeof imageWithLazyPayload>[1],
+) => {
+  const image = imageWithLazyPayload(payload, windows);
+  const payloadStart = image.length - payload.length;
+  const payloadReads: number[][] = [];
+  const facts = await readMachoImage(async (offset, length) => {
+    if (offset >= payloadStart) payloadReads.push([offset, length]);
+    return image.subarray(offset, offset + length);
+  }, image.length);
+  expect(payloadReads).toEqual([[payloadStart, payload.length]]);
+  return facts;
+};
+
 describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
-  it("reads one shared payload range once", async () => {
-    const payload = lazyLoadDylibInfoPayload({
-      path: "@rpath/libl.dylib",
-      symbols: ["_lf"],
-    });
-    const dataOffset = 32 + 16 + 16 + 16;
-    const image = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(dataOffset, payload.length),
-        lazyLoadDylibInfoCommand(dataOffset, payload.length),
-      ],
-    });
-    const bytes = new Uint8Array(image.length + payload.length);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    let payloadReads = 0;
-    const facts = await readMachoImage(async (offset, length) => {
-      if (offset === image.length && length === payload.length)
-        payloadReads += 1;
-      return bytes.subarray(offset, offset + length);
-    }, bytes.length);
-    expect(payloadReads).toBe(1);
+  it("reuses identical payload facts and reads containing bytes only once", async () => {
+    const first = lazyInfoPayloadWithSymbolCount(
+      MAX_LAZY_INFO_SYMBOL_REFERENCES,
+      "@rpath/libl.dylib",
+    );
+    const inner = lazyInfoPayloadWithSymbolCount(0, "@rpath/libm.dylib");
+    const outer = Buffer.concat([first, inner]);
+    const facts = await readPayloadOnce(outer, [
+      [0, outer.length],
+      [0, outer.length],
+      [first.length, inner.length],
+    ]);
     expect(facts).toMatchObject({
       status: "parsed",
       slices: [
@@ -1224,6 +1257,7 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
           dependencies: [
             { install_name: "@rpath/libl.dylib" },
             { install_name: "@rpath/libl.dylib" },
+            { install_name: "@rpath/libm.dylib" },
           ],
         },
       ],
@@ -1239,90 +1273,52 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
         lazyLoadDylibInfoCommand(0, MAX_LOAD_COMMAND_BYTES),
       ],
     });
-    const bytes = new Uint8Array(MAX_LOAD_COMMAND_BYTES);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    expect(await read(bytes)).toMatchObject({
+    const prefix = new Uint8Array(image.length + payload.length);
+    prefix.set(image);
+    prefix.set(payload, image.length);
+    const facts = await readMachoImage(async (offset, length) => {
+      if (offset + length > prefix.length)
+        throw new Error(
+          "Requested payload bytes before enforcing the aggregate limit",
+        );
+      return prefix.subarray(offset, offset + length);
+    }, MAX_LOAD_COMMAND_BYTES);
+    expect(facts).toMatchObject({
       status: "unsupported",
       reason: expect.stringContaining("aggregate limit"),
     });
   });
 
-  it("does not reread a payload range contained in an earlier read", async () => {
-    const payload = lazyLoadDylibInfoPayload({
-      path: "@rpath/libl.dylib",
-      symbols: ["_lf"],
-    });
-    const image = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(0, payload.length + 8),
-        lazyLoadDylibInfoCommand(0, payload.length),
-      ],
-    });
-    const bytes = new Uint8Array(image.length + payload.length + 8);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    const view = new DataView(bytes.buffer);
-    view.setUint32(32 + 8, image.length, true);
-    view.setUint32(48 + 8, image.length, true);
-    let payloadReads = 0;
-    const facts = await readMachoImage(async (offset, length) => {
-      if (offset === image.length) payloadReads += 1;
-      return bytes.subarray(offset, offset + length);
-    }, bytes.length);
-    expect(payloadReads).toBe(1);
-    expect(facts).toMatchObject({
+  it("keeps equal-size payload identities in load-command order", async () => {
+    const second = lazyInfoPayloadWithSymbolCount(0, "@rpath/libm.dylib");
+    const first = Buffer.alloc(second.length);
+    first.set(lazyInfoPayloadWithSymbolCount(0, ""));
+    const image = imageWithLazyPayload(Buffer.concat([first, second]), [
+      [first.length, second.length],
+      [0, first.length],
+    ]);
+    expect(await read(image)).toMatchObject({
       status: "parsed",
       slices: [
         {
           dependencies: [
-            { install_name: "@rpath/libl.dylib" },
-            { install_name: "@rpath/libl.dylib" },
+            { install_name: "@rpath/libm.dylib" },
+            { install_name: "" },
           ],
         },
       ],
     });
-  });
-
-  it("parses distinct non-nested lazy-info payloads under the dependency limit", async () => {
-    const count = 8;
-    const payloadSize = 26;
-    const payload = new Uint8Array(payloadSize);
-    new DataView(payload.buffer).setUint32(0, 24, true);
-    new DataView(payload.buffer).setUint32(20, 24, true);
-    const dataOffset = 32 + 16 + count * 16;
-    const commands = Array.from({ length: count }, (_, index) =>
-      lazyLoadDylibInfoCommand(dataOffset + index * payloadSize, payloadSize),
-    );
-    const image = machoImage({ commands });
-    const bytes = new Uint8Array(image.length + count * payloadSize);
-    bytes.set(image);
-    for (let index = 0; index < count; index += 1)
-      bytes.set(payload, image.length + index * payloadSize);
-    const facts = await read(bytes);
-    if (facts.status !== "parsed")
-      throw new Error(
-        facts.status === "not-mach-o" ? facts.status : facts.reason,
-      );
-    expect(facts.slices[0]?.dependencies).toHaveLength(count);
   });
 });
 
 describe("LC_LAZY_LOAD_DYLIB_INFO dependency limit", () => {
   it("retains one result per command until the dependency limit", async () => {
     const payload = lazyLoadDylibInfoPayload({ path: "@rpath/libl.dylib" });
-    const imageFor = (count: number) => {
-      const dataOffset = 32 + 16 + count * 16;
-      const image = machoImage({
-        commands: Array.from({ length: count }, () =>
-          lazyLoadDylibInfoCommand(dataOffset, payload.length),
-        ),
-      });
-      const bytes = new Uint8Array(image.length + payload.length);
-      bytes.set(image);
-      bytes.set(payload, image.length);
-      return bytes;
-    };
+    const imageFor = (count: number) =>
+      imageWithLazyPayload(
+        payload,
+        Array.from({ length: count }, () => [0, payload.length]),
+      );
     const atLimit = await read(imageFor(MAX_LAZY_INFO_DEPENDENCIES));
     if (atLimit.status !== "parsed")
       throw new Error(
@@ -1331,7 +1327,16 @@ describe("LC_LAZY_LOAD_DYLIB_INFO dependency limit", () => {
     expect(atLimit.slices[0]?.dependencies).toHaveLength(
       MAX_LAZY_INFO_DEPENDENCIES,
     );
-    expect(await read(imageFor(MAX_LAZY_INFO_DEPENDENCIES + 1))).toMatchObject({
+    const over = imageFor(MAX_LAZY_INFO_DEPENDENCIES + 1);
+    const payloadStart = over.length - payload.length;
+    const refused = await readMachoImage(async (offset, size) => {
+      if (offset + size > payloadStart)
+        throw new Error(
+          "Read a lazy payload before enforcing the dependency limit",
+        );
+      return over.subarray(offset, offset + size);
+    }, over.length);
+    expect(refused).toMatchObject({
       status: "unsupported",
       reason: expect.stringContaining("dependency limit"),
     });
@@ -1346,38 +1351,22 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
     view.setUint32(0, 24, true);
     view.setUint32(20, 24, true);
     payload.set(path, 24);
-    const image = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(0, payload.length),
-        lazyLoadDylibInfoCommand(0, 24),
-      ],
-    });
-    const bytes = new Uint8Array(image.length + payload.length);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    const patched = new DataView(bytes.buffer);
-    patched.setUint32(32 + 8, image.length, true);
-    patched.setUint32(48 + 8, image.length, true);
-    expect(await read(bytes)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("outside the payload"),
-    });
-    const truncated = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(0, payload.length),
-        lazyLoadDylibInfoCommand(0, 40),
-      ],
-    });
-    const truncatedBytes = new Uint8Array(truncated.length + payload.length);
-    truncatedBytes.set(truncated);
-    truncatedBytes.set(payload, truncated.length);
-    const truncatedView = new DataView(truncatedBytes.buffer);
-    truncatedView.setUint32(32 + 8, truncated.length, true);
-    truncatedView.setUint32(48 + 8, truncated.length, true);
-    expect(await read(truncatedBytes)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("unterminated"),
-    });
+    const readShorter = (size: number) =>
+      readPayloadOnce(payload, [
+        [0, payload.length],
+        [0, size],
+      ]);
+    const afterNul = 24 + path.length + 2;
+    expect((await readShorter(afterNul)).status).toBe("parsed");
+    for (const [size, diagnostic] of [
+      [24, "outside the payload"],
+      [afterNul - 2, "unterminated"],
+      [afterNul - 1, "unterminated"],
+    ] as const)
+      expect(await readShorter(size)).toMatchObject({
+        status: "malformed",
+        reason: expect.stringContaining(diagnostic),
+      });
   });
 
   it("rejects a load path taken from the payload header", async () => {
@@ -1385,14 +1374,7 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
     const view = new DataView(payload.buffer);
     view.setUint32(0, 4, true);
     view.setUint32(20, 24, true);
-    const image = machoImage({
-      commands: [lazyLoadDylibInfoCommand(0, payload.length)],
-    });
-    const bytes = new Uint8Array(image.length + payload.length);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    new DataView(bytes.buffer).setUint32(32 + 8, image.length, true);
-    expect(await read(bytes)).toMatchObject({
+    expect(await read(imageWithLazyPayload(payload))).toMatchObject({
       status: "malformed",
       reason: expect.stringContaining("inside the payload header"),
     });
@@ -1401,20 +1383,7 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
       symbols: ["_lf"],
     });
     new DataView(symbolPayload.buffer).setUint32(24, 4, true);
-    const symbolImage = machoImage({
-      commands: [lazyLoadDylibInfoCommand(0, symbolPayload.length)],
-    });
-    const symbolBytes = new Uint8Array(
-      symbolImage.length + symbolPayload.length,
-    );
-    symbolBytes.set(symbolImage);
-    symbolBytes.set(symbolPayload, symbolImage.length);
-    new DataView(symbolBytes.buffer).setUint32(
-      32 + 8,
-      symbolImage.length,
-      true,
-    );
-    expect(await read(symbolBytes)).toMatchObject({
+    expect(await read(imageWithLazyPayload(symbolPayload))).toMatchObject({
       status: "malformed",
       reason: expect.stringContaining("symbol 0"),
     });
@@ -1439,14 +1408,7 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
           stringOffset + (step === 0 ? 0 : symbol % 8),
           true,
         );
-      const image = machoImage({
-        commands: [lazyLoadDylibInfoCommand(0, payload.length)],
-      });
-      const bytes = new Uint8Array(image.length + payload.length);
-      bytes.set(image);
-      bytes.set(payload, image.length);
-      new DataView(bytes.buffer).setUint32(32 + 8, image.length, true);
-      return bytes;
+      return imageWithLazyPayload(payload);
     };
     expect(imageFor(2, 0).length).toBeLessThan(MAX_LOAD_COMMAND_BYTES);
     expect(await read(imageFor(2, 0))).toMatchObject({
@@ -1485,29 +1447,8 @@ const lazyInfoPayloadWithSymbolCount = (
   return payload;
 };
 
-const imageWithLazyPayload = (payload: Uint8Array): Uint8Array => {
-  const image = machoImage({
-    commands: [lazyLoadDylibInfoCommand(0, payload.length)],
-  });
-  const bytes = new Uint8Array(image.length + payload.length);
-  bytes.set(image);
-  bytes.set(payload, image.length);
-  const view = new DataView(bytes.buffer);
-  view.setUint32(32 + 8, image.length, true);
-  view.setUint32(32 + 12, payload.length, true);
-  return bytes;
-};
-
 describe("LC_LAZY_LOAD_DYLIB_INFO symbol cardinality", () => {
-  it("stops before caching one string for every symbol offset", async () => {
-    const atLimit = lazyInfoPayloadWithSymbolCount(
-      MAX_LAZY_INFO_SYMBOL_REFERENCES,
-      "@rpath/libl.dylib",
-    );
-    expect(await read(imageWithLazyPayload(atLimit))).toMatchObject({
-      status: "parsed",
-      slices: [{ dependencies: [{ install_name: "@rpath/libl.dylib" }] }],
-    });
+  it("refuses one payload above the symbol reference limit", async () => {
     const overLimit = lazyInfoPayloadWithSymbolCount(
       MAX_LAZY_INFO_SYMBOL_REFERENCES + 1,
       "@rpath/libl.dylib",
@@ -1524,21 +1465,10 @@ describe("LC_LAZY_LOAD_DYLIB_INFO symbol cardinality", () => {
       "@rpath/libl.dylib",
     );
     const second = lazyInfoPayloadWithSymbolCount(1, "@rpath/libm.dylib");
-    const image = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(0, first.length),
-        lazyLoadDylibInfoCommand(0, second.length),
-      ],
-    });
-    const bytes = new Uint8Array(image.length + first.length + second.length);
-    bytes.set(image);
-    bytes.set(first, image.length);
-    bytes.set(second, image.length + first.length);
-    const view = new DataView(bytes.buffer);
-    view.setUint32(32 + 8, image.length, true);
-    view.setUint32(32 + 12, first.length, true);
-    view.setUint32(48 + 8, image.length + first.length, true);
-    view.setUint32(48 + 12, second.length, true);
+    const bytes = imageWithLazyPayload(Buffer.concat([first, second]), [
+      [0, first.length],
+      [first.length, second.length],
+    ]);
     expect(await read(bytes)).toMatchObject({
       status: "unsupported",
       reason: expect.stringContaining("65536-reference limit"),
@@ -1553,19 +1483,8 @@ describe("LC_LAZY_LOAD_DYLIB_INFO path terminator", () => {
     view.setUint32(0, 24, true);
     view.setUint32(20, 24, true);
     payload[24] = 0x61;
-    const imageFor = (size: number) => {
-      const image = machoImage({
-        commands: [lazyLoadDylibInfoCommand(0, size)],
-      });
-      const bytes = new Uint8Array(image.length + payload.length);
-      bytes.set(image);
-      bytes.set(payload, image.length);
-      new DataView(bytes.buffer).setUint32(32 + 8, image.length, true);
-      new DataView(bytes.buffer).setUint32(32 + 12, size, true);
-      return bytes;
-    };
-    expect((await read(imageFor(payload.length))).status).toBe("parsed");
-    expect(await read(imageFor(26))).toMatchObject({
+    expect((await read(imageWithLazyPayload(payload))).status).toBe("parsed");
+    expect(await read(imageWithLazyPayload(payload, [[0, 26]]))).toMatchObject({
       status: "malformed",
       reason: expect.stringContaining("unterminated"),
     });
@@ -1789,6 +1708,28 @@ describe("Mach-O load command reader inputs", () => {
     ).toEqual({ status: "malformed", reason: "Mach-O header is truncated" });
   });
 
+  it.each([MAX_JVM_CLASS_IDENTITY_BYTES, MAX_JVM_CLASS_IDENTITY_BYTES + 1])(
+    "reports a known FAT range error and skips full class reads for %i bytes",
+    async (size) => {
+      const header = Buffer.alloc(28);
+      header.writeUInt32BE(0xcafebabe, 0);
+      header.writeUInt32BE(1, 4);
+      header.writeUInt32BE(CPU.arm64.type, 8);
+      header.writeUInt32BE(size, 16);
+      header.writeUInt32BE(32, 20);
+      const readAt = vi.fn(async (offset: number, length: number) =>
+        header.subarray(offset, offset + length),
+      );
+      expect(await readMachoImage(readAt, size)).toMatchObject({
+        status: "malformed",
+        reason: expect.stringContaining("slice range extends beyond the file"),
+      });
+      expect(Math.max(...readAt.mock.calls.map(([, length]) => length))).toBe(
+        28,
+      );
+    },
+  );
+
   it("keeps oversized CAFEBABE identity unknown when class payload is sparse", async () => {
     const classPrefix = Buffer.from(javaClassFile(4000, true));
     const payloadBytes = MAX_LOAD_COMMAND_BYTES + 1;
@@ -1827,14 +1768,16 @@ describe("Mach-O load command reader failures", () => {
   };
 
   it("reports malformed command tables with the failing command", async () => {
-    expect(await read(withCommandSize(0))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("load command 0"),
-    });
-    expect(await read(withCommandSize(4096))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("invalid cmdsize"),
-    });
+    for (const size of [0, 4096])
+      expect(await read(withCommandSize(size))).toMatchObject({
+        status: "malformed",
+        reason: expect.stringMatching(
+          new RegExp(
+            `load command 0\\b.*offset 0\\b.*invalid.*cmdsize ${size}\\b`,
+            "iu",
+          ),
+        ),
+      });
     const extraCommand = machoImage({ commands: [rpathCommand("x")] });
     new DataView(extraCommand.buffer).setUint32(16, 2, true);
     expect(await read(extraCommand)).toMatchObject({
@@ -1844,33 +1787,25 @@ describe("Mach-O load command reader failures", () => {
   });
 
   it("requires 8-byte command alignment in 64-bit images", async () => {
-    // A command the reader does not decode; only its size is checked.
-    const command = new Uint8Array(12);
-    const view = new DataView(command.buffer);
-    view.setUint32(0, 0x7f000001, true);
-    view.setUint32(4, 12, true);
-    expect(await read(machoImage({ commands: [command] }))).toMatchObject({
+    expect(await read(machoImageWithUnknownCommand(true, 12))).toMatchObject({
       status: "malformed",
-      reason: expect.stringContaining("invalid cmdsize 12"),
-    });
-    expect(
-      await read(
-        machoImage({
-          cpu: { type: 7, subtype: 3 },
-          wide: false,
-          commands: [command],
-        }),
+      reason: expect.stringMatching(
+        /load command 0\b.*invalid.*cmdsize 12\b/iu,
       ),
-    ).toMatchObject({ status: "parsed" });
+    });
+    expect(await read(machoImageWithUnknownCommand(false, 12))).toMatchObject({
+      status: "parsed",
+      slices: [{ architecture: "i386" }],
+    });
   });
 
   it("accepts FAT tables up to 128 records that name a Mach-O CPU", async () => {
-    const slices = Array.from({ length: 24 }, () => ({
+    const slices = Array.from({ length: 128 }, () => ({
       cpu: CPU.arm64,
       bytes: machoImage({}),
     }));
     const facts = await read(fatImage(slices));
-    expect(facts.status === "parsed" && facts.slices).toHaveLength(24);
+    expect(facts.status === "parsed" && facts.slices).toHaveLength(128);
     // An empty table is not a Java class file, whose major version is nonzero.
     for (const magic of [
       [0xca, 0xfe, 0xba, 0xbe],
@@ -1882,43 +1817,41 @@ describe("Mach-O load command reader failures", () => {
       });
   });
 
-  it("rejects string commands too short to hold their string offset", async () => {
-    const short = new Uint8Array(8);
-    const view = new DataView(short.buffer);
-    view.setUint32(0, LC.RPATH, true);
-    view.setUint32(4, 8, true);
-    expect(await read(machoImage({ commands: [short] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringMatching(
-        /load command 0\b.*too short.*string offset/iu,
-      ),
-    });
-    view.setUint32(0, LC.CODE_SIGNATURE, true);
-    expect(await read(machoImage({ commands: [short] }))).toMatchObject({
-      status: "malformed",
-      reason: "load command 0 is too short for LC_CODE_SIGNATURE",
-    });
-  });
-
-  it("rejects strings that are unterminated, misplaced or not UTF-8", async () => {
-    const unterminated = rpathCommand("abcd");
+  it("reports command-specific payload defects after accepting the frame", async () => {
+    const short = Uint8Array.of(LC.CODE_SIGNATURE, 0, 0, 0, 8, 0, 0, 0);
+    const shortRpath = short.slice();
+    new DataView(shortRpath.buffer).setUint32(0, LC.RPATH, true);
+    const withOffset = (command: Uint8Array, offset: number) => {
+      new DataView(command.buffer).setUint32(8, offset, true);
+      return command;
+    };
+    const unterminated = rpathCommand("ab");
     unterminated.fill(0x41, 12);
-    expect(await read(machoImage({ commands: [unterminated] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("unterminated"),
-    });
-    const misplaced = rpathCommand("abcd");
-    new DataView(misplaced.buffer).setUint32(8, 4, true);
-    expect(await read(machoImage({ commands: [misplaced] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("string offset 4"),
-    });
     const invalid = rpathCommand("ab");
     invalid[12] = 0xff;
-    expect(await read(machoImage({ commands: [invalid] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("not UTF-8"),
-    });
+    const atEnd = rpathCommand("ab");
+    for (const [command, issue] of [
+      [short, /too short.*LC_CODE_SIGNATURE/iu],
+      [shortRpath, /too short.*string offset/iu],
+      [unterminated, /unterminated/iu],
+      [withOffset(rpathCommand("ab"), 11), /string offset 11\b.*outside/iu],
+      [
+        withOffset(atEnd, atEnd.length),
+        new RegExp(`string offset ${atEnd.length}\\b.*outside`, "iu"),
+      ],
+      [
+        withOffset(dylibCommand(LC.LOAD_DYLIB, "ab"), 23),
+        /string offset 23\b.*outside/iu,
+      ],
+      [invalid, /not UTF-8/iu],
+    ] as const) {
+      const result = await read(machoImage({ commands: [command] }));
+      expect(result).toMatchObject({ status: "malformed" });
+      if (result.status !== "malformed")
+        throw new Error("Expected a malformed command");
+      expect(result.reason).toMatch(/load command 0\b/iu);
+      expect(result.reason).toMatch(issue);
+    }
   });
 
   it("refuses truncated, oversized, big-endian and out-of-range images", async () => {
@@ -1927,13 +1860,22 @@ describe("Mach-O load command reader failures", () => {
       status: "malformed",
       reason: "Mach-O header is truncated",
     });
-    const oversized = machoImage({});
-    new DataView(oversized.buffer).setUint32(
-      20,
-      MAX_LOAD_COMMAND_BYTES + 8,
-      true,
+    const payloadRead = new Error("Mach-O command table read");
+    const readDeclaredTable = (commandBytes: number) => {
+      const prefix = machoImage({}).subarray(0, 32);
+      new DataView(prefix.buffer).setUint32(20, commandBytes, true);
+      return readMachoImage(async (offset, length) => {
+        if (offset + length > prefix.length) throw payloadRead;
+        return prefix.subarray(offset, offset + length);
+      }, prefix.length + commandBytes);
+    };
+    await expect(readDeclaredTable(MAX_LOAD_COMMAND_BYTES)).rejects.toBe(
+      payloadRead,
     );
-    expect(await read(oversized)).toMatchObject({ status: "unsupported" });
+    expect(await readDeclaredTable(MAX_LOAD_COMMAND_BYTES + 8)).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringMatching(/above the .* limit/iu),
+    });
     const beyond = machoImage({ commands: [rpathCommand("x")] });
     new DataView(beyond.buffer).setUint32(20, beyond.length, true);
     expect(await read(beyond)).toMatchObject({
@@ -1980,25 +1922,31 @@ describe("Mach-O load command reader defect precedence", () => {
     expect(await read(machoImage({ commands: [shortRpath, unsized] }))).toEqual(
       decodeFirst,
     );
-    // over a missing later command,
+    // An impossible declared count prevents any command from being decoded.
     const missing = machoImage({ commands: [shortRpath] });
     new DataView(missing.buffer).setUint32(16, 2, true);
-    expect(await read(missing)).toEqual(decodeFirst);
-    // and over unconsumed command bytes.
+    expect(await read(missing)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringMatching(/count 2 cannot fit/iu),
+    });
+    // An earlier decode defect wins over unconsumed command bytes.
     const unconsumed = machoImage({
       commands: [shortRpath, rpathCommand("x")],
     });
     new DataView(unconsumed.buffer).setUint32(16, 1, true);
     expect(await read(unconsumed)).toEqual(decodeFirst);
 
-    // The command-size limit is checked before the slice bounds.
+    // A table whose declared size leaves the slice is malformed.
     const oversized = machoImage({});
     new DataView(oversized.buffer).setUint32(
       20,
       MAX_LOAD_COMMAND_BYTES + 8,
       true,
     );
-    expect(await read(oversized)).toMatchObject({ status: "unsupported" });
+    expect(await read(oversized)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringMatching(/extend beyond.*slice/iu),
+    });
 
     // A malformed FAT slice wins over an earlier or later unsupported one.
     const bigEndian = new Uint8Array(32);
@@ -2044,20 +1992,56 @@ it.each([true, false])(
   },
 );
 
-it("observes only the common 28-byte header of a 64-bit slice", async () => {
-  const bytes = machoImage({ fileType: FILE_TYPE.dylib }).subarray(0, 28);
-  const readAt = vi.fn(readerOf(bytes));
-  expect(await readMachoImage(readAt, 32)).toMatchObject({
-    status: "parsed",
-    slices: [{ file_type: "dylib", file_type_code: FILE_TYPE.dylib }],
-  });
-  expect(readAt.mock.calls).toEqual([
-    [0, 8],
-    [0, 28],
-    [32, 0],
-  ]);
-  expect(await readMachoImage(readerOf(bytes), 28)).toEqual({
+it("reads the common header at exactly its supported physical boundaries", async () => {
+  const common = (wide: boolean) =>
+    machoImage({
+      wide,
+      cpu: wide ? CPU.arm64 : CPU.i386,
+      fileType: FILE_TYPE.dylib,
+    }).subarray(0, 28);
+  for (const [wide, fileLength] of [
+    [true, 32],
+    [false, 28],
+  ] as const) {
+    const bytes = common(wide);
+    const readAt = vi.fn(readerOf(bytes));
+    expect(await readMachoImage(readAt, fileLength)).toMatchObject({
+      status: "parsed",
+      slices: [{ file_type: "dylib", file_type_code: FILE_TYPE.dylib }],
+    });
+    expect(
+      readAt.mock.calls.every(
+        ([offset, length]) => length === 0 || offset + length <= bytes.length,
+      ),
+    ).toBe(true);
+  }
+  expect(await readMachoImage(readerOf(common(true)), 28)).toEqual({
     status: "malformed",
     reason: "load commands extend beyond the Mach-O slice",
+  });
+});
+
+it("does not borrow Mach-O header bytes beyond a short FAT declaration", async () => {
+  const short = machoImage({ cpu: CPU.arm64 });
+  const bytes = fatImage([
+    { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+    { cpu: CPU.arm64, bytes: short.subarray(0, 12) },
+  ]);
+  const { offset, size } = fatSliceRange(bytes, 1);
+  // Keep a complete header physically readable after the declared slice ends.
+  bytes.set(short, offset);
+  const readAt = vi.fn(readerOf(bytes));
+  const result = await readMachoImage(readAt, bytes.length);
+  expect(
+    readAt.mock.calls.filter(
+      ([start, length]) =>
+        start >= offset &&
+        start < offset + short.length &&
+        start + length > offset + size,
+    ),
+  ).toEqual([]);
+  expect(result).toEqual({
+    status: "malformed",
+    reason: "Mach-O header is truncated",
   });
 });

@@ -1,13 +1,20 @@
 /** Build real PE TLS samples with Zig, then inspect through the public CLI. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const zig = process.env.REA_ZIG ?? "zig";
-const root = await mkdtemp(join(tmpdir(), "rea-pe-load-config-"));
-try {
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-pe-load-config-",
+  private: false,
+});
+const root = rootFixture.path;
+await withVerifierFixture(rootFixture, async () => {
   const source = join(root, "tls.c");
   await writeFile(
     source,
@@ -77,6 +84,4 @@ void entry(void) {}
       }),
     );
   }
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+});

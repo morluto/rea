@@ -1,15 +1,21 @@
+import {
+  DEFAULT_BUN_READER_LIMITS,
+  type BunReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
-  probeBunStandaloneGraph,
-  bunModuleCountLimit,
-  BUN_GRAPH_SUFFIX_BYTES,
-} from "./BunModuleGraphLayout.js";
+  CPU_ARM64,
+  CPU_X86_64,
+  universalMacho,
+} from "../../../tests/fixtures/universalMacho.js";
+import { probeBunStandaloneGraph } from "./BunModuleGraphLayout.js";
 import { decodeBunModuleGraph } from "./BunModuleGraphMembers.js";
 import {
   locateBunGraphFixture,
+  BUN_FIXTURE_GRAPH_SUFFIX_BYTES,
   bunModuleGraphPayload,
   bunPrefixedPayload,
   machoBunSection,
@@ -52,7 +58,7 @@ async function locate(bytes: Buffer) {
 }
 
 /** Probe while counting bytes read through the handle. */
-async function probe(bytes: Buffer) {
+async function probe(bytes: Buffer, limits?: BunReaderLimits) {
   const path = join(await createTestTempDirectory("rea-bun-parser-"), "app");
   await writeFile(path, bytes);
   const handle = await open(path, "r");
@@ -70,7 +76,12 @@ async function probe(bytes: Buffer) {
   });
   try {
     return {
-      result: await probeBunStandaloneGraph(counted, bytes.length),
+      result: await probeBunStandaloneGraph(
+        counted,
+        bytes.length,
+        undefined,
+        limits,
+      ),
       bytesRead,
     };
   } finally {
@@ -159,7 +170,11 @@ it.each(["trailer", "byte_count"])(
       modules: [{ name: "/$bunfs/root/main.js" }],
     });
     if (field === "trailer") payload[payload.length - 1] = 0;
-    else payload.writeBigUInt64LE(0n, payload.length - BUN_GRAPH_SUFFIX_BYTES);
+    else
+      payload.writeBigUInt64LE(
+        0n,
+        payload.length - BUN_FIXTURE_GRAPH_SUFFIX_BYTES,
+      );
     const prefix = Buffer.alloc(4);
     prefix.writeUInt32LE(payload.length);
     expect(
@@ -210,14 +225,14 @@ it.each([
   await expect(decodeBunModuleGraph(graph)).rejects.toThrow(reason);
 });
 
-it("recognizes a truncated section as malformed", async () => {
+it("recognizes a truncated section as truncated", async () => {
   const section = bunPrefixedPayload(bunModuleGraphPayload({ modules: [{}] }));
   const result = await locate(
     machoBunSection(section.subarray(0, section.length - 1)),
   );
   expect(result).toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "truncated" },
   });
 });
 
@@ -233,19 +248,83 @@ it("locates the legacy trailer before its final carrier length", async () => {
   expect((await decodeBunModuleGraph(result.graph)).modules).toHaveLength(1);
 });
 
-it("does not admit oversized payloads or truncated length prefixes", async () => {
-  const prefix = Buffer.alloc(8);
-  prefix.writeBigUInt64LE(300n * 1024n * 1024n);
-  expect(await locate(machoBunSection(prefix))).toMatchObject({
-    status: "present",
-    failure: { reason: "limit" },
-  });
+it("rejects truncated length prefixes and ignores empty placeholders", async () => {
   expect(await locate(machoBunSection(Buffer.from([1])))).toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "truncated" },
   });
   expect(await locate(machoBunSection(Buffer.alloc(8)))).toEqual({
     status: "absent",
+  });
+});
+
+it.each([
+  {
+    name: "Mach-O section",
+    carrier: (payload: Buffer) => machoBunSection(bunPrefixedPayload(payload)),
+    breakExtent: (bytes: Buffer, payload: Buffer) =>
+      bytes.writeBigUInt64LE(
+        BigInt(payload.length + 1),
+        bytes.length - payload.length - 8,
+      ),
+  },
+  {
+    name: "appended ELF trailer",
+    carrier: elfAppendedBunPayload,
+    breakExtent: (bytes: Buffer) =>
+      bytes.writeBigUInt64LE(
+        BigInt(bytes.length),
+        bytes.length - BUN_FIXTURE_GRAPH_SUFFIX_BYTES,
+      ),
+  },
+])(
+  "checks the $name payload extent before its configured limit",
+  async ({ carrier, breakExtent }) => {
+    const payload = bunModuleGraphPayload({ modules: [{ name: "main.js" }] });
+    const bytes = carrier(payload);
+    const limits = {
+      ...DEFAULT_BUN_READER_LIMITS,
+      payload_bytes: payload.length - 1,
+    };
+    expect((await probe(bytes, limits)).result).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "limit",
+        readerLimit: { parameter: "artifact_limits.bun.payload_bytes" },
+      },
+    });
+    breakExtent(bytes, payload);
+    expect((await probe(bytes, limits)).result).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "truncated",
+        message: expect.stringContaining("truncated"),
+      },
+    });
+  },
+);
+
+it("reports an impossible Bun suffix byte count as a format error", async () => {
+  const payload = bunModuleGraphPayload({ modules: [{ name: "main.js" }] });
+  const limits = {
+    ...DEFAULT_BUN_READER_LIMITS,
+    payload_bytes: payload.length,
+  };
+  const section = () => peBunSection(bunPrefixedPayload(payload));
+  expect((await probe(section(), limits)).result).toMatchObject({
+    status: "present",
+    claim: { payloadLength: payload.length },
+  });
+  payload.writeBigUInt64LE(
+    BigInt(payload.length + 1),
+    payload.length - BUN_FIXTURE_GRAPH_SUFFIX_BYTES,
+  );
+  expect((await probe(section(), limits)).result).toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("byte_count"),
+    },
   });
 });
 
@@ -254,6 +333,204 @@ it("refuses multiple embedded graphs instead of selecting one", async () => {
   expect(await locate(machoBunSections([section, section]))).toMatchObject({
     status: "present",
     failure: { reason: "unavailable" },
+  });
+});
+
+it.each([
+  ["zero-fill", (bytes: Buffer) => bytes.writeUInt32LE(0x12, 32 + 72 + 64)],
+  ["file extent", (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 48)],
+  [
+    "virtual extent",
+    (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 72 + 32),
+  ],
+] as const)(
+  "refuses a named Mach-O Bun section with invalid %s backing",
+  async (reason, change) => {
+    const section = bunPrefixedPayload(
+      bunModuleGraphPayload({ modules: [{}] }),
+    );
+    const bytes = machoBunSection(section);
+    change(bytes);
+    expect(await locate(bytes)).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "malformed",
+        message: expect.stringContaining(reason),
+      },
+    });
+  },
+);
+
+it.each(["thin", "universal"] as const)(
+  "requires a Bun segment to fit its %s Mach-O image",
+  async (format) => {
+    const payload = bunPrefixedPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("body") }],
+      }),
+    );
+    const wrap = (thin: Buffer) =>
+      format === "thin"
+        ? thin
+        : universalMacho([{ bytes: thin, cpuType: CPU_ARM64, cpuSubtype: 0 }])
+            .bytes;
+    const thin = machoBunSection(payload);
+    const control = await probe(wrap(thin));
+    expect(control.result).toMatchObject({
+      status: "present",
+      claim: { carrier: "mach-o-section" },
+    });
+    const malformed = Buffer.from(thin);
+    const segment = 32;
+    const size = BigInt(payload.length) + 1n;
+    malformed.writeBigUInt64LE(size, segment + 32);
+    malformed.writeBigUInt64LE(size, segment + 48);
+    // The universal fixture pads after the slice. The excess byte is outside
+    // the slice even when the outer file has bytes at that offset.
+    const { result } = await probe(wrap(malformed));
+    expect(result).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "malformed",
+        message: expect.stringContaining("segment range is outside the file"),
+      },
+    });
+  },
+);
+
+it.each(["cpu-type", "cpu-subtype"] as const)(
+  "requires a matching FAT %s for a Bun section claim",
+  async (field) => {
+    const thin = (name: string) =>
+      machoBunSection(
+        bunPrefixedPayload(bunModuleGraphPayload({ modules: [{ name }] })),
+      );
+    const candidate = {
+      bytes: thin("candidate.js"),
+      cpuType: CPU_ARM64,
+      cpuSubtype: 0,
+    };
+    const conflicting = {
+      ...candidate,
+      ...(field === "cpu-type"
+        ? { tableCpuType: CPU_X86_64 }
+        : { tableCpuSubtype: 1 }),
+    };
+    const matching = universalMacho([candidate]);
+    expect((await probe(matching.bytes)).result).toMatchObject({
+      status: "present",
+      claim: { carrier: "mach-o-section" },
+    });
+    const wrong = universalMacho([conflicting]);
+    const unpadded = wrong.bytes.subarray(
+      0,
+      wrong.slices[0]!.offset + wrong.slices[0]!.size,
+    );
+    expect((await probe(unpadded)).result).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "malformed",
+        message: expect.stringContaining("CPU type/subtype disagrees"),
+      },
+    });
+    const unnamed = Buffer.from(conflicting.bytes);
+    unnamed.write("__note", 32 + 72);
+    expect(
+      (await probe(universalMacho([{ ...conflicting, bytes: unnamed }]).bytes))
+        .result,
+    ).toEqual({ status: "absent" });
+    const validSibling = { ...candidate, bytes: thin("independent.js") };
+    const mixed = universalMacho([conflicting, validSibling]);
+    const result = await locate(mixed.bytes);
+    if (result.status !== "present" || !result.graph)
+      throw new Error("Expected the independent Bun graph");
+    expect(
+      (await decodeBunModuleGraph(result.graph)).modules[0]?.nameText.text,
+    ).toBe("independent.js");
+    const oversizedCommands = machoBunSections([
+      bunPrefixedPayload(
+        bunModuleGraphPayload({ modules: [{ name: "first.js" }] }),
+      ),
+      bunPrefixedPayload(
+        bunModuleGraphPayload({ modules: [{ name: "second.js" }] }),
+      ),
+    ]);
+    const limited = universalMacho([
+      { ...conflicting, bytes: oversizedCommands },
+      validSibling,
+    ]);
+    const { result: underBudget } = await probe(limited.bytes, {
+      ...DEFAULT_BUN_READER_LIMITS,
+      recognition_load_command_bytes: validSibling.bytes.readUInt32LE(20),
+    });
+    expect(underBudget).toMatchObject({
+      status: "present",
+      claim: {
+        carrier: "mach-o-section",
+        payloadOffset: limited.slices[1]!.offset + 32 + 72 + 80 + 8,
+      },
+    });
+  },
+);
+
+it("keeps refused FAT bytes outside the appended graph fallback", async () => {
+  const graph = (name: string) =>
+    bunModuleGraphPayload({ modules: [{ name }] });
+  const thin = machoBunSection(bunPrefixedPayload(graph("refused.js")));
+  const fixture = universalMacho([
+    {
+      bytes: thin,
+      cpuType: CPU_ARM64,
+      cpuSubtype: 0,
+      tableCpuType: CPU_X86_64,
+    },
+  ]);
+  const slice = fixture.slices[0]!;
+  const unpadded = fixture.bytes.subarray(0, slice.offset + slice.size);
+  const limits = {
+    ...DEFAULT_BUN_READER_LIMITS,
+    recognition_load_command_bytes: thin.readUInt32LE(20) - 1,
+  };
+  expect((await probe(unpadded, limits)).result).toEqual({ status: "absent" });
+
+  const outside = graph("outside.js");
+  const outer = Buffer.concat([unpadded, outside]);
+  for (const selected of [limits, DEFAULT_BUN_READER_LIMITS]) {
+    expect((await probe(outer, selected)).result).toMatchObject({
+      status: "present",
+      claim: {
+        carrier: "appended-trailer",
+        payloadOffset: unpadded.length,
+        payloadLength: outside.length,
+      },
+    });
+  }
+
+  const legacySize = Buffer.alloc(8);
+  legacySize.writeBigUInt64LE(BigInt(outer.length + legacySize.length));
+  expect(
+    (await probe(Buffer.concat([outer, legacySize]), limits)).result,
+  ).toMatchObject({
+    status: "present",
+    claim: {
+      carrier: "appended-trailer",
+      payloadOffset: unpadded.length,
+      payloadLength: outside.length,
+    },
+  });
+
+  // The footer is outside, but its reported data begins one byte in the
+  // refused slice. Both the footer and the full graph span must be eligible.
+  const overlapping = Buffer.from(outside);
+  const offsets = overlapping.length - BUN_FIXTURE_GRAPH_SUFFIX_BYTES;
+  overlapping.writeBigUInt64LE(
+    overlapping.readBigUInt64LE(offsets) + 1n,
+    offsets,
+  );
+  expect(
+    (await probe(Buffer.concat([unpadded, overlapping]), limits)).result,
+  ).toEqual({
+    status: "absent",
   });
 });
 
@@ -301,33 +578,57 @@ it.each([
     expect(await locate(carrier(section))).toMatchObject({
       status: "present",
       failure: {
-        reason: "format",
+        reason: "truncated",
         message: expect.stringContaining("past the end of the file"),
       },
     });
   },
 );
 
-it("matches ELF section names in bounded time when headers share one long name", async () => {
+it("requires PE raw section padding to fit before reading a Bun graph", async () => {
+  const payload = bunPrefixedPayload(
+    bunModuleGraphPayload({ modules: [{ name: "main.js" }] }),
+  );
+  const valid = peBunSection(payload);
+  expect((await probe(valid)).result).toMatchObject({
+    status: "present",
+    claim: { carrier: "pe-section" },
+  });
+  // Only file-alignment padding is missing. The complete virtual section and
+  // the rest of the PE declarations are byte-identical to the valid control.
+  expect((await probe(valid.subarray(0, -1))).result).toMatchObject({
+    status: "present",
+    failure: {
+      reason: "truncated",
+      message: expect.stringContaining("past the end of the file"),
+    },
+  });
+});
+
+it("reads a shared long ELF section name once without materializing its string table", async () => {
   const shnum = 16_383;
   const stringOffset = 64;
   const strings = Buffer.alloc(1024 * 1024, 0x61);
+  strings[0] = 0;
+  strings[strings.length - 1] = 0;
   const tableOffset = stringOffset + strings.length;
   const bytes = Buffer.alloc(tableOffset + shnum * 64);
   elfPrefix().copy(bytes, 0);
   bytes.writeBigUInt64LE(BigInt(tableOffset), 40);
   bytes.writeUInt16LE(64, 58);
   bytes.writeUInt16LE(shnum, 60);
-  bytes.writeUInt16LE(0, 62);
+  bytes.writeUInt16LE(1, 62);
   strings.copy(bytes, stringOffset);
-  for (let index = 0; index < shnum; index += 1) {
+  for (let index = 1; index < shnum; index += 1) {
     const header = tableOffset + index * 64;
+    bytes.writeUInt32LE(1, header);
+    bytes.writeUInt32LE(index === 1 ? 3 : 1, header + 4);
     bytes.writeBigUInt64LE(BigInt(stringOffset), header + 24);
     bytes.writeBigUInt64LE(BigInt(strings.length), header + 32);
   }
-  const started = performance.now();
-  expect((await probe(bytes)).result).toEqual({ status: "absent" });
-  expect(performance.now() - started).toBeLessThan(2_000);
+  const observed = await probe(bytes);
+  expect(observed.result).toEqual({ status: "absent" });
+  expect(observed.bytesRead).toBeLessThan(shnum * 64 + 1024);
 });
 
 it("refuses an excessive table count before reading or allocating the module table", async () => {
@@ -340,7 +641,6 @@ it("refuses an excessive table count before reading or allocating the module tab
   if (result.status !== "present" || result.graph === undefined)
     throw new Error("Missing graph");
   const read = vi.fn(result.graph.data.read);
-  const expected = bunModuleCountLimit(count);
   await expect(
     decodeBunModuleGraph({
       ...result.graph,
@@ -349,7 +649,124 @@ it("refuses an excessive table count before reading or allocating the module tab
   ).rejects.toMatchObject({
     reason: "limit",
     boundary: "capacity",
-    message: expected.message,
+    readerLimit: {
+      parameter: "artifact_limits.bun.module_count",
+      effective_value: 100_000,
+      required_value: 100_001,
+      unit: "count",
+    },
   });
   expect(read).not.toHaveBeenCalled();
+});
+
+it.each([
+  {
+    carrier: "ELF",
+    encode: elfBunSection,
+    field: "recognition_table_bytes",
+    needed: 192,
+  },
+  {
+    carrier: "Mach-O",
+    encode: machoBunSection,
+    field: "recognition_load_command_bytes",
+    needed: 152,
+  },
+] as const)(
+  "keeps $carrier recognition unknown at its selected boundary and recovers the same graph",
+  async ({ encode, field, needed }) => {
+    const bytes = encode(
+      bunPrefixedPayload(
+        bunModuleGraphPayload({
+          modules: [{ name: "main.js", contents: Buffer.from("retained") }],
+        }),
+      ),
+    );
+    const limited = await probe(bytes, {
+      ...DEFAULT_BUN_READER_LIMITS,
+      [field]: needed - 1,
+    });
+    expect(limited.result).toMatchObject({
+      status: "limited",
+      failure: {
+        reason: "limit",
+        readerLimit: {
+          parameter: `artifact_limits.bun.${field}`,
+          effective_value: needed - 1,
+          required_value: needed,
+        },
+      },
+    });
+    const recovered = await probe(bytes, {
+      ...DEFAULT_BUN_READER_LIMITS,
+      [field]: needed,
+    });
+    expect(recovered.result).toMatchObject({
+      status: "present",
+      claim: {
+        carrier: encode === elfBunSection ? "elf-section" : "mach-o-section",
+      },
+    });
+  },
+);
+
+it("recognizes an ELF Bun section name deep in the string table by reading only that name", async () => {
+  const bytes = elfBunSection(
+    bunPrefixedPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("retained") }],
+      }),
+    ),
+    1024 * 1024 + 8,
+  );
+  const observed = await probe(bytes);
+  expect(observed.result).toMatchObject({
+    status: "present",
+    claim: { carrier: "elf-section" },
+  });
+  expect(observed.bytesRead).toBeLessThan(1024);
+});
+
+it.each([
+  ["missing command", (image: Buffer) => image.writeUInt32LE(2, 16)],
+  [
+    "unused command bytes",
+    (image: Buffer) => image.writeUInt32LE(image.readUInt32LE(20) + 8, 20),
+  ],
+] as const)("refuses a Mach-O Bun graph with %s", async (_label, damage) => {
+  const image = machoBunSection(
+    bunPrefixedPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("hello") }],
+      }),
+    ),
+  );
+  damage(image);
+  const { result } = await probe(image);
+  expect(result).toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+});
+
+it("preserves Bun metadata UTF-8 text and keeps undecodable bytes as hex", async () => {
+  const result = await locate(
+    elfAppendedBunPayload(
+      bunModuleGraphPayload({
+        modules: [
+          { name: "\uFEFF資料𐐷.js" },
+          { name: Buffer.from([0xc3, 0x28]) },
+        ],
+        compileExecArgv: Buffer.from([0xff]),
+      }),
+    ),
+  );
+  if (result.status !== "present" || !result.graph)
+    throw new Error("missing graph");
+  const decoded = await decodeBunModuleGraph(result.graph);
+  expect(decoded.modules.map(({ nameText }) => nameText)).toEqual([
+    { text: "\uFEFF資料𐐷.js", hex: null },
+    { text: null, hex: "c328" },
+  ]);
+  expect(decoded.compileExecArgv).toEqual({ text: null, hex: "ff" });
 });

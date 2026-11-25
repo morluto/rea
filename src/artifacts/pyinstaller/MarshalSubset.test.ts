@@ -20,6 +20,11 @@ it("reads a Python 3.9 reference-flagged PYZ table", () => {
   ]);
 });
 
+it("reads marshal one-byte string tags as Latin-1", () => {
+  for (const hex of ["6101000000e9", "4101000000e9", "7a01e9", "5a01e9"])
+    expect(readMarshalSubset(bytes(hex))).toEqual({ ok: true, value: "é" });
+});
+
 it("decodes CPython marshal Unicode with surrogatepass", () => {
   expect(
     readMarshalSubset(
@@ -82,7 +87,7 @@ it.each([
   ).toMatchObject({
     ok: false,
     error: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("UTF-8"),
     },
   });
@@ -126,7 +131,7 @@ it.each(["6c0200000003000000", "6cfeffffff03000000"])(
     expect(readMarshalSubset(bytes(hex))).toMatchObject({
       ok: false,
       error: {
-        reason: "format",
+        reason: "malformed",
         message: expect.stringMatching(/long.*not normalized/iu),
       },
     });
@@ -160,7 +165,7 @@ it("rejects a marshal type outside the subset", () => {
   const parsed = readMarshalSubset(Buffer.from([0x4e]));
   expect(parsed.ok).toBe(false);
   if (parsed.ok) return;
-  expect(parsed.error.reason).toBe("format");
+  expect(parsed.error.reason).toBe("malformed");
 });
 
 it.each([
@@ -171,7 +176,7 @@ it.each([
   const parsed = readMarshalSubset(bytes(hex));
   expect(parsed).toMatchObject({
     ok: false,
-    error: { reason: "format" },
+    error: { reason: "malformed" },
   });
 });
 

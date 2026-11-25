@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { Budget } from "../budget.js";
 import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
@@ -20,12 +21,16 @@ import {
   textBytes,
   type Reserve,
 } from "./webNetworkRouteTemplates.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 /** Shared retained/temporary byte accounting for views that group retained HAR records. */
 export abstract class WebNetworkProjectionAccumulator {
   readonly #limitations = new Set<string>();
-  #retainedBytes = 0;
-  #temporaryBytes = 0;
+  /** Retained state and temporary work share one allowance. */
+  readonly #bytes: Budget;
+  /** The retained and temporary shares of `#bytes`, for their checkpoints. */
+  readonly #retained: Budget;
+  readonly #temporary: Budget;
   /** Per-record scratch reservation handed to the shared record readers. */
   protected readonly scratch: Reserve = (bytes) => this.temporary(bytes);
 
@@ -33,41 +38,53 @@ export abstract class WebNetworkProjectionAccumulator {
     readonly maximumBytes: number,
     private readonly budgetSubject: string,
     private readonly operation = "inspect_analysis_view",
-  ) {}
+  ) {
+    this.#bytes = new Budget(maximumBytes);
+    this.#retained = new Budget(maximumBytes);
+    this.#temporary = new Budget(maximumBytes);
+  }
+
+  #charge(share: Budget, bytes: number): boolean {
+    if (!this.#bytes.tryCharge(bytes)) return false;
+    // A share never exceeds the whole, so it always fits.
+    return share.tryCharge(bytes);
+  }
+
+  #restore(share: Budget, mark: number): void {
+    this.#bytes.refund(share.restore(mark));
+  }
 
   protected retain(bytes: number): boolean {
-    if (this.#retainedBytes + this.#temporaryBytes + bytes > this.maximumBytes)
-      return false;
-    this.#retainedBytes += bytes;
-    return true;
+    return this.#charge(this.#retained, bytes);
   }
 
   protected temporary(bytes: number): boolean {
-    if (this.#retainedBytes + this.#temporaryBytes + bytes > this.maximumBytes)
-      return false;
-    this.#temporaryBytes += bytes;
-    return true;
+    return this.#charge(this.#temporary, bytes);
   }
 
-  /** Restore the enclosing synchronous parse's scratch after a nested body lease. */
+  /**
+   * Release the scratch charged by a nested body lease. Leases end in LIFO
+   * order and `releaseTemporary` never runs inside one, so the enclosing
+   * parse's scratch is still charged when this runs.
+   */
   protected temporaryCheckpoint(): () => void {
-    const held = this.#temporaryBytes;
+    const mark = this.#temporary.used;
     return () => {
-      this.#temporaryBytes = held;
+      this.#restore(this.#temporary, mark);
     };
   }
 
   /** Mark the retained bytes; the returned call releases what was retained since, once none of it is held. */
   protected retainedCheckpoint(): () => void {
-    const mark = this.#retainedBytes;
+    const mark = this.#retained.used;
     return () => {
-      this.#retainedBytes = Math.min(this.#retainedBytes, mark);
+      this.#restore(this.#retained, mark);
     };
   }
 
   /** Per-record strings and descriptors never become cumulative scratch. */
   protected releaseTemporary(): void {
-    this.#temporaryBytes = 0;
+    this.#restore(this.#temporary, 0);
   }
 
   protected overBudget(): Result<never, AnalysisError> {
@@ -80,6 +97,7 @@ export abstract class WebNetworkProjectionAccumulator {
         fixedAllowanceOptions(
           "The analysis-view projection allowance",
           "parser",
+          { limit: this.maximumBytes, unit: "bytes" },
         ),
       ),
     );
@@ -105,13 +123,52 @@ export abstract class WebNetworkProjectionAccumulator {
   }
 
   addLimitations(limitations: readonly string[]): Result<void, AnalysisError> {
-    for (const limitation of limitations) {
-      if (this.#limitations.has(limitation)) continue;
-      if (!this.retain(ENTRY_BYTES + textBytes(limitation.length)))
-        return this.overBudget();
-      this.#limitations.add(limitation);
-    }
+    const prepared = this.prepareLimitations(limitations);
+    if (!prepared.ok) return prepared;
+    prepared.value();
     return ok(undefined);
+  }
+
+  /** Admit record qualifications without publishing them before the record commits. */
+  protected prepareLimitations(
+    limitations: readonly string[],
+  ): Result<() => void, AnalysisError> {
+    const rollbackAdmission = this.retainedCheckpoint();
+    const pending = new Set<string>();
+    for (const limitation of limitations) {
+      if (this.#limitations.has(limitation) || pending.has(limitation))
+        continue;
+      if (!this.retain(ENTRY_BYTES + textBytes(limitation.length))) {
+        rollbackAdmission();
+        return this.overBudget();
+      }
+      pending.add(limitation);
+    }
+    return ok(() => {
+      for (const limitation of pending) this.#limitations.add(limitation);
+    });
+  }
+
+  /** Derive budgeted qualifications for this snapshot without retaining old snapshots. */
+  protected snapshotLimitations(
+    derived: readonly string[],
+  ): Result<string[], AnalysisError> {
+    const release = this.temporaryCheckpoint();
+    if (
+      !this.scratch(
+        derived.reduce(
+          (bytes, limitation) =>
+            bytes + ENTRY_BYTES + textBytes(limitation.length),
+          0,
+        ),
+      )
+    )
+      return this.overBudget();
+    try {
+      return ok([...new Set([...this.#limitations, ...derived])].sort(compare));
+    } finally {
+      release();
+    }
   }
 
   protected sortedLimitations(): string[] {
@@ -120,30 +177,13 @@ export abstract class WebNetworkProjectionAccumulator {
 }
 
 /** Authenticate and gate a retained HAR parent before a grouping view reads any record. */
-export const admitHarCaptureParent = (
+const parseHarCapture = (
   parent: AnalysisViewParent,
-  viewKind: "api-surface" | "environment-manifest" | "environment-state",
-  accumulator: WebNetworkProjectionAccumulator,
-  context: { readonly operation?: string; readonly sourceField?: string } = {},
+  operation: string,
+  sourceField: string,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const operation = context.operation ?? "inspect_analysis_view";
-  const sourceField = context.sourceField ?? "source";
-  const unsupported = (reason: string, remediationAction?: string) =>
-    err(
-      new AnalysisUnsupportedTargetError(
-        operation,
-        parent.evidenceId,
-        reason,
-        remediationAction === undefined ? undefined : { remediationAction },
-      ),
-    );
-  if (parent.operation !== "inspect_web_network_capture")
-    return unsupported(
-      `View ${viewKind} is unsupported for parent operation ${parent.operation}; ${viewKind} requires ${viewKind === "api-surface" ? "inspect_web_network_capture" : "inspect_web_network_capture or capture_browser_scenario"}.`,
-    );
-  const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
-  if (!admitted.ok) return admitted;
-  const parsed = safeParseOwnedWebNetworkCapture(parent.normalizedResult);
+  const source = parent.normalizedResult;
+  const parsed = safeParseOwnedWebNetworkCapture(source);
   if (!parsed.success)
     return err(
       analysisInputErrorFromIssues(
@@ -152,22 +192,43 @@ export const admitHarCaptureParent = (
           ...issue,
           path: [sourceField, "normalized_result", ...issue.path],
         })),
-        { [sourceField]: { normalized_result: parent.normalizedResult } },
+        { [sourceField]: { normalized_result: source } },
         { cause: parsed.error },
       ),
     );
-  if (parsed.data.format !== "har")
+  return ok(parsed.data);
+};
+
+export const admitHarCaptureParent = (
+  parent: AnalysisViewParent,
+  viewKind: "api-surface" | "environment-manifest" | "environment-state",
+  accumulator: WebNetworkProjectionAccumulator,
+  context: { readonly operation?: string; readonly sourceField?: string } = {},
+): Result<WebNetworkCapture, AnalysisError> => {
+  const operation = context.operation ?? "inspect_analysis_view";
+  const sourceField = context.sourceField ?? "source";
+  const unsupported = (reason: string) =>
+    err(unsupportedTarget(operation, parent.evidenceId, "evidence", reason));
+  if (parent.operation !== "inspect_web_network_capture")
     return unsupported(
-      `${viewKind} does not support capture format ${parsed.data.format}.`,
+      `View ${viewKind} is unsupported for parent operation ${parent.operation}; ${viewKind} requires ${viewKind === "api-surface" ? "inspect_web_network_capture" : "inspect_web_network_capture or capture_browser_scenario"}.`,
+    );
+  const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
+  if (!admitted.ok) return admitted;
+  const parsed = parseHarCapture(parent, operation, sourceField);
+  if (!parsed.ok) return parsed;
+  if (parsed.value.format !== "har")
+    return unsupported(
+      `${viewKind} does not support capture format ${parsed.value.format}.`,
     );
   // Environment views preserve the recorded report path and authenticate its digest;
   // the api-surface view keeps the admission its existing callers rely on.
-  const { artifact } = parsed.data;
-  const subject = parent.subject;
+  const { artifact } = parsed.value;
+  const subject = evidenceFileTarget(parent);
   if (
     viewKind !== "api-surface" &&
     artifact.sha256 !== null &&
-    (subject == null || subject.digest.sha256 !== artifact.sha256)
+    (subject == null || subject.sha256 !== artifact.sha256)
   )
     return err(
       analysisViewInputError([
@@ -184,9 +245,14 @@ export const admitHarCaptureParent = (
     .object({ sensitive_value_count: z.number().int().nonnegative() })
     .safeParse(parent.parameters);
   if (!declarations.success || declarations.data.sensitive_value_count > 0)
-    return unsupported(
-      "sensitive_values_unretained",
-      "This view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
+    return err(
+      unsupportedTarget(
+        operation,
+        parent.evidenceId,
+        "evidence",
+        "sensitive_values_unretained: this view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
+        { field: "sensitive_value_count" },
+      ),
     );
-  return ok(parsed.data);
+  return ok(parsed.value);
 };

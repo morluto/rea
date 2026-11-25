@@ -1,3 +1,4 @@
+import { UEFI_TOOL_CONTRACTS } from "./uefi/uefiToolContracts.js";
 import { ANALYSIS_SETTINGS_TOOL_CONTRACTS } from "./analysisSettingsContracts.js";
 import { GPU_TOOL_CONTRACTS } from "./gpu/gpuToolContracts.js";
 import { CAPTURE_TOOL_CONTRACTS } from "./captures/captureToolContracts.js";
@@ -12,13 +13,16 @@ import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
 import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
+import { NUGET_NUPKG_TOOL_CONTRACTS } from "./nuget/nupkgToolContracts.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
 import { V8_CODE_CACHE_TOOL_CONTRACTS } from "./v8/v8CodeCacheToolContracts.js";
+import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "./java/mavenGradleMetadataToolContracts.js";
 import { SQLITE_TOOL_CONTRACTS } from "./sqlite/sqliteToolContracts.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
+import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "./releaseExposureToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
 import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
@@ -45,57 +49,102 @@ import { GDB_TOOL_CONTRACTS } from "./gdbToolContracts.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
 import { FRIDA_TOOL_CONTRACTS } from "./fridaToolContracts.js";
 import { ENVIRONMENT_TOOL_CONTRACTS } from "./environmentToolContracts.js";
+import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
+import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "./browserScenarioToolContracts.js";
+
+/**
+ * Canonical contract-array owners in public catalog order. Each public
+ * contract belongs to exactly one of these groups.
+ */
+const CATALOG_CONTRACT_GROUPS = {
+  ANALYSIS_SETTINGS_TOOL_CONTRACTS,
+  OFFICIAL_TOOL_CONTRACTS,
+  ENHANCED_TOOL_CONTRACTS,
+  NATIVE_TOOL_CONTRACTS,
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  ANALYSIS_VIEW_TOOL_CONTRACTS,
+  ARTIFACT_TOOL_CONTRACTS,
+  RELEASE_EXPOSURE_TOOL_CONTRACTS,
+  DESKTOP_APPLICATION_TOOL_CONTRACTS,
+  EVM_TOOL_CONTRACTS,
+  GO_TOOL_CONTRACTS,
+  IL2CPP_TOOL_CONTRACTS,
+  MODEL_TOOL_CONTRACTS,
+  GPU_TOOL_CONTRACTS,
+  RUST_TOOL_CONTRACTS,
+  PYTHON_PYC_TOOL_CONTRACTS,
+  NUGET_NUPKG_TOOL_CONTRACTS,
+  ERLANG_BEAM_TOOL_CONTRACTS,
+  V8_CODE_CACHE_TOOL_CONTRACTS,
+  MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
+  WASM_TOOL_CONTRACTS,
+  APK_SIGNATURE_TOOL_CONTRACTS,
+  SQLITE_TOOL_CONTRACTS,
+  CAPTURE_TOOL_CONTRACTS,
+  SIGNAL_TOOL_CONTRACTS,
+  MANAGED_TOOL_CONTRACTS,
+  ANDROID_TOOL_CONTRACTS,
+  APKTOOL_TOOL_CONTRACTS,
+  PCAP_TOOL_CONTRACTS,
+  FLUTTER_TOOL_CONTRACTS,
+  JEB_TOOL_CONTRACTS,
+  ADB_TOOL_CONTRACTS,
+  FIRMWARE_TOOL_CONTRACTS,
+  UEFI_TOOL_CONTRACTS,
+  MANAGED_WORKFLOW_TOOL_CONTRACTS,
+  BROWSER_PROVIDER_TOOL_CONTRACTS,
+  ELECTRON_TOOL_CONTRACTS,
+  JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
+  APPLICATION_TOOL_CONTRACTS,
+  WEB_SCRIPT_TOOL_CONTRACTS,
+  WEB_RUNTIME_TOOL_CONTRACTS,
+  WEB_NETWORK_CAPTURE_TOOL_CONTRACTS,
+  ENVIRONMENT_TOOL_CONTRACTS,
+  DESKTOP_BUILD_TOOL_CONTRACTS,
+  JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+  SESSION_TOOL_CONTRACTS,
+  CUTTER_TOOL_CONTRACTS,
+  REVERSE_ENGINEERING_TOOL_CONTRACTS,
+  GDB_TOOL_CONTRACTS,
+  RIZIN_DEBUG_TOOL_CONTRACTS,
+  FRIDA_TOOL_CONTRACTS,
+} as const;
+
+/**
+ * Every named contract group: the catalog groups above plus provider-owned
+ * subsets of one of them, which capability declarations may select whole.
+ */
+export const TOOL_CONTRACT_GROUPS = {
+  ...CATALOG_CONTRACT_GROUPS,
+  // Both are subsets of BROWSER_PROVIDER_TOOL_CONTRACTS.
+  BROWSER_TOOL_CONTRACTS,
+  BROWSER_SCENARIO_TOOL_CONTRACTS,
+} as const;
+
+export type ToolContractGroupId = keyof typeof TOOL_CONTRACT_GROUPS;
+
+type CatalogContract =
+  (typeof CATALOG_CONTRACT_GROUPS)[keyof typeof CATALOG_CONTRACT_GROUPS][number];
 
 /** Complete ordered public inventory used by registration and verification. */
-export const TOOL_CONTRACTS = [
-  ...ANALYSIS_SETTINGS_TOOL_CONTRACTS,
-  ...OFFICIAL_TOOL_CONTRACTS,
-  ...ENHANCED_TOOL_CONTRACTS,
-  ...NATIVE_TOOL_CONTRACTS,
-  ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
-  ...ANALYSIS_VIEW_TOOL_CONTRACTS,
-  ...ARTIFACT_TOOL_CONTRACTS,
-  ...DESKTOP_APPLICATION_TOOL_CONTRACTS,
-  ...EVM_TOOL_CONTRACTS,
-  ...GO_TOOL_CONTRACTS,
-  ...IL2CPP_TOOL_CONTRACTS,
-  ...MODEL_TOOL_CONTRACTS,
-  ...GPU_TOOL_CONTRACTS,
-  ...RUST_TOOL_CONTRACTS,
-  ...PYTHON_PYC_TOOL_CONTRACTS,
-  ...ERLANG_BEAM_TOOL_CONTRACTS,
-  ...V8_CODE_CACHE_TOOL_CONTRACTS,
-  ...WASM_TOOL_CONTRACTS,
-  ...APK_SIGNATURE_TOOL_CONTRACTS,
-  ...SQLITE_TOOL_CONTRACTS,
-  ...CAPTURE_TOOL_CONTRACTS,
-  ...SIGNAL_TOOL_CONTRACTS,
-  ...MANAGED_TOOL_CONTRACTS,
-  ...ANDROID_TOOL_CONTRACTS,
-  ...APKTOOL_TOOL_CONTRACTS,
-  ...PCAP_TOOL_CONTRACTS,
-  ...FLUTTER_TOOL_CONTRACTS,
-  ...JEB_TOOL_CONTRACTS,
-  ...ADB_TOOL_CONTRACTS,
-  ...FIRMWARE_TOOL_CONTRACTS,
-  ...MANAGED_WORKFLOW_TOOL_CONTRACTS,
-  ...BROWSER_PROVIDER_TOOL_CONTRACTS,
-  ...ELECTRON_TOOL_CONTRACTS,
-  ...JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
-  ...APPLICATION_TOOL_CONTRACTS,
-  ...WEB_SCRIPT_TOOL_CONTRACTS,
-  ...WEB_RUNTIME_TOOL_CONTRACTS,
-  ...WEB_NETWORK_CAPTURE_TOOL_CONTRACTS,
-  ...ENVIRONMENT_TOOL_CONTRACTS,
-  ...DESKTOP_BUILD_TOOL_CONTRACTS,
-  ...JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
-  ...SESSION_TOOL_CONTRACTS,
-  ...CUTTER_TOOL_CONTRACTS,
-  ...REVERSE_ENGINEERING_TOOL_CONTRACTS,
-  ...GDB_TOOL_CONTRACTS,
-  ...RIZIN_DEBUG_TOOL_CONTRACTS,
-  ...FRIDA_TOOL_CONTRACTS,
-] as const;
+export const TOOL_CONTRACTS: readonly CatalogContract[] = Object.values(
+  CATALOG_CONTRACT_GROUPS,
+).flat();
+
+/** Public tool contract paired with its canonical catalog index. */
+export interface ToolContractEntry {
+  readonly contract: CatalogContract;
+  readonly index: number;
+}
+
+const TOOL_CONTRACTS_BY_NAME: ReadonlyMap<string, ToolContractEntry> = new Map(
+  TOOL_CONTRACTS.map((contract, index) => [contract.name, { contract, index }]),
+);
+
+/** Resolve a public contract entry in catalog order in O(1). */
+export const toolContractEntry = (
+  name: string,
+): ToolContractEntry | undefined => TOOL_CONTRACTS_BY_NAME.get(name);
 
 /** Resolve a public contract by name while retaining its exact schema types. */
 export const toolContract = <
@@ -103,14 +152,9 @@ export const toolContract = <
 >(
   name: Name,
 ): Extract<(typeof TOOL_CONTRACTS)[number], { readonly name: Name }> => {
-  const contract = TOOL_CONTRACTS.find(
-    (
-      candidate,
-    ): candidate is Extract<
-      (typeof TOOL_CONTRACTS)[number],
-      { readonly name: Name }
-    > => candidate.name === name,
-  );
+  const contract = TOOL_CONTRACTS_BY_NAME.get(name)?.contract as
+    | Extract<(typeof TOOL_CONTRACTS)[number], { readonly name: Name }>
+    | undefined;
   if (contract === undefined) throw new Error(`Missing tool contract: ${name}`);
   return contract;
 };

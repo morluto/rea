@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { access, stat, statfs } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 
 import { z } from "zod";
 
@@ -8,47 +8,45 @@ import type {
   DesktopBuildCommand,
   DesktopBuildFacts,
   DesktopBuildFactsInput,
-} from "../application/DesktopBuildDoctor.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+} from "../ports/DesktopBuildHost.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import {
   readRegularFileText,
   RetainedRegularFileCleanupFailure,
-} from "../application/RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
+import { PYTHON_BUILD_ARCHIVE_PROBE } from "../domain/desktop/appBuildArchive.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
+import { describeSystemPs, resolveSystemPs } from "../process/systemPs.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
 import {
+  ArtifactFileCleanupFailure,
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../resources/index.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
   agentEnvReportedVersion,
-  BUILD_COMPUTER_SETTINGS,
   defaultBuildComputerArchive,
   programOnPath,
   resolveBuildComputerProgram,
   type BuildComputerSetting,
 } from "./BuildComputerEnvironment.js";
+import { BUILD_COMPUTER_SETTINGS } from "../domain/desktop/buildComputerSettings.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEFAULT_DOCKER_ROOT = "/var/lib/docker";
 const CONFIG_BYTES = 1024 * 1024;
 
-/** Inspect the same tar compression formats as the build's Python extractor without extracting files. */
-const ARCHIVE_VERSION = String.raw`
-import json, pathlib, sys, tarfile
-roots, versions = set(), {}
-with tarfile.open(sys.argv[1], "r|*") as archive:
-    for entry in archive:
-        parts = pathlib.PurePosixPath(entry.name).parts
-        if len(parts) == 3 and parts[1:] == ("scripts", "rea.mjs") and (entry.isfile() or entry.issym()):
-            roots.add(parts[0])
-        elif len(parts) == 2 and parts[1] == "package.json" and entry.isfile() and entry.size <= 1048576:
-            stream = archive.extractfile(entry)
-            if stream is not None:
-                try:
-                    versions[parts[0]] = json.load(stream).get("version")
-                except (ValueError, UnicodeError, AttributeError):
-                    pass
-print(json.dumps({"version": versions.get(next(iter(roots))) if len(roots) == 1 else None}))
-`;
+const missingPath = (cause: unknown): boolean =>
+  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
 /** Read what a desktop build needs from this host, changing nothing. */
 export const readDesktopBuildFacts = async (
@@ -77,7 +75,19 @@ export const readDesktopBuildFacts = async (
     versions.set(path, pending);
     return pending;
   };
-  const archive = await archiveFact(input, agentEnv);
+  const archive = await archiveFact(input, async () =>
+    agentEnv.status === "found"
+      ? agentEnvInterpreter(
+          { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
+          "desktop_build_doctor",
+          input.resources,
+        ).catch((cause: unknown) => {
+          if (cause instanceof ArtifactFileCleanupFailure)
+            throw runnerCleanupFailure(cause);
+          return "python3";
+        })
+      : "python3",
+  );
   const chosenCommand = (
     name: BuildComputerSetting,
     command: DesktopBuildCommand,
@@ -144,12 +154,7 @@ const attempt = async (
     const stderr = failure?.stderr.trim() ?? "";
     return {
       ok: false,
-      reason:
-        stderr === ""
-          ? cause instanceof Error
-            ? cause.message
-            : String(cause)
-          : stderr,
+      reason: stderr === "" ? errorMessage(cause) : stderr,
     };
   }
 };
@@ -177,12 +182,21 @@ const settingCommand = async (
     : { status: "invalid", value };
 };
 
-/** procps `ps` accepts `-p`; busybox's does not. */
+/**
+ * Probe the `ps` REA's process supervisor selects: a fixed system location
+ * first, REA's PATH only as the fallback. procps `ps` accepts `-p`; busybox's
+ * does not.
+ */
 const psFact = async (
   input: DesktopBuildFactsInput,
 ): Promise<DesktopBuildFacts["ps"]> => {
-  const ps = await programOnPath("ps", input.environment);
-  if (ps === undefined) return { found: false, detail: "No ps is on PATH." };
+  const selected = await resolveSystemPs(input.platform);
+  const ps =
+    selected.source === "system"
+      ? selected.command
+      : await programOnPath("ps", input.environment);
+  if (ps === undefined)
+    return { found: false, detail: `No ${describeSystemPs(selected)}.` };
   const probe = await attempt(input, ps, [
     "-o",
     "pid=",
@@ -228,10 +242,10 @@ const freeSpace = async (path: string): Promise<DesktopBuildFacts["disk"]> => {
       return { path: candidate, freeBytes: fs.bavail * fs.bsize };
     } catch (cause: unknown) {
       const parent = dirname(candidate);
-      if (parent === candidate)
+      if (parent === candidate || !missingPath(cause))
         return {
           path,
-          error: cause instanceof Error ? cause.message : String(cause),
+          error: errorMessage(cause),
         };
       candidate = parent;
     }
@@ -246,10 +260,15 @@ const agentEnvVersion = async (
   return reported.ok ? agentEnvReportedVersion(reported.stdout) : undefined;
 };
 
-/** The setup-packed archive is named by its version; another is read for its package version. */
+const archiveObservationSchema = z.object({
+  version: z.string().nullable(),
+  problem: z.string().nullable(),
+});
+
+/** Read layout and package version for the selected archive without extracting it. */
 const archiveFact = async (
   input: DesktopBuildFactsInput,
-  agentEnv: DesktopBuildCommand,
+  pythonForArchive: () => Promise<string | undefined>,
 ): Promise<DesktopBuildFacts["archive"]> => {
   const selected = input.environment.REA_BUILD_COMPUTER_REA_ARCHIVE;
   const source =
@@ -258,23 +277,31 @@ const archiveFact = async (
     source === "cache"
       ? defaultBuildComputerArchive(input.environment, input.platform)
       : (selected as string);
-  const file = await stat(path).then(
-    (entry) => entry.isFile(),
-    () => false,
-  );
-  if (!file) return { path, source, status: "missing" };
-  if (source === "cache") return { path, source, status: "current" };
-  const python =
-    agentEnv.status === "found"
-      ? await agentEnvInterpreter(
-          { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
-          "desktop_build_doctor",
-        ).catch(() => "python3")
-      : "python3";
+  try {
+    if (!(await stat(path)).isFile())
+      return { path, source, status: "missing" };
+  } catch (cause: unknown) {
+    return missingPath(cause)
+      ? { path, source, status: "missing" }
+      : {
+          path,
+          source,
+          status: "unknown",
+          detail: `REA could not inspect ${path}: ${errorMessage(cause)}`,
+        };
+  }
+  const python = await pythonForArchive();
+  if (python === undefined)
+    return {
+      path,
+      source,
+      status: "unknown",
+      detail: `REA could not identify the selected runner's Python to inspect ${path}.`,
+    };
   const packed = await attempt(input, python, [
     "-I",
     "-c",
-    ARCHIVE_VERSION,
+    PYTHON_BUILD_ARCHIVE_PROBE,
     path,
   ]);
   if (!packed.ok)
@@ -284,15 +311,24 @@ const archiveFact = async (
       status: "unknown",
       detail: `REA could not inspect ${path}: ${packed.reason}`,
     };
-  let version: unknown;
-  try {
-    version = (JSON.parse(packed.stdout) as { version?: unknown }).version;
-  } catch {
-    version = undefined;
+  const parsed = safeParseJson(packed.stdout);
+  const observation = parsed.ok
+    ? archiveObservationSchema.safeParse(parsed.value)
+    : undefined;
+  if (observation?.success === true && observation.data.problem !== null) {
+    const { version, problem } = observation.data;
+    return {
+      path,
+      source,
+      status: "invalid",
+      detail: `${version === null ? path : `${path} declares REA ${version}`}. ${problem}`,
+    };
   }
+  const version =
+    observation?.success === true ? observation.data.version : null;
   return version === PRODUCT_IDENTITY.packageVersion
     ? { path, source, status: "current" }
-    : typeof version !== "string"
+    : version === null
       ? {
           path,
           source,
@@ -303,7 +339,7 @@ const archiveFact = async (
           path,
           source,
           status: "stale",
-          detail: `${path} holds REA ${typeof version === "string" ? version : "of an unknown version"}; this is REA ${PRODUCT_IDENTITY.packageVersion}.`,
+          detail: `${path} holds REA ${version}; this is REA ${PRODUCT_IDENTITY.packageVersion}.`,
         };
 };
 
@@ -314,7 +350,7 @@ const registrationFacts = async (
   versionFor: (path: string) => Promise<string | undefined>,
 ): Promise<DesktopBuildFacts["registrations"]> => {
   const selected = input.clientIds.length === 0 ? undefined : input.clientIds;
-  const recordedRunners = new Map<string, string>();
+  const recorded = new Map<string, Map<string, string>>();
   const statuses = await input.registrations(
     selected,
     Object.fromEntries(
@@ -325,20 +361,22 @@ const registrationFacts = async (
     ),
     undefined,
     (client, name, value) => {
-      if (
-        name === "REA_AGENT_ENV_COMMAND" &&
-        (selected === undefined || selected.includes(client))
-      )
-        recordedRunners.set(client, value);
+      if (selected === undefined || selected.includes(client)) {
+        const settings = recorded.get(client) ?? new Map<string, string>();
+        settings.set(name, value);
+        recorded.set(client, settings);
+      }
     },
   );
   const registered = statuses.filter(({ command }) => command.length > 0);
   const considered = selected ?? registered.map(({ client }) => client);
-  return Promise.all(
+  // Every admitted client inspection settles before a failure is reported, so
+  // no file a peer opened outlives the doctor operation that owns it.
+  const outcomes = await Promise.allSettled(
     considered.map(async (client) => {
       const status = registered.find((entry) => entry.client === client);
-      const recordedRunner =
-        status === undefined ? undefined : recordedRunners.get(client);
+      const values = status === undefined ? undefined : recorded.get(client);
+      const recordedRunner = values?.get("REA_AGENT_ENV_COMMAND");
       const effectiveRunner =
         recordedRunner === undefined
           ? undefined
@@ -376,14 +414,48 @@ const registrationFacts = async (
           effectiveRunner === undefined ||
           effectiveRunner !== selectedSettings.REA_AGENT_ENV_COMMAND,
       );
-      const compared = differing.filter(
-        (name) => selectedSettings[name as BuildComputerSetting] !== undefined,
-      );
-      const unchecked = differing.filter(
-        (name) =>
-          selectedSettings[name as BuildComputerSetting] === undefined &&
-          !(name === "REA_AGENT_ENV_COMMAND" && runner !== undefined),
-      );
+      const compared: string[] = [];
+      const unchecked: string[] = [];
+      for (const name of differing) {
+        if (name === "REA_AGENT_ENV_COMMAND") {
+          if (runner !== undefined) compared.push(name);
+          else unchecked.push(name);
+          continue;
+        }
+        const value = values?.get(name);
+        if (value === undefined) {
+          unchecked.push(name);
+          continue;
+        }
+        const environment = { ...input.environment, [name]: value };
+        if (name === "REA_DOCKER_COMMAND") {
+          const command = await settingCommand(environment, name, "docker");
+          if (command.status !== "found") compared.push(name);
+          else if (
+            (await dockerDaemon({ ...input, environment }, command.path))
+              .status !== "reachable"
+          )
+            unchecked.push(name);
+        } else if (name === "REA_BUILD_COMPUTER_REA_ARCHIVE") {
+          const archive = await archiveFact(
+            { ...input, environment },
+            async () =>
+              effectiveRunner === undefined || runner?.status === "invalid"
+                ? undefined
+                : agentEnvInterpreter(
+                    { ...environment, REA_AGENT_ENV_COMMAND: effectiveRunner },
+                    "desktop_build_doctor",
+                    input.resources,
+                  ).catch((cause: unknown) => {
+                    if (cause instanceof ArtifactFileCleanupFailure)
+                      throw runnerCleanupFailure(cause);
+                    return undefined;
+                  }),
+          );
+          if (archive.status === "unknown") unchecked.push(name);
+          else if (archive.status !== "current") compared.push(name);
+        } else unchecked.push(name);
+      }
       return {
         client,
         registered: status !== undefined,
@@ -395,14 +467,18 @@ const registrationFacts = async (
       };
     }),
   );
+  const failure = outcomes.find((outcome) => outcome.status === "rejected");
+  if (failure !== undefined) throw failure.reason;
+  return outcomes.flatMap((outcome) =>
+    outcome.status === "fulfilled" ? [outcome.value] : [],
+  );
 };
 
 const solveEndpoint = async (
   input: DesktopBuildFactsInput,
   runner: DesktopBuildCommand,
 ): Promise<string | null | undefined> => {
-  if (input.signal.aborted)
-    throw new AnalysisCancelledError("doctor", { cause: input.signal.reason });
+  if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
   if (runner.status !== "found") return null;
   const discovery = await attempt(input, runner.path, [
     "config",
@@ -462,20 +538,47 @@ const solveEndpoint = async (
     : (selected ?? "agentenv model configuration");
 };
 
+/**
+ * A doctor file whose close failed stays owned by `input.resources`, which the
+ * doctor host retries on close. Report it as the doctor's typed cleanup
+ * failure, bound to that owner's lease, so the error document keeps the
+ * retained file and its recovery.
+ */
+const doctorFileCleanupFailure = (
+  lease: AnalysisCleanupLease,
+  resources: readonly string[],
+  reason: string,
+  cause: unknown,
+  cleanupPrimary?: AnalysisCancelledError,
+): ProviderCleanupError => {
+  const failure = new ProviderCleanupError(
+    "rea",
+    resources,
+    { reason },
+    { operation: "doctor", cause, cleanupPrimary },
+  );
+  new AnalysisCleanupLeaseGroup(failure, [lease]);
+  return failure;
+};
+
+const runnerCleanupFailure = (
+  cause: ArtifactFileCleanupFailure,
+): ProviderCleanupError =>
+  doctorFileCleanupFailure(
+    cause.cleanupLease,
+    cause.cleanup?.resources ?? cause.cleanupLease.cleanupResources ?? [],
+    cause.cleanup?.reason ?? cause.message,
+    cause,
+  );
+
 const canReadModelConfig = async (
   path: string,
   input: DesktopBuildFactsInput,
 ): Promise<boolean> => {
   try {
-    if (input.signal.aborted)
-      throw new AnalysisCancelledError("doctor", {
-        cause: input.signal.reason,
-      });
+    if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
     const candidate = await stat(path);
-    if (input.signal.aborted)
-      throw new AnalysisCancelledError("doctor", {
-        cause: input.signal.reason,
-      });
+    if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
     if (!candidate.isFile() || candidate.size > CONFIG_BYTES) return false;
     await readRegularFileText(path, {
       signal: input.signal,
@@ -484,19 +587,25 @@ const canReadModelConfig = async (
           throw new Error("Configuration exceeds the read limit");
       },
       cancellationFailure: (reason) =>
-        new AnalysisCancelledError("doctor", { cause: reason }),
+        cancelledBy("doctor", carriedReason(reason)),
     });
     return true;
   } catch (cause: unknown) {
     if (cause instanceof RetainedRegularFileCleanupFailure) {
       input.resources.retain(cause.cleanupOwner);
-      throw cause;
+      const cancellation = regularFileCancellation(cause);
+      throw doctorFileCleanupFailure(
+        cause.cleanupLease,
+        [cause.path],
+        cause.message,
+        cause,
+        cancellation === undefined
+          ? undefined
+          : cancelledBy("doctor", carriedReason(cancellation.reason)),
+      );
     }
     if (cause instanceof AnalysisCancelledError) throw cause;
-    if (input.signal.aborted)
-      throw new AnalysisCancelledError("doctor", {
-        cause: input.signal.reason,
-      });
+    if (input.signal.aborted) throw cancelledBy("doctor", input.signal);
     return false;
   }
 };

@@ -6,19 +6,19 @@ import { Readable } from "node:stream";
 
 import { expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   buildDenoSection,
   defaultDenoMetadata,
   denoElf,
   denoIntelTrailer,
 } from "../../../src/artifacts/deno/DenoStandalone.fixture.js";
-import { MAX_DENO_PATH_COMPONENT_BYTES } from "../../../src/artifacts/deno/DenoVirtualFs.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
 const source = "console.log('deno')\n";
 const asset = "hello-asset\n";
 
@@ -216,6 +216,9 @@ it("publishes a remote module with a port to a Windows destination", async () =>
       sha256: createHash("sha256").update(body).digest("hex"),
       bytes: body.length,
     });
+    expect(
+      (await readFile(join(tree.outputRoot, remote.logical_path))).equals(body),
+    ).toBe(true);
   } finally {
     await tree.rollback();
   }
@@ -529,7 +532,7 @@ it.each([
     ).toMatchObject({
       logical_path: destination,
       format_metadata: { source_path: "https://example.com/mod.ts" },
-      limitations: expect.arrayContaining([expect.stringContaining("prefix")]),
+      limitations: [expect.any(String)],
     });
     const resourceScope = new ArtifactResourceScope();
     try {

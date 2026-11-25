@@ -1,27 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   analysisSnapshotSchema,
   snapshotTarget,
 } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import { executableFormatHintSchema } from "../../domain/dosCom.js";
+import { openBinaryInputSchema } from "../../contracts/sessionLifecycleInputs.js";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
 import {
   createImmutableEvidenceBundle,
   parseEvidenceBundle,
 } from "../../domain/evidenceBundle.js";
+import { rawLoadAtEntry } from "../../domain/rawBinary.fixture.js";
+import type {
+  BINARY_TARGET_FORMAT_KINDS,
+  TargetFormat,
+} from "../../domain/targetFormats.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 
 /**
  * One admitted target per format. A format added to `BinaryTarget` fails
  * compilation here until it has a fixture, and the cases below then require
- * every vocabulary that persists or projects targets to accept it. This guards
- * the failure class of #7290 until target formats have a single owner.
+ * every vocabulary that persists or projects targets to accept it.
  */
 type TargetFixtures = {
-  readonly [Format in BinaryTarget["format"]]: BinaryTarget & {
+  readonly [Format in TargetFormat]: BinaryTarget & {
     readonly format: Format;
+    readonly kind: (typeof BINARY_TARGET_FORMAT_KINDS)[Format];
   };
 };
 
@@ -82,8 +87,7 @@ const TARGETS: TargetFixtures = {
     format: "raw-binary",
     architecture: "m68k",
     availableArchitectures: ["m68k"],
-    entryPoint: "0x1000",
-    entryPointSource: "0x1000",
+    rawLoad: rawLoadAtEntry("0x1000"),
   },
   "gamecube-dol": {
     ...identity,
@@ -107,6 +111,7 @@ const TARGETS: TargetFixtures = {
     ...identity,
     kind: "database",
     format: "analysis-database",
+    databaseEngine: "hopper",
   },
   zip: { ...archive, format: "zip" },
   ipa: { ...archive, format: "ipa" },
@@ -121,7 +126,15 @@ const TARGETS: TargetFixtures = {
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
   wxapkg: { ...archive, format: "wxapkg" },
+  tar: { ...archive, format: "tar" },
+  dds: { ...archive, format: "dds" },
+  glb: { ...archive, format: "glb" },
+  ktx: { ...archive, format: "ktx" },
+  ktx2: { ...archive, format: "ktx2" },
   uimage: { ...archive, format: "uimage" },
+  "android-boot-image": { ...archive, format: "android-boot-image" },
+  iso9660: { ...archive, format: "iso9660" },
+  "android-ota-payload": { ...archive, format: "android-ota-payload" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
   dmg: { ...archive, format: "dmg" },
@@ -135,9 +148,15 @@ const TARGETS: TargetFixtures = {
     espFlash: { selected: true, flashOffset: null, partitionTableOffset: null },
   },
   fit: { ...archive, format: "fit" },
+  "ntfs-mft": { ...archive, format: "ntfs-mft" },
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },
   "source-map": { ...artifact, format: "source-map" },
+  uefi: { ...artifact, format: "uefi" },
+  sqlite: { ...artifact, format: "sqlite" },
+  "windows-shortcut": { ...artifact, format: "windows-shortcut" },
+  "python-pyc": { ...artifact, format: "python-pyc" },
+  devicetree: { ...artifact, format: "devicetree" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;
@@ -145,6 +164,10 @@ const roundTrip = (value: unknown): unknown =>
   JSON.parse(JSON.stringify(value));
 
 describe("target format vocabularies", () => {
+  it("defines a target type for every canonical format", () => {
+    expectTypeOf<BinaryTarget["format"]>().toEqualTypeOf<TargetFormat>();
+  });
+
   it.each(Object.values(TARGETS))(
     "persists and projects $format targets",
     (target) => {
@@ -154,8 +177,10 @@ describe("target format vocabularies", () => {
         result: { observed: true },
       });
       expect(parseEvidence(roundTrip(evidence)).subject).toMatchObject({
-        format: target.format,
-        architecture: target.architecture ?? null,
+        identity: {
+          format: target.format,
+          architecture: target.architecture ?? null,
+        },
       });
       const bundle = createImmutableEvidenceBundle([evidence]);
       expect(parseEvidenceBundle(roundTrip(bundle)).artifacts).toEqual([
@@ -169,7 +194,10 @@ describe("target format vocabularies", () => {
         analysisSnapshotSchema.shape.target.parse(
           roundTrip(snapshotTarget(target)),
         ),
-      ).toMatchObject({ format: target.format, kind: target.kind });
+      ).toMatchObject({
+        kind: target.kind,
+        identity: { format: target.format },
+      });
       expect(binaryTargetSummary(target)).toMatchObject({
         format: target.format,
         kind: target.kind,
@@ -177,7 +205,7 @@ describe("target format vocabularies", () => {
     },
   );
 
-  it.each(executableFormatHintSchema.options)(
+  it.each(openBinaryInputSchema.shape.format.unwrap().options)(
     "admits the caller-selected %s hint only as its own target format",
     (hint) => {
       // An ESP flash dump is the one caller-selected format read as an archive.

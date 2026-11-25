@@ -37,16 +37,20 @@ recorded instead. It records `REA_AGENT_ENV_COMMAND`, `REA_DOCKER_COMMAND` and
 `REA_BUILD_COMPUTER_REA_ARCHIVE` as absolute paths in that client's REA
 registration, keeping a value the registration already has other than an
 archive setup packed for an earlier REA version, and refreshes the skill.
-`--install-agentenv` runs `uv tool install agentenv-framework==0.9.1464`
+`--install-agentenv` runs `uv tool install agentenv-framework==0.9.1485`
 when `uv` is on `PATH`, and otherwise prints the command. Setup never
 installs Docker or Node.js and never runs `sudo`. Restart the client
 afterwards.
 
 Doctor is read-only and checks, in order: a Linux amd64 or arm64 host,
 Node.js, procps `ps`, the Docker CLI, a Docker daemon reachable without
-`sudo`, 20 GB free where Docker keeps images, agentenv-framework 0.9.1464,
+`sudo`, 20 GB free where Docker keeps images, agentenv-framework 0.9.1485,
 the runtime archive of this REA version, the build settings in the
 registration or the environment, and the skill. Each failure names its fix.
+Doctor reads the selected runtime archive without extracting it. The archive
+must supply one launcher at `scripts/rea.mjs` under a visible top folder.
+When doctor can identify the intended folder, it reports its declared package
+version even if the launcher is unusable.
 It also reports, without counting them against `healthy`, whether a model
 endpoint for solver runs is configured and which agentenv containers
 earlier builds left. Pass `--json` for the full report.
@@ -67,9 +71,9 @@ rest of this page is the same setup by hand.
 - [Docker Engine](https://docs.docker.com/engine/install/) and its
   [post-install steps](https://docs.docker.com/engine/install/linux-postinstall/):
   add yourself to the `docker` group, then log in again.
-- agentenv-framework 0.9.1464, the version bundles target. Install
+- agentenv-framework 0.9.1485, the version bundles target. Install
   [uv](https://docs.astral.sh/uv/getting-started/installation/) first, then
-  run `uv tool install agentenv-framework==0.9.1464`. Set
+  run `uv tool install agentenv-framework==0.9.1485`. Set
   `REA_AGENT_ENV_COMMAND` to the absolute path of the resulting `agent-env`
   program, normally `$HOME/.local/bin/agent-env`; `command -v agent-env`
   shows the path when its install directory is on your `PATH`. Installing it
@@ -126,11 +130,11 @@ setup wrote, such as in `~/.claude.json`:
 }
 ```
 
-Solver runs are `agent-env run` commands the agent runs in its shell, and
-agentenv refuses them without a model endpoint: export `LITELLM_BASE_URL` and
-`LITELLM_API_KEY` in the shell that starts `claude`, whose Bash tool inherits
-them, or set `base_url` and `api_key` under `[model]` in
-`.agentenv/config.toml`.
+`measure_build_task` runs solves through agentenv, which refuses them without
+a model endpoint: export `LITELLM_BASE_URL` and `LITELLM_API_KEY` in the shell
+that starts `claude`, whose REA server inherits them, or set `base_url` and
+`api_key` under `[model]` in `.agentenv/config.toml`. REA passes them on to
+agentenv and never reads the key.
 
 Claude Code asks before each MCP tool call its permission settings do not
 allow, and a build makes dozens of `act_on_build_computer` calls. You can
@@ -142,13 +146,13 @@ A headless run, `claude -p`, ends when the skill asks its upfront questions,
 and refuses the tool calls its permission settings do not allow. Put the
 answers in the request: the install source when the app is not in the Ubuntu
 archive, a synthetic seed or the file to start from, whether to review the
-task before solver runs, and the solver runs' count, model and budget, or
+task before it is measured, and the model and budget to measure it with, or
 none:
 
 ```bash
 claude -p 'Build me a Gnote environment where the agent adds olive oil to the
-shopping list note. Make a synthetic note. Then make 2 solver runs with
-<model>, at most $4 in all, without a review first.'
+shopping list note. Make a synthetic note. Then measure it with <model>,
+at most $4 in all, without a review first.'
 ```
 
 ## Start a computer
@@ -190,9 +194,35 @@ Applications menu entry can open the app.
 | `archive`        | `package` from the Ubuntu 24.04 archive, on amd64 and arm64, with its optional `extra_packages` beside it  |
 | `apt_repository` | `package` from the repository at `uri` with `suite` and `components`, trusting the key file `key_file`     |
 | `package_file`   | The `.deb` at `url`, checked against `sha256`, for one `architecture`, after its apt `dependencies` are in |
+| `appimage`       | The AppImage at `url`, checked against `sha256`, for one `architecture`, extracted with its own entry      |
+| `tarball`        | The archive at `url`, checked against `sha256`, for one `architecture`, with an entry running `program`    |
 
 Build steps run with the network off, so a `.deb`'s dependencies must be
-listed. `extra_packages` names up to 16 more archive packages, by the same
+listed.
+
+An AppImage or a tarball is downloaded by agentenv when the bundle is put,
+refused unless its SHA-256 is the one named, and unpacked by a root build
+step, `install-download.sh`, under `/opt/rea-apps/<desktop_entry>`; the
+export writes the same step. An AppImage is extracted with its own
+`--appimage-extract`, so no FUSE is needed, and the step installs the image's
+own `<desktop_entry>.desktop` under `/usr/local/share/applications`. It replaces
+the effective `Exec` program in the main group and each desktop action with the
+image's `AppRun`, preserving any `env` prefix and its assignments. It removes
+main-group `TryExec` declarations and installs the main group's effective icon.
+Repeated declarations follow GLib's last-key rule. An image missing the
+requested desktop entry fails the build and lists the entries it has. A
+tarball is read with Python's `tarfile`, since the computer has no
+`xz` program, so gzip, bzip2 and xz archives work. Its `data` filter refuses
+links that point outside the folder, absolute ones included, and special
+files, so such an archive fails the build. Its `program` is a path
+inside the archive, and REA writes the entry: `name` in the menu, or the
+entry's last part, and `program` with the files it opens (`%F`). An
+Electron app's command is rewritten after this step, on the entry it
+installed. An image or tarball holds no Debian package, so the capture
+records its package as `unknown`; the export checks instead that the
+captured program lies under the folder the download unpacks to. The
+downloaded file stays in the image's layer under the app's folder beside
+what it unpacks, so a 721 MB AppImage that unpacks to 3.0 GB adds both. `extra_packages` names up to 16 more archive packages, by the same
 name rules as `package`, for a runtime piece the app needs that its package
 does not install: apt here skips Recommends, so MyPaint 2.0.1 exits at launch
 without `librsvg2-common`, GTK's SVG icon loader, and Freeplane 1.7.10 needs
@@ -330,9 +360,22 @@ it, and tears down once that call has ended. Closing the
 MCP server closes every computer the same way, and a helper whose REA server
 exits sees its stdin close and tears down.
 
+Once the helper reports a computer, SIGTERM or SIGINT can request teardown
+while stdin remains open. It exits 0 when agentenv confirms nothing is left,
+or 1 when agentenv still reports resources.
+
+A timed-out or cancelled export command is stopped by that command's
+supervisor. It sends SIGINT, then SIGTERM, then SIGKILL, with two seconds
+between each, to processes that are still in the command's session. A child
+that stays in that session after the leader exits receives the rest of the
+sequence. A process that has left the session is not signaled. If that
+process still holds the command's stderr, the result keeps the leader's exit
+status and says the stderr is incomplete. That result does not mean the
+outside process is gone. `close_build_computer`
+still tears the computer down in that case. The teardown is what clears the
+retained command. A reader that has not confirmed its own stop still keeps
+the computer up so that reader can be retried.
+
 The control token that guards the computer's framework-only routes stays in
 REA: no result, error or log carries it. Code running in the computer as its
 user can still read it, which is acceptable for a local build.
-
-See the [specification](specs/desktop-app-environments/build-computer/spec.md)
-for scope and verification.

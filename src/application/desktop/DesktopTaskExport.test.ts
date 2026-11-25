@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
-import { namesApp, shippedSeedCheckView } from "./DesktopTaskExport.js";
+import { shippedSeedCheckView } from "./DesktopTaskExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   HOME,
@@ -286,7 +286,7 @@ describe("exportDesktopApplication with a task's seed", () => {
     );
     if (kept instanceof Error) throw kept;
     expect(kept.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["row"] },
+      tasks: [{ failing_on_seed: ["row"] }],
     });
   });
 
@@ -312,7 +312,7 @@ describe("exportDesktopApplication with a task's seed", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { checks: 2, failing_on_seed: ["notes"] },
+      tasks: [{ checks: 2, failing_on_seed: ["notes"] }],
     });
   });
 
@@ -363,11 +363,16 @@ describe("exportDesktopApplication with a task", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: {
-        name: "note-milk",
-        checks: 3,
-        failing_on_seed: ["milk", "check-2", "check-3"],
-      },
+      tasks: [
+        {
+          name: "note-milk",
+          checks: 3,
+          end_checkpoint: "edited",
+          failing_on_seed: ["milk", "check-2", "check-3"],
+          near_checkpoint: null,
+          failing_on_near: [],
+        },
+      ],
     });
     const steps = JSON.parse(
       await readFile(join(directory, "tasks/note-milk.json"), "utf8"),
@@ -405,8 +410,11 @@ describe("exportDesktopApplication with a task", () => {
 
   it.each([
     [
-      [task([]), task([])],
-      "2 task files were given; a capture yields one task.",
+      [
+        task([{ kind: "lines_present", file: NOTE, lines: ["milk"] }]),
+        task([{ kind: "lines_present", file: NOTE, lines: ["milk"] }]),
+      ],
+      'Two tasks are named "note-milk"',
     ],
     ["{", "is not valid UTF-8 JSON"],
     ["\uFEFF{}", "Save the file as UTF-8 without a byte-order mark"],
@@ -503,7 +511,7 @@ describe("exportDesktopApplication with a task's readers", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { name: "note-milk", checks: 1, failing_on_seed: ["version"] },
+      tasks: [{ name: "note-milk", checks: 1, failing_on_seed: ["version"] }],
     });
     const verifier = await readFile(
       join(directory, "artifacts/note-milk-check/verify.py"),
@@ -590,6 +598,73 @@ describe("exportDesktopApplication with a task's readers", () => {
     expect((result as Error & { userMessage: string }).userMessage).toContain(
       "not under the app's owned paths",
     );
+  });
+});
+
+describe("exportDesktopApplication taskReader port", () => {
+  it("calls the injected taskReader port with the command, timeout, and signal", async () => {
+    const scratch = await createTestTempDirectory("desktop-task-port-");
+    const taskPath = join(scratch, "task.json");
+    const directory = join(scratch, "bundle");
+    const controller = new AbortController();
+    const calls: Array<{
+      readonly argv: readonly string[];
+      readonly timeoutS: number;
+      readonly signal: AbortSignal | undefined;
+    }> = [];
+    await writeFile(
+      taskPath,
+      JSON.stringify(
+        readerTask(["version v2"], {
+          id: "version",
+          file: DATABASE,
+          argv: ["custom-reader", "{file}"],
+          output: "lines",
+          timeout_s: 7,
+        }),
+      ),
+    );
+
+    const result = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(capture()),
+        directory,
+        name: undefined,
+        tasks: [taskPath],
+      },
+      {
+        ...readers,
+        taskReader: async (argv, timeoutS, signal) => {
+          calls.push({ argv, timeoutS, signal });
+          return {
+            exit_code: 0,
+            stdout: `${JSON.stringify({
+              view: {
+                format: "text",
+                view: {
+                  lines: calls.length === 1 ? ["version v2"] : ["version v1"],
+                  line_count: 1,
+                  truncated: false,
+                },
+              },
+            })}\n`,
+            stderr: "",
+            timed_out: false,
+          };
+        },
+      },
+      controller.signal,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(calls).toHaveLength(2);
+    expect(calls.every((call) => call.timeoutS === 37)).toBe(true);
+    expect(calls.every((call) => call.signal === controller.signal)).toBe(true);
+    expect(
+      calls.every((call) =>
+        call.argv.some((part) => part.includes("custom-reader")),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -720,7 +795,7 @@ describe("exportDesktopApplication with a screen-judged task", () => {
     );
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { name: "note-shown", failing_on_seed: [] },
+      tasks: [{ name: "note-shown", failing_on_seed: [] }],
     });
   });
 
@@ -729,7 +804,7 @@ describe("exportDesktopApplication with a screen-judged task", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { name: "note-shown", checks: 1, failing_on_seed: [] },
+      tasks: [{ name: "note-shown", checks: 1, failing_on_seed: [] }],
     });
     expect(
       (result.normalized_result as { limitations: string[] }).limitations.some(
@@ -794,17 +869,20 @@ describe("exportDesktopApplication with a task's prompt", () => {
     expect(naming(named.result.limitations)).toEqual([]);
   });
 
-  it("does not treat a word that only contains the app's name as naming it", () => {
-    const dia = { title: "Dia", name: "dia", aptPackage: "dia" };
-    expect(namesApp("Update the diagram and save it.", dia)).toBe(false);
-    expect(namesApp("In Dia, add a box.", dia)).toBe(true);
-    expect(
-      namesApp("In Notes, write down milk.", {
-        title: "Notes",
-        name: "notes",
-        aptPackage: "notes",
-      }),
-    ).toBe(true);
+  it("does not treat a word that only contains the app's name as naming it", async () => {
+    const checks = [
+      { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
+    ];
+    const exported = await exportWithTasks({
+      ...task(checks),
+      prompt: "Update the notesheet and save it.",
+    });
+    if (exported.result instanceof Error) throw exported.result;
+    expect(exported.result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/prompt.*does not name the app/iu),
+      ]),
+    );
   });
 });
 

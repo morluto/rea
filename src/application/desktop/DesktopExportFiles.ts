@@ -1,7 +1,12 @@
-import { createHash } from "node:crypto";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewFileLimitMessage,
+  type DesktopViewPolicy,
+} from "../../domain/desktop/desktopViewPolicy.js";
 import { Readable } from "node:stream";
 
-import type { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import type { SafeOutputTree } from "../../resources/index.js";
 import type {
   DesktopAppExportPlan,
   SeedScrubReport,
@@ -25,6 +30,7 @@ import { err } from "../../domain/result.js";
 import { refuse } from "./DesktopExportInstall.js";
 import type { RetainedContent } from "./DesktopRetainedContent.js";
 import { readZipView } from "./DesktopZipView.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** A file the export writes from bytes it made. */
 export interface GeneratedFile {
@@ -84,7 +90,8 @@ const retainedBytes = async (
   copy: RetainedCopy,
   signal: AbortSignal | undefined,
 ): Promise<Buffer> => {
-  signal?.throwIfAborted();
+  if (signal?.aborted === true)
+    throw cancelledBy("export_desktop_application", signal);
   const bytes = await content.read(copy.digest, signal);
   if (!bytes.ok)
     throw refuse(
@@ -138,6 +145,7 @@ export const shippedSeedViews = async (
   copies: readonly RetainedCopy[],
   identity: HostIdentity,
   signal: AbortSignal | undefined,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): Promise<ReadonlyMap<string, TaskFileView>> => {
   const views = new Map<string, TaskFileView>();
   for (const copy of copies) {
@@ -150,15 +158,23 @@ export const shippedSeedViews = async (
     const bytes = await retainedBytes(content, copy, signal);
     const shipped = shippedSeed(bytes, seed, identity).bytes;
     if (shipped === undefined) continue;
-    const document = openStateDocument(seed.home, shipped);
+    if (shipped.length > policy.file_bytes) {
+      views.set(seed.home, {
+        format: null,
+        view: null,
+        error: desktopViewFileLimitMessage(policy),
+      });
+      continue;
+    }
+    const document = openStateDocument(seed.home, shipped, policy);
     const { format } = document;
     const view =
       "error" in document
         ? err(document.error)
         : format === "zip"
-          ? await readZipView(document.bytes, signal)
+          ? await readZipView(document.bytes, signal, policy)
           : isTextualFormat(format)
-            ? textualView(format, document.bytes)
+            ? textualView(format, document.bytes, policy)
             : undefined;
     views.set(seed.home, {
       format,
@@ -199,8 +215,7 @@ export const writeFiles = async (
       Readable.from([bytes]),
       {
         bytes: bytes.length,
-        sha256:
-          shipped.sha256 ?? createHash("sha256").update(bytes).digest("hex"),
+        sha256: shipped.sha256 ?? sha256Hex(bytes),
       },
       signal,
     );

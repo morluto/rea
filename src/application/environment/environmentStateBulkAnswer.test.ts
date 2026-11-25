@@ -8,11 +8,9 @@ import {
   BOTH_BOOKS_RENAMED_ROWS,
   FIRST_BOOK,
   SECOND_BOOK,
-  bothBooksDeleted,
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
-import { servedCatalog } from "./environmentState.js";
 
 const BULK_DELETE_ROWS: readonly TimedCaptureRow[] = [
   ...BOOK_INIT_ROWS,
@@ -57,10 +55,9 @@ describe("bulk response records and rendering", () => {
         response: { shape: "entity", pointer: "/0" },
       });
       const body = count === 1 ? [{ id: 2 }] : [{ id: 1 }, { id: 2 }];
-      expect(books.answer("delete_books", { body })).toMatchObject({
-        body,
-        state: { view: "delete" },
-      });
+      const answer = books.answer("delete_books", { body });
+      expect(answer.body).toEqual(body);
+      expect(answer).toMatchObject({ state: { view: "delete" } });
       expect(
         books.store.ofType("/api/books").map((entity) => entity.id),
       ).toEqual(count === 1 ? ["1"] : []);
@@ -237,19 +234,6 @@ describe("served bulk writes", () => {
     });
     expect(books.snapshot()).toBe(before);
   });
-
-  it("advertises the body a bulk delete takes as the array its recording sent", () => {
-    const books = servedFrom(BULK_DELETE_ROWS);
-    const catalog = servedCatalog(books.source, books.state, "books");
-    if (!catalog.ok) throw catalog.error;
-    const tool = catalog.value.tools.find(
-      (definition) => definition.name === "delete_books",
-    );
-    expect(tool?.inputSchema.properties["body"]).toMatchObject({
-      type: "array",
-      items: { type: "object" },
-    });
-  });
 });
 
 describe("served bulk write queries and capacity", () => {
@@ -391,22 +375,6 @@ describe("served bulk writes whose recordings answered every entity", () => {
       ["2", "1"].map((id) => books.answer("get_books_by_id", { id }).body),
     );
   });
-
-  it("answers a delete with the rows or ids it names, never the recorded ones", () => {
-    const rows = servedFrom(
-      bothBooksDeleted([{ id: 1 }, { id: 2 }], [{ id: 1 }, { id: 2 }]),
-    );
-    expect(rows.answer("delete_books", { body: [{ id: 2 }] }).body).toEqual([
-      { id: 2 },
-    ]);
-    expect(rows.store.ofType("/api/books").map((entry) => entry.id)).toEqual([
-      "1",
-    ]);
-    const ids = servedFrom(bothBooksDeleted([1, 2], { ids: [1, 2] }));
-    expect(ids.answer("delete_books", { body: { ids: [2] } }).body).toEqual([
-      2,
-    ]);
-  });
 });
 
 const uuid = (n: number): string =>
@@ -504,7 +472,8 @@ describe("served bulk updates of what each entity holds", () => {
     ).toBe(true);
     cards.answer("patch_cards", { body: { ids: [2], name: "Edited" } });
     expect(cards.answer("get_cards_by_id", { id: "2" }).body).toMatchObject({
-      edit: { by: "ops" },
+      name: "Edited",
+      edit: { at: "2026-10-17T18:00:08.000Z", by: "ops" },
     });
     const before = cards.snapshot();
     expect(

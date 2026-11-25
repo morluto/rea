@@ -1,51 +1,69 @@
 import { AnalysisError } from "../../../domain/analysisErrorBase.js";
 import {
+  AnalysisTargetFailureError,
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
+  fixedCeilingConstraint,
 } from "../../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../../domain/artifactOperationError.js";
 import { PLAYWRIGHT_TRACE_OPERATION as operation } from "../../../domain/playwrightTrace/playwrightTrace.js";
-import { ArtifactReaderFailure } from "../../../artifacts/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  artifactFileCancellationCause,
+  stableArtifactInputFailure,
+  readerIntegrityFailure,
+  artifactOperationReason,
+} from "../../../resources/index.js";
 import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
-import { stableArtifactInputRecovery } from "../../../artifacts/StableArtifactFailure.js";
 
 /** Classify the archive owner's facts without interpreting opaque cancellation reasons. */
 export const traceFailure = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
+      return cause.fixedAllowance === undefined
+        ? new AnalysisResourceConstraintError(
+            operation,
+            cause.boundary ?? "memory",
+            cause.message,
+            null,
+            {
+              cause,
+              remediationAction:
+                "Select a smaller complete recorder chunk. Reply selection does not increase archive parsing allowances.",
+            },
+          )
+        : fixedCeilingConstraint(
+            operation,
+            cause.boundary ?? "memory",
+            cause.message,
+            cause.fixedAllowance,
+            { cause },
+          );
+    // The archive owner established malformed or truncated bytes: a target
+    // refusal. Only a path-kind refusal is the caller's selection.
+    if (cause.parseFailure !== undefined)
+      return new AnalysisTargetFailureError(
         operation,
-        cause.boundary ?? "memory",
-        cause.message,
-        null,
-        {
-          cause,
-          remediationAction:
-            "Select a smaller complete recorder chunk. Reply selection does not increase archive parsing allowances.",
-        },
+        path,
+        cause.parseFailure,
+        { cause },
       );
-    if (cause.reason === "format" || cause.reason === "path")
-      return new AnalysisInputError(
-        operation,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
+    if (cause.reason === "path")
+      return stableArtifactInputFailure(cause, operation);
     return new ArtifactOperationError(
       operation,
-      cause.reason,
+      artifactOperationReason(cause),
       undefined,
       cause.message,
       { cause },

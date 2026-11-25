@@ -12,7 +12,7 @@ import {
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 
 describe("served writes whose calls send different members", () => {
-  it("numbers a created bundle that leaves its order out, and keeps one a call sends", () => {
+  it("keeps a sent order and continues the sequence after its bundle is removed", () => {
     const bundles = servedFrom(NUMBERED_UNLESS_SENT_ROWS);
     expect(
       bundles.answer("post_bundles", { body: { name: "Echo" } }).body,
@@ -24,17 +24,14 @@ describe("served writes whose calls send different members", () => {
       name: "Foxtrot",
       order: 9,
     });
-  });
-
-  it("numbers past an order a call sent, even once that bundle is gone", () => {
-    const bundles = servedFrom(NUMBERED_UNLESS_SENT_ROWS);
-    bundles.answer("post_bundles", { body: { name: "Echo" } });
-    bundles.answer("post_bundles", { body: { name: "Foxtrot", order: 9 } });
-    bundles.store.removeAll(
-      bundles.store
-        .ofType("/api/bundles")
-        .filter((entity) => entity.fields["order"] === 9),
-    );
+    const explicit = bundles.store
+      .ofType("/api/bundles")
+      .find((entity) => entity.fields["order"] === 9);
+    if (explicit === undefined) throw new Error("Expected order 9 to be held");
+    bundles.store.remove(explicit);
+    expect(
+      bundles.store.entity(explicit.type, explicit.collection, explicit.id),
+    ).toBeUndefined();
     expect(
       bundles.answer("post_bundles", { body: { name: "Golf" } }).body,
     ).toMatchObject({ name: "Golf", order: 10 });
@@ -85,15 +82,12 @@ describe("served writes whose calls send different members", () => {
 
   it("answers an update with its clock spelled as the recorded answer and stores it as reads spell it", () => {
     const tasks = servedFrom(DONE_CLOCK_ROWS);
-    const answered = tasks.answer("patch_tasks_by_id", {
-      id: "1",
-      body: { done: true },
-    }).body as { done_at: string };
-    expect(answered.done_at).toMatch(/\.\d{9}Z$/u);
-    const read = tasks.answer("get_tasks_by_id", { id: "1" }).body as {
-      done_at: string;
-    };
-    expect(read.done_at).toMatch(/:\d{2}Z$/u);
+    expect(
+      tasks.answer("patch_tasks_by_id", { id: "1", body: { done: true } }).body,
+    ).toMatchObject({ done_at: "2026-10-17T18:00:08.000000000Z" });
+    expect(tasks.answer("get_tasks_by_id", { id: "1" }).body).toMatchObject({
+      done_at: "2026-10-17T18:00:08Z",
+    });
   });
 
   it("serves an update that sends only the member every recorded update sent", () => {

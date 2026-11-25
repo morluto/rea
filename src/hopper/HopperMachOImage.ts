@@ -1,23 +1,35 @@
+import {
+  withOwnedFileHandle,
+  RegularFileCancelled,
+  RegularFileCleanupFailure,
+} from "../filesystem/OwnedRegularFile.js";
+import {
+  NonRegularFileReadError,
+  RegularFileOperationCancelled,
+} from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { z } from "zod";
 
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  type ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+} from "../resources/index.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type {
-  BinaryTarget,
-  HeaderArchitecture,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   findOverlappingFatSlices,
+  inspectFatSliceBounds,
   readFatSliceDeclarations,
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
@@ -26,11 +38,7 @@ import {
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
 import { MACHO_CPU_TYPES } from "../domain/apple/machoTargetSelection.js";
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
-import {
-  HopperCancelledError,
-  HopperStartError,
-} from "../domain/hopperErrors.js";
+import { HopperCancelledError, HopperStartError } from "./HopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
@@ -40,6 +48,7 @@ import {
   copyHopperSource,
   type HopperImageCopyOptions,
 } from "./HopperImageCopy.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const hopperFatMachOImageSchema = z.strictObject({
   method: z.enum(["fat32_thin_slice", "fat64_thin_slice"]),
@@ -99,22 +108,23 @@ export const resolveHopperMachOImage = async (
       ),
     );
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("open_binary", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("open_binary", options.signal));
   if (target.format !== "mach-o" && target.format !== "mach-o-universal")
     return invalid("Hopper image preparation requires a Mach-O target");
   let opened: FileHandle;
   try {
     opened = await (
       options.fileSystem ?? defaultHopperMachOImageResolutionFileSystem
-    ).open(target.path, "r");
+    ).open(
+      target.path,
+      constants.O_RDONLY |
+        (constants.O_NONBLOCK ?? 0) |
+        (constants.O_NOCTTY ?? 0),
+    );
   } catch (cause: unknown) {
     // Keep the OS error so a read-permission denial reports access_denied.
     return invalid(
-      `Cannot read Mach-O source for Hopper image preparation: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Cannot read Mach-O source for Hopper image preparation: ${errorMessage(cause)}`,
       cause,
     );
   }
@@ -130,61 +140,63 @@ const inspectAndFinalizeHopperMachOImage = async (
   owner: OwnedFileHandle,
   options: HopperMachOImageResolutionOptions,
 ): Promise<Result<HopperMachOImage, AnalysisError>> => {
-  let result: Result<HopperMachOImage, HopperMachOImageResolutionError>;
-  try {
-    result = await inspectHopperMachOImage(
-      target,
-      owner.handle,
-      options.signal,
-    );
-  } catch (cause: unknown) {
-    result =
-      cause instanceof BinaryTargetError ||
-      cause instanceof AnalysisCancelledError
-        ? err(cause)
-        : err(
-            new BinaryTargetError(
-              target.path,
-              `Cannot validate Mach-O image: ${cause instanceof Error ? cause.message : String(cause)}`,
-              { cause },
-            ),
+  let cancellationBeforeClose = false;
+  const readFailure = (cause: unknown): HopperMachOImageResolutionError =>
+    cause instanceof BinaryTargetError ||
+    cause instanceof AnalysisCancelledError
+      ? cause
+      : cause instanceof RegularFileOperationCancelled
+        ? cancelledBy("open_binary", carriedReason(cause.reason))
+        : new BinaryTargetError(
+            target.path,
+            `Cannot validate Mach-O image: ${errorMessage(cause)}`,
+            { cause },
           );
-  }
-  const cancellationBeforeClose = options.signal?.aborted === true;
-  let closeOutcome:
-    | { readonly kind: "closed" }
-    | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    await owner.close();
-    closeOutcome = { kind: "closed" };
+    const image = await withOwnedFileHandle(
+      target.path,
+      owner,
+      options.signal === undefined ? {} : { signal: options.signal },
+      async (handle) => {
+        try {
+          const inspected = await inspectHopperMachOImage(
+            target,
+            handle,
+            options.signal,
+          );
+          if (!inspected.ok) throw inspected.error;
+          return inspected.value;
+        } finally {
+          cancellationBeforeClose = options.signal?.aborted === true;
+        }
+      },
+    );
+    return ok(image);
   } catch (cause: unknown) {
-    closeOutcome = { kind: "failed", cause };
+    if (cause instanceof RegularFileCancelled)
+      return err(cancelledBy("open_binary", carriedReason(cause.reason)));
+    if (!(cause instanceof RegularFileCleanupFailure))
+      return err(readFailure(cause));
+    return retainHopperPreflightCloseFailure({
+      target,
+      owner: cause.owner,
+      resourceScope: options.resourceScope,
+      failure:
+        cause.outcome.kind === "failed"
+          ? readFailure(cause.outcome.cause)
+          : undefined,
+      cancellationBeforeClose,
+      signal: options.signal,
+      closeFailure: cause.cleanupCause,
+    });
   }
-  if (closeOutcome.kind === "closed") {
-    if (result.ok && options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal.reason,
-        }),
-      );
-    return result;
-  }
-  return retainHopperPreflightCloseFailure({
-    target,
-    owner,
-    resourceScope: options.resourceScope,
-    result,
-    cancellationBeforeClose,
-    signal: options.signal,
-    closeFailure: closeOutcome.cause,
-  });
 };
 
 const retainHopperPreflightCloseFailure = (options: {
   readonly target: BinaryTarget & { readonly kind: "executable" };
   readonly owner: OwnedFileHandle;
   readonly resourceScope: RetainedResourceScope;
-  readonly result: Result<HopperMachOImage, HopperMachOImageResolutionError>;
+  readonly failure: HopperMachOImageResolutionError | undefined;
   readonly cancellationBeforeClose: boolean;
   readonly signal: AbortSignal | undefined;
   readonly closeFailure: unknown;
@@ -201,43 +213,38 @@ const retainHopperPreflightCloseFailure = (options: {
     resource,
   );
   const cleanup = {
-    reason:
-      options.closeFailure instanceof Error
-        ? options.closeFailure.message
-        : String(options.closeFailure),
+    reason: errorMessage(options.closeFailure),
     resources: [resource],
   };
   const cancellationIsPrimary =
-    (!options.result.ok &&
-      options.result.error instanceof AnalysisCancelledError) ||
-    (options.result.ok && options.cancellationBeforeClose);
+    options.failure instanceof AnalysisCancelledError ||
+    (options.failure === undefined && options.cancellationBeforeClose);
   let failure: AnalysisError;
   let closeIsPrimary = false;
-  if (!options.result.ok) {
+  if (options.failure !== undefined) {
     failure =
-      options.result.error instanceof BinaryTargetError
-        ? new BinaryTargetError(
-            options.result.error.path,
-            options.result.error.reason,
-            {
-              ...(options.result.error.cause === undefined
-                ? {}
-                : { cause: options.result.error.cause }),
-              ...(options.result.error.constraint === undefined
-                ? {}
-                : { constraint: options.result.error.constraint }),
-              cleanup,
-            },
-          )
-        : new AnalysisCancelledError("open_binary", {
-            cause: options.result.error.cause,
+      options.failure instanceof BinaryTargetError
+        ? new BinaryTargetError(options.failure.path, options.failure.reason, {
+            ...(options.failure.cause === undefined
+              ? {}
+              : { cause: options.failure.cause }),
+            ...(options.failure.constraint === undefined
+              ? {}
+              : { constraint: options.failure.constraint }),
+            cleanup,
+          })
+        : cancelledBy("open_binary", carriedReason(options.failure.cause), {
             cleanup,
           });
   } else if (options.cancellationBeforeClose) {
-    failure = new AnalysisCancelledError("open_binary", {
-      cause: options.signal?.reason,
-      cleanup,
-    });
+    // cancellationBeforeClose records that the caller's signal had aborted.
+    failure = cancelledBy(
+      "open_binary",
+      carriedReason(options.signal?.reason),
+      {
+        cleanup,
+      },
+    );
   } else {
     failure = new BinaryTargetError(
       options.target.path,
@@ -260,11 +267,7 @@ const retainHopperPreflightCloseFailure = (options: {
     failure.retainSecondaryFailure(cleanupError);
   }
   if (options.signal?.aborted && !cancellationIsPrimary)
-    failure.retainSecondaryFailure(
-      new AnalysisCancelledError("open_binary", {
-        cause: options.signal.reason,
-      }),
-    );
+    failure.retainSecondaryFailure(cancelledBy("open_binary", options.signal));
   new AnalysisCleanupLeaseGroup(failure, [lease]);
   return err(failure);
 };
@@ -282,12 +285,15 @@ const inspectHopperMachOImage = async (
         cause === undefined ? undefined : { cause },
       ),
     );
+  const stats = await file.stat();
+  if (!stats.isFile())
+    return invalid(
+      `Selected input must be a regular file: ${target.path}`,
+      new NonRegularFileReadError(target.path, stats.isDirectory()),
+    );
   const read = (offset: number, length: number): Promise<Buffer> =>
     readFileHandleRange(file, offset, length, () => {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError("open_binary", {
-          cause: signal.reason,
-        });
+      if (signal?.aborted) throw cancelledBy("open_binary", signal);
     });
   const header = await read(0, 8);
   const fatPrefix = readFatHeaderPrefix(header);
@@ -302,15 +308,10 @@ const inspectHopperMachOImage = async (
     for await (const chunk of readFileHandleChunks(file, {
       ...(signal === undefined ? {} : { signal }),
       cancellationFailure: (reason) =>
-        new AnalysisCancelledError("open_binary", { cause: reason }),
+        cancelledBy("open_binary", carriedReason(reason)),
     })) {
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("open_binary", {
-            cause: signal.reason,
-          }),
-        );
-      const bytes = Buffer.from(chunk);
+      if (signal?.aborted) return err(cancelledBy("open_binary", signal));
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       hash.update(bytes);
       size += bytes.length;
       if (!Number.isSafeInteger(size))
@@ -321,10 +322,7 @@ const inspectHopperMachOImage = async (
         prefixLength += copied;
       }
     }
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy("open_binary", signal));
     if (prefixLength !== prefix.length)
       return invalid("Thin Mach-O header is truncated");
     const observedSha256 = hash.digest("hex");
@@ -347,7 +345,7 @@ const inspectHopperMachOImage = async (
       "Mach-O source header changed before Hopper image preparation",
     );
   const { wide, littleEndian, count, tableEnd } = fatPrefix;
-  const size = (await file.stat()).size;
+  const size = stats.size;
   if (count === 0 || count > 128 || tableEnd > size)
     return invalid(
       "FAT architecture table is truncated or exceeds the supported 128 entries",
@@ -359,6 +357,10 @@ const inspectHopperMachOImage = async (
     littleEndian,
   });
   if (parsed.status === "malformed") return invalid(parsed.reason);
+  if (target.format !== "mach-o-universal")
+    return invalid(
+      "Universal Mach-O source disagrees with its admitted format",
+    );
   if (
     target.architecture !== "x86" &&
     target.architecture !== "x86_64" &&
@@ -367,41 +369,50 @@ const inspectHopperMachOImage = async (
   )
     return invalid("Hopper cannot select the admitted Mach-O architecture");
   const architecture = target.architecture;
-  const matches = [];
+  // Target admission chose the slice; reading another one would analyze bytes
+  // the session's Evidence does not name. Check container-level bounds and
+  // overlaps across the table, then validate only the selected slice's
+  // alignment, reserved word, and thin Mach-O header identity.
+  const admitted = target.universalSlice;
+  const matches: FatSliceDeclaration[] = [];
   for (const slice of parsed.slices) {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-      );
-    const rangeError = validateFatSlice(slice, size, tableEnd);
-    if (rangeError !== null) return invalid(rangeError);
-    if (slice.reserved !== null && slice.reserved !== 0)
-      return invalid(
-        `FAT64 architecture ${slice.index} has a nonzero reserved field`,
-      );
-    if (slice.size < 12)
-      return invalid(
-        `FAT architecture ${slice.index} has a truncated Mach-O header`,
-      );
-    const embedded = await read(slice.offset, 12);
-    if (embedded.length !== 12)
-      return invalid(`FAT architecture ${slice.index} became truncated`);
-    const identity = readMachoHeaderPrefixFacts(embedded).identity;
-    if (identity === null)
-      return invalid(
-        `FAT architecture ${slice.index} does not contain a Mach-O image`,
-      );
-    const identityError = validateFatSliceIdentity(slice, identity);
-    if (identityError !== null) return invalid(identityError);
-    if (slice.cpuType === MACHO_CPU_TYPES[architecture]) matches.push(slice);
+    if (signal?.aborted) return err(cancelledBy("open_binary", signal));
+    const boundsIssue = inspectFatSliceBounds(slice, size, tableEnd);
+    if (boundsIssue !== null) return invalid(boundsIssue.reason);
+    if (slice.offset === admitted.offset && slice.size === admitted.size)
+      matches.push(slice);
   }
   if (findOverlappingFatSlices(parsed.slices) !== null)
     return invalid("FAT slices overlap");
-  const selected = selectHopperSlice(matches, architecture);
-  if (selected === undefined)
+  const [selected] = matches;
+  if (selected === undefined || matches.length > 1)
     return invalid(
-      `FAT selection for ${architecture} is ${matches.length === 0 ? "missing" : "ambiguous"}; extract the exact architecture into a thin image before opening it`,
+      `The admitted ${architecture} slice at file offset ${String(admitted.offset)} is ${selected === undefined ? "not declared by" : "declared more than once in"} the FAT table; open the stable source again`,
     );
+  if (selected.cpuType !== MACHO_CPU_TYPES[architecture])
+    return invalid(
+      `The admitted slice at file offset ${String(admitted.offset)} is not ${architecture}; open the stable source again`,
+    );
+  const rangeError = validateFatSlice(selected, size, tableEnd);
+  if (rangeError !== null) return invalid(rangeError);
+  if (selected.reserved !== null && selected.reserved !== 0)
+    return invalid(
+      `FAT64 architecture ${selected.index} has a nonzero reserved field`,
+    );
+  if (selected.size < 12)
+    return invalid(
+      `FAT architecture ${selected.index} has a truncated Mach-O header`,
+    );
+  const embedded = await read(selected.offset, 12);
+  if (embedded.length !== 12)
+    return invalid(`FAT architecture ${selected.index} became truncated`);
+  const identity = readMachoHeaderPrefixFacts(embedded).identity;
+  if (identity === null)
+    return invalid(
+      `FAT architecture ${selected.index} does not contain a Mach-O image`,
+    );
+  const identityError = validateFatSliceIdentity(selected, identity);
+  if (identityError !== null) return invalid(identityError);
   return ok({
     method: wide ? "fat64_thin_slice" : "fat32_thin_slice",
     architecture_count: count,
@@ -416,28 +427,6 @@ const inspectHopperMachOImage = async (
   });
 };
 
-/**
- * Plain arm64 (cpusubtype 0) and arm64e (cpusubtype 2) function-entry encodings
- * decode under Hopper's --aarch64; Apple's arm64e.x1 variant (cpusubtype 12)
- * does not, so it is selected only when it is the arm64 family's only candidate.
- * Every other ambiguity stays fail-closed.
- */
-const selectHopperSlice = (
-  matches: readonly FatSliceDeclaration[],
-  architecture: HeaderArchitecture,
-): FatSliceDeclaration | undefined => {
-  if (matches.length === 1) return matches[0];
-  if (architecture !== "arm64") return undefined;
-  for (const cpuSubtype of [0, 2]) {
-    const preferred = matches.filter(
-      (slice) => machoCpuSubtypeBase(slice.cpuSubtype) === cpuSubtype,
-    );
-    if (preferred.length === 1) return preferred[0];
-    if (preferred.length > 1) return undefined;
-  }
-  return undefined;
-};
-
 /** Copy a selected slice and verify the entire original source in the same pass. */
 export const prepareHopperMachOImage = async (
   sourcePath: string,
@@ -450,7 +439,7 @@ export const prepareHopperMachOImage = async (
     resourceScope: options.resourceScope,
     fileSystem: options.fileSystem,
   };
-  const { signal, observer } = options;
+  const { signal } = options;
   if (signal?.aborted) return err(new HopperCancelledError(signal.reason));
   if (image.method === "thin_verified_copy") {
     const prepared = await prepareThinHopperMachOImage(
@@ -458,7 +447,7 @@ export const prepareHopperMachOImage = async (
       sourceSha256,
       image,
       destination,
-      { signal, observer, ...copyDependencies },
+      { signal, ...copyDependencies },
     );
     return signal?.aborted && prepared.ok
       ? err(new HopperCancelledError(signal.reason))
@@ -474,7 +463,6 @@ export const prepareHopperMachOImage = async (
     sourcePath,
     destination,
     signal,
-    observer,
     ...copyDependencies,
     selectBytes: (bytes, position) => {
       hash.update(bytes);
@@ -533,12 +521,11 @@ const prepareThinHopperMachOImage = async (
   destination: string,
   options: {
     readonly signal: AbortSignal | undefined;
-    readonly observer: HopperImageCopyOptions["observer"];
     readonly resourceScope: ArtifactResourceScope;
     readonly fileSystem?: HopperImageCopyOptions["fileSystem"];
   },
 ): Promise<Result<string, HopperStartError | HopperCancelledError>> => {
-  const { signal, observer, resourceScope, fileSystem } = options;
+  const { signal, resourceScope, fileSystem } = options;
   const hash = createHash("sha256");
   const prefix = Buffer.alloc(12);
   let prefixLength = 0;
@@ -546,7 +533,6 @@ const prepareThinHopperMachOImage = async (
     sourcePath,
     destination,
     signal,
-    observer,
     resourceScope,
     fileSystem,
     selectBytes: (bytes) => {

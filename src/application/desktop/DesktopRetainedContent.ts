@@ -1,28 +1,31 @@
-import { createHash } from "node:crypto";
+import { DESKTOP_VIEW_DEFAULTS } from "../../domain/desktop/desktopViewPolicy.js";
 import { join } from "node:path";
 
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,
+  regularFileCancellation,
   withOwnedRegularFile,
 } from "../../filesystem/OwnedRegularFile.js";
 import {
   RegularFileCapacityError,
   readStableFileBytes,
 } from "../../filesystem/readStableFileBytes.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const MIB = 1024 * 1024;
 
 /** Largest retained file the state view reads. */
-const DEFAULT_MAX_BYTES = 64 * MIB;
+const DEFAULT_MAX_BYTES = DESKTOP_VIEW_DEFAULTS.file_bytes;
 
 type FailedRelease = Extract<
   ArtifactCleanupAttempt,
@@ -66,7 +69,16 @@ export class RetainedContent {
         readStableFileBytes(handle, path, this.maxBytes, options),
       );
     } catch (cause: unknown) {
-      signal?.throwIfAborted();
+      const cancellation = regularFileCancellation(cause);
+      if (cancellation !== undefined)
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "Retained content read cancelled",
+          {
+            cause: cancellation.reason,
+            cancellation,
+          },
+        );
       const outcome =
         cause instanceof RegularFileCleanupFailure ? cause.outcome : undefined;
       // A read that finished keeps its bytes; its failed close is retried by `release`.
@@ -82,7 +94,7 @@ export class RetainedContent {
       else if (cause instanceof Error) return err("is missing or unreadable");
       else throw cause;
     }
-    return createHash("sha256").update(bytes).digest("hex") === sha256
+    return sha256Hex(bytes) === sha256
       ? ok(bytes)
       : err("does not match its digest");
   }
@@ -140,13 +152,11 @@ export const withRetainedContent = async <Value>(
         { operation: outcome.cause.operation, cause: fileFailure },
       );
       bindArtifactFileCleanup(fileFailure, fileCleanup);
-      const combined = analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         outcome.cause,
         fileCleanup,
         outcome.cause.operation,
       );
-      combined.bindCleanupDependencies([outcome.cause, fileCleanup]);
-      throw combined;
     }
     throw resources.cleanupFailure(outcome, failures);
   }

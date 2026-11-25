@@ -26,9 +26,34 @@ claims. Check relevant rendered MCP prompts, guided workflows and packaged skill
 advice against the live contracts and exercise their suggested handoffs. Report
 working alternatives and evidence limits as well as findings.
 
+For wording audits and agent trials, use
+[focused tool-description trials](../../../docs/development/client-verification.md#focused-tool-description-trials).
+Start with representative workflow boundaries and repeat failures or ambiguous
+outcomes; keep actual arguments and supported final claims separate. Reuse the
+repository's evaluation tooling and report actual runtime/model versions and
+synthetic versus production coverage rather than copying a harness into a skill.
+
 For a design request, return the proposed boundary, input/result shape, Evidence
 semantics, nearest alternative, and verification approach. Implement when
 requested, preserving the user's scope and existing authorization.
+
+When adding or revising contracts and services:
+
+- Check high-cardinality discovery and graph tools for optional per-call
+  pagination (`limit`/`offset`) or traversal bounds (`max_depth`/`max_nodes`)
+  that stop producer work early when supplied, preserve unpaged behavior
+  when omitted, and report `partial` coverage with explicit
+  continuation facts when truncated.
+- Keep input schemas flat (avoid redundant root unions whose branches share
+  identical fields) so compact advertised schemas stay `inline`; refresh
+  advertised schemas (`npm run verify:advertised-schemas -- --update-summary`)
+  and run `npm run docs:check` after contract changes.
+- Reuse shared application runners (`executeArtifactInspection`,
+  `executeProviderOperation`, `executeRetainedSummaryOperation`) instead of
+  adding pass-through wrapper services, and migrate callers directly with zero
+  re-export shims (grep `stryker*.config.mjs`, `scripts/ci/scopes.mjs`, and
+  `tests/boundary/cli/cliStartupImports.test.ts` whenever moving or deleting
+  files).
 
 For implementation or verification, consult [testing](../../../docs/development/testing.md)
 for the affected consumer and provider lanes, and

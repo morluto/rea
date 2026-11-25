@@ -1,17 +1,26 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { MAX_BROWSER_DEADLINE_MS } from "../domain/browserDeadline.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
+import {
+  analysisErrorWithCleanupFailure,
+  withInheritedCleanupOwnership,
+} from "../domain/analysisErrorCleanup.js";
 import { CdpConnection } from "./CdpConnection.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Typed ownership facts shared by transport errors and their adapter projections. */
 class CdpTransportCleanupFailure extends ProviderCleanupError {
@@ -119,7 +128,7 @@ export class CdpTargetSessionOwner {
     options: ExecutionOptions,
     limits: BrowserSocketLimits,
   ): Promise<{ readonly connection: CdpConnection; readonly reused: boolean }> {
-    this.#assertOpen(operation, "browser-endpoint");
+    this.#assertOpen(operation);
     await this.retryPending();
     const leased = await this.#leaseExistingBrowserSocket(
       url,
@@ -140,11 +149,9 @@ export class CdpTargetSessionOwner {
     { readonly connection: CdpConnection; readonly reused: boolean } | undefined
   > {
     while (true) {
-      this.#assertOpen(operation, "browser-endpoint");
+      this.#assertOpen(operation);
       if (options.signal?.aborted === true)
-        throw new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(operation, options.signal);
       const admitted = this.#browserSockets.get(url);
       const socket = admitted ?? this.#candidateBrowserSockets.get(url);
       if (socket === undefined) return undefined;
@@ -219,9 +226,10 @@ export class CdpTargetSessionOwner {
       const onAbort = (): void => {
         waiter.detachAbort();
         if (!activePending.waiters.delete(waiter)) return;
-        const cancelError = new AnalysisCancelledError(operation, {
-          cause: options.signal?.reason,
-        });
+        const cancelError = cancelledBy(
+          operation,
+          carriedReason(options.signal?.reason),
+        );
         if (activePending.waiters.size > 0) {
           reject(cancelError);
           return;
@@ -267,7 +275,7 @@ export class CdpTargetSessionOwner {
             ? {}
             : { maxPayloadBytes: limits.maxPayloadBytes }),
           commandTimeoutMs: limits.commandTimeoutMs,
-          handshakeTimeoutMs: MAX_BROWSER_DEADLINE_MS,
+          handshakeTimeoutMs: MAX_NODE_TIMER_DELAY_MS,
         },
       );
       if (this.#pendingBrowserSockets.get(url) === pending)
@@ -427,13 +435,11 @@ export class CdpTargetSessionOwner {
       readonly handshakeTimeoutMs?: number;
     },
   ): Promise<CdpConnection> {
-    this.#assertOpen(operation, resource);
+    this.#assertOpen(operation);
     await this.retryPending();
-    this.#assertOpen(operation, resource);
+    this.#assertOpen(operation);
     if (options.signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, {
-        cause: options.signal.reason,
-      });
+      throw cancelledBy(operation, options.signal);
     this.#admissions += 1;
     let connection: CdpConnection | undefined;
     try {
@@ -576,13 +582,12 @@ export class CdpTargetSessionOwner {
     if (failures.length > 1) throw aggregateCleanupFailures(failures);
   }
 
-  #assertOpen(operation: BrowserObservationOperation, resource: string): void {
+  #assertOpen(operation: BrowserObservationOperation): void {
     if (!this.#closing) return;
-    throw new ProviderCleanupError(
+    throw new AnalysisCapabilityUnavailableError(
       "rea-cdp-browser",
-      [resource],
-      { reason: "CDP provider is closing and cannot admit another session." },
-      { operation },
+      operation,
+      "CDP provider is closing and cannot admit another session.",
     );
   }
 
@@ -664,18 +669,15 @@ const rebindPendingConnectFailure = (
 ): unknown => {
   if (cause instanceof BrowserObservationError) {
     const rebound = cause.forOperation(waiter.operation);
-    return cause.cleanupIncomplete
-      ? rebound.bindCleanupDependencies([cause])
-      : rebound;
+    return withInheritedCleanupOwnership(rebound, cause);
   }
   if (cause instanceof AnalysisCancelledError) {
-    const rebound = new AnalysisCancelledError(waiter.operation, {
-      cause: waiter.signal?.reason ?? cause.cause,
-      cleanup: cause.cleanup,
-    });
-    return cause.cleanupIncomplete
-      ? rebound.bindCleanupDependencies([cause])
-      : rebound;
+    const rebound = cancelledBy(
+      waiter.operation,
+      carriedReason(waiter.signal?.reason ?? cause.cause),
+      { cleanup: cause.cleanup },
+    );
+    return withInheritedCleanupOwnership(rebound, cause);
   }
   if (cause instanceof AnalysisError) {
     const composed = composedConnectCleanupFailures.get(cause);
@@ -731,9 +733,7 @@ const cleanupError = (
       reason:
         cause instanceof AnalysisError
           ? (cause.userMessage ?? cause.message)
-          : cause instanceof Error
-            ? cause.message
-            : String(cause),
+          : errorMessage(cause),
     },
   });
 

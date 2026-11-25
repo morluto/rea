@@ -1,10 +1,13 @@
-import { BUNDLE_SETTING_VARIABLE } from "./buildComputerSettings.js";
+import {
+  BUILD_COMPUTER_SETTINGS,
+  BUNDLE_SETTING_VARIABLE,
+} from "./buildComputerSettings.js";
 import { buildSecretHandleSchema } from "./buildSecrets.js";
-import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { excludedValues } from "../schemaConstraints.js";
 import {
   appModuleFile,
   aptSources,
@@ -15,8 +18,8 @@ import {
   renderEnvToml,
   renderInstallScript,
   renderSmokeTask,
-  shellQuote,
 } from "./appExport.js";
+import { shellQuote } from "./shellQuote.js";
 import {
   COMPUTER_ARCHITECTURES,
   DOWNLOAD_INSTALL_SCRIPT,
@@ -31,6 +34,8 @@ import {
 import { INSTALL_SCRIPT, type ExportPackageFile } from "./appExportInstall.js";
 import { isArmoredKey } from "./aptRepositories.js";
 import { DEBIAN_PACKAGE_NAME } from "./debianPackageFile.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { PYTHON_BUILD_ARCHIVE } from "./appBuildArchive.js";
 
 /** The Node.js release the build layer runs REA with: the one REA pins. */
 export const BUILD_NODE_VERSION = "24.22.1";
@@ -83,8 +88,8 @@ export const buildInstallSchema = z.discriminatedUnion("kind", [
     kind: z.literal("apt_repository"),
     package: aptPackageSchema,
     uri: downloadUrlSchema,
-    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u),
-    components: z.array(z.string().regex(/^[A-Za-z0-9._-]+$/u)).default([]),
+    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._\x2f\x2d]*$/u),
+    components: z.array(z.string().regex(/^[A-Za-z0-9._\x2d]+$/u)).default([]),
     key_file: absoluteLocalPathStringSchema.describe(
       "The repository's signing key on this host, armored or binary.",
     ),
@@ -119,7 +124,7 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     kind: z.literal("request"),
     desktop_entry: z
       .string()
-      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._\x2d]*$/u)
       .max(255)
       .describe(
         "The desktop entry id the package installs, such as org.xfce.mousepad; the menu opens it with gtk-launch.",
@@ -145,7 +150,11 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     ),
     settings: z
       .record(
-        z.string().regex(BUNDLE_SETTING_VARIABLE),
+        excludedValues(
+          z.string().regex(BUNDLE_SETTING_VARIABLE),
+          BUILD_COMPUTER_SETTINGS,
+          "Build host control names are reserved.",
+        ),
         buildSecretHandleSchema,
       )
       .optional()
@@ -218,23 +227,32 @@ mkdir -p /opt/rea/payload${
     : `
 cp ${packageFile} ${BUILD_PACKAGE_FILE}`
 }
-python3 - <<'PY'
+launcher=$(python3 - <<'PY'
 import glob
+from pathlib import Path
 import tarfile
 
-for name, into in [(path, "/opt/rea") for path in glob.glob("node-*.tar.xz")] + [("${REA_PAYLOAD}", "/opt/rea/payload")]:
+${PYTHON_BUILD_ARCHIVE}
+payload = Path("/opt/rea/payload")
+with tarfile.open("${REA_PAYLOAD}") as archive:
+    archive.extractall(payload, filter="tar")
+    entry, _, problem = inspect_rea_archive(archive)
+    if problem is not None:
+        raise SystemExit(problem)
+launcher = payload / entry
+if not launcher.is_file() or not launcher.resolve().is_relative_to(payload.resolve()):
+    raise SystemExit("The selected scripts/rea.mjs did not extract as a regular file.")
+
+for name in glob.glob("node-*.tar.xz"):
     with tarfile.open(name) as archive:
-        archive.extractall(into, filter="tar")
+        archive.extractall("/opt/rea", filter="tar")
+print(launcher)
 PY
-set -- /opt/rea/payload/*/scripts/rea.mjs
-if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
-    echo "The REA archive must hold one top folder with scripts/rea.mjs." >&2
-    exit 1
-fi
+)
 ln -sf /opt/rea/node-v${BUILD_NODE_VERSION}-linux-*/bin/node /usr/local/bin/node
 # The archive's top folder is caller-chosen and may contain spaces. The launcher
 # runs a fixed path so the shell does not split that folder before Node opens it.
-ln -sfn "$1" /opt/rea/rea.mjs
+ln -sfn "$launcher" /opt/rea/rea.mjs
 printf '#!/bin/sh\\nexec /usr/local/bin/node /opt/rea/rea.mjs "$@"\\n' > /usr/local/bin/rea
 chmod 755 /usr/local/bin/rea
 rm -f node-*.tar.xz ${REA_PAYLOAD}
@@ -264,7 +282,7 @@ const buildInstall = (
             suite: install.suite,
             components: install.components,
             keyFile: `apt-keys/${name}.${isArmoredKey(aptKey) ? "asc" : "gpg"}`,
-            keySha256: createHash("sha256").update(aptKey).digest("hex"),
+            keySha256: sha256Hex(aptKey),
           },
         }
       : undefined;
@@ -363,12 +381,14 @@ if [ -z "$desktop" ]; then
   echo "No installed desktop entry $entry.desktop was found, so its command cannot be adjusted for Electron." >&2
   exit 1
 fi
-set -- /opt/rea/payload/*/dist/domain/desktop/appExportInstall.js
-if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+launcher=$(readlink /opt/rea/rea.mjs)
+policy="\${launcher%/scripts/rea.mjs}/dist/domain/desktop/appExportInstall.js"
+if [ ! -f "$policy" ]; then
   echo "The REA archive must include dist/domain/desktop/appExportInstall.js so an Electron app can use REA's launch policy." >&2
   exit 1
 fi
-/usr/local/bin/node --input-type=module - "$1" "$desktop" <<'JS'
+/usr/local/bin/node --input-type=module - "$policy" "$desktop" <<'JS'
+import { isUtf8 } from "node:buffer";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -378,7 +398,12 @@ if (typeof policy.adjustInstalledDesktopText !== "function") {
   process.exit(1);
 }
 const desktop = process.argv[3];
-const adjusted = policy.adjustInstalledDesktopText(readFileSync(desktop, "utf8"), true);
+const bytes = readFileSync(desktop);
+if (!isUtf8(bytes)) {
+  console.error(\`The desktop entry \${desktop} is not valid UTF-8 and could not be adjusted for Electron.\`);
+  process.exit(1);
+}
+const adjusted = policy.adjustInstalledDesktopText(bytes.toString("utf8"), true);
 if (!adjusted.ok) {
   console.error(\`The desktop entry \${desktop} could not be adjusted for Electron: \${adjusted.error}.\`);
   process.exit(1);

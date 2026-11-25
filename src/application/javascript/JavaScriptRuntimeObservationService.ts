@@ -1,16 +1,17 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { JavaScriptRuntimeObservationPort } from "./JavaScriptRuntimeObservationPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { JavaScriptRuntimeObservationPort } from "../../ports/javascript/JavaScriptRuntimeObservationPort.js";
 import { createJavaScriptRuntimeObservationEvidence } from "./JavaScriptRuntimeObservationEvidence.js";
 import type { Evidence } from "../../domain/evidence.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type {
   ListJavaScriptRuntimeTargetsInput,
   ObserveJavaScriptRuntimeInput,
+  JavaScriptRuntimeObservation,
 } from "../../domain/javascript/javascriptRuntimeObservation.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -31,11 +32,7 @@ export const listJavaScriptRuntimeTargets = async (
   const ready = requireProvider(provider, "list_javascript_runtime_targets");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("list_javascript_runtime_targets", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("list_javascript_runtime_targets", options.signal));
   const result = await ready.value.listTargets(input, options);
   if (!result.ok) return result;
   const report = javascriptRuntimeTargetListSchema.safeParse(result.value);
@@ -65,11 +62,7 @@ export const observeJavaScriptRuntime = async (
   const ready = requireProvider(provider, "observe_javascript_runtime");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("observe_javascript_runtime", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("observe_javascript_runtime", options.signal));
   const result = await ready.value.observe(input, options);
   if (!result.ok) {
     const partial = result.error.partialObservation;
@@ -80,6 +73,17 @@ export const observeJavaScriptRuntime = async (
     ) {
       const report = javascriptRuntimeObservationSchema.safeParse(partial);
       if (report.success) {
+        const mismatch = runtimeSelectionFailure(input, report.data);
+        if (mismatch !== undefined) {
+          result.error.retainSecondaryFailure(mismatch);
+          return err(
+            keepIncompleteObservation(
+              result.error,
+              "observe_javascript_runtime",
+              "Inspector retained a non-JSON incomplete observation.",
+            ),
+          );
+        }
         result.error.partialObservation =
           createJavaScriptRuntimeObservationEvidence(
             "observe_javascript_runtime",
@@ -107,6 +111,9 @@ export const observeJavaScriptRuntime = async (
         { cause: report.error },
       ),
     );
+  const mismatch = runtimeSelectionFailure(input, report.data);
+  if (mismatch !== undefined)
+    return err(mismatch.retainPartialObservation(report.data));
   return runtimeEvidence(
     "observe_javascript_runtime",
     input,
@@ -115,6 +122,24 @@ export const observeJavaScriptRuntime = async (
     options,
   );
 };
+
+/** Shape-valid observations still must identify the caller-selected request. */
+const runtimeSelectionFailure = (
+  input: ObserveJavaScriptRuntimeInput,
+  report: JavaScriptRuntimeObservation,
+): AnalysisOutputError | undefined =>
+  report.target.target_id !== input.target_id ||
+  report.capture.observation_ms !== input.observation_ms ||
+  report.target.runtime_kind !== (input.runtime_kind ?? "unknown") ||
+  report.target.runtime_kind_authority !==
+    (input.runtime_kind === undefined
+      ? "not-declared"
+      : "caller-declared-unverified")
+    ? new AnalysisOutputError(
+        "observe_javascript_runtime",
+        "Inspector changed the selected target, observation window, or caller-declared runtime kind.",
+      )
+    : undefined;
 
 const requireProvider = (
   provider: JavaScriptRuntimeObservationPort | undefined,

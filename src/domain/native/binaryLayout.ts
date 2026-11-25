@@ -2,12 +2,33 @@ import { z } from "zod";
 import { canBorrowParsedJsonSnapshot } from "../immutableJson.js";
 
 import { pwntoolsTimeoutField } from "./nativeDeadlines.js";
+import { pwntoolsProducerLimitsField } from "./pwntoolsResourceLimits.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
 
-const unsignedHex = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
+const unsignedHex = z
+  .string()
+  .regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/, { abort: true });
 const index = z.int().nonnegative();
 const scalar = z.union([z.string(), z.int()]);
+
+// ELF section and segment types may be retained as either names or numeric values.
+const sectionTypes = {
+  SHT_NULL: 0,
+  SHT_SYMTAB: 2,
+  SHT_STRTAB: 3,
+  SHT_RELA: 4,
+  SHT_NOBITS: 8,
+  SHT_REL: 9,
+  SHT_DYNSYM: 11,
+  SHT_RELR: 19,
+} as const;
+const sectionTypeIs = (
+  value: string | number | undefined,
+  name: keyof typeof sectionTypes,
+): boolean => value === name || value === sectionTypes[name];
+const segmentIsNull = (value: string | number): boolean =>
+  value === "PT_NULL" || value === 0;
 const range = z.strictObject({ offset: unsignedHex, bytes: unsignedHex });
 const canonicalBase64 = canonicalBase64Schema;
 const name = z.strictObject({
@@ -23,6 +44,7 @@ export const inspectBinaryLayoutInputSchema = z.strictObject({
     "Absolute filesystem path to the selected binary",
   ),
   pwntools_timeout_ms: pwntoolsTimeoutField,
+  producer_limits: pwntoolsProducerLimitsField,
 });
 
 /** File and linked-image evidence; numeric ELF values never pass through unsafe JSON numbers. */
@@ -33,7 +55,7 @@ const binaryLayoutObjectSchema = z.strictObject({
     bytes: index,
   }),
   format: z.literal("elf"),
-  architecture: z.union([
+  architecture: z.discriminatedUnion("machine", [
     z.strictObject({
       machine: z.enum(["EM_X86_64", "EM_AARCH64"]),
       bits: z.literal(64),
@@ -210,119 +232,146 @@ export const binaryLayoutPayloadSchema = binaryLayoutObjectSchema.omit({
   diagnostics: true,
 });
 
+const binaryLayoutEnvelopeSchema = binaryLayoutObjectSchema.pick({
+  artifact: true,
+  diagnostics: true,
+});
+
+type BinaryLayoutIssueAdder = (issue: {
+  code: "custom";
+  path: (string | number)[];
+  message: string;
+}) => void;
+
+const validateBinaryLayoutInvariants = (
+  value: z.output<typeof binaryLayoutObjectSchema>,
+  addIssue: BinaryLayoutIssueAdder,
+): void => {
+  const size = BigInt(value.artifact.bytes);
+  const check = (
+    offset: string,
+    length: string,
+    path: (string | number)[],
+  ): void => {
+    const start = BigInt(offset);
+    const bytes = BigInt(length);
+    if (start > size || bytes > size - start)
+      addIssue({
+        code: "custom",
+        path,
+        message:
+          "Reported file-backed range lies outside the selected artifact.",
+      });
+  };
+  const checkLocation = (
+    where: z.infer<typeof range>,
+    path: (string | number)[],
+  ): void => check(where.offset, where.bytes, path);
+  const checkName = (
+    reported: z.infer<typeof name>,
+    path: (string | number)[],
+  ): void => {
+    if (reported.location !== null)
+      checkLocation(reported.location, [...path, "location"]);
+  };
+  const expectedEntryMeaning =
+    value.image_type === "ET_REL"
+      ? "not-applicable"
+      : value.entry_point.reported_value === "0x0"
+        ? "absent"
+        : "linked-virtual-address";
+  if (value.entry_point.meaning !== expectedEntryMeaning)
+    addIssue({
+      code: "custom",
+      path: ["entry_point", "meaning"],
+      message:
+        "Entry meaning must distinguish zero/unused fields from an actual linked address.",
+    });
+  for (const [index, section] of value.sections.entries()) {
+    if (
+      (sectionTypeIs(section.type, "SHT_SYMTAB") ||
+        sectionTypeIs(section.type, "SHT_DYNSYM")) &&
+      !sectionTypeIs(value.sections[section.link]?.type, "SHT_STRTAB")
+    )
+      addIssue({
+        code: "custom",
+        path: ["sections", index, "link"],
+        message: "Symbol tables must link to an existing string-table section.",
+      });
+    if (section.index !== index)
+      addIssue({
+        code: "custom",
+        path: ["sections", index, "index"],
+        message:
+          "Complete section order must preserve original producer indices.",
+      });
+    checkLocation(section.header_location, [
+      "sections",
+      index,
+      "header_location",
+    ]);
+    checkName(section.name, ["sections", index, "name"]);
+    const hasFileBytes =
+      !sectionTypeIs(section.type, "SHT_NOBITS") &&
+      !sectionTypeIs(section.type, "SHT_NULL");
+    if (section.file_backing !== (hasFileBytes ? "file" : "none"))
+      addIssue({
+        code: "custom",
+        path: ["sections", index, "file_backing"],
+        message:
+          "File backing must follow the reported section type; NOBITS and unused headers have no file content.",
+      });
+    if (hasFileBytes) check(section.offset, section.size, ["sections", index]);
+  }
+  for (const [index, segment] of value.segments.entries()) {
+    if (segment.index !== index)
+      addIssue({
+        code: "custom",
+        path: ["segments", index, "index"],
+        message:
+          "Complete segment order must preserve original producer indices.",
+      });
+    checkLocation(segment.header_location, [
+      "segments",
+      index,
+      "header_location",
+    ]);
+    const hasFileBytes =
+      !segmentIsNull(segment.type) && BigInt(segment.file_size) !== 0n;
+    if (segment.file_backing !== (hasFileBytes ? "file" : "none"))
+      addIssue({
+        code: "custom",
+        path: ["segments", index, "file_backing"],
+        message:
+          "File backing must follow the reported segment type and file size.",
+      });
+    if (segmentIsNull(segment.type) !== (segment.permissions === null))
+      addIssue({
+        code: "custom",
+        path: ["segments", index, "permissions"],
+        message:
+          "Unused PT_NULL flags have no permission meaning; other segment flags retain their interpretation.",
+      });
+    if (hasFileBytes)
+      check(segment.offset, segment.file_size, ["segments", index]);
+  }
+  for (const [index, symbol] of value.symbols.entries()) {
+    checkLocation(symbol.location, ["symbols", index, "location"]);
+    checkName(symbol.name, ["symbols", index, "name"]);
+  }
+  for (const [index, relocation] of value.relocations.entries())
+    checkLocation(relocation.location, ["relocations", index, "location"]);
+  validateRelocationReferences(value, addIssue);
+  validatePackedRelativeTables(value, addIssue, checkLocation);
+  for (const facet of ["needed_libraries", "interpreters"] as const)
+    for (const [index, reported] of value.linkage[facet].entries())
+      checkName(reported, ["linkage", facet, index]);
+};
+
 /** Check source ranges again at the public boundary, independently of upstream parsing. */
 export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
   (value, context) => {
-    const size = BigInt(value.artifact.bytes);
-    const check = (
-      offset: string,
-      length: string,
-      path: (string | number)[],
-    ): void => {
-      const start = BigInt(offset);
-      const bytes = BigInt(length);
-      if (start > size || bytes > size - start)
-        context.addIssue({
-          code: "custom",
-          path,
-          message:
-            "Reported file-backed range lies outside the selected artifact.",
-        });
-    };
-    const checkLocation = (
-      where: z.infer<typeof range>,
-      path: (string | number)[],
-    ): void => check(where.offset, where.bytes, path);
-    const checkName = (
-      reported: z.infer<typeof name>,
-      path: (string | number)[],
-    ): void => {
-      if (reported.location !== null)
-        checkLocation(reported.location, [...path, "location"]);
-    };
-    const expectedEntryMeaning =
-      value.image_type === "ET_REL"
-        ? "not-applicable"
-        : value.entry_point.reported_value === "0x0"
-          ? "absent"
-          : "linked-virtual-address";
-    if (value.entry_point.meaning !== expectedEntryMeaning)
-      context.addIssue({
-        code: "custom",
-        path: ["entry_point", "meaning"],
-        message:
-          "Entry meaning must distinguish zero/unused fields from an actual linked address.",
-      });
-    for (const [index, section] of value.sections.entries()) {
-      if (
-        (section.type === "SHT_SYMTAB" || section.type === "SHT_DYNSYM") &&
-        value.sections[section.link]?.type !== "SHT_STRTAB"
-      )
-        context.addIssue({
-          code: "custom",
-          path: ["sections", index, "link"],
-          message:
-            "Symbol tables must link to an existing string-table section.",
-        });
-      if (section.index !== index)
-        context.addIssue({
-          code: "custom",
-          path: ["sections", index, "index"],
-          message:
-            "Complete section order must preserve original producer indices.",
-        });
-      checkLocation(section.header_location, [
-        "sections",
-        index,
-        "header_location",
-      ]);
-      checkName(section.name, ["sections", index, "name"]);
-      if (section.file_backing === "file")
-        check(section.offset, section.size, ["sections", index]);
-    }
-    for (const [index, segment] of value.segments.entries()) {
-      if (segment.index !== index)
-        context.addIssue({
-          code: "custom",
-          path: ["segments", index, "index"],
-          message:
-            "Complete segment order must preserve original producer indices.",
-        });
-      checkLocation(segment.header_location, [
-        "segments",
-        index,
-        "header_location",
-      ]);
-      const hasFileBytes =
-        segment.type !== "PT_NULL" && BigInt(segment.file_size) !== 0n;
-      if (segment.file_backing !== (hasFileBytes ? "file" : "none"))
-        context.addIssue({
-          code: "custom",
-          path: ["segments", index, "file_backing"],
-          message:
-            "File backing must follow the reported segment type and file size.",
-        });
-      if ((segment.type === "PT_NULL") !== (segment.permissions === null))
-        context.addIssue({
-          code: "custom",
-          path: ["segments", index, "permissions"],
-          message:
-            "Unused PT_NULL flags have no permission meaning; other segment flags retain their interpretation.",
-        });
-      if (hasFileBytes)
-        check(segment.offset, segment.file_size, ["segments", index]);
-    }
-    for (const [index, symbol] of value.symbols.entries()) {
-      checkLocation(symbol.location, ["symbols", index, "location"]);
-      checkName(symbol.name, ["symbols", index, "name"]);
-    }
-    for (const [index, relocation] of value.relocations.entries())
-      checkLocation(relocation.location, ["relocations", index, "location"]);
-    validateRelocationReferences(value, context);
-    validatePackedRelativeTables(value, context, checkLocation);
-    for (const facet of ["needed_libraries", "interpreters"] as const)
-      for (const [index, reported] of value.linkage[facet].entries())
-        checkName(reported, ["linkage", facet, index]);
+    validateBinaryLayoutInvariants(value, (issue) => context.addIssue(issue));
   },
 );
 
@@ -330,6 +379,29 @@ export type InspectBinaryLayoutInput = z.infer<
   typeof inspectBinaryLayoutInputSchema
 >;
 export type BinaryLayout = z.infer<typeof binaryLayoutSchema>;
+
+/** Validate only the envelope and cross-field invariants for an already-parsed decoder payload. */
+export const safeParseProjectedBinaryLayout = (
+  payload: z.output<typeof binaryLayoutPayloadSchema>,
+  envelope: {
+    readonly artifact: unknown;
+    readonly diagnostics: unknown;
+  },
+):
+  | { success: true; data: BinaryLayout }
+  | { success: false; error: z.ZodError } => {
+  const checkedEnvelope = binaryLayoutEnvelopeSchema.safeParse(envelope);
+  if (!checkedEnvelope.success)
+    return { success: false, error: checkedEnvelope.error };
+  const combined: BinaryLayout = { ...payload, ...checkedEnvelope.data };
+  const issues: z.core.$ZodIssueCustom[] = [];
+  validateBinaryLayoutInvariants(combined, (issue) => {
+    issues.push(issue);
+  });
+  if (issues.length > 0)
+    return { success: false, error: new z.ZodError(issues) };
+  return { success: true, data: combined };
+};
 
 const validatedImmutableLayouts = new WeakSet<object>();
 
@@ -355,7 +427,7 @@ export const safeParseOwnedBinaryLayout = (
 
 const validateRelocationReferences = (
   value: z.output<typeof binaryLayoutObjectSchema>,
-  context: z.RefinementCtx,
+  addIssue: BinaryLayoutIssueAdder,
 ): void => {
   const symbols = new Set(
     value.symbols.map(
@@ -371,20 +443,24 @@ const validateRelocationReferences = (
           ? target.section_index !== 0 &&
             target.section_index === owner?.info &&
             value.sections[target.section_index] !== undefined &&
-            value.sections[target.section_index]?.type !== "SHT_NULL" &&
+            !sectionTypeIs(
+              value.sections[target.section_index]?.type,
+              "SHT_NULL",
+            ) &&
             target.offset === relocation.reported_offset
           : target.kind === "unknown-section" &&
             target.reported_section_index === owner?.info &&
             target.offset === relocation.reported_offset &&
             (target.reported_section_index === 0
               ? target.unknown_reason === "undefined-section-reference"
-              : value.sections[target.reported_section_index]?.type ===
-                  "SHT_NULL" &&
-                target.unknown_reason === "inactive-section-header")
+              : sectionTypeIs(
+                  value.sections[target.reported_section_index]?.type,
+                  "SHT_NULL",
+                ) && target.unknown_reason === "inactive-section-header")
         : target.kind === "linked-virtual-address" &&
           target.address === relocation.reported_offset;
     if (!targetMatches)
-      context.addIssue({
+      addIssue({
         code: "custom",
         path: ["relocations", index, "target"],
         message:
@@ -393,9 +469,11 @@ const validateRelocationReferences = (
     const table = value.sections[relocation.symbol_table_index];
     const tableExists =
       relocation.symbol_table_index !== 0 &&
-      (table?.type === "SHT_SYMTAB" || table?.type === "SHT_DYNSYM");
+      (sectionTypeIs(table?.type, "SHT_SYMTAB") ||
+        sectionTypeIs(table?.type, "SHT_DYNSYM"));
     const positiveReferenceExists =
       tableExists &&
+      table !== undefined &&
       // Elf32_Sym is 16 bytes; Elf64_Sym is 24.
       BigInt(table.entry_size) >=
         (value.architecture.bits === 32 ? 16n : 24n) &&
@@ -405,8 +483,10 @@ const validateRelocationReferences = (
         `${relocation.symbol_table_index}:${relocation.symbol_index}`,
       );
     if (
-      (owner?.type !== "SHT_REL" && owner?.type !== "SHT_RELA") ||
-      owner.link !== relocation.symbol_table_index ||
+      owner === undefined ||
+      (!sectionTypeIs(owner.type, "SHT_REL") &&
+        !sectionTypeIs(owner.type, "SHT_RELA")) ||
+      owner?.link !== relocation.symbol_table_index ||
       (relocation.symbol_table_index !== 0 && !tableExists) ||
       (relocation.symbol_index !== 0 && !positiveReferenceExists) ||
       relocation.symbol_reference_meaning !==
@@ -414,7 +494,7 @@ const validateRelocationReferences = (
           ? "zero-symbol-value"
           : "symbol-table-entry")
     )
-      context.addIssue({
+      addIssue({
         code: "custom",
         path: ["relocations", index],
         message:
@@ -425,7 +505,7 @@ const validateRelocationReferences = (
 
 const validatePackedRelativeTables = (
   value: z.output<typeof binaryLayoutObjectSchema>,
-  context: z.RefinementCtx,
+  addIssue: BinaryLayoutIssueAdder,
   checkLocation: (
     location: z.output<typeof range>,
     path: (string | number)[],
@@ -445,7 +525,7 @@ const validatePackedRelativeTables = (
       "base64",
     );
     if (BigInt(encodedBytes) !== BigInt(table.location.bytes))
-      context.addIssue({
+      addIssue({
         code: "custom",
         path: ["packed_relative_relocations", tableIndex],
         message:
@@ -453,11 +533,12 @@ const validatePackedRelativeTables = (
       });
     const section = value.sections[table.section_index];
     if (
-      section?.type !== "SHT_RELR" ||
+      section === undefined ||
+      !sectionTypeIs(section.type, "SHT_RELR") ||
       section.offset !== table.location.offset ||
       section.size !== table.location.bytes
     )
-      context.addIssue({
+      addIssue({
         code: "custom",
         path: ["packed_relative_relocations", tableIndex, "section_index"],
         message:
@@ -465,7 +546,7 @@ const validatePackedRelativeTables = (
       });
     for (const [decoded, entry] of table.entries.entries())
       if (entry.decoded_index !== decoded)
-        context.addIssue({
+        addIssue({
           code: "custom",
           path: ["packed_relative_relocations", tableIndex, "entries", decoded],
           message: "Decoded offsets must preserve upstream iterator order.",

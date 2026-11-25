@@ -1,9 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -13,39 +14,41 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const expectRecoveredBatch = (response: CallToolResult, owned: string) => {
   expect(parseMcpToolError(response).error).toMatchObject({
-    code: "resource_constraint",
+    code: "cleanup_incomplete",
     details: {
-      completed_observation: {
+      resources: [owned],
+      partial_observation: {
         evidence: {
-          normalized_result: {
-            items: [
-              { status: "ok" },
-              {
-                status: "error",
-                error: {
-                  code: "cleanup_incomplete",
-                  details: { resources: [owned] },
-                },
-              },
-            ],
-          },
+          normalized_result: { items: [{ status: "ok" }], total: 1 },
         },
       },
+      secondary_failures: expect.arrayContaining([
+        {
+          code: "resource_constraint",
+          category: "resource_constraint",
+          message: expect.any(String),
+          retryable: true,
+          remediation: expect.any(Object),
+          details: expect.objectContaining({ operation: "record_evidence" }),
+        },
+      ]),
     },
   });
 };
 
-it("keeps a mixed batch cleanup owner after source retention fails and retries it", async () => {
+it("keeps a batch cleanup owner and its completed prefix after source retention fails", async () => {
   const root = await createTestTempDirectory("rea-batch-owned-cleanup-");
   const target = join(root, "fixture.com"),
     owned = join(root, "owned");
   await writeFile(target, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "health",
     parameters: {},
     result: "source",
@@ -57,14 +60,7 @@ it("keeps a mixed batch cleanup owner after source retention fails and retries i
     pending = false,
     allow = false,
     closes = 0;
-  let entered!: () => void;
-  let release!: () => void;
-  const closing = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const finalCleanup = phaseGate();
   const session = new BinarySession(
     createTestProviderRouter(() => ({
       execute: async (operation) => {
@@ -90,14 +86,13 @@ it("keeps a mixed batch cleanup owner after source retention fails and retries i
         closes++;
         if (!pending) return ok(null);
         if (closes === 2) {
-          entered();
-          await gate;
+          await finalCleanup.hold();
           return err(failure);
         }
         if (!allow) return err(failure);
         await rm(owned, { recursive: true });
         pending = false;
-        failure.resolveCleanup();
+        releaseOwnedCleanup(failure);
         return ok(null);
       },
     })),
@@ -122,7 +117,10 @@ it("keeps a mixed batch cleanup owner after source retention fails and retries i
       ),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "batch-owned-cleanup", version: "1" });
+  const client = new Client(
+    { name: "batch-owned-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);
@@ -153,12 +151,12 @@ it("keeps a mixed batch cleanup owner after source retention fails and retries i
       { signal: controller.signal, timeout: 120000 },
     );
     try {
-      await awaitAcknowledgement(closing, cancelledClose, "final cleanup");
+      await finalCleanup.reached(cancelledClose, "final cleanup");
       controller.abort();
       await expect(cancelledClose).rejects.toThrow();
     } finally {
       controller.abort();
-      release();
+      finalCleanup.release();
       await Promise.allSettled([cancelledClose]);
     }
     allow = true;
@@ -170,7 +168,7 @@ it("keeps a mixed batch cleanup owner after source retention fails and retries i
     await expect(access(owned)).rejects.toThrow();
   } finally {
     allow = true;
-    release();
+    finalCleanup.release();
     await client.close();
     await server.close();
     await session.close();

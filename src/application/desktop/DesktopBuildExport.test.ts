@@ -1,5 +1,10 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { expect, it } from "vitest";
 
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { exportBuild } from "./DesktopBuildExport.js";
 
 it.each([4, 8])(
@@ -42,20 +47,24 @@ it.each([4, 8])(
         consents: [],
       },
       {
-        directory: "/unused",
-        task: {
-          name: "t",
-          prompt: "Task",
-          checks: [
-            {
-              kind: "lines_present",
-              file: "f0.bin",
-              lines: ["x"],
-              reader: "r0",
+        directory: join(await createTestTempDirectory("build-export-"), "out"),
+        tasks: [
+          {
+            task: {
+              name: "t",
+              prompt: "Task",
+              checks: [
+                {
+                  kind: "lines_present",
+                  file: "f0.bin",
+                  lines: ["x"],
+                  reader: "r0",
+                },
+              ],
+              readers,
             },
-          ],
-          readers,
-        },
+          },
+        ],
       },
       new AbortController().signal,
     );
@@ -102,26 +111,30 @@ it.each([
         consents: [],
       },
       {
-        directory: "/unused",
-        task: {
-          name: "t",
-          prompt: "Task",
-          checks: [
-            {
-              kind: "lines_present",
-              file: "f0.bin",
-              lines: ["x"],
-              reader: "r0",
+        directory: join(await createTestTempDirectory("build-export-"), "out"),
+        tasks: [
+          {
+            task: {
+              name: "t",
+              prompt: "Task",
+              checks: [
+                {
+                  kind: "lines_present",
+                  file: "f0.bin",
+                  lines: ["x"],
+                  reader: "r0",
+                },
+              ],
+              readers: timeouts.map((timeout_s, index) => ({
+                id: `r${String(index)}`,
+                file: `f${String(index)}.bin`,
+                argv: ["cat", "{file}"],
+                output: "lines" as const,
+                timeout_s,
+              })),
             },
-          ],
-          readers: timeouts.map((timeout_s, index) => ({
-            id: `r${String(index)}`,
-            file: `f${String(index)}.bin`,
-            argv: ["cat", "{file}"],
-            output: "lines" as const,
-            timeout_s,
-          })),
-        },
+          },
+        ],
       },
       new AbortController().signal,
     );
@@ -129,3 +142,63 @@ it.each([
     expect(observedTimeout).toBe(routeTimeout);
   },
 );
+
+it("refuses an unusable output folder before running anything in the computer", async () => {
+  const root = await createTestTempDirectory("build-export-");
+  const file = join(root, "file");
+  await writeFile(file, "file");
+  let executions = 0;
+  const computer = {
+    exec: async () => {
+      executions += 1;
+      return {
+        exit_code: 0,
+        stdout: "{}\n",
+        stderr: "",
+        timed_out: false,
+        truncated: false,
+      };
+    },
+    homeFiles: async () => new Map(),
+    redacted: (text: string) => text,
+  };
+  const result = await exportBuild(
+    computer,
+    {
+      folder: ".rea-build/c",
+      attempt: 0,
+      extraPackages: [],
+      secrets: [],
+      keep: async (handle: string) => handle,
+      signIn: false,
+      consents: [],
+    },
+    {
+      directory: file,
+      tasks: [
+        {
+          task: {
+            name: "t",
+            prompt: "Task",
+            checks: [
+              {
+                kind: "lines_present",
+                file: "f0.bin",
+                lines: ["x"],
+              },
+            ],
+          },
+        },
+      ],
+    },
+    new AbortController().signal,
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  if (!(result.error instanceof AnalysisInputError)) return;
+  expect(result.error.issues).toContainEqual(
+    expect.objectContaining({ path: ["directory"], reason: "invalid_value" }),
+  );
+  expect(executions).toBe(0);
+});

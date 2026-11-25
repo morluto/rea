@@ -42,17 +42,17 @@ const fixture = async (scenario: (typeof scenarios)[number]) => {
         $objects: ["$null", { real: 9007199254740992 }],
       }),
     );
-    const trailer = bytes.length - 32;
-    // Add one unreachable offset entry backed by the first trailer byte. The
-    // locked primary decoder accepts it; supplemental pre-trailer capacity does not.
-    bytes.writeBigUInt64BE(
-      bytes.readBigUInt64BE(trailer + 8) + 1n,
-      trailer + 8,
-    );
     const original = parseBinary(bytes);
     expect(original).toMatchObject({
       $objects: ["$null", { real: 9007199254740992 }],
     });
+    const trailer = bytes.length - 32;
+    // Add one unreachable offset entry backed by the first trailer byte. The
+    // reachable object graph is unchanged, but the supplemental table no longer fits.
+    bytes.writeBigUInt64BE(
+      bytes.readBigUInt64BE(trailer + 8) + 1n,
+      trailer + 8,
+    );
   } else {
     let xml = build(source)
       .replace(
@@ -115,13 +115,10 @@ const verify = (
   } else if (scenario === "opaque-xml") {
     expect(fields.text).toBe("<integer>9007199254740993</integer>");
     expect(fields.real).toBe(9007199254740996);
-    expect(fields.first).toBeDefined();
-    const exact =
-      typeof fields.first === "object" &&
-      fields.first !== null &&
-      JSON.stringify(fields.first) ===
-        JSON.stringify({ $plist_type: "integer", decimal: "9007199254740993" });
-    expect(exact || precisionNote).toBe(true);
+    expect(fields.first).toEqual({
+      $plist_type: "integer",
+      decimal: "9007199254740993",
+    });
     // If a literal count is reported, opaque content must not inflate it.
     const countNote = result.limitations.find((note) =>
       /integer literal\(s\)/u.test(note),

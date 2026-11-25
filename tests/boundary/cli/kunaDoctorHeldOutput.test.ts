@@ -125,10 +125,11 @@ process.exit(0);
         providerInspections: expect.arrayContaining([
           expect.objectContaining({
             id: "kuna",
-            available: false,
+            // Admission decides availability; the version probe is its own check.
+            available: true,
             checks: expect.arrayContaining([
               expect.objectContaining({
-                name: "installation",
+                name: "version",
                 ok: false,
                 code: "version_unresolved",
                 details: expect.objectContaining({

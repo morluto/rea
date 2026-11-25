@@ -12,6 +12,7 @@ import {
   environmentManifestCaptureFixture,
 } from "../../fixtures/analysisView.js";
 import {
+  environmentServeFixture,
   environmentServeSource,
   writeEnvironmentServeFiles,
 } from "../../fixtures/environmentServe.js";
@@ -23,7 +24,9 @@ describe("rea environment-serve refusals", () => {
     "refuses a manifest whose parent is not the supplied evidence with a typed invalid request",
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-environment-serve-cli-");
-      const files = await writeEnvironmentServeFiles(root);
+      const { manifest, capture } = environmentServeFixture();
+      const manifestPath = join(root, "manifest.json");
+      await writeFile(manifestPath, JSON.stringify(manifest));
       const other = join(root, "other.json");
       await writeFile(
         other,
@@ -34,14 +37,13 @@ describe("rea environment-serve refusals", () => {
       const result = await cli.run({
         arguments: [
           "environment-serve",
-          files.manifestPath,
+          manifestPath,
           "--evidence",
           other,
           "--port",
           "0",
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -50,10 +52,17 @@ describe("rea environment-serve refusals", () => {
         category: "invalid_input",
         details: {
           operation: "environment-serve",
-          issues: [{ path: ["evidence", "evidence_id"] }],
+          issues: [
+            {
+              path: ["evidence", "evidence_id"],
+              reason: "invalid_value",
+              expected: capture.evidence_id,
+            },
+          ],
         },
       });
       expect(result.stdout).toContain("different capture");
+      expect(result.stderr).not.toContain("MCP transport listening");
     },
   );
 
@@ -63,10 +72,8 @@ describe("rea environment-serve refusals", () => {
       const root = await createTestTempDirectory(
         "rea-environment-serve-usage-",
       );
-      const files = await writeEnvironmentServeFiles(root);
       const result = await cli.run({
-        arguments: ["environment-serve", files.manifestPath, "--json"],
-        timeoutMs: 30_000,
+        arguments: ["environment-serve", join(root, "manifest.json"), "--json"],
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -87,17 +94,15 @@ describe("rea environment-serve refusals", () => {
       const root = await createTestTempDirectory(
         "rea-environment-serve-listener-",
       );
-      const files = await writeEnvironmentServeFiles(root);
       const result = await cli.run({
         arguments: [
           "environment-serve",
-          files.manifestPath,
+          join(root, "manifest.json"),
           "--evidence",
-          files.capturePath,
+          join(root, "capture.json"),
           flag,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -112,16 +117,14 @@ describe("rea environment-serve refusals", () => {
     "refuses an unreadable manifest path before binding",
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-environment-serve-path-");
-      const files = await writeEnvironmentServeFiles(root);
       const result = await cli.run({
         arguments: [
           "environment-serve",
           join(root, "missing.json"),
           "--evidence",
-          files.capturePath,
+          join(root, "capture.json"),
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -195,7 +198,6 @@ cliTest(
         "0",
         "--json",
       ],
-      timeoutMs: 30000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

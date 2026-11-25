@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
@@ -61,7 +62,7 @@ describe("build bundle renderer", () => {
       { id: "env", type: "deploy_env", env_id: "mousepad" },
     ]);
     const script = text(bundle.files, "envs/mousepad/install-rea.sh");
-    expect(script).toContain("/opt/rea/payload/*/scripts/rea.mjs");
+    expect(script).toContain('ln -sfn "$launcher" /opt/rea/rea.mjs');
     expect(script).toContain(
       `/opt/rea/node-v${BUILD_NODE_VERSION}-linux-*/bin/node`,
     );
@@ -260,6 +261,8 @@ describe("build bundle download installs", () => {
         },
       }).success;
     expect(install({})).toBe(true);
+    expect(install({ url: "not-a-url" })).toBe(false);
+    expect(install({ url: "https://" })).toBe(false);
     expect(install({ program: "../bin/sh" })).toBe(false);
     expect(install({ program: "/usr/bin/notes" })).toBe(false);
     expect(install({ program: "notes//notes" })).toBe(false);
@@ -317,5 +320,31 @@ describe("Electron launch rendering", () => {
         file.path.endsWith("prepare-electron-launch.sh"),
       ),
     ).toBe(false);
+  });
+});
+
+describe("build bundle host settings", () => {
+  it("keeps the host-control environment names reserved at runtime without advertising non-portable look-around", () => {
+    const parse = (settings: Record<string, string>) =>
+      buildSourceSchema.safeParse({
+        kind: "bundle",
+        path: "/tmp/bundle",
+        settings,
+      });
+
+    for (const reserved of [
+      "REA_AGENT_ENV_COMMAND",
+      "REA_DOCKER_COMMAND",
+      "REA_BUILD_COMPUTER_REA_ARCHIVE",
+    ]) {
+      const result = parse({ [reserved]: "handle" });
+      expect(result.success, reserved).toBe(false);
+    }
+
+    expect(parse({ REA_EXTRA_SETTING: "handle" }).success).toBe(true);
+    // The advertised schema states the same reservation with `not`, not look-around.
+    const advertised = JSON.stringify(z.toJSONSchema(buildSourceSchema));
+    expect(advertised).not.toMatch(/\(\?<?[=!]/u);
+    expect(advertised).toContain('"not":{"enum":["REA_AGENT_ENV_COMMAND"');
   });
 });
