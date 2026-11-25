@@ -860,6 +860,7 @@
 * **native:** extract NativeMacosErrorProjection from NativeMacOSProvider ([#13741](https://github.com/morluto/rea/issues/13741)) ([3306133](https://github.com/morluto/rea/commit/33061332ef3e386a9412841925128160e31bd1a0))
 * **native:** isolate FAT Mach-O slice framing and consolidate Mach-O/PE/MZ gates ([#14366](https://github.com/morluto/rea/issues/14366)) ([b6e0616](https://github.com/morluto/rea/commit/b6e06169cd55d34dc33faa677e5e2943c295f00e))
 * **native:** share sorted address boundary search ([#14472](https://github.com/morluto/rea/issues/14472)) ([97ed871](https://github.com/morluto/rea/commit/97ed8719d6272741ed894121361b01bcca446487))
+* **native:** stop scanning after a second dyld diagnostic ([#14598](https://github.com/morluto/rea/issues/14598)) ([3890d9d](https://github.com/morluto/rea/commit/3890d9d2535259c019aa46e9f48a4797c185a98a))
 * **nuget,apk:** adopt ByteSource and drop the NuGet in-memory parse branch ([5b79ae5](https://github.com/morluto/rea/commit/5b79ae5d62be355c5f955fe43c42a8e15b891a64))
 * **nuget,apk:** adopt ByteSource and drop the NuGet in-memory parse branch ([299c592](https://github.com/morluto/rea/commit/299c592b636de2080f6ce123e5fbc58effce45f2))
 * **nuget,apk:** adopt ByteSource and drop the NuGet in-memory parse branch ([05b683b](https://github.com/morluto/rea/commit/05b683b72e8579ab4cf1cbb7181179d27b110965))
