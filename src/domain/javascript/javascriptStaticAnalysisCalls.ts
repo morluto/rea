@@ -842,13 +842,25 @@ interface SourceEdit {
  * endpoint values already omit, so no analyzer output echoes it.
  */
 const partialEndpointValue = (source: string, target: t.Node): string => {
-  const edits: SourceEdit[] = [];
+  const texts = new Map<t.StringLiteral | t.TemplateElement, string>();
   traverseJavaScriptAst(target, {
     enter: (node) => {
       if (!t.isStringLiteral(node) && !t.isTemplateElement(node)) return;
-      const edit = credentialFreeLiteral(source, node);
-      if (edit !== undefined) edits.push(edit);
+      const cooked = cookedLiteral(node);
+      if (cooked !== undefined) texts.set(node, cooked);
     },
+  });
+  // Userinfo inside one literal goes as in an exact value.
+  const redacted = new Map(
+    [...texts].map(([node, text]) => [node, removeTransportCredentials(text)]),
+  );
+  for (const pieces of urlTextSequences(target))
+    removeSplitUserinfo(pieces, redacted);
+  const edits = [...redacted].flatMap(([node, text]): SourceEdit[] => {
+    const cooked = texts.get(node)!;
+    if (text === cooked) return [];
+    const edit = literalEdit(source, node, cooked, text);
+    return edit === undefined ? [] : [edit];
   });
   let value = sourceSlice(source, target);
   const base = target.start ?? 0;
@@ -858,30 +870,102 @@ const partialEndpointValue = (source: string, target: t.Node): string => {
   return value;
 };
 
-/** Edit one literal whose value spells URL userinfo; leave every other literal. */
-const credentialFreeLiteral = (
+const cookedLiteral = (
+  node: t.StringLiteral | t.TemplateElement,
+): string | undefined => {
+  const cooked = t.isStringLiteral(node) ? node.value : node.value.cooked;
+  return typeof cooked === "string" ? cooked : undefined;
+};
+
+/** A literal piece of a string's text, or null for a dynamic piece. */
+type UrlTextPiece = t.StringLiteral | t.TemplateElement | null;
+
+/**
+ * The pieces that join into each string a request target spells: the
+ * target, or each property value of an options object. Only `+` operands
+ * and template parts join; a literal inside another expression, such as a
+ * computed key, is not part of the text.
+ */
+const urlTextSequences = (target: t.Node): UrlTextPiece[][] => {
+  const node = unwrapJavaScriptExpression(target).node;
+  if (t.isObjectExpression(node))
+    return node.properties.flatMap((property) =>
+      t.isObjectProperty(property) ? urlTextSequences(property.value) : [],
+    );
+  return [urlTextPieces(node)];
+};
+
+const urlTextPieces = (input: t.Node): UrlTextPiece[] => {
+  const node = unwrapJavaScriptExpression(input).node;
+  if (t.isStringLiteral(node)) return [node];
+  if (t.isBinaryExpression(node, { operator: "+" }))
+    return [...urlTextPieces(node.left), ...urlTextPieces(node.right)];
+  if (t.isTemplateLiteral(node))
+    return node.quasis.flatMap((quasi, index) => {
+      const expression = node.expressions[index];
+      return expression === undefined
+        ? [quasi]
+        : [quasi, ...urlTextPieces(expression)];
+    });
+  return [null];
+};
+
+/** A literal that ends inside a URL authority, before any `@`. */
+const OPEN_AUTHORITY = /^(?:[a-z][a-z\d+.-]*:)?\/\/[^/?#\\@]*$/iu;
+
+/**
+ * A literal that ends inside a URL authority, such as `"https://user:"`,
+ * leaves its userinfo open: the following pieces belong to it up to the `@`
+ * that ends it, as in `"https://user:" + "secret@" + host`. A path, query or
+ * fragment delimiter before any `@` closes the authority without userinfo.
+ */
+const removeSplitUserinfo = (
+  pieces: readonly UrlTextPiece[],
+  redacted: Map<t.StringLiteral | t.TemplateElement, string>,
+): void => {
+  let open: { readonly index: number; readonly from: number } | undefined;
+  for (let index = 0; index < pieces.length; index++) {
+    const piece = pieces[index];
+    const text = piece === null ? undefined : redacted.get(piece!);
+    if (text === undefined) continue;
+    if (open !== undefined) {
+      const end = text.search(/[@/?#\\]/u);
+      if (end === -1) continue;
+      if (text[end] === "@") {
+        const first = pieces[open.index]!;
+        redacted.set(first, redacted.get(first)!.slice(0, open.from));
+        for (let between = open.index + 1; between < index; between++) {
+          const middle = pieces[between];
+          if (middle !== null && middle !== undefined) redacted.set(middle, "");
+        }
+        redacted.set(piece!, text.slice(end + 1));
+      }
+      open = undefined;
+    }
+    const current = redacted.get(piece!)!;
+    if (OPEN_AUTHORITY.test(current))
+      open = { index, from: current.indexOf("//") + "//".length };
+  }
+};
+
+/** Write one literal with new text; keep its quotes and every other byte. */
+const literalEdit = (
   source: string,
   node: t.StringLiteral | t.TemplateElement,
+  cooked: string,
+  text: string,
 ): SourceEdit | undefined => {
-  const cooked = t.isStringLiteral(node) ? node.value : node.value.cooked;
-  if (
-    typeof cooked !== "string" ||
-    typeof node.start !== "number" ||
-    typeof node.end !== "number"
-  )
+  if (typeof node.start !== "number" || typeof node.end !== "number")
     return undefined;
-  const redacted = removeTransportCredentials(cooked);
-  if (redacted === cooked) return undefined;
   const quoted = t.isStringLiteral(node);
   const start = quoted ? node.start + 1 : node.start;
   const end = quoted ? node.end - 1 : node.end;
   // An unescaped body keeps its quotes and every other byte.
-  if (source.slice(start, end) === cooked)
-    return { start, end, text: redacted };
+  if (source.slice(start, end) === cooked) return { start, end, text };
   // An escape moves the offsets, so write the literal again from its value.
   return quoted
-    ? { start: node.start, end: node.end, text: JSON.stringify(redacted) }
-    : { start, end, text: redacted.replace(/[\\`]|\$\{/gu, "\\$&") };
+    ? { start: node.start, end: node.end, text: JSON.stringify(text) }
+    : { start, end, text: text.replace(/[\\`]|\$\{/gu, "\\$&") };
 };
 
 const resolvedRequestTarget = (

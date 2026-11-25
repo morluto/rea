@@ -607,6 +607,19 @@ it.each([
     'import { net } from "electron"; net.fetch("https://user:secret@api.example.test/" + path);',
     '"https://api.example.test/" + path',
   ],
+  [
+    // The userinfo starts in one literal and ends in the next.
+    'import { net } from "electron"; net.fetch("https://user:" + "secret@" + host);',
+    '"https://" + "" + host',
+  ],
+  [
+    'fetch("https://user:" + "sec" + "ret@api.example.test/" + path);',
+    '"https://" + "" + "api.example.test/" + path',
+  ],
+  [
+    'fetch(`https://user:${"secret@"}${host}/v1`);',
+    '`https://${""}${host}/v1`',
+  ],
 ])(
   "removes URL userinfo from a partial endpoint expression: %s",
   (source, value) => {
@@ -618,6 +631,19 @@ it.each([
     expect(JSON.stringify(analysis)).not.toContain("secret");
   },
 );
+
+it("keeps literals after a closed URL authority", () => {
+  const source =
+    'fetch("https://api.example.test" + "/to/" + "user:secret@x" + path);';
+  expect(endpoints(source)).toEqual([
+    {
+      kind: "network",
+      value: source.slice("fetch(".length, -");".length),
+      mechanism: "call:fetch",
+      resolution: "partial",
+    },
+  ]);
+});
 
 it("keeps partial expression text that only resembles URL credentials", () => {
   const source =
