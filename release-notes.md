@@ -344,6 +344,7 @@
 * **mcp:** accept discover_tools in exact-name discovery batches ([#13288](https://github.com/morluto/rea/issues/13288)) ([fd40fd9](https://github.com/morluto/rea/commit/fd40fd9ab2a0238529e2c2bc55264af778b439a3))
 * **mcp:** keep doctor launches target-free on Windows ([#13250](https://github.com/morluto/rea/issues/13250)) ([0209d3e](https://github.com/morluto/rea/commit/0209d3e1b580d83497a7b04bc274001670311bd6))
 * **mcp:** name the HTTP option that requires --http ([2fbcec8](https://github.com/morluto/rea/commit/2fbcec84eb5054c7f014729021172173df1742c8))
+* **mcp:** rank multi-word discover_tools queries by matched terms ([#14584](https://github.com/morluto/rea/issues/14584)) ([c58de7f](https://github.com/morluto/rea/commit/c58de7f77efc738b414376fa7b7a1e98b1499c99))
 * **mcp:** retain doctor initialization when catalog requests fail ([#13255](https://github.com/morluto/rea/issues/13255)) ([87889b8](https://github.com/morluto/rea/commit/87889b8729da8a02a4159bc7274c92be52464031))
 * **mcp:** settle independent launch preparation owners ([#13259](https://github.com/morluto/rea/issues/13259)) ([178467f](https://github.com/morluto/rea/commit/178467f6a7c77f6c61f81008ccffeaa7d0061d38))
 * **model:** name and size Q4_0_4_4 GGUF tensors ([#14532](https://github.com/morluto/rea/issues/14532)) ([ed9e664](https://github.com/morluto/rea/commit/ed9e664c2a046737ffae7e17aa23e41b867bf8e7))
