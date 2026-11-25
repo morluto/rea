@@ -804,6 +804,7 @@
 * **macho:** use binary facts for native diagnostic admission ([#13929](https://github.com/morluto/rea/issues/13929)) ([7ce3e5d](https://github.com/morluto/rea/commit/7ce3e5d208fe213882de9427835b993a9a36945c))
 * **managed:** read custom-attribute prologs and resource lengths through BinaryReader ([2bd8963](https://github.com/morluto/rea/commit/2bd8963062fa664e7c6fab0410547480778a5ea5)), refs [#11865](https://github.com/morluto/rea/issues/11865)
 * **managed:** share method and field graph registration ([#14471](https://github.com/morluto/rea/issues/14471)) ([9ea3af4](https://github.com/morluto/rea/commit/9ea3af4bb8554c8141ae7af2f4fc454a64001d2c))
+* **managed:** share unmatched member comparison facts ([#14484](https://github.com/morluto/rea/issues/14484)) ([cca35e9](https://github.com/morluto/rea/commit/cca35e94f74cf3f2210c11b8228fc55312d72ee8))
 * **native:** compose LLDB resolver cleanup through the shared owner ([3af56cc](https://github.com/morluto/rea/commit/3af56cc7d50a5f41ea4753d2d0570082611ee0a4)), refs [#11859](https://github.com/morluto/rea/issues/11859)
 * **native:** extract NativeAotPeImage from nativeAotPe ([#13998](https://github.com/morluto/rea/issues/13998)) ([4d5b059](https://github.com/morluto/rea/commit/4d5b059c640aa5b690116bdffefba4085a1c3ebd))
 * **native:** extract NativeMacosErrorProjection from NativeMacOSProvider ([#13741](https://github.com/morluto/rea/issues/13741)) ([3306133](https://github.com/morluto/rea/commit/33061332ef3e386a9412841925128160e31bd1a0))
@@ -860,6 +861,7 @@
 * **verify:** share client receipt publication ([#14317](https://github.com/morluto/rea/issues/14317)) ([74996b5](https://github.com/morluto/rea/commit/74996b5ba6c58e6d43b991c5167c6a68051e0332))
 * **verify:** share client setup and idempotence checks ([#14326](https://github.com/morluto/rea/issues/14326)) ([d7846f2](https://github.com/morluto/rea/commit/d7846f283499b450bbbb7bc4301c2e5ef2f58833))
 * **views:** reuse invalid-view results and row selectors ([#14314](https://github.com/morluto/rea/issues/14314)) ([5dafc31](https://github.com/morluto/rea/commit/5dafc31d23f8f6f13a57b9b374411f412917d199))
+* **views:** share fixed page budget errors ([#14479](https://github.com/morluto/rea/issues/14479)) ([a2fd2d7](https://github.com/morluto/rea/commit/a2fd2d7d3045951ee684b6612294495d9c4f7435))
 * **web:** remove the superseded single-query module matcher ([#14319](https://github.com/morluto/rea/issues/14319)) ([ab96130](https://github.com/morluto/rea/commit/ab96130f2277fa8a8571fb4bb4f210b6902acd5b))
 * **xml:** share DOM element traversal helpers in xmlDocument ([#13799](https://github.com/morluto/rea/issues/13799)) ([4b648f2](https://github.com/morluto/rea/commit/4b648f23fd061417a7b0b57e560683e907f83020))
 
