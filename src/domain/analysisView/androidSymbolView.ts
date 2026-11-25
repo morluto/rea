@@ -16,6 +16,7 @@ import {
   ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
   analysisViewPageTooLarge,
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -73,15 +74,8 @@ export const projectAndroidSymbolSummary = (
   // The engine artifact digest is the JAR; it cannot identify the APK.
   const subject = evidenceSubjectTarget(parent.subject);
   if (subject === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Android symbol summaries require the recorded APK subject identity.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Android symbol summaries require the recorded APK subject identity.",
     );
   const shared = {
     kind: "summary" as const,

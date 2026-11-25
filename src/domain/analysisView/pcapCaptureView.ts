@@ -1,5 +1,6 @@
 import {
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { z } from "zod";
@@ -136,14 +137,8 @@ const parseParent = (
   if (!parsed.ok) return parsed;
   const subject = evidenceFileTarget(parent);
   if (subject == null || subject.sha256 !== parsed.value.target.sha256)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Packet parent subject must identify the report's SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Packet parent subject must identify the report's SHA-256.",
     );
   return ok(parsed.value);
 };
