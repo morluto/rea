@@ -4,6 +4,7 @@ import {
   isObjectPrototypeSetter,
   objectDataPropertyValue,
   primitiveOwnKeys,
+  readExactJavaScriptLiteral,
   stringValue,
   staticObjectPropertyReader,
   unwrapJavaScriptExpression,
