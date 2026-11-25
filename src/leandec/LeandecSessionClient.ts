@@ -94,6 +94,13 @@ const canonicalAddress = (raw: unknown): string | undefined => {
   }
 };
 
+// Leandec stores padded hex addresses; REA exposes normalized 0x addresses.
+const addressPredicate = (address: string): string => {
+  const canonical = canonicalAddress(address);
+  if (canonical === undefined) throw new AnalysisInputError("address", { userMessage: "Expected hexadecimal address." });
+  return "COALESCE(NULLIF(ltrim(lower(addr), '0'), ''), '0') = '" + canonical + "'";
+};
+
 const publicAddress = (value: unknown): string => {
   const address = canonicalAddress(value);
   if (address === undefined) throw new AnalysisOutputError("leandec", "Invalid Leandec address");
@@ -121,7 +128,8 @@ const requiredCount = (value: JsonValue | undefined): number =>
 
 const inventoryEntry = (row: JsonValue): InventoryEntry => {
   const cells = list(row);
-  const address = canonicalAddress(requiredText(cells[0])) ?? invalidReply("invalid function address");
+  const address = requiredText(cells[0]);
+  if (canonicalAddress(address) === undefined) invalidReply("invalid function address");
   const name = requiredText(cells[1]);
   const namespace = requiredText(cells[2]);
   return { address, name, qualified: namespace ? `${namespace}::${name}` : name, size: requiredCount(cells[3]) };
@@ -129,7 +137,7 @@ const inventoryEntry = (row: JsonValue): InventoryEntry => {
 
 const waitShared = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
   const result = await waitForAbortable(promise, signal);
-  if (result instanceof AbortedWait) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
+  if (result instanceof AbortedWait) throw cancelledBy("leandec", result);
   return result;
 };
 
@@ -388,10 +396,9 @@ export class LeandecSessionClient implements AnalysisClient {
     options: ExecutionOptions,
   ): Promise<Answer> {
     const strings = await this.#stringsOf(options);
-    const wanted =
-      parameters.address === undefined
-        ? undefined
-        : canonicalAddress(parameters.address);
+    const wanted = parameters.address === undefined ? undefined : canonicalAddress(parameters.address);
+    if (parameters.address !== undefined && wanted === undefined)
+      throw new AnalysisInputError("list_strings", { userMessage: "Invalid string address." });
     const selected =
       wanted === undefined
         ? strings.items
@@ -445,22 +452,21 @@ export class LeandecSessionClient implements AnalysisClient {
       canonicalAddress(parameters.address) ??
       (await this.#resolve("address_name", parameters.address, options))
         .address;
-    const resolved = record(
-      await this.#call("resolve", { target: key, selector: address }, options),
-    );
-    const exact = resolved.exact === true ? text(resolved.name) : undefined;
-    if (exact !== undefined)
-      return {
-        result: exact,
-        locations: [{ kind: "address", address: publicAddress(address) }],
-        limitations: [],
-      };
+    const functions = record(await this.#call("sql", {
+      target: key,
+      query: "SELECT name FROM functions WHERE kind != 'external' AND " + addressPredicate(address),
+      limit: 2,
+    }, options));
+    const matches = list(functions.rows);
+    if (matches.length > 1) invalidReply("multiple names for the same address");
+    if (matches[0] !== undefined)
+      return { result: requiredText(list(matches[0])[0]), locations: [{ kind: "address", address: publicAddress(address) }], limitations: [] };
     const labels = record(
       await this.#call(
         "sql",
         {
           target: key,
-          query: `SELECT name FROM labels WHERE addr = '${address}' AND name != '' LIMIT 1`,
+          query: "SELECT name FROM labels WHERE " + addressPredicate(address) + " AND name != '' LIMIT 1",
         },
         options,
       ),
@@ -667,14 +673,16 @@ export class LeandecSessionClient implements AnalysisClient {
     const address = canonicalAddress(wanted);
     if (address === undefined)
       throw new AnalysisInputError(operation, { userMessage: `No exact procedure named ${wanted}.` });
-    const direct = record(await this.#call("sql", { target: key, limit: 1,
-      query: "SELECT addr, name, COALESCE(ns, ''), size FROM functions WHERE kind != 'external' AND addr = '" + address + "'",
+    const direct = record(await this.#call("sql", { target: key, limit: 2,
+      query: "SELECT addr, name, COALESCE(ns, ''), size FROM functions WHERE kind != 'external' AND " + addressPredicate(address),
     }, options));
-    const row = list(direct.rows)[0];
-    if (row !== undefined) return inventoryEntry(row);
+    const rows = list(direct.rows);
+    if (rows.length > 1) invalidReply("multiple entries for the same address");
+    if (rows[0] !== undefined) return inventoryEntry(rows[0]);
     const resolved = record(await this.#call("resolve", { target: key, selector: "0x" + address }, options));
-    const entryAddress = canonicalAddress(requiredText(resolved.address)) ?? invalidReply("invalid resolved address");
-    if (entryAddress !== address && canonicalAddress(resolved.inside_address) !== address)
+    const entryAddress = requiredText(resolved.address);
+    const canonicalEntry = canonicalAddress(entryAddress) ?? invalidReply("invalid resolved address");
+    if (canonicalEntry !== address && canonicalAddress(resolved.inside_address) !== address)
       throw new AnalysisInputError(operation, { userMessage: INTERIOR_ONLY });
     const name = requiredText(resolved.name);
     return { address: entryAddress, name, qualified: name, size: requiredCount(resolved.size) };
