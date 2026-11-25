@@ -531,6 +531,14 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         this.presentation.output,
         this.maximumInputElements,
         this.evidenceReferenceAlternatives,
+        () => ({
+          names:
+            this.progressiveCatalog?.inScopeToolNames() ??
+            [...this.registrations.entries()]
+              .filter(([, registered]) => registered.enabled)
+              .map(([name]) => name),
+          discoverTools: this.progressiveCatalog !== undefined,
+        }),
       ),
     );
   }

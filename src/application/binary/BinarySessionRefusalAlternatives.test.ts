@@ -22,9 +22,6 @@ const IDENTITY = {
   name: "Fixture analysis provider",
   version: "1",
 } as const;
-const GENERIC =
-  "This analysis is unavailable for the current target. Choose another analysis or target.";
-
 /** The owning formatter's remediation for exactly these offered tools. */
 const remediationFor = (operation: string, offered: readonly string[]) =>
   offeredOperationAlternatives(operation, (alternative) =>
@@ -189,12 +186,38 @@ describe("undeclared navigation refusals", () => {
     const declared = await refusal(session, "next_address");
     expect(declared).toMatchObject({
       code: "capability_unavailable",
-      remediation: { action: GENERIC },
+      remediation: {
+        action: expect.stringContaining("binary_session"),
+      },
       details: { reason: "next_address needs a loaded listing" },
     });
+    expect(declared.remediation.action).not.toBe(
+      "This analysis is unavailable for the current target. Choose another analysis or target.",
+    );
     expect(declared.details).not.toHaveProperty("alternatives");
     const [next, previous] = await offeredInDiscovery(session);
     expect(next).toBeUndefined();
     expect(previous).toEqual(["read_function_instructions"]);
+  });
+
+  it("names the provider switch for a declared operation the provider cannot run", async () => {
+    const session = await openSession([capability("search_bytes", false)]);
+    const result = await session.execute("search_bytes", {
+      pattern: "aa bb",
+    });
+    if (result.ok) throw new Error("search_bytes unexpectedly succeeded");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      remediation: {
+        action: expect.stringContaining("binary_session"),
+      },
+      details: {
+        reason: "search_bytes needs a loaded listing",
+      },
+    });
+    expect(projected.remediation.action).toContain("open_binary");
+    expect(projected.remediation.action).not.toBe(projected.message);
+    expect(projected.details).not.toHaveProperty("alternatives");
   });
 });

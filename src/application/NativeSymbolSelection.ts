@@ -212,11 +212,20 @@ const unresolvedNameError = (
       conformsToInputContract: true,
       ...(candidates.length > 0
         ? {}
-        : { related: { operations: ["search_procedures", "list_names"] } }),
+        : {
+            related: {
+              operations:
+                operation === "xrefs"
+                  ? ["find_xrefs_to_name", "search_procedures", "list_names"]
+                  : ["search_procedures", "list_names"],
+            },
+          }),
       remediationAction:
         candidates.length > 0
           ? `Retry with one of the observed names or addresses: ${candidates.map(({ address, name }) => `${name} at ${address}`).join(", ")}. The provider does not report which library each name is imported from.`
-          : "Find an observed name or address with search_procedures or list_names, then retry. An inventory miss leaves the symbol's presence in the artifact unknown.",
+          : operation === "xrefs"
+            ? "Find cross-references by name with find_xrefs_to_name, or find an observed name or address with search_procedures or list_names, then retry. An inventory miss leaves the symbol's presence in the artifact unknown."
+            : "Find an observed name or address with search_procedures or list_names, then retry. An inventory miss leaves the symbol's presence in the artifact unknown.",
     },
     [
       {

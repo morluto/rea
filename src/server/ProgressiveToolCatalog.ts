@@ -82,6 +82,11 @@ export class ProgressiveToolCatalog {
     });
   }
 
+  /** In-scope tool names, including the always-advertised discovery adapter. */
+  inScopeToolNames(): readonly string[] {
+    return [...this.inventory.keys()];
+  }
+
   private inputSchemaFor(registered: RegisteredTool): Record<string, unknown> {
     let schema = this.inputSchemas.get(registered);
     if (schema === undefined) {
