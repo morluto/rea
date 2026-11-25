@@ -854,6 +854,7 @@
 * **uefi:** unify LZMA frame readers into LzmaFrameReader with backpressure ([#13814](https://github.com/morluto/rea/issues/13814)) ([fc29153](https://github.com/morluto/rea/commit/fc29153d5c0aaed05b011ad5461632d485001799))
 * **uninstall:** extract registration-removal and item-collapse helpers from Uninstall ([#14006](https://github.com/morluto/rea/issues/14006)) ([bc8a0b3](https://github.com/morluto/rea/commit/bc8a0b32f37ef707e71fde55d394087d2b489c71))
 * **uninstall:** extract UninstallDataAndSkills from Uninstall ([#13736](https://github.com/morluto/rea/issues/13736)) ([054bbbc](https://github.com/morluto/rea/commit/054bbbc55e63ff8d4b617a04cb681145f2ca134f))
+* **verifiers:** share whole-file SHA-256 hashing ([#14475](https://github.com/morluto/rea/issues/14475)) ([60af9ef](https://github.com/morluto/rea/commit/60af9ef6b35e332dd5645fbb99ededfe5b40c64c))
 * **verify:** exclude negated .ok checks from the abort-reclassification guard ([a80dc68](https://github.com/morluto/rea/commit/a80dc68318d2b9e2abca08ae5d4eaf1206b83bde)), refs [#11920](https://github.com/morluto/rea/issues/11920)
 * **verify:** share client receipt publication ([#14317](https://github.com/morluto/rea/issues/14317)) ([74996b5](https://github.com/morluto/rea/commit/74996b5ba6c58e6d43b991c5167c6a68051e0332))
 * **verify:** share client setup and idempotence checks ([#14326](https://github.com/morluto/rea/issues/14326)) ([d7846f2](https://github.com/morluto/rea/commit/d7846f283499b450bbbb7bc4301c2e5ef2f58833))
