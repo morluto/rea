@@ -89,9 +89,7 @@ const target = (change: Partial<MipsElfMetadata> = {}): BinaryTarget => ({
     ...change,
   },
 });
-const abi = (
-  change: Partial<NonNullable<MipsElfMetadata["abiFlags"]>>,
-): Partial<MipsElfMetadata> => {
+const abi = (change: Partial<NonNullable<MipsElfMetadata["abiFlags"]>>) => {
   const base = target();
   if (base.kind !== "executable" || base.architecture !== "mips")
     throw new Error("expected a MIPS fixture target");
@@ -103,6 +101,59 @@ const abi = (
 const softFloat = abi({ cpr1Size: 0, fpAbi: 3 });
 
 describe("bounded Ghidra MIPS admission", () => {
+  it.each(["little", "big"] as const)(
+    "resolves a declared-o32 MIPS32 firmware profile in %s endian",
+    async (byteOrder) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      const firmware = target({
+        byteOrder,
+        flags: 0x50001007,
+        abiFlags: null,
+      });
+      expect(ghidra.inspectTargetSupport(firmware)).toMatchObject({
+        status: "supported",
+      });
+      const result = await ghidra.resolveAnalysisProfile(firmware);
+      if (!result.ok) throw result.error;
+      expect(result.value.profile?.parameters).toMatchObject({
+        mips_support_lane: "elf32-exec-o32-arch32-standard",
+        language_id: `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
+        mips_abi_basis: "declared-o32-header",
+        mips_elf: {
+          flags: 0x50001007,
+          abi_flags: null,
+        },
+      });
+    },
+  );
+  it.each([
+    { flags: 0x1005 },
+    { flags: 0x50001807 },
+    { flags: 0x50001107 },
+    { flags: 0x50001047 },
+    { flags: 0x50001027 },
+    { type: 1 },
+    { type: 3 },
+    abi({ isaRevision: 1 }),
+    abi({ isaRevision: 1, cpr1Size: 0, fpAbi: 3 }),
+    abi({ isaRevision: 2 }),
+    { gnuAttributes: { fpAbi: 3, msa: null } },
+    {
+      limitations: [
+        { kind: "unexamined_declarations", message: "unread declarations" },
+      ],
+    },
+  ] satisfies Partial<MipsElfMetadata>[])(
+    "does not widen declared MIPS32 admission to %j",
+    (change) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      expect(
+        ghidra.inspectTargetSupport(
+          target({ flags: 0x50001007, abiFlags: null, ...change }),
+        ).status,
+      ).toBe("unsupported");
+    },
+  );
   it("binds a saved project's MIPS metadata without claiming a fresh-import lane", () => {
     const little = target();
     const big = target({ byteOrder: "big" });
@@ -300,10 +351,6 @@ describe("recordless legacy MIPS admission", () => {
     [{ flags: 0x50000101 }, "EF_MIPS_32BITMODE"],
     [{ flags: 0x00000201 }, "EF_MIPS_FP64"],
     [{ flags: 0x70000101 }, "EF_MIPS_32BITMODE"],
-    [
-      { flags: 0x50001001 },
-      "EF_MIPS_ARCH_32R2 for headers that declare an ABI",
-    ],
     [{ flags: 0x50000201 }, "EF_MIPS_FP64"],
     [{ flags: 0x50000401 }, "EF_MIPS_NAN2008"],
     [{ flags: 0x60000001 }, "32R2"],

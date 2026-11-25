@@ -644,6 +644,13 @@ export const createGhidraProviderClient = (input: {
           "Floating-point ABI semantics are unverified for this recordless legacy admission.",
         ]
       : []),
+    ...(committedProfile.parameters.mips_abi_basis === "declared-o32-header" &&
+    target.architecture === "mips" &&
+    target.mips?.abiFlags === null
+      ? [
+          "The ELF header declares o32. No ABI flags record was found; the default compiler specification does not verify floating-point argument or return storage.",
+        ]
+      : []),
     ...ghidraMips1Limitations(
       target,
       importLanguage,
