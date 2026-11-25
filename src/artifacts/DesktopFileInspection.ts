@@ -243,7 +243,8 @@ export const inspectDesktopFile = async (
       value: { format: "IoStore TOC" },
     });
   const elf = hasElfMagic(prefix);
-  if (elf || (prefix.length >= 4 && hasMachoMagic(prefix)))
+  const native = elf || (prefix.length >= 4 && hasMachoMagic(prefix));
+  if (native)
     fact({
       kind: "native-image-header",
       offset: 0,
