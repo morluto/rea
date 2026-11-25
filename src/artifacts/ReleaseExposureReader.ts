@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import {
   RELEASE_EXPOSURE_AUDIT_OPERATION as OPERATION,
   releaseExposureFailure,
@@ -2945,9 +2946,7 @@ const listContainer = async (
     }
     listed.push(entry);
     const key = logicalPathNfc(entry.path).replace(/\/+$/u, "");
-    const sameName = byPath.get(key);
-    if (sameName === undefined) byPath.set(key, [entry]);
-    else sameName.push(entry);
+    appendToMapList(byPath, key, entry);
   }
   const coverage = traversal.snapshot();
   if (coverage.status === "unknown") state.coverageUnknown = true;
