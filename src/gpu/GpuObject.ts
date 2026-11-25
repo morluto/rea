@@ -1,9 +1,25 @@
 import type { GpuLocation, GpuObject } from "../domain/gpu/gpuCodeObjects.js";
 import type { GpuSource } from "./GpuSource.js";
 import type { AmdGpuTargetIdentity } from "./AmdGpuTarget.js";
+/** Retain an exact decoded-size declaration in the public row when representable. */
+export const recordDeclaredGpuDecodedSize = (
+  row: GpuObject,
+  size: number | bigint,
+): void => {
+  if (size > Number.MAX_SAFE_INTEGER) {
+    row.decoded_size = null;
+    row.limitations.push(
+      `Declared decoded size is ${String(size)} bytes, outside the exact integer range of decoded_size`,
+    );
+  } else {
+    row.decoded_size = Number(size);
+  }
+};
+
 export type GpuPayloadTarget = {
   readonly value: string | null;
   readonly amdMetadata?: GpuObject["amd_target_metadata"];
+  readonly amdPal?: GpuObject["amd_pal_metadata"];
   readonly cudaHeader?: GpuObject["cuda_target_header"];
   readonly limitation?: string;
 } & (
@@ -40,6 +56,7 @@ export const gpuObject = (
     payload_target: null,
     cuda_target_header: null,
     amd_target_metadata: null,
+    amd_pal_metadata: null,
     target_consistency: "unexamined",
     bundle_id: null,
     compression: "none",

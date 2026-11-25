@@ -1,11 +1,10 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { expect, it as test, vi } from "vitest";
-import {
-  firmwareFixture,
-  assertFirmwareCleanup,
-} from "../../fixtures/firmware/provider.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { firmwareFixture } from "../../fixtures/firmware/provider.js";
 import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
@@ -14,8 +13,8 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
 
 // Extraction-stage assertions use producer-reported gaps. Unclassified byte
 // coverage has its own oracle in the selected-interval workflow below.
@@ -92,7 +91,7 @@ it("keeps cleanup-failure state local to the selected factory instance", async (
     path: healthy.path,
   });
   expect(result.ok).toBe(true);
-  await assertFirmwareCleanup(healthy.launches);
+  await expectProviderLaunchCleanup(healthy.launches);
 });
 
 it("binds region observations to exact bytes and preserves provider-reported uncertainty", async () => {
@@ -115,7 +114,7 @@ it("binds region observations to exact bytes and preserves provider-reported unc
     size_basis: "provider_reported_validation_unknown",
   });
   expect(result.value.subject?.local_path).toBe(fixture.path);
-  expect(result.value.subject?.format).toBe("file");
+  expect(fileIdentity(result.value.subject).format).toBe("file");
   expect(result.value.raw_result).toMatchObject({
     report: [{ Analysis: { file_map: [{ id: "hit" }] } }],
   });
@@ -126,7 +125,7 @@ it("binds region observations to exact bytes and preserves provider-reported unc
       "1",
     ]),
   );
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it.each(["wrong-input", "bounds"])(
@@ -140,7 +139,7 @@ it.each(["wrong-input", "bounds"])(
       ok: false,
       error: { _tag: "AnalysisOutputError" },
     });
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -200,7 +199,7 @@ it("extracts a selected interval with verified file identity and parent-byte lin
     expect.arrayContaining(["--process-num", "1", "--randomness-depth", "0"]),
   );
   expect(fixture.launches[1]?.args).not.toContain("--no-sandbox");
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it("retains a setup-failed publication tree for provider cleanup retry", async () => {
@@ -582,7 +581,7 @@ it.each(["task-error", "task-warning"])(
         }),
       ]);
     } else expect(failures).toEqual([]);
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -612,7 +611,7 @@ it("retains independent failures beside dependencies at each extraction owner", 
     }
   }
   expect(normalized.chunks[0]?.extraction_failed).toBe(true);
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it("carries the owning multi-file stage on a task-level dependency gap", async () => {
@@ -756,7 +755,7 @@ it.each(["depth", "dependency", "link"])(
         code: "ENOENT",
       });
     }
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -778,7 +777,7 @@ it("distinguishes a real output file named $input from the selected original", a
   expect(await readFile(`${fixture.output}/$input`, "utf8")).toBe(
     "firmware=true\n",
   );
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it.each(["hash", "malformed", "budget", "missing-file"])(
@@ -794,7 +793,7 @@ it.each(["hash", "malformed", "budget", "missing-file"])(
     await expect(access(fixture.output)).rejects.toMatchObject({
       code: "ENOENT",
     });
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -823,7 +822,7 @@ it("preserves existing output and rejects invalid intervals before invoking extr
     details: { issues: [{ path: ["range"], reason: "out_of_range" }] },
   });
   expect(fixture.launches).toHaveLength(previous);
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it("retains startup stderr when Unblob exits 1 without a report", async () => {
@@ -858,7 +857,7 @@ it("retains startup stderr when Unblob exits 1 without a report", async () => {
   await expect(access(fixture.output)).rejects.toMatchObject({
     code: "ENOENT",
   });
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it.each([
@@ -903,7 +902,7 @@ it.each([
       delivery.toCallToolResult(result, toolContract(operation))
         .structuredContent,
     ).toMatchObject({ error });
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -931,7 +930,7 @@ it("cancels an owned active process and permits the next queued operation", asyn
     error: { _tag: "AnalysisCancelledError" },
   });
   expect(fixture.launches).toHaveLength(2);
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it("cancels a waiting request promptly while keeping later launches behind the active operation", async () => {
@@ -957,7 +956,7 @@ it("cancels a waiting request promptly while keeping later launches behind the a
   expect(fixture.launches).toHaveLength(2);
   activeController.abort();
   expect((await active).ok).toBe(false);
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it("retains an uncertain worker's workspace and blocks later launches", async () => {
@@ -986,7 +985,7 @@ it("retains an uncertain worker's workspace and blocks later launches", async ()
   });
   if (!resumed.ok) throw resumed.error;
   expect(resumed.value.subject?.local_path).toBe(fixture.path);
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it("accepts another build on the verified release line and reports it", async () => {
@@ -1002,7 +1001,7 @@ it("accepts another build on the verified release line and reports it", async ()
   expect(result.value.normalized_result).toMatchObject({
     engine: { version: "3.1.2" },
   });
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it("names the accepted release line when the banner is another line", async () => {
@@ -1017,7 +1016,7 @@ it("names the accepted release line when the banner is another line", async () =
       reason: expect.stringContaining("Binwalk 3.1.x"),
     },
   });
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 it("rejects absent or unsupported engines without installing anything", async () => {
@@ -1036,5 +1035,5 @@ it("rejects absent or unsupported engines without installing anything", async ()
     ok: false,
     error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });

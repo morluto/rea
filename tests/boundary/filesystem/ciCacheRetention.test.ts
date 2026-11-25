@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -11,6 +10,7 @@ import {
   selectNpmDownloadDuplicateDeletions,
   selectPrefixDeletions,
 } from "../../../scripts/ci/cache-retention.mjs";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const cache = (
   id: number,
@@ -30,6 +30,28 @@ const cache = (
   size_in_bytes: size,
 });
 
+it("keeps restorable generations across cache versions on the same ref", () => {
+  const prefix = "rea-static-v1-Linux-X64-";
+  const olderVersion = "a".repeat(64);
+  const newerVersion = "b".repeat(64);
+  const entries = [olderVersion, newerVersion].flatMap((version, index) =>
+    [1, 2, 3].map((hour) => {
+      const id = index * 3 + hour;
+      return cache(
+        id,
+        `${prefix}${id}`,
+        `2026-10-20T0${id}:00:00Z`,
+        undefined,
+        100,
+        version,
+      );
+    }),
+  );
+  expect(
+    selectPrefixDeletions(entries, { prefix }).map((entry) => entry.id),
+  ).toEqual([1, 4]);
+});
+
 describe("Turbo snapshot retention", () => {
   const prefix = "rea-static-v1-Linux-X64-";
 
@@ -39,13 +61,58 @@ describe("Turbo snapshot retention", () => {
       [
         cache(1, `${prefix}old`, "2026-10-20T01:00:00Z", undefined, 10),
         cache(2, `${prefix}older`, "2026-10-20T02:00:00Z", undefined, 20),
-        cache(3, `${prefix}recent`, "2026-10-20T03:00:00Z", undefined, 30),
+        cache(
+          3,
+          `${prefix}recent`,
+          "2026-10-20T04:00:00.125+01:00",
+          undefined,
+          30,
+        ),
         cache(4, keepKey, "2026-10-20T00:00:00Z", undefined, 40),
       ],
       { prefix, keepKey },
     );
     expect(deletions.map((entry) => entry.id)).toEqual([1]);
     expect(deletions.reduce((sum, entry) => sum + entry.size, 0)).toBe(10);
+  });
+
+  it("keeps restorable generations when another ref has newer snapshots", () => {
+    const rows = [
+      cache(1, prefix + "old-main", "2026-10-20T01:00:00Z"),
+      cache(2, prefix + "main-a", "2026-10-20T02:00:00Z"),
+      cache(3, prefix + "main-b", "2026-10-20T03:00:00Z"),
+      cache(
+        4,
+        prefix + "old-feature",
+        "2026-10-20T04:00:00Z",
+        undefined,
+        100,
+        undefined,
+        "refs/heads/feature",
+      ),
+      cache(
+        5,
+        prefix + "feature-a",
+        "2026-10-20T05:00:00Z",
+        undefined,
+        100,
+        undefined,
+        "refs/heads/feature",
+      ),
+      cache(
+        6,
+        prefix + "feature-b",
+        "2026-10-20T06:00:00Z",
+        undefined,
+        100,
+        undefined,
+        "refs/heads/feature",
+      ),
+    ];
+
+    expect(
+      selectPrefixDeletions(rows, { prefix }).map((entry) => entry.id),
+    ).toEqual([1, 4]);
   });
 
   it("keeps an in-flight generation when the saved key is already newest", () => {
@@ -89,8 +156,9 @@ describe("Turbo snapshot retention", () => {
     ).toEqual([4]);
   });
 
-  it("retains the newest portable snapshots without a caller keep key", () => {
+  it("retains the newest portable and Windows build snapshots without a caller keep key", () => {
     const portable = "rea-portable-build-v2-Linux-X64-";
+    const windowsBuild = "rea-windows-build-v1-Windows-X64-";
     const deletions = selectPrefixDeletions(
       [
         cache(7, `${portable}one`, "2026-10-20T01:00:00Z"),
@@ -100,6 +168,16 @@ describe("Turbo snapshot retention", () => {
       { prefix: portable },
     );
     expect(deletions.map((entry) => entry.id)).toEqual([7]);
+    expect(
+      selectPrefixDeletions(
+        [
+          cache(10, `${windowsBuild}one`, "2026-10-20T01:00:00Z"),
+          cache(11, `${windowsBuild}two`, "2026-10-20T02:00:00Z"),
+          cache(12, `${windowsBuild}three`, "2026-10-20T03:00:00Z"),
+        ],
+        { prefix: windowsBuild },
+      ).map((entry) => entry.id),
+    ).toEqual([10]);
   });
 
   it("refuses prefixes and lists that can reach download caches", () => {
@@ -326,14 +404,13 @@ describe("cache listing and retention", () => {
     expect(deleted).toEqual([]);
   });
 
-  it("stops listing once a short page proves the inventory is complete", async () => {
+  it("keeps page boundaries stable across a cache restore", async () => {
     const requests: string[] = [];
     const caches = await listAllCaches(
       async (_method, endpoint) => {
         requests.push(endpoint);
-        const page = new URL(endpoint, "https://example.test").searchParams.get(
-          "page",
-        );
+        const query = new URL(endpoint, "https://example.test").searchParams;
+        const page = query.get("page");
         return {
           actions_caches:
             page === "1"
@@ -344,13 +421,18 @@ describe("cache listing and retention", () => {
                     "2026-10-20T01:00:00Z",
                   ),
                 )
-              : [cache(101, `${prefix}last`, "2026-10-20T02:00:00Z")],
+              : query.get("sort") === "created_at" &&
+                  query.get("direction") === "desc"
+                ? [cache(101, `${prefix}last`, "2026-10-20T00:00:00Z")]
+                : // Restoring the last entry moves it to the front under the API default.
+                  [cache(100, `${prefix}99`, "2026-10-20T01:00:00Z")],
         };
       },
       repository,
       prefix,
     );
     expect(caches).toHaveLength(101);
+    expect(caches.at(-1)?.id).toBe(101);
     expect(requests).toHaveLength(2);
   });
 
@@ -472,7 +554,7 @@ describe("repeated cache ids", () => {
 });
 
 it("runs retention from the command line without deleting on an unsafe prefix", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-cache-retention-"));
+  const root = await createTestTempDirectory("rea-cache-retention-");
   const log = join(root, "gh.log");
   const gh = join(root, "gh");
   await writeFile(
@@ -498,3 +580,35 @@ exit 1
   ).toThrow(/one Turbo family/u);
   await expect(readFile(log, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it.each([
+  { created_at: "2026-02-30T00:00:00Z" },
+  { created_at: 0 },
+  { last_accessed_at: ["2026-04-01T00:00:00Z"] },
+])(
+  "does not delete any cache when its timestamps are malformed: %j",
+  async (override) => {
+    const prefix = "rea-static-v1-Linux-X64-";
+    const deleted: number[] = [];
+    await expect(
+      retainCaches({
+        repository: "example/fixture",
+        families: [{ prefix }],
+        request: async () => ({
+          actions_caches: [
+            {
+              ...cache(1, prefix + "old", "2026-01-01T00:00:00Z"),
+              ...override,
+            },
+            cache(2, prefix + "middle", "2026-04-01T00:00:00Z"),
+            cache(3, prefix + "new", "2026-04-02T00:00:00Z"),
+          ],
+        }),
+        deleteCache: async (id: number) => {
+          deleted.push(id);
+        },
+      }),
+    ).rejects.toThrow("invalid timestamp");
+    expect(deleted).toEqual([]);
+  },
+);

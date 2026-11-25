@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
+import { unsupportedTarget } from "../analysisErrorCore.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -10,9 +10,7 @@ import {
 import { WebNetworkApiSurfaceAccumulator } from "./WebNetworkApiSurfaceAccumulator.js";
 import { admitHarCaptureParent } from "./WebNetworkProjectionAccumulator.js";
 
-import { apiSurfaceFields, apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
-
-export { apiSurfaceFields, apiSurfaceViewSchema };
+import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 
 /** Create the budget and query-name policy shared by admission and projection. */
 export const createApiSurfaceAccumulator = (
@@ -25,6 +23,8 @@ export const createApiSurfaceAccumulator = (
   return new WebNetworkApiSurfaceAccumulator(
     undefined,
     selected?.include_query_parameter_names === true,
+    undefined,
+    selected?.include_request_header_names === true,
   );
 };
 
@@ -36,9 +36,10 @@ export const projectWebNetworkApiSurfaceView = (
 ) => {
   if (view.kind !== "api-surface")
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         "inspect_analysis_view",
         parent.evidenceId,
+        "evidence",
         `View ${view.kind} is unsupported for parent operation ${parent.operation}; api-surface requires inspect_web_network_capture.`,
       ),
     );
@@ -53,6 +54,11 @@ export const projectWebNetworkApiSurfaceView = (
     ...(view.include_query_parameter_names === true
       ? [
           "Observed query parameter names do not establish required parameters, value types or a complete API schema.",
+        ]
+      : []),
+    ...(view.include_request_header_names === true
+      ? [
+          "Observed header, cookie and set-cookie names do not establish authentication, session semantics or a complete header schema; no values are copied.",
         ]
       : []),
     ...(capture.records.length < capture.total_records

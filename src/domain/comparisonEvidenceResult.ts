@@ -14,6 +14,10 @@ import {
   processCaptureComparisonSchema,
   type ProcessCaptureComparison,
 } from "./process/processComparison.js";
+import {
+  webScreenshotDiffSchema,
+  type WebScreenshotDiff,
+} from "./webScreenshot.js";
 import { err, ok, type Result } from "./result.js";
 import { comparisonSourceEvidenceSides } from "./comparisonSourceEvidence.js";
 
@@ -21,6 +25,7 @@ type ComparisonResults = {
   readonly compare_artifacts: ArtifactComparisonResult;
   readonly compare_functions: FunctionComparisonResult;
   readonly compare_process_captures: ProcessCaptureComparison;
+  readonly compare_web_screenshots: WebScreenshotDiff;
 };
 
 /** One admitted comparison's envelope and its operation-specific parsed facts. */
@@ -49,6 +54,7 @@ export function readComparisonResult(
     const parsed = readEvidencePayload(
       processCaptureComparisonSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!parsed.ok) return parsed;
     return ok({ operation, evidence, result: parsed.value });
@@ -57,6 +63,7 @@ export function readComparisonResult(
     const parsed = readEvidencePayload(
       functionComparisonResultSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!parsed.ok) return parsed;
     if (parsed.value.function_match.method === "same-evidence") {
@@ -99,15 +106,26 @@ export function readComparisonResult(
     if (!links.ok) return links;
     return ok({ operation, evidence, result: parsed.value });
   }
+  if (operation === "compare_web_screenshots") {
+    const parsed = readEvidencePayload(
+      webScreenshotDiffSchema,
+      evidence.normalized_result,
+      { within: ["normalized_result"] },
+    );
+    if (!parsed.ok) return parsed;
+    return ok({ operation, evidence, result: parsed.value });
+  }
   const parsed = readEvidencePayload(
     artifactComparisonResultSchema,
     evidence.normalized_result,
+    { within: ["normalized_result"] },
   );
   if (!parsed.ok) return parsed;
-  const links = validateFindingLinks(
-    evidence,
-    parsed.value.changes.flatMap(({ evidence_links }) => evidence_links),
-  );
+  const links = validateFindingLinks(evidence, [
+    ...parsed.value.changes.flatMap(({ evidence_links }) => evidence_links),
+    // optional-fact-default: only retained IDs are links to validate.
+    ...(parsed.value.integrity_mismatch_evidence_ids ?? []),
+  ]);
   if (!links.ok) return links;
   return ok({ operation, evidence, result: parsed.value });
 }

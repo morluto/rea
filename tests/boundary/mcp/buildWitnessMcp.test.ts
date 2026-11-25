@@ -1,8 +1,8 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import type {
   BuildSettle,
@@ -33,6 +33,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cancelDuringCommit } from "../../fixtures/outputTreeCommit.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../support/testWait.js";
 
 const TASK = {
   name: "add-eggs",
@@ -635,6 +636,39 @@ it("refuses a witness without a folder for its record, or one already holding fi
   ).toContain("not empty");
 });
 
+it("refuses an unusable witness folder before recording", async () => {
+  const { check, computer, directory } = await witnessed();
+  const root = await createTestTempDirectory("witness-unusable-");
+  const regularFile = join(root, "file");
+  await writeFile(regularFile, "occupied");
+  const candidates = [regularFile, join(regularFile, "out")];
+  if (process.platform !== "win32") {
+    const emptyFolder = join(root, "empty");
+    await mkdir(emptyFolder);
+    const emptyLink = join(root, "empty-link");
+    await symlink(emptyFolder, emptyLink);
+    const danglingLink = join(root, "dangling-link");
+    await symlink(join(root, "absent"), danglingLink);
+    candidates.push(emptyLink, danglingLink);
+  }
+  for (const candidate of candidates) {
+    const response = await check({ stage: "seed", directory: candidate });
+    const { error } = parseMcpToolError(response);
+    expect(error.code).toBe("invalid_request");
+    expect(error.message).not.toContain("not empty");
+    expect(error.details?.issues).toMatchObject([
+      { path: ["directory"], reason: "invalid_value" },
+    ]);
+  }
+  expect(computer.recordingRequests).toEqual([]);
+  const seed = parsed(await check({ stage: "seed", directory }));
+  expect(seed.witness).toMatchObject({
+    stage: "seed",
+    held: true,
+    next_stage: "after_edit",
+  });
+});
+
 it("retries a seed whose state read failed, with the recording it began", async () => {
   const witness = await witnessed();
   witness.app.failGets = 1;
@@ -895,13 +929,13 @@ it("keeps a completed reset when the screenshot after it is cancelled", async ()
     },
     { signal: controller.signal },
   );
-  await vi.waitFor(() => expect(witness.app.methods).toContain("data/reset"));
+  await waitFor(() => expect(witness.app.methods).toContain("data/reset"));
   controller.abort();
   await expect(resetting).rejects.toThrow();
   const near = parseMcpToolError(await witness.check({ stage: "near_miss" }));
   expect(near.error.message).toContain("put the seed back");
   expect(witness.app.state).toEqual(lines("milk"));
-}, 30_000);
+});
 
 it("checks after_reset once the reset sent before it has relaunched the app", async () => {
   const witness = await witnessed(4);
@@ -909,7 +943,7 @@ it("checks after_reset once the reset sent before it has relaunched the app", as
   await throughNearMiss(witness);
   const order: string[] = [];
   const reset = witness.act("reset").then(() => order.push("reset"));
-  await vi.waitFor(() => expect(app.methods.at(-1)).toBe("data/reset"));
+  await waitFor(() => expect(app.methods.at(-1)).toBe("data/reset"));
   const last = await check({ stage: "after_reset" });
   order.push("check");
   await reset;
@@ -925,7 +959,7 @@ it("checks after_reset once the reset sent before it has relaunched the app", as
     outcome: "applied",
   });
   expect(app.methods.slice(-2)).toEqual(["data/reset", "data/get"]);
-}, 30_000);
+});
 
 it("sends progress while a reset waits for the relaunched app", async () => {
   const witness = await witnessed(14);
@@ -939,7 +973,7 @@ it("sends progress while a reset waits for the relaunched app", async () => {
   );
   expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
   expect(progress.length).toBeGreaterThan(0);
-}, 30_000);
+});
 
 /** The shipped timing scaled down a tenfold: a read every 50 ms, a 300 ms window, a 1.5 s bound. */
 const SETTLE: SettleTiming = { intervalMs: 50, windowMs: 300, boundMs: 1500 };

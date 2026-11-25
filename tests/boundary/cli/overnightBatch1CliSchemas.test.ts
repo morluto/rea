@@ -1,18 +1,20 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
+import type { AdbRequest } from "../../../src/domain/adb/adbDeviceAnalysis.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { Cli, z } from "incur";
+import { z } from "zod";
 import { expect, it, vi } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
-import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok } from "../../../src/domain/result.js";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { registerApktoolCommands } from "../../../src/cli/apktoolCommands.js";
-import { registerDecompileDirectoryCommand } from "../../../src/cli/decompileDirectoryCommand.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import { registerSqliteCommands } from "../../../src/cli/sqliteCommands.js";
-import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import { silentLogger } from "../../../src/logger.js";
 
 const registry = () => {
@@ -28,7 +30,7 @@ const registry = () => {
     ok(createAnalysisExecution({}, identity)),
   );
   const runDirectAnalysis = vi.fn(async () => failure);
-  const adbProvider: AdbDeviceAnalysisPort = {
+  const adbProvider: RequestAnalysisPort<AdbRequest> = {
     inspectAvailability: async () => ({
       status: "available",
       code: null,
@@ -38,7 +40,7 @@ const registry = () => {
     close: async () => {},
     execute: adbExecute,
   };
-  const apktoolProvider: ApktoolResourceAnalysisPort = {
+  const apktoolProvider: RequestAnalysisPort<ApktoolRequest> = {
     inspectAvailability: async () => ({
       status: "available",
       code: null,
@@ -48,21 +50,13 @@ const registry = () => {
     close: async () => {},
     execute: apktoolExecute,
   };
-  const cli = Cli.create("overnight-batch1-cli-schemas", { sync: false });
+  const cli = createCommandCli();
   registerAdbCommands(cli, silentLogger, {}, adbProvider);
   registerApktoolCommands(cli, silentLogger, {}, apktoolProvider);
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerSqliteCommands(cli, silentLogger, {});
-  registerDecompileDirectoryCommand(cli, silentLogger, runDirectAnalysis);
   const serve = async (argv: readonly string[]): Promise<unknown> => {
-    let stdout = "";
-    await cli.serve([...argv, "--json"], {
-      env: {},
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => undefined,
-    });
+    const { stdout } = await serveInProcessCli(cli, [...argv, "--json"]);
     return JSON.parse(stdout);
   };
   return { cli, serve, adbExecute, apktoolExecute, runDirectAnalysis };
@@ -214,7 +208,7 @@ it.each([
 it("rejects an empty column array in the inspect-sqlite-database options schema", () => {
   const { cli } = registry();
   let options: unknown;
-  visitRegisteredCommands(cli, (command, path) => {
+  cliCommands(cli).forEach(({ definition: command, name: path }) => {
     if (path === "inspect-sqlite-database") options = command.options;
   });
   expect(options).toBeInstanceOf(z.ZodObject);

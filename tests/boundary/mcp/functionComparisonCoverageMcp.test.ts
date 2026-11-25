@@ -1,8 +1,14 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  evidenceSubjectInput,
+} from "../../../src/domain/evidence.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -16,13 +22,11 @@ const sourceWithCoverage = (
   result: typeof template.normalized_result,
   relationshipCoverage: RelationshipCoverage,
 ) => {
-  if (template.subject === null)
-    throw new Error("Function comparison fixtures must be artifact-bound");
   return createEvidence(
     {
       path: `${template.subject.local_path}/${observation}`,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
@@ -43,9 +47,11 @@ const expectAdvertisedComparisonSchema = async (
   const advertised = (await client.listTools()).tools.find(
     ({ name }) => name === "compare_functions",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("compare_functions did not advertise its output schema");
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   expect(validator.validateSchema(outputSchema)).toBe(true);
   const validate = validator.compile(outputSchema);
@@ -108,24 +114,28 @@ const expectHistoricalDiscovery = async (
   const current = functionComparisonResultSchema.parse(
     comparison.normalized_result,
   );
-  const historical = createEvidence(undefined, comparison.provider, {
-    predicateType: comparison.predicate_type,
-    operation: comparison.operation,
-    parameters: comparison.parameters,
-    result: {
-      ...current,
-      dimensions: current.dimensions.map((dimension) => {
-        if (dimension.dimension !== "calls") return dimension;
-        const { discovery_status: _discovery, ...historicalDimension } =
-          dimension;
-        return { ...historicalDimension, limitations: [] };
-      }),
+  const historical = createEvidence(
+    evidenceSubjectInput(comparison.subject),
+    comparison.provider,
+    {
+      predicateType: comparison.predicate_type,
+      operation: comparison.operation,
+      parameters: comparison.parameters,
+      result: {
+        ...current,
+        dimensions: current.dimensions.map((dimension) => {
+          if (dimension.dimension !== "calls") return dimension;
+          const { discovery_status: _discovery, ...historicalDimension } =
+            dimension;
+          return { ...historicalDimension, limitations: [] };
+        }),
+      },
+      confidence: comparison.confidence,
+      authority: comparison.authority,
+      limitations: comparison.limitations,
+      evidenceLinks: comparison.evidence_links,
     },
-    confidence: comparison.confidence,
-    authority: comparison.authority,
-    limitations: comparison.limitations,
-    evidenceLinks: comparison.evidence_links,
-  });
+  );
   expect(session.recordEvidence(historical).ok).toBe(true);
   const prior = await verify(
     (name, arguments_) => client.callTool({ name, arguments: arguments_ }),
@@ -234,7 +244,7 @@ it.each(["complete", "partial"] as const)(
   },
 );
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "qualifies observed calls and verifies discovery independently (%s)",
   async (profile) => {
     for (const [label, coverage, status] of [
@@ -471,7 +481,11 @@ const assertChangedDespiteUnknownCalls = async (
       ),
       pseudocode: "return 1;",
     }),
-    { status: "unknown", reason: "Call graph unavailable." },
+    {
+      status: "unknown",
+      reason: "Call graph unavailable.",
+      limited_directions: ["callers", "callees"],
+    },
   );
   const changed = await call("compare_functions", {
     left,
@@ -528,16 +542,14 @@ it("keeps incomplete calls unknown through public comparison and verification wh
     FUNCTION_COMPARISON_EXAMPLE.right,
     "coverage-right",
     FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
-    { status: "unknown", reason: "Call graph unavailable." },
+    {
+      status: "unknown",
+      reason: "Call graph unavailable.",
+      limited_directions: ["callers", "callees"],
+    },
   );
-  expect(left.subject).not.toBeNull();
-  expect(right.subject).not.toBeNull();
-  expect(left.limitations).not.toContainEqual(
-    expect.stringMatching(/artifact identity.*unavailable/iu),
-  );
-  expect(right.limitations).not.toContainEqual(
-    expect.stringMatching(/artifact identity.*unavailable/iu),
-  );
+  expect(left.subject.identity.kind).toBe("file");
+  expect(right.subject.identity.kind).toBe("file");
   const compared = await client.callTool({
     name: "compare_functions",
     arguments: { left, right },

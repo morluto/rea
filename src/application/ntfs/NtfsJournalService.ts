@@ -1,32 +1,30 @@
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import type { BigIntStats } from "node:fs";
 import {
   ntfsJournalCacheFor,
   type NtfsJournalCache,
   type NtfsAcquisition,
 } from "./NtfsJournalCache.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
-  artifactFileCancellationCause,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import {
   readStableArtifact,
   assertStableArtifactState,
-} from "../../artifacts/readStableArtifact.js";
-import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
-} from "../../artifacts/StableArtifactFailure.js";
+  readerIntegrityFailure,
+} from "../../resources/index.js";
 import {
   primaryAnalysisError,
   type AnalysisError,
 } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -75,13 +73,9 @@ const readFailure = (
   const { cause } = artifactFilePrimaryFacts(failure);
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return artifactFileCancellationError(operation, cause);
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         operation,
@@ -90,13 +84,23 @@ const readFailure = (
         {
           maximum_file_bytes: NTFS_JOURNAL_FILE_BYTES,
         },
-        { cause, retryable: false },
+        {
+          cause,
+          ...fixedAllowanceOptions("The NTFS journal file allowance", "input", {
+            limit: NTFS_JOURNAL_FILE_BYTES,
+            unit: "bytes",
+          }),
+        },
       );
   }
   if (
     cause instanceof ArtifactReaderFailure &&
-    (cause.reason === "path" || cause.reason === "format")
+    cause.parseFailure !== undefined
   )
+    return new AnalysisTargetFailureError(operation, path, cause.parseFailure, {
+      cause,
+    });
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
     return inputFailure(parameter, cause.message, cause);
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -231,7 +235,7 @@ export const inspectNtfsJournalEvidence = async (
         "capacity",
         "One NTFS inspection is already active in this scope; retry after it completes.",
         { maximum_concurrent_inspections: 1 },
-        { retryable: true },
+        { retryable: true, measuredExhaustion: true },
       ),
     );
   try {

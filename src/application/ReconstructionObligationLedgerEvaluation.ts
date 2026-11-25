@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { ReconstructionObligationSources } from "./ReconstructionObligationLedgerRequest.js";
 import {
@@ -27,8 +28,6 @@ import {
 import {
   addObligationDiagnostic as addDiagnostic,
   contradictionDiagnostics,
-  groupManifestBindings,
-  groupManifestContradictions,
   uniqueObligationDiagnostics as uniqueDiagnostics,
 } from "./ReconstructionObligationLedgerDiagnostics.js";
 import {
@@ -41,6 +40,16 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
 type Binding = NonNullable<ReconstructionObligation["binding"]>;
 
+const groupByObligation = <T extends { readonly obligation_id: string }>(
+  entries: readonly T[],
+): ReadonlyMap<string, readonly T[]> => {
+  const groups = new Map<string, T[]>();
+  for (const entry of entries) {
+    appendToMapList(groups, entry.obligation_id, entry);
+  }
+  return groups;
+};
+
 interface EvaluationContext {
   readonly candidates: ReadonlyMap<string, ReconstructionObligationCandidate>;
   readonly evidence: ReadonlyMap<string, Evidence>;
@@ -49,7 +58,10 @@ interface EvaluationContext {
     ReturnType<typeof parseReconstructionProofEvidence>
   >;
   readonly bindings: ReadonlyMap<string, readonly Binding[]>;
-  readonly contradictions: ReturnType<typeof groupManifestContradictions>;
+  readonly contradictions: ReadonlyMap<
+    string,
+    Readonly<ReconstructionObligationManifest["contradictions"]>
+  >;
 }
 
 export const evaluateReconstructionObligationLedger = ({
@@ -130,8 +142,8 @@ const createEvaluationContext = (
       parseReconstructionProofEvidence(record),
     ]),
   ),
-  bindings: groupManifestBindings(manifest),
-  contradictions: groupManifestContradictions(manifest),
+  bindings: groupByObligation(manifest.bindings),
+  contradictions: groupByObligation(manifest.contradictions),
 });
 
 const findOrphanManifestIds = (

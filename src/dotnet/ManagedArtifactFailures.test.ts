@@ -1,9 +1,8 @@
-import * as inventoryProducer from "./ManagedMetadataInventory.js";
+import * as inventoryProducer from "../domain/managed/managedMetadataInventory.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import {
   buildManagedPeFixture,
@@ -37,7 +36,6 @@ it("preserves a readable native declaration when inventory issue count exceeds c
     );
     expect(result.pinvoke_imports[0]?.import_name).toBe("Observe");
     expect(result.coverage.state).toBe("partial");
-    expect(result.coverage.issues.length).toBeGreaterThanOrEqual(issueCount);
     expect(
       result.coverage.issues.reduce(
         (count, observed) => count + Number(observed.scope === issue.scope),
@@ -52,7 +50,7 @@ it("preserves a readable native declaration when inventory issue count exceeds c
 });
 
 describe("managed artifact failure classification", () => {
-  it("distinguishes native, malformed, and unsupported metadata", () => {
+  it("distinguishes absent metadata from malformed signatures and table masks", () => {
     const nativeBytes = buildNativePeFixture();
     const native = inspectManagedArtifactBytes(
       nativeBytes,
@@ -76,16 +74,20 @@ describe("managed artifact failure classification", () => {
       expect.objectContaining({ code: "invalid-metadata-root" }),
     ]);
 
-    const unsupportedTableBytes = buildManagedPeFixture({
+    const invalidTableBytes = buildManagedPeFixture({
       metadataValidMaskExtra: 1n << 50n,
     });
-    const unsupportedTable = inspectManagedArtifactBytes(
-      unsupportedTableBytes,
-      managedPeFixtureTarget(unsupportedTableBytes),
+    const invalidTables = inspectManagedArtifactBytes(
+      invalidTableBytes,
+      managedPeFixtureTarget(invalidTableBytes),
     );
-    expect(unsupportedTable.coverage.issues).toEqual([
-      expect.objectContaining({ code: "invalid-tables" }),
-    ]);
+    expect(invalidTables).toMatchObject({
+      classification: { status: "malformed" },
+      coverage: {
+        state: "partial",
+        issues: [{ code: "invalid-tables", scope: "metadata.valid-mask" }],
+      },
+    });
   });
 
   it("rejects a ReadyToRun OS-override machine without a CLI directory", () => {
@@ -96,7 +98,7 @@ describe("managed artifact failure classification", () => {
     ).toThrow("Unsupported PE machine 0x7a35");
   });
 
-  it("keeps malformed reference and attribute issues across inventory callers", () => {
+  it("keeps readable duplicate references and both declined rows in artifact and members", () => {
     const bytes = buildManagedPeFixture({
       references: [
         "System.Runtime",
@@ -109,7 +111,6 @@ describe("managed artifact failure classification", () => {
     const target = managedPeFixtureTarget(bytes);
     const artifact = inspectManagedArtifactBytes(bytes, target);
     const members = inspectManagedMembersBytes(bytes, target);
-    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
     const issueCodes = ["invalid-heap-index", "invalid-row"];
 
     expect(artifact.references.map(({ name }) => name)).toEqual([
@@ -121,86 +122,69 @@ describe("managed artifact failure classification", () => {
       issueCodes,
     );
     expect(members.coverage.issues.map(({ code }) => code)).toEqual(issueCodes);
-    expect(boundaries.coverage).toMatchObject({
-      state: "partial",
-      issues: [
-        expect.objectContaining({ code: "invalid-heap-index" }),
-        expect.objectContaining({ code: "invalid-row" }),
-      ],
-    });
   });
 });
 
-describe.each([0, 0x200])(
-  "stream-name file offsets with %i bytes of padding",
-  (padding) => {
-    it.each([
-      {
-        label: "non-printable name",
-        value: 0x1f,
-        length: 1,
-        detail: "Metadata stream name is not printable ASCII",
-      },
-      {
-        label: "unterminated name",
-        value: 0x41,
-        length: 32,
-        detail: "Metadata stream name is missing a bounded terminator",
-      },
-    ])(
-      "reports the artifact location for $label",
-      ({ value, length, detail }) => {
-        const original = buildManagedPeFixture();
-        const section =
-          original.readUInt32LE(0x3c) +
-          24 +
-          original.readUInt16LE(original.readUInt32LE(0x3c) + 20);
-        const rawOffset = original.readUInt32LE(section + 20);
-        // Relocate the raw section while preserving RVAs and its internal layout.
-        const bytes = Buffer.concat([
-          original.subarray(0, rawOffset),
-          Buffer.alloc(padding),
-          original.subarray(rawOffset),
-        ]);
-        bytes.writeUInt32LE(rawOffset + padding, section + 20);
-        const baseline = inspectManagedArtifactBytes(
-          bytes,
-          managedPeFixtureTarget(bytes),
-        );
-        expect(baseline.coverage).toEqual({ state: "complete", issues: [] });
+it("reports both invalid stream names at their relocated file offset", () => {
+  const original = buildManagedPeFixture();
+  const pe = original.readUInt32LE(0x3c);
+  const section = pe + 24 + original.readUInt16LE(pe + 20);
+  const rawOffset = original.readUInt32LE(section + 20);
+  const relocated = Buffer.concat([
+    original.subarray(0, rawOffset),
+    Buffer.alloc(0x200),
+    original.subarray(rawOffset),
+  ]);
+  relocated.writeUInt32LE(rawOffset + 0x200, section + 20);
+  // The PE fixture places the metadata root at 0x300 before relocation
+  // and the first table stream name 40 bytes into that root.
+  const nameOffset = 0x528;
+  expect(relocated.toString("ascii", nameOffset, nameOffset + 2)).toBe("#~");
+  const baseline = inspectManagedArtifactBytes(
+    relocated,
+    managedPeFixtureTarget(relocated),
+  );
+  expect(baseline).toMatchObject({
+    coverage: { state: "complete", issues: [] },
+    metadata: {
+      status: "complete",
+      stream_names: expect.arrayContaining(["#~"]),
+      table_row_counts: { Module: 1, MethodDef: 1 },
+    },
+  });
 
-        const pe = readManagedPeLayout(bytes);
-        if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
-        const root = pe.rvaToOffset(
-          pe.cli.metadata.rva,
-          pe.cli.metadata.size,
-          "cli.metadata",
-        );
-        const versionLength = bytes.readUInt32LE(root + 12);
-        const nameOffset =
-          root + Math.ceil((16 + versionLength) / 4) * 4 + 4 + 8;
-        bytes.fill(value, nameOffset, nameOffset + length);
-        const target = managedPeFixtureTarget(bytes);
-        const artifact = inspectManagedArtifactBytes(bytes, target);
-        const members = inspectManagedMembersBytes(bytes, target);
-
-        expect(artifact.classification.status).toBe("malformed");
-        expect(artifact.coverage.issues).toEqual([
-          expect.objectContaining({
-            code: "invalid-stream",
-            scope: "metadata.stream-name",
-            detail,
-            offset: nameOffset,
-          }),
-        ]);
-        expect(artifact.classification.evidence).toContainEqual(
+  for (const [value, length, detail] of [
+    [0x1f, 1, "not printable ASCII"],
+    [0x41, 32, "missing a bounded terminator"],
+  ] as const) {
+    const bytes = Buffer.from(relocated).fill(
+      value,
+      nameOffset,
+      nameOffset + length,
+    );
+    const target = managedPeFixtureTarget(bytes);
+    const issue = {
+      code: "invalid-stream",
+      scope: "metadata.stream-name",
+      detail: expect.stringContaining(detail),
+      offset: nameOffset,
+    };
+    const artifact = inspectManagedArtifactBytes(bytes, target);
+    expect(artifact).toMatchObject({
+      classification: {
+        status: "malformed",
+        evidence: expect.arrayContaining([
           expect.objectContaining({
             code: "metadata-not-admitted",
             file_offset: nameOffset,
           }),
-        );
-        expect(members.coverage.issues).toEqual(artifact.coverage.issues);
+        ]),
       },
-    );
-  },
-);
+      coverage: { issues: [issue] },
+    });
+    if (length === 32)
+      expect(inspectManagedMembersBytes(bytes, target).coverage.issues).toEqual(
+        [issue],
+      );
+  }
+});

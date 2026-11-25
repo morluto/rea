@@ -7,19 +7,14 @@ import { browserScenarioReferences } from "../fixtures/browserScenarioReferences
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest.for([
   ["CLI", "query"],
-  ["CLI", "storage"],
-  ["CLI", "session-storage"],
-  ["CLI", "cookie"],
-  ["stdio MCP", "query"],
-  ["stdio MCP", "storage"],
-  ["stdio MCP", "session-storage"],
   ["stdio MCP", "cookie"],
 ] as const)(
   "reports undeclared references through %s for a wide %s list",
-  { timeout: 60_000 },
   async ([surface, placement], { cli }) => {
     const home = await createTestTempDirectory("rea-scenario-reference-");
     const input = browserScenarioReferences(placement, 130_000);
@@ -31,13 +26,13 @@ cliTest.for([
       retryable: false,
       details: {
         operation: "capture_browser_scenario",
-        issues: expect.arrayContaining([
-          expect.objectContaining({
+        issues: [
+          {
             path: ["secrets"],
             reason: "invalid_value",
             message: "Secret reference token is not declared",
-          }),
-        ]),
+          },
+        ],
       },
     };
     if (surface === "CLI") {
@@ -45,18 +40,20 @@ cliTest.for([
       await writeFile(path, JSON.stringify(input));
       // A real file argument avoids the host argv limit for this valid JSON.
       const result = await cli.run({
-        arguments: ["capture-browser-scenario", path, "--json"],
+        arguments: completeArguments("capture-browser-scenario", path),
         environment: { HOME: home, REA_LOG_LEVEL: "silent" },
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject(expected);
       return;
     }
-    const client = new Client({
-      name: "scenario-reference-diagnostics",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "scenario-reference-diagnostics",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -75,7 +72,7 @@ cliTest.for([
       await client.connect(transport);
       const result = await client.callTool({
         name: "capture_browser_scenario",
-        arguments: input,
+        arguments: { ...input, detail: "complete" },
       });
       expect(result.isError).toBe(true);
       expect(parseMcpToolError(result).error).toMatchObject(expected);

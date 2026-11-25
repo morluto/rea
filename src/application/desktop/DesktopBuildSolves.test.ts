@@ -1,5 +1,5 @@
 import * as buildEnvironment from "../../desktop/BuildComputerEnvironment.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { renderSmokeTask } from "../../domain/desktop/appExport.js";
 import { MEASURE_BUILD_TASK_CONTRACT } from "../../contracts/desktopBuildMeasureContract.js";
 import {
@@ -21,12 +21,24 @@ import {
 } from "../../desktop/AgentEnvSolveHelper.js";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import type { HostFileReader } from "../../ports/HostFileReader.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import type { SolveReport } from "../../desktop/AgentEnvSolveHelper.js";
 import {
-  measureBuildTask,
+  measureBuildTask as measureTaskWithReader,
   measureInFreshComputers,
+  type MeasureRequest,
   type Solver,
 } from "./DesktopBuildSolves.js";
+
+const measureBuildTask = (
+  req: MeasureRequest,
+  solver: Solver,
+  signal: AbortSignal,
+  progress?: ProgressReporter,
+  resources?: ArtifactResourceScope,
+  reader: HostFileReader = hostFiles.readHostFile,
+) => measureTaskWithReader(req, solver, signal, reader, progress, resources);
 
 /** A bundle holding stand-in steps and verifiers for these tasks, and a README. */
 const bundleWith = async (...tasks: string[]) => {
@@ -112,6 +124,36 @@ describe("measureBuildTask's record of a bundle", () => {
     );
     expect(result.ok).toBe(true);
     expect(calls).toHaveLength(3);
+  });
+
+  it("records an unknown total cost and still measures the bundle's next task", async () => {
+    const bundle = await bundleWith("add-eggs", "add-bread");
+    const signal = new AbortController().signal;
+    const unpriced: Solver = async () => ({ ...passed, usd: null });
+    const first = await measureBuildTask(
+      request(bundle, "add-eggs"),
+      unpriced,
+      signal,
+    );
+    expect(first).toMatchObject({
+      ok: true,
+      value: { usd: null, stopped: "cost_unknown" },
+    });
+    const recorded = JSON.parse(
+      await readFile(join(bundle, "difficulty.json"), "utf8"),
+    ) as { tasks: Record<string, { usd: unknown }> };
+    expect(recorded.tasks["add-eggs"]?.usd).toBeNull();
+
+    // The saved record with an unknown cost is read back, not refused.
+    const second = await measureBuildTask(
+      request(bundle, "add-bread"),
+      counting().solver,
+      signal,
+    );
+    expect(second.ok).toBe(true);
+    const readme = await readFile(join(bundle, "README.md"), "utf8");
+    expect(readme).toContain("cost unknown.");
+    expect(readme).toContain("$1.50 in all.");
   });
 
   it("keeps both records when two tasks of one bundle are measured at once", async () => {
@@ -253,31 +295,27 @@ it("retains completed paid solves when a later helper cannot be cleaned up", asy
 
 it("returns a typed failure if difficulty preflight encounters an I/O error", async () => {
   const bundle = await bundleWith("add-eggs");
-  const original = hostFiles.readHostFile;
-  const spy = vi
-    .spyOn(hostFiles, "readHostFile")
-    .mockImplementation(async (path, ...rest) => {
-      if (path.endsWith("difficulty.json"))
-        throw Object.assign(new Error("disk failure"), { code: "EIO" });
-      return original(path, ...rest);
-    });
-  try {
-    const { calls, solver } = counting();
-    const result = await measureBuildTask(
-      request(bundle, "add-eggs"),
-      solver,
-      new AbortController().signal,
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected I/O failure");
-    expect(result.error).toMatchObject({
-      _tag: "ProviderAdapterError",
-      cause: expect.objectContaining({ code: "EIO" }),
-    });
-    expect(calls).toEqual([]);
-  } finally {
-    spy.mockRestore();
-  }
+  const reader: HostFileReader = async (path, ...rest) => {
+    if (path.endsWith("difficulty.json"))
+      throw Object.assign(new Error("disk failure"), { code: "EIO" });
+    return hostFiles.readHostFile(path, ...rest);
+  };
+  const { calls, solver } = counting();
+  const result = await measureBuildTask(
+    request(bundle, "add-eggs"),
+    solver,
+    new AbortController().signal,
+    undefined,
+    undefined,
+    reader,
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected I/O failure");
+  expect(result.error).toMatchObject({
+    _tag: "ProviderAdapterError",
+    cause: expect.objectContaining({ code: "EIO" }),
+  });
+  expect(calls).toEqual([]);
 });
 
 it.each([
@@ -291,30 +329,27 @@ it.each([
     const work = new DesktopBuildOwnedWork();
     const controller = new AbortController();
     const reason = new Error("cancel during close");
-    const original = hostFiles.readHostFile;
     let reads = 0;
     let closes = 0;
-    const spy = vi
-      .spyOn(hostFiles, "readHostFile")
-      .mockImplementation(async (path, ...rest) => {
-        if (path.endsWith(suffix) && ++reads === occurrence) {
-          if (cancel) controller.abort(reason);
-          throw hostFiles.hostReadFailure(
-            new RegularFileCleanupFailure({
-              path,
-              owner: {
-                close: async () => {
-                  if (++closes === 1) throw new Error("still busy");
-                },
-              } as never,
-              outcome: { kind: "completed", value: Buffer.from("read") },
-              cleanupCause: new Error("close failed"),
-              ...(cancel ? { completionCancellation: { reason } } : {}),
-            }),
-          );
-        }
-        return original(path, ...rest);
-      });
+    const reader: HostFileReader = async (path, ...rest) => {
+      if (path.endsWith(suffix) && ++reads === occurrence) {
+        if (cancel) controller.abort(reason);
+        throw hostFiles.hostReadFailure(
+          new RegularFileCleanupFailure({
+            path,
+            owner: {
+              close: async () => {
+                if (++closes === 1) throw new Error("still busy");
+              },
+            } as never,
+            outcome: { kind: "completed", value: Buffer.from("read") },
+            cleanupCause: new Error("close failed"),
+            ...(cancel ? { completionCancellation: { reason } } : {}),
+          }),
+        );
+      }
+      return hostFiles.readHostFile(path, ...rest);
+    };
     try {
       const result = await measureBuildTask(
         request(bundle, "add-eggs"),
@@ -322,6 +357,7 @@ it.each([
         controller.signal,
         undefined,
         work.resources,
+        reader,
       );
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected cleanup failure");
@@ -340,7 +376,6 @@ it.each([
       expect(await work.close()).toEqual([]);
       expect(result.error.cleanupIncomplete).toBe(false);
     } finally {
-      spy.mockRestore();
       await work.close();
     }
   },
@@ -350,21 +385,19 @@ it("keeps an input read failure primary when cancellation also arrives during cl
   const bundle = await bundleWith("add-eggs");
   const work = new DesktopBuildOwnedWork();
   const controller = new AbortController();
-  const original = hostFiles.readHostFile;
-  const spy = vi
-    .spyOn(hostFiles, "readHostFile")
-    .mockImplementation(async (path, ...rest) => {
-      if (!path.endsWith("tasks/add-eggs.json")) return original(path, ...rest);
-      controller.abort(new Error("cancel"));
-      throw hostFiles.hostReadFailure(
-        new RegularFileCleanupFailure({
-          path,
-          owner: { close: async () => {} } as never,
-          outcome: { kind: "failed", cause: new Error("read failed") },
-          cleanupCause: new Error("close failed"),
-        }),
-      );
-    });
+  const reader: HostFileReader = async (path, ...rest) => {
+    if (!path.endsWith("tasks/add-eggs.json"))
+      return hostFiles.readHostFile(path, ...rest);
+    controller.abort(new Error("cancel"));
+    throw hostFiles.hostReadFailure(
+      new RegularFileCleanupFailure({
+        path,
+        owner: { close: async () => {} } as never,
+        outcome: { kind: "failed", cause: new Error("read failed") },
+        cleanupCause: new Error("close failed"),
+      }),
+    );
+  };
   try {
     const result = await measureBuildTask(
       request(bundle, "add-eggs"),
@@ -372,6 +405,7 @@ it("keeps an input read failure primary when cancellation also arrives during cl
       controller.signal,
       undefined,
       work.resources,
+      reader,
     );
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failure");
@@ -380,7 +414,6 @@ it("keeps an input read failure primary when cancellation also arrives during cl
     expect(await work.close()).toEqual([]);
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
-    spy.mockRestore();
     await work.close();
   }
 });
@@ -435,24 +468,23 @@ it.each(["../../outside", "nested/task", "nested\\task", ".", ".."])(
   "refuses invalid selected task names before any file read or solve: %s",
   async (task) => {
     const read = vi
-      .spyOn(hostFiles, "readHostFile")
+      .fn<HostFileReader>()
       .mockRejectedValue(new Error("invalid task must not reach filesystem"));
     const solve = vi.fn<Solver>();
-    try {
-      const result = await measureBuildTask(
-        request("/unused-bundle", task),
-        solve,
-        new AbortController().signal,
-      );
-      expect(result).toMatchObject({
-        ok: false,
-        error: { _tag: "AnalysisInputError", issues: [{ path: ["task"] }] },
-      });
-      expect(read).not.toHaveBeenCalled();
-      expect(solve).not.toHaveBeenCalled();
-    } finally {
-      read.mockRestore();
-    }
+    const result = await measureBuildTask(
+      request("/unused-bundle", task),
+      solve,
+      new AbortController().signal,
+      undefined,
+      undefined,
+      read,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError", issues: [{ path: ["task"] }] },
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(solve).not.toHaveBeenCalled();
   },
 );
 
@@ -474,7 +506,7 @@ it("refuses invalid measurement identity before resolving the fresh-computer env
     .mockRejectedValue(
       new Error("invalid task must not resolve an environment"),
     );
-  const read = vi.spyOn(hostFiles, "readHostFile");
+  const read = vi.fn<HostFileReader>();
   const resources = new ArtifactResourceScope();
   try {
     const result = await measureInFreshComputers(
@@ -484,6 +516,7 @@ it("refuses invalid measurement identity before resolving the fresh-computer env
         defaults: {},
         retainCleanup: () => undefined,
         resources,
+        readHostFile: read,
       },
       new AbortController().signal,
     );
@@ -495,7 +528,6 @@ it("refuses invalid measurement identity before resolving the fresh-computer env
     expect(read).not.toHaveBeenCalled();
   } finally {
     environment.mockRestore();
-    read.mockRestore();
     await resources.close();
   }
 });

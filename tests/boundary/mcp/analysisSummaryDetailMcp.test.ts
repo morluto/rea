@@ -1,6 +1,7 @@
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { byteEntropySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { byteEntropySchema } from "../../../src/domain/native/byteEntropy.js";
+import { byteEntropySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,9 +13,11 @@ import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { analysisViewLayoutFixture } from "../../fixtures/analysisView.js";
 import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
+import { inspectionTestProvider } from "../../fixtures/binaryDiagnostics/inspectionProvider.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const contract = toolContract("analyze_javascript_application");
 
@@ -38,7 +41,10 @@ const connect = async (
         },
     binaryLayout === undefined ? {} : { binaryLayout },
   );
-  const client = new Client({ name: "analysis-summary-detail", version: "1" });
+  const client = new Client(
+    { name: "analysis-summary-detail", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -75,7 +81,7 @@ it("returns the summary of complete Evidence retained for later views", async ()
   const input = await application();
   const complete = await client.callTool({
     name: contract.name,
-    arguments: input,
+    arguments: { ...input, detail: "complete" },
   });
   expect(complete.isError).not.toBe(true);
   const completeEvidence = contract.outputSchema.parse(
@@ -143,13 +149,11 @@ it("returns the summary of retained binary layout Evidence", async () => {
   const layout = analysisViewLayoutFixture();
   const client = await connect(
     true,
-    new BinaryLayoutService({
-      inspectAndClose(input, options) {
-        return this.inspect(input, options);
-      },
-      identity: BINARY_LAYOUT_TEST_PROVIDER,
-      inspect: () => Promise.resolve(ok(layout)),
-    }),
+    new BinaryLayoutService(
+      inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () =>
+        Promise.resolve(ok(layout)),
+      ),
+    ),
   );
   const layoutContract = toolContract("inspect_binary_layout");
   const summary = await client.callTool({
@@ -243,6 +247,7 @@ cliTest(
         file_entropy: 0,
         block_count: 129,
         run_count: 1,
+        runs: [{ offset: 7, length: 32769, classification: "low" }],
         top_runs: [{ offset: 7, length: 32769, classification: "low" }],
       },
     });
@@ -263,6 +268,32 @@ cliTest(
     expect(textBytes(summary.content)).toBeLessThan(
       textBytes(complete.content),
     );
+    const blocks = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: view.parent_evidence_id,
+        },
+        view: {
+          kind: "byte-entropy",
+          collection: "blocks",
+          offset: 127,
+          limit: 4,
+        },
+      },
+    });
+    expect(blocks.isError).not.toBe(true);
+    const completeReport = byteEntropySchema.parse(evidence.normalized_result);
+    expect(
+      parseEvidence(blocks.structuredContent).normalized_result,
+    ).toMatchObject({
+      kind: "byte-entropy",
+      parent_evidence_id: evidence.evidence_id,
+      entropy: { block_count: 129, run_count: 1 },
+      items: completeReport.blocks.slice(127),
+      coverage: { examined: 2, total: 129, next_offset: null },
+    });
     expect(
       (
         await client.callTool({

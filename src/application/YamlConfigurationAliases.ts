@@ -9,6 +9,36 @@ import {
   type Document,
   type Node,
 } from "yaml";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+
+/** Resolve literal and aliased string keys to their source nodes for editing. */
+export const resolveYamlEditPath = (
+  document: Document,
+  path: readonly string[],
+): (string | Node)[] => {
+  const resolved: (string | Node)[] = [];
+  let current: unknown = document.contents;
+  for (const name of path) {
+    if (isAlias(current)) current = current.resolve(document);
+    if (!isMap(current)) {
+      resolved.push(name);
+      current = undefined;
+      continue;
+    }
+    const matches = current.items.filter((pair) => {
+      const key = isAlias(pair.key) ? pair.key.resolve(document) : pair.key;
+      return isScalar(key) && key.value === name;
+    });
+    if (matches.length > 1)
+      throw new ConfigurationError(
+        `YAML mapping contains more than one key resolving to ${JSON.stringify(name)}.`,
+      );
+    const pair = matches[0];
+    resolved.push(pair !== undefined && isNode(pair.key) ? pair.key : name);
+    current = pair?.value;
+  }
+  return resolved;
+};
 
 interface AliasCopies {
   readonly targets: ReadonlyMap<Alias, Node | undefined>;
@@ -141,16 +171,17 @@ export const preserveYamlAliasValues = (
     });
   if (removed.size === 0) return new Set();
   const targets = new Map<Alias, Node | undefined>();
-  const names = new Set<string>();
+  const anchors = new Map<string, Node>();
   const reusedNames = new Set<string>();
   visit(document, {
     Alias: (_key, node) => {
-      targets.set(node, node.resolve(document));
+      // YAML binds an alias to the last preceding definition of its name.
+      targets.set(node, anchors.get(node.source));
     },
     Value: (_key, node) => {
       if (node.anchor === undefined) return;
-      if (names.has(node.anchor)) reusedNames.add(node.anchor);
-      names.add(node.anchor);
+      if (anchors.has(node.anchor)) reusedNames.add(node.anchor);
+      anchors.set(node.anchor, node);
     },
   });
   const context: AliasCopies = {
@@ -161,7 +192,7 @@ export const preserveYamlAliasValues = (
     survivingNames: new Map(),
     visiting: new Set(),
     validated: new Set(),
-    names,
+    names: new Set(anchors.keys()),
     reusedNames,
   };
   const replacements = new Map<Node, Node>();

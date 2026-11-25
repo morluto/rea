@@ -1,90 +1,31 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { observed } from "../../fixtures/analysisExecution.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidenceBundle,
+  parseEvidenceBundle,
+  safeParseEvidenceBundle,
+} from "../../../src/domain/evidenceBundle.js";
 import { ANALYSIS_SNAPSHOT_TARGET } from "../../../src/domain/analysisSnapshot.fixture.js";
 
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
-
-it("exports and imports GameCube DOL Evidence without losing its subject identity", async () => {
-  const root = await createTestTempDirectory("rea-dol-bundle-mcp-");
-  const path = join(root, "bundle.json");
-  const record = createEvidence(
-    {
-      path: join(root, "game.dol"),
-      sha256: "d".repeat(64),
-      format: "gamecube-dol",
-      architecture: "powerpc",
-    },
-    { id: "fixture", name: "Fixture", version: "1" },
-    {
-      operation: "inspect_artifact",
-      parameters: {},
-      result: { observed: true },
-    },
-  );
-  const session = createTestBinarySession(() => {
-    throw new Error("bundle round trip must not run a provider");
-  });
-  expect(session.recordEvidence(record).ok).toBe(true);
-  const source = await connectEvidenceMcp("dol-source", session);
-  const importedSession = createTestBinarySession(() => {
-    throw new Error("bundle import must not run a provider");
-  });
-  const target = await connectEvidenceMcp("dol-target", importedSession);
-  try {
-    const inline = await source.client.callTool({
-      name: "get_evidence_bundle",
-      arguments: {},
-    });
-    expect(inline.isError).not.toBe(true);
-    expect(inline.structuredContent).toMatchObject({
-      result: {
-        artifacts: [{ format: "gamecube-dol", architecture: "powerpc" }],
-      },
-    });
-    const exported = await source.client.callTool({
-      name: "export_evidence_bundle",
-      arguments: { path },
-    });
-    expect(exported.isError).not.toBe(true);
-    const imported = await target.client.callTool({
-      name: "import_evidence_bundle",
-      arguments: { path },
-    });
-    expect(imported.isError).not.toBe(true);
-    const restored = await target.client.callTool({
-      name: "get_evidence_bundle",
-      arguments: {},
-    });
-    expect(restored.structuredContent).toEqual(inline.structuredContent);
-  } finally {
-    await Promise.allSettled([
-      source.client.close(),
-      source.server.close(),
-      session.close(),
-      target.client.close(),
-      target.server.close(),
-      importedSession.close(),
-    ]);
-  }
-});
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("preserves BOM recovery through public bundle import", async () => {
   const root = await createTestTempDirectory("rea-bundle-bom-mcp-");
   const path = join(root, "bundle.json");
-  await writeFile(path, "\uFEFF{}");
+  await writeFile(path, `\uFEFF${JSON.stringify(createEvidenceBundle([]))}`);
   const session = createTestBinarySession(() => {
     throw new Error("bundle import must not start a provider");
   });
@@ -97,9 +38,11 @@ it("preserves BOM recovery through public bundle import", async () => {
     expect(parseMcpToolError(response)).toMatchObject({
       error: {
         code: "evidence_integrity_mismatch",
-        message: expect.stringMatching(
-          /byte-order mark.*UTF-8 without a byte-order mark/iu,
-        ),
+        details: {
+          path,
+          reason: "invalid-json",
+          content_issues: [{ reason: "invalid_format" }],
+        },
         remediation: {
           action: expect.stringMatching(
             /byte-order mark.*UTF-8 without a byte-order mark/iu,
@@ -112,128 +55,115 @@ it("preserves BOM recovery through public bundle import", async () => {
   }
 });
 
-it("returns the complete session Evidence bundle in the tool result", async () => {
-  const evidence = createEvidence(
-    undefined,
-    { id: "fixture", name: "Fixture", version: "1" },
-    { operation: "observe", parameters: {}, result: { value: "seen" } },
-  );
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(resultOk(null)),
-  }));
-  expect(session.recordEvidence(evidence).ok).toBe(true);
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "inline-evidence-bundle", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const result = await client.callTool({
-      name: "get_evidence_bundle",
-      arguments: {},
-    });
-    expect(result.structuredContent).toMatchObject({
-      result: {
-        records: [
-          {
-            evidence_id: evidence.evidence_id,
-            normalized_result: { value: "seen" },
-          },
-        ],
-      },
-    });
-  } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
-  }
-});
-
-it("rejects bundle field stripping at MCP import without changing retained evidence", async () => {
+it("retains complete Evidence across rejected and successful MCP bundle imports", async () => {
   const root = await createTestTempDirectory("rea-evidence-bundle-mcp-");
-  const sourceSession = createBundleSourceSession();
-  const targetSession = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(resultOk(null)),
-  }));
+  const {
+    session: sourceSession,
+    evidence,
+    subject,
+  } = createBundleSourceSession(root);
+  const targetSession = createTestBinarySession(() => {
+    throw new Error("bundle import must not start a provider");
+  });
+  expect(targetSession.recordEvidence(evidence).ok).toBe(true);
   const source = await connectEvidenceMcp("bundle-source", sourceSession);
   const target = await connectEvidenceMcp("bundle-target", targetSession);
-  const { client: sourceClient } = source;
-  const { client: targetClient } = target;
   const bundlePath = join(root, "exported.json");
-  const targetExportPath = join(root, "round-trip.json");
 
   try {
-    const { sourceJson, records, evidenceIndex } = await exportFixtureBundle(
-      sourceClient,
-      bundlePath,
+    const contents = await exportFixtureBundle(source.client, bundlePath);
+    const bundle = parseEvidenceBundle(JSON.parse(contents));
+    const evidenceIndex = bundle.records.findIndex(
+      ({ evidence_id }) => evidence_id === evidence.evidence_id,
     );
-    const initial = structured(
-      await targetClient.callTool({
-        name: "get_evidence_bundle",
-        arguments: {},
-      }),
-    ).result;
+    expect(bundle.records[evidenceIndex]).toEqual(evidence);
+    expect(bundle.artifacts).toContainEqual({
+      digest: { sha256: subject.sha256 },
+      format: "gamecube-dol",
+      architecture: "powerpc",
+    });
+    expect(bundle.unknowns).toHaveLength(1);
+    expect(await getBundle(source.client)).toEqual(bundle);
+    const initial = createEvidenceBundle([evidence]);
+    expect(await getBundle(target.client)).toEqual(initial);
+
     for (const [label, path] of unsupportedBundleFields(evidenceIndex)) {
-      const candidate = structuredClone(sourceJson);
+      const candidate = structuredClone(bundle);
       setPath(candidate, path, "unsupported-metadata");
-      const malformedPath = join(root, `${label.replaceAll(" ", "-")}.json`);
-      await writeFile(malformedPath, JSON.stringify(candidate));
-      const rejected = await targetClient.callTool({
-        name: "import_evidence_bundle",
-        arguments: { path: malformedPath },
+      expect(safeParseEvidenceBundle(candidate), label).toMatchObject({
+        ok: false,
+        error: {
+          kind: "invalid-bundle",
+          cause: {
+            issues: expect.arrayContaining([
+              {
+                code: "unrecognized_keys",
+                path: path.slice(0, -1),
+                keys: [path.at(-1)],
+                message: expect.any(String),
+              },
+            ]),
+          },
+        },
       });
-      expect(parseMcpToolError(rejected), label).toMatchObject({
-        error: { code: "evidence_integrity_mismatch" },
-      });
-      expect(
-        structured(
-          await targetClient.callTool({
-            name: "get_evidence_bundle",
-            arguments: {},
-          }),
-        ).result,
-        label,
-      ).toEqual(initial);
     }
 
-    const imported = await targetClient.callTool({
+    const malformed = structuredClone(bundle);
+    setPath(
+      malformed,
+      ["records", evidenceIndex, "subject", "identity", "future_field"],
+      "unsupported-metadata",
+    );
+    const malformedPath = join(root, "malformed.json");
+    await writeFile(malformedPath, JSON.stringify(malformed));
+    const rejected = await target.client.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path: malformedPath },
+    });
+    expect(parseMcpToolError(rejected)).toMatchObject({
+      error: { code: "evidence_integrity_mismatch" },
+    });
+    expect(await getBundle(target.client)).toEqual(initial);
+
+    const imported = await target.client.callTool({
       name: "import_evidence_bundle",
       arguments: { path: bundlePath },
     });
-    if (imported.isError === true)
-      throw new Error(JSON.stringify(parseMcpToolError(imported)));
-    await targetClient.callTool({
-      name: "export_evidence_bundle",
-      arguments: { path: targetExportPath },
+    expect(structured(imported).result).toEqual({
+      imported: bundle.records.length - 1,
+      unknowns_added: 1,
+      total: bundle.records.length,
     });
-    expect(JSON.parse(await readFile(targetExportPath, "utf8"))).toEqual(
-      sourceJson,
+    expect(await getBundle(target.client)).toEqual(bundle);
+    const targetExportPath = join(root, "round-trip.json");
+    structured(
+      await target.client.callTool({
+        name: "export_evidence_bundle",
+        arguments: { path: targetExportPath },
+      }),
     );
-    const observedRecord = records[evidenceIndex]!;
-    expect(observedRecord.parameters).toEqual({ caller: { note: "preserve" } });
-    expect(observedRecord.normalized_result).toEqual({
-      producer: { extension: "preserve" },
-    });
-    expect(object(observedRecord.analysis_profile).parameters).toEqual({
-      loader: { mode: "full" },
-    });
+    expect(await readFile(targetExportPath, "utf8")).toBe(contents);
   } finally {
     await Promise.allSettled([
-      sourceClient.close(),
+      source.client.close(),
       source.server.close(),
       sourceSession.close(),
-      targetClient.close(),
+      target.client.close(),
       target.server.close(),
       targetSession.close(),
     ]);
   }
 });
 
-const createBundleSourceSession = () => {
+const createBundleSourceSession = (root: string) => {
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const evidence = createEvidence(ANALYSIS_SNAPSHOT_TARGET, provider, {
+  const subject = {
+    path: join(root, "game.dol"),
+    sha256: "d".repeat(64),
+    format: "gamecube-dol",
+    architecture: "powerpc",
+  } as const;
+  const evidence = createEvidence(subject, provider, {
     operation: "observe",
     parameters: { caller: { note: "preserve" } },
     result: { producer: { extension: "preserve" } },
@@ -248,10 +178,9 @@ const createBundleSourceSession = () => {
     },
     locations: [{ kind: "address", address: "0x1000" }],
   });
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(resultOk(null)),
-  }));
+  const session = createTestBinarySession(() => {
+    throw new Error("bundle export must not start a provider");
+  });
   expect(session.recordEvidence(evidence).ok).toBe(true);
   for (const extra of [
     createEvidence(ANALYSIS_SNAPSHOT_TARGET, provider, {
@@ -260,7 +189,7 @@ const createBundleSourceSession = () => {
       result: { completed: true },
       authority: "controlled-replay",
     }),
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
@@ -270,17 +199,13 @@ const createBundleSourceSession = () => {
     }),
   ])
     expect(session.recordEvidence(extra).ok).toBe(true);
-  return session;
+  return { session, evidence, subject };
 };
 
 const exportFixtureBundle = async (
   client: Client,
   path: string,
-): Promise<{
-  readonly sourceJson: unknown;
-  readonly records: Record<string, unknown>[];
-  readonly evidenceIndex: number;
-}> => {
+): Promise<string> => {
   const unknown = await client.callTool({
     name: "record_unknown",
     arguments: {
@@ -300,13 +225,7 @@ const exportFixtureBundle = async (
     arguments: { path },
   });
   expect(exported.isError).not.toBe(true);
-  const sourceJson = JSON.parse(await readFile(path, "utf8")) as unknown;
-  const records = array(object(sourceJson).records).map(object);
-  const evidenceIndex = records.findIndex(
-    (record) => record.operation === "observe",
-  );
-  expect(evidenceIndex).toBeGreaterThanOrEqual(0);
-  return { sourceJson, records, evidenceIndex };
+  return readFile(path, "utf8");
 };
 
 const unsupportedBundleFields = (
@@ -317,8 +236,8 @@ const unsupportedBundleFields = (
   ["provider manifest", ["providers", 0, "future_field"]],
   ["record subject", ["records", evidenceIndex, "subject", "future_field"]],
   [
-    "subject digest",
-    ["records", evidenceIndex, "subject", "digest", "future_field"],
+    "subject identity",
+    ["records", evidenceIndex, "subject", "identity", "future_field"],
   ],
   ["artifact manifest", ["artifacts", 0, "future_field"]],
   [
@@ -349,7 +268,10 @@ const connectEvidenceMcp = async (
   session: ReturnType<typeof createTestBinarySession>,
 ) => {
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -397,3 +319,8 @@ const structured = (result: Awaited<ReturnType<Client["callTool"]>>) => {
     throw new Error("Missing structured MCP result");
   return result.structuredContent as Record<string, unknown>;
 };
+
+const getBundle = async (client: Client) =>
+  structured(
+    await client.callTool({ name: "get_evidence_bundle", arguments: {} }),
+  ).result;

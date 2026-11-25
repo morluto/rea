@@ -1,11 +1,9 @@
 import type { ArtifactOccurrence } from "../domain/artifactGraph.js";
-import type { ArtifactReader } from "./ArtifactReader.js";
+import type { ArtifactReader } from "../resources/index.js";
 import {
   ARTIFACT_FORMATS,
   type ArtifactReaderConstruction,
 } from "./artifactFormats.js";
-
-export type { ArtifactReaderConstruction } from "./artifactFormats.js";
 
 /** Formats with an artifact entry reader; availability policy belongs to the caller. */
 export type ArtifactReaderFormat = {

@@ -2,16 +2,8 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -22,8 +14,12 @@ import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { createAnalysisProfile } from "../dist/domain/analysisProfile.js";
 import { createEvidenceBundle } from "../dist/domain/evidenceBundle.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 import {
   createVerifierMcpOwner,
   VerifierStdioTransport,
@@ -32,6 +28,7 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 export async function verifyProjectCoverage(run) {
   const installDir = process.env.GHIDRA_INSTALL_DIR;
@@ -39,13 +36,10 @@ export async function verifyProjectCoverage(run) {
     throw new Error(
       "Set GHIDRA_INSTALL_DIR to an absolute Ghidra installation path.",
     );
-  const installation = await inspectVerifierGhidraInstallation({
-    environment: process.env,
+  const installation = await inspectVerifierGhidraFromEnvironment(
+    process.env,
     installDir,
-    ...(process.env.JAVA_HOME === undefined
-      ? {}
-      : { javaHome: process.env.JAVA_HOME }),
-  });
+  );
   if (installation.status !== "available")
     throw new Error(`Ghidra is unavailable: ${JSON.stringify(installation)}`);
   if (process.platform === "win32")
@@ -56,10 +50,14 @@ export async function verifyProjectCoverage(run) {
     new URL("../tests/conformance/ghidra/", import.meta.url),
   );
   const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
-  const workspace = await mkdtemp(
-    join(tmpdir(), "rea-ghidra-project-coverage-"),
-  );
+  const fixture = await VerifierFixture.open({
+    prefix: "rea-ghidra-project-coverage-",
+    private: false,
+  });
+  const workspace = fixture.path;
   const connections = createVerifierMcpOwner();
+  // The workspace is removed only after every MCP connection confirms.
+  fixture.releaseAfter(() => connections.close());
   const target = join(workspace, "fixture");
   const projects = join(workspace, "projects");
   const env = {
@@ -86,10 +84,12 @@ export async function verifyProjectCoverage(run) {
     return files.flat().sort((a, b) => a[0].localeCompare(b[0]));
   }
   async function connect(environment) {
-    const client = new Client({
-      name: "selected-project-coverage-verifier",
-      version: "1",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "selected-project-coverage-verifier",
+        version: "1",
+      }),
+    );
     const transport = new VerifierStdioTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -105,7 +105,6 @@ export async function verifyProjectCoverage(run) {
     );
     return requireMcpOutput(reply, name);
   }
-  let commandCleanupIncomplete = false;
   const command = async (executable, args, timeoutMs) => {
     try {
       return await runOwnedCommand(
@@ -119,13 +118,19 @@ export async function verifyProjectCoverage(run) {
         { timeoutMs, diagnosticBytes: 16 * 1024 * 1024 },
       );
     } catch (cause) {
-      commandCleanupIncomplete =
+      // A command whose process group was not confirmed stopped may still
+      // use the workspace, so the fixture keeps it.
+      if (
         cause instanceof OwnedCommandFailure &&
-        cause.cleanupOwner !== undefined;
+        cause.cleanupOwner !== undefined
+      )
+        fixture.retain(
+          `${executable} cleanup is incomplete; it may still use ${workspace}`,
+        );
       throw cause;
     }
   };
-  const result = await withVerifierCleanup(async () => {
+  return await withVerifierFixture(fixture, async () => {
     await mkdir(projects);
     // REA_CC is the invoking developer's explicitly selected compiler, not target input.
     await command(
@@ -219,7 +224,7 @@ export async function verifyProjectCoverage(run) {
         assert.equal(
           direct.analysis_profile.parameters
             .selected_project_relationship_coverage,
-          selected ? "prior-analysis-unknown-v1" : undefined,
+          selected ? "prior-analysis-unknown" : undefined,
         );
         for (const [start, goal, direction] of [
           [caller, leaf, "forward"],
@@ -310,7 +315,7 @@ export async function verifyProjectCoverage(run) {
           assert.equal(
             snapshot.binding.analysis_profile.parameters
               .selected_project_relationship_coverage,
-            "prior-analysis-unknown-v1",
+            "prior-analysis-unknown",
           );
           const profile = snapshot.binding.analysis_profile;
           const oldParameters = { ...profile.parameters };
@@ -400,14 +405,7 @@ export async function verifyProjectCoverage(run) {
       provider: installation.providerVersion,
       results: report,
     };
-  }, [
-    async () => {
-      await connections.close();
-      if (!commandCleanupIncomplete)
-        await rm(workspace, { recursive: true, force: true });
-    },
-  ]);
-  return result;
+  });
 }
 
 if (

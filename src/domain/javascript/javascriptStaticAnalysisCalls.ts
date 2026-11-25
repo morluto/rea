@@ -1,9 +1,13 @@
 import {
   isBrowserNetworkRequest,
   isFetchCall,
+  literalRequestConstructorUrl,
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
-import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import {
+  intrinsicPrototypeMemberMayHaveChanged,
+  isIntrinsicMapLookup,
+} from "./javascriptSemanticIntrinsicInstances.js";
 import {
   traverseJavaScriptAst,
   traverseJavaScriptValueAst,
@@ -61,7 +65,7 @@ import {
 import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticAmbientWrites.js";
+} from "./javascriptSemanticGlobalReference.js";
 import {
   evaluateSemanticExpression,
   evaluateSemanticExpressionProvenance,
@@ -595,19 +599,6 @@ export const indexVitePreloadDependencyTable = (
   };
 };
 
-const requestConstructorUrl = (
-  node: t.Node,
-  bindings: JavaScriptSemanticAnalysisState,
-): string | undefined => {
-  const target = unwrapJavaScriptExpression(node).node;
-  if (
-    t.isNewExpression(target) &&
-    isUnmodifiedGlobalReference(target.callee, bindings, "Request")
-  )
-    return stringValue(target.arguments[0]);
-  return undefined;
-};
-
 const inspectEndpointCall = (
   node: JavaScriptCallLike,
   name: string,
@@ -622,7 +613,7 @@ const inspectEndpointCall = (
     const literal =
       stringValue(target) ??
       (requestTargetObjects(node, bindings, context) === "request"
-        ? requestConstructorUrl(target, bindings)
+        ? literalRequestConstructorUrl(target, bindings)
         : undefined);
     if (literal !== undefined) {
       addEndpoint(context, {
@@ -904,7 +895,7 @@ const resolvedRequestTarget = (
   // A toString result is selected before the enclosing request invocation.
   const expression = unwrapJavaScriptExpression(node).node;
   const capture = reference === expression ? site : expression;
-  if (index.referenceMayHaveChangedAt(capture, reference)) return undefined;
+  if (index.mayObserve(capture, reference)) return undefined;
   if (!requestInitializerPrecedesSite(reference, capture, bindings, index))
     return undefined;
   const evaluated = evaluateSemanticExpression(node, bindings);
@@ -983,7 +974,7 @@ const urlObjectRequestTarget = (
       isToString = true;
     }
   }
-  if (!t.isIdentifier(target) || index.referenceMayHaveChangedAt(site, target))
+  if (!t.isIdentifier(target) || index.mayObserve(site, target))
     return undefined;
   const binding = index.bindingForReferenceAt(target);
   if (binding === undefined || seen.has(binding.bindingId)) return undefined;
@@ -1012,17 +1003,15 @@ const urlObjectRequestTarget = (
       isToString,
     );
   if (!isToString && requestObjects) {
-    const requestUrl = requestConstructorUrl(initialized, bindings);
+    const requestUrl = literalRequestConstructorUrl(initialized, bindings);
     if (requestUrl !== undefined) return requestUrl;
   }
   if (!t.isNewExpression(initialized)) return undefined;
   if (!isUnmodifiedGlobalReference(initialized.callee, bindings, "URL"))
     return undefined;
   if (
-    ["URL", "Object"].some((owner) =>
-      ["toString", "valueOf"].some((method) =>
-        bindings.ambientWrites.covers(["global", owner, "prototype", method]),
-      ),
+    ["toString", "valueOf"].some((method) =>
+      intrinsicPrototypeMemberMayHaveChanged(bindings, "URL", method),
     )
   )
     return undefined;
@@ -1137,7 +1126,7 @@ export const finishSqliteStorageCalls = (
   for (const { node, name } of context.accumulator.pendingSqliteCalls) {
     const callee = unwrapJavaScriptExpression(node.callee).node;
     const provenance = evaluateSemanticExpressionProvenance(callee, bindings);
-    const changed = index.referenceMayHaveChangedAt(node, callee);
+    const changed = index.mayObserve(node, callee);
     if (!changed && t.isIdentifier(callee) && provenance.status === "local")
       continue;
     const origin =

@@ -12,10 +12,8 @@ import {
 import { collectJavaScriptIdentityWritesSteps } from "./javascriptElectronMemberWrites.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import {
-  semanticRequireOriginCandidate,
-  type JavaScriptRequireOrigin,
-} from "./javascriptSemanticRequireOrigin.js";
+import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
+import type { JavaScriptRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
@@ -31,6 +29,7 @@ import {
   completeSemanticSteps,
   traverseJavaScriptValueAst,
 } from "./javascriptSemanticTraversal.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 /** A standalone Webpack bootstrap uses the module, exports, loader convention. */
 const BOOTSTRAP_RUNTIME = "webpack-bootstrap";
@@ -45,10 +44,8 @@ interface BootstrapExternals {
   readonly externals: ReadonlyMap<string, JavaScriptModuleOrigin | null>;
 }
 
-const proofs = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.CallExpression, BootstrapExternals | null>
->();
+const proofs =
+  semanticConsumerMemo<WeakMap<t.CallExpression, BootstrapExternals | null>>();
 
 /**
  * Recover a literal require reached through a proven Webpack bootstrap.
@@ -187,7 +184,7 @@ const canonicalWebpackInteropBindings = (
       if (node === undefined || seen.has(node)) continue;
       seen.add(node);
       if (seen.size > state.precision.alias_selections) {
-        state.valueResourceLimits.add("alias-selections");
+        state.observations.valueResourceLimits.add("alias-selections");
         return true;
       }
       const binding = resolveSemanticBindingState(state, node, node.name);

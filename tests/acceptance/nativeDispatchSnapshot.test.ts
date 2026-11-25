@@ -117,7 +117,6 @@ cliTest.skipIf(process.platform !== "darwin")(
     expect(Buffer.compare(await readFile(first), Buffer.from(bytes))).toBe(0);
     expect(Buffer.compare(await readFile(second), Buffer.from(bytes))).toBe(0);
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform !== "darwin")(
@@ -174,7 +173,6 @@ cliTest.skipIf(process.platform !== "darwin")(
     expect(Buffer.compare(await readFile(target), bytes)).toBe(0);
     await client.ping();
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform !== "darwin")(
@@ -308,11 +306,10 @@ cliTest.skipIf(process.platform !== "darwin")(
     expect(Buffer.compare(await readFile(target), Buffer.from(bytes))).toBe(0);
     await client.ping();
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform !== "darwin")(
-  "reports exact Objective-C class imports through the compiled native MCP adapter",
+  "reports exact Objective-C class imports through the compiled CLI and MCP adapters",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-objc-import-mcp-");
     const target = join(root, "class-import.macho");
@@ -330,36 +327,12 @@ cliTest.skipIf(process.platform !== "darwin")(
       REA_LOG_LEVEL: "silent",
     };
 
-    const cliResult = await cli.run({
-      arguments: ["inspect-native-dispatch-metadata", target, "--json"],
-      environment,
-    });
-    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
-    const cliEvidence = toolContract(
-      "inspect_native_dispatch_metadata",
-    ).outputSchema.parse(cliResult.json);
-    expect(cliEvidence.normalized_result).toMatchObject({
-      result: {
-        target_selection: {
-          container: "thin",
-          offset: 0,
-          cpu_type: CPU.arm64.type,
-          cpu_subtype: CPU.arm64.subtype,
-        },
-      },
-    });
-
-    const { client, call } = await connectLocalToolsMcp(environment);
-    const opened = await call("open_binary", { path: target });
-    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const inspected = await call("inspect_native_dispatch_metadata", {
-      max_records: 100,
-      objc_class_import_addresses: [fixture.address, fixture.unboundAddress],
-      objc_class_import_addresses_complete: true,
-    });
-    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
-    const evidence = parseEvidence(inspected.structuredContent);
-    expect(evidence.normalized_result).toMatchObject({
+    const addresses = [
+      fixture.address,
+      fixture.nonClassAddress,
+      fixture.unboundAddress,
+    ];
+    const expected = {
       target_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
       target_architecture: "arm64",
       provider: { id: "native-macos" },
@@ -374,16 +347,48 @@ cliTest.skipIf(process.platform !== "darwin")(
           {
             requested_address: fixture.address,
             symbol: "_OBJC_CLASS_$_Document",
+            binding_source: "bind",
             library: "/System/Library/Frameworks/AppKit.framework/AppKit",
           },
         ],
         objc_class_import_binding_coverage: {
           status: "complete",
-          examined: 2,
+          examined: 3,
           decoded: 1,
         },
       },
+    };
+    const cliResult = await cli.run({
+      arguments: [
+        "inspect-native-dispatch-metadata",
+        target,
+        "--json",
+        ...addresses.flatMap((address) => [
+          "--objc-class-import-address",
+          address,
+        ]),
+        "--objc-class-import-addresses-complete",
+      ],
+      environment,
     });
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+    const cliEvidence = toolContract(
+      "inspect_native_dispatch_metadata",
+    ).outputSchema.parse(cliResult.json);
+    expect(cliEvidence.normalized_result).toMatchObject(expected);
+
+    const { client, call } = await connectLocalToolsMcp(environment);
+    const opened = await call("open_binary", { path: target });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const inspected = await call("inspect_native_dispatch_metadata", {
+      max_records: 100,
+      objc_class_import_addresses: addresses,
+      objc_class_import_addresses_complete: true,
+    });
+    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+    expect(
+      parseEvidence(inspected.structuredContent).normalized_result,
+    ).toMatchObject(expected);
     await client.ping();
   },
 );

@@ -1,0 +1,293 @@
+import type { ArtifactFormatId } from "./artifactGraph.js";
+import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
+import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
+import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
+import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
+import { hasFitImagesNode } from "./firmware/fitImage.js";
+import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
+import { hasUf2Block } from "./firmware/uf2.js";
+import { hasGodotPckHeader } from "./godotPckFormat.js";
+import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import {
+  hasIso9660Signature,
+  ISO9660_DESCRIPTOR_OFFSET,
+  ISO9660_RECOGNITION_BYTES,
+} from "./iso9660/iso9660Structures.js";
+import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { hasUImageMagic } from "./uimageFormat.js";
+import { hasUnityFsHeader } from "./unityfsFormat.js";
+import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
+import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
+import { BinaryFormatFailure } from "./binaryContainer.js";
+import {
+  hasDevicetreeMagic,
+  readDevicetreeHeader,
+} from "./firmware/devicetreeHeader.js";
+import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
+import { hasSqliteHeader } from "./sqliteFormat.js";
+import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
+import {
+  hasDdsHeader,
+  hasGlbHeader,
+  hasKtx1Identifier,
+  hasKtx2Identifier,
+} from "./gpuAssetFormats.js";
+import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
+import { hasZipSignature } from "./zipPackageFormat.js";
+
+/** Formats recognized from leading bytes before native executable headers. */
+export type RecognizedArtifactFormat = Extract<
+  ArtifactFormatId,
+  | "ines"
+  | "zip"
+  | "godot-pck"
+  | "unityfs"
+  | "wxapkg"
+  | "tar"
+  | "dds"
+  | "glb"
+  | "ktx"
+  | "ktx2"
+  | "uimage"
+  | "android-boot-image"
+  | "android-ota-payload"
+  | "iso9660"
+  | "intel-hex"
+  | "srec"
+  | "uf2"
+  | "dfuse"
+  | "esp-flash-image"
+  | "esp-image"
+  | "fit"
+  | "ntfs-mft"
+  | "plist"
+  | StandaloneArtifactFormat
+>;
+
+/**
+ * Single-file formats that a dedicated execution-free tool reads. Inventory
+ * records only the file itself; the inspection routes it to that tool.
+ */
+export const STANDALONE_ARTIFACT_FORMATS = [
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
+] as const;
+
+export type StandaloneArtifactFormat =
+  (typeof STANDALONE_ARTIFACT_FORMATS)[number];
+
+export const isStandaloneArtifactFormat = (
+  format: string,
+): format is StandaloneArtifactFormat =>
+  (STANDALONE_ARTIFACT_FORMATS as readonly string[]).includes(format);
+
+/** The bytes one route has read when it asks which format a file holds. */
+export interface ArtifactRecognitionInput {
+  /** Leading bytes; routes read different prefix lengths. */
+  readonly prefix: Buffer;
+  readonly fileSize: number;
+  /** The final DFU suffix bytes, when the route has read them. */
+  readonly suffix?: Uint8Array | undefined;
+  /** Whether an ESP flash partition layout was located, when the route looked. */
+  readonly espFlashLayout?: boolean | undefined;
+  /**
+   * The bytes at the first ISO 9660 volume descriptor (sector 16), when the
+   * route has read them and the prefix does not reach them.
+   */
+  readonly iso9660Descriptor?: Uint8Array | undefined;
+}
+
+/**
+ * What one recognizer established:
+ *
+ * - `recognized`: the bytes are this format.
+ * - `refused`: the header names this format, but this file is one REA does
+ *   not read as it (an unsupported variant or an extent that does not fit).
+ * - `needs-input`: deciding needs bytes the route has not read yet.
+ *
+ * `index` is the recognizer's position, so a route can supply the missing
+ * input or skip a refusal and resume from there.
+ */
+type Recognition =
+  | {
+      readonly state: "recognized" | "needs-input";
+      readonly format: RecognizedArtifactFormat;
+    }
+  | {
+      readonly state: "refused";
+      readonly format: RecognizedArtifactFormat;
+      readonly reason: string;
+    };
+
+export type ArtifactFormatRecognition = Recognition & {
+  readonly index: number;
+};
+
+/** `undefined` when the bytes do not claim this recognizer's format. */
+type ArtifactFormatRecognizer = (
+  input: ArtifactRecognitionInput,
+) => Recognition | undefined;
+
+const when =
+  (format: RecognizedArtifactFormat, claims: (prefix: Buffer) => boolean) =>
+  ({ prefix }: ArtifactRecognitionInput): Recognition | undefined =>
+    claims(prefix) ? { state: "recognized", format } : undefined;
+
+/**
+ * The one ordered recognizer table. Inventory classification and binary
+ * target resolution both walk it, so the same bytes reach the same verdict;
+ * each route decides only what a refusal or a missing input means for it.
+ */
+export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
+  [
+    ({ prefix, fileSize }) => {
+      if (nesContainerFormat(prefix) === undefined) return undefined;
+      const layout = parseInesLayout(prefix, fileSize);
+      return layout.ok
+        ? { state: "recognized", format: "ines" }
+        : { state: "refused", format: "ines", reason: layout.error.detail };
+    },
+    when("zip", hasZipSignature),
+    when("godot-pck", hasGodotPckHeader),
+    when("unityfs", hasUnityFsHeader),
+    when(
+      "wxapkg",
+      (prefix) => hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix),
+    ),
+    // A ustar or GNU header, or a gzip member whose first block is one.
+    ({ prefix }) => {
+      if (recognizeTarPrefix(prefix) !== undefined)
+        return { state: "recognized", format: "tar" };
+      const reason = tarHeaderRefusal(prefix);
+      return reason === undefined
+        ? undefined
+        : { state: "refused", format: "tar", reason };
+    },
+    when("dds", hasDdsHeader),
+    when("glb", hasGlbHeader),
+    when("ktx", hasKtx1Identifier),
+    when("ktx2", hasKtx2Identifier),
+    when("uimage", hasUImageMagic),
+    when("android-boot-image", hasAndroidBootImageMagic),
+    ({ prefix }) => {
+      const ota = recognizeAndroidOtaPayload(prefix);
+      if (ota === undefined) return undefined;
+      return ota.state === "recognized"
+        ? { state: "recognized", format: "android-ota-payload" }
+        : {
+            state: "refused",
+            format: "android-ota-payload",
+            reason: ota.reason,
+          };
+    },
+    ({ prefix }) => {
+      const format = detectHexRecordEncoding(prefix);
+      return format === undefined ? undefined : { state: "recognized", format };
+    },
+    when("uf2", hasUf2Block),
+    ({ prefix, suffix, fileSize }) => {
+      if (!hasDfuSePrefix(prefix)) return undefined;
+      if (suffix === undefined)
+        return { state: "needs-input", format: "dfuse" };
+      return isDfuSeFile(prefix, suffix, fileSize)
+        ? { state: "recognized", format: "dfuse" }
+        : undefined;
+    },
+    // The descriptor set starts at 32 KiB, past most routes' prefixes; the
+    // system area before it may hold any boot code, so it claims nothing.
+    ({ prefix, fileSize, iso9660Descriptor }) => {
+      if (fileSize < ISO9660_RECOGNITION_BYTES) return undefined;
+      const end = ISO9660_RECOGNITION_BYTES;
+      const descriptor =
+        iso9660Descriptor ??
+        (prefix.length >= end
+          ? prefix.subarray(ISO9660_DESCRIPTOR_OFFSET, end)
+          : undefined);
+      if (descriptor === undefined)
+        return { state: "needs-input", format: "iso9660" };
+      return hasIso9660Signature(descriptor)
+        ? { state: "recognized", format: "iso9660" }
+        : undefined;
+    },
+    // A C3 or S3 flash dump begins with its bootloader image, so the flash
+    // layout is decided before the image header.
+    ({ espFlashLayout }) =>
+      espFlashLayout === undefined
+        ? { state: "needs-input", format: "esp-flash-image" }
+        : espFlashLayout
+          ? { state: "recognized", format: "esp-flash-image" }
+          : undefined,
+    ({ prefix, fileSize }) => {
+      const esp = recognizeEspImage(prefix, fileSize);
+      if (esp === undefined) return undefined;
+      return esp === "esp-image"
+        ? { state: "recognized", format: "esp-image" }
+        : { state: "refused", format: "esp-image", reason: ESP8266_REFUSAL };
+    },
+    when("fit", hasFitImagesNode),
+    when("ntfs-mft", hasMftFileRecordHeader),
+    when("sqlite", hasSqliteHeader),
+    when("windows-shortcut", hasWindowsShortcutHeader),
+    // Only a pinned CPython magic claims the format; a CR LF trailer alone
+    // is too weak a signature for arbitrary bytes.
+    when("python-pyc", (prefix) => {
+      const observed = observePythonBytecodePrefix(prefix);
+      return observed.state === "framed" && observed.identity !== null;
+    }),
+    // A FIT image is a devicetree too, so FIT claims it first. The header
+    // owner decides whether the remaining blob is one REA reads.
+    ({ prefix }) => {
+      if (!hasDevicetreeMagic(prefix)) return undefined;
+      try {
+        readDevicetreeHeader(prefix);
+      } catch (cause: unknown) {
+        if (!(cause instanceof BinaryFormatFailure)) throw cause;
+        return {
+          state: "refused",
+          format: "devicetree",
+          reason: cause.message,
+        };
+      }
+      return { state: "recognized", format: "devicetree" };
+    },
+    // Binary plists, including keyed archives, often use other extensions.
+    when("plist", hasBinaryPlistSignature),
+  ];
+
+/**
+ * The first recognizer at or after `from` whose format the bytes claim, or
+ * `undefined` when none does.
+ */
+export const recognizeArtifactFormat = (
+  input: ArtifactRecognitionInput,
+  from = 0,
+): ArtifactFormatRecognition | undefined => {
+  for (let index = from; index < ARTIFACT_FORMAT_RECOGNIZERS.length; index++) {
+    const recognition = ARTIFACT_FORMAT_RECOGNIZERS[index]!(input);
+    if (recognition !== undefined) return { ...recognition, index };
+  }
+  return undefined;
+};
+
+/**
+ * Whether a bounded prefix alone lets the table recognize a format. Claims
+ * that need more input or refuse do not count. The whole-file firmware probe
+ * asks this first, so inventory classification and binary target resolution
+ * both rank the table above it: an ISO 9660 image keeps its tree even when a
+ * sector-aligned file inside it is a complete UEFI firmware volume.
+ */
+export const recognizesArtifactPrefix = (
+  prefix: Buffer,
+  fileSize: number,
+): boolean => {
+  const input = { prefix, fileSize };
+  for (
+    let recognition = recognizeArtifactFormat(input);
+    recognition !== undefined;
+    recognition = recognizeArtifactFormat(input, recognition.index + 1)
+  )
+    if (recognition.state === "recognized") return true;
+  return false;
+};

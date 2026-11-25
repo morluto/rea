@@ -2,26 +2,24 @@ import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
-import { Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  ArtifactFileSource,
+} from "../resources/index.js";
+import { OwnedAsyncArtifactStreams } from "./OwnedAsyncArtifactStreams.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import type {
-  ArtifactFormatMetadata,
-  WxapkgMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { WxapkgMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   readWxapkgFileTable,
   readWxapkgHeader,
@@ -30,8 +28,6 @@ import {
 } from "./WxapkgStructures.js";
 
 const CHUNK_BYTES = 64 * 1024;
-/** Bound active member streams; each owns a file-range generator. */
-const MAX_MEMBER_STREAMS = 4;
 
 type WxapkgEntry = ArtifactEntry & {
   readonly declaredSize: number;
@@ -51,7 +47,11 @@ export class WxapkgArtifactReader implements ArtifactReader {
   readonly format = "wxapkg" as const;
   readonly #scope = new ArtifactResourceScope();
   #entries = new Map<string, WxapkgEntryState>();
-  readonly #streams = new Map<Readable, AbortController>();
+  readonly #streams = new OwnedAsyncArtifactStreams(
+    this.#scope,
+    "wxapkg",
+    CHUNK_BYTES,
+  );
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
   #header: WxapkgMetadata | undefined;
@@ -109,55 +109,33 @@ export class WxapkgArtifactReader implements ArtifactReader {
     }
     // A close while paused at yield must not turn a cleared map into completion.
     this.#assertOpen(signal);
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const state = this.#entries.get(entry.adapterKey);
-      if (state === undefined || !sameArtifactEntry(entry, state.entry))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "wxapkg entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        state?.entry,
+        "wxapkg entry does not match its owning inventory",
+      );
       // Every logical open spends the work budget, including empty members
       // whose streams perform only the carrier checks below.
       this.#reserveMemberRead();
       // Validate carrier freshness before handing out member bytes.
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
-      if (this.#streams.size >= MAX_MEMBER_STREAMS)
-        throw new ArtifactReaderFailure(
-          "limit",
-          "wxapkg reader already owns four active member streams",
-          { boundary: "capacity" },
-        );
-      const controller = new AbortController();
-      const output = ownAsyncArtifactStream(
-        this.#memberChunks(handle, state, controller.signal),
-        controller,
-        {
-          scope: this.#scope,
-          streams: this.#streams,
-          signal,
-          label: "wxapkg",
-          highWaterMark: CHUNK_BYTES,
-        },
+      return this.#streams.open(signal, (active) =>
+        this.#memberChunks(handle, state, active),
       );
-      return output;
     });
   }
 
   async close(): Promise<void> {
     this.#closing = true;
-    for (const [stream, controller] of this.#streams) {
-      const cause = new ArtifactReaderFailure(
-        "unavailable",
-        "wxapkg reader closed",
-      );
-      controller.abort(cause);
-      stream.destroy(cause);
-    }
+    this.#streams.close();
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
@@ -271,6 +249,7 @@ export class WxapkgArtifactReader implements ArtifactReader {
       this.#reserveMemberRead();
       const length = Math.min(CHUNK_BYTES, offset + size - position);
       const chunk = await readArtifactFileBytes(
+        "wxapkg",
         handle,
         position,
         length,
@@ -289,9 +268,13 @@ export class WxapkgArtifactReader implements ArtifactReader {
   #reserveMemberRead(): void {
     if (this.#remainingReadOperations <= 0)
       throw artifactFixedLimitFailure(
-        "wxapkg directory-and-chunk I/O work",
-        this.#admittedReadOperations,
-        "operations",
+        {
+          name: "The wxapkg directory-and-chunk I/O work allowance",
+          kind: "parser",
+          limit: this.#admittedReadOperations,
+          unit: "operations",
+        },
+        `The wxapkg members need more than ${String(this.#admittedReadOperations)} directory-and-chunk read operations.`,
       );
     this.#remainingReadOperations--;
   }

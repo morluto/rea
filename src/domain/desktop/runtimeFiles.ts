@@ -13,16 +13,16 @@ const LOCK_NAMES = new Set([
   "write.lock",
 ]);
 /** LibreOffice's lock beside a document it has open: `.~lock.<name>#`. */
-const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
+const DOCUMENT_LOCK = /^\.~lock\..+#$/su;
 /**
  * A lock named for the file beside it: GnuCash's `<file>.LCK`, Grisbi's
  * `.<file>.lock`, and VYM's `<file>.<ext>.lock`. A project's `Gemfile.lock`
  * or `Cargo.lock` does not match.
  */
 const SIBLING_LOCKS = [
-  /^(.+)\.lck$/iu,
-  /^\.(.+)\.(?:lock|lck)$/iu,
-  /^([^.].*\.[^.]+)\.lock$/iu,
+  /^(.+)\.lck$/isu,
+  /^\.(.+)\.(?:lock|lck)$/isu,
+  /^([^.].*\.[^.]+)\.lock$/isu,
 ];
 
 /** Every file a sibling lock's name could refer to. A hidden `.lck` matches more than one pattern, so the caller checks each against the files beside it. */

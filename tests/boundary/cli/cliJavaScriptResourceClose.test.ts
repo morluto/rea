@@ -2,9 +2,9 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { closeCliResources } from "../../../src/cli/cliResources.js";
 import {
-  closeCliJavaScriptResources,
   CliJavaScriptAnalysisHost,
   runCliJavaScriptApplicationAnalysis,
 } from "../../../src/cli/javascriptApplicationAnalysis.js";
@@ -14,7 +14,7 @@ const originalClose = ArtifactResourceScope.prototype.close;
 
 afterEach(async () => {
   ArtifactResourceScope.prototype.close = originalClose;
-  await closeCliJavaScriptResources();
+  await closeCliResources();
 });
 
 /** Create the process-owned scope without starting a worker. */
@@ -96,6 +96,7 @@ it("retains completed JavaScript Evidence when cancellation arrives during final
 });
 
 it("retries JavaScript worker shutdown when the first close fails", async () => {
+  await closeCliResources();
   let calls = 0;
   ArtifactResourceScope.prototype.close = function (
     this: ArtifactResourceScope,
@@ -106,17 +107,16 @@ it("retries JavaScript worker shutdown when the first close fails", async () => 
   };
 
   await openCliScope();
-  await expect(closeCliJavaScriptResources()).rejects.toThrow(
-    "worker still owned",
-  );
+  await expect(closeCliResources()).rejects.toThrow("worker still owned");
   expect(calls).toBe(1);
-  await closeCliJavaScriptResources();
+  await closeCliResources();
   expect(calls).toBe(2);
-  await closeCliJavaScriptResources();
+  await closeCliResources();
   expect(calls).toBe(2);
 });
 
 it("shares one in-flight JavaScript worker shutdown between callers", async () => {
+  await closeCliResources();
   let calls = 0;
   let release = (): void => {};
   const gate = new Promise<void>((resolve) => {
@@ -131,8 +131,8 @@ it("shares one in-flight JavaScript worker shutdown between callers", async () =
 
   try {
     await openCliScope();
-    const first = closeCliJavaScriptResources();
-    const second = closeCliJavaScriptResources();
+    const first = closeCliResources();
+    const second = closeCliResources();
     let secondSettled = false;
     void second.then(() => {
       secondSettled = true;

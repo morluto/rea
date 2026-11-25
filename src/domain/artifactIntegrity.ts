@@ -32,10 +32,19 @@ export const artifactDfuCrc32PairSchema = z.object({
   declared_crc32: crc32,
   observed_crc32: crc32,
 });
+/**
+ * A container's standard IEEE CRC-32 checksum over its payload bytes, such as
+ * a legacy U-Boot uImage data CRC.
+ */
+export const artifactCrc32PairSchema = z.object({
+  algorithm: z.literal("crc32"),
+  declared_crc32: crc32,
+  observed_crc32: crc32,
+});
 /** A checksum a container declares over its own bytes, with the observed value. */
-export type ArtifactContainerIntegrityPair = z.infer<
-  typeof artifactDfuCrc32PairSchema
->;
+export type ArtifactContainerIntegrityPair =
+  | z.infer<typeof artifactDfuCrc32PairSchema>
+  | z.infer<typeof artifactCrc32PairSchema>;
 export type ArtifactIntegrityPair =
   | z.infer<typeof artifactSha256PairSchema>
   | z.infer<typeof artifactMd5PairSchema>
@@ -86,7 +95,7 @@ export type ArtifactIntegrityDetails = {
       readonly calculatedMd5: string | null;
     }
   | {
-      readonly algorithm: "dfu-crc32";
+      readonly algorithm: "dfu-crc32" | "crc32";
       readonly declaredCrc32: string;
       readonly calculatedCrc32: string | null;
     }
