@@ -1,4 +1,6 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { spawnOwnedProviderProcess, ProviderProcessSupervisor, type ProviderProcessHandle } from "../process/ProviderProcess.js";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 
@@ -62,7 +64,12 @@ export interface LeandecMcpClientOptions {
  * touches Ghidra or the cache directly.
  */
 export class LeandecMcpClient {
-  readonly #child: ChildProcessWithoutNullStreams;
+  #child: ProviderProcessHandle | undefined;
+  #supervisor: ProviderProcessSupervisor | undefined;
+  #launch: Promise<void> | undefined;
+  readonly #owner = new AbortController();
+  #fatal: LeandecRpcError | undefined;
+  #closing: Promise<void> | undefined;
   readonly #pending = new Map<number, PendingCall>();
   readonly #options: LeandecMcpClientOptions;
   #nextId = 1;
@@ -77,32 +84,51 @@ export class LeandecMcpClient {
 
   constructor(options: LeandecMcpClientOptions) {
     this.#options = options;
-    this.#child = spawn(options.python, [options.server], {
-      cwd: options.cwd,
-      env: { ...options.environment } as NodeJS.ProcessEnv,
-      stdio: ["pipe", "pipe", "pipe"],
+  }
+
+  async #start(): Promise<void> {
+    const launch = await spawnOwnedProviderProcess({
+      command: this.#options.python,
+      arguments: [this.#options.server],
+      runId: randomUUID(),
+      expectedCommand: null,
+      cwd: this.#options.cwd,
+      env: { ...this.#options.environment },
+      stdin: "pipe",
+      sweepTokenOwnedProcesses: true,
+      signal: this.#owner.signal,
     });
-    this.#child.stdout.setEncoding("utf8");
-    this.#child.stderr.setEncoding("utf8");
-    this.#child.stdout.on("data", (chunk: string) => this.#onStdout(chunk));
-    this.#child.stderr.on("data", (chunk: string) => {
+    this.#child = launch.process;
+    this.#supervisor = new ProviderProcessSupervisor(
+      { ...launch, ownsProcessLifetime: true },
+      { captureStdout: false, maxDiagnosticBytes: STDERR_LIMIT,
+        onDiagnostic: event => {
+          if (event.type === "error") this.#transportFailure("spawn", event.message);
+        } },
+    );
+    const child = launch.process;
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => this.#onStdout(chunk));
+    child.stdout?.on("error", (cause: Error) => this.#transportFailure("frame", cause.message));
+    child.stdin?.on("error", (cause: Error) => this.#transportFailure("rpc", cause.message));
+    child.stderr?.on("data", (chunk: string) => {
       this.#stderr = (this.#stderr + chunk).slice(-STDERR_LIMIT);
     });
-    this.#child.on("error", (cause: Error) => {
-      this.#failAll(new LeandecRpcError("spawn", cause.message, this.#stderr));
-    });
-    this.#child.on("exit", (code, signal) => {
+    child.on("exit", (code: number | null, signal: string | null) => {
       this.#exit = { code, signal };
-      const detail =
-        signal === null ? `exit ${String(code)}` : `signal ${signal}`;
-      this.#failAll(
-        new LeandecRpcError(
-          "exit",
-          `Leandec MCP server stopped (${detail})`,
-          this.#stderr,
-        ),
-      );
+      this.#transportFailure("exit", `Leandec MCP server stopped (${signal ?? String(code)})`);
     });
+    if (child.stdin == null || child.stdout == null)
+      this.#transportFailure("spawn", "Leandec MCP protocol streams are unavailable");
+    if (this.#supervisor.observedExit() !== undefined)
+      this.#transportFailure("exit", "Leandec MCP server stopped during startup");
+    if (this.#fatal !== undefined) throw this.#fatal;
+  }
+
+  #transportFailure(reason: "exit" | "frame" | "rpc" | "spawn", message: string): void {
+    this.#fatal ??= new LeandecRpcError(reason, message, this.#stderr);
+    this.#failAll(this.#fatal);
   }
 
   serverVersion(): string | undefined {
@@ -110,15 +136,18 @@ export class LeandecMcpClient {
   }
 
   /** Perform the MCP handshake once; repeated callers share the same attempt. */
-  initialize(signal?: AbortSignal): Promise<void> {
-    this.#handshake ??= this.#handshakeOnce(signal).catch((cause: unknown) => {
-      this.#handshake = undefined;
-      throw cause;
-    });
-    return this.#handshake;
+  async initialize(signal?: AbortSignal): Promise<void> {
+    if (this.#closed) throw new LeandecRpcError("exit", "Leandec MCP session closed", this.#stderr);
+    if (signal?.aborted) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
+    this.#handshake ??= this.#handshakeOnce();
+    const result = await waitForAbortable(this.#handshake, signal);
+    if (result === ABORTED) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
   }
 
-  async #handshakeOnce(signal?: AbortSignal): Promise<void> {
+  async #handshakeOnce(): Promise<void> {
+    this.#launch ??= this.#start();
+    await this.#launch;
+    const signal = this.#owner.signal;
     const result = await this.#request(
       "initialize",
       {
@@ -135,6 +164,7 @@ export class LeandecMcpClient {
     if (typeof serverInfo?.version === "string")
       this.#serverVersion = serverInfo.version;
     this.#write({ jsonrpc: "2.0", method: "notifications/initialized" });
+    if (this.#fatal !== undefined) throw this.#fatal;
   }
 
   /** Call one tool and return its parsed JSON payload. */
@@ -155,11 +185,10 @@ export class LeandecMcpClient {
         timeoutMs: options.timeoutMs ?? this.#options.defaultTimeoutMs,
       },
     );
-    const content = Array.isArray(asRecord(result)?.content)
-      ? (asRecord(result)?.content as JsonValue[])
-      : [];
-    const textValue = asRecord(content[0])?.text;
-    const text = typeof textValue === "string" ? textValue : "";
+    const content = asRecord(result)?.content;
+    if (!Array.isArray(content) || typeof asRecord(content[0])?.text !== "string")
+      throw new LeandecRpcError("frame", `Malformed MCP reply for ${tool}`, this.#stderr);
+    const text = asRecord(content[0])?.text as string;
     if (asRecord(result)?.isError === true)
       throw new LeandecToolError(tool, text || `${tool} failed`);
     if (text.length === 0) return null;
@@ -172,25 +201,29 @@ export class LeandecMcpClient {
   }
 
   /** Stop the server, rejecting anything still in flight. */
-  async close(): Promise<void> {
-    if (this.#closed) return;
+  close(): Promise<void> {
     this.#closed = true;
-    this.#failAll(
-      new LeandecRpcError("exit", "Leandec MCP session closed", this.#stderr),
-    );
-    if (this.#exit !== undefined) return;
-    this.#child.kill("SIGTERM");
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        this.#child.kill("SIGKILL");
-        resolve();
-      }, 2000);
-      timer.unref();
-      this.#child.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
+    this.#owner.abort();
+    this.#failAll(new LeandecRpcError("exit", "Leandec MCP session closed", this.#stderr));
+    this.#closing ??= this.#closeOwned().catch((cause: unknown) => {
+      this.#closing = undefined;
+      throw cause;
     });
+    return this.#closing;
+  }
+
+  async #closeOwned(): Promise<void> {
+    await Promise.allSettled([this.#launch, this.#handshake]);
+    if (this.#supervisor === undefined) return;
+    const stopped = await this.#supervisor.stop();
+    if (stopped.status === "incomplete")
+      throw new LeandecRpcError("exit", stopped.reason, this.#stderr);
+  }
+
+  #cancel(id: number, method: string, reason: string): void {
+    if (method === "tools/call" && this.#pending.has(id))
+      this.#write({ jsonrpc: "2.0", method: "notifications/cancelled",
+        params: { requestId: id, reason } });
   }
 
   #request(
@@ -198,7 +231,8 @@ export class LeandecMcpClient {
     params: JsonValue,
     options: { readonly signal?: AbortSignal; readonly timeoutMs: number },
   ): Promise<JsonValue> {
-    if (this.#exit !== undefined)
+    if (this.#fatal !== undefined) return Promise.reject(this.#fatal);
+    if (this.#closed || this.#exit !== undefined)
       return Promise.reject(
         new LeandecRpcError(
           "exit",
@@ -213,6 +247,7 @@ export class LeandecMcpClient {
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
       const onAbort = (): void => {
+        this.#cancel(id, method, "Caller cancelled");
         this.#settle(id, (pending) =>
           pending.reject(
             new LeandecCallCancelled("aborted", "Caller cancelled the request"),
@@ -221,6 +256,7 @@ export class LeandecMcpClient {
       };
       options.signal?.addEventListener("abort", onAbort, { once: true });
       const timer = setTimeout(() => {
+        this.#cancel(id, method, "Deadline exceeded");
         this.#settle(id, (pending) =>
           pending.reject(
             new LeandecCallCancelled(
@@ -253,8 +289,19 @@ export class LeandecMcpClient {
   }
 
   #write(message: JsonValue): void {
-    if (this.#exit !== undefined) return;
-    this.#child.stdin.write(JSON.stringify(message) + "\n");
+    if (this.#fatal !== undefined || this.#closed) return;
+    const stdin = this.#child?.stdin;
+    if (stdin == null || !stdin.writable) {
+      this.#transportFailure("rpc", "Leandec MCP stdin is not writable");
+      return;
+    }
+    try {
+      stdin.write(JSON.stringify(message) + "\n", (cause?: Error | null) => {
+        if (cause != null) this.#transportFailure("rpc", cause.message);
+      });
+    } catch (cause: unknown) {
+      this.#transportFailure("rpc", cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   #onStdout(chunk: string): void {
@@ -312,7 +359,11 @@ export class LeandecMcpClient {
       );
       return;
     }
-    this.#settle(id, (pending) => pending.resolve(record?.result as JsonValue));
+    if (record?.jsonrpc !== "2.0" || record.result === undefined) {
+      this.#transportFailure("frame", "Malformed JSON-RPC response");
+      return;
+    }
+    this.#settle(id, (pending) => pending.resolve(record.result as JsonValue));
   }
 
   #failAll(cause: Error): void {

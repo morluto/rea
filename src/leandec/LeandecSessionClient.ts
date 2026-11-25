@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { open } from "node:fs/promises";
+import { join } from "node:path";
+import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
@@ -114,7 +119,10 @@ const waitShared = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise
 
 const filterEntries = async <T>(entries: readonly T[], value: (entry: T) => string,
   query: AnalysisSearchQuery, operation: string, signal?: AbortSignal): Promise<readonly T[]> => {
-  if (query.mode !== "regex") return entries.filter(entry => analysisSearchPredicate(query)(value(entry)));
+  if (query.mode !== "regex") {
+    const matches = analysisSearchPredicate(query);
+    return entries.filter(entry => matches(value(entry)));
+  }
   const matched = await matchRegexValues({ operation, pattern: query.pattern,
     caseSensitive: query.case_sensitive ?? false, values: entries.map(value), signal });
   if (!matched.ok) throw matched.error;
@@ -145,6 +153,7 @@ export class LeandecSessionClient implements AnalysisClient {
     | undefined;
   #closed = false;
   readonly #owner = new AbortController();
+  #runtime: PrivateRuntimeRoot | undefined;
 
   constructor(
     target: BinaryTarget,
@@ -219,6 +228,8 @@ export class LeandecSessionClient implements AnalysisClient {
     try {
       await this.#client.close();
       await Promise.allSettled([this.#session, this.#inventory, this.#strings]);
+      await this.#runtime?.close();
+      this.#runtime = undefined;
       return ok(null);
     } catch (cause: unknown) {
       return err(this.#project(cause, "close", {}));
@@ -638,65 +649,76 @@ export class LeandecSessionClient implements AnalysisClient {
 
   async #open(options: ExecutionOptions): Promise<string> {
     await this.#client.initialize(options.signal);
-    try {
-      return await this.#overviewKey(options);
-    } catch (cause: unknown) {
-      if (
-        !(cause instanceof LeandecToolError) ||
-        !/unknown target/iu.test(cause.message)
-      )
-        throw cause;
-      // A different path with identical bytes is the same analysis: reuse the
-      // stored key instead of re-importing into an existing Ghidra project.
-      const byDigest = await this.#findByDigest(options);
-      if (byDigest !== undefined) return byDigest;
-      if (!this.#settings.autoAnalyze)
-        throw this.#unavailable(
-          "open_binary",
-          `${cause.message}. Run "python3 ${this.#settings.server} import ${this.#target.path}" once, or set LEANDEC_AUTO_ANALYZE=1.`,
-        );
-      await this.#importTarget(options);
-      return this.#overviewKey(options);
-    }
+    // Verify the complete admitted file and hash the selected slice independently.
+    // A private copy is retained until all owned work and process cleanup finish.
+    const input = await this.#verifiedInput(options);
+    const cached = await this.#findByDigest(input.digest, options);
+    if (cached !== undefined) return cached;
+    if (!this.#settings.autoAnalyze)
+      throw this.#unavailable("open_binary", "No matching Leandec target is cached. Import the verified target or enable LEANDEC_AUTO_ANALYZE.");
+    await this.#importTarget(input.path, options);
+    const imported = await this.#findByDigest(input.digest, options);
+    if (imported === undefined)
+      throw new AnalysisOutputError("open_binary", "Leandec import did not produce the verified slice");
+    return imported;
   }
 
-  async #findByDigest(options: ExecutionOptions): Promise<string | undefined> {
+  async #verifiedInput(options: ExecutionOptions): Promise<{ path: string; digest: string }> {
+    this.#runtime ??= await PrivateRuntimeRoot.create({ prefix: "rea-leandec-" });
+    const path = join(this.#runtime.path, "input");
+    const file = await open(path, "w", 0o600);
+    const source = createHash("sha256");
+    const selected = createHash("sha256");
+    const slice = this.#target.format === "mach-o-universal" ? this.#target.universalSlice : undefined;
+    let offset = 0;
+    let copied = 0;
+    try {
+      for await (const chunk of createReadStream(this.#target.path, { highWaterMark: 64 * 1024, signal: options.signal })) {
+        options.signal?.throwIfAborted();
+        const bytes = Buffer.from(chunk);
+        source.update(bytes);
+        const start = slice === undefined ? offset : Math.max(offset, slice.offset);
+        const end = slice === undefined ? offset + bytes.length : Math.min(offset + bytes.length, slice.offset + slice.size);
+        if (end > start) {
+          const admitted = bytes.subarray(start - offset, end - offset);
+          selected.update(admitted);
+          let written = 0;
+          while (written < admitted.length) {
+            const result = await file.write(admitted, written, admitted.length - written);
+            if (result.bytesWritten === 0) throw new Error("Leandec private input write stalled");
+            written += result.bytesWritten;
+          }
+          copied += admitted.length;
+        }
+        offset += bytes.length;
+      }
+    } finally {
+      await file.close();
+    }
+    if (source.digest("hex") !== this.#target.sha256 || copied === 0 || (slice !== undefined && copied !== slice.size))
+      throw new AnalysisInputError("open_binary", { userMessage: "Target bytes changed or the selected slice is incomplete; reopen the target." });
+    return { path, digest: selected.digest("hex") };
+  }
+
+  async #findByDigest(digest: string, options: ExecutionOptions): Promise<string | undefined> {
     const response = await this.#call("targets", {}, options);
     const targets = typeof response === "string" && response.startsWith("no targets yet:") ? [] : list(response);
-    const match = targets
-      .map((item) => record(item))
-      .find((item) => text(item.slice_sha256) === this.#target.sha256);
+    const match = targets.map(record).find(item => item.slice_sha256 === digest && item.arch === this.#target.architecture);
     if (match === undefined) return undefined;
     const key = requiredText(match.key);
     const overview = record(await this.#call("overview", { target: key }, options));
+    if (overview.key !== key || overview.slice_sha256 !== digest || overview.arch !== this.#target.architecture)
+      throw new AnalysisOutputError("open_binary", "Leandec cache identity does not match the selected bytes and architecture");
     requiredCount(overview.functions);
     return key;
   }
 
-  async #overviewKey(options: ExecutionOptions): Promise<string> {
-    const overview = record(
-      await this.#call("overview", { target: this.#target.path }, options),
-    );
-    const key = text(overview.key);
-    if (key === undefined)
-      throw this.#unavailable(
-        "open_binary",
-        "Leandec did not report a target key for this path.",
-      );
-    requiredCount(overview.functions);
-    return key;
-  }
-
-
-  async #importTarget(options: ExecutionOptions): Promise<void> {
+  async #importTarget(path: string, options: ExecutionOptions): Promise<void> {
     const job = record(
       await this.#call(
         "analyze",
         {
-          path: this.#target.path,
-          ...(this.#target.format === "mach-o-universal"
-            ? { arch: this.#target.architecture }
-            : {}),
+          path,
         },
         options,
         this.#settings.importTimeoutMs,

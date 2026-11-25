@@ -13,7 +13,6 @@ No Hopper installation is involved. Leandec is not bundled, downloaded or modifi
 export LEANDEC_MCP_SERVER=/absolute/path/to/leandec/mcp_server.py
 export REA_ANALYSIS_PROVIDER=leandec          # select it explicitly
 export LEANDEC_PYTHON=python3                 # optional, default python3
-rea doctor --provider leandec
 ```
 
 Select it with `--provider leandec`, MCP's `open_binary.provider_id: "leandec"`, or
@@ -33,6 +32,8 @@ request.
 
 Leandec owns the Ghidra heap and worker limits (`LEANDEC_MAXMEM`, `LEANDEC_CPUS`) because it
 starts the analysis process itself.
+
+The provider is optional. The dedicated `rea doctor --provider leandec` selector is not yet implemented; use a real `open_binary` request followed by `list_procedures` to check the configured server.
 
 ## What Leandec answers
 
@@ -55,7 +56,7 @@ provider, or Leandec's MCP server directly, for those operations.
 ## Cache reuse
 
 - Answers are keyed by the target's SHA-256 and Leandec's own analysis profile; REA's
-  profile parameters record the target digest, format, architecture and inventory cap.
+  profile parameters record the target digest, format, architecture and inventory/string caps.
 - A target already present in Leandec's registry is read from SQLite with no Ghidra start.
   `decompile`, `disassemble`, `cfg` and `xrefs` only start Ghidra for functions that are not
   cached yet.
