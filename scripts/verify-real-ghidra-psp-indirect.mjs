@@ -155,7 +155,11 @@ try {
       { timeout: 240000 },
     );
     const value = requireMcpOperationResult(reply, name);
-    const evidence = ["inspect_native_api", "analyze_function"].includes(name)
+    const evidence = [
+      "inspect_native_api",
+      "analyze_function",
+      "list_procedures",
+    ].includes(name)
       ? parseEvidence(reply.structuredContent)
       : undefined;
     return { value, evidence };
@@ -164,8 +168,12 @@ try {
   await call("open_binary", { path: targetPath, provider_id: "ghidra" });
   const image = (await call("inspect_native_load_image")).value;
   assertPspLoadedImage(image.observations, targetSha);
-  const procedures = (await call("list_procedures", { detail: "complete" }))
-    .value;
+  const documents = (await call("list_documents")).value;
+  assert.equal(documents.length, 1);
+  const [document] = documents;
+  assert.ok(typeof document === "string" && document.length > 0);
+  const inventoryArguments = { document, detail: "complete" };
+  const procedures = (await call("list_procedures", inventoryArguments)).value;
   const observed = [];
   let computedListingBranches = 0;
   let preservedComputedBranches = 0;
@@ -313,7 +321,8 @@ try {
   const snapshot = parseAnalysisSnapshot(
     JSON.parse(await readFile(snapshotPath, "utf8")),
   );
-  assert.equal(snapshot.target.kind, "file");
+  assert.equal(snapshot.target.kind, "executable");
+  assert.equal(snapshot.target.identity.kind, "file");
   assert.equal(snapshot.target.identity.sha256, targetSha);
   assert.equal(
     snapshot.binding.analysis_profile.parameters.language_id,
@@ -331,18 +340,21 @@ try {
     provider_id: "ghidra",
     snapshot_path: snapshotPath,
   });
-  const replayed = await call("inspect_native_api", {
-    procedure: symbols.rea_psp_computed_dispatch,
-  });
+  const replayed = await call("list_procedures", inventoryArguments);
   assert.ok(
     replayed.evidence?.limitations.some((limitation) =>
       limitation.includes("Loaded from a local REA analysis snapshot"),
     ),
-    "Expected native API Evidence replayed from the saved snapshot",
+    "Expected procedure inventory Evidence replayed from the saved snapshot",
   );
+  assert.deepEqual(replayed.value, procedures);
+
+  const freshInspection = await call("inspect_native_api", {
+    procedure: symbols.rea_psp_computed_dispatch,
+  });
   assert.ok(originalDispatchInspection, "Original API result missing");
-  assert.deepEqual(replayed.value, originalDispatchInspection);
-  assert.ok(Array.isArray(replayed.value.residual_unknowns));
+  assert.deepEqual(freshInspection.value, originalDispatchInspection);
+  assert.ok(Array.isArray(freshInspection.value.residual_unknowns));
   await call("close_binary");
   assert.equal(digest(await readFile(targetPath)), targetSha);
 
