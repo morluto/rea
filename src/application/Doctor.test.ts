@@ -5,21 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import { defaultHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
-import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
+import {
+  createDoctorHostFixture as host,
+  scopeChecksOf,
+  ubuntu2404Distribution,
+} from "./Doctor.fixture.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
 import { MAC_HOPPER_SYSTEM_LAUNCHER } from "../hopperPaths/MacHopperPaths.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-
-/** The explicit scope's checks; an audit-wide report has none. */
-const scopeChecksOf = <Check>(report: {
-  readonly scope_checks?: readonly Check[];
-}): readonly Check[] => {
-  if (report.scope_checks === undefined)
-    throw new Error("Expected an explicit-scope doctor report");
-  return report.scope_checks;
-};
 
 const configurationHost = (
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -1120,13 +1115,7 @@ describe("doctor Linux and Hopper discovery", () => {
       host({
         platform: "linux",
         macosVersion: () => Promise.resolve(undefined),
-        linuxDistribution: () =>
-          Promise.resolve({
-            id: "ubuntu",
-            versionId: "24.04",
-            packageFamily: "deb",
-            hopperSetupSupported: true,
-          }),
+        linuxDistribution: ubuntu2404Distribution,
         configuredHopperPath: path,
         executable: (candidate) => Promise.resolve(candidate === path),
       }),
@@ -1193,13 +1182,7 @@ describe("doctor Linux and Hopper discovery", () => {
       host({
         platform: "linux",
         macosVersion: () => Promise.resolve(undefined),
-        linuxDistribution: () =>
-          Promise.resolve({
-            id: "ubuntu",
-            versionId: "24.04",
-            packageFamily: "deb",
-            hopperSetupSupported: true,
-          }),
+        linuxDistribution: ubuntu2404Distribution,
         linuxDemoRuntimeCheck: () =>
           Promise.resolve({
             name: "hopper-demo-runtime",
@@ -1225,13 +1208,7 @@ describe("doctor Linux and Hopper discovery", () => {
       host({
         platform: "linux",
         configuredHopperPath: path,
-        linuxDistribution: () =>
-          Promise.resolve({
-            id: "ubuntu",
-            versionId: "24.04",
-            packageFamily: "deb",
-            hopperSetupSupported: true,
-          }),
+        linuxDistribution: ubuntu2404Distribution,
         executable: (candidate) => Promise.resolve(candidate === path),
         inspectLinuxHopper: () =>
           Promise.resolve(
@@ -1377,13 +1354,7 @@ describe("doctor standard Linux Hopper paths", () => {
         host({
           platform: "linux",
           macosVersion: () => Promise.resolve(undefined),
-          linuxDistribution: () =>
-            Promise.resolve({
-              id: "ubuntu",
-              versionId: "24.04",
-              packageFamily: "deb",
-              hopperSetupSupported: true,
-            }),
+          linuxDistribution: ubuntu2404Distribution,
           executable: (candidate) => Promise.resolve(candidate === path),
         }),
       );

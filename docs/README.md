@@ -175,6 +175,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Contracts and evidence
 
 - [MCP runtime contracts](reference/mcp-contracts.md)
+- [Target failures](reference/target-failures.md)
 - [Directory identity](reference/directory-identity.md)
 - [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md)
 - [Reconstruction coverage](reconstruction-coverage.md)

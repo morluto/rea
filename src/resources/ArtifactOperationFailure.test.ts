@@ -98,7 +98,10 @@ it.each([
     cause: malformedInput("pe", "bad field"),
     genericCode: "unsupported_target",
   },
-  { cause: truncatedInput("pe", "short field"), genericCode: "truncated" },
+  {
+    cause: truncatedInput("pe", "short field"),
+    genericCode: "unsupported_target",
+  },
   {
     cause: unsupportedInput("pe", "unsupported image"),
     genericCode: "unsupported_target",
@@ -174,7 +177,7 @@ it.each([
         reason: cause.message,
         ...(cause.kind === "unsupported"
           ? {}
-          : { format_failure: cause.kind, format: "pe" }),
+          : { failure_kind: cause.kind, format: "pe" }),
         partial_observation: observation,
       },
     });
@@ -188,7 +191,7 @@ it.each([
         detail: cause.message,
         ...(cause.kind === "unsupported"
           ? {}
-          : { format_failure: cause.kind, format: "pe" }),
+          : { failure_kind: cause.kind, format: "pe" }),
       },
     });
   },
@@ -266,7 +269,7 @@ it("preserves adjustable reader admission facts and gives cleanup priority", () 
     translateArtifactFailure("inspect_artifact", failure),
   );
   expect(adjustable).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: true,
     details: {
       reader_limit: {
@@ -310,7 +313,7 @@ it.each(["capacity", "file-size", "memory"] as const)(
       translateArtifactFailure("inventory_artifact", failure),
     );
     expect(result).toMatchObject({
-      code: "truncated",
+      code: "partial",
       retryable: false,
       message: failure.message,
       details: { boundary, detail: failure.message },
@@ -373,7 +376,7 @@ it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public p
   expect(
     projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
   ).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: false,
     message: failure.message,
     details: { refusal },
