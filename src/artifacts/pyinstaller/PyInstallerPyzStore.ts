@@ -18,6 +18,7 @@ import {
   readArtifactFileChunks,
   abortIfNeeded,
   artifactFileAdmissionFailure,
+  malformedArtifact,
 } from "../../resources/index.js";
 import {
   pyInstallerMemberStream,
@@ -120,8 +121,8 @@ export class PyInstallerPyzStore {
   ): Promise<{ handle: FileHandle; start: number }> {
     abortIfNeeded(signal);
     if (entry.compressedSize === 0)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "pyinstaller",
         "Compressed PYZ image has no zlib bytes",
       );
     this.#root ??= await mkdtemp(join(tmpdir(), "rea-pyz-"));

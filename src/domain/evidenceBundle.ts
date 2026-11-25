@@ -10,7 +10,7 @@ import { err, ok, type Result } from "./result.js";
 import { describeValidationFailure } from "./validationFailure.js";
 import { equalJsonText } from "./jsonSerialization.js";
 import { z } from "zod";
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "./canonicalDigest.js";
 
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
@@ -734,7 +734,7 @@ const rejectDependencyCycles = (
 export const serializeValidatedEvidenceBundle = (
   bundle: EvidenceBundle,
 ): string => {
-  const serialized = canonicalize(bundle);
+  const serialized = serializeCanonicalValue(bundle);
   if (serialized === undefined)
     throw new TypeError("Evidence bundle canonicalization failed");
   return serialized;

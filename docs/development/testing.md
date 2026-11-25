@@ -166,7 +166,8 @@ no compiled-runtime prerequisite, not a fixed time budget.
 duplication statistics. Complete reports remain in `.cache/static-checks/`.
 The fast gate uploads them as `static-check-reports`. Full qualification
 uploads duplication diagnostics from the deep job as
-`static-deep-check-reports`, including after that gate fails.
+`static-deep-check-reports`, including after that gate fails. On reruns, both
+artifact names end in `-attempt-N`, where `N` is the workflow run attempt.
 Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
 without the artifacts lock, so it can record hashes while `check:pr` or
 `check:test` already holds that lock. The CI jobs still run the locked
@@ -1300,8 +1301,8 @@ publish timing history. Fast runs publish `test-timings-fast` and full runs
 publish `test-timings-full`. The build job accepts only verified artifacts from
 successful default-branch CI runs that match its tier. It lists one page of
 matching artifacts and checks up to five producer runs individually. When
-eligible artifacts remain, it can check them against one page of successful CI
-runs. A tier with no qualifying artifact leaves history unset. The build
+eligible artifacts remain, it can check them against up to three pages of
+successful CI runs within the shared 20-second lookup budget. A tier with no qualifying artifact leaves history unset. The build
 downloads the small, checkout-relative timing file. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are

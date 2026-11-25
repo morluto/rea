@@ -22,14 +22,22 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
-  type MalformedTargetFailure,
 } from "./analysisErrorCore.js";
-import { ArtifactOperationError } from "./artifactOperationError.js";
+import {
+  TARGET_FAILURE_PROJECTIONS,
+  targetFailureDetails,
+  targetFailureRetry,
+  type TargetFailureRetry,
+} from "./targetFailure.js";
+import {
+  ArtifactOperationError,
+  integrityCheckMeansChanged,
+} from "./artifactOperationError.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -560,7 +568,13 @@ const projectError = (
     category: analysisErrorCategory(error),
     message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
-      (RETRYABLE_CODES.has(code) &&
+      // `retryable` keeps its contract meaning: the unchanged request may
+      // succeed. For a target failure that is exactly a `backoff` hint.
+      (error instanceof AnalysisTargetFailureError &&
+        code !== "cleanup_incomplete" &&
+        targetFailureRetry(error.failure) === "backoff") ||
+      (!(error instanceof AnalysisTargetFailureError) &&
+        RETRYABLE_CODES.has(code) &&
         error.ownPresentation()?.retryable !== false) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
@@ -579,6 +593,13 @@ const projectError = (
           ? `${remediation}${retentionGuidance}${publicationRemediation}`
           : `${remediation}${retentionGuidance} ${cleanupRetryRemediation(cleanupRetry)}${publicationRemediation}`,
     },
+    ...(error instanceof AnalysisTargetFailureError &&
+    code !== "cleanup_incomplete"
+      ? { retry: targetFailureRetry(error.failure) }
+      : {}),
+    ...(error instanceof ArtifactOperationError && code === "artifact_changed"
+      ? { retry: TARGET_FAILURE_PROJECTIONS.changed.retry }
+      : {}),
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
   };
@@ -617,25 +638,6 @@ const errorDetails = (
   providerErrorDetails(error) ??
   lifecycleErrorDetails(error);
 
-/** The public facts of a format owner's malformed or truncated parse. */
-const parseFailureDetails = (failure: MalformedTargetFailure) => {
-  const { kind, format, offset, field } = failure;
-  const extent = kind === "truncated" ? failure.extent : undefined;
-  return {
-    format_failure: kind,
-    format,
-    ...(offset === undefined ? {} : { offset }),
-    ...(field === undefined ? {} : { field }),
-    // The reader's measured end of the input and the length it needed.
-    ...(extent === undefined
-      ? {}
-      : {
-          available_bytes: extent.availableBytes,
-          required_bytes: extent.requiredBytes,
-        }),
-  };
-};
-
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
@@ -645,12 +647,12 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
     };
-  if (error instanceof AnalysisMalformedTargetError)
+  if (error instanceof AnalysisTargetFailureError)
     return {
       operation: error.operation,
       path: error.path,
       reason: error.failure.detail,
-      ...parseFailureDetails(error.failure),
+      ...targetFailureDetails(error.failure),
     };
   if (error instanceof AnalysisResourceConstraintError)
     return {
@@ -751,6 +753,10 @@ const artifactStateErrorDetails = (
     return {
       operation: error.operation,
       reason: error.reason,
+      ...(error.reason === "integrity" &&
+      integrityCheckMeansChanged(error.integrityCheck)
+        ? { failure_kind: "changed" }
+        : {}),
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
@@ -759,7 +765,7 @@ const artifactStateErrorDetails = (
         : { integrity_check: error.integrityCheck }),
       ...(error.parseFailure === undefined
         ? {}
-        : parseFailureDetails(error.parseFailure)),
+        : targetFailureDetails(error.parseFailure)),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),
@@ -970,6 +976,7 @@ const lifecycleErrorDetails = (
       ...(error.constraint === undefined
         ? {}
         : { constraint: error.constraint }),
+      ...(error.field === undefined ? {} : { field: error.field }),
       ...(error.infoPlist === undefined ? {} : { info_plist: error.infoPlist }),
       ...(error.probedPaths === undefined
         ? {}
@@ -998,7 +1005,10 @@ export interface AnalysisErrorProjection extends Readonly<
     | "artifact_integrity_mismatch"
     | "artifact_operation_failed"
     | "evidence_integrity_mismatch"
-    | "truncated"
+    | "partial"
+    | "target_integrity_mismatch"
+    | "input_conflict"
+    | "host_io_failed"
     | "process_capture_failed"
     | "cleanup_incomplete"
     | "revision_conflict"
@@ -1010,7 +1020,7 @@ export interface AnalysisErrorProjection extends Readonly<
     | "unsupported_provider"
     | "unsupported_target"
     | "integrity_mismatch"
-    | "truncated"
+    | "partial"
     | "cancelled"
     | "timeout"
     | "resource_constraint"
@@ -1018,6 +1028,8 @@ export interface AnalysisErrorProjection extends Readonly<
     | "execution_failure";
   readonly message: string;
   readonly retryable: boolean;
+  /** A target failure's retry hint, derived from its kind. */
+  readonly retry?: TargetFailureRetry;
   readonly remediation: Readonly<{
     action: string;
   }>;

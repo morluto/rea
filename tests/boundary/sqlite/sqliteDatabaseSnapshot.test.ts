@@ -190,7 +190,7 @@ it("refuses an active journal even before SQLite writes its magic header", async
     expect(journal.subarray(8, 28).some((byte) => byte !== 0)).toBe(true);
     const original = await readFile(database.path);
     await expect(capture()).rejects.toMatchObject({
-      reason: "format",
+      reason: "unsupported",
       message: expect.stringContaining("recovery"),
     });
     expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
@@ -204,7 +204,7 @@ it("refuses an active journal even before SQLite writes its magic header", async
 it("refuses an incomplete zeroed journal header", async () => {
   const { database, capture } = await fixture();
   await writeFile(`${database.path}-journal`, Buffer.alloc(27));
-  await expect(capture()).rejects.toMatchObject({ reason: "format" });
+  await expect(capture()).rejects.toMatchObject({ reason: "unsupported" });
 });
 
 it.runIf(process.platform !== "win32")(

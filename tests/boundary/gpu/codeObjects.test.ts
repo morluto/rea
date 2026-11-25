@@ -1680,7 +1680,7 @@ it("rejects out-of-range bundle entries without guessing a payload", async () =>
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisMalformedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 
@@ -1955,7 +1955,7 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
     const result = await inspect(bytes, { analysis: "inventory" });
     if (result.ok) throw new Error("Expected malformed directory");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
     });
   }
   const framed = Buffer.alloc(32 + 65537 * 25);
@@ -2013,7 +2013,7 @@ it("checks Clang bundle ID bounds before the retained directory allowance", asyn
     const result = await inspect(bytes, { analysis: "inventory" });
     if (result.ok) throw new Error("Expected a malformed bundle directory");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
     });
   }
 });

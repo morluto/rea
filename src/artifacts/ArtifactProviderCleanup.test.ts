@@ -20,7 +20,7 @@ it("updates a bundle resource client's returned cleanup error after close retry"
           },
         },
       });
-      throw new ArtifactReaderFailure("format", "controlled decode refusal");
+      throw new ArtifactReaderFailure("malformed", "controlled decode refusal");
     });
   const client = new ArtifactProvider({}, "darwin").createBundleResourceClient({
     callerPath: "/fixture/Demo.app",

@@ -211,7 +211,7 @@ cliTest(
         details: {
           operation: "inspect_elf_notes",
           path,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "elf",
         },
       });

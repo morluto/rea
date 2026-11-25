@@ -46,6 +46,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE Authenticode certificate tables](pe-certificates.md)
 - [PE import and delay-load tables](pe-imports.md)
 - [PE TLS callbacks and load configuration](pe-load-config.md)
+- [PE x64 exception-directory function ranges](guides/native/pe-unwind-ranges.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
 - [Static CUDA and HIP code objects](gpu-code-objects.md)
@@ -131,6 +132,8 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
+- [ISO 9660 disc images](guides/firmware/iso9660-images.md)
+- [tar and gzip-compressed tar archives](tar-archives.md)
 - [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
 
 ## WebAssembly
@@ -172,6 +175,8 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Contracts and evidence
 
 - [MCP runtime contracts](reference/mcp-contracts.md)
+- [Target failures](reference/target-failures.md)
+- [Directory identity](reference/directory-identity.md)
 - [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md)
 - [Reconstruction coverage](reconstruction-coverage.md)
 

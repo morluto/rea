@@ -876,7 +876,7 @@ const parseElfNoteSteps = function* (
   const tables: ElfNotes["tables"] = [];
   let unreadCompressedNotes = false;
   const examined = { count: 0 };
-  const noteSections = [];
+  let hasNoteSections = false;
   const compressedNoteSpans: ElfNoteSpan[] = [];
   const fileEnd = BigInt(fileSize);
   for (const batch of elfHeaderTableBatches(sections)) {
@@ -887,7 +887,6 @@ const parseElfNoteSteps = function* (
       batch.size,
     );
     for (let item = 0; item < batch.count; item += 1) {
-      const index = batch.index + item;
       const at = item * shentsize;
       const declaration = readElfSectionHeader(
         sectionHeadersBytes.subarray(at, at + shentsize),
@@ -898,15 +897,8 @@ const parseElfNoteSteps = function* (
       const section = declaration.value;
       const storage = elfNoteSectionStorage(section);
       if (storage === "not-note") continue;
-      const { nameOffset, offset, size, alignment } = section;
-      noteSections.push({
-        index,
-        nameOffset,
-        offset,
-        size,
-        alignment,
-        storage,
-      });
+      hasNoteSections = true;
+      const { offset, size } = section;
       if (
         storage === "compressed" &&
         offset <= fileEnd &&
@@ -988,66 +980,92 @@ const parseElfNoteSteps = function* (
       }
     }
   }
-  for (const {
-    index,
-    nameOffset,
-    offset,
-    size,
-    alignment: declaredAlignment,
-    storage,
-  } of noteSections) {
-    if (
-      offset > BigInt(Number.MAX_SAFE_INTEGER) ||
-      size > BigInt(Number.MAX_SAFE_INTEGER)
-    )
-      return fail("ELF offset or size exceeds a safe integer.");
-    const fileOffset = Number(offset);
-    const tableSize = Number(size);
-    requireElfRange(fileSize, fileOffset, tableSize);
-    if (storage === "compressed") {
-      if (options.retainReadableNotes !== true)
-        throw new BinaryFormatFailure("unsupported", COMPRESSED_NOTE_MESSAGE);
-      unreadCompressedNotes = true;
-      continue;
+  // Compressed spans must be known before reading program notes. Revisit
+  // section headers in bounded batches instead of retaining a second set of
+  // facts for every note section until the program pass has finished.
+  if (hasNoteSections) {
+    for (const batch of elfHeaderTableBatches(sections)) {
+      yield { kind: "yield" };
+      const sectionHeadersBytes = yield* readElfStep(
+        fileSize,
+        batch.offset,
+        batch.size,
+      );
+      for (let item = 0; item < batch.count; item += 1) {
+        const index = batch.index + item;
+        const at = item * shentsize;
+        const declaration = readElfSectionHeader(
+          sectionHeadersBytes.subarray(at, at + shentsize),
+          header.elfClass,
+          little,
+        );
+        if (!declaration.ok) return fail(declaration.error.message);
+        const section = declaration.value;
+        const storage = elfNoteSectionStorage(section);
+        if (storage === "not-note") continue;
+        const {
+          nameOffset,
+          offset,
+          size,
+          alignment: declaredAlignment,
+        } = section;
+        if (
+          offset > BigInt(Number.MAX_SAFE_INTEGER) ||
+          size > BigInt(Number.MAX_SAFE_INTEGER)
+        )
+          return fail("ELF offset or size exceeds a safe integer.");
+        const fileOffset = Number(offset);
+        const tableSize = Number(size);
+        requireElfRange(fileSize, fileOffset, tableSize);
+        if (storage === "compressed") {
+          if (options.retainReadableNotes !== true)
+            throw new BinaryFormatFailure(
+              "unsupported",
+              COMPRESSED_NOTE_MESSAGE,
+            );
+          unreadCompressedNotes = true;
+          continue;
+        }
+        if (
+          compressedOverlap !== undefined &&
+          compressedOverlap({ offset: fileOffset, size: tableSize }) !== "none"
+        )
+          continue;
+        if (declaredAlignment > BigInt(Number.MAX_SAFE_INTEGER))
+          return fail("ELF offset or size exceeds a safe integer.");
+        const alignment = noteAlignment(Number(declaredAlignment));
+        const sectionName =
+          shstrtab === null
+            ? { name: null, limitation: null }
+            : readElfSectionName(shstrtab, nameOffset, text);
+        if (sectionName.limitation !== null)
+          sectionNameLimitations.add(sectionName.limitation);
+        const table: ElfNoteTable = {
+          kind: "section",
+          index,
+          name: sectionName.name,
+          location: { offset: fileOffset, bytes: tableSize },
+          alignment,
+        };
+        tables.push(table);
+        const noteTableBytes = yield* readElfStep(
+          fileSize,
+          fileOffset,
+          tableSize,
+          "note-table",
+        );
+        for (const note of parseNoteStreamFromTable(
+          noteTableBytes,
+          fileOffset,
+          little,
+          alignment,
+          input.max_entries,
+          examined,
+          text,
+        ))
+          visitNote(note, table, header, text);
+      }
     }
-    if (
-      compressedOverlap !== undefined &&
-      compressedOverlap({ offset: fileOffset, size: tableSize }) !== "none"
-    )
-      continue;
-    if (declaredAlignment > BigInt(Number.MAX_SAFE_INTEGER))
-      return fail("ELF offset or size exceeds a safe integer.");
-    const alignment = noteAlignment(Number(declaredAlignment));
-    const sectionName =
-      shstrtab === null
-        ? { name: null, limitation: null }
-        : readElfSectionName(shstrtab, nameOffset, text);
-    if (sectionName.limitation !== null)
-      sectionNameLimitations.add(sectionName.limitation);
-    const table: ElfNoteTable = {
-      kind: "section",
-      index,
-      name: sectionName.name,
-      location: { offset: fileOffset, bytes: tableSize },
-      alignment,
-    };
-    tables.push(table);
-    const noteTableBytes = yield* readElfStep(
-      fileSize,
-      fileOffset,
-      tableSize,
-      "note-table",
-    );
-    for (const note of parseNoteStreamFromTable(
-      noteTableBytes,
-      fileOffset,
-      little,
-      alignment,
-      input.max_entries,
-      examined,
-      text,
-    ))
-      visitNote(note, table, header, text);
   }
   return {
     header,

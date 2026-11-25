@@ -41,6 +41,8 @@ import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.j
 
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   artifactParseFailure,
   artifactReaderLimitFailure,
   artifactFixedLimitFailure,
@@ -116,7 +118,10 @@ interface Carrier {
 }
 
 const formatFailure = (message: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("format", message);
+  malformedArtifact("node-sea", message);
+
+const truncatedFailure = (message: string): ArtifactReaderFailure =>
+  truncatedArtifact("node-sea", message);
 
 const limitFailure = (message: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", message, { boundary: "memory" });
@@ -196,7 +201,7 @@ export const readNodeSeaBlob = async (
     location.blobOffset,
     location.blobLength,
   );
-  if (bytes === undefined) throw formatFailure(NODE_SEA_TRUNCATED);
+  if (bytes === undefined) throw truncatedFailure(NODE_SEA_TRUNCATED);
   return bytes;
 };
 
@@ -312,7 +317,7 @@ const collapseRanges = async (
     const hashes = new Set<string>();
     for (const range of unique) {
       const hash = await hashArtifactRange(carrier, range.offset, range.length);
-      if (hash === undefined) throw formatFailure(NODE_SEA_TRUNCATED);
+      if (hash === undefined) throw truncatedFailure(NODE_SEA_TRUNCATED);
       hashes.add(hash);
     }
     if (hashes.size !== 1) throw formatFailure(NODE_SEA_DUPLICATE_BLOB);
@@ -434,7 +439,7 @@ const locateThinMachO = async (
         const table = offset + segmentHeader;
         if (nsects > Math.floor((size - segmentHeader) / sectionSize)) {
           if (identityIssue !== null) continue;
-          throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
+          throw truncatedFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
         }
         const admission = admitMachoSegmentCommand(
           segment,
@@ -450,7 +455,7 @@ const locateThinMachO = async (
             little,
           );
           if (!parsedSection.ok)
-            throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
+            throw truncatedFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
           const record = parsedSection.value;
           if (cString(record.nameBytes, 0, 16) !== SEA_SECTION) continue;
           // Only a named declaration is attributed to SEA. A mismatch
@@ -464,7 +469,8 @@ const locateThinMachO = async (
           const fileOffset = record.offset;
           // The segment and section bounds admit every nonempty payload.
           // Empty segments can still declare an offset outside the image.
-          if (fileOffset > sliceSize) throw formatFailure(NODE_SEA_TRUNCATED);
+          if (fileOffset > sliceSize)
+            throw truncatedFailure(NODE_SEA_TRUNCATED);
           const length = Number(record.size);
           admitBlobBytes(carrier, length);
           found.push({ offset: base + fileOffset, length });
@@ -473,7 +479,7 @@ const locateThinMachO = async (
     }
   }
   if (found.length > 0 && !cursor.finish().ok)
-    throw formatFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
+    throw truncatedFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
   return { ranges: found };
 };
 
@@ -726,7 +732,7 @@ const scanElfNoteTable = async (
     const owner = cString(name, 0, name.length);
     if (owner === RESOURCE_NAME) {
       if (framing === "truncated-descriptor")
-        throw formatFailure(NODE_SEA_ELF_DESCRIPTOR_TRUNCATED);
+        throw truncatedFailure(NODE_SEA_ELF_DESCRIPTOR_TRUNCATED);
       admitBlobBytes(carrier, descsz);
       found.push({ offset: note.offset + cursor + descriptor, length: descsz });
     }
@@ -783,7 +789,7 @@ const locatePeResources = async (
     );
   }
   const bytes = await readExact(carrier, 0, carrier.fileSize);
-  if (bytes === undefined) throw formatFailure(NODE_SEA_TRUNCATED);
+  if (bytes === undefined) throw truncatedFailure(NODE_SEA_TRUNCATED);
   // A native-looking file need not be an admitted PE image. Once the layout
   // is admitted, resource errors remain failures rather than inferred absence.
   let layout: ReturnType<typeof readPeResourceLayout>;

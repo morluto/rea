@@ -49,6 +49,9 @@ export {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  artifactFormatFailure,
+  malformedArtifact,
+  truncatedArtifact,
   artifactPrimaryCleanupLeases,
   assertProducedEntry,
   copyArtifactEntry,
@@ -113,6 +116,10 @@ export {
   streamStableArtifact,
   withStableArtifactHandle,
 } from "./readStableArtifact.js";
+export {
+  artifactFileCeilingConstraint,
+  artifactReadBudgetConstraint,
+} from "./artifactReadBudget.js";
 export type {
   StableArtifactFileSystem,
   StableArtifactHandle,

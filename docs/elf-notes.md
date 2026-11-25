@@ -113,7 +113,10 @@ section zero. Their complete declared tables must fit inside the selected image;
 invalid escape values and a direct section count of `0xff00` or greater in
 `e_shnum` are malformed. Header tables are traversed in 64 KiB batches with
 cancellation checkpoints between batches; section references retain their
-original table indices. Compressed section-name tables require zero or a power of two for
+original table indices. After identifying compressed spans, note section
+headers are revisited in bounded batches so processing empty note tables also
+allows cancellation without retaining a second full collection of section facts.
+Compressed section-name tables require zero or a power of two for
 the decoded alignment. A zlib stream must consume its full declared payload.
 
 FDO decoding separately admits up to 64 KiB of distinct recognized descriptor

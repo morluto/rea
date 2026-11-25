@@ -265,7 +265,7 @@ const PATH_SCOPES = {
     "scripts/prepare.mjs",
     "scripts/lib/release-proposal.*",
     "scripts/lib/release-pull-request.mjs",
-    "patches/release-please+17.3.0.patch",
+    "patches/release-please+17.11.2.patch",
     "tests/boundary/filesystem/releaseProposal.test.ts",
     "scripts/rea.mjs",
     "scripts/lib/cli-process-environment.mjs",
@@ -756,11 +756,11 @@ export const CI_LANES = {
   code: {
     paths: [],
     required: {
-      fast: ["build", "test-shard", "test-source"],
-      full: ["build", "test-shard"],
+      fast: ["build", "test-shard", "test-source", "test"],
+      full: ["build", "test-shard", "test"],
     },
     // A selected PR subset runs its source tests in the test-shard groups.
-    selectedTests: ["build", "test-shard"],
+    selectedTests: ["build", "test-shard", "test"],
   },
   runtime: sameJobs([], ["windows-native-build", "package-e2e"]),
   package: sameJobs(PATH_SCOPES.package, ["windows-curated"], {

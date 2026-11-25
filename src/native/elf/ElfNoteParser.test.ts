@@ -141,6 +141,51 @@ it.each(["sections", "programs"] as const)(
   },
 );
 
+it("cancels while processing notes after the extended section-header scan", async () => {
+  const bytes = withElfExtendedNumbering(
+    elfNoteFixture({ ownership: "section", notes: Buffer.alloc(0) }),
+    "sections",
+  );
+  const table = Number(bytes.readBigUInt64LE(40));
+  const width = bytes.readUInt16LE(58);
+  // Each empty note has its own four-byte padding range. These declarations
+  // consume no entry budget, but processing them must still allow cancellation.
+  for (let index = 3; index < 4099; index += 1) {
+    const at = table + index * width;
+    bytes.writeUInt32LE(7, at + 4);
+    bytes.writeBigUInt64LE(BigInt(at + 8), at + 24);
+    bytes.writeBigUInt64LE(4n, at + 32);
+  }
+  const source = bufferByteSource(bytes, 64);
+  let noteReads = 0;
+  const cancelled = new Error("cancel note sections after header traversal");
+  let observed: unknown;
+  try {
+    await parseElfNotesFromHandle(
+      {
+        ...source,
+        readRange: async (offset, length) => {
+          if (offset >= table && length === 4) noteReads += 1;
+          return source.readRange(offset, length);
+        },
+      },
+      { path: defaults.path, sha256: "ab".repeat(32), bytes: bytes.length },
+      defaults,
+      async () => {
+        if (noteReads > 0) throw cancelled;
+      },
+    );
+  } catch (cause) {
+    observed = cause;
+  }
+  expect(noteReads).toBeGreaterThan(0);
+  expect(observed).toBe(cancelled);
+  const retried = await parse(bytes);
+  expect(retried.entries).toHaveLength(0);
+  expect(retried.tables).toHaveLength(4097);
+  expect(retried.tables.at(-1)?.index).toBe(4098);
+});
+
 it.each([
   { bits: 32, little: false, kind: "sections" },
   { bits: 64, little: true, kind: "sections" },

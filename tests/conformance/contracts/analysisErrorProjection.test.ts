@@ -128,7 +128,7 @@ describe("analysis error projection contract", () => {
       ...(
         [
           "cancelled",
-          "format",
+          "malformed",
           "integrity",
           "limit",
           "path",

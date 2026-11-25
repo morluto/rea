@@ -418,8 +418,8 @@ export const androidBootImageRefusals = () => {
       name: "short-image",
       bytes: truncateImage(buildBootImage({ version: 0 })),
       kind: "truncated",
-      code: "truncated",
-      category: "truncated",
+      code: "unsupported_target",
+      category: "unsupported_target",
       format: "android-boot-image",
     },
     {

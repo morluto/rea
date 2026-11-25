@@ -5,7 +5,8 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "23 0-2,4-23 * * *"
+    - cron: "23 1,5,7,11,13,17,19,23 * * *"
+    - cron: "23 9,15,21 * * *"
     - cron: "23 3 * * *"
   workflow_dispatch:
   workflow_call:
@@ -52,6 +53,13 @@ jobs:
     name: Classify changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      PR_CLASSIFIER_INPUTS: |
+        /tests/
+        **/*.test.ts
+        **/*.fixture*.ts
+        /.github/
+        /.husky/
     permissions:
       contents: read
       actions: read
@@ -114,9 +122,17 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.source_sha || github.sha }}
-          # Diff-based PR and push plans need ancestry. Qualification uses HEAD.
-          fetch-depth: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.source_sha != '') && 1 || 0 }}
-          filter: blob:none
+          # PR test selection reads tracked test sources. Fast scheduled sweeps
+          # and full-on-push plans compare Git trees and need ancestry. Full
+          # qualification and warm main pushes use only HEAD.
+          # Keep the nonzero branch first: numeric 0 is falsy in Actions expressions.
+          fetch-depth: ${{ (inputs.source_sha != '' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && vars.REA_CI_FULL_ON_PUSH != 'true') || (github.event_name == 'schedule' && github.event.schedule != '23 1,5,7,11,13,17,19,23 * * *')) && 1 || 0 }}
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/*/
+            /scripts/
+            ${{ github.event_name == 'pull_request' && inputs.source_sha == '' && env.PR_CLASSIFIER_INPUTS || '' }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           package-manager-cache: false
@@ -128,16 +144,20 @@ jobs:
         run: |
           test "${SOURCE_SHA}" = "${GITHUB_SHA}"
           test "${SOURCE_SHA}" = "$(git rev-parse HEAD)"
-      - name: Find a verified ancestor for push selection
+      - name: Find a verified ancestor for main selection
         id: baseline
-        if: github.event_name == 'push' && inputs.source_sha == ''
+        if: inputs.source_sha == '' && ((github.event_name == 'push' && vars.REA_CI_FULL_ON_PUSH == 'true') || (github.event_name == 'schedule' && github.event.schedule == '23 1,5,7,11,13,17,19,23 * * *'))
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.sha }}
           CI_REPOSITORY: ${{ github.repository }}
           CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # Warm pushes do not verify provider lanes; only scheduled main runs
+          # prove lane coverage for baseline diffs, including after re-enabling
+          # REA_CI_FULL_ON_PUSH.
+          CI_BASELINE_EVENT: schedule
         run: node scripts/ci/baseline.mjs
-      - name: Admit scheduled full qualification
+      - name: Admit scheduled qualification
         id: qualification
         if: github.event_name == 'schedule' && inputs.source_sha == ''
         env:
@@ -147,6 +167,7 @@ jobs:
           CI_REPOSITORY_ID: ${{ github.repository_id }}
           CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           CI_FORCE_FULL: ${{ github.event.schedule == '23 3 * * *' }}
+          CI_QUALIFICATION_TIER: ${{ github.event.schedule == '23 1,5,7,11,13,17,19,23 * * *' && 'fast' || 'full' }}
         run: node scripts/ci/qualification.mjs
       - name: Select verification lanes
         id: plan
@@ -161,6 +182,8 @@ jobs:
             (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&
             startsWith(github.event.pull_request.head.ref, format('release-please--branches--{0}--', github.event.pull_request.base.ref))) }}
           CI_SKIP_FULL: ${{ steps.qualification.outputs.run_full == 'false' }}
+          CI_PUSH_WARM_ONLY: ${{ github.event_name == 'push' && inputs.source_sha == '' && vars.REA_CI_FULL_ON_PUSH != 'true' }}
+          CI_SCHEDULE_FAST: ${{ github.event_name == 'schedule' && inputs.source_sha == '' && github.event.schedule == '23 1,5,7,11,13,17,19,23 * * *' }}
         run: node scripts/ci/plan.mjs
       - name: Record affected-test prediction before the full suite
         id: shadow-upload
@@ -258,7 +281,7 @@ jobs:
         if: always() && needs.changes.outputs.code == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: static-check-reports
+          name: ${{ github.run_attempt == 1 && 'static-check-reports' || format('static-check-reports-attempt-{0}', github.run_attempt) }}
           path: .cache/static-checks/
           include-hidden-files: true
           if-no-files-found: ignore
@@ -325,7 +348,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: static-deep-check-reports
+          name: ${{ github.run_attempt == 1 && 'static-deep-check-reports' || format('static-deep-check-reports-attempt-{0}', github.run_attempt) }}
           path: .cache/static-checks/
           include-hidden-files: true
           if-no-files-found: ignore
@@ -387,7 +410,7 @@ jobs:
   test-shard:
     name: Test shard (${{ matrix.shard }})
     needs: [changes, build]
-    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.test_shard_job == 'test-shard'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tier != 'warm' && needs.changes.outputs.test_shard_job == 'test-shard'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy: &portable-shard-strategy
@@ -444,7 +467,7 @@ jobs:
   test-shard-broad:
     name: Test shard (${{ matrix.shard }})
     needs: [changes, build, static]
-    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.test_shard_job == 'test-shard-broad'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tier != 'warm' && needs.changes.outputs.test_shard_job == 'test-shard-broad'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy: *portable-shard-strategy
@@ -516,6 +539,7 @@ jobs:
       # matching history so one tier cannot pack the other with its weights.
       - name: Find available trusted timing history
         id: history
+        if: needs.changes.outputs.tier != 'warm'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -525,7 +549,7 @@ jobs:
           CI_TIMING_TIER: ${{ needs.changes.outputs.tier }}
         run: node scripts/ci/test-history.mjs
       - name: Download previous timing report
-        if: steps.history.outputs.run-id != ''
+        if: needs.changes.outputs.tier != 'warm' && steps.history.outputs.run-id != ''
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -534,6 +558,7 @@ jobs:
           github-token: ${{ github.token }}
           path: .cache/ci-test-history
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.tier != 'warm'
         with:
           name: rea-test-runtime
           overwrite: true
@@ -613,7 +638,7 @@ jobs:
   test:
     name: Portable tests
     needs: [changes, test-source, test-shard, test-shard-broad]
-    if: ${{ !cancelled() && needs.changes.outputs.tier != 'reused' }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.code == 'true' && needs.changes.outputs.tier != 'warm')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -798,11 +823,6 @@ jobs:
       - run: npm run verify:windows-native:artifact
       - if: steps.windows-native-cache.outputs.cache-hit != 'true'
         run: node scripts/build-windows-native.mjs --inspection-fixture
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: windows-native-inspection-fixture
-          path: .cache/windows-native-inspection-fixture/
-          if-no-files-found: error
       # The process boundary observations are independent of the addon: they
       # report the caller's and child's own token, environment and breakaway
       # results from a separate executable. Cross-build it in the lane that
@@ -834,14 +854,22 @@ jobs:
           key: ${{ steps.windows-native-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          name: windows-native-inspection-fixture
+          path: .cache/windows-native-inspection-fixture/
+          if-no-files-found: error
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
           name: windows-process-boundary-fixture
           path: .cache/windows-process-boundary/
           if-no-files-found: error
+          overwrite: true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-native-controls
           path: native/windows/build/
           if-no-files-found: error
+          overwrite: true
 
   package-e2e:
     name: Native package baseline (${{ matrix.platform }} ${{ matrix.architecture }})
@@ -1460,8 +1488,8 @@ jobs:
           CI_JOBS: ${{ toJSON(needs) }}
           CI_QUALIFICATION_DIRECTORY: .cache/ci-qualification
         run: node scripts/ci/required.mjs
-      - name: Upload full qualification receipt artifact
-        if: needs.changes.outputs.tier == 'full' && success()
+      - name: Upload qualification or fast-sweep receipt artifact
+        if: (needs.changes.outputs.tier == 'full' || (github.event_name == 'schedule' && needs.changes.outputs.tier == 'fast')) && success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.gate.outputs.receipt_name }}

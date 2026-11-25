@@ -6,12 +6,13 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
+import { targetFailureRecovery } from "./targetFailure.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
   INFO_PLIST_DECODE_MIB,
@@ -133,8 +134,8 @@ export const analysisErrorRemediationAction = (
       error.remediationAction ??
       "Select a target supported by this operation or choose an operation supporting the reported target format."
     );
-  if (error instanceof AnalysisMalformedTargetError)
-    return `The selected target's ${error.failure.format} bytes are ${error.failure.kind} where ${error.operation} reads them; the request arguments are not at fault, so changing them will not help. Choose another operation or provider for this target, or select a complete, well-formed copy of it.`;
+  if (error instanceof AnalysisTargetFailureError)
+    return targetFailureRecovery(error.operation, error.failure);
   if (error instanceof AnalysisResourceConstraintError) {
     if (error.remediationAction !== undefined) return error.remediationAction;
     const refusal = analysisErrorRefusal(error);
@@ -213,7 +214,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "load_selection_rejected"
   )
-    return "Correct the reported load argument (format, architecture, or entry_point) and retry.";
+    return "Correct the reported load argument (format, architecture, architecture_variant, entry_point, base_address, or vector_table_address) and retry.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "file_format_rejected"
@@ -418,7 +419,7 @@ export const composedCallerGuidance = (sources: {
 const outcomeUserMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisSnapshotMismatchError) return error.message;
   if (error instanceof AnalysisUnsupportedTargetError) return error.message;
-  if (error instanceof AnalysisMalformedTargetError) return error.message;
+  if (error instanceof AnalysisTargetFailureError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
   if (error instanceof AnalysisAccessDeniedError)
     return "Host filesystem permissions denied read access to the selected path.";
@@ -588,7 +589,7 @@ const artifactMessage = ({
         ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive.`
         : "Artifact bytes contradict declared integrity."
     } If expected, rerun ${operation === "inventory_artifact" ? "inspect_artifact" : operation} with integrity_policy=record-and-continue to retain observed bytes as untrusted; otherwise get a fresh copy.`;
-  if (reason === "format" || reason === "integrity")
+  if (reason === "integrity")
     return "Artifact is invalid or has changed. Get a fresh copy and try again.";
   return "Artifact could not be read or written. Check file access and try again.";
 };
@@ -621,7 +622,16 @@ const presentedRelatedInputs = (
     )
       return { operations: ["inspect_plist"] };
     if (error.constraint === "load_selection_rejected")
-      return { parameters: ["format", "architecture", "entry_point"] };
+      return {
+        parameters: [
+          "format",
+          "architecture",
+          "architecture_variant",
+          "entry_point",
+          "base_address",
+          "vector_table_address",
+        ],
+      };
     if (error.constraint === "wasm_requires_static_inspection")
       return { operations: ["inspect_wasm_artifact"] };
   }
@@ -703,7 +713,7 @@ const KNOWN_ERROR_TAGS = {
   AnalysisOutputError: true,
   AnalysisCapabilityUnavailableError: true,
   AnalysisUnsupportedTargetError: true,
-  AnalysisMalformedTargetError: true,
+  AnalysisTargetFailureError: true,
   AnalysisCancelledError: true,
   AnalysisTimeoutError: true,
   AnalysisResourceConstraintError: true,

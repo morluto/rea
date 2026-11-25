@@ -11,6 +11,10 @@ import {
   inspectPeLoadConfigInputSchema,
 } from "../../domain/native/peLoadConfig.js";
 import {
+  peUnwindRangesSchema,
+  inspectPeUnwindRangesInputSchema,
+} from "../../domain/native/peUnwindRanges.js";
+import {
   binaryHardeningSchema,
   inspectBinaryHardeningInputSchema,
 } from "../../domain/native/binaryHardening.js";
@@ -255,6 +259,23 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "List function ranges from ELF unwind tables",
         input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_pe_unwind_ranges",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_pe_unwind_ranges", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Inspect the x64 PE exception directory (.pdata RUNTIME_FUNCTION entries): paged function begin/end/unwind RVAs, whether each entry starts a function or is a chained fragment of another, and each chain's parent and primary entry. Counts cover every entry; malformed, unsorted, overlapping or unreadable entries are flagged. Leaf functions have no entry, so a missing entry does not prove no function starts there. No execution or disassembler; other machines report unsupported_machine.",
+    inputSchema: inspectPeUnwindRangesInputSchema,
+    outputSchema: evidenceResultOf(peUnwindRangesSchema),
+    examples: [
+      {
+        title: "Count primary x64 function entries and chained fragments",
+        input: { path: "/artifacts/program.exe", limit: 0 },
       },
     ],
   },

@@ -32,6 +32,7 @@ import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { artifactReaderLimitFailure } from "./index.js";
+import { targetDigestChangedFailure } from "./withArtifactTargetIdentity.js";
 import {
   malformedInput,
   truncatedInput,
@@ -98,7 +99,11 @@ it.each([
     cause: malformedInput("pe", "bad field"),
     genericCode: "unsupported_target",
   },
-  { cause: truncatedInput("pe", "short field"), genericCode: "truncated" },
+  // Inventory and selected-file refusals of truncated bytes share one code.
+  {
+    cause: truncatedInput("pe", "short field"),
+    genericCode: "unsupported_target",
+  },
   {
     cause: unsupportedInput("pe", "unsupported image"),
     genericCode: "unsupported_target",
@@ -174,7 +179,7 @@ it.each([
         reason: cause.message,
         ...(cause.kind === "unsupported"
           ? {}
-          : { format_failure: cause.kind, format: "pe" }),
+          : { failure_kind: cause.kind, format: "pe" }),
         partial_observation: observation,
       },
     });
@@ -188,7 +193,7 @@ it.each([
         detail: cause.message,
         ...(cause.kind === "unsupported"
           ? {}
-          : { format_failure: cause.kind, format: "pe" }),
+          : { failure_kind: cause.kind, format: "pe" }),
       },
     });
   },
@@ -266,7 +271,7 @@ it("preserves adjustable reader admission facts and gives cleanup priority", () 
     translateArtifactFailure("inspect_artifact", failure),
   );
   expect(adjustable).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: true,
     details: {
       reader_limit: {
@@ -310,7 +315,7 @@ it.each(["capacity", "file-size", "memory"] as const)(
       translateArtifactFailure("inventory_artifact", failure),
     );
     expect(result).toMatchObject({
-      code: "truncated",
+      code: "partial",
       retryable: false,
       message: failure.message,
       details: { boundary, detail: failure.message },
@@ -373,7 +378,7 @@ it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public p
   expect(
     projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
   ).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: false,
     message: failure.message,
     details: { refusal },
@@ -416,6 +421,25 @@ it("keeps producer-owned recovery through cleanup wrapping and public projection
     cleanup_reason: "Owned staging cleanup needs retry",
     resources: ["owned staging"],
   });
+});
+
+it("projects a session digest mismatch as admitted identity, not a retryable change", () => {
+  const projected = projectAnalysisError(
+    translateArtifactFailure(
+      "inspect_keyed_archive",
+      targetDigestChangedFailure("archive", "a".repeat(64), "b".repeat(64)),
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "artifact_operation_failed",
+    category: "integrity_mismatch",
+    retryable: false,
+    details: {
+      reason: "integrity",
+      integrity_check: "admitted-identity",
+    },
+  });
+  expect(projected.retry).toBeUndefined();
 });
 
 it("names the failed integrity check through cleanup wrapping and public projection", () => {
@@ -535,7 +559,7 @@ it("keeps only a path-kind reader refusal a selection error", () => {
       issues: [{ path: ["path"], reason: "invalid_format" }],
     },
   });
-  const bytes = new ArtifactReaderFailure("format", "Corrupt member table");
+  const bytes = new ArtifactReaderFailure("malformed", "Corrupt member table");
   expect(
     projectOwnedArtifactInputFailure(
       artifactFilePrimaryFacts(bytes),
