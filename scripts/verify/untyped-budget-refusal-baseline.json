@@ -38,7 +38,7 @@
   "src/domain/analysisView/webSourceLocationView.ts": 1,
   "src/domain/apiContract/GraphqlDocuments.ts": 1,
   "src/domain/apiContract/GraphqlInventory.ts": 1,
-  "src/domain/apiContract/parseApiContract.ts": 1,
+  "src/domain/apiContract/contractInventory.ts": 1,
   "src/domain/pngVisualDiff.ts": 1,
   "src/domain/wasm/wasmInterfaceBudget.ts": 1,
   "src/firmware/FirmwareFiles.ts": 2,

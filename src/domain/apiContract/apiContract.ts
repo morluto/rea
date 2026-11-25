@@ -37,7 +37,7 @@ export const apiContractPathReferenceSchema = z.strictObject({
   source_pointer: z.string(),
   reference: z.string().nullable(),
   credential_redacted: z.boolean(),
-  state: z.enum(["unresolved", "malformed"]),
+  state: z.enum(["unresolved", "malformed", "resolved"]),
 });
 export const apiContractDiagnosticSchema = z.strictObject({
   diagnostic_id: prefixedDigestSchema("api_contract_diagnostic"),
@@ -48,6 +48,7 @@ export const apiContractDiagnosticSchema = z.strictObject({
     "invalid-path-key",
     "invalid-path-item",
     "invalid-path-reference",
+    "unresolved-path-reference",
     "invalid-operation",
     "invalid-operation-id",
     "unknown-path-item-field",
@@ -81,7 +82,7 @@ export const apiContractSchema = z.strictObject({
     status: z.enum(["complete-within-scope", "partial"]),
     paths_state: z.enum(["object", "absent", "malformed"]),
     path_entries_examined: z.int().nonnegative(),
-    reference_resolution: z.literal("not-attempted"),
+    reference_resolution: z.enum(["not-attempted", "local-only"]),
     schema_validation: z.literal("not-performed"),
     duplicate_json_members: z.literal("last-value-wins"),
   }),

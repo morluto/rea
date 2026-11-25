@@ -1,24 +1,24 @@
-import { Budget } from "../budget.js";
 import { escapeJsonPointerToken } from "../jsonPointer.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
   unsupportedTarget,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { digestCanonicalValue } from "../canonicalDigest.js";
 import { err, ok, type Result } from "../result.js";
-import { parseRecordedTransportUrl } from "../recordedTransportUrl.js";
 import {
-  API_CONTRACT_FACT_BYTES,
   API_CONTRACT_OPERATION,
   type ApiContract,
   type ApiContractArtifact,
-  type ApiContractDiagnostic,
-  type ApiContractOperation,
 } from "./apiContract.js";
+import { ContractInventory } from "./contractInventory.js";
 import { isRecord } from "../../kernel/isRecord.js";
+import {
+  API_CONTRACT_MAX_LOCAL_REF_EXPANSIONS,
+  API_CONTRACT_MAX_REF_DEPTH,
+  LocalRefResolver,
+  type LocalRefOutcome,
+} from "./resolveLocalRefs.js";
 
 const methods = [
   "get",
@@ -45,150 +45,6 @@ const pathMetadata = new Set([
 const httpToken = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const record = (value: unknown): Record<string, unknown> | undefined =>
   isRecord(value) ? (value as Record<string, unknown>) : undefined;
-const identity = (prefix: string, facts: unknown) =>
-  `${prefix}_${digestCanonicalValue(facts)}`;
-
-interface OperationSlot {
-  readonly path: string;
-  readonly method: string;
-  readonly pointer: string;
-  readonly hasReference: boolean;
-}
-
-/** Own compact declarations and account for repeated path/pointer serialization before allocation. */
-class ContractInventory {
-  readonly operations: ApiContract["operations"] = [];
-  readonly references: ApiContract["path_item_references"] = [];
-  readonly diagnostics: ApiContractDiagnostic[] = [];
-  readonly #retainedBytes = new Budget(API_CONTRACT_FACT_BYTES);
-
-  constructor(readonly artifact: ApiContractArtifact) {}
-
-  reserve(bytes: number): Result<void, AnalysisError> {
-    // Includes object/index overhead and repeated escaped Evidence delivery, not just source bytes.
-    return this.#retainedBytes.tryCharge(bytes)
-      ? ok(undefined)
-      : err(
-          new AnalysisResourceConstraintError(
-            API_CONTRACT_OPERATION,
-            "memory",
-            "API contract declarations exceed the retained-facts representation allowance.",
-            { representation_bytes: API_CONTRACT_FACT_BYTES },
-            {
-              retryable: false,
-              remediationAction:
-                "Select a smaller complete API document; paging the reply does not increase the parser's retained-facts allowance.",
-            },
-          ),
-        );
-  }
-
-  diagnostic(
-    code: ApiContractDiagnostic["code"],
-    pointer: string,
-    message: string,
-  ): Result<void, AnalysisError> {
-    const admitted = this.reserve(1024 + pointer.length * 12);
-    if (!admitted.ok) return admitted;
-    this.diagnostics.push({
-      diagnostic_id: identity("api_contract_diagnostic", [
-        this.artifact.sha256,
-        pointer,
-        code,
-      ]),
-      source_pointer: pointer,
-      code,
-      message,
-    });
-    return ok(undefined);
-  }
-
-  reference(
-    path: string,
-    pointer: string,
-    value: unknown,
-  ): Result<void, AnalysisError> {
-    const admitted = this.reserve(
-      1024 +
-        path.length * 12 +
-        (typeof value === "string" ? value.length * 12 : 0),
-    );
-    if (!admitted.ok) return admitted;
-    const credentials =
-      typeof value === "string"
-        ? parseRecordedTransportUrl(value).credentials
-        : null;
-    const reference =
-      typeof value !== "string" || credentials === "ambiguous"
-        ? null
-        : credentials === null
-          ? value
-          : value.slice(0, credentials.start) + value.slice(credentials.end);
-    this.references.push({
-      reference_id: identity("api_path_reference", [
-        this.artifact.sha256,
-        pointer,
-      ]),
-      path,
-      source_pointer: pointer,
-      reference,
-      credential_redacted: credentials !== null,
-      state: typeof value === "string" ? "unresolved" : "malformed",
-    });
-    return typeof value === "string"
-      ? ok(undefined)
-      : this.diagnostic(
-          "invalid-path-reference",
-          pointer,
-          "Path Item $ref must be a string; reference resolution was not attempted.",
-        );
-  }
-
-  operation(value: unknown, slot: OperationSlot): Result<void, AnalysisError> {
-    const object = record(value);
-    const declaredId =
-      typeof object?.operationId === "string" ? object.operationId : null;
-    const admitted = this.reserve(
-      1536 +
-        slot.path.length * 32 +
-        slot.method.length * 24 +
-        (declaredId?.length ?? 0) * 12,
-    );
-    if (!admitted.ok) return admitted;
-    const reason: ApiContractOperation["reason"] =
-      object === undefined
-        ? "malformed-operation"
-        : slot.hasReference
-          ? "unresolved-path-item-reference"
-          : null;
-    this.operations.push({
-      operation_id: identity("api_operation", [
-        this.artifact.sha256,
-        slot.pointer,
-      ]),
-      operation_key: identity("api_operation_key", [slot.path, slot.method]),
-      method: slot.method,
-      path: slot.path,
-      declared_id: declaredId,
-      source_pointer: slot.pointer,
-      state: reason === null ? "declared" : "unknown",
-      reason,
-    });
-    if (object === undefined)
-      return this.diagnostic(
-        "invalid-operation",
-        slot.pointer,
-        "The method's value is not an Operation Object.",
-      );
-    if (Object.hasOwn(object, "operationId") && declaredId === null)
-      return this.diagnostic(
-        "invalid-operation-id",
-        `${slot.pointer}/operationId`,
-        "operationId is present but is not a string; its identity remains unavailable.",
-      );
-    return ok(undefined);
-  }
-}
 
 const infoFacts = (
   root: Record<string, unknown>,
@@ -258,6 +114,54 @@ function* additionalOperations(
   return ok(undefined);
 }
 
+type PathItemReference =
+  | { readonly kind: "none" }
+  | { readonly kind: "resolved"; readonly target: Record<string, unknown> }
+  | { readonly kind: "unresolved" };
+
+/** Record a Path Item $ref and, for a local fragment, resolve it. */
+function pathItemReference(
+  item: Record<string, unknown>,
+  context: {
+    inventory: ContractInventory;
+    path: string;
+    pointer: string;
+    resolver: LocalRefResolver;
+  },
+): Result<PathItemReference, AnalysisError> {
+  const { inventory, path, pointer, resolver } = context;
+  if (!Object.hasOwn(item, "$ref")) return ok({ kind: "none" });
+  const refValue = item.$ref;
+  if (typeof refValue !== "string") {
+    const added = inventory.reference(path, `${pointer}/$ref`, refValue);
+    if (!added.ok) return added;
+    return ok({ kind: "unresolved" });
+  }
+  if (refValue.startsWith("#")) inventory.localResolutionAttempted = true;
+  const outcome: LocalRefOutcome = resolver.resolve(refValue);
+  if (outcome.kind === "resolved") {
+    const recorded = inventory.reference(
+      path,
+      `${pointer}/$ref`,
+      refValue,
+      "resolved",
+    );
+    if (!recorded.ok) return recorded;
+    return ok({ kind: "resolved", target: outcome.target });
+  }
+  const recorded = inventory.reference(path, `${pointer}/$ref`, refValue);
+  if (!recorded.ok) return recorded;
+  if (outcome.kind !== "external") {
+    const diagnosed = inventory.diagnostic(
+      "unresolved-path-reference",
+      `${pointer}/$ref`,
+      `${outcome.detail} Its effective operations remain unknown; adjacent inline slots are preserved without merging.`,
+    );
+    if (!diagnosed.ok) return diagnosed;
+  }
+  return ok({ kind: "unresolved" });
+}
+
 function* pathItem(
   value: unknown,
   context: {
@@ -265,9 +169,12 @@ function* pathItem(
     path: string;
     pointer: string;
     modern: boolean;
+    resolver: LocalRefResolver;
+    /** True when this item is already a resolved $ref target; its own $ref is not re-recorded. */
+    resolved?: boolean;
   },
 ): Generator<void, Result<void, AnalysisError>> {
-  const { inventory, path, pointer, modern } = context;
+  const { inventory, path, pointer, modern, resolver } = context;
   const item = record(value);
   if (item === undefined)
     return inventory.diagnostic(
@@ -275,10 +182,30 @@ function* pathItem(
       pointer,
       "Path Item must be an object; its operations are unknown.",
     );
-  const hasReference = Object.hasOwn(item, "$ref");
-  if (hasReference) {
-    const added = inventory.reference(path, `${pointer}/$ref`, item.$ref);
-    if (!added.ok) return added;
+  let hasReference = false;
+  if (!context.resolved) {
+    const reference = pathItemReference(item, {
+      inventory,
+      path,
+      pointer,
+      resolver,
+    });
+    if (!reference.ok) return reference;
+    if (reference.value.kind === "resolved") {
+      // Enumerate the target's operations under the referencing path;
+      // source pointers stay scoped to this path so identities stay unique.
+      const read = yield* pathItem(reference.value.target, {
+        inventory,
+        path,
+        pointer,
+        modern,
+        resolver,
+        resolved: true,
+      });
+      if (!read.ok) return read;
+    } else if (reference.value.kind !== "none") {
+      hasReference = true;
+    }
   }
   const fixedMethods: readonly string[] = modern ? modernMethods : methods;
   let examined = 0;
@@ -319,6 +246,8 @@ interface ContractReportContext {
   readonly openapi: string;
   readonly info: ApiContract["info"];
   readonly pathsState: ApiContract["source_coverage"]["paths_state"];
+  /** True for the OpenAPI 3.2 minor family (QUERY + additionalOperations). */
+  readonly modern: boolean;
   examined: number;
 }
 
@@ -331,6 +260,11 @@ const contractReport = (
   let declared = 0;
   for (const operation of inventory.operations)
     if (operation.state === "declared") declared++;
+  const unresolvedPathItems = inventory.references.filter(
+    (row) => row.state !== "resolved",
+  ).length;
+  const referenceResolution: ApiContract["source_coverage"]["reference_resolution"] =
+    inventory.localResolutionAttempted ? "local-only" : "not-attempted";
   return {
     contract_id: `api_contract_${artifact.sha256}`,
     format: "openapi-json",
@@ -344,20 +278,20 @@ const contractReport = (
       operation_slots: inventory.operations.length,
       declared,
       unknown: inventory.operations.length - declared,
-      unresolved_path_items: inventory.references.length,
+      unresolved_path_items: unresolvedPathItems,
       diagnostics: inventory.diagnostics.length,
     },
     source_coverage: {
       scope: "inline-path-operations",
       status:
         incomplete ||
-        inventory.references.length > 0 ||
+        unresolvedPathItems > 0 ||
         inventory.diagnostics.length > 0
           ? "partial"
           : "complete-within-scope",
       paths_state: context.pathsState,
       path_entries_examined: context.examined,
-      reference_resolution: "not-attempted",
+      reference_resolution: referenceResolution,
       schema_validation: "not-performed",
       duplicate_json_members: "last-value-wins",
     },
@@ -369,7 +303,13 @@ const contractReport = (
         : []),
       "Operations are document declarations, not evidence of runtime implementation, reachability or authorization.",
       "Only inline operations under paths are inventoried; callbacks, webhooks, components, servers, parameters, schemas, request/response contracts and security are not analyzed.",
-      "No reference is resolved, including local fragments. A Path Item reference makes its effective operations unknown; adjacent inline slots are preserved without merging referenced definitions.",
+      ...(referenceResolution === "local-only"
+        ? [
+            `Local same-document $ref fragments (#/...) are resolved within a depth budget of ${API_CONTRACT_MAX_REF_DEPTH} hops and an expansion budget of ${API_CONTRACT_MAX_LOCAL_REF_EXPANSIONS} resolved references per document. Cycles, missing targets, invalid pointers, budget overflows and external or non-local references remain unresolved, and their Path Item operations stay unknown. No network fetch or external file read is performed.`,
+          ]
+        : [
+            "No reference is resolved, including local fragments. A Path Item reference makes its effective operations unknown; adjacent inline slots are preserved without merging referenced definitions.",
+          ]),
       "Transport userinfo credentials are excluded from reference URIs. credential_redacted marks the exclusion; an ambiguous credential span leaves the displayed reference unknown. Other reference text is preserved.",
       "This is a structural inventory, not full OpenAPI schema validation. operationId values are preserved without assuming uniqueness; operation_key matches exact method/path spelling, not semantic equivalence across APIs.",
       "Source JSON members use last-value-wins parsing. Original bytes remain in the caller-selected artifact, identified by SHA-256; this Evidence does not embed the complete source document.",
@@ -381,7 +321,7 @@ function* collectPaths(
   sourcePaths: Record<string, unknown>,
   inventory: ContractInventory,
   context: ContractReportContext,
-  modern: boolean,
+  resolver: LocalRefResolver,
 ): Generator<void, Result<void, AnalysisError>> {
   for (const path in sourcePaths) {
     if (!Object.hasOwn(sourcePaths, path) || path.startsWith("x-")) continue;
@@ -391,7 +331,13 @@ function* collectPaths(
     if (!admitted.ok) return admitted;
     const pointer = `/paths/${escapeJsonPointerToken(path)}`;
     const read = path.startsWith("/")
-      ? yield* pathItem(sourcePaths[path], { inventory, path, pointer, modern })
+      ? yield* pathItem(sourcePaths[path], {
+          inventory,
+          path,
+          pointer,
+          modern: context.modern,
+          resolver,
+        })
       : inventory.diagnostic(
           "invalid-path-key",
           pointer,
@@ -403,7 +349,7 @@ function* collectPaths(
   return ok(undefined);
 }
 
-/** Enumerate declarations only; never resolve references, servers, callbacks or runtime expressions. */
+/** Enumerate declarations, resolving local same-document references only; never fetch servers, callbacks, runtime expressions or external references. */
 export function* parseApiContractSteps(
   value: unknown,
   artifact: ApiContractArtifact,
@@ -446,6 +392,7 @@ export function* parseApiContractSteps(
     openapi: root.openapi,
     info: info.value,
     pathsState,
+    modern: version[1] === "2",
     examined: 0,
   };
   const interrupted = (error: AnalysisError) => {
@@ -473,7 +420,7 @@ export function* parseApiContractSteps(
       paths ?? {},
       inventory,
       context,
-      version[1] === "2",
+      new LocalRefResolver(root),
     );
     if (!read.ok) return interrupted(read.error);
   } catch (cause: unknown) {
