@@ -1,5 +1,6 @@
 import type { FixedCeilingFacts } from "./fixedAllowanceRemediation.js";
 import {
+  lastAtOrBelow,
   resolveMappedFileOffset,
   spansOverlap,
   type FileMapping,
@@ -517,18 +518,6 @@ export const mappedFileOffset = (
   if (reason === "invalid-size")
     throw new BinaryFormatFailure("malformed", message);
   throw new BinaryMappingFailure(reason, message);
-};
-
-/** Index of the last sorted value at or below `value`, or -1. */
-const lastAtOrBelow = (sorted: readonly bigint[], value: bigint): number => {
-  let low = 0;
-  let high = sorted.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if ((sorted[middle] as bigint) <= value) low = middle + 1;
-    else high = middle;
-  }
-  return low - 1;
 };
 
 /** Sorted starts with the furthest end reached by any span starting at or before each. */
