@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "63"
+  version: "64"
 ---
 
 # REA
@@ -457,6 +457,9 @@ bounded negative searches bounded, and do not describe a broad investigation
 as complete while required questions remain open.
 
 ## Read only the relevant guide
+
+- Reconstructing a spreadsheet-based desktop workflow, including form actions,
+  report dependencies and parity checks: [workbooks](references/workbooks.md)
 
 - Native binaries, managed assemblies, archives, and extraction:
   [references/native-and-artifacts.md](references/native-and-artifacts.md)
