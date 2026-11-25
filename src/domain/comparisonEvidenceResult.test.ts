@@ -119,46 +119,46 @@ describe("same-evidence comparison admission", () => {
   });
 });
 
-describe("same-evidence comparison admission with normalized views", () => {
-  const counts = {
-    address_derived_identifiers: 1,
-    unmasked_address_derived_identifiers: 0,
-    corroborated_addresses: 1,
-    visible_addresses: 0,
-  };
-  const view = (
-    dimension: (typeof NORMALIZED_VIEW_DIMENSIONS)[number],
-    links: readonly string[] = [source, source],
-  ) => ({
-    dimension,
-    status: "unchanged" as const,
-    left_digest: hash,
-    right_digest: hash,
-    left_count: 1,
-    right_count: 1,
-    text_delta: { added_lines: 0, removed_lines: 0, hunks: 0 },
-    evidence_links: links,
-    masking: {
-      policy: "rea-address-normalized-text-v1" as const,
-      provider_id: "ghidra",
-      rules: [{ rule: "entry", description: "Entry address" }],
-      left: counts,
-      right: counts,
-    },
+const counts = {
+  address_derived_identifiers: 1,
+  unmasked_address_derived_identifiers: 0,
+  corroborated_addresses: 1,
+  visible_addresses: 0,
+};
+const view = (
+  dimension: (typeof NORMALIZED_VIEW_DIMENSIONS)[number],
+  links: readonly string[] = [source, source],
+) => ({
+  dimension,
+  status: "unchanged" as const,
+  left_digest: hash,
+  right_digest: hash,
+  left_count: 1,
+  right_count: 1,
+  text_delta: { added_lines: 0, removed_lines: 0, hunks: 0 },
+  evidence_links: links,
+  masking: {
+    policy: "rea-address-normalized-text-v1" as const,
+    provider_id: "ghidra",
+    rules: [{ rule: "entry", description: "Entry address" }],
+    left: counts,
+    right: counts,
+  },
+  limitations: [],
+  conclusion_kind: "derived_relationship" as const,
+});
+const withViews = (views: readonly unknown[]) => ({
+  ...baseline(),
+  normalized_views: {
+    policy: "rea-address-normalized-text-v1" as const,
+    views,
     limitations: [],
-    conclusion_kind: "derived_relationship" as const,
-  });
-  const withViews = (views: readonly unknown[]) => ({
-    ...baseline(),
-    normalized_views: {
-      policy: "rea-address-normalized-text-v1" as const,
-      views,
-      limitations: [],
-    },
-  });
-  const pseudocode = () => view("pseudocode_normalized");
-  const assembly = () => view("assembly_normalized");
+  },
+});
+const pseudocode = () => view("pseudocode_normalized");
+const assembly = () => view("assembly_normalized");
 
+describe("same-evidence comparison admission with normalized views", () => {
   it("accepts unchanged views of the same source", () => {
     const candidate = withViews([pseudocode(), assembly()]);
     expect(functionComparisonResultSchema.safeParse(candidate).success).toBe(
@@ -251,6 +251,46 @@ describe("same-evidence comparison admission with normalized views", () => {
         "compare_functions",
       ).ok,
     ).toBe(false);
+  });
+});
+
+describe("recorded named-symbol allowance", () => {
+  it.each([
+    { allowance: 0, views: true },
+    { allowance: 1.5, views: true },
+    { allowance: "16", views: true },
+    { allowance: 2 ** 53, views: true },
+    { allowance: 16, views: false },
+  ])(
+    "rejects a recorded max_named_symbol_code_units of $allowance (views $views)",
+    ({ allowance, views }) => {
+      const candidate = views
+        ? withViews([pseudocode(), assembly()])
+        : baseline();
+      const recorded = {
+        ...evidence(candidate),
+        parameters: {
+          ...evidence(candidate).parameters,
+          max_named_symbol_code_units: allowance,
+        },
+      } as unknown as Evidence;
+      const read = readComparisonResult(recorded, "compare_functions");
+      expect(read.ok ? undefined : read.error.message).toMatch(
+        /max_named_symbol_code_units/u,
+      );
+    },
+  );
+
+  it("accepts a recorded max_named_symbol_code_units with its views", () => {
+    const candidate = withViews([pseudocode(), assembly()]);
+    const recorded = {
+      ...evidence(candidate),
+      parameters: {
+        ...evidence(candidate).parameters,
+        max_named_symbol_code_units: 16,
+      },
+    } as unknown as Evidence;
+    expect(readComparisonResult(recorded, "compare_functions").ok).toBe(true);
   });
 });
 

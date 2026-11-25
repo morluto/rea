@@ -619,6 +619,9 @@ describe("opt-in function comparison normalized views", () => {
       right_evidence_id: right.evidence_id,
       include_normalized_views: true,
     });
+    expect(evidence.parameters).not.toHaveProperty(
+      "max_named_symbol_code_units",
+    );
     expect(evidence.normalized_result).toMatchObject({
       normalized_views: {
         policy: "rea-address-normalized-text-v1",
@@ -637,6 +640,36 @@ describe("opt-in function comparison normalized views", () => {
     expect(
       (evidence.normalized_result as { dimensions: unknown }).dimensions,
     ).toEqual(exactResult.dimensions);
+  });
+
+  it("records a caller-set named-symbol allowance and requires the views for it", async () => {
+    const [left, right] = relocationPair();
+    const { client } = await createApplicationMcpHarness();
+    const response = await client.callTool({
+      name: "compare_functions",
+      arguments: {
+        left,
+        right,
+        include_normalized_views: true,
+        max_named_symbol_code_units: 2_000_000,
+      },
+    });
+    expect(
+      response.isError,
+      JSON.stringify(response.structuredContent),
+    ).not.toBe(true);
+    expect(parseEvidence(response.structuredContent).parameters).toMatchObject({
+      include_normalized_views: true,
+      max_named_symbol_code_units: 2_000_000,
+    });
+    const withoutViews = await client.callTool({
+      name: "compare_functions",
+      arguments: { left, right, max_named_symbol_code_units: 2_000_000 },
+    });
+    expect(withoutViews.isError).toBe(true);
+    expect(JSON.stringify(withoutViews.content)).toContain(
+      "set include_normalized_views to true",
+    );
   });
 
   it("returns the same views for retained session references", async () => {

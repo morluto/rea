@@ -220,6 +220,12 @@ These parameters report that limit:
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/elfReadBudgets.ts` |
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`            | 128        |     1 |                       256 | `src/domain/native/elfReadBudgets.ts` |
 
+`compare_functions` also accepts `max_named_symbol_code_units` (default
+1000000, floor 1, maximum `Number.MAX_SAFE_INTEGER`, owner
+`src/domain/functionComparisonAddressProjection.ts`). It does not refuse: a
+normalized view it stops is `unknown`, and its limitations name the parameter,
+its effective value and source, and the next call.
+
 Refusals that still name a per-call control only in prose are counted by
 `scripts/verify/fixed-ceilings.mjs` against
 `scripts/verify/untyped-budget-refusal-baseline.json` and tracked in

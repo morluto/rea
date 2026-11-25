@@ -46,8 +46,13 @@ export const compareFunctionEvidence = (
   });
   if (!right.ok) return right;
   try {
+    const { include_normalized_views, max_named_symbol_code_units } =
+      selected.value.input;
     const comparison = compareFunctions(left.value, right.value, {
-      includeNormalizedViews: selected.value.input.include_normalized_views,
+      includeNormalizedViews: include_normalized_views,
+      ...(max_named_symbol_code_units === undefined
+        ? {}
+        : { maxNamedSymbolCodeUnits: max_named_symbol_code_units }),
     });
     const leftEvidence = left.value.evidence;
     const rightEvidence = right.value.evidence;
@@ -66,6 +71,10 @@ export const compareFunctionEvidence = (
           ...(comparison.normalized_views === undefined
             ? {}
             : { include_normalized_views: true }),
+          // Recorded only when the caller chose it; the default stays omitted.
+          ...(max_named_symbol_code_units === undefined
+            ? {}
+            : { max_named_symbol_code_units }),
         },
         result: comparison,
         confidence: "derived",

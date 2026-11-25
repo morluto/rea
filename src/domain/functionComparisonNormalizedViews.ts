@@ -3,6 +3,7 @@ import { diffLines } from "diff";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   createFunctionAddressProjection,
+  DEFAULT_NAMED_SYMBOL_CODE_UNITS,
   hasFunctionBodyExtent,
   type AddressProjection,
 } from "./functionComparisonAddressProjection.js";
@@ -203,6 +204,8 @@ export const normalizedViews = (
     readonly callsStatus: "unchanged" | "changed" | "unknown";
     /** Both sides are one Evidence record, so their projections are identical. */
     readonly sameEvidence: boolean;
+    /** The caller's `max_named_symbol_code_units`; omitted keeps the default. */
+    readonly namedSymbolCodeUnits?: number;
   },
 ): FunctionNormalizedViews => {
   const { links, providersDiffer } = options;
@@ -226,10 +229,19 @@ export const normalizedViews = (
         ...shared,
         "One dossier did not observe its own function body extent, so corroborated addresses on both sides were masked as ordinal placeholders instead of entry-relative offsets.",
       ];
-  const leftProjection = createFunctionAddressProjection(left, relativeOffsets);
+  const allowance: NamedSymbolAllowance = {
+    codeUnits: options.namedSymbolCodeUnits ?? DEFAULT_NAMED_SYMBOL_CODE_UNITS,
+    requested: options.namedSymbolCodeUnits !== undefined,
+  };
+  const leftProjection = createFunctionAddressProjection(
+    left,
+    relativeOffsets,
+    allowance.codeUnits,
+  );
   const rightProjection = createFunctionAddressProjection(
     right,
     relativeOffsets,
+    allowance.codeUnits,
   );
   return {
     policy: POLICY,
@@ -253,6 +265,7 @@ export const normalizedViews = (
         [left, leftProjection],
         [right, rightProjection],
         dimension,
+        allowance,
       );
       if (!texts.projected)
         return unknownView(dimension, links, [...limitations, texts.reason]);
@@ -329,11 +342,18 @@ export const normalizedViews = (
 
 type ProjectedText = NonNullable<ReturnType<typeof normalizeText>>;
 
+/** The named-symbol work each side may spend, and whether the caller set it. */
+interface NamedSymbolAllowance {
+  readonly codeUnits: number;
+  readonly requested: boolean;
+}
+
 /** Both sides' projected text, or why normalization was skipped. */
 const projectTexts = (
   [left, leftProjection]: readonly [FunctionSnapshot, AddressProjection],
   [right, rightProjection]: readonly [FunctionSnapshot, AddressProjection],
   dimension: NormalizedViewDimension,
+  allowance: NamedSymbolAllowance,
 ):
   | {
       readonly projected: true;
@@ -368,7 +388,7 @@ const projectTexts = (
     ? { projected: true, left: leftText, right: rightText }
     : {
         projected: false,
-        reason: `${exhausted} named-symbol matching reached its work limit before the text was projected, so normalization was skipped.`,
+        reason: `${exhausted} named-symbol matching examined its allowance of ${String(allowance.codeUnits)} code units (max_named_symbol_code_units, ${allowance.requested ? "set by this call" : "the default"}; default ${String(DEFAULT_NAMED_SYMBOL_CODE_UNITS)}, minimum 1, maximum ${String(Number.MAX_SAFE_INTEGER)}) before the text was projected, so normalization was skipped. Raise max_named_symbol_code_units in the next compare_functions call; no restart is needed, and it does not raise the bounded line diff.`,
       };
 };
 

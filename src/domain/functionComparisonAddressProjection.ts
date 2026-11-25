@@ -31,7 +31,7 @@ export interface AddressProjection {
   readonly isCallEndpointAddress: (address: bigint) => boolean;
   /** Whether the exact calls dimension compares this caller or callee. */
   readonly isComparedCallEndpointAddress: (address: bigint) => boolean;
-  /** Whether named-symbol matching stopped at its walk limit. */
+  /** Whether named-symbol matching spent its code-unit allowance. */
   readonly namedSymbolWalkExhausted: () => boolean;
 }
 
@@ -110,6 +110,7 @@ const callEndpointAddresses = (snapshot: FunctionSnapshot) => {
 export const createFunctionAddressProjection = (
   snapshot: FunctionSnapshot,
   relativeOffsets: boolean,
+  namedSymbolCodeUnits: number,
 ): AddressProjection => {
   const addresses = corroboratedAddresses(snapshot);
   const { calleeAddresses, callEndpoints, comparedCallEndpoints } =
@@ -117,7 +118,10 @@ export const createFunctionAddressProjection = (
   const extent = relativeOffsets ? bodyExtent(snapshot) : null;
   const targetsBySite = referenceTargetsBySite(snapshot);
   const instructionSites = observedInstructionSites(snapshot);
-  const namedSymbols = indexNamedSymbols(namedSymbolNames(snapshot));
+  const namedSymbols = indexNamedSymbols(
+    namedSymbolNames(snapshot),
+    namedSymbolCodeUnits,
+  );
   const observedAddress = (address: bigint): AddressMask | null => {
     if (extent !== null && contains(extent.ranges, address))
       return {
@@ -310,12 +314,13 @@ const incomingCallSources = (
 };
 
 /**
- * Characters the named-symbol walks of one projection may examine. A long chain
- * of repeated qualifiers would otherwise make every token walk back through all
- * earlier ones before the bounded diff starts; past this work the projection
- * stops matching and its views report unknown.
+ * Code units the named-symbol walks of one side may examine when the caller
+ * omits `max_named_symbol_code_units`. A long chain of repeated qualifiers
+ * would otherwise make every token walk back through all earlier ones before
+ * the bounded diff starts; past this work the projection stops matching and its
+ * views report unknown. It is an REA work allowance, not a format limit.
  */
-const NAMED_SYMBOL_WALK_LIMIT = 1_000_000;
+export const DEFAULT_NAMED_SYMBOL_CODE_UNITS = 1_000_000;
 
 interface NamedSymbolIndex {
   readonly names: ReadonlySet<string>;
@@ -327,11 +332,14 @@ interface NamedSymbolIndex {
 }
 
 /** Index named symbols once, spelled backwards, in space linear in their text. */
-const indexNamedSymbols = (names: ReadonlySet<string>): NamedSymbolIndex => ({
+const indexNamedSymbols = (
+  names: ReadonlySet<string>,
+  codeUnits: number,
+): NamedSymbolIndex => ({
   names,
   // Code units, as the walk reads them, so surrogate pairs reverse consistently.
   reversed: [...names].map((name) => name.split("").reverse().join("")).sort(),
-  remainingSteps: NAMED_SYMBOL_WALK_LIMIT,
+  remainingSteps: codeUnits,
   exhausted: false,
 });
 
@@ -365,7 +373,7 @@ const narrow = (
  * Whether the matched identifier spells a named symbol, alone or as the tail of
  * a qualified name whose exact qualifier precedes it in the same code segment.
  * The walk goes back from the token's end, narrowing the sorted reversed names,
- * and stops for good once the projection has spent its walk limit.
+ * and stops for good once the projection has spent its code-unit allowance.
  */
 const isNamedOccurrence = (
   index: NamedSymbolIndex,

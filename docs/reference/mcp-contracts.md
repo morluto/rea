@@ -2507,9 +2507,13 @@ text delta. The thunk target of a listed caller or callee, or of a referenced
 procedure, counts as uncompared even when it is also a listed endpoint, and a
 comparison of one Evidence record with itself skips both endpoint conditions
 because its two projections are identical. Recognizing named symbols written
-with a qualifier has a bounded amount of work per side; text that exhausts it,
-such as a long chain of repeated qualifiers, leaves the view `unknown` without
-projected facts and says so in its limitations.
+with a qualifier examines at most `max_named_symbol_code_units` code units per
+side (default 1,000,000, shared by its pseudocode and then its assembly
+projection, accepted only with `include_normalized_views: true`). Once either
+side has spent it, as a long chain of repeated qualifiers can, a view is
+`unknown` without projected facts; its limitations name the allowance, its
+effective value and source, and that the next call can raise it. The comparison
+Evidence records the value only when the caller sets it.
 Each view returns its applied masking rules, counts, limitations, and both
 source Evidence links. Reconstruction claims and static/runtime function
 selectors can name `pseudocode_normalized` or `assembly_normalized` only when

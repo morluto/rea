@@ -1766,7 +1766,7 @@ describe("normalized view opt-in integrity", () => {
 });
 
 describe("normalized view named symbol index", () => {
-  it("stops a repeated-qualifier chain at the walk limit and reports the view unknown", () => {
+  it("stops a repeated-qualifier chain at the default allowance and names its recovery", () => {
     // Each token in the chain would otherwise walk back through every earlier qualifier.
     const chain = `${"FUN_00009000::".repeat(8_000)}FUN_00009000`;
     const make = (base: string) => {
@@ -1800,7 +1800,9 @@ describe("normalized view named symbol index", () => {
     expect(view(result, "pseudocode_normalized")).toMatchObject({
       status: "unknown",
       limitations: expect.arrayContaining([
-        expect.stringContaining("named-symbol matching reached its work limit"),
+        expect.stringContaining(
+          "Left and Right named-symbol matching examined its allowance of 1000000 code units (max_named_symbol_code_units, the default; default 1000000, minimum 1, maximum 9007199254740991)",
+        ),
       ]),
     });
   });
@@ -1871,6 +1873,55 @@ describe("normalized view named symbol index", () => {
       status: "changed",
       masking: { left: { address_derived_identifiers: 0 } },
     });
+  });
+});
+
+describe("normalized view named symbol allowance", () => {
+  it("names a caller-set allowance in the view and projects once it is raised", () => {
+    // Recognizing ns::FUN_00009000 walks back over all 16 code units of the name.
+    const make = (base: string) => {
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: "void f(void) { ns::FUN_00009000(); }",
+        assembly: [`${base}: PUSH EBP`],
+        callers: [{ address: "0x20000", name: "ns::FUN_00009000" }],
+      });
+      return {
+        ...dossier,
+        callers: dossier.callers.map((item) => ({
+          ...item,
+          symbol: {
+            primary: true,
+            dynamic: false,
+            external: false,
+            type: "function",
+            source: "user_defined" as const,
+          },
+        })),
+      };
+    };
+    const [before, after] = syntheticPair(make("0x411700"), make("0x511700"));
+    const compare = (maxNamedSymbolCodeUnits?: number) =>
+      compareFunctions(before, after, {
+        includeNormalizedViews: true,
+        ...(maxNamedSymbolCodeUnits === undefined
+          ? {}
+          : { maxNamedSymbolCodeUnits }),
+      });
+    const stopped = compare(15);
+    expect(view(stopped, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      left_digest: null,
+      limitations: expect.arrayContaining([
+        "Left and Right named-symbol matching examined its allowance of 15 code units (max_named_symbol_code_units, set by this call; default 1000000, minimum 1, maximum 9007199254740991) before the text was projected, so normalization was skipped. Raise max_named_symbol_code_units in the next compare_functions call; no restart is needed, and it does not raise the bounded line diff.",
+      ]),
+    });
+    const defaulted = compare();
+    expect(view(defaulted, "pseudocode_normalized")).toMatchObject({
+      status: "unchanged",
+    });
+    expect(compare(16).normalized_views).toEqual(defaulted.normalized_views);
   });
 });
 

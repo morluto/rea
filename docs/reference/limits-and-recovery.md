@@ -93,6 +93,14 @@ page runs a fresh discovery on that device.
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
+`compare_functions` accepts `max_named_symbol_code_units` with
+`include_normalized_views: true`: the code units each side's named-symbol
+matching may examine (default 1,000,000, floor 1, maximum
+`Number.MAX_SAFE_INTEGER`). It never refuses the comparison. Once either side
+has spent it, a normalized view is `unknown`, and its limitations name the
+parameter, its effective value and source, and the next call. The bounded line
+diff of those views is independent of it.
+
 `inspect_elf_notes` and `inspect_elf_debug_link` refuse a file above
 `max_file_bytes`, a decoded section-name table above it, or more notes than
 `max_entries` with `details.limit` naming that field

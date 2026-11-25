@@ -5,6 +5,8 @@ import { coverageStatusSchema } from "./coverage.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { nativeAddressSchema } from "./native/nativeAddress.js";
+import { DEFAULT_NAMED_SYMBOL_CODE_UNITS } from "./functionComparisonAddressProjection.js";
+import { requirePresence } from "./schemaConstraints.js";
 
 const comparisonStatusSchema = z.enum(["unchanged", "changed", "unknown"]);
 export const functionComparisonDimensionNameSchema = z.enum([
@@ -33,16 +35,35 @@ export const isNormalizedViewDimension = (
   NORMALIZED_VIEW_DIMENSIONS.some((name) => name === dimension);
 
 /** Inputs for explicit function-to-function comparison. */
-export const functionComparisonInputSchema = z.strictObject({
-  left: evidenceInputSchema,
-  right: evidenceInputSchema,
-  include_normalized_views: z
-    .boolean()
-    .default(false)
-    .describe(
-      "Opt in to separate address-normalized pseudocode and assembly views beside the eight exact dimensions. Exact dimensions, changes, summary counts, and overall status keep their current meaning. Normalized views rewrite recognized address-derived identifiers and dossier-corroborated addresses as entry-relative offsets inside the observed function body and as side-local ordinal placeholders outside it, so normalized equality does not establish that both sides reference the same procedure, data, or label.",
-    ),
-});
+export const functionComparisonInputSchema = requirePresence(
+  z.strictObject({
+    left: evidenceInputSchema,
+    right: evidenceInputSchema,
+    include_normalized_views: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Opt in to separate address-normalized pseudocode and assembly views beside the eight exact dimensions. Exact dimensions, changes, summary counts, and overall status keep their current meaning. Normalized views rewrite recognized address-derived identifiers and dossier-corroborated addresses as entry-relative offsets inside the observed function body and as side-local ordinal placeholders outside it, so normalized equality does not establish that both sides reference the same procedure, data, or label.",
+      ),
+    max_named_symbol_code_units: z
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional()
+      .describe(
+        `Code units each side's named-symbol matching may examine, shared by its pseudocode and then its assembly projection; omitted means ${String(DEFAULT_NAMED_SYMBOL_CODE_UNITS)}. Once either side has spent it, a view is unknown and names this allowance in its limitations; raise it on the next call, no restart. The bounded line diff stays independent. Needs include_normalized_views`,
+      ),
+  }),
+  [
+    {
+      when: "max_named_symbol_code_units",
+      requires: "include_normalized_views",
+      requiresValue: true,
+      message:
+        "max_named_symbol_code_units bounds the normalized views; set include_normalized_views to true.",
+    },
+  ],
+);
 
 const textDeltaSchema = z.object({
   added_lines: z.int().min(0),

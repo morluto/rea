@@ -152,6 +152,19 @@ const validateNormalizedViewOptIn = (
         "Function comparison include_normalized_views selection is not a boolean",
       ),
     );
+  const allowance = evidence.parameters["max_named_symbol_code_units"];
+  if (
+    allowance !== undefined &&
+    (selection !== true ||
+      typeof allowance !== "number" ||
+      !Number.isSafeInteger(allowance) ||
+      allowance < 1)
+  )
+    return err(
+      new EvidenceIntegrityError(
+        "Function comparison max_named_symbol_code_units is not a positive safe integer recorded with include_normalized_views",
+      ),
+    );
   return (selection === true) === (result.normalized_views !== undefined)
     ? ok(undefined)
     : err(

@@ -16,6 +16,8 @@ import { normalizedViews } from "./functionComparisonNormalizedViews.js";
 /** Caller-selected projection options for one explicit comparison. */
 export interface FunctionComparisonRequest {
   readonly includeNormalizedViews?: boolean;
+  /** Named-symbol work allowance per side; omitted keeps the default. */
+  readonly maxNamedSymbolCodeUnits?: number;
 }
 
 /** Compare two authenticated function snapshots without fuzzy matching. */
@@ -53,6 +55,9 @@ export const compareFunctions = (
             providersDiffer,
             // A coordinate commitment can match one record as same-entry first.
             sameEvidence: links[0] === links[1],
+            ...(request.maxNamedSymbolCodeUnits === undefined
+              ? {}
+              : { namedSymbolCodeUnits: request.maxNamedSymbolCodeUnits }),
             callsStatus:
               dimensions.find(({ dimension }) => dimension === "calls")
                 ?.status ?? "unknown",
