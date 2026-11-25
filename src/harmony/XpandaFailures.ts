@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
@@ -45,6 +48,17 @@ const xpandaTimeoutGuidance = (timeoutMs: number) => ({
   remediationAction:
     "Raise the operation's analysis_timeout_ms input (whole-file decompilation of large applications is the slowest operation), or decompile a single class instead of the whole file.",
 });
+
+/** The typed deadline failure an operation's timeout boundary reports. */
+export const xpandaTimeoutError = (
+  operation: string,
+  timeoutMs: number,
+  options?: AnalysisErrorOptions,
+): AnalysisTimeoutError =>
+  new AnalysisTimeoutError(operation, timeoutMs, {
+    ...options,
+    ...xpandaTimeoutGuidance(timeoutMs),
+  });
 
 /** Freeze failure selection now; read diagnostics once after owned finalization. */
 export const captureXpandaFailure = (
@@ -147,10 +161,7 @@ const presentDiagnosticFailure = (
       output === undefined ? {} : { capturedOutput: output },
     );
   if (failure.kind === "timeout")
-    return new AnalysisTimeoutError(failure.operation, failure.timeoutMs, {
-      ...options,
-      ...xpandaTimeoutGuidance(failure.timeoutMs),
-    });
+    return xpandaTimeoutError(failure.operation, failure.timeoutMs, options);
   if (failure.kind === "output")
     return new AnalysisOutputError(failure.operation, failure.reason, options);
   if (failure.kind === "startup") {

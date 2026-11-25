@@ -64,7 +64,7 @@ import {
   xpandaXrefsSchema,
   type XpandaSession,
 } from "./XpandaProtocol.js";
-import { captureXpandaFailure } from "./XpandaFailures.js";
+import { captureXpandaFailure, xpandaTimeoutError } from "./XpandaFailures.js";
 import {
   XPANDA_BYTECODE_VERSION_SUPPORT,
   XPANDA_CHECKOUT_REMEDIATION,
@@ -79,6 +79,24 @@ import { errorMessage } from "../kernel/errorMessage.js";
 type Outcome = Awaited<ReturnType<HarmonyAbcAnalysisPort["execute"]>>;
 
 const IDLE_RETIRE_MS = 60_000;
+
+/** The typed reason the combined operation signal aborted. */
+const interruptionError = (context: {
+  readonly operation: string;
+  readonly signal: AbortSignal;
+  readonly timeout: AbortSignal;
+  readonly timeoutMs: number;
+  readonly callerSignal: AbortSignal | undefined;
+  readonly shutdown: AbortSignal;
+}): AnalysisError => {
+  if (context.timeout.aborted)
+    return xpandaTimeoutError(context.operation, context.timeoutMs);
+  if (context.shutdown.aborted)
+    return cancelledBy(context.operation, context.shutdown);
+  if (context.callerSignal?.aborted === true)
+    return cancelledBy(context.operation, context.callerSignal);
+  return cancelledBy(context.operation, carriedReason(context.signal.reason));
+};
 
 /** How long a caller waits behind the provider's serialized request tail. */
 const waitForTurn = (
@@ -150,8 +168,17 @@ const publishStagedExport = async (options: {
   readonly expectedWritten: number;
   /** Cancels publication; output is removed before the reason is rethrown. */
   readonly signal: AbortSignal;
+  /** Typed cancellation or deadline failure for the stopped operation. */
+  readonly interruption: () => AnalysisError;
 }): Promise<readonly string[]> => {
-  const { source, destination, operation, expectedWritten, signal } = options;
+  const {
+    source,
+    destination,
+    operation,
+    expectedWritten,
+    signal,
+    interruption,
+  } = options;
   const stop = (): void => {
     if (signal.aborted) throw signal.reason ?? new Error("aborted");
   };
@@ -226,8 +253,8 @@ const publishStagedExport = async (options: {
   } catch (cause: unknown) {
     // Cancellation or the deadline wins over a publication failure observed
     // in the same window; either way the partial tree is removed first.
-    const primary: unknown = signal.aborted
-      ? (signal.reason ?? new Error("aborted"))
+    const primary: AnalysisError | AnalysisOutputError = signal.aborted
+      ? interruption()
       : cause instanceof AnalysisError
         ? cause
         : new AnalysisOutputError(
@@ -244,9 +271,7 @@ const publishStagedExport = async (options: {
         { reason: errorMessage(cleanupCause) },
         { operation, cause: new AggregateError([primary, cleanupCause]) },
       );
-      if (primary instanceof AnalysisError)
-        throw analysisErrorWithCleanupDependencies(primary, cleanup, operation);
-      throw cleanup;
+      throw analysisErrorWithCleanupDependencies(primary, cleanup, operation);
     }
     throw primary;
   }
@@ -597,6 +622,15 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
           operation: request.operation,
           expectedWritten: exported.written,
           signal,
+          interruption: () =>
+            interruptionError({
+              operation: request.operation,
+              signal,
+              timeout,
+              timeoutMs,
+              callerSignal: options?.signal,
+              shutdown: this.#shutdown.signal,
+            }),
         });
         normalized = {
           ...exported,
