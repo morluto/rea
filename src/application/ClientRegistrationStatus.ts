@@ -116,11 +116,6 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
       }
   );
 
-export type UnhealthyClientRegistrationStatus = Exclude<
-  ClientRegistrationStatus,
-  { readonly state: "aligned" }
->;
-
 interface ClientRegistrationReadOptions {
   readonly platform: NodeJS.Platform;
   readonly environment?: NodeJS.ProcessEnv;

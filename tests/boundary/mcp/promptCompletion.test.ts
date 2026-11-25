@@ -1,7 +1,3 @@
-import {
-  fileIdentity,
-  fileSubjectDisplay,
-} from "../../fixtures/evidenceSubject.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -19,7 +15,11 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { PROCESS_CAPTURE_REFERENCE } from "../../../src/contracts/investigationExamples.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../../src/domain/evidence.js";
+import { artifactInventorySubject } from "../../../src/domain/artifactInventoryEvidence.js";
 import {
   artifactInspectionResultSchema,
   createArtifactInspection,
@@ -452,11 +452,7 @@ const createPagedInspectionEvidence = async (
   ]);
   const inventoryResult = await inventoryArtifact(path);
   const source = createEvidence(
-    {
-      path,
-      sha256: inventoryResult.manifest.root_sha256,
-      format: inventoryResult.manifest.root_format,
-    },
+    artifactInventorySubject(path, inventoryResult),
     fixtureProvider,
     {
       operation: "inventory_artifact",
@@ -552,15 +548,11 @@ const createPagedInspectionEvidence = async (
   };
   const target = source.subject;
   if (target === null) throw new Error("fixture inventory has no subject");
+  const subject = evidenceSubjectInput(target);
   const evidence = createEvidence(
-    {
-      path: fileSubjectDisplay(target).local_path,
-      sha256:
-        corruption === "carrier-subject"
-          ? "a".repeat(64)
-          : fileIdentity(target).sha256,
-      format: fileIdentity(target).format,
-    },
+    corruption === "carrier-subject" && "sha256" in subject
+      ? { ...subject, sha256: "a".repeat(64) }
+      : subject,
     fixtureProvider,
     {
       operation: "inspect_artifact",

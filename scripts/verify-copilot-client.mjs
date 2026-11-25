@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { verifyClientSetup } from "./verify/clients/setup.mjs";
+import { verifyClientSetupAndReadSkillBody } from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -20,6 +20,7 @@ import {
   assertClientJavaScriptFixtureEvidence,
 } from "./verify/clients/javascript-fixture.mjs";
 import {
+  containsText,
   findClientResult,
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
@@ -121,14 +122,6 @@ await withVerifierCleanup(async () => {
       strict: false,
       validateFormats: false,
     });
-    const containsText = (value, text) => {
-      if (typeof value === "string") return value.includes(text);
-      if (value && typeof value === "object")
-        return Object.values(value).some((nested) =>
-          containsText(nested, text),
-        );
-      return false;
-    };
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: "copilot",
@@ -261,7 +254,7 @@ await withVerifierCleanup(async () => {
       2,
     );
     await writeFile(configPath, original);
-    await verifyClientSetup({
+    expectedSkillBody = await verifyClientSetupAndReadSkillBody({
       client: "copilot_cli",
       commands,
       runtimeRoot,
@@ -275,22 +268,6 @@ await withVerifierCleanup(async () => {
         assert(configured.includes("unrelated-server"));
       },
     });
-    const installedSkill = await readFile(
-      join(skillDirectory, "SKILL.md"),
-      "utf8",
-    );
-    assert(installedSkill.includes("name: reverse-engineer-anything"));
-    const skillLines = installedSkill.split("\n");
-    const headerEnd = skillLines.indexOf("---", 1);
-    assert(
-      skillLines[0] === "---" && headerEnd > 0,
-      "Installed skill must have its authored frontmatter",
-    );
-    expectedSkillBody = skillLines
-      .slice(headerEnd + 1)
-      .join("\n")
-      .trim();
-    assert(expectedSkillBody.length > 0);
     for (const [name, args] of [
       ["mcp-list", ["mcp", "list"]],
       ["skill-add", ["skill", "add", skillDirectory]],

@@ -104,7 +104,7 @@ index of `binary_path`; its refusal reports the same kind of limit. See
 ### Static reader read allowance
 
 `inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
-`inspect_pe_certificates`, `inspect_binary_hardening` and
+`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_binary_hardening` and
 `inspect_native_exports` bound the bytes they read, not the file size.
 `max_file_bytes` (CLI `--max-file-bytes`) counts each positional read of
 headers, directory tables and the ranges they reference. Defaults are 64 MiB

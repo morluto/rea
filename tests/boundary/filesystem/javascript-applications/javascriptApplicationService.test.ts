@@ -315,8 +315,9 @@ describe("Selected JavaScript source failure diagnostics", () => {
         "Unselected content changes must still fail integrity verification",
       );
     expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "artifact_operation_failed",
-      details: { reason: "integrity" },
+      code: "artifact_changed",
+      retry: "backoff",
+      details: { reason: "integrity", failure_kind: "changed" },
     });
   });
 

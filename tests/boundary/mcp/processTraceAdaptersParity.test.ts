@@ -1,9 +1,9 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -17,7 +17,6 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 const temporaryRoots: string[] = [];
@@ -51,16 +50,11 @@ const comparisonClient = async (
     { kind: "session", session },
     { environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT } },
   );
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     { name: "trace-parity", version: "1" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 afterEach(async () => {

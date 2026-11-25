@@ -2,8 +2,8 @@ import {
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
   primaryAnalysisError,
@@ -221,9 +221,10 @@ export const adbExitFailure = (
       diagnostic,
     )
   )
-    return new AnalysisUnsupportedTargetError(
+    return unsupportedTarget(
       operation,
       target.device,
+      "android-device",
       excerpt,
       detail,
     );
@@ -242,7 +243,13 @@ export const adbExitFailure = (
       )
         ? localPath
         : (target.path ?? target.device);
-    return new AnalysisUnsupportedTargetError(operation, path, excerpt, detail);
+    return unsupportedTarget(
+      operation,
+      path,
+      "android-device",
+      excerpt,
+      detail,
+    );
   }
   const protocolError = new AdbProtocolError(
     excerpt === ""
@@ -258,9 +265,10 @@ export const adbExitFailure = (
       `${run.capturedOutput.stdout}\n${run.stderr}`,
     );
     if (reason !== null)
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         operation,
         target.device,
+        "android-package",
         reason,
         { cause: protocolError },
       );
@@ -303,7 +311,7 @@ export const packageChangeRefusal = (
   return reason === null
     ? undefined
     : err(
-        new AnalysisUnsupportedTargetError(operation, serial, reason, {
+        unsupportedTarget(operation, serial, "android-package", reason, {
           cause: error,
         }),
       );
