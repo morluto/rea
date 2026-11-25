@@ -489,6 +489,7 @@
 * **ci:** run scheduled full qualification every six hours ([#14374](https://github.com/morluto/rea/issues/14374)) ([14b9167](https://github.com/morluto/rea/commit/14b916795c9c80ba46109bdb0ea6b9aafe5daf44))
 * **ci:** skip ancestor lookup for reused scheduled runs ([#14431](https://github.com/morluto/rea/issues/14431)) ([079f426](https://github.com/morluto/rea/commit/079f426eb57f354cdd6034fa93f90a6cf6031f7a))
 * **ci:** skip the portable report runner for non-code changes ([#14333](https://github.com/morluto/rea/issues/14333)) ([7e16cb3](https://github.com/morluto/rea/commit/7e16cb3600489aedb28bffd3e79d9e21c75b1c7b))
+* **ci:** skip timing downloads for single-test selections ([#14477](https://github.com/morluto/rea/issues/14477)) ([a0390ba](https://github.com/morluto/rea/commit/a0390ba8775a17f2d5123ee326c8ba0966118fe1))
 * **ci:** trace fixed-ceiling baselines and owned bridge sources in PR test selection ([#14375](https://github.com/morluto/rea/issues/14375)) ([229ba77](https://github.com/morluto/rea/commit/229ba77b1aa552192ab7b714c93bb3313f130392))
 * **ci:** warm caches on main push and run scheduled fast main sweeps ([#14383](https://github.com/morluto/rea/issues/14383)) ([c718143](https://github.com/morluto/rea/commit/c718143643658c81b3d0c1ed4f60b43ce680eed0))
 * **cli/mcp:** decouple analysis view contracts and defer tshark PATH probes ([#13316](https://github.com/morluto/rea/issues/13316)) ([787b5aa](https://github.com/morluto/rea/commit/787b5aafb94f69f3b529a13bf47235a1b5ec4295))
