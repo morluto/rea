@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { EventEmitter, once } from "node:events";
 import { PassThrough } from "node:stream";
 import { buffer } from "node:stream/consumers";
@@ -19,7 +20,6 @@ import {
   phaseGate,
 } from "../../tests/support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 
 const sliceOwnershipFixture = async (secondSlice = false) => {
   const root = await createTestTempDirectory("rea-slice-ownership-");
@@ -64,14 +64,6 @@ const sliceOwnershipFixture = async (secondSlice = false) => {
       }),
   };
   return { path, runner, bytes };
-};
-
-const sliceEntries = async (
-  reader: MachOSliceArtifactReader,
-): Promise<ArtifactEntry[]> => {
-  const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
 };
 
 const cleanupOwner = (runId: string): ProviderProcessSupervisor => {
@@ -359,7 +351,7 @@ it("keeps a borrowed source usable after idle and active cancelled slice reads",
     }
   });
 
-  const [entry] = await sliceEntries(reader);
+  const [entry] = await collectEntries(reader);
   if (entry === undefined) throw new Error("Expected an x86_64 slice");
   const idleController = new AbortController();
   const idle = await reader.open(entry, idleController.signal);
@@ -414,7 +406,7 @@ it("keeps a borrowed source usable after idle and active cancelled slice reads",
     }
   }
 
-  const [verified] = await sliceEntries(reader);
+  const [verified] = await collectEntries(reader);
   if (verified === undefined)
     throw new Error("Expected the same slice after cancellation");
   const reopened = await buffer(await reader.open(verified));
@@ -611,7 +603,7 @@ describe("Mach-O slice stream ownership", () => {
         fixture.runner,
       );
       try {
-        const [entry] = await sliceEntries(reader);
+        const [entry] = await collectEntries(reader);
         const caller = new AbortController();
         const stream = await reader.open(entry!, caller.signal);
         await once(stream, "readable");
@@ -648,7 +640,7 @@ describe("Mach-O slice stream ownership", () => {
     let reads: { mockRestore(): void } | undefined;
     let consumed: Promise<Buffer> | undefined;
     try {
-      const [entry] = await sliceEntries(reader);
+      const [entry] = await collectEntries(reader);
       reads = vi.spyOn(source.handle, "read").mockImplementation((async (
         ...args: unknown[]
       ) => {
@@ -687,7 +679,7 @@ describe("Mach-O slice stream ownership", () => {
       {},
       fixture.runner,
     );
-    const [entry] = await sliceEntries(reader);
+    const [entry] = await collectEntries(reader);
     const stream = await reader.open(entry!);
     const failure = new Error("Mach-O descriptor close denied");
     const close = vi
@@ -710,7 +702,7 @@ describe("Mach-O slice stream ownership", () => {
       const fixture = await sliceOwnershipFixture();
       const reader = new MachOSliceArtifactReader(fixture.path, process.env);
       try {
-        const [entry] = await sliceEntries(reader);
+        const [entry] = await collectEntries(reader);
         const stream = await reader.open(entry!);
         await once(stream, "readable");
         await reader.close();

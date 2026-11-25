@@ -555,6 +555,25 @@ it.each([
     unhandledErrors: 0,
   },
   {
+    label: "queued module",
+    success: true,
+    state: "queued",
+    unhandledErrors: 0,
+  },
+  {
+    label: "pending module",
+    success: true,
+    state: "pending",
+    unhandledErrors: 0,
+  },
+  {
+    label: "interrupted test run",
+    success: true,
+    state: "passed",
+    reason: "interrupted",
+    unhandledErrors: 0,
+  },
+  {
     label: "unhandled error",
     success: true,
     state: "passed",
@@ -562,13 +581,14 @@ it.each([
   },
 ])(
   "refuses a successful merge with $label and leaves diagnostics",
-  async ({ success, state, unhandledErrors }) => {
+  async ({ success, state, reason, unhandledErrors }) => {
     const root = await createTestTempDirectory("rea-ci-conflicting-report-");
     await writeFile(
       join(root, "test-timings.json"),
       JSON.stringify({
         version: 1,
         success,
+        reason,
         unhandledErrors,
         files: [{ name: "tests/sample.test.ts", durationMs: 1, state }],
       }),
@@ -589,7 +609,7 @@ it("recovers complete module costs from real blob reports without executing test
   const config = join(root, "vitest.config.mjs");
   await writeFile(
     config,
-    'export default { test: { globals: true, include: ["sample.test.js"], maxWorkers: 1 } };',
+    'export default { test: { fsModuleCache: false, globals: true, include: ["sample.test.js"], maxWorkers: 1 } };',
   );
   await writeFile(
     join(root, "sample.test.js"),

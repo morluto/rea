@@ -2,7 +2,10 @@ import type { JsonValue } from "./jsonValue.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
 import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
-import type { ParseFailure } from "./parseFailure.js";
+import {
+  TARGET_FAILURE_PROJECTIONS,
+  type TargetFailure,
+} from "./targetFailure.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -30,28 +33,22 @@ export class AnalysisUnsupportedTargetError extends AnalysisError {
   }
 }
 
-/** What a byte-format parser established about the selected target's bytes. */
-export type MalformedTargetFailure = Extract<
-  ParseFailure,
-  { readonly kind: "malformed" | "truncated" }
->;
-
 /**
- * The selected target's bytes violate, or end inside, a structure of the
- * format this operation reads. The request's arguments are not at fault, so
- * this is a target refusal rather than invalid input.
+ * The selected target at `path` could not be read, for the reason its owner
+ * established. The failure's `kind` alone selects the public code, category,
+ * retryability and recovery; see {@link TARGET_FAILURE_PROJECTIONS}.
  */
-export class AnalysisMalformedTargetError extends AnalysisError {
-  readonly _tag = "AnalysisMalformedTargetError";
-  readonly failure: MalformedTargetFailure;
+export class AnalysisTargetFailureError extends AnalysisError {
+  readonly _tag = "AnalysisTargetFailureError";
+  readonly failure: TargetFailure;
   constructor(
     readonly operation: string,
     readonly path: string,
-    failure: MalformedTargetFailure,
+    failure: TargetFailure,
     options?: AnalysisErrorOptions,
   ) {
     super(
-      `${failure.kind === "truncated" ? "Truncated" : "Malformed"} ${failure.format} target for ${operation} at ${path}: ${failure.detail}`,
+      `${TARGET_FAILURE_PROJECTIONS[failure.kind].title} ${failure.format} target for ${operation} at ${path}: ${failure.detail}`,
       options,
     );
     this.failure = Object.freeze({ ...failure });

@@ -170,6 +170,7 @@ describe("trace path completion and cancellation", () => {
               relationshipCoverage: {
                 status: "unknown",
                 reason: "the provider cannot confirm graph coverage",
+                limited_directions: ["callees"],
               },
             }),
           );

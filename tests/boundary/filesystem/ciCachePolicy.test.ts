@@ -138,7 +138,16 @@ const readWorkflows = async () => {
               z
                 .object({
                   env: z.record(z.string(), z.unknown()).optional(),
-                  steps: z.array(z.record(z.string(), z.unknown())).optional(),
+                  steps: z
+                    .array(
+                      z
+                        .object({
+                          uses: z.string().optional(),
+                          with: z.record(z.string(), z.unknown()).optional(),
+                        })
+                        .passthrough(),
+                    )
+                    .optional(),
                 })
                 .passthrough(),
             )
@@ -185,6 +194,7 @@ async function verifyPrefixedHashFiles(
     const fileNames = targetPaths.map((path) =>
       path.slice("triggering-source/".length),
     );
+    expect(fileNames.every((name) => !name.includes("/"))).toBe(true);
     const nestedHash = aggregateHashFilesContent(
       await Promise.all(
         targetPaths.map((path) => readFile(join(runnerWorkspace, path))),
@@ -635,12 +645,16 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     ref: "${{ github.workflow_sha }}",
     path: "trusted-retention",
     "persist-credentials": false,
+    "sparse-checkout-cone-mode": false,
+    "sparse-checkout": "/.nvmrc\n/scripts/ci/\n",
   });
   const targetCheckout = checkouts[1];
   expect(targetCheckout?.with).toMatchObject({
     ref: "${{ github.event.workflow_run.head_sha }}",
     path: "triggering-source",
     "persist-credentials": false,
+    "sparse-checkout-cone-mode": false,
+    "sparse-checkout": "/*\n!/*/\n",
   });
   expect(checkouts).toHaveLength(2);
   const setupNode = steps.find(
@@ -741,6 +755,51 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(String(windowsNativeKey?.run)).toContain("ImageOS");
   expect(String(windowsNativeKey?.run)).toContain("ImageVersion");
   expect(String(windowsNativeKey?.run)).toContain("date -u +%Y-%m-%d");
+});
+
+it("replaces Windows cross-build artifacts on retries under their consumer names", async () => {
+  const ci = workflows.find(({ file }) => file === "ci.yml");
+  const jobs = ci?.workflow.jobs;
+  const producer = jobs?.["windows-native-build"]?.steps ?? [];
+  const verifiedAt = producer.findIndex(
+    (step) => step.name === "Verify cross-built Windows test fixtures",
+  );
+  const uploadPositions = producer.flatMap((step, index) =>
+    step.uses?.startsWith("actions/upload-artifact@") ? [index] : [],
+  );
+  expect(verifiedAt).toBeGreaterThanOrEqual(0);
+  expect(uploadPositions).toHaveLength(3);
+  for (const index of uploadPositions)
+    expect(index).toBeGreaterThan(verifiedAt);
+  const uploads = uploadPositions.map((index) => producer[index]?.with);
+  expect(uploads).toMatchObject([
+    {
+      name: "windows-native-inspection-fixture",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-process-boundary-fixture",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-native-controls",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+  ]);
+  const names = new Set(uploads.map((upload) => upload?.name));
+  for (const job of ["package-e2e", "windows-curated"]) {
+    const downloads = jobs?.[job]?.steps?.filter(
+      (step) =>
+        step.uses?.startsWith("actions/download-artifact@") &&
+        names.has(step.with?.name),
+    );
+    expect(downloads?.map((step) => step.with?.name).sort()).toEqual(
+      job === "package-e2e" ? ["windows-native-controls"] : [...names].sort(),
+    );
+  }
 });
 
 it("publishes each hosted npm download cache from one writer", async () => {

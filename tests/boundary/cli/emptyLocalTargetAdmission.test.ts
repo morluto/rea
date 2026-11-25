@@ -33,7 +33,7 @@ const registry = () => {
       }) as const,
   );
   const cli = createCommandCli();
-  registerArtifactCommands(cli, silentLogger, runProviderAnalysis);
+  registerArtifactCommands(cli, silentLogger, runProviderAnalysis, {});
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerCoreNativeCommands(cli, silentLogger, runDirectAnalysis);
   registerManagedCommands(cli, silentLogger, {

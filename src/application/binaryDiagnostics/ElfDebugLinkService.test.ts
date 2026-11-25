@@ -1,3 +1,4 @@
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { resolvedAnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -57,6 +58,7 @@ const report: ElfDebugLink = {
   candidate: null,
   verification: null,
   coverage: { status: "complete", examined_sections: 0 },
+  limitation_codes: ["standing_caveats"],
   limitations: [...ELF_DEBUG_LINK_LIMITATIONS],
 };
 
@@ -170,6 +172,10 @@ it("rejects a report whose type name, lookup paths, or verification disagree", a
   const interrupted: ElfDebugLink = {
     ...linked,
     candidate: interruptedCandidate,
+    limitation_codes: [
+      ...linked.limitation_codes,
+      "candidate_comparison_incomplete",
+    ],
     limitations: [
       ...linked.limitations,
       ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
@@ -228,6 +234,10 @@ it("rejects a report whose type name, lookup paths, or verification disagree", a
     },
     {
       ...interrupted,
+      limitation_codes: [
+        ...interrupted.limitation_codes,
+        "candidate_unreadable" as const,
+      ],
       limitations: [
         ...interrupted.limitations,
         ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
@@ -266,6 +276,7 @@ it("rejects an unreadable-candidate verdict without its limitation", async () =>
         reason: "candidate_unreadable",
       },
     },
+    limitation_codes: [...report.limitation_codes, "cannot_verify"],
     limitations: [
       ...ELF_DEBUG_LINK_LIMITATIONS,
       ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
@@ -279,30 +290,31 @@ it("rejects an unreadable-candidate verdict without its limitation", async () =>
   if (result.ok)
     throw new Error("Expected missing unreadable-candidate limitation to fail");
   expect(result.error).toBeInstanceOf(AnalysisOutputError);
+
+  // Typed limitation_codes drive validation rather than prose matching.
+  const reworded = await serviceFor({
+    ...report,
+    limitations: ["Custom standing caveat prose."],
+  }).inspect({ path: report.artifact.path });
+  expect(reworded.ok).toBe(true);
+
+  const missingCode = await serviceFor({
+    ...report,
+    limitation_codes: [],
+  }).inspect({ path: report.artifact.path });
+  expect(missingCode).toMatchObject({
+    ok: false,
+    error: expect.any(AnalysisOutputError),
+  });
 });
 
 it("retains a completed observation if the caller cancels while the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late elf debug link cancellation" };
-  const service = new ElfDebugLinkService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const late = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late elf debug link cancellation",
+    (inspect) => new ElfDebugLinkService({ identity, inspect }),
   );
-  expect(late).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError" },
-  });
-  if (late.ok) throw new Error("Expected late cancellation");
-  expect(late.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(late.error.cause).toBe(reason);
-  expect(parseEvidence(late.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_elf_debug_link",
     confidence: "observed",
     subject: { identity: { format: "elf", architecture: "x86_64" } },
@@ -350,8 +362,9 @@ it("keeps caller Evidence after retained cleanup releases and reveals the primar
     path: report.artifact.path,
     candidate_path: "/artifacts/prog.debug",
   };
-  const partial = {
+  const partial: ElfDebugLink = {
     ...report,
+    limitation_codes: [...report.limitation_codes, "candidate_read_incomplete"],
     limitations: [
       ...report.limitations,
       ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,

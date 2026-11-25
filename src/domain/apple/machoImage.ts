@@ -25,7 +25,7 @@ import {
   machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
-import type { ByteSource } from "../byteSource.js";
+import { readByteSourceSlice, type ByteSource } from "../byteSource.js";
 
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
 export const readMachoImage = (
@@ -37,15 +37,11 @@ export const readMachoImage = (
 export const readMachoImageFromReader = async (
   source: ByteSource,
 ): Promise<Extract<BinaryContainer, { format: "macho" }>> => {
-  const readSlice = (offset: number, length: number): Promise<Buffer> => {
-    if (length <= 0 || offset >= source.size)
-      return Promise.resolve(Buffer.alloc(0));
-    const clamped = Math.min(length, source.size - offset);
-    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-      return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
-    return source.readRange(offset, clamped);
-  };
-  const headerPrefix = await readSlice(0, Math.min(32, source.size));
+  const headerPrefix = await readByteSourceSlice(
+    source,
+    0,
+    Math.min(32, source.size),
+  );
   const parsed = readMachoLoadCommandDeclarations(headerPrefix, source.size);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
   if (parsed.value === null)
@@ -63,7 +59,11 @@ export const readMachoImageFromReader = async (
       },
     );
   requireBinaryTableBudget(BigInt(table.commandBytes), "Mach-O load commands");
-  const tableBytes = await readSlice(0, table.headerSize + table.commandBytes);
+  const tableBytes = await readByteSourceSlice(
+    source,
+    0,
+    table.headerSize + table.commandBytes,
+  );
   return readMachoImageCore(tableBytes, source.size);
 };
 

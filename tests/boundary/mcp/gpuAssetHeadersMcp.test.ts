@@ -1,9 +1,12 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  inspectInventorySummary,
+  inspectRetainedOccurrences,
+} from "../../fixtures/artifactInventoryMcp.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import {
   ddsBc7Fixture,
@@ -11,8 +14,6 @@ import {
   ktx2Fixture,
   ktxFixture,
 } from "../../../src/artifacts/gpuAsset/gpuAsset.fixture.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 it("exposes DDS, GLB, KTX and KTX2 header summaries and region pages through MCP", async () => {
   const root = await createTestTempDirectory("rea-gpu-asset-mcp-");
@@ -29,36 +30,20 @@ it("exposes DDS, GLB, KTX and KTX2 header summaries and region pages through MCP
     await writeFile(path, bytes);
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const reply = await call("inspect_artifact", { detail: "summary" });
-    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-    const summary = z
-      .object({
-        parent_evidence_id: z.string(),
-        summary: z.object({ root_format_metadata: z.unknown() }),
-      })
-      .parse(parseEvidence(reply.structuredContent).normalized_result);
+    const summary = await inspectInventorySummary(call);
     expect(summary.summary.root_format_metadata).toMatchObject({
       kind: format,
       extent_check: "consistent",
     });
-    const retained = await call("inspect_analysis_view", {
-      source: {
-        kind: "retained-evidence",
-        evidence_id: summary.parent_evidence_id,
-      },
-      view: {
-        kind: "inventory",
-        collection: "occurrences",
+    const view = await inspectRetainedOccurrences(
+      call,
+      summary.parent_evidence_id,
+      {
         logical_paths: [region],
         fields: ["logical_path", "format_metadata"],
       },
-    });
-    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-    expect(
-      analysisViewResultSchema.parse(
-        parseEvidence(retained.structuredContent).normalized_result,
-      ),
-    ).toMatchObject({
+    );
+    expect(view).toMatchObject({
       kind: "inventory",
       items: [
         expect.objectContaining({

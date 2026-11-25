@@ -270,7 +270,7 @@ sliceTest(
         code: "unsupported_target",
         details: {
           path: damaged,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "macho",
           reason: "FAT architecture 0 slice range extends beyond the file",
         },
@@ -290,7 +290,7 @@ sliceTest(
       code: "unsupported_target",
       details: {
         path: cutOff,
-        format_failure: "truncated",
+        failure_kind: "truncated",
         format: "macho",
         available_bytes: 20,
         required_bytes: 28,
@@ -320,7 +320,7 @@ sliceTest(
       code: "unsupported_target",
       details: {
         path: disagreeing,
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "macho",
         reason:
           "FAT architecture 0 CPU type/subtype disagrees with its Mach-O header",
@@ -451,7 +451,7 @@ sliceTest(
         code: "unsupported_target",
         details: {
           path,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "macho",
           reason: "Mach-O slices 0 and 1 overlap.",
         },

@@ -336,7 +336,7 @@ cliTest(
         details: {
           operation: "inspect_il2cpp_metadata",
           path,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "il2cpp-metadata",
           reason: expect.stringContaining("record-size-mismatch"),
         },
@@ -501,7 +501,7 @@ cliTest(
           code: "unsupported_target",
           details: {
             operation: "inspect_il2cpp_metadata",
-            format_failure: "malformed",
+            failure_kind: "malformed",
             format: "il2cpp-metadata",
             reason: expect.stringContaining("section-overlap"),
           },
@@ -537,7 +537,7 @@ cliTest(
       details: {
         operation: "inspect_il2cpp_metadata",
         path,
-        format_failure: "truncated",
+        failure_kind: "truncated",
         format: "il2cpp-metadata",
         reason: expect.stringContaining("truncated-header"),
         partial_observation: {
@@ -1133,7 +1133,7 @@ cliTest(
           code: "unsupported_target",
           details: {
             path,
-            format_failure: "malformed",
+            failure_kind: "malformed",
             format: "il2cpp-metadata",
             reason: expect.stringContaining("section-overlap"),
           },
@@ -1147,7 +1147,7 @@ cliTest(
           code: "unsupported_target",
           details: {
             path: binaryPath,
-            format_failure: "truncated",
+            failure_kind: "truncated",
             format: "macho",
           },
         }),
@@ -1169,7 +1169,7 @@ cliTest(
           code: "unsupported_target",
           details: {
             path,
-            format_failure: "malformed",
+            failure_kind: "malformed",
             format: "il2cpp-metadata",
             reason: expect.stringMatching(/^invalid-method-definition-token:/u),
           },

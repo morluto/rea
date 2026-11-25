@@ -1,4 +1,12 @@
-import { AnalysisCapabilityUnavailableError } from "./analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisTargetFailureError,
+} from "./analysisErrorCore.js";
+import {
+  TARGET_FAILURE_KINDS,
+  TARGET_FAILURE_PROJECTIONS,
+  type TargetFailureKind,
+} from "./targetFailure.js";
 import {
   domainErrorTag,
   type AnalysisError,
@@ -40,6 +48,7 @@ export const RETRYABLE_CODES: ReadonlySet<ErrorCode> = new Set([
 
 /** Domain tags whose classification depends on the error's own facts. */
 type SpecializedErrorTag =
+  | "AnalysisTargetFailureError"
   | "ArtifactOperationError"
   | "BinaryTargetError"
   | "BrowserObservationError"
@@ -70,10 +79,6 @@ const STATIC_ERROR_CLASSIFICATIONS = {
     "unsupported_target",
     "unsupported_target",
   ),
-  AnalysisMalformedTargetError: classified(
-    "unsupported_target",
-    "unsupported_target",
-  ),
   AnalysisCancelledError: classified("cancelled", "cancelled"),
   AnalysisTimeoutError: classified("provider_timeout", "timeout"),
   AnalysisResourceConstraintError: classified(
@@ -100,15 +105,25 @@ const RETRYABLE_CAPABILITY_UNAVAILABLE = classified(
   "unavailable",
 );
 
+/** The code and category the projection table gives one target failure kind. */
+const kindClassification = (
+  kind: TargetFailureKind,
+): AnalysisErrorClassification => {
+  const { code, category } = TARGET_FAILURE_PROJECTIONS[kind];
+  return { code, category };
+};
+
 const ARTIFACT_OPERATION_CLASSIFICATIONS = {
   cancelled: classified("cancelled", "cancelled"),
-  // The artifact's bytes are at fault, not the request: a target refusal.
-  malformed: classified("unsupported_target", "unsupported_target"),
-  truncated: classified("truncated", "truncated"),
-  unsupported: classified("unsupported_target", "unsupported_target"),
+  // Reasons that name a target failure kind take that kind's projection, so
+  // an inventory refusal and a selected-file refusal of the same bytes report
+  // the same code. `limit` reports `partial`: the result was cut short.
+  malformed: kindClassification("malformed"),
+  truncated: kindClassification("truncated"),
+  unsupported: kindClassification("unsupported"),
   format: classified("artifact_operation_failed", "execution_failure"),
   integrity: classified("artifact_operation_failed", "integrity_mismatch"),
-  limit: classified("truncated", "truncated"),
+  limit: classified("partial", "partial"),
   path: classified("artifact_operation_failed", "execution_failure"),
   unavailable: classified("artifact_operation_failed", "unavailable"),
   io: classified("artifact_operation_failed", "execution_failure"),
@@ -146,7 +161,7 @@ const UNKNOWN_REGISTRY_CLASSIFICATIONS = {
   "revision-conflict": classified("revision_conflict", "execution_failure"),
   "invalid-transition": classified("execution_failure", "execution_failure"),
   integrity: classified("evidence_integrity_mismatch", "execution_failure"),
-  limit: classified("truncated", "execution_failure"),
+  limit: classified("partial", "execution_failure"),
   constraint: classified("invalid_request", "invalid_input"),
 } as const satisfies Readonly<
   Record<UnknownRegistryError["reason"], AnalysisErrorClassification>
@@ -227,7 +242,7 @@ const BROWSER_OBSERVATION_CLASSIFICATIONS = {
   target_session_detached: classified("target_unavailable", "unavailable"),
   protocol_error: classified("unreadable_output", "execution_failure"),
   disconnected: classified("provider_unavailable", "unavailable"),
-  payload_limit: classified("truncated", "truncated"),
+  payload_limit: classified("partial", "partial"),
   window_not_found: classified("unreadable_output", "execution_failure"),
   window_metadata_missing: classified("unreadable_output", "execution_failure"),
   process_ownership_unavailable: classified(
@@ -257,6 +272,7 @@ const staticClassification = (
   if (tag === undefined)
     throw new TypeError(`Unpresented provider error: ${error._tag}`);
   switch (tag) {
+    case "AnalysisTargetFailureError":
     case "ArtifactOperationError":
     case "BinaryTargetError":
     case "BrowserObservationError":
@@ -283,6 +299,8 @@ export const classifyAnalysisError = (
     return { code: owned.code, category: owned.category };
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return RETRYABLE_CAPABILITY_UNAVAILABLE;
+  if (error instanceof AnalysisTargetFailureError)
+    return kindClassification(error.failure.kind);
   if (error instanceof ProviderSelectionError)
     return PROVIDER_SELECTION_CLASSIFICATIONS[error.reason];
   if (error instanceof BrowserObservationError)
@@ -363,6 +381,15 @@ export const analysisErrorCatalogue =
       RETRYABLE_CAPABILITY_UNAVAILABLE,
       true,
     ),
+    ...TARGET_FAILURE_KINDS.map((kind) => {
+      const { code, category, retry } = TARGET_FAILURE_PROJECTIONS[kind];
+      return catalogueRow(
+        "AnalysisTargetFailureError",
+        `kind=${kind}`,
+        { code, category },
+        retry === "backoff",
+      );
+    }),
     ...reasonRows("ArtifactOperationError", ARTIFACT_OPERATION_CLASSIFICATIONS),
     catalogueRow(
       "ArtifactOperationError",

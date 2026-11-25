@@ -82,9 +82,9 @@ The reader admits at most 4,096 vendor ramdisk table entries and an entry size
 of at most 4,096 bytes. It verifies that the table dimensions agree and the
 declared bytes fit in the image before applying those limits and reading the
 table. A vendor `header_size` above 1 MiB also exceeds a capacity limit. Unsupported
-header revisions return `unsupported_target`; truncated declared structures
-return `truncated`; malformed layouts return `unsupported_target`. Truncated and
-malformed refusals also carry `details.format_failure`, `details.format`
+header revisions, truncated declared structures and malformed layouts all
+return `unsupported_target`. Truncated and malformed refusals carry
+`details.failure_kind` (`truncated` or `malformed`), `details.format`
 (`android-boot-image`) and, when the parser names them, `details.offset` and
 `details.field`. The page
 padding after the last component carries no data and may be absent. These refusals
