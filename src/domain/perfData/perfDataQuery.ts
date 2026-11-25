@@ -22,8 +22,3 @@ export const inspectPerfDataInputSchema = z.strictObject({
     ),
 });
 export type InspectPerfDataInput = z.output<typeof inspectPerfDataInputSchema>;
-
-/** CLI-facing aliases so one owner states each bound once. */
-export const perfDataFileBytesSchema =
-  inspectPerfDataInputSchema.shape.max_file_bytes;
-export const perfDataEventsSchema = inspectPerfDataInputSchema.shape.max_events;
