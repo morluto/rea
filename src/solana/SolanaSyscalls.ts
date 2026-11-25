@@ -133,11 +133,18 @@ interface NameCandidates {
 const buildCandidates = (image: SolanaElfImage): NameCandidates => {
   const byHash = new Map<number, string[]>();
   const fromElf = new Set<string>();
+  // Per-name work happens once: thousands of symbols can share one long
+  // name, and hashing it per symbol would multiply its cost by the
+  // symbol count.
+  const hashed = new Set<string>();
   const add = (name: string, elf: boolean): void => {
-    const hash = solanaNameHash(name);
-    const existing = byHash.get(hash);
-    if (existing === undefined) byHash.set(hash, [name]);
-    else if (!existing.includes(name)) existing.push(name);
+    if (!hashed.has(name)) {
+      hashed.add(name);
+      const hash = solanaNameHash(name);
+      const existing = byHash.get(hash);
+      if (existing === undefined) byHash.set(hash, [name]);
+      else if (!existing.includes(name)) existing.push(name);
+    }
     if (elf) fromElf.add(name);
   };
   for (const name of KNOWN_SOLANA_SYSCALLS) add(name, false);

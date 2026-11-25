@@ -506,7 +506,13 @@ const analyzeAcquired = (
       computed_jumps_unresolved: dispatch.computedJumpsUnresolved,
     },
     syscalls: {
-      dynamic_symbols: undefinedSymbols.map((symbol) => symbol.name).sort(),
+      // Distinct names only: thousands of symbols can share one long
+      // name, and repeating it per symbol would let a small capture
+      // expand into an unbounded report. The distinct total is bounded
+      // by the parser's retained-name allowance.
+      dynamic_symbols: [
+        ...new Set(undefinedSymbols.map((symbol) => symbol.name)),
+      ].sort(),
       defined_symbols: definedSymbols,
       undefined_symbols: undefinedSymbols.length,
       call_sites: callResolutions.map((resolution) => ({
@@ -724,12 +730,16 @@ export class SolanaProgramProvider implements SolanaProgramPort {
     }
     if (unreleased.length === 0) return;
     this.#retainedCleanup = unreleased;
-    throw new ProviderCleanupError(
+    const failure = new ProviderCleanupError(
       SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
       unreleased.flatMap((lease) => lease.cleanupResources ?? []),
       { reason },
       { operation: OPERATION },
     );
+    // The retry error follows its exact cleanup owners: once every
+    // retained lease releases, it stops reporting cleanup incomplete.
+    new AnalysisCleanupLeaseGroup(failure, unreleased);
+    throw failure;
   }
 
   async analyze(

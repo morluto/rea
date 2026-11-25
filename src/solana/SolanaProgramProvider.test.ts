@@ -11,6 +11,7 @@ import {
   AnalysisInputError,
   AnalysisTargetFailureError,
 } from "../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { SafeOutputTree } from "../resources/index.js";
 import { SolanaProgramProvider } from "./SolanaProgramProvider.js";
 import type { SolanaHandoff } from "./SolanaHandoff.js";
@@ -262,6 +263,104 @@ it("retains a tree whose rollback fails and releases it on close", async () => {
   // close() retries the retained rollback and releases the tree.
   await provider.close();
   await expect(stat(outDir)).rejects.toThrow();
+});
+
+it("binds a failed close retry error to the leases it retains", async () => {
+  const root = await createTestTempDirectory("rea-solana-close-binding-");
+  const elfPath = join(root, "program.so");
+  const outDir = join(root, "out");
+  await writeFile(elfPath, buildElf());
+  const provider = new SolanaProgramProvider();
+  const writeSpy = vi
+    .spyOn(SafeOutputTree.prototype, "write")
+    .mockRejectedValueOnce(new Error("disk full"));
+  const rollbackSpy = vi
+    .spyOn(SafeOutputTree.prototype, "rollback")
+    .mockRejectedValueOnce(new Error("handle busy"))
+    .mockRejectedValueOnce(new Error("still busy"));
+  let retryError: unknown;
+  try {
+    const result = await provider.analyze({ path: elfPath, out_dir: outDir });
+    expect(result.ok).toBe(false);
+    retryError = await provider.close().then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+  } finally {
+    writeSpy.mockRestore();
+    rollbackSpy.mockRestore();
+  }
+  expect(retryError).toBeInstanceOf(ProviderCleanupError);
+  const failure = retryError as ProviderCleanupError;
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.cleanupResources).toContain(outDir);
+  // A later successful close releases the lease, and the same retry
+  // error stops reporting incomplete cleanup.
+  await provider.close();
+  expect(failure.cleanupIncomplete).toBe(false);
+  await expect(stat(outDir)).rejects.toThrow();
+});
+
+it("lists each distinct dynamic symbol name once in the report", async () => {
+  const root = await createTestTempDirectory("rea-solana-symbol-names-");
+  const elfPath = join(root, "program.so");
+  // Three undefined symbols, two sharing one name: the report's name
+  // inventory holds the name once, while the symbol count keeps all 3.
+  const dynstr = new TextEncoder().encode("\0sol_log_\0sol_memcpy_\0");
+  const headerSize = 64;
+  const dynsymOffset = headerSize;
+  const dynsymSize = 3 * 24;
+  const dynstrOffset = dynsymOffset + dynsymSize;
+  const shstrtab = new TextEncoder().encode("\0.dynsym\0.dynstr\0.shstrtab\0");
+  const shstrtabOffset = dynstrOffset + dynstr.length;
+  const sectionHeaderOffset = shstrtabOffset + shstrtab.length;
+  const sectionCount = 4;
+  const bytes = new Uint8Array(sectionHeaderOffset + sectionCount * 64);
+  const view = new DataView(bytes.buffer);
+  bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1], 0);
+  view.setUint16(16, 3, true);
+  view.setUint16(18, 263, true);
+  view.setBigUint64(40, BigInt(sectionHeaderOffset), true);
+  view.setUint16(54, 56, true);
+  view.setUint16(58, 64, true);
+  view.setUint16(60, sectionCount, true);
+  view.setUint16(62, 3, true);
+  [1, 1, 10].forEach((name, index) => {
+    const offset = dynsymOffset + index * 24;
+    view.setUint32(offset, name, true);
+    bytes[offset + 4] = 0x10;
+  });
+  bytes.set(dynstr, dynstrOffset);
+  bytes.set(shstrtab, shstrtabOffset);
+  const section = (
+    index: number,
+    name: number,
+    type: number,
+    offset: number,
+    size: number,
+    link = 0,
+    entrySize = 0,
+  ): void => {
+    const base = sectionHeaderOffset + index * 64;
+    view.setUint32(base, name, true);
+    view.setUint32(base + 4, type, true);
+    view.setBigUint64(base + 24, BigInt(offset), true);
+    view.setBigUint64(base + 32, BigInt(size), true);
+    view.setUint32(base + 40, link, true);
+    view.setBigUint64(base + 56, BigInt(entrySize), true);
+  };
+  section(1, 1, 11, dynsymOffset, dynsymSize, 2, 24);
+  section(2, 9, 3, dynstrOffset, dynstr.length);
+  section(3, 17, 3, shstrtabOffset, shstrtab.length);
+  await writeFile(elfPath, bytes);
+  const result = await new SolanaProgramProvider().analyze({ path: elfPath });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.syscalls.dynamic_symbols).toEqual([
+    "sol_log_",
+    "sol_memcpy_",
+  ]);
+  expect(result.value.syscalls.undefined_symbols).toBe(3);
 });
 
 it("reports cancellation with the caller's reason instead of a provider failure", async () => {
