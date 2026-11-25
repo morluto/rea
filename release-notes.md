@@ -1092,6 +1092,7 @@
 * **firmware:** consolidate staging and resource recovery checks ([#13358](https://github.com/morluto/rea/issues/13358)) ([2209acc](https://github.com/morluto/rea/commit/2209acc82424bee01512419bee02e9613aa3392c))
 * **firmware:** consolidate UF2 numbering and shared reader identity ([#13372](https://github.com/morluto/rea/issues/13372)) ([e9dead7](https://github.com/morluto/rea/commit/e9dead75ea7efd3567e80cf84a79b40fe3883c51))
 * **firmware:** observe decoded region descriptor settlement ([#13378](https://github.com/morluto/rea/issues/13378)) ([ac7ae19](https://github.com/morluto/rea/commit/ac7ae19cb23c9dc2380b08381ca96e073620ad1e))
+* **fixtures:** share little-endian integer buffers ([#14432](https://github.com/morluto/rea/issues/14432)) ([1e5cdbc](https://github.com/morluto/rea/commit/1e5cdbc7ee10118dde862e904b2b537e886bf35a))
 * **flutter:** consolidate ELF and snapshot header checks ([#13595](https://github.com/morluto/rea/issues/13595)) ([2d65688](https://github.com/morluto/rea/commit/2d65688ac79ebe9b625d2620e4bb2bfc6ffd1b5e))
 * **formats:** consolidate BEAM and DOL boundary checks ([#12832](https://github.com/morluto/rea/issues/12832)) ([c9caa0a](https://github.com/morluto/rea/commit/c9caa0aa5b60e049ac5284b7f9efaad4d793c3ff))
 * **gdb:** consolidate inferior terminal admission checks ([#13011](https://github.com/morluto/rea/issues/13011)) ([c235b61](https://github.com/morluto/rea/commit/c235b6160ee25704926fac30f137dcb503a58f2a))
