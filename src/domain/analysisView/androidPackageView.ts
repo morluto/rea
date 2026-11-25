@@ -26,6 +26,7 @@ import {
   ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
   analysisViewPageTooLarge,
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
@@ -126,15 +127,8 @@ export const projectAndroidPackageView = (
   // The engine digest identifies the JAR, never the authenticated APK subject.
   const subject = evidenceSubjectTarget(parent.subject);
   if (subject === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Android package views require the recorded APK subject identity.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Android package views require the recorded APK subject identity.",
     );
   const report = parsed.value;
   const shared = {

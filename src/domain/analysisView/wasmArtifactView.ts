@@ -1,5 +1,6 @@
 import {
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { z } from "zod";
@@ -98,15 +99,8 @@ export const projectWasmArtifactView = (
       evidenceSubjectTarget(parent.subject),
     )
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "WASM parent Evidence subject must identify the report's file format and SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "WASM parent Evidence subject must identify the report's file format and SHA-256.",
     );
   const limitations = uniqueSorted([
     ...parent.limitations,

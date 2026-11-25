@@ -58,3 +58,13 @@ export const invalidAnalysisView = (
       { path: ["view"], reason: "invalid_value", message },
     ]),
   );
+
+/** The parent Evidence subject does not identify the artifact required by the view. */
+export const invalidAnalysisViewSubject = (
+  message: string,
+): Result<never, AnalysisInputError> =>
+  err(
+    analysisViewInputError([
+      { path: ["source", "subject"], reason: "invalid_value", message },
+    ]),
+  );
