@@ -36,9 +36,11 @@ try {
   # Native stderr is diagnostic output; the child's exit status decides failure.
   $ErrorActionPreference = 'Continue'
   $global:LASTEXITCODE = 1
-  if ($MyInvocation.ExpectingInput) {
-    # The documented pipeline form reads the request from stdin; forward the
-    # caller's input instead of leaving the child on the console.
+  if ($MyInvocation.ExpectingInput -and $reaArguments -contains '-') {
+    # A '-' argument asks the CLI to read its request from stdin. Forwarding only
+    # that form keeps an inherited stdin untouched: ExpectingInput is also true
+    # for a `-File` invocation whose parent merely keeps stdin open, and piping
+    # $input there would wait for an end that never arrives.
     $input | & $reaNode @reaArguments
   } else {
     & $reaNode @reaArguments
