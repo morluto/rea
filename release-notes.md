@@ -479,6 +479,7 @@
 * **ci:** check out only timing reporter inputs ([#14378](https://github.com/morluto/rea/issues/14378)) ([79efc75](https://github.com/morluto/rea/commit/79efc75a11dffc857792b6dfb12ac4f24d4412a8))
 * **ci:** check recent runs first for a trusted baseline ([#14403](https://github.com/morluto/rea/issues/14403)) ([af06970](https://github.com/morluto/rea/commit/af06970015088f6185e4e01a7e4cffb27695db1b))
 * **ci:** defer failure artifacts until main comparison is possible ([#14379](https://github.com/morluto/rea/issues/14379)) ([f145aca](https://github.com/morluto/rea/commit/f145aca28fca368669f1f1af11cb62e248ce58eb))
+* **ci:** fail before report setup when no test group ran ([#14483](https://github.com/morluto/rea/issues/14483)) ([d8da811](https://github.com/morluto/rea/commit/d8da811b5c58052a4cb9b43a3b8642d7882e2949))
 * **ci:** keep health report changes on portable checks ([#14430](https://github.com/morluto/rea/issues/14430)) ([15d5944](https://github.com/morluto/rea/commit/15d5944ab7c60002bd77eee1bd7456653338af8b))
 * **ci:** limit push and qualification classifier checkouts to scripts ([#14341](https://github.com/morluto/rea/issues/14341)) ([62b5d27](https://github.com/morluto/rea/commit/62b5d27638ab12dbc756b4d4252e38a311573f34))
 * **ci:** narrow cache retention checkouts ([#14402](https://github.com/morluto/rea/issues/14402)) ([8e4c1c5](https://github.com/morluto/rea/commit/8e4c1c5f8d7e38a68f180738d8335f1eacb10c18))
