@@ -313,7 +313,8 @@ try {
       assert.equal(failure.code, "unsupported_target");
       assert.equal(failure.details.path, path);
       assert.match(failure.details.reason, /EF00/);
-      assert.match(failure.remediation.action, /target format/);
+      assert.equal(failure.details.failure_kind, "unsupported");
+      assert.equal(failure.details.format, "evm-bytecode");
       cases++;
     }
   }

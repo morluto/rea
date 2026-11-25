@@ -15,6 +15,7 @@ import {
   artifactFileCancellationCause,
   stableArtifactInputFailure,
   readerIntegrityFailure,
+  artifactOperationReason,
 } from "../../../resources/index.js";
 import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
 
@@ -62,7 +63,7 @@ export const traceFailure = (cause: unknown, path: string): AnalysisError => {
       return stableArtifactInputFailure(cause, operation);
     return new ArtifactOperationError(
       operation,
-      cause.reason,
+      artifactOperationReason(cause),
       undefined,
       cause.message,
       { cause },

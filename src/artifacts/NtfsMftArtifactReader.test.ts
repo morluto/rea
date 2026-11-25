@@ -363,7 +363,11 @@ it("reports a $MFT stream that shrinks during decoding as a changed file, not ma
     // The public projection names the model's kind: a changed target.
     expect(
       projectAnalysisError(
-        translateArtifactFailure("inspect_artifact", failure),
+        translateArtifactFailure(
+          "inspect_artifact",
+          "/selected/artifact",
+          failure,
+        ),
       ),
     ).toMatchObject({
       code: "artifact_changed",

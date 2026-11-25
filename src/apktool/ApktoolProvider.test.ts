@@ -1368,7 +1368,7 @@ it.each(["decode", "projection"] as const)(
       expect(controller.signal.aborted).toBe(true);
       expect(result.error._tag).toBe(
         stage === "decode"
-          ? "AnalysisUnsupportedTargetError"
+          ? "AnalysisTargetFailureError"
           : "AnalysisProtocolError",
       );
       if (stage === "decode")

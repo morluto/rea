@@ -19,7 +19,6 @@ import {
 import {
   AnalysisInputError,
   AnalysisTargetFailureError,
-  AnalysisUnsupportedTargetError,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { ParseFailureError } from "../parseFailure.js";
@@ -139,11 +138,7 @@ const selectionError = (
     ]);
   const parsed = failure.failure;
   const cause = new ParseFailureError(parsed);
-  return parsed.kind === "unsupported"
-    ? new AnalysisUnsupportedTargetError(operation, path, parsed.detail, {
-        cause,
-      })
-    : new AnalysisTargetFailureError(operation, path, parsed, { cause });
+  return new AnalysisTargetFailureError(operation, path, parsed, { cause });
 };
 
 interface FatSlice {

@@ -83,7 +83,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
   type AnalysisResourceConstraintError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
@@ -1266,10 +1266,10 @@ class NativeMacOSClient implements AnalysisClient {
     if (!parsed.ok) {
       if (parsed.error instanceof UnsupportedBinaryPlistUidError)
         return err(
-          new AnalysisUnsupportedTargetError(
+          new AnalysisTargetFailureError(
             "inspect_plist",
             fileInput.selection.path,
-            parsed.error.message,
+            parsed.error.failure,
             { cause: parsed.error },
           ),
         );

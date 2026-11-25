@@ -45,6 +45,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
+  malformedArtifact,
 } from "../resources/ArtifactReader.js";
 import {
   assembleReleaseExposureReport,
@@ -4163,7 +4164,9 @@ describe("ReleaseExposureReader cleanup-bearing read failures", () => {
     resource: string,
   ): ArtifactReaderFailure =>
     ArtifactReaderFailure.withCleanup(
-      new ArtifactReaderFailure(reason, `${reason} failure: ${resource}`),
+      reason === "malformed"
+        ? malformedArtifact("source-map", `${reason} failure: ${resource}`)
+        : new ArtifactReaderFailure(reason, `${reason} failure: ${resource}`),
       { reason: "close failed", resources: [resource] },
     );
 

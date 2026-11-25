@@ -110,9 +110,12 @@ it("does not publish a method-93 member with an incomplete final frame magic", a
   expect(result).toMatchObject({
     ok: false,
     error: {
-      _tag: "ArtifactOperationError",
-      reason: "malformed",
-      detail: "ZIP archive is malformed: Invalid compressed data",
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        kind: "malformed",
+        format: "zip",
+        detail: "ZIP archive is malformed: Invalid compressed data",
+      },
     },
   });
   expect(await readdir(root)).toEqual(["method93.zip"]);
@@ -654,8 +657,12 @@ it("preserves encrypted-member and malformed-compression observations", async ()
   expect(extraction).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: expect.stringContaining("Archive entry secret.txt is encrypted"),
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        detail: expect.stringContaining(
+          "Archive entry secret.txt is encrypted",
+        ),
+      },
     },
   });
   await expect(readFile(extractionRoot)).rejects.toMatchObject({
@@ -783,10 +790,10 @@ it("reports a member with an unsupported compression method as unavailable and k
   });
 });
 
-/** Inventory one archive through the provider and expect a typed failure. */
+/** Inventory one archive through the provider and expect the ZIP owner's target failure. */
 const expectInventoryFailure = async (
   path: string,
-  reason: string,
+  kind: "malformed" | "truncated",
   detail: string | RegExp,
 ): Promise<void> => {
   const target = await parseBinaryTarget(path);
@@ -797,10 +804,13 @@ const expectInventoryFailure = async (
   expect(result).toMatchObject({
     ok: false,
     error: {
-      _tag: "ArtifactOperationError",
-      reason,
-      detail:
-        typeof detail === "string" ? detail : expect.stringMatching(detail),
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        kind,
+        format: "zip",
+        detail:
+          typeof detail === "string" ? detail : expect.stringMatching(detail),
+      },
     },
   });
 };

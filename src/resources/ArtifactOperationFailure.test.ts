@@ -43,6 +43,7 @@ it("projects a Zstandard frame-cap as an adjustable artifact limit", () => {
   expect(
     translateArtifactFailure(
       "extract_artifact",
+      "/selected/artifact",
       new ZstandardFrameAllowanceError({ maxFrames: 4, source: "runtime" }, 10),
     ),
   ).toMatchObject({
@@ -95,22 +96,12 @@ const failWithDescriptorCleanup = async (
 };
 
 it.each([
-  {
-    cause: malformedInput("pe", "bad field"),
-    genericCode: "unsupported_target",
-  },
-  // Inventory and selected-file refusals of truncated bytes share one code.
-  {
-    cause: truncatedInput("pe", "short field"),
-    genericCode: "unsupported_target",
-  },
-  {
-    cause: unsupportedInput("pe", "unsupported image"),
-    genericCode: "unsupported_target",
-  },
+  { cause: malformedInput("pe", "bad field") },
+  { cause: truncatedInput("pe", "short field") },
+  { cause: unsupportedInput("pe", "unsupported image") },
 ])(
   "preserves $cause.kind projection and selected identity through descriptor cleanup",
-  async ({ cause, genericCode }) => {
+  async ({ cause }) => {
     const operation = "inspect_pe_resources";
     const bytes = Buffer.from("inert snapshot");
     const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -138,7 +129,7 @@ it.each([
       operation,
       { bytes, sha256 },
     );
-    const generic = translateArtifactFailure("inspect_artifact", wrapped);
+    const generic = translateArtifactFailure("inspect_artifact", path, wrapped);
     const observation = {
       kind: "file-snapshot-hash",
       path,
@@ -153,8 +144,7 @@ it.each([
       expect(projectAnalysisError(generic)).toMatchObject({
         code: "cleanup_incomplete",
         details: {
-          reason: cause.kind,
-          detail: cause.message,
+          reason: cause.message,
           cleanup: "incomplete",
           resources: [path],
         },
@@ -177,23 +167,23 @@ it.each([
         operation,
         path,
         reason: cause.message,
-        ...(cause.kind === "unsupported"
-          ? {}
-          : { failure_kind: cause.kind, format: "pe" }),
+        failure_kind: cause.kind,
+        format: "pe",
         partial_observation: observation,
       },
     });
-    // The inventory path carries the format owner's parsed facts too, so
-    // both adapters name the same format and failure kind.
+    // An inventory refusal of the same bytes is the same target failure of
+    // the selected path, with the format owner's facts.
     expect(projectAnalysisError(generic)).toMatchObject({
-      code: genericCode,
-      category: genericCode,
+      code: "unsupported_target",
+      category: "unsupported_target",
+      retry: "none",
       details: {
-        reason: cause.kind,
-        detail: cause.message,
-        ...(cause.kind === "unsupported"
-          ? {}
-          : { failure_kind: cause.kind, format: "pe" }),
+        operation: "inspect_artifact",
+        path,
+        reason: cause.message,
+        failure_kind: cause.kind,
+        format: "pe",
       },
     });
   },
@@ -246,7 +236,11 @@ it.each([
       required,
     );
     const projected = projectAnalysisError(
-      translateArtifactFailure("inspect_artifact", failure),
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        failure,
+      ),
     );
     expect(projected).toMatchObject({
       retryable: false,
@@ -268,7 +262,7 @@ it("preserves adjustable reader admission facts and gives cleanup priority", () 
     2,
   );
   const adjustable = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", failure),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", failure),
   );
   expect(adjustable).toMatchObject({
     code: "partial",
@@ -293,7 +287,7 @@ it("preserves adjustable reader admission facts and gives cleanup priority", () 
     resources: ["owned input descriptor"],
   });
   const projected = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", wrapped),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", wrapped),
   );
   expect(projected.retryable).toBe(false);
   expect(projected.details).toMatchObject({
@@ -312,7 +306,11 @@ it.each(["capacity", "file-size", "memory"] as const)(
       { boundary },
     );
     const result = projectAnalysisError(
-      translateArtifactFailure("inventory_artifact", failure),
+      translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        failure,
+      ),
     );
     expect(result).toMatchObject({
       code: "partial",
@@ -326,7 +324,11 @@ it.each(["capacity", "file-size", "memory"] as const)(
     });
     expect(
       projectAnalysisError(
-        translateArtifactFailure("inventory_artifact", wrapped),
+        translateArtifactFailure(
+          "inventory_artifact",
+          "/selected/artifact",
+          wrapped,
+        ),
       ),
     ).toMatchObject({
       code: "cleanup_incomplete",
@@ -345,7 +347,11 @@ it("reports a parser limit even when artifact cleanup also fails", () => {
   });
   expect(
     projectAnalysisError(
-      translateArtifactFailure("inspect_keyed_archive", wrapped),
+      translateArtifactFailure(
+        "inspect_keyed_archive",
+        "/selected/artifact",
+        wrapped,
+      ),
     ),
   ).toMatchObject({
     code: "cleanup_incomplete",
@@ -376,7 +382,13 @@ it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public p
     unit: "records",
   };
   expect(
-    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+    projectAnalysisError(
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        failure,
+      ),
+    ),
   ).toMatchObject({
     code: "partial",
     retryable: false,
@@ -388,7 +400,7 @@ it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public p
     resources: ["handle"],
   });
   const projected = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", wrapped),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", wrapped),
   );
   expect(projected).toMatchObject({
     code: "cleanup_incomplete",
@@ -411,7 +423,7 @@ it("keeps producer-owned recovery through cleanup wrapping and public projection
     resources: ["owned staging"],
   });
   const projected = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", wrapped),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", wrapped),
   );
   expect(projected.message).toBe(userMessage);
   expect(projected.remediation.action).toBe(userMessage);
@@ -427,6 +439,7 @@ it("projects a session digest mismatch as admitted identity, not a retryable cha
   const projected = projectAnalysisError(
     translateArtifactFailure(
       "inspect_keyed_archive",
+      "/selected/archive",
       targetDigestChangedFailure("archive", "a".repeat(64), "b".repeat(64)),
     ),
   );
@@ -450,7 +463,11 @@ it("names the failed integrity check through cleanup wrapping and public project
   );
   expect(
     projectAnalysisError(
-      translateArtifactFailure("inventory_artifact", failure),
+      translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        failure,
+      ),
     ),
   ).toMatchObject({
     details: { reason: "integrity", integrity_check: "container-identity" },
@@ -461,7 +478,11 @@ it("names the failed integrity check through cleanup wrapping and public project
   });
   expect(
     projectAnalysisError(
-      translateArtifactFailure("inventory_artifact", wrapped),
+      translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        wrapped,
+      ),
     ),
   ).toMatchObject({
     code: "cleanup_incomplete",
@@ -480,7 +501,11 @@ it("names the failed integrity check through cleanup wrapping and public project
   );
   expect(
     projectAnalysisError(
-      translateArtifactFailure("extract_artifact", unpacked),
+      translateArtifactFailure(
+        "extract_artifact",
+        "/selected/artifact",
+        unpacked,
+      ),
     ),
   ).toMatchObject({
     details: {
@@ -503,7 +528,13 @@ it("keeps the named integrity check through descriptor cleanup", async () => {
     ),
   );
   expect(
-    projectAnalysisError(translateArtifactFailure("extract_artifact", wrapped)),
+    projectAnalysisError(
+      translateArtifactFailure(
+        "extract_artifact",
+        "/selected/artifact",
+        wrapped,
+      ),
+    ),
   ).toMatchObject({
     code: "cleanup_incomplete",
     details: { integrity_check: "read-coverage", resources: [path] },
@@ -533,7 +564,7 @@ it("keeps a reader's named check when a provider supplies its own cause and opti
   });
 });
 
-// A reader's `format` reason means target bytes; only `path` names the
+// A reader's target reasons mean the bytes; only `path` names the
 // caller's selection. A non-regular source is a path-kind refusal at its owner.
 it("keeps only a path-kind reader refusal a selection error", () => {
   const operation = "inspect_erlang_beam";
@@ -559,12 +590,4 @@ it("keeps only a path-kind reader refusal a selection error", () => {
       issues: [{ path: ["path"], reason: "invalid_format" }],
     },
   });
-  const bytes = new ArtifactReaderFailure("malformed", "Corrupt member table");
-  expect(
-    projectOwnedArtifactInputFailure(
-      artifactFilePrimaryFacts(bytes),
-      operation,
-      path,
-    ),
-  ).toBeUndefined();
 });

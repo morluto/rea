@@ -275,8 +275,8 @@ cliTest(
       expect(output.json).toMatchObject({
         code: "unsupported_target",
         details: {
-          reason: "malformed",
-          detail: expect.stringContaining("Keyed archive has no $top roots"),
+          failure_kind: "malformed",
+          reason: expect.stringContaining("Keyed archive has no $top roots"),
         },
       });
       const opened = await call("open_binary", { path });

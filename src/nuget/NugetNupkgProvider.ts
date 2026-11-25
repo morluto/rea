@@ -98,7 +98,7 @@ const nupkgFailure = (
             failure.reason !== "integrity" &&
             failure.reason !== "cancelled"
           )
-            return translateArtifactFailure(OPERATION, failure);
+            return translateArtifactFailure(OPERATION, input.path, failure);
         }
         return undefined;
       },

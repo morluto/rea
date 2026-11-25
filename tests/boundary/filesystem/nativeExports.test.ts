@@ -495,8 +495,8 @@ describe("native export encoding and failures", () => {
       path: malformed,
     });
     expect(await failure({ path: macho })).toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: expect.stringContaining("inspect_macho"),
+      _tag: "AnalysisTargetFailureError",
+      failure: { detail: expect.stringContaining("inspect_macho") },
     });
     expect(await failure({ path, max_file_bytes: 64 })).toMatchObject({
       _tag: "AnalysisResourceConstraintError",

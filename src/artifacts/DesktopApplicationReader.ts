@@ -36,7 +36,7 @@ import { createDesktopApplicationEvidence } from "../domain/desktopApplicationEv
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../domain/analysisErrorCore.js";
 import type {
   AnalysisError,
@@ -103,6 +103,7 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
     } catch (cause: unknown) {
       const error = translateArtifactFailure(
         "inspect_desktop_application",
+        input.path,
         cause,
       );
       return err(error);
@@ -189,9 +190,10 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
 }
 
 /**
- * The root is the caller's selection: a non-directory is an unsupported
- * target, and host failures keep the shared target-unavailable/access-denied
- * classification instead of becoming artifact I/O faults.
+ * The root is the caller's selection: a path that is not a directory is a
+ * selection failure, and host failures keep the shared
+ * target-unavailable/access-denied classification instead of becoming
+ * artifact I/O faults.
  */
 const selectedRootFailure = (
   path: string,
@@ -199,16 +201,15 @@ const selectedRootFailure = (
   partialObservation: AnalysisPartialObservation | undefined,
 ): AnalysisError =>
   failure.reason === "path"
-    ? new AnalysisUnsupportedTargetError(
+    ? new AnalysisTargetFailureError(
         "inspect_desktop_application",
         path,
-        failure.message,
         {
-          cause: failure,
-          partialObservation,
-          remediationAction:
-            "Select the application's local installation directory, such as a macOS .app bundle or the directory containing its executable.",
+          kind: "selection",
+          format: "desktop-application",
+          detail: `${failure.message}. Select the application's local installation directory, such as a macOS .app bundle or the directory containing its executable.`,
         },
+        { cause: failure, partialObservation },
       )
     : new BinaryTargetError(path, failure.message, {
         cause: failure.cause,

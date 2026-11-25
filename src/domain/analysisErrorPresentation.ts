@@ -8,7 +8,6 @@ import {
   AnalysisInputError,
   AnalysisTargetFailureError,
   AnalysisOutputError,
-  AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
@@ -129,13 +128,12 @@ export const analysisErrorRemediationAction = (
       : "Open an executable analysis target before importing a binary analysis snapshot.";
   if (error instanceof AnalysisSnapshotMismatchError)
     return "Select an artifact, provider, and analysis profile matching the snapshot, or run analysis without it and save a fresh snapshot for the intended binding.";
-  if (error instanceof AnalysisUnsupportedTargetError)
-    return (
-      error.remediationAction ??
-      "Select a target supported by this operation or choose an operation supporting the reported target format."
-    );
   if (error instanceof AnalysisTargetFailureError)
-    return targetFailureRecovery(error.operation, error.failure);
+    return targetFailureRecovery(
+      error.operation,
+      error.failure,
+      analysisErrorRelatedInputs(error),
+    );
   if (error instanceof AnalysisResourceConstraintError) {
     if (error.remediationAction !== undefined) return error.remediationAction;
     const refusal = analysisErrorRefusal(error);
@@ -418,7 +416,6 @@ export const composedCallerGuidance = (sources: {
 
 const outcomeUserMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisSnapshotMismatchError) return error.message;
-  if (error instanceof AnalysisUnsupportedTargetError) return error.message;
   if (error instanceof AnalysisTargetFailureError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
   if (error instanceof AnalysisAccessDeniedError)
@@ -562,12 +559,6 @@ const artifactMessage = ({
       detail ??
       "Artifact processing reached a resource limit. Select an artifact within the reported limits and retry."
     );
-  if (reason === "unsupported")
-    return "Artifact structure uses an unsupported format or revision. Use a decoder that supports the reported form.";
-  if (reason === "truncated")
-    return "A declared artifact structure is truncated. Select a complete copy and retry; do not pad or truncate required bytes.";
-  if (reason === "malformed")
-    return "Artifact bytes contain malformed format structure. Review the reported field and select a valid copy.";
   if (reason === "path")
     return (
       detail ??
@@ -667,10 +658,17 @@ export const analysisErrorRelatedInputs = (
     error.related?.operations,
     presented?.operations,
   );
-  if (parameters === undefined && operations === undefined) return undefined;
+  const providers = mergeRelatedList(error.related?.providers, undefined);
+  if (
+    parameters === undefined &&
+    operations === undefined &&
+    providers === undefined
+  )
+    return undefined;
   return {
     ...(parameters === undefined ? {} : { parameters }),
     ...(operations === undefined ? {} : { operations }),
+    ...(providers === undefined ? {} : { providers }),
   };
 };
 
@@ -712,7 +710,6 @@ const KNOWN_ERROR_TAGS = {
   AnalysisArtifactChangedError: true,
   AnalysisOutputError: true,
   AnalysisCapabilityUnavailableError: true,
-  AnalysisUnsupportedTargetError: true,
   AnalysisTargetFailureError: true,
   AnalysisCancelledError: true,
   AnalysisTimeoutError: true,
