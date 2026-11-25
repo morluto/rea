@@ -745,7 +745,7 @@ reject `rea setup --client freebuff` as an unsupported client. `lm_studio`
 requires a release after 6.8.0. `cline_vscode`, `cline_vscode_insiders`,
 `cline_vscodium`, `cline_cursor`, `cline_windsurf`, `kiro`, `mastracode`, `zed`,
 `amp`, `mcporter`, `fx`, `junie`, `goose` and `kilo` require a release after
-6.9.0. Setup never selects
+6.10.1. Setup never selects
 `mcporter` from detection, because MCPorter already imports the registrations
 setup writes for other clients; select it with `--client mcporter`.
 
@@ -2279,11 +2279,11 @@ without asking npm to resolve the workspace's dependency graph.
 ### Global installation wrapper
 
 The optional curl wrapper installs only the global npm package. Review a
-release-tagged script before running it. The example below is the 6.9.0
+release-tagged script before running it. The example below is the 6.10.1
 release; replace the version when installing a different tag.
 
 ```bash
-rea_version=6.9.0
+rea_version=6.10.1
 curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh &&
   less rea-install.sh &&
   bash rea-install.sh --version "$rea_version"

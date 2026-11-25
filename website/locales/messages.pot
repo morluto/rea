@@ -5566,7 +5566,7 @@ msgstr ""
 msgctxt "page:get-started/index.html"
 msgid ""
 "On macOS or Linux, review a release-tagged installer before running it. This example "
-"pins 6.9.0. The default-branch script tracks main and is not a pinned release."
+"pins 6.10.1. The default-branch script tracks main and is not a pinned release."
 msgstr ""
 
 #. {ph0}: <code>rea setup</code>
