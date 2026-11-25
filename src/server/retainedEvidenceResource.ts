@@ -10,9 +10,10 @@ import {
 
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { Evidence } from "../domain/evidence.js";
-import { jsonParts } from "../domain/jsonSerialization.js";
+import { jsonParts, jsonStringCodeUnits } from "../domain/jsonSerialization.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { RETAINED_SUMMARY_VIEW_TOOL } from "./retainedSummaryDelivery.js";
+import { MCP_RESULT_STRING_LIMIT } from "./toolResultEncoding.js";
 
 /** Resource template name, as `resources/templates/list` reports it. */
 export const RETAINED_EVIDENCE_RESOURCE = "retained-evidence";
@@ -37,24 +38,28 @@ const pagingCall = (evidenceId: string) => ({
 });
 
 /**
- * The record's exact JSON text, or undefined when that text, escaped inside
- * the read result, cannot fit `budgetBytes`. Measures part by part, so an
- * oversized record stops at the budget without one document-sized string.
+ * Whether one read of the record fits this connection: its JSON text,
+ * escaped inside the read result with the result's envelope, within
+ * `budgetBytes` of UTF-8 and within REA's single-string limit. The read and
+ * the link offer share this check, so a linked record never refuses its
+ * read. Measures part by part and stops at the first bound it crosses,
+ * without a document-sized string.
  */
-const exactJsonWithin = (
+export const retainedEvidenceReadFits = (
   evidence: Evidence,
   budgetBytes: number,
-): string | undefined => {
-  const parts: string[] = [];
+  stringLimit = MCP_RESULT_STRING_LIMIT,
+): boolean => {
   let bytes = READ_ENVELOPE_BYTES;
+  let codeUnits = READ_ENVELOPE_BYTES;
   for (const part of jsonParts(evidence)) {
     // Each part escaped on its own, less its quotes; a surrogate pair split
     // across two parts is overcounted, never undercounted.
     bytes += jsonStringByteLength(part, budgetBytes - bytes + 2) - 2;
-    if (bytes > budgetBytes) return undefined;
-    parts.push(part);
+    codeUnits += jsonStringCodeUnits(part) - 2;
+    if (bytes > budgetBytes || codeUnits > stringLimit) return false;
   }
-  return parts.join("");
+  return true;
 };
 
 /**
@@ -76,8 +81,7 @@ export const readRetainedEvidenceResource = (
       uri.href,
       `Evidence ${evidenceId} is not retained in this MCP session. Only Evidence retained by this session can be read, and a session reset clears it; call get_evidence_bundle with detail summary to list what is retained.`,
     );
-  const text = exactJsonWithin(evidence, budgetBytes);
-  if (text === undefined)
+  if (!retainedEvidenceReadFits(evidence, budgetBytes))
     throw new ProtocolError(
       ProtocolErrorCode.InvalidRequest,
       `Evidence ${evidenceId} is larger than one MCP response on this connection (${String(budgetBytes)} bytes). Page its exact JSON with next, an inspect_analysis_view evidence-json cursor, following coverage.next_offset.`,
@@ -88,6 +92,7 @@ export const readRetainedEvidenceResource = (
         next: pagingCall(evidenceId),
       },
     );
+  const text = [...jsonParts(evidence)].join("");
   return { contents: [{ uri: uri.href, mimeType: MIME_TYPE, text }] };
 };
 

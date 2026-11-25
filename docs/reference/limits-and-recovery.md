@@ -343,9 +343,10 @@ not, the work is never refused or truncated:
   appears in `resources/templates/list`, not `resources/list`, and reads any
   record the session retains. An ID the session does not retain (unknown,
   from another session, or cleared by `reset_investigation`) is refused with
-  `-32602`. A record too large for one response on the connection
-  (`REA_MCP_MAX_RESPONSE_BYTES`) gets no link, and a read of it is refused
-  with `-32600` and `data.next`, the cursor. Claude Code 2.1 shows the link
+  `-32602`. A record whose escaped read is too large for one response on
+  the connection (`REA_MCP_MAX_RESPONSE_BYTES`, or REA's single-string
+  limit) gets no link, and a read of it is refused with `-32600` and
+  `data.next`, the cursor. The link and the read use the same check. Claude Code 2.1 shows the link
   to the model as one line, about 70 tokens, and never reads it by itself;
   when the model reads it, Claude Code saves a large read to a file and
   shows a preview.

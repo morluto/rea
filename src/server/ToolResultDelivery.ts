@@ -50,7 +50,10 @@ import {
 } from "../domain/agentResultBudget.js";
 import { currentMcpToolRequest } from "./McpToolRequest.js";
 import { AGENT_BUDGET_OPERATIONS } from "../domain/agentBudgetOperations.js";
-import { retainedEvidenceLink } from "./retainedEvidenceResource.js";
+import {
+  retainedEvidenceLink,
+  retainedEvidenceReadFits,
+} from "./retainedEvidenceResource.js";
 
 const AGENT_BUDGET_OPERATION_NAMES: ReadonlySet<string> = new Set(
   AGENT_BUDGET_OPERATIONS,
@@ -698,10 +701,11 @@ const overBudgetSummary = (
     return undefined;
   return {
     summary: summary.value,
-    // A record larger than one response pages only through the cursor; the
-    // read measures its escaped text exactly.
+    // A record one read cannot deliver pages only through the cursor. The
+    // read's own check decides, after the cheap bound on its unescaped size.
     link:
-      completeBytes <= limits.resultBudgetBytes
+      completeBytes <= limits.resultBudgetBytes &&
+      retainedEvidenceReadFits(evidence, limits.resultBudgetBytes)
         ? retainedEvidenceLink({
             evidenceId: evidence.evidence_id,
             operation: evidence.operation,

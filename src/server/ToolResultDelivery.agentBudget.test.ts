@@ -24,6 +24,7 @@ import {
 import { measureMcpResultWithinBudget } from "./toolResultEncoding.js";
 import {
   readRetainedEvidenceResource,
+  retainedEvidenceReadFits,
   retainedEvidenceUri,
 } from "./retainedEvidenceResource.js";
 
@@ -191,6 +192,25 @@ it("links the complete record only when one read can fit the frame, and refuses 
   expect((read.contents[0] as { text: string }).text).toBe(
     JSON.stringify(evidence),
   );
+
+  // The record's JSON fits the frame but its escaped read does not: no link
+  // is offered, since the read would refuse it.
+  const escaped = new ToolResultDelivery(completeBytes + 1024 + 2048);
+  expect(escaped.resultBudgetBytes).toBeGreaterThanOrEqual(completeBytes);
+  expect(retainedEvidenceReadFits(evidence, escaped.resultBudgetBytes)).toBe(
+    false,
+  );
+  const escapedResult = deliver(escaped, evidence, new EvidenceLedger());
+  expect(escapedResult.isError).not.toBe(true);
+  expect(escapedResult.content.map(({ type }) => type)).toEqual([
+    "text",
+    "text",
+  ]);
+  // REA's single-string limit bounds a read as well as its bytes.
+  expect(retainedEvidenceReadFits(evidence, 64 * 1024 * 1024)).toBe(true);
+  expect(
+    retainedEvidenceReadFits(evidence, 64 * 1024 * 1024, completeBytes),
+  ).toBe(false);
 
   // A frame that holds the summary but not the complete record: the cursor
   // alone recovers it, and a read names that cursor.
