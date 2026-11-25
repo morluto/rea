@@ -16,6 +16,7 @@ import {
 } from "../tests/conformance/ghidra/psp-fixture.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import {
   createVerifierRun,
@@ -44,6 +45,7 @@ if (ghidra.status !== "available")
 const run = createVerifierRun();
 const commands = await createVerifierCommands();
 const fixture = await VerifierFixture.open({ prefix: "rea-psp-indirect-" });
+const interruption = bindVerifierCommandInterruption(commands);
 const workspace = fixture.path;
 const runtime = join(workspace, "runtime");
 const origin = fileURLToPath(
@@ -72,7 +74,7 @@ try {
   }
 
   const subprocess = (command, args, timeout = 60000) =>
-    commands.exec(command, args, {
+    interruption.exec(command, args, {
       cwd: workspace,
       env: { ...process.env, LANG: "C", LC_ALL: "C" },
       timeout,
@@ -145,14 +147,17 @@ try {
     stderr: "pipe",
   });
   client = new Client({ name: "rea-psp-indirect-proof", version: "1" });
-  await client.connect(transport);
+  await interruption.untilInterrupted(
+    client.connect(transport, { signal: interruption.signal }),
+  );
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
   const call = async (name, args = {}) => {
+    interruption.throwIfInterrupted();
     const reply = await client.callTool(
       { name, arguments: args },
-      { timeout: 240000 },
+      { timeout: 240000, signal: interruption.signal },
     );
     const value = requireMcpOperationResult(reply, name);
     const evidence =
@@ -383,22 +388,27 @@ try {
 }
 let completed;
 try {
-  completed = await completeVerifierRun(run);
-  assertVerifierCleanupComplete(completed.process_lineage);
-} catch (error) {
-  failures.push(error);
-  throw new AggregateError(
-    failures,
-    `PSP verifier cleanup unverified; retained workspace: ${workspace}`,
-  );
+  try {
+    completed = await completeVerifierRun(run);
+    assertVerifierCleanupComplete(completed.process_lineage);
+  } catch (error) {
+    failures.push(error);
+  }
+  const interrupted = interruption.reason();
+  if (interrupted !== undefined && !failures.includes(interrupted))
+    failures.push(interrupted);
+  if (failures.length > 0)
+    throw new AggregateError(
+      failures,
+      `PSP verifier failed; retained workspace: ${workspace}`,
+    );
+  assert.ok(report, "Missing PSP indirect branch report");
+  interruption.retainWorkspaceIfInterrupted(fixture);
+  await fixture.release();
+  interruption.throwIfInterrupted();
+} finally {
+  interruption.finish();
 }
-if (failures.length > 0)
-  throw new AggregateError(
-    failures,
-    `PSP verifier failed; retained workspace: ${workspace}`,
-  );
-assert.ok(report, "Missing PSP indirect branch report");
-await fixture.release();
 process.stdout.write(
   JSON.stringify(
     {
