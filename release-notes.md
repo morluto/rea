@@ -484,6 +484,7 @@
 * **ci:** narrow cache retention checkouts ([#14402](https://github.com/morluto/rea/issues/14402)) ([8e4c1c5](https://github.com/morluto/rea/commit/8e4c1c5f8d7e38a68f180738d8335f1eacb10c18))
 * **ci:** narrow pull request classifier checkouts to traced inputs ([#14376](https://github.com/morluto/rea/issues/14376)) ([5ef6cd8](https://github.com/morluto/rea/commit/5ef6cd89b5b8cc192683c2e97762bb4c4422fb21))
 * **ci:** omit development tools from failure reporting ([#14332](https://github.com/morluto/rea/issues/14332)) ([30fe9d9](https://github.com/morluto/rea/commit/30fe9d9f424447926ca0b8fb3006ddd6f95f279b))
+* **ci:** query static diagnostics by artifact name ([#14476](https://github.com/morluto/rea/issues/14476)) ([02c4209](https://github.com/morluto/rea/commit/02c420939d63a5c983e98815c518dc5d59a379bb))
 * **ci:** resolve test snapshot blobs in one tree walk ([#14334](https://github.com/morluto/rea/issues/14334)) ([73c1689](https://github.com/morluto/rea/commit/73c1689aefeabd29d235f8d4341d71f1d3316544))
 * **ci:** reuse installed website rendering packages ([#14337](https://github.com/morluto/rea/issues/14337)) ([1e1db9e](https://github.com/morluto/rea/commit/1e1db9e342ad13d26c27f34af8a2d7a5648387c9))
 * **ci:** run scheduled full qualification every six hours ([#14374](https://github.com/morluto/rea/issues/14374)) ([14b9167](https://github.com/morluto/rea/commit/14b916795c9c80ba46109bdb0ea6b9aafe5daf44))
