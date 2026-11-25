@@ -45,10 +45,8 @@ interface RecordingProducerFailureContext {
   readonly configurationDiagnostics?: (
     cause: unknown,
   ) => AnalysisErrorOptions["diagnostics"];
-  readonly readerIntegrity: (
-    failure: ArtifactReaderFailure,
-    reason: string,
-  ) => AnalysisError;
+  /** A reader integrity failure, classified by its owner. */
+  readonly readerIntegrity: (failure: ArtifactReaderFailure) => AnalysisError;
 }
 
 /** Describe recording failures in terms of the command, workspace, and catalog that produced them. */
@@ -117,7 +115,7 @@ export const recordingProducerFailureDialect = (
         failure instanceof ArtifactReaderFailure &&
         failure.reason === "integrity"
       )
-        return context.readerIntegrity(failure, reason);
+        return context.readerIntegrity(failure);
       return new AnalysisOutputError(operation, reason, {
         cause: failure,
         ...captured,

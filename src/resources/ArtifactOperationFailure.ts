@@ -22,7 +22,7 @@ import {
  * the target the caller selected, whichever member the reader was reading.
  */
 export const translateArtifactFailure = (
-  operation: ArtifactOperationError["operation"],
+  operation: string,
   path: string,
   cause: unknown,
 ): AnalysisError => {
@@ -49,7 +49,7 @@ export const translateArtifactFailure = (
  * target failure and needs {@link translateArtifactFailure} with its path.
  */
 export const translateArtifactOperationFailure = (
-  operation: ArtifactOperationError["operation"],
+  operation: string,
   cause: ArtifactReaderFailure,
 ): ArtifactOperationError => {
   const reason = artifactOperationReason(cause);
