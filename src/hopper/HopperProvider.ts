@@ -23,7 +23,6 @@ import type {
   ProviderAvailability,
   ProviderIdentity,
   ProviderTargetSupport,
-  RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
@@ -78,15 +77,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
   readonly #launcherSpelling: string;
   readonly #launcherPath: string;
   readonly #ownedResources = new ArtifactResourceScope();
-  readonly #inspectionOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#ownedResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#ownedResources.run(operation),
-  };
+  readonly #inspectionOwner = this.#ownedResources.forCloseOwners();
 
   /**
    * Host platform, injected so availability and launch-mode decisions can be

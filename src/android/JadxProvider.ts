@@ -1,14 +1,8 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
-import {
-  ArtifactResourceScope,
-  AnalysisCleanupLease,
-} from "../resources/index.js";
-import type {
-  RetainedResourceScope,
-  ExecutionOptions,
-} from "../ports/AnalysisProvider.js";
+import { ArtifactResourceScope } from "../resources/index.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { throwIfJadxInterrupted } from "./JadxInterruption.js";
 import type { BigIntStats } from "node:fs";
@@ -345,15 +339,7 @@ export class JadxProvider implements AndroidAnalysisPort {
   readonly #inspections = new Set<
     Promise<Awaited<ReturnType<typeof inspectJadxAvailability>>>
   >();
-  readonly #prerequisiteOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#prerequisites.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#prerequisites.run(operation),
-  };
+  readonly #prerequisiteOwner = this.#prerequisites.forCloseOwners();
   #closePromise: Promise<void> | undefined;
   constructor(
     readonly environment: Readonly<Record<string, string | undefined>>,
