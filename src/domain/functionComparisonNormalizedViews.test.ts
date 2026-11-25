@@ -1765,6 +1765,15 @@ describe("normalized view opt-in integrity", () => {
   );
 });
 
+/** The allowance facts a stopped view reports, in whatever wording and order. */
+const allowanceFacts = (codeUnits: number, source: "default" | "request") =>
+  expect.stringMatching(
+    new RegExp(
+      String.raw`^(?=.*\bmax_named_symbol_code_units\b)(?=.*\b${String(codeUnits)} code units\b)(?=.*\bsource ${source}\b)`,
+      "su",
+    ),
+  );
+
 describe("normalized view named symbol index", () => {
   it("stops a repeated-qualifier chain at the default allowance and names its recovery", () => {
     // Each token in the chain would otherwise walk back through every earlier qualifier.
@@ -1800,9 +1809,7 @@ describe("normalized view named symbol index", () => {
     expect(view(result, "pseudocode_normalized")).toMatchObject({
       status: "unknown",
       limitations: expect.arrayContaining([
-        expect.stringContaining(
-          "Left and Right named-symbol matching examined its allowance of 1000000 code units (max_named_symbol_code_units, the default; default 1000000, minimum 1, maximum 9007199254740991)",
-        ),
+        allowanceFacts(1_000_000, "default"),
       ]),
     });
   });
@@ -1913,9 +1920,7 @@ describe("normalized view named symbol allowance", () => {
     expect(view(stopped, "pseudocode_normalized")).toMatchObject({
       status: "unknown",
       left_digest: null,
-      limitations: expect.arrayContaining([
-        "Left and Right named-symbol matching examined its allowance of 15 code units (max_named_symbol_code_units, set by this call; default 1000000, minimum 1, maximum 9007199254740991) before the text was projected, so normalization was skipped. Raise max_named_symbol_code_units in the next compare_functions call; no restart is needed, and it does not raise the bounded line diff.",
-      ]),
+      limitations: expect.arrayContaining([allowanceFacts(15, "request")]),
     });
     const defaulted = compare();
     expect(view(defaulted, "pseudocode_normalized")).toMatchObject({

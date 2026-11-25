@@ -229,10 +229,10 @@ export const normalizedViews = (
         ...shared,
         "One dossier did not observe its own function body extent, so corroborated addresses on both sides were masked as ordinal placeholders instead of entry-relative offsets.",
       ];
-  const allowance: NamedSymbolAllowance = {
-    codeUnits: options.namedSymbolCodeUnits ?? DEFAULT_NAMED_SYMBOL_CODE_UNITS,
-    requested: options.namedSymbolCodeUnits !== undefined,
-  };
+  const allowance: NamedSymbolAllowance =
+    options.namedSymbolCodeUnits === undefined
+      ? { codeUnits: DEFAULT_NAMED_SYMBOL_CODE_UNITS, source: "default" }
+      : { codeUnits: options.namedSymbolCodeUnits, source: "request" };
   const leftProjection = createFunctionAddressProjection(
     left,
     relativeOffsets,
@@ -342,10 +342,10 @@ export const normalizedViews = (
 
 type ProjectedText = NonNullable<ReturnType<typeof normalizeText>>;
 
-/** The named-symbol work each side may spend, and whether the caller set it. */
+/** The named-symbol work each side may spend, and where that value came from. */
 interface NamedSymbolAllowance {
   readonly codeUnits: number;
-  readonly requested: boolean;
+  readonly source: "default" | "request";
 }
 
 /** Both sides' projected text, or why normalization was skipped. */
@@ -388,7 +388,7 @@ const projectTexts = (
     ? { projected: true, left: leftText, right: rightText }
     : {
         projected: false,
-        reason: `${exhausted} named-symbol matching examined its allowance of ${String(allowance.codeUnits)} code units (max_named_symbol_code_units, ${allowance.requested ? "set by this call" : "the default"}; default ${String(DEFAULT_NAMED_SYMBOL_CODE_UNITS)}, minimum 1, maximum ${String(Number.MAX_SAFE_INTEGER)}) before the text was projected, so normalization was skipped. Raise max_named_symbol_code_units in the next compare_functions call; no restart is needed, and it does not raise the bounded line diff.`,
+        reason: `${exhausted} named-symbol matching examined its allowance of ${String(allowance.codeUnits)} code units (max_named_symbol_code_units, source ${allowance.source}; default ${String(DEFAULT_NAMED_SYMBOL_CODE_UNITS)}, minimum 1, maximum ${String(Number.MAX_SAFE_INTEGER)}) before the text was projected, so normalization was skipped. Raise max_named_symbol_code_units in the next compare_functions call; no restart is needed, and it does not raise the bounded line diff.`,
       };
 };
 
