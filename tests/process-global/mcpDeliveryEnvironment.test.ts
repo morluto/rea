@@ -95,7 +95,7 @@ it("keeps independent server budgets for successful results and oversized errors
     [smallClient, largeClient].map((client) =>
       client.callTool({
         name: "procedure_pseudo_code",
-        arguments: { procedure: "main" },
+        arguments: { detail: "complete", procedure: "main" },
       }),
     ),
   );

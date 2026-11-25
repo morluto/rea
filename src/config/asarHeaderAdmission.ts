@@ -1,9 +1,9 @@
 import { defaultedNumberSettingParser } from "./optionalSetting.js";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 import {
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
 } from "../domain/analysisResourceLimits.js";
-import { z } from "zod";
 
 import type { AsarListingAdmission } from "./asarListingAdmission.js";
 
@@ -25,15 +25,11 @@ export const DEFAULT_ASAR_HEADER_ADMISSION: AsarHeaderAdmission = {
 const asarMaxHeaderBytesConstraint = `${ASAR_HEADER_ADMISSION_SETTING} must be a positive decimal integer of at most ${String(MAXIMUM_ASAR_MAX_HEADER_BYTES)} bytes (256 MiB); the default is ${String(DEFAULT_ASAR_MAX_HEADER_BYTES)} bytes (16 MiB).`;
 
 /** Optional decimal byte count for the ASAR header/index admission. */
-export const asarMaxHeaderBytesSchema = z
-  .string()
-  .regex(/^[1-9]\d*$/u, { error: asarMaxHeaderBytesConstraint })
-  .transform(Number)
-  .pipe(
-    z.number().int().max(MAXIMUM_ASAR_MAX_HEADER_BYTES, {
-      error: asarMaxHeaderBytesConstraint,
-    }),
-  );
+export const asarMaxHeaderBytesSchema = positiveDecimalIntegerSchema(
+  1,
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+  asarMaxHeaderBytesConstraint,
+);
 
 /** Resolve the effective admission from one environment value. */
 export const parseAsarHeaderAdmission =

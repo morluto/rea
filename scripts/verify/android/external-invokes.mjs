@@ -11,6 +11,10 @@ import {
   requireMcpToolError,
 } from "../../lib/mcp-verifier-results.mjs";
 import { sha256File } from "../../lib/verifier-file-sha256.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "../../lib/complete-evidence.mjs";
 
 const operation = "trace_android_references";
 const className = "android.app.NotificationManager";
@@ -110,10 +114,12 @@ const verifyApk = async (options, path, dexEntry) => {
     },
     stderr: "pipe",
   });
-  const client = new Client({
-    name: "rea-real-external-references",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-real-external-references",
+      version: "1",
+    }),
+  );
   await withVerifierCleanup(async () => {
     await client.connect(transport, { timeout: 30_000 });
     const call = (name, args) =>
@@ -132,10 +138,13 @@ const verifyApk = async (options, path, dexEntry) => {
       for (const caller of result.normalized_result.references) {
         const body = parseEvidence(
           requireMcpOutput(
-            await call("inspect_android_method", {
-              path,
-              ...caller.source_selector,
-            }),
+            await call(
+              "inspect_android_method",
+              await completeEvidenceToolArguments("inspect_android_method", {
+                path,
+                ...caller.source_selector,
+              }),
+            ),
             "inspect_android_method",
           ),
         );
@@ -259,7 +268,9 @@ const verifySiteBudget = async (options, path, control) => {
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-external-site-budget", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-external-site-budget", version: "1" }),
+  );
   await withVerifierCleanup(async () => {
     await client.connect(transport, { timeout: 30_000 });
     const call = (args) =>

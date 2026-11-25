@@ -24,6 +24,7 @@ import {
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "win32" || process.arch !== "x64")
   throw new Error(
@@ -298,10 +299,12 @@ try {
       cwd: callerDirectory,
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "rea-packaged-windows-ghidra",
-      version: "1.0.0",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "rea-packaged-windows-ghidra",
+        version: "1.0.0",
+      }),
+    );
     const closeClient = async () => {
       try {
         await client.close();
@@ -363,12 +366,13 @@ try {
       );
       report.bundleActivator = "ReaGhidraBundleActivator";
       assert.equal((await call("list_documents", {})).length, 1);
-      await call("list_names", {});
-      const procedures = await call("list_procedures", {});
+      await call("list_names", { detail: "complete" });
+      const procedures = await call("list_procedures", { detail: "complete" });
       assert.ok(procedures.length > 0);
       if (targetArgument === undefined) {
         const calleeAddress = fixture.calleeAddress;
         const calleeCode = await call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: calleeAddress,
         });
         assert.match(calleeCode, /\b(?:42|0x2a)\b/iu);
@@ -376,22 +380,30 @@ try {
           const callerAddress = fixture.callerAddress;
           assert.ok(
             (
-              await call("procedure_callees", { procedure: callerAddress })
+              await call("procedure_callees", {
+                detail: "complete",
+                procedure: callerAddress,
+              })
             ).includes(calleeAddress),
           );
           assert.match(
-            await call("procedure_pseudo_code", { procedure: callerAddress }),
+            await call("procedure_pseudo_code", {
+              detail: "complete",
+              procedure: callerAddress,
+            }),
             /\+\s*1\b/u,
           );
         }
       }
       assert.ok((await call("list_segments", {})).length > 0);
-      await call("list_strings", {});
+      await call("list_strings", { detail: "complete" });
       const procedure =
         procedures.find((item) => item.procedure?.external === false) ??
         procedures[0];
       assert.ok(procedure !== undefined);
-      const loadImage = await call("inspect_native_load_image", {});
+      const loadImage = await call("inspect_native_load_image", {
+        detail: "complete",
+      });
       assert.equal(
         loadImage.status,
         "unsupported",
@@ -416,14 +428,21 @@ try {
       );
       await call("address_name", { address: procedure.address });
       assert.equal(
-        await call("procedure_address", { procedure: procedure.value }),
+        await call("procedure_address", {
+          detail: "complete",
+          procedure: procedure.value,
+        }),
         procedure.address,
       );
       await call("resolve_containing_procedure", {
+        detail: "complete",
         address: procedure.address,
       });
-      await call("search_procedures", { pattern: procedure.value });
-      await call("search_strings", { pattern: "rea" });
+      await call("search_procedures", {
+        detail: "complete",
+        pattern: procedure.value,
+      });
+      await call("search_strings", { detail: "complete", pattern: "rea" });
       report.byteSearch = await verifyWindowsGhidraByteSearch({
         invoke: call,
         sourceBytes,

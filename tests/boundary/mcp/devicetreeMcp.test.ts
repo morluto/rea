@@ -244,7 +244,7 @@ mcpTest("rejects relative paths and unsupported versions", async ({ mcp }) => {
   try {
     const response = await client.callTool({
       name: "inspect_devicetree",
-      arguments: { path: "board.dtb" },
+      arguments: { detail: "complete", path: "board.dtb" },
     });
     expect(parseMcpToolError(response).error).toMatchObject({
       code: "invalid_request",
@@ -254,7 +254,7 @@ mcpTest("rejects relative paths and unsupported versions", async ({ mcp }) => {
     await writeFile(path, devicetreeFixture(undefined, 18));
     const unsupported = await client.callTool({
       name: "inspect_devicetree",
-      arguments: { path },
+      arguments: { detail: "complete", path },
     });
     expect(parseMcpToolError(unsupported).error).toMatchObject({
       code: "unsupported_target",

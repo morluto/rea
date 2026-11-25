@@ -39,7 +39,10 @@ import {
   type ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
 import type { SignalRecordingPort } from "../ports/signals/SignalRecordingPort.js";
-import { readStableArtifact } from "../resources/index.js";
+import {
+  readerIntegrityFailure,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
@@ -454,10 +457,8 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           failure instanceof UnattributedVersionProbeFailure
             ? { version_probe_status_owner: failure.statusOwner }
             : undefined,
-        readerIntegrity: (failure, reason) =>
-          new AnalysisArtifactChangedError(operation, resourcePath, reason, {
-            cause: failure,
-          }),
+        readerIntegrity: (failure) =>
+          readerIntegrityFailure(operation, resourcePath, failure),
       });
       result = err(classifyProviderFailure(cause, dialect));
     }

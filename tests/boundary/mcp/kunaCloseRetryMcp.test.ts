@@ -72,7 +72,10 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     const opened = await call("open_binary", { path: program });
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
     // The single-function answer returns while the project export stays live.
-    const text = await call("procedure_pseudo_code", { procedure: "main" });
+    const text = await call("procedure_pseudo_code", {
+      detail: "complete",
+      procedure: "main",
+    });
     expect(text.isError, JSON.stringify(text.content)).not.toBe(true);
     await expect.poll(() => exportsOf(fixture.kuna)).toHaveLength(1);
 

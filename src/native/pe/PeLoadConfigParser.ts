@@ -21,6 +21,7 @@ import {
   peDeclaredFileMappings,
   readPeImageFromReader,
   type PeImage,
+  peImageRangeReader,
 } from "../../domain/native/peImage.js";
 import { peSectionVirtualExtent } from "../../domain/peSectionHeader.js";
 import { peImageBaseHex } from "../../domain/native/peAddressSpace.js";
@@ -302,12 +303,7 @@ export const parsePeLoadConfigFromHandle = async (
 ): Promise<PeLoadConfig> => {
   assertArtifactReadActive(signal);
   const image = await readPeImageFromReader(handle);
-  const readBytes: PeRangeReader = (offset, length) =>
-    length === 0
-      ? Promise.resolve(Buffer.alloc(0))
-      : offset >= 0 && offset + length <= handle.prefix.length
-        ? Promise.resolve(handle.prefix.subarray(offset, offset + length))
-        : handle.readRange(offset, length);
+  const readBytes = peImageRangeReader(handle);
   return parsePeLoadConfigFromReader(readBytes, image, artifact, input, signal);
 };
 
