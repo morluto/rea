@@ -1,3 +1,7 @@
+import {
+  availableFixtureProvider,
+  supportedFixtureTarget,
+} from "../../../tests/fixtures/analysisExecution.js";
 import { unknownTarget } from "../../domain/targetIdentity.js";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -279,18 +283,8 @@ it.each(["retired", "healthy"] as const)(
           throw new Error("The fixture requires its declared profile resolver");
         return provider.resolveAnalysisProfile(selected, options);
       },
-      inspectAvailability: () => ({
-        status: "available",
-        code: null,
-        reason: null,
-        diagnostics: {},
-      }),
-      inspectTargetSupport: () => ({
-        status: "supported",
-        code: null,
-        reason: null,
-        diagnostics: {},
-      }),
+      inspectAvailability: availableFixtureProvider,
+      inspectTargetSupport: supportedFixtureTarget,
       hasPendingOwnedResources: () => pending,
       closeOwnedResources,
     };

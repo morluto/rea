@@ -4,6 +4,7 @@ import {
 } from "./protobufCaptureView.js";
 import {
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { z } from "zod";
@@ -476,14 +477,8 @@ const parseCaptureParent = (
     report.artifact.sha256 !== null &&
     (subject == null || subject.sha256 !== report.artifact.sha256)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Capture parent subject must identify the report's SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Capture parent subject must identify the report's SHA-256.",
     );
   return ok(report);
 };

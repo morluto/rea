@@ -2,6 +2,7 @@ import { ParseFailureError } from "../domain/parseFailure.js";
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
+  artifactParseFailure,
   copyArtifactEntry,
   assertProducedEntry,
   type ArtifactEntry,
@@ -80,9 +81,7 @@ export class InesArtifactReader implements ArtifactReader {
       await this.#verifySource(signal);
       const parsed = parseInesLayout(prefix, this.source.initial.size);
       if (!parsed.ok)
-        throw new ArtifactReaderFailure("format", parsed.error.detail, {
-          cause: new ParseFailureError(parsed.error),
-        });
+        throw artifactParseFailure(new ParseFailureError(parsed.error), signal);
       this.#layout = parsed.value;
       this.#entries.clear();
       return parsed.value;

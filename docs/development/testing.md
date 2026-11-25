@@ -99,7 +99,7 @@ it or select another revision.
 Source typechecking needs no compiled runtime or generated test metadata.
 Typecheck, runtime compilation, and Frida binding verification share
 `scripts/run-typescript.mjs`. The pinned tsrs package supplies Linux x64/arm64
-(GNU and musl) and macOS arm64 compilers. Windows and other unsupported hosts
+(GNU and musl) and macOS x64/arm64 compilers. Windows and other unsupported hosts
 retain the existing stable official TypeScript compiler. Its upstream version
 can differ from tsrs, so both compiler tasks hash the selected package and version
 through `scripts/run-turbo.mjs` before cache lookup. Outputs from different
@@ -240,8 +240,9 @@ collected assertions can be awaited later. `import/no-duplicates` warns with
 no escaping for clients: the presentation re-emits every advertised pattern in
 the portable grammar (`src/contracts/portablePattern.ts`).
 
-Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
-`oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
+Fast lint stays syntax-based. `npm run lint:typed` defaults to the locked
+`oxlint-tsgolint` executable and honors an explicit `OXLINT_TSGOLINT_PATH`.
+It records native plus typed diagnostics in
 `.cache/static-checks/typed-oxlint.json`. Production `src` treats
 `no-misused-promises` as an error; tests/fixtures warn. `no-floating-promises` is
 an error throughout the lint inventory. `return-await` is an error in

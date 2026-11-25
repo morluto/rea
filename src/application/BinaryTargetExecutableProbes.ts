@@ -1,3 +1,4 @@
+import { hasElfMagic } from "../domain/binaryContainer.js";
 import type { FileHandle } from "node:fs/promises";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
@@ -154,7 +155,7 @@ export const readExecutableMetadata = async (
     }
     return parseMzExecutableMetadata(bytes, evidence);
   }
-  if (bytes.length >= 4 && bytes.toString("hex", 0, 4) === "7f454c46")
+  if (hasElfMagic(bytes))
     return readElfMetadata(handle, bytes, {
       fileSize,
       hostArchitecture,

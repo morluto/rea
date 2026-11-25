@@ -27,6 +27,7 @@ import {
 import {
   executeWorkflowFixture as execFileAsync,
   workflowGit as git,
+  workflowFixtureEnvironment,
 } from "../../support/workflowGit.js";
 
 async function commit(directory: string) {
@@ -117,7 +118,7 @@ async function runPlanScript(
     {
       cwd: directory,
       env: {
-        ...process.env,
+        ...workflowFixtureEnvironment(),
         BASE_SHA: base,
         HEAD_SHA: head,
         GITHUB_SHA: head,
@@ -383,8 +384,16 @@ it("selects code checks for documentation filenames containing line separators",
 });
 
 it.each([
+  "artifacts.d.mts",
+  "artifacts.mjs",
+  "failure-report.d.mts",
+  "failure-report.mjs",
+  "github-api.d.mts",
+  "github-api.mjs",
   "job-timings.mjs",
   "job-timings-batch.mjs",
+  "pr-ci-health.d.mts",
+  "pr-ci-health.mjs",
   "test-report.mjs",
   "test-timing-reporter.mjs",
   "test-history.mjs",
@@ -879,86 +888,106 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects a completed CI ancestor rather than a foreign or non-terminal run", async ({
-  skip,
-}) => {
-  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
-  const { directory, base } = await fixture();
-  const foreignBase = await change(directory, ["README.md"]);
-  const head = await change(directory, ["src/evm/client.ts"]);
-  const bin = join(directory, "fake-bin");
-  await mkdir(bin);
-  const gh = join(bin, "gh");
-  await writeFile(gh, '#!/bin/sh\ncat "$GH_FIXTURE_RESPONSE"\n');
-  await chmod(gh, 0o755);
-  const response = join(directory, "runs.json");
-  await writeFile(
-    response,
-    JSON.stringify({
-      workflow_runs: [
-        {
-          status: "completed",
-          path: ".github/workflows/ci.yml@refs/heads/main",
-          event: "push",
-          conclusion: "success",
-          head_branch: "main",
-          head_repository: { full_name: "untrusted/fork" },
-          head_sha: foreignBase,
-        },
-        {
-          status: "in_progress",
-          path: ".github/workflows/ci.yml@refs/heads/main",
-          event: "push",
-          conclusion: "success",
-          head_branch: "main",
-          head_repository: { full_name: "owner/repo" },
-          head_sha: foreignBase,
-        },
-        {
-          status: "completed",
-          path: ".github/workflows/release.yml@refs/heads/main",
-          event: "push",
-          conclusion: "success",
-          head_branch: "main",
-          head_repository: { full_name: "owner/repo" },
-          head_sha: foreignBase,
-        },
-        {
-          status: "completed",
-          path: ".github/workflows/ci.yml@refs/heads/main",
-          event: "push",
-          conclusion: "success",
-          head_branch: "main",
-          head_repository: { full_name: "owner/repo" },
-          head_sha: base,
-        },
+it.for([
+  {
+    scenario: "recent ancestor",
+    sameHeadRuns: 0,
+    includeBase: true,
+    calls: [5],
+  },
+  {
+    scenario: "older ancestor",
+    sameHeadRuns: 2,
+    includeBase: true,
+    calls: [5, 100],
+  },
+  {
+    scenario: "short list exhausted",
+    sameHeadRuns: 0,
+    includeBase: false,
+    calls: [5],
+  },
+  {
+    scenario: "ancestor outside search window",
+    sameHeadRuns: 97,
+    includeBase: true,
+    calls: [5, 100],
+  },
+])(
+  "looks up the trusted CI baseline for $scenario",
+  async ({ sameHeadRuns, includeBase, calls }, { skip }) => {
+    skip(process.platform === "win32", "the fake gh uses a POSIX shebang");
+    const { directory, base } = await fixture();
+    const foreignBase = await change(directory, ["README.md"]);
+    const head = await change(directory, ["src/evm/client.ts"]);
+    const bin = join(directory, "fake-bin");
+    await mkdir(bin);
+    const gh = join(bin, "gh");
+    await writeFile(
+      gh,
+      `#!${process.execPath}
+const fs = require("node:fs");
+const size = Number(process.argv.find((arg) => arg.startsWith("per_page=")).slice(9));
+fs.appendFileSync(process.env.GH_REQUEST_LOG, size + "\\n");
+console.log(JSON.stringify({ workflow_runs: JSON.parse(process.env.GH_FIXTURE_RUNS).slice(0, size) }));
+`,
+    );
+    await chmod(gh, 0o755);
+    const candidate = {
+      status: "completed",
+      path: ".github/workflows/ci.yml@refs/heads/main",
+      event: "push",
+      conclusion: "success",
+      head_branch: "main",
+      head_repository: { full_name: "owner/repo" },
+      head_sha: foreignBase,
+    };
+    const runs = [
+      { ...candidate, head_repository: { full_name: "untrusted/fork" } },
+      { ...candidate, status: "in_progress" },
+      { ...candidate, path: ".github/workflows/release.yml@refs/heads/main" },
+      ...Array.from({ length: sameHeadRuns }, () => ({
+        ...candidate,
+        head_sha: head,
+      })),
+    ];
+    if (includeBase) runs.push({ ...candidate, head_sha: base });
+    const output = join(directory, "baseline-output");
+    const log = join(directory, "request-log");
+    const result = await execFileAsync(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+        ),
       ],
-    }),
-  );
-  const output = join(directory, "baseline-output");
-  const result = await execFileAsync(
-    process.execPath,
-    [
-      fileURLToPath(
-        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
-      ),
-    ],
-    {
-      cwd: directory,
-      env: {
-        ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
-        GH_FIXTURE_RESPONSE: response,
-        CI_REPOSITORY: "owner/repo",
-        CI_DEFAULT_BRANCH: "main",
-        HEAD_SHA: head,
-        GITHUB_OUTPUT: output,
+      {
+        cwd: directory,
+        env: {
+          ...workflowFixtureEnvironment(),
+          PATH: `${bin}:${process.env.PATH}`,
+          GH_FIXTURE_RUNS: JSON.stringify(runs),
+          GH_REQUEST_LOG: log,
+          CI_REPOSITORY: "owner/repo",
+          CI_DEFAULT_BRANCH: "main",
+          HEAD_SHA: head,
+          GITHUB_OUTPUT: output,
+        },
       },
-    },
-  );
-  expect(JSON.parse(result.stdout)).toEqual({ base, reason: "" });
-  expect(await readFile(output, "utf8")).toBe(`base=${base}\nreason=\n`);
-});
+    );
+    const expectedBase = includeBase && runs.length <= 100 ? base : "";
+    const reason = expectedBase
+      ? ""
+      : "No trusted successful CI push baseline is an ancestor of this head";
+    expect(JSON.parse(result.stdout)).toEqual({ base: expectedBase, reason });
+    expect(await readFile(output, "utf8")).toBe(
+      `base=${expectedBase}\nreason=${reason}\n`,
+    );
+    expect(
+      (await readFile(log, "utf8")).trim().split("\n").map(Number),
+    ).toEqual(calls);
+  },
+);
 
 it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
@@ -979,17 +1008,18 @@ it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
     {
       cwd: directory,
       env: {
-        ...process.env,
+        ...workflowFixtureEnvironment(),
         PATH: `${bin}:${process.env.PATH}`,
         CI_REPOSITORY: "owner/repo",
         CI_DEFAULT_BRANCH: "main",
+        CI_BASELINE_EVENT: "schedule",
         HEAD_SHA: head,
       },
     },
   );
   expect(JSON.parse(result.stdout)).toMatchObject({
     base: "",
-    reason: expect.stringContaining("Could not read"),
+    reason: "Could not read a successful CI schedule baseline from GitHub",
   });
   expect(head).not.toBe(base);
 });
@@ -1879,7 +1909,7 @@ it.each(["evm", "browser"])(
     const run = (result: string) =>
       execFileAsync(process.execPath, [command], {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           CI_JOBS: JSON.stringify({ ...jobs, [scope]: { result } }),
         },
       });

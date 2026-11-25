@@ -18,7 +18,7 @@ class Generator:
         adapter = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(adapter)
         classifications = [
-            (adapter.CaptureFailure("format", "Malformed retained record.", "/record"), "format"),
+            (adapter.CaptureFailure("malformed", "Malformed retained record.", "/record"), "malformed"),
             (adapter.CaptureFailure("input-limit", "Nesting budget.", "/extension"), "input-limit"),
             (MemoryError("payload must not enter diagnostics"), "resource-limit"),
             (RuntimeError("payload must not enter diagnostics"), "decoder"),
@@ -28,7 +28,7 @@ class Generator:
             reply = adapter.failure_reply(error)
             assert reply["reason"] == expected, reply
             assert "payload must not enter diagnostics" not in json.dumps(reply)
-        for state, expected in [({"metadata": {1: b"bad-key"}}, "format"), ({"metadata": object()}, "decoder")]:
+        for state, expected in [({"metadata": {1: b"bad-key"}}, "malformed"), ({"metadata": object()}, "decoder")]:
             try:
                 adapter.project_record(state, [], 64)
             except adapter.CaptureFailure as error:

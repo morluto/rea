@@ -1,3 +1,4 @@
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { createHash } from "node:crypto";
 import { parseAppleIps } from "../../native/apple/AppleIpsParser.js";
@@ -7,7 +8,6 @@ import { AppleIpsService } from "./AppleIpsService.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import type { AppleIps } from "../../domain/native/appleIps.js";
 import { ok } from "../../domain/result.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 
 const identity = APPLE_IPS_PROVIDER;
 const bytes = Buffer.from(
@@ -117,26 +117,12 @@ it.each([null, { caller: "selected IPS request" }])(
   },
 );
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new AppleIpsService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "report.ips" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "report.ips",
+    (inspect) => new AppleIpsService({ identity, inspect }),
+  ));
 
 it("records the selected report as a file subject", async () => {
   const result = await new AppleIpsService({

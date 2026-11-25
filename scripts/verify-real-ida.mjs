@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import {
   assertFeatureTrace,
   findMappedNonFunction,
@@ -12,7 +13,6 @@ import {
 import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -133,11 +133,6 @@ let phase = "target admission";
 const workspaces = new Set();
 let targetIsDatabase = false;
 const databases = new Set();
-const digest = async () => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(target)) hash.update(chunk);
-  return hash.digest("hex");
-};
 const observe = (input) => {
   const evidence = evidenceSchema.parse(input);
   assert.equal(evidence.provider.id, "ida");
@@ -547,7 +542,7 @@ const cleanup = async () => {
     await upstream.connect();
     if (config.mode === "attached") {
       const metadata = await upstream.readResource("ida://idb/metadata");
-      assert.equal(metadata.sha256.toLowerCase(), await digest());
+      assert.equal(metadata.sha256.toLowerCase(), await sha256File(target));
       report.checks.push(
         "existing GUI target remains open with the original input identity",
       );
@@ -583,13 +578,13 @@ const cleanup = async () => {
   }
 };
 try {
-  const before = await digest();
+  const before = await sha256File(target);
   for await (const head of createReadStream(target, { end: 3 }))
     targetIsDatabase = hasIdaDatabaseSignature(head);
   const siblings = (await readdir(dirname(target))).sort();
   await mcp(await cli());
   await cleanup();
-  assert.equal(await digest(), before);
+  assert.equal(await sha256File(target), before);
   // Engines write databases beside their input; only the private copy may get one.
   assert.deepEqual((await readdir(dirname(target))).sort(), siblings);
   report.checks.push(

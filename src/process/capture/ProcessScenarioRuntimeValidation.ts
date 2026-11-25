@@ -10,6 +10,7 @@ import {
 import { lookupExecutable } from "../ExecutableLookup.js";
 import { snapshotEnvironment } from "../snapshotEnvironment.js";
 import { processCaptureCancelled } from "./ProcessCaptureError.js";
+import { reportedSystemCode } from "../../kernel/reportedSystemCode.js";
 
 /** Resolve caller-selected executable and observation paths for this execution. */
 export const resolveProcessScenarioRuntimePaths = async (
@@ -132,7 +133,7 @@ const hostAccessDenial = (
   selected: string,
   cause: unknown,
 ): AnalysisAccessDeniedError | undefined => {
-  const code = osErrorCode(cause);
+  const code = reportedSystemCode(cause);
   return code === "EACCES" || code === "EPERM"
     ? new AnalysisAccessDeniedError(
         "capture_process_scenario",
@@ -145,16 +146,8 @@ const hostAccessDenial = (
     : undefined;
 };
 
-const osErrorCode = (cause: unknown): string | undefined =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "code" in cause &&
-  typeof cause.code === "string"
-    ? cause.code
-    : undefined;
-
 const osFailure = (cause: unknown): string => {
-  const code = osErrorCode(cause);
+  const code = reportedSystemCode(cause);
   return code === undefined ? "" : ` (${code})`;
 };
 

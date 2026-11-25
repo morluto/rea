@@ -10,7 +10,10 @@ import {
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "../../src/native/pe/PeCertificates.fixture.js";
 import { repeatedCertificateSignedData } from "../fixtures/peCertificateAllowance.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -56,7 +59,7 @@ cliTest(
           : {
               code: "unsupported_target",
               details: {
-                format_failure: kind,
+                failure_kind: kind,
                 format: "pe-certificate-table",
                 reason: expect.stringContaining(message),
               },
@@ -105,7 +108,7 @@ cliTest.for([false, true])(
       code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        format_failure: "truncated",
+        failure_kind: "truncated",
         format: "pe-certificate-table",
       },
     };
@@ -189,7 +192,7 @@ cliTest.for([0x00, 0xff, null])(
           code: "unsupported_target",
           details: {
             operation: "inspect_pe_certificates",
-            format_failure: "malformed",
+            failure_kind: "malformed",
             format: "pe-certificate-table",
             reason: expect.stringContaining("critical"),
           },
@@ -224,14 +227,16 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "pe-certificate-table",
         reason: expect.stringContaining("Name RDN"),
       },
     });
     const call = await cli.sharedMcpCall!();
     const response = await call("inspect_pe_certificates", { path });
-    expect(parseMcpToolError(response).error).toEqual(result.json);
+    const mcpError = parseMcpToolError(response).error;
+    expect(mcpError.remediation.action).toContain("inspect_pe_certificates");
+    expectAdapterErrorParity(mcpError, result.json, "inspect_pe_certificates");
     expect(response.structuredContent).toBeUndefined();
     expect((await readFile(path)).equals(bytes)).toBe(true);
   },
@@ -260,7 +265,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "pe-certificate-table",
         reason: expect.stringContaining("padding"),
       },
@@ -437,7 +442,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "pe-certificate-table",
       },
     });

@@ -43,10 +43,10 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   AnalysisProtocolError,
   cancelledBy,
   carriedReason,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { isAbortWithReason } from "../process/SignalAbort.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -1151,9 +1151,10 @@ export class FlutterBuildProvider {
     const candidates = libraries.filter((library) => library.kind === "libapp");
     if (candidates.length === 0)
       return err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_dart_aot",
           path,
+          "dart-aot",
           "No lib/<abi>/libapp.so was found; the target carries no Dart AOT payload",
         ),
       );
@@ -1169,9 +1170,10 @@ export class FlutterBuildProvider {
         : candidates.find((candidate) => candidate.abi === abi);
     if (selected === undefined)
       return err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_dart_aot",
           path,
+          "dart-aot",
           `No libapp.so was found for ABI ${abi ?? "(none)"}; available: ${candidates
             .map((candidate) => candidate.abi)
             .join(", ")}`,
@@ -1253,9 +1255,10 @@ export class FlutterBuildProvider {
     const snapshotFacts = await observeDartSnapshot(bounded, signal);
     if (!snapshotFacts.observed)
       return err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_dart_aot",
           path,
+          "dart-aot",
           `No recognizable Dart snapshot symbols were found: ${snapshotFacts.reasons.join("; ")}`,
         ),
       );
