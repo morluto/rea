@@ -1000,6 +1000,7 @@
 * **cli:** consolidate one-shot cleanup coverage ([#12781](https://github.com/morluto/rea/issues/12781)) ([49f78bd](https://github.com/morluto/rea/commit/49f78bd03b0466adc2fb1e50cb0c1cc866ce8ed5))
 * **cli:** consolidate source Evidence finalization checks ([#12861](https://github.com/morluto/rea/issues/12861)) ([688d129](https://github.com/morluto/rea/commit/688d129aef5eaf8155d2d1401d86c900effb6f33))
 * **cli:** consolidate xrefs admission and prove fallback identity ([#12873](https://github.com/morluto/rea/issues/12873)) ([35595de](https://github.com/morluto/rea/commit/35595de07a06bf655613fa7dfcc642c0c79d7ae1))
+* **clients:** share verifier message text search ([#14443](https://github.com/morluto/rea/issues/14443)) ([fda73b9](https://github.com/morluto/rea/commit/fda73b9f24ba71ad0d0f1fba3db9aa277b594a02))
 * **cli:** reuse the in-process runner for schema and help checks ([#14308](https://github.com/morluto/rea/issues/14308)) ([d27eb3a](https://github.com/morluto/rea/commit/d27eb3ab240d58e0e1c0bf156113a3660e41afa5))
 * **composition:** consolidate capture redaction fixtures ([#12973](https://github.com/morluto/rea/issues/12973)) ([5ca9f48](https://github.com/morluto/rea/commit/5ca9f4874b3d9adc9ca753fd97e9a72f7687a350))
 * **composition:** consolidate external writer cleanup checks ([#12980](https://github.com/morluto/rea/issues/12980)) ([d7cebb7](https://github.com/morluto/rea/commit/d7cebb77a65496c8d9e7cd41bc0c6d369f22d707))
