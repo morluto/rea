@@ -85,7 +85,7 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
         z
           .object({
             logical_path: z.string(),
-            algorithm: z.literal("dfu-crc32"),
+            algorithm: z.enum(["dfu-crc32", "crc32"]),
             declared_crc32: z.string().regex(/^[a-f0-9]{8}$/u),
             calculated_crc32: z
               .string()

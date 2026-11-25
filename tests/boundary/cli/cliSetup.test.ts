@@ -126,12 +126,7 @@ const clientStates = [
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
 
-cliTest.for([
-  "--dry-run=abc",
-  "--dry-run=",
-  "--dryRun=abc",
-  "--dry-run=ab\ncd",
-] as const)(
+cliTest.for(["--dry-run=abc", "--dry-run=", "--dry-run=ab\ncd"] as const)(
   "rejects malformed setup dry-run value %s before approved changes are written",
   async (dryRun, { cli }) => {
     const home = await createTestTempDirectory("rea-cli-invalid-dry-run-");
@@ -140,8 +135,10 @@ cliTest.for([
 
     await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
     expect(result.exitCode).not.toBe(0);
-    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
-    expect(result.stdout).toContain("--dry-run");
+    expect(result.json).toMatchObject({
+      code: "PARSE_ERROR",
+      message: "Invalid --dry-run value; use true or false.",
+    });
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
   },
 );
@@ -201,14 +198,17 @@ cliTest(
         "codex",
         "--skill=false",
         "--dry-run=abc",
-        "--dryRun=false",
+        "--dry-run=false",
         "--json",
       ],
       cwd: selectedHome,
       environment: isolatedSetupEnvironment(selectedHome),
     });
     expect(result.exitCode, result.stderr).toBe(1);
-    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
+    expect(result.json).toMatchObject({
+      code: "PARSE_ERROR",
+      message: "Invalid --dry-run value; use true or false.",
+    });
     expect(await readFile(config, "utf8")).toBe(original);
     expect((await lstat(config)).mtimeMs).toBe(before.mtimeMs);
     expect(await readdir(dirname(config))).toEqual(["config.toml"]);

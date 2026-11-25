@@ -1,7 +1,7 @@
 import { boundedList, describeBoundedList } from "../boundedList.js";
 import { crc32 } from "node:zlib";
 
-import type { DfuSeMetadata } from "../artifactFormatMetadata.js";
+import type { DfuSeMetadata } from "../formatMetadata/firmwareMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";
 

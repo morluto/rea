@@ -1,5 +1,8 @@
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
+import {
+  isStandaloneArtifactFormat,
+  recognizeArtifactFormat,
+} from "../../domain/artifactFormatRecognition.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import {
   hasDestinationPath,
@@ -8,10 +11,8 @@ import {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import {
-  hasBinaryPlistSignature,
-  hasXmlPlistSignature,
-} from "../../domain/apple/appleArchiveFormat.js";
+import type { DirectoryRootDigest } from "../../domain/directoryTreeDigest.js";
+import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
   artifactEdgeId,
   artifactIdForNode,
@@ -34,11 +35,9 @@ import {
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import { classifyFatContainerEvidence } from "../../domain/apple/machoContainer.js";
 import {
-  classifyFatContainerEvidence,
-  readFatContainerHeader,
-} from "../../domain/apple/machoContainer.js";
-import {
+  parsePeRecordFacts,
   parsePeRecordStructure,
   readNativeHeaderFormat,
 } from "../../domain/binaryTarget.js";
@@ -153,6 +152,9 @@ export const createOccurrence = (
     ...(entry.formatMetadata === undefined
       ? {}
       : { format_metadata: { ...entry.formatMetadata } }),
+    ...(entry.linkTarget === undefined
+      ? {}
+      : { link_target: { ...entry.linkTarget } }),
   };
 };
 
@@ -209,6 +211,7 @@ export const materializeDirectoryNodes = (
       sha256: digestCanonicalValue({ kind: "directory", children }, "Artifact"),
       size: 0,
       format: "directory",
+      architecture: null,
       contentState: "virtual",
     });
     nodes.set(node.artifact_id, node);
@@ -225,10 +228,17 @@ export const createRootNode = (input: {
       } & ArtifactClassificationEvidence)
     | null;
   readonly occurrences: readonly MutableOccurrence[];
+  /** A directory root's tree digest, which names it when complete. */
+  readonly treeDigest?: DirectoryRootDigest | undefined;
 }): ArtifactNode =>
   createArtifactNode({
     sha256:
       input.digest?.sha256 ??
+      (input.treeDigest?.status === "complete"
+        ? input.treeDigest.sha256
+        : undefined) ??
+      // A partial walk has no tree identity. This listing commitment keeps
+      // the graph addressable, and the inventory reports the digest partial.
       digestCanonicalValue(
         {
           kind: "directory-root",
@@ -244,10 +254,9 @@ export const createRootNode = (input: {
         "Artifact",
       ),
     size: input.digest?.bytes ?? 0,
-    format:
-      input.digest === null
-        ? "directory"
-        : classifyArtifactBytes(input.digest, input.digest.bytes),
+    ...(input.digest === null
+      ? { format: "directory" as const, architecture: null }
+      : classifyArtifactHeader(input.digest, input.digest.bytes)),
     contentState: "materialized",
   });
 
@@ -255,6 +264,7 @@ export const createArtifactNode = (input: {
   readonly sha256: string;
   readonly size: number;
   readonly format: ArtifactNode["format"];
+  readonly architecture: ArtifactNode["architecture"];
   readonly contentState: ArtifactNode["content_state"];
 }): ArtifactNode => ({
   artifact_id: artifactIdForNode({
@@ -265,7 +275,7 @@ export const createArtifactNode = (input: {
   sha256: input.sha256,
   size: input.size,
   media_type: null,
-  architecture: null,
+  architecture: input.architecture,
   content_state: input.contentState,
   limitations: [],
 });
@@ -556,9 +566,11 @@ export const classifyArtifactContent = (
   readonly kind: ArtifactOccurrence["artifact_kind"];
   readonly format: ArtifactOccurrence["artifact_format"];
   readonly contentFormat: ArtifactNode["format"];
+  readonly contentArchitecture: ArtifactNode["architecture"];
 } => {
   const { prefix, asarHeader } = evidence;
-  const contentFormat = classifyArtifactBytes(evidence, fileSize);
+  const { format: contentFormat, architecture: contentArchitecture } =
+    classifyArtifactHeader(evidence, fileSize);
   const byPath = classifyArtifactPath(path);
   let role: ReturnType<typeof classifyArtifactPath>;
   if (
@@ -582,7 +594,7 @@ export const classifyArtifactContent = (
       role = { kind: "container", format: "asar" };
     else role = artifactRoleForFormat(path, contentFormat);
   } else role = artifactRoleForFormat(path, contentFormat);
-  return { ...role, contentFormat };
+  return { ...role, contentFormat, contentArchitecture };
 };
 
 const artifactRoleForFormat = (
@@ -597,7 +609,8 @@ const artifactRoleForFormat = (
       kind: "container",
       format: zipPackageFormatForPath(path) ?? format,
     };
-  if (format === "uefi") return { kind: "resource", format };
+  if (format === "uefi" || isStandaloneArtifactFormat(format))
+    return { kind: "resource", format };
   if (format === "plist") return { kind: "plist", format };
   if (artifactFormatDescriptor(format)?.roleContainer === true)
     return { kind: "container", format };
@@ -613,16 +626,36 @@ const artifactRoleForFormat = (
 export const classifyArtifactBytes = (
   evidence: ArtifactClassificationEvidence,
   fileSize: number,
-): ArtifactNode["format"] => {
-  const { prefix, suffix, mzWindowsHeaderSignature, mzWindowsHeaderRecord } =
-    evidence;
+): ArtifactNode["format"] => classifyArtifactHeader(evidence, fileSize).format;
+
+/**
+ * The storage format and, for a thin native image, the CPU family its header
+ * names. Architecture is null when the header names a machine REA does not
+ * decode, and for containers such as universal Mach-O whose slices name
+ * their own.
+ */
+export const classifyArtifactHeader = (
+  evidence: ArtifactClassificationEvidence,
+  fileSize: number,
+): Pick<ArtifactNode, "format" | "architecture"> => {
+  const {
+    prefix,
+    suffix,
+    iso9660Descriptor,
+    mzWindowsHeaderSignature,
+    mzWindowsHeaderRecord,
+  } = evidence;
+  const only = (format: ArtifactNode["format"]) => ({
+    format,
+    architecture: null,
+  });
   // A refused claim falls through: a header-only iNES region, for example,
   // has the signature but not the declared cartridge extent, so it stays a
   // file instead of becoming another container. A claim that needs more
-  // bytes falls through too: the scan holds a bounded prefix and the trailer,
-  // so it cannot locate an ESP flash partition table, and a flash dump is
-  // classified by its first image.
-  const input = { prefix, fileSize, suffix };
+  // bytes falls through too: the scan holds a bounded prefix, the trailer and
+  // the ISO 9660 descriptor signature, so it cannot locate an ESP flash
+  // partition table, and a flash dump is classified by its first image.
+  const input = { prefix, fileSize, suffix, iso9660Descriptor };
   for (
     let recognition = recognizeArtifactFormat(input);
     recognition !== undefined;
@@ -632,14 +665,14 @@ export const classifyArtifactBytes = (
       recognition.state === "recognized" &&
       recognition.format !== "esp-flash-image"
     )
-      return recognition.format;
-  if (hasXmlPlistSignature(prefix)) return "plist";
-  const fatFormat = classifyFatArtifact(evidence, fileSize);
-  if (fatFormat !== null) return fatFormat;
+      return only(recognition.format);
+  if (evidence.xmlPlistSignature) return only("plist");
+  const fatFormat = classifyFatArtifact(evidence);
+  if (fatFormat !== null) return only(fatFormat);
   // Admit ELF and thin Mach-O as target resolution does: a magic number
   // whose header does not decode is not an executable REA can open.
   const native = readNativeHeaderFormat(prefix, fileSize);
-  if (!native.ok) return "unknown";
+  if (!native.ok) return only("unknown");
   if (native.value !== null) return native.value;
   if (hasDosMzMagic(prefix)) {
     if (
@@ -647,15 +680,15 @@ export const classifyArtifactBytes = (
       fileSize < prefix.length ||
       prefix.length < Math.min(fileSize, 64)
     )
-      return "unknown";
+      return only("unknown");
     const mzEvidence = parseMzHeaderEvidence(
       prefix,
       fileSize,
       mzWindowsHeaderSignature,
     );
     const { windowsHeader } = mzEvidence;
-    if (windowsHeader.state === "signature-needed") return "unknown";
-    if (windowsHeader.state === "candidate") return "unknown";
+    if (windowsHeader.state === "signature-needed") return only("unknown");
+    if (windowsHeader.state === "candidate") return only("unknown");
     if (windowsHeader.state === "declared") {
       const windowsOffset = windowsHeader.offset;
       if (windowsHeader.signature === "PE" && windowsOffset >= 64) {
@@ -669,31 +702,39 @@ export const classifyArtifactBytes = (
             : undefined;
         const record =
           (observed?.length ?? 0) > (inline?.length ?? 0) ? observed : inline;
-        if (record !== undefined && parsePeRecordStructure(record).ok)
-          return "pe";
+        if (record !== undefined && parsePeRecordStructure(record).ok) {
+          // Target admission's parser owns the machine and optional-header
+          // agreement; a structure it refuses keeps an unknown architecture.
+          const facts = parsePeRecordFacts(record, undefined);
+          return {
+            format: "pe",
+            architecture: facts.ok ? facts.value.metadata.architecture : null,
+          };
+        }
       }
-      return "unknown";
+      return only("unknown");
     }
-    if (mzEvidence.dos.ok) return "dos-mz";
-    return "unknown";
+    if (mzEvidence.dos.ok) return only("dos-mz");
+    return only("unknown");
   }
-  return "file";
+  return only("file");
 };
 
 const classifyFatArtifact = (
   evidence: ArtifactClassificationEvidence,
-  fileSize: number,
 ): ArtifactNode["format"] | null => {
-  const { prefix, fatSliceHeaders } = evidence;
-  const fatHeader =
-    fatSliceHeaders?.header ?? readFatContainerHeader(prefix, fileSize);
-  if (fatHeader.state === "needs-data" || fatHeader.state === "malformed")
+  const { prefix, fatHeader, fatSliceHeadersByOffset } = evidence;
+  if (
+    fatHeader.state === "needs-data" ||
+    fatHeader.state === "malformed" ||
+    fatHeader.state === "truncated"
+  )
     return "unknown";
   if (fatHeader.state === "not-fat") return null;
   const identity = classifyFatContainerEvidence(
     fatHeader,
     prefix,
-    fatSliceHeaders?.sliceHeadersByOffset,
+    fatSliceHeadersByOffset,
   );
   return identity.state === "mach-o" ? "mach-o-universal" : "unknown";
 };

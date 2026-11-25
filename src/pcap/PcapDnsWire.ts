@@ -24,6 +24,13 @@ export interface DnsMessageFacts {
   readonly incomplete_reasons?: readonly string[];
 }
 
+const DNS_FIELD_KEYS = new Set([
+  "dns.qry.name",
+  "dns.a",
+  "dns.aaaa",
+  "dns.id_raw",
+]);
+
 /** Read named producer fields, retaining occurrence order within one PDU. */
 const fields = (source: unknown): Map<string, unknown[]> => {
   const result = new Map<string, unknown[]>();
@@ -31,22 +38,30 @@ const fields = (source: unknown): Map<string, unknown[]> => {
   while (pending.length > 0) {
     const value = pending.pop();
     if (Array.isArray(value)) {
-      for (let index = value.length - 1; index >= 0; index -= 1)
-        pending.push(value[index]);
+      for (let index = value.length - 1; index >= 0; index -= 1) {
+        const item = value[index];
+        if (typeof item === "object" && item !== null) pending.push(item);
+      }
     } else if (object(value)) {
-      const entries = Object.entries(value);
-      for (const [key, field] of entries) {
-        if (!["dns.qry.name", "dns.a", "dns.aaaa", "dns.id_raw"].includes(key))
-          continue;
-        const values = result.get(key) ?? [];
+      const keys = Object.keys(value);
+      for (let i = 0; i < keys.length; i += 1) {
+        const key = keys[i]!;
+        if (!DNS_FIELD_KEYS.has(key)) continue;
+        const field = value[key];
+        let values = result.get(key);
+        if (values === undefined) {
+          values = [];
+          result.set(key, values);
+        }
         if (key === "dns.id_raw") values.push(field);
         else if (Array.isArray(field)) values.push(...field);
         else values.push(field);
-        result.set(key, values);
       }
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const [key, child] = entries[index]!;
-        if (!key.endsWith("_raw")) pending.push(child);
+      for (let index = keys.length - 1; index >= 0; index -= 1) {
+        const key = keys[index]!;
+        if (key.endsWith("_raw")) continue;
+        const child = value[key];
+        if (typeof child === "object" && child !== null) pending.push(child);
       }
     }
   }
@@ -123,12 +138,26 @@ const decodeName = (
           "DNS name encoding or compression pointer is invalid",
         );
       const label = message.subarray(at, at + length);
-      labels.push(label.toString("hex"));
-      folded.push(
-        [...label]
-          .map((byte) => byteToHex(byte >= 65 && byte <= 90 ? byte + 32 : byte))
-          .join(""),
-      );
+      const hex = label.toString("hex");
+      labels.push(hex);
+      let hasUpper = false;
+      for (let i = 0; i < label.length; i += 1) {
+        const byte = label[i]!;
+        if (byte >= 65 && byte <= 90) {
+          hasUpper = true;
+          break;
+        }
+      }
+      if (!hasUpper) {
+        folded.push(hex);
+      } else {
+        let lower = "";
+        for (let i = 0; i < label.length; i += 1) {
+          const byte = label[i]!;
+          lower += byteToHex(byte >= 65 && byte <= 90 ? byte + 32 : byte);
+        }
+        folded.push(lower);
+      }
       at += length;
     }
   }

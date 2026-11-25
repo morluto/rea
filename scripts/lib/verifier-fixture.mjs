@@ -173,6 +173,16 @@ export class VerifierFixture {
     });
   }
 
+  /**
+   * Retain the fixture and build the failure to propagate to its caller.
+   * @param {string} message
+   * @param {ErrorOptions} [options]
+   */
+  retainedError(message, options) {
+    this.retain(message);
+    return new Error(message, options);
+  }
+
   /** Concurrent callers share one attempt; a failed attempt can be retried. */
   release() {
     return this.#settle(true);

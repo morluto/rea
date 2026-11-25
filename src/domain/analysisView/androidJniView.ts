@@ -22,7 +22,7 @@ import {
 } from "./analysisViewShape.js";
 import {
   ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-  analysisViewInputError,
+  invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -30,7 +30,7 @@ import {
   pageViewCoverage,
   analysisViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const reportSchema = androidResultSchemas.inspect_android_jni_bindings;
 const readReport = createAnalysisViewResultReader(reportSchema);
@@ -72,15 +72,8 @@ export const projectAndroidJniView = (
     parent.operation !== "inspect_android_jni_bindings" ||
     (view.kind !== "summary" && view.kind !== "android-jni")
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "JNI Evidence supports summary or android-jni collection pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "JNI Evidence supports summary or android-jni collection pages.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof androidJniViewRequestSchema>
@@ -190,13 +183,9 @@ export const projectAndroidJniView = (
       rows: readonly Row[],
       matches: (row: Row) => boolean,
     ) =>
-      selectViewRows(
-        rows,
-        view,
-        (row, index) =>
-          (indices === undefined || indices.has(index)) && matches(row),
-        project,
-      );
+      indices !== undefined
+        ? selectIndexedViewRows(rows, indices, view, matches, project)
+        : selectViewRows(rows, view, matches, project);
     const set = (values: readonly string[] | undefined) =>
       values === undefined ? undefined : new Set(values);
     let selected: { rows: object[]; total: number };

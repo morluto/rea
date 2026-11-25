@@ -90,60 +90,7 @@ class HeaderJson {
     }
     return rejectModel("Unterminated safetensors JSON string");
   }
-  *#value(depth: number): Generator<void, HeaderValue> {
-    if (++this.#nodes % 4096 === 0) yield;
-    this.#space();
-    this.budget.charge(64);
-    if (depth > MODEL_JSON_NESTING)
-      throw modelCapacityFailure(
-        "json-nesting",
-        `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
-      );
-    const c = this.text[this.#position];
-    if (c === '"') return this.#string();
-    if (this.text.startsWith("null", this.#position)) {
-      this.#position += 4;
-      return null;
-    }
-    if (this.text.startsWith("true", this.#position)) {
-      this.#position += 4;
-      return true;
-    }
-    if (this.text.startsWith("false", this.#position)) {
-      this.#position += 5;
-      return false;
-    }
-    if (c === "{" || c === "[") {
-      this.#position++;
-      const object: { [key: string]: HeaderValue } = Object.create(null) as {
-        [key: string]: HeaderValue;
-      };
-      const array: HeaderValue[] = [];
-      const close = c === "{" ? "}" : "]";
-      this.#space();
-      if (this.text[this.#position] === close) {
-        this.#position++;
-        return c === "{" ? object : array;
-      }
-      while (true) {
-        this.#space();
-        if (c === "{") {
-          if (this.text[this.#position] !== '"')
-            rejectModel("Expected safetensors JSON object key");
-          const key = this.#string();
-          if (Object.hasOwn(object, key))
-            rejectModel(`Duplicate safetensors JSON key ${key}`);
-          this.#space();
-          if (this.text[this.#position++] !== ":")
-            rejectModel("Expected safetensors JSON colon");
-          object[key] = yield* this.#value(depth + 1);
-        } else array.push(yield* this.#value(depth + 1));
-        this.#space();
-        const next = this.text[this.#position++];
-        if (next === close) return c === "{" ? object : array;
-        if (next !== ",") rejectModel("Invalid safetensors JSON container");
-      }
-    }
+  #number(): bigint | JsonNumber {
     const text = this.text;
     const len = text.length;
     const start = this.#position;
@@ -210,11 +157,100 @@ class HeaderJson {
   *read(): Generator<void, HeaderValue> {
     if (this.text[0] !== "{")
       rejectModel("Safetensors header must begin with a JSON object");
-    const value = yield* this.#value(0);
+    type Frame =
+      | {
+          readonly kind: "object";
+          readonly value: { [key: string]: HeaderValue };
+          key: string;
+        }
+      | { readonly kind: "array"; readonly value: HeaderValue[] };
+    const stack: Frame[] = [];
+    let root: HeaderValue | undefined;
+    // Iterative descent avoids allocating a JS Generator frame per JSON value.
+    parseValue: while (true) {
+      if (++this.#nodes % 4096 === 0) yield;
+      this.#space();
+      this.budget.charge(64);
+      if (stack.length > MODEL_JSON_NESTING)
+        throw modelCapacityFailure(
+          "json-nesting",
+          `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
+        );
+      const c = this.text[this.#position];
+      let value: HeaderValue;
+      if (c === "{" || c === "[") {
+        this.#position++;
+        const close = c === "{" ? "}" : "]";
+        this.#space();
+        if (this.text[this.#position] === close) {
+          this.#position++;
+          value =
+            c === "{"
+              ? (Object.create(null) as { [key: string]: HeaderValue })
+              : [];
+        } else if (c === "{") {
+          const object = Object.create(null) as { [key: string]: HeaderValue };
+          if (this.text[this.#position] !== '"')
+            rejectModel("Expected safetensors JSON object key");
+          const key = this.#string();
+          this.#space();
+          if (this.text[this.#position++] !== ":")
+            rejectModel("Expected safetensors JSON colon");
+          stack.push({ kind: "object", value: object, key });
+          continue parseValue;
+        } else {
+          stack.push({ kind: "array", value: [] });
+          continue parseValue;
+        }
+      } else if (c === '"') {
+        value = this.#string();
+      } else if (this.text.startsWith("null", this.#position)) {
+        this.#position += 4;
+        value = null;
+      } else if (this.text.startsWith("true", this.#position)) {
+        this.#position += 4;
+        value = true;
+      } else if (this.text.startsWith("false", this.#position)) {
+        this.#position += 5;
+        value = false;
+      } else {
+        value = this.#number();
+      }
+      // Attach the completed value to its parent container and advance.
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1]!;
+        if (frame.kind === "object") frame.value[frame.key] = value;
+        else frame.value.push(value);
+        this.#space();
+        const next = this.text[this.#position++];
+        const close = frame.kind === "object" ? "}" : "]";
+        if (next === close) {
+          stack.pop();
+          value = frame.value;
+          continue;
+        }
+        if (next !== ",") rejectModel("Invalid safetensors JSON container");
+        if (frame.kind === "object") {
+          this.#space();
+          if (this.text[this.#position] !== '"')
+            rejectModel("Expected safetensors JSON object key");
+          const key = this.#string();
+          if (Object.hasOwn(frame.value, key))
+            rejectModel(`Duplicate safetensors JSON key ${key}`);
+          this.#space();
+          if (this.text[this.#position++] !== ":")
+            rejectModel("Expected safetensors JSON colon");
+          frame.key = key;
+        }
+        continue parseValue;
+      }
+      root = value;
+      break;
+    }
     this.#space();
     if (this.#position !== this.text.length)
       rejectModel("Trailing non-whitespace safetensors header bytes");
-    return value;
+    return root;
   }
 }
 

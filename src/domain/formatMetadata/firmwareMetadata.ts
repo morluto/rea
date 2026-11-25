@@ -527,7 +527,7 @@ export const uImageMetadataSchema = z.strictObject({
   entry_point: uint32,
   header_crc32: uint32,
   data_crc32: uint32,
-  crc_verified: z.literal(true),
+  crc_verified: z.boolean(),
   os: z.number().int().min(0).max(255),
   os_name: z.string(),
   arch: z.number().int().min(0).max(255),

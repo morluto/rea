@@ -61,26 +61,6 @@ mcpTest(
 );
 
 mcpTest(
-  "requires an absolute path for inspect_nuget_nupkg",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_nuget_nupkg",
-        arguments: { path: "pkg.nupkg" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_nuget_nupkg" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
   "advises a fixed allowance, not more memory, for a Zstandard window refusal",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);

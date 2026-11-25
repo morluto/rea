@@ -13,7 +13,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
 import { AMD_ZLIB_HEADER_LENGTH } from "./FfsSections.js";
 import {
   buildCompressionSection,
@@ -566,7 +566,7 @@ it("extracts embedded raw-file volume files and targets the nested volume by off
 
 it("validates requests through the service before execution", async () => {
   const provider = new UefiAnalysisProvider();
-  const service = new UefiAnalysisService(provider);
+  const service = createUefiAnalysisService(provider);
   const rejected = await service.execute("inspect_uefi_firmware", {
     path: "relative/image.fi",
   });

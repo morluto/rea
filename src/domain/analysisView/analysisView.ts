@@ -1,6 +1,7 @@
 import { projectWebSourceLocationView } from "./webSourceLocationView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
+import { projectWebPageView } from "./webPageView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -11,6 +12,8 @@ import { projectRecordedArrayView } from "./recordedArrayView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
+import { projectUefiExtractionView } from "./uefiExtractionView.js";
+import { projectUefiFirmwareView } from "./uefiFirmwareView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
@@ -192,6 +195,8 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
+  retain("inspect_uefi_firmware", projectUefiFirmwareView),
+  retain("extract_uefi_firmware", projectUefiExtractionView),
   retain("inspect_native_exports", projectNativeExportsView),
   retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
@@ -235,6 +240,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("inspect_web_page", projectWebPageView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 

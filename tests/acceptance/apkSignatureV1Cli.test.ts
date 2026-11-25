@@ -2,7 +2,7 @@ import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../fixtures/canonicalOutputSchema.js";
-import { parseZipTail } from "../../src/domain/apkSignature/apkSigningBlock.js";
+import { parseZipTailFromReader } from "../../src/domain/apkSignature/apkSigningBlock.js";
 import { centralDirectoryV1SignatureEntries } from "../../src/domain/apkSignature/apkV1Signature.js";
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { writeFile } from "node:fs/promises";
@@ -42,6 +42,7 @@ import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestMcp } from "../support/mcp/mcpFixture.js";
+import { bufferByteSource } from "../../src/domain/byteSource.js";
 
 const completeEvidence = (value: unknown) => {
   const evidence = toolContract("inspect_apk_signature").outputSchema.parse(
@@ -686,10 +687,11 @@ cliTest(
       stored: true,
     }));
     const bytes = await zipWith(entries, { dataDescriptor: false });
-    const tail = parseZipTail(bytes);
+    const reader = bufferByteSource(bytes, 4);
+    const tail = await parseZipTailFromReader(reader);
     if (!tail.ok) throw new Error("Expected a framed ZIP tail");
     const { centralDirectoryOffset, centralDirectorySize, totalEntries } =
-      tail.value;
+      tail.value.tail;
     const parsed = centralDirectoryV1SignatureEntries(
       bytes,
       centralDirectoryOffset,

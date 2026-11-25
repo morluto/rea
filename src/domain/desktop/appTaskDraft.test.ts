@@ -7,6 +7,7 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheck } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
 import { draftTaskFiles, type TaskDraftFile } from "./appTaskDraft.js";
+import { xml } from "./appTaskDraft.fixture.js";
 import { leftOutFiles } from "./appExportUnowned.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { xmlView } from "./stateFormats.js";
@@ -483,6 +484,35 @@ describe("draftTaskFiles for text split into runs", () => {
       ).toEqual([true]);
       expect(passing(file, checks, meetingNote(old))).toEqual([false]);
     }
+  });
+
+  it("keeps a text check through reflow when a nested marker contains selector-like text", () => {
+    const file = "Documents/headline.xml";
+    const note = (runs: readonly string[], marker = "Headline[@draft=first") =>
+      xml(
+        `<body><section id="headline"><p><marker id="${marker}"/>${runs
+          .map((run) => `<span>${run}</span>`)
+          .join(
+            "",
+          )}</p><p><marker id="Empty continuation"/></p></section><section id="details"><p>Saturday at 7 PM</p></section></body>`,
+      );
+    const seed = note(["Spring ", "Market"]);
+    const saved = note(["Summer ", "Fair"]);
+    const [document] = draft({ [file]: path("document", "xml", seed, saved) });
+
+    const checks = document?.suggested;
+    expect(checks).toEqual([
+      {
+        kind: "text_equals",
+        file,
+        pointer: "/root/children/[name=section][@id=headline]",
+        value: "Summer Fair",
+      },
+    ]);
+    expect(
+      passing(file, checks, note(["Summer Fair"], "Updated style")),
+    ).toEqual([true]);
+    expect(passing(file, checks, seed)).toEqual([false]);
   });
 
   it("checks a rewritten archive paragraph and ignores formatting-only changes beside it", () => {
