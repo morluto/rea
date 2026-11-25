@@ -8,9 +8,13 @@ it.each(["malformed", "unsupported"] as const)(
   (kind) => {
     const cause = new BinaryFormatFailure(kind, "metadata format refused");
     expect(appleDispatchMetadataFailure(cause, "/selected")).toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
+      _tag: "AnalysisTargetFailureError",
       path: "/selected",
-      reason: "metadata format refused",
+      failure: {
+        kind,
+        format: "native-binary",
+        detail: "metadata format refused",
+      },
     });
   },
 );

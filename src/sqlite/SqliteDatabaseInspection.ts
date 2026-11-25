@@ -238,7 +238,7 @@ const decodeSchemaText = (
       : FATAL_UTF16_DECODERS[encoding].decode(value);
   } catch (cause: unknown) {
     throw new SqliteInspectionFailure(
-      "format",
+      "malformed",
       `SQLite schema ${label} contains malformed ${encoding} text: ${errorMessage(cause)}`,
     );
   }
@@ -266,13 +266,13 @@ const cell = (
   const hex = value.slice(1).toLowerCase();
   if (!/^(?:[0-9a-f]{2})*$/.test(hex))
     throw new SqliteInspectionFailure(
-      "format",
+      "malformed",
       "SQLite returned an invalid encoded cell.",
     );
   if (value[0] === "b") return { type: "blob", hex };
   if (value[0] !== "t")
     throw new SqliteInspectionFailure(
-      "format",
+      "malformed",
       "SQLite returned an unknown encoded cell type.",
     );
   return {
@@ -576,7 +576,7 @@ const readSchema = (
         } catch (cause: unknown) {
           if (
             !(cause instanceof SqliteInspectionFailure) ||
-            cause.reason !== "format"
+            cause.reason !== "malformed"
           )
             throw cause;
           // The catalog walk reports malformed names at the schema row. Never
@@ -682,7 +682,7 @@ const readSchema = (
       const listed = metadata.get(sqliteNameBytesKey(parsed.name));
       if (listed === undefined || listed.type === "view")
         throw new SqliteInspectionFailure(
-          "format",
+          "malformed",
           `SQLite schema/table inventory mismatch: ${value.name}`,
         );
       const possibleShadowParent =
@@ -1116,7 +1116,7 @@ export const inspectSqliteDatabaseSnapshot = (
   // SQLite's Unix VFS reports a one-byte file as size zero, so the engine would
   // open it as an empty database and never reach its own header check.
   if (statSync(snapshotPath).size === 1)
-    throw new SqliteInspectionFailure("format", "file is not a database");
+    throw new SqliteInspectionFailure("malformed", "file is not a database");
   const db = new DatabaseSync(snapshotPath, {
     readOnly: true,
     allowExtension: false,

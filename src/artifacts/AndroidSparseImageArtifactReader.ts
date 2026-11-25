@@ -24,7 +24,7 @@ import {
   ArtifactStreamLifecycle,
   ownArtifactStream,
 } from "./OwnedArtifactStream.js";
-import { cancellableArtifactChunks } from "./OwnedAsyncArtifactStream.js";
+import { cancellableArtifactChunks } from "./OwnedAsyncArtifactStreams.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type { AndroidSparseImageMetadata } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";

@@ -37,8 +37,8 @@ cliTest.for([
     });
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.json).toMatchObject({
-      code: "artifact_operation_failed",
-      details: { reason: "format" },
+      code: "unsupported_target",
+      details: { path, failure_kind: "malformed", format: "unityfs" },
     });
   },
 );

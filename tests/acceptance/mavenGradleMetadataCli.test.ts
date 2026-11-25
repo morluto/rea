@@ -570,7 +570,7 @@ cliTest.for([
       code: "unsupported_target",
       details: {
         operation: "inspect_maven_gradle_metadata",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         reason: expect.stringContaining(issue),
         partial_observation: {
           kind: "file-snapshot-hash",

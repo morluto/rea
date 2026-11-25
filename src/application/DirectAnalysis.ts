@@ -407,6 +407,7 @@ const runAnalysis = async (
       const inspectDirectory = dependencies.inspectArtifactDirectory;
       const execution = await runInRetainedArtifactScope(
         session.resourceScope,
+        path,
         () =>
           inspectDirectory(
             directory,

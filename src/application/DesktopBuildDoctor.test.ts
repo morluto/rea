@@ -1,19 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
-import { createDoctorHostFixture } from "./Doctor.fixture.js";
+import { createDoctorHostFixture, scopeChecksOf } from "./Doctor.fixture.js";
 import { runDoctor, type DoctorHost } from "./Doctor.js";
 import type { DoctorCheck } from "../ports/DoctorProviderInspection.js";
 import type { DesktopBuildFacts } from "../ports/DesktopBuildHost.js";
-
-/** The explicit scope's checks; an audit-wide report has none. */
-const scopeChecksOf = <Check>(report: {
-  readonly scope_checks?: readonly Check[];
-}): readonly Check[] => {
-  if (report.scope_checks === undefined)
-    throw new Error("Expected an explicit-scope doctor report");
-  return report.scope_checks;
-};
 
 const ready: DesktopBuildFacts = {
   ps: { found: true, detail: "/usr/bin/ps" },

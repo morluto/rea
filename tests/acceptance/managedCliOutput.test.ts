@@ -751,13 +751,17 @@ cliTest(
           code: "unsupported_target",
           category: "unsupported_target",
           retryable: false,
+          retry: "none",
           remediation: {
-            action:
-              "Select a target supported by this operation or choose an operation supporting the reported target format.",
+            action: expect.stringContaining(
+              "Choose another operation or provider for this target.",
+            ),
           },
           details: {
             operation: command.replaceAll("-", "_"),
             path,
+            failure_kind: "unsupported",
+            format,
             reason: `Managed static triage requires a PE target; observed ${format}.`,
           },
         });

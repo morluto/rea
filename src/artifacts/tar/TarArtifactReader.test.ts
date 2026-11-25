@@ -21,7 +21,8 @@ import type {
   ArtifactTraversalOmission,
 } from "../../resources/index.js";
 import { TarArtifactReader } from "./TarArtifactReader.js";
-import { GzipTarStream } from "./TarByteStream.js";
+import { TAR_RETAINED_METADATA_BYTES, walkTar } from "./TarWalk.js";
+import { GzipTarStream, TarStreamEnded } from "./TarByteStream.js";
 import {
   gzipTarFixture,
   RELEASE_TAR_MEMBERS,
@@ -269,6 +270,29 @@ describe("truncated tar", () => {
     );
   });
 
+  it("refuses a gzip stream that ends before the first tar block as the carrier's own failure", async () => {
+    const ended = new TarStreamEnded(
+      {
+        kind: "truncated",
+        format: "gzip",
+        detail:
+          "gzip stream ends before its end marker after 0 decompressed byte(s)",
+      },
+      undefined,
+    );
+    const stream = {
+      position: 0,
+      read: () => Promise.reject(ended),
+      skip: () => Promise.reject(ended),
+      trailingCarrierNonZero: () => Promise.reject(ended),
+      close: () => undefined,
+    };
+    await expect(walkTar(stream, undefined)).rejects.toMatchObject({
+      reason: "truncated",
+      parseFailure: { kind: "truncated", format: "gzip" },
+    });
+  });
+
   it("refuses a file whose first header is invalid as malformed tar", async () => {
     const bytes = tarFixture([{ name: "a.txt", data: "a" }]);
     bytes[148] = 0x39;
@@ -462,6 +486,43 @@ describe("tar header edge cases", () => {
       await expect(pending).rejects.toMatchObject({ reason: "cancelled" });
     } finally {
       stream.close();
+    }
+  });
+
+  it("refuses repeated global pax headers at the retained metadata allowance", async () => {
+    const value = "x".repeat(800_000);
+    const pieces: Buffer[] = [];
+    const perRecord = Buffer.byteLength("k000") + value.length + 64;
+    const count = Math.floor(TAR_RETAINED_METADATA_BYTES / perRecord) + 2;
+    for (let index = 0; index < count; index += 1) {
+      const key = `k${String(index).padStart(3, "0")}`;
+      const body = ` ${key}=${value}\n`;
+      let length = Buffer.byteLength(body) + 1;
+      while (String(length).length + Buffer.byteLength(body) !== length)
+        length = String(length).length + Buffer.byteLength(body);
+      const pax = Buffer.from(`${String(length)}${body}`);
+      pieces.push(
+        tarHeader({ name: "PaxHeader", type: "g" }, pax.length),
+        pax,
+        Buffer.alloc((512 - (pax.length % 512)) % 512),
+      );
+    }
+    const reader = new TarArtifactReader(
+      await write("global-pax-budget.tar", Buffer.concat(pieces)),
+    );
+    try {
+      await expect(async () => {
+        for await (const entry of reader.entries()) void entry;
+      }).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "memory",
+        fixedAllowance: {
+          limit: TAR_RETAINED_METADATA_BYTES,
+          unit: "bytes",
+        },
+      });
+    } finally {
+      await reader.close();
     }
   });
 
