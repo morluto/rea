@@ -139,7 +139,7 @@ describe("AxmlArtifactReader", () => {
   it("rejects a carrier truncated inside a chunk", async () => {
     const full = buildAxml(AXML_MANIFEST_EVENTS);
     await withReader(full.subarray(0, full.length - 12), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -171,7 +171,7 @@ describe("AxmlArtifactReader", () => {
     for (const [name, bytes] of Object.entries(cases)) {
       await withReader(bytes, async (reader) => {
         await expect(list(reader), name).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
         });
       });
     }
@@ -524,7 +524,7 @@ describe("axml scope and malformed regressions", () => {
       { kind: "end", name: "root" },
     ];
     await withReader(buildAxml(events), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -543,7 +543,7 @@ describe("axml scope and malformed regressions", () => {
       { kind: "endNs", prefix: "p", uri: "urn:a" },
     ];
     await withReader(buildAxml(events), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -554,7 +554,7 @@ describe("axml scope and malformed regressions", () => {
       { kind: "end", name: "root" },
     ];
     await withReader(buildAxml(events), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -589,7 +589,7 @@ describe("axml scope and malformed regressions", () => {
       { kind: "end", name: "root" },
     ];
     await withReader(buildAxml(events), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -605,7 +605,7 @@ describe("axml scope and malformed regressions", () => {
     const stringsStart = bytes.readUInt32LE(8 + 8 + 12);
     bytes[8 + stringsStart]! += 1;
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 });

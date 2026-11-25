@@ -179,7 +179,7 @@ describe("axml malformed extents", () => {
     const startElement = 8 + bytes.readUInt32LE(12);
     bytes.writeUInt16LE(0xffff, startElement + 28);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -188,7 +188,7 @@ describe("axml malformed extents", () => {
     // First string offset lives at pool base + 28; push it past the pool end.
     bytes.writeUInt32LE(0x7fffffff, 8 + 28);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -197,7 +197,7 @@ describe("axml malformed extents", () => {
       declaredSize: 8 + 16,
     });
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -209,13 +209,13 @@ describe("axml malformed extents", () => {
       { kind: "end", name: "b" },
     ];
     await withReader(buildAxml(events), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
   it("rejects a document without a root element", async () => {
     await withReader(buildAxml([]), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -224,7 +224,7 @@ describe("axml malformed extents", () => {
     // styleCount is the pool header's third u32, at file offset 20.
     bytes.writeUInt32LE(1, 20);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -244,7 +244,9 @@ describe("axml malformed extents", () => {
     await withReader(
       buildAxml(events, { tailChunks: [cdata] }),
       async (reader) => {
-        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+        await expect(list(reader)).rejects.toMatchObject({
+          reason: "malformed",
+        });
       },
     );
   });
@@ -296,7 +298,7 @@ describe("axml projection fidelity regressions", () => {
     // End-element node: namespace index at +16, name index at +20.
     bytes.writeUInt32LE(0xffffffff, cursor + 16);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -306,7 +308,7 @@ describe("axml projection fidelity regressions", () => {
       { kind: "end", name: "not a name" },
     ];
     await withReader(buildAxml(events), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -317,7 +319,7 @@ describe("axml projection fidelity regressions", () => {
       { kind: "end", name: "root" },
     ];
     await withReader(buildAxml(events), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -333,7 +335,7 @@ describe("axml projection fidelity regressions", () => {
     const last = bytes.length - 24;
     bytes.writeUInt32LE(0x7fff0000, last + 16);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -352,7 +354,7 @@ describe("axml projection fidelity regressions", () => {
       ];
       await withReader(buildAxml(events), async (reader) => {
         await expect(list(reader), `${prefix}=${uri}`).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
         });
       });
     }
@@ -378,7 +380,9 @@ describe("axml projection fidelity regressions", () => {
     await withReader(
       buildAxml(events, { resourceIds: { name: 0x01010003 } }),
       async (reader) => {
-        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+        await expect(list(reader)).rejects.toMatchObject({
+          reason: "malformed",
+        });
       },
     );
   });
@@ -466,7 +470,7 @@ describe("axml projection fidelity regressions", () => {
     let cursor = 8 + bytes.readUInt32LE(12);
     bytes.writeUInt16LE(6, cursor + 16 + 20 + 12);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -487,7 +491,7 @@ describe("axml projection fidelity regressions", () => {
     const last = bytes.readUInt32LE(poolBase + 28 + (count - 1) * 4);
     bytes[stringsStart + last + 3] = 0xff;
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
