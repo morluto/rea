@@ -6,11 +6,15 @@ import {
   desktopCandidateSchema,
   desktopComponentSchema,
   desktopProbeSchema,
+  desktopDeferredProbeSchema,
   desktopFamilySchema,
   desktopCoverageSchema,
   type DesktopApplication,
 } from "../desktopApplication.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   completeWithinViewCoverage,
@@ -23,7 +27,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { ok, err } from "../result.js";
+import { ok } from "../result.js";
 import { evidenceFileTarget } from "../evidence.js";
 
 // Bound diagnostic context independently of the retained report size. Previews
@@ -139,6 +143,8 @@ export const desktopSummarySchema = z.strictObject({
       example: desktopProbeSchema,
     }),
   ),
+  /** Probes counted rather than listed: one bounded group per operation and reason. */
+  deferred_probes: z.array(desktopDeferredProbeSchema),
 });
 
 type DesktopCollection = z.infer<typeof desktopViewRequestSchema>["collection"];
@@ -156,15 +162,8 @@ export const projectDesktopApplicationView = (
     SummaryAnalysisView | z.output<typeof desktopViewRequestSchema>
   >(admitted, "summary", "desktop-application");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Desktop directory Evidence supports summary and desktop-application views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Desktop directory Evidence supports summary and desktop-application views.",
     );
   const parsed = readDesktopApplication(parent);
   if (!parsed.ok) return parsed;
@@ -175,14 +174,8 @@ export const projectDesktopApplicationView = (
     subject.format !== "directory" ||
     subject.sha256 !== report.root.snapshot_sha256
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Parent must identify the same examined directory snapshot.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Parent must identify the same examined directory snapshot.",
     );
   const shared = {
     parent_evidence_id: parent.evidenceId,
@@ -276,6 +269,7 @@ export const projectDesktopApplicationView = (
         candidates: report.candidates.map(summarizeBasis),
         components: report.components.map(summarizeBasis),
         next_probe_groups: [...groups.values()],
+        deferred_probes: report.deferred_probes,
       },
       coverage: completeWithinViewCoverage(report.files.length),
     });

@@ -10,13 +10,27 @@ import { snapshotEnvironment } from "./snapshotEnvironment.js";
 
 /** One file a launcher tries for a bare command, in search order. */
 export interface PathSearchCandidate {
-  /** The absolute file the launch would execute from this entry. */
+  /**
+   * The absolute file the launch would execute from this entry, or, for a
+   * POSIX candidate marked `unresolved`, the entry's relative file as written.
+   */
   readonly path: string;
   /**
    * An empty or relative PATH entry, or on Windows a rooted entry without a
    * drive (`\tools`), which depends on the working directory or its drive.
    */
   readonly relativeEntry: boolean;
+}
+
+/** A POSIX candidate with the PATH entry it came from. */
+export interface PosixPathSearchCandidate extends PathSearchCandidate {
+  /** The PATH entry as written. */
+  readonly entry: string;
+  /**
+   * Why the working directory of a relative entry could not be read, when the
+   * selection asked for such entries as written.
+   */
+  readonly unresolved?: { readonly cause: unknown };
 }
 
 /**
@@ -26,7 +40,18 @@ export interface PathSearchCandidate {
  */
 export type RelativePathEntries =
   | { readonly relativeEntries: "skip" }
-  | { readonly relativeEntries: "resolve"; readonly workingDirectory?: string };
+  | {
+      readonly relativeEntries: "resolve";
+      /** A directory, or a reader called only when a relative entry is reached. */
+      readonly workingDirectory?: string | (() => string);
+      /**
+       * A working directory that cannot be read: `skip` (the default) leaves
+       * the entry out; `as-written` yields its relative file, marked
+       * `unresolved`, for a caller that probes it against the process's own
+       * directory, as the kernel resolves it during `execvp`.
+       */
+      readonly unreadableWorkingDirectory?: "skip" | "as-written";
+    };
 
 /**
  * The files `execvp` tries for a bare command (one without `/`), in PATH
@@ -41,33 +66,68 @@ export function* posixPathCandidates(
   commands: string | readonly string[],
   searchPath: string,
   selection: RelativePathEntries,
-): Generator<PathSearchCandidate, void, undefined> {
+): Generator<PosixPathSearchCandidate, void, undefined> {
   // Lazy, so an entry after the first match is never resolved: resolving a
   // relative entry reads the working directory, which may no longer exist.
   for (const directory of searchPath.split(posix.delimiter)) {
     const relativeEntry = !posix.isAbsolute(directory);
     if (relativeEntry && selection.relativeEntries === "skip") continue;
-    const workingDirectory =
+    const read =
       relativeEntry && selection.relativeEntries === "resolve"
-        ? (selection.workingDirectory ?? currentDirectory())
+        ? readWorkingDirectory(selection.workingDirectory)
         : undefined;
-    // A removed working directory holds nothing; later entries still count.
-    if (relativeEntry && workingDirectory === undefined) continue;
-    for (const command of typeof commands === "string" ? [commands] : commands)
+    const names = typeof commands === "string" ? [commands] : commands;
+    if (read !== undefined && !read.ok) {
+      // A removed working directory holds no file of its own, but the
+      // kernel still resolves a relative entry such as `..` from it.
+      if (
+        selection.relativeEntries === "resolve" &&
+        selection.unreadableWorkingDirectory === "as-written"
+      )
+        for (const command of names)
+          yield {
+            path: appendCallerPath(
+              directory === "" ? "." : directory,
+              command,
+              "linux",
+            ),
+            relativeEntry,
+            entry: directory,
+            unresolved: { cause: read.cause },
+          };
+      continue;
+    }
+    for (const command of names)
       yield {
         path: absoluteCallerPath(
           appendCallerPath(directory, command, "linux"),
           {
-            ...(workingDirectory === undefined
-              ? {}
-              : { cwd: workingDirectory }),
+            ...(read === undefined ? {} : { cwd: read.directory }),
             platform: "linux",
           },
         ),
         relativeEntry,
+        entry: directory,
       };
   }
 }
+
+/** The working directory a relative entry resolves against, or why it cannot be read. */
+const readWorkingDirectory = (
+  selected: string | (() => string) | undefined,
+):
+  | { readonly ok: true; readonly directory: string }
+  | { readonly ok: false; readonly cause: unknown } => {
+  if (typeof selected === "string") return { ok: true, directory: selected };
+  try {
+    return {
+      ok: true,
+      directory: selected === undefined ? process.cwd() : selected(),
+    };
+  } catch (cause: unknown) {
+    return { ok: false, cause };
+  }
+};
 
 /**
  * This process's directory, or `undefined` once it has been removed: a

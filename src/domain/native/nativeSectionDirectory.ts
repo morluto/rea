@@ -40,7 +40,7 @@ import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
 } from "../compression/zstandardFrameAllowance.js";
-import type { ByteSource } from "../byteSource.js";
+import { bufferByteSource, type ByteSource } from "../byteSource.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */
 export interface NativeReadRequest {
@@ -546,31 +546,6 @@ const driveFromBuffer = <T>(
   return next.value;
 };
 
-const driveElfDirectoryCooperative = async (
-  bytes: Buffer,
-  decode: CooperativeElfSectionNameDecoder,
-  maximumSourceAndDecodedNamesBytes?: number,
-): Promise<ElfSectionDirectory> => {
-  const steps = readElfSectionDirectory(
-    bytes.length,
-    maximumSourceAndDecodedNamesBytes,
-  );
-  let next = steps.next();
-  while (!next.done) {
-    const step = next.value;
-    if (
-      step.sectionNames !== undefined &&
-      step.fulfillSectionNames !== undefined
-    ) {
-      step.fulfillSectionNames(await decode(step.sectionNames));
-      next = steps.next(Buffer.alloc(0));
-      continue;
-    }
-    next = steps.next(bytes.subarray(step.offset, step.offset + step.size));
-  }
-  return next.value;
-};
-
 const projectDirectoryFrameAllowance = (
   operation: string,
   cause: unknown,
@@ -609,19 +584,15 @@ export const readElfDirectoryFromBufferCooperative = async (
   pause: ZstandardFramePause,
   operation: string,
   maximumSourceAndDecodedNamesBytes?: number,
-  decode: CooperativeElfSectionNameDecoder = (request) =>
-    decodeElfSectionNameRequestCooperative(request, pause),
-): Promise<ElfSectionDirectory> => {
-  try {
-    return await driveElfDirectoryCooperative(
-      bytes,
-      decode,
-      maximumSourceAndDecodedNamesBytes,
-    );
-  } catch (cause) {
-    return projectDirectoryFrameAllowance(operation, cause);
-  }
-};
+  decode?: CooperativeElfSectionNameDecoder,
+): Promise<ElfSectionDirectory> =>
+  readElfDirectoryFromReader(
+    bufferByteSource(bytes),
+    pause,
+    operation,
+    maximumSourceAndDecodedNamesBytes,
+    decode,
+  );
 
 const driveElfDirectoryFromSource = async (
   source: ByteSource,

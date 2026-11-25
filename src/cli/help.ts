@@ -163,6 +163,10 @@ const globalOptionRows = ({ formats, root }: GlobalOptionsHelp): Row[] =>
       description: "Skip first n tokens of output",
     },
     { label: "--full-output", description: "Show full output envelope" },
+    {
+      label: "--no-retain",
+      description: "Write no over-budget result to the retained-Evidence cache",
+    },
     ...(root === undefined
       ? []
       : [

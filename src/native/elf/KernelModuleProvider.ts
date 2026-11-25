@@ -1,7 +1,7 @@
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -35,16 +35,12 @@ export class KernelModuleProvider implements KernelModulePort {
   readonly identity = KERNEL_MODULE_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        KERNEL_MODULE_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      KERNEL_MODULE_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectKernelModuleInput, options?: ExecutionOptions) {
@@ -70,11 +66,7 @@ export class KernelModuleProvider implements KernelModulePort {
           },
           (handle) =>
             parseKernelModuleFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,

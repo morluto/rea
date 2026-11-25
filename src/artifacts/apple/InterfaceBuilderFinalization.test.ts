@@ -82,6 +82,7 @@ it.each([
       });
       const projected = translateArtifactFailure(
         "decode_interface_builder",
+        "/selected/artifact",
         outcome.cause,
       );
       if (abort) expect(projected.cause).toBe(reason);
@@ -141,6 +142,7 @@ it.each([false, true])(
       else expect(rejected).toBe(failure);
       const projected = translateArtifactFailure(
         "decode_interface_builder",
+        "/selected/artifact",
         rejected,
       );
       expect(projected.partialObservation).toBeUndefined();

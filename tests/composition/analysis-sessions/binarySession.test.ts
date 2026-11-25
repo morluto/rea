@@ -23,7 +23,10 @@ import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 import {
   ControllableAnalysisClient,
   createBinarySessionTargets,
@@ -1959,11 +1962,7 @@ describe("reference truncation forwarding", () => {
     referencesTruncated: boolean | undefined,
     calls: string[],
   ): AnalysisProvider => {
-    const identity = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    } as const;
+    const identity = createFixtureProviderIdentity();
     return {
       identity: () => identity,
       resolveAnalysisProfile: () =>

@@ -25,6 +25,7 @@ import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
 let upstream: typeof import("release-please");
+let githubApi: typeof import("release-please/build/src/github-api.js");
 let githubRuntime: typeof import("release-please/build/src/github.js");
 const baseline = "a".repeat(40);
 const latest = "b".repeat(40);
@@ -60,6 +61,7 @@ it("reports a gateway error without logging the HTML response page", () => {
 
 beforeAll(async () => {
   upstream = await import("release-please");
+  githubApi = require("release-please/build/src/github-api.js");
   githubRuntime = require("release-please/build/src/github.js");
 });
 
@@ -83,9 +85,9 @@ it("preserves the existing overflow notes if their replacement fails", async () 
     createNewBranch,
     forkBranch,
     octokit: { repos: { getContent, createOrUpdateFileContents: write } },
-  } as unknown as Awaited<ReturnType<typeof upstream.GitHub.create>>;
+  } as unknown as InstanceType<typeof githubApi.GitHubApi>;
   const update = () =>
-    upstream.GitHub.prototype.createFileOnNewBranch.call(
+    githubApi.GitHubApi.prototype.createFileOnNewBranch.call(
       github,
       "release-notes.md",
       "Notes: café",
@@ -127,9 +129,9 @@ it("creates overflow notes on a new branch without requiring an existing file", 
         createOrUpdateFileContents: write,
       },
     },
-  } as unknown as Awaited<ReturnType<typeof upstream.GitHub.create>>;
+  } as unknown as InstanceType<typeof githubApi.GitHubApi>;
   await expect(
-    upstream.GitHub.prototype.createFileOnNewBranch.call(
+    githubApi.GitHubApi.prototype.createFileOnNewBranch.call(
       github,
       "release-notes.md",
       "Notes",
@@ -1098,7 +1100,7 @@ it.each([
       "10",
       "10",
     ]);
-    expect(fixture.pages[1]).toEqual(fixture.pages[2]);
+    expect(fixture.pages[2]).toEqual({ ...fixture.pages[1], num: 5 });
     expect(fixture.historyQueries[1]).toBe(fixture.historyQueries[2]);
     expect(sleep.mock.calls).toEqual([[1000]]);
   },
@@ -1256,9 +1258,9 @@ const releasePatchFixture = async (outsideProject = false) => {
     require.resolve("release-please/package.json"),
   );
   const source = fileURLToPath(new URL("../../../", import.meta.url));
-  const patchPath = join(project, "patches/release-please+17.3.0.patch");
+  const patchPath = join(project, "patches/release-please+17.11.2.patch");
   const patch = await readFile(
-    join(source, "patches/release-please+17.3.0.patch"),
+    join(source, "patches/release-please+17.11.2.patch"),
     "utf8",
   );
   const members = [...patch.matchAll(/^\+\+\+ b\/(.+)$/gmu)].map((match) => {
@@ -1341,7 +1343,7 @@ it("rejects a different dependency version before patching", async () => {
     JSON.stringify({ version: "17.4.0" }),
   );
   await expect(applyReleasePleasePatch(fixture)).rejects.toThrow(
-    "requires release-please 17.3.0",
+    "requires release-please 17.11.2",
   );
 });
 

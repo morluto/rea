@@ -11,9 +11,12 @@ import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/Ja
 import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysis.js";
 import {
   projectRetainedAnalysis,
+  summarizeRetainedAnalysis,
+} from "../application/analysisView/AnalysisViewService.js";
+import {
   requireAnalysisViewRetention,
   type AnalysisViewRetention,
-} from "../application/analysisView/AnalysisViewService.js";
+} from "../application/analysisView/AnalysisViewRetention.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok } from "../domain/result.js";
@@ -95,7 +98,21 @@ export const bindBrowserObservationTools = (
     inspect_web_page: {
       admission: "sdk",
       ...optional,
-      run: (input, options) => inspectWebPage(browser, input, options),
+      // Delivery detail never reaches the capture, so its Evidence identity
+      // is the same for every detail.
+      run: async ({ detail, ...request }, options) => {
+        if (detail === "summary") {
+          const ready = requireAnalysisViewRetention(
+            "inspect_web_page",
+            retention,
+          );
+          if (!ready.ok) return ready;
+        }
+        const inspected = await inspectWebPage(browser, request, options);
+        return inspected.ok && detail === "summary"
+          ? summarizeRetainedAnalysis(inspected.value, retention)
+          : inspected;
+      },
     },
     analyze_web_bundle: {
       admission: "sdk",
@@ -109,8 +126,12 @@ export const bindBrowserObservationTools = (
           if (!ready.ok) return ready;
         }
         const analyzed = await analyzeWebBundle(browser, request, options);
-        return analyzed.ok && view !== undefined
-          ? projectRetainedAnalysis(analyzed.value, retention, view)
+        return analyzed.ok && detail === "summary"
+          ? projectRetainedAnalysis(
+              analyzed.value,
+              retention,
+              view ?? { kind: "summary" },
+            )
           : analyzed;
       },
     },

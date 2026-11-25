@@ -3,14 +3,14 @@ import {
   sourceToBundleComparisonResultSchema,
   type SourceToBundleComparisonResult,
 } from "../javascript/sourceToBundleComparisonSchemas.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -107,15 +107,8 @@ export const projectSourceToBundleView = (
     SummaryAnalysisView | z.output<typeof sourceToBundleViewRequestSchema>
   >(admitted, "summary", "source-to-bundle");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Source-to-bundle comparisons support summary and source-to-bundle pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Source-to-bundle comparisons support summary and source-to-bundle pages",
     );
   const parsed = checkedReport(parent);
   if (!parsed.ok) return parsed;

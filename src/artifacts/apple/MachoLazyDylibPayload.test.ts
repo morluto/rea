@@ -32,6 +32,7 @@ it("resolves lazy dylib fields in an unaligned Uint8Array view", async () => {
   });
   const short = slice.subarray(0, -1);
   expect(await readMachoImage(readerOf(short), short.length)).toMatchObject({
-    status: "malformed",
+    status: "failed",
+    failure: { kind: "malformed" },
   });
 });

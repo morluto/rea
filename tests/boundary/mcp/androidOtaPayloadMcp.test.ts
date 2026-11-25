@@ -3,12 +3,12 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  artifactInventorySummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  inspectInventorySummary,
+  inspectRetainedOccurrences,
+} from "../../fixtures/artifactInventoryMcp.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
@@ -32,12 +32,7 @@ it("extracts and retains complete OTA facts behind a compact MCP summary", async
     },
   });
 
-  const inspected = await call("inspect_artifact", { detail: "summary" });
-  expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
-  const { summary, parent_evidence_id } =
-    artifactInventorySummaryViewResultSchema.parse(
-      parseEvidence(inspected.structuredContent).normalized_result,
-    );
+  const { summary, parent_evidence_id } = await inspectInventorySummary(call);
   expect(summary).toMatchObject({
     source_coverage: { status: "complete" },
     root_format_metadata: {
@@ -80,18 +75,9 @@ it("extracts and retains complete OTA facts behind a compact MCP summary", async
   expect((await readFile(path)).equals(bytes)).toBe(true);
   await unlink(path);
 
-  const retained = await call("inspect_analysis_view", {
-    source: { kind: "retained-evidence", evidence_id: parent_evidence_id },
-    view: {
-      kind: "inventory",
-      collection: "occurrences",
-      fields: ["logical_path", "format_metadata", "hash_status"],
-    },
+  const view = await inspectRetainedOccurrences(call, parent_evidence_id, {
+    fields: ["logical_path", "format_metadata", "hash_status"],
   });
-  expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-  const view = analysisViewResultSchema.parse(
-    parseEvidence(retained.structuredContent).normalized_result,
-  );
   expect(view).toMatchObject({
     kind: "inventory",
     items: [

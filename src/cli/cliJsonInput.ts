@@ -39,6 +39,7 @@ import {
   JSON_INPUT_RESOURCE_REMEDIATION,
   parseUtf8Json,
 } from "../application/Utf8JsonInput.js";
+import { reportedSystemCode } from "../kernel/reportedSystemCode.js";
 
 /**
  * Scopes of JSON-input files whose close still failed after their owner's
@@ -475,19 +476,14 @@ const jsonFileReadError = (
 
 /** Preserve file-selection and system failures alongside the requested path. */
 const readFailureIssue = (path: string, cause: unknown) => {
-  const code =
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    typeof cause.code === "string"
-      ? ` (${cause.code})`
-      : "";
+  const code = reportedSystemCode(cause);
+  const suffix = code === undefined ? "" : ` (${code})`;
   return {
     path: [],
     reason: "invalid_value" as const,
     message:
-      cause instanceof NonRegularFileReadError && cause.code === "ENOTFILE"
-        ? `The JSON input must be a regular file${code}: ${path}`
-        : `The JSON input file could not be read${code}: ${path}`,
+      cause instanceof NonRegularFileReadError && code === "ENOTFILE"
+        ? `The JSON input must be a regular file${suffix}: ${path}`
+        : `The JSON input file could not be read${suffix}: ${path}`,
   };
 };

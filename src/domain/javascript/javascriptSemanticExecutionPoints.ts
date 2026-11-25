@@ -534,7 +534,6 @@ const classifiers: {
   TSTypeParameterDeclaration: none,
   TSTypeParameter: none,
   TSQualifiedName: none,
-  TSNamedTupleMember: none,
   TSNamespaceExportDeclaration: none,
   TSExportAssignment: none,
   TSExternalModuleReference: none,
@@ -574,6 +573,8 @@ const classifiers: {
   DoExpression: unsupported,
   ModuleExpression: unsupported,
   TopicReference: unsupported,
+  StructBody: unsupported,
+  StructDeclaration: unsupported,
 };
 
 const isTypeOnly = (node: t.Node): node is TypeOnlyNode =>

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
+import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import {
   CLEARED_THEN_OMITTED_KEPT_ROWS,
   DEFAULT_THEN_NUMBERED_ROWS,
@@ -24,15 +21,7 @@ import {
   CLEARED_THEN_KEPT_ROWS,
   PUT_CLEARS_ROWS,
 } from "../../../tests/fixtures/environmentStateVariedCalls.js";
-import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
-
-const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
-  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === tool,
-  );
-  if (plan === undefined) throw new Error(`No plan for ${tool}`);
-  return plan;
-};
+import { planOf } from "../../../tests/fixtures/environmentStateWrites.js";
 
 describe("writes whose calls send different members", () => {
   it("serves an update a later call sends fewer members to, requiring only those every call sent", () => {

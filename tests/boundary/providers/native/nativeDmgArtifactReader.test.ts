@@ -28,7 +28,10 @@ import {
   type NativeDmgHost,
 } from "../../../../src/artifacts/NativeDmgArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../../src/artifacts/inventory/scanCanonical.js";
-import { DirectoryArtifactReader } from "../../../../src/resources/index.js";
+import {
+  DirectoryArtifactReader,
+  translateArtifactFailure,
+} from "../../../../src/resources/index.js";
 
 const createAttachedReader = async (
   path: string,
@@ -241,7 +244,7 @@ describe("DMG inventory reader ownership", () => {
       .catch((cause: unknown) => cause);
 
     expect(failure).toMatchObject({
-      reason: "format",
+      reason: "io",
       cleanup: {
         resources: expect.arrayContaining([
           expect.stringMatching(/^DMG attachment ownership unknown/u),
@@ -673,7 +676,7 @@ describe("native DMG artifact reader", () => {
     await expect(
       createAttachedReader("/tmp/image.dmg", process.env, undefined, host),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "io",
       cleanup: {
         resources: expect.arrayContaining([
           expect.stringMatching(
@@ -1312,8 +1315,8 @@ describe("native DMG verification resource availability", () => {
 describe("native DMG permanent verification refusals", () => {
   // hdiutil emits both English spellings depending on AppleLanguages.
   it.each([
-    ["image not recognized", "format"],
-    ["image not recognised", "format"],
+    ["image not recognized", "unsupported"],
+    ["image not recognised", "unsupported"],
     ["image data corrupted", "integrity"],
     ["Permission denied", "io"],
     ["Input/output error", "io"],
@@ -1336,9 +1339,19 @@ describe("native DMG permanent verification refusals", () => {
         },
       );
       onTestFinished(() => reader.close());
-      await expect(entryPaths(reader)).rejects.toMatchObject({
+      const failure = await entryPaths(reader).catch((cause: unknown) => cause);
+      expect(failure).toMatchObject({
         reason,
         integrityCheck: reason === "integrity" ? "image-checksum" : undefined,
+        parseFailure:
+          reason === "unsupported"
+            ? {
+                kind: "unsupported",
+                format: "dmg",
+                detail: expect.stringContaining(diagnostic),
+                undecodedContent: false,
+              }
+            : undefined,
         cause: { command: "/usr/bin/hdiutil", exitCode: 1, stdout, stderr },
         message: expect.stringContaining(
           reason === "unavailable"
@@ -1346,6 +1359,30 @@ describe("native DMG permanent verification refusals", () => {
             : diagnostic,
         ),
       });
+      const translated = translateArtifactFailure(
+        "inventory_artifact",
+        path,
+        failure,
+      );
+      expect(translated).toMatchObject(
+        reason === "unsupported"
+          ? {
+              _tag: "AnalysisTargetFailureError",
+              operation: "inventory_artifact",
+              path,
+              failure: {
+                kind: "unsupported",
+                format: "dmg",
+                undecodedContent: false,
+                detail: expect.stringContaining(diagnostic),
+              },
+            }
+          : {
+              _tag: "ArtifactOperationError",
+              operation: "inventory_artifact",
+              reason,
+            },
+      );
       expect(run.mock.calls).toHaveLength(1);
       expect(reader.provenance()).toMatchObject([
         { arguments: ["verify", path], exit_code: 1, effects: ["read"] },
@@ -1610,7 +1647,7 @@ describe("native DMG real verification diagnostics", () => {
       // readable target stays unknown (see the localized diagnostics suite).
       expect(failure.reason).toBe(
         /verify failed - image not recogni[sz]ed/u.test(failure.message)
-          ? "format"
+          ? "unsupported"
           : "unavailable",
       );
       expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');

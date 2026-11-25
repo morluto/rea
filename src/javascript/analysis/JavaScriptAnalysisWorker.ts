@@ -11,9 +11,8 @@ import {
 } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
 import {
+  artifactFileCleanupError,
   ArtifactResourceScope,
-  ArtifactReaderFailure,
-  bindArtifactFileCleanup,
 } from "../../resources/index.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
@@ -148,7 +147,7 @@ type WorkerPrimaryFailure =
  * static checkpoints discovery retained survive.
  */
 export const isRecoverableJavaScriptWorkerFailure = (
-  purpose: "analysis" | "preload-discovery",
+  purpose: "analysis" | "preload-discovery" | "structure-only",
   result: Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>,
 ): boolean =>
   purpose === "preload-discovery" &&
@@ -348,7 +347,7 @@ export class JavaScriptAnalysisWorker {
     signal?: AbortSignal,
     onPhase?: (phase: string) => Promise<void>,
     packageType: JavaScriptPackageType = "unknown",
-    purpose: "analysis" | "preload-discovery" = "analysis",
+    purpose: "analysis" | "preload-discovery" | "structure-only" = "analysis",
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
@@ -1443,16 +1442,8 @@ export class JavaScriptAnalysisWorker {
         : cancellation.capturedOutput === undefined
           ? cancellation.retainCapturedOutput(this.#captured())
           : cancellation;
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-      const error = new ProviderCleanupError(
-        PROVIDER,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { operation: OPERATION, cause },
-      );
-      bindArtifactFileCleanup(cause, error);
-      return error;
-    }
+    const fileCleanup = artifactFileCleanupError(cause, PROVIDER, OPERATION);
+    if (fileCleanup !== undefined) return fileCleanup;
     if (
       cause instanceof AnalysisError &&
       (deadline === undefined || this.#phase === "startup")
