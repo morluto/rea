@@ -512,9 +512,11 @@ it.each([
 
 it.each([
   {
-    label: "local descriptive PR link with a different candidate repository",
+    label:
+      "local descriptive PR comment link with a different candidate repository",
     candidateRepository: "https://github.com/elsewhere/other.git",
-    reference: () => "[paths](https://github.com/fixture/rea/pull/948)",
+    reference: () =>
+      "[paths](https://github.com/fixture/rea/pull/948/?tab=conversation#issuecomment-123)",
     accepted: true,
   },
   {

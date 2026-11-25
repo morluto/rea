@@ -850,6 +850,26 @@ it("verifies complete bullets without counting inline code as credit or referenc
   });
 });
 
+it.each([
+  "https://github.com/fixture/rea/pull/101?tab=conversation#issuecomment-123",
+  "https://github.com/fixture/rea/pull/101/#discussion_r123",
+])("requires PR credit for a GitHub deep link (%s)", async (href) => {
+  const f = await fixture();
+  const changelog = join(f.directory, "CHANGELOG.md");
+  const bullet = f.bullet.replace("#101", `[the implementation](${href})`);
+  await writeFile(changelog, f.notes.replace(f.bullet, bullet));
+  await f.invoke(["check", "--manifest", f.manifest]);
+  await writeFile(
+    changelog,
+    f.notes.replace(f.bullet, bullet.replace(", @bob", "")),
+  );
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("Missing Thanks @bob for PR #101"),
+  });
+});
+
 it("requires editorial headings in release prose outside code fences", async () => {
   const f = await fixture();
   const notes = f.notes.replace(
