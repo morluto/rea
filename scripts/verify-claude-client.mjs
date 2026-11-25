@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { verifyClientSetup } from "./verify/clients/setup.mjs";
+import {
+  installedSkillBody,
+  verifyClientSetup,
+} from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -262,7 +265,7 @@ await withVerifierCleanup(async () => {
       2,
     );
     await writeFile(configPath, original);
-    expectedSkillBody = await verifyClientSetup({
+    const installedSkill = await verifyClientSetup({
       client: "claude_code",
       commands,
       runtimeRoot,
@@ -276,6 +279,7 @@ await withVerifierCleanup(async () => {
         assert.equal(JSON.parse(configured).theme, "light");
       },
     });
+    expectedSkillBody = installedSkillBody(installedSkill);
     const response = await saveVerifierCommandOutput(
       () =>
         commands.exec(

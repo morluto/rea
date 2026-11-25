@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { verifyClientSetup } from "./verify/clients/setup.mjs";
+import {
+  installedSkillBody,
+  verifyClientSetup,
+} from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
@@ -254,7 +257,7 @@ await withVerifierCleanup(async () => {
       2,
     );
     await writeFile(configPath, original);
-    expectedSkillBody = await verifyClientSetup({
+    const installedSkill = await verifyClientSetup({
       client: "copilot_cli",
       commands,
       runtimeRoot,
@@ -268,6 +271,7 @@ await withVerifierCleanup(async () => {
         assert(configured.includes("unrelated-server"));
       },
     });
+    expectedSkillBody = installedSkillBody(installedSkill);
     for (const [name, args] of [
       ["mcp-list", ["mcp", "list"]],
       ["skill-add", ["skill", "add", skillDirectory]],

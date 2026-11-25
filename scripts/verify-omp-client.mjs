@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
-import { isPathWithinRoot } from "../dist/domain/localPath.js";
+import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { containsText } from "./verify/clients/result-discovery.mjs";
@@ -271,64 +271,23 @@ await withVerifierCleanup(async () => {
       setupRejected.snapshot.stdout.text,
     );
     invalidProfileRejected = true;
-    for (const args of [
-      ["setup", "--client", "omp", "--dry-run"],
-      ["setup", "--client", "omp", "--yes"],
-      ["doctor", "--client", "omp", "--skill"],
-    ]) {
-      const result = await rea(args);
-      await writeFile(
-        join(
-          lab,
-          `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`,
-        ),
-        result.stdout,
-      );
-      const parsed = JSON.parse(result.stdout);
-      if (args[0] === "doctor") assert.equal(parsed.healthy, true);
-      else {
-        assert.equal(
-          parsed.status,
-          args.includes("--dry-run") ? "planned" : "ready",
-        );
-        if (args.includes("--dry-run")) {
-          assert(
-            parsed.plannedActions.some(
-              (action) => action.target === configPath,
-            ),
-          );
-          assert(
-            parsed.plannedActions.some(
-              (action) => action.target === skillDirectory,
-            ),
-          );
-          assert(
-            parsed.plannedActions.every(
-              (action) =>
-                action.target === configPath ||
-                (isAbsolute(action.target) &&
-                  isPathWithinRoot(skillDirectory, action.target)),
-            ),
-            "Refuse setup writes outside the owned config/skill",
-          );
-        }
-      }
-    }
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const configured = await readFile(configPath, "utf8");
-    const registration = JSON.parse(configured);
-    assert.equal(registration.mcpServers.other.command, "unrelated-server");
-    assert.deepEqual(registration.disabledServers, ["other"]);
-    const repeated = JSON.parse(
-      (await rea(["setup", "--client", "omp", "--yes"])).stdout,
-    );
-    assert.deepEqual(repeated.appliedActions, []);
-    assert.equal(await readFile(configPath, "utf8"), configured);
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    expectedSkillBody = await readFile(
-      join(skillDirectory, "SKILL.md"),
-      "utf8",
-    );
+    expectedSkillBody = await verifyClientSetup({
+      client: "omp",
+      commands,
+      runtimeRoot,
+      environment,
+      workspace,
+      lab,
+      configPath,
+      original,
+      skillDirectory,
+      planBoundaryMessage: "Refuse setup writes outside the owned config/skill",
+      checkConfigured: (configured) => {
+        const registration = JSON.parse(configured);
+        assert.equal(registration.mcpServers.other.command, "unrelated-server");
+        assert.deepEqual(registration.disabledServers, ["other"]);
+      },
+    });
     const response = await saveVerifierCommandOutput(
       () =>
         commands.exec(

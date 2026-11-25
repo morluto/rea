@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { isPathWithinRoot } from "#dist/domain/localPath.js";
 
-/** Verify client setup and return the installed instructions expected in model requests. */
+/** Verify client setup and return the installed skill file for the client to check. */
 export async function verifyClientSetup({
   client,
   commands,
@@ -15,6 +15,7 @@ export async function verifyClientSetup({
   original,
   skillDirectory,
   checkConfigured,
+  planBoundaryMessage,
 }) {
   const run = async (command, flag, output) => {
     const result = await commands.exec(
@@ -45,6 +46,7 @@ export async function verifyClientSetup({
         (isAbsolute(action.target) &&
           isPathWithinRoot(skillDirectory, action.target)),
     ),
+    planBoundaryMessage,
   );
 
   const applied = await run("setup", "--yes", "setup.json");
@@ -61,10 +63,11 @@ export async function verifyClientSetup({
   assert.equal(await readFile(configPath, "utf8"), configured);
   assert.equal(await readFile(backup, "utf8"), original);
 
-  const installedSkill = await readFile(
-    join(skillDirectory, "SKILL.md"),
-    "utf8",
-  );
+  return readFile(join(skillDirectory, "SKILL.md"), "utf8");
+}
+
+/** These clients inject the trimmed instruction body after the authored frontmatter. */
+export function installedSkillBody(installedSkill) {
   assert(installedSkill.includes("name: reverse-engineer-anything"));
   const lines = installedSkill.split("\n");
   const headerEnd = lines.indexOf("---", 1);
