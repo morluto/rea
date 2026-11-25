@@ -1,3 +1,4 @@
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { withCanonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -915,12 +916,7 @@ async function fingerprintFiles(directory) {
       const name = join(relative, entry.name);
       if (entry.isDirectory()) await visit(name);
       else if (entry.isFile())
-        result.push([
-          name,
-          createHash("sha256")
-            .update(await readFile(join(directory, name)))
-            .digest("hex"),
-        ]);
+        result.push([name, await sha256File(join(directory, name))]);
       else throw new Error(`Unexpected project entry: ${name}`);
     }
   };

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectPowerPc64Readelf,
@@ -77,10 +77,7 @@ const env = {
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
 }
-const sha256 = async (path) =>
-  createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+
 // Compiler, reader and CLI launches share one command owner. Its process group is what
 // a timeout stops, including a linker that would otherwise outlive Clang.
 const commands = await createVerifierCommands();
@@ -317,7 +314,7 @@ try {
       );
       assert.ok(cliDossier.pseudocode.trim().length > 0);
       assert.equal(
-        await sha256(fixture.path),
+        await sha256File(fixture.path),
         fixture.sha256,
         "Analysis modified the source executable",
       );
@@ -341,7 +338,7 @@ try {
     }
     reports.push({
       path: shared,
-      sha256: await sha256(shared),
+      sha256: await sha256File(shared),
       checks: ["ET_DYN refused before provider startup"],
       status: "passed",
     });

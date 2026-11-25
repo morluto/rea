@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -308,12 +309,7 @@ const verifyUnmodelledRefusal = async () => {
       );
     },
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(fixture.path))
-      .digest("hex"),
-    fixture.sha256,
-  );
+  assert.equal(await sha256File(fixture.path), fixture.sha256);
   return {
     path: fixture.path,
     sha256: fixture.sha256,
@@ -817,12 +813,7 @@ try {
         headers.push({ flags, outcome: "refused", reason: outcome });
       }
     }
-    assert.equal(
-      createHash("sha256")
-        .update(await readFile(fixture.path))
-        .digest("hex"),
-      fixture.sha256,
-    );
+    assert.equal(await sha256File(fixture.path), fixture.sha256);
     reports.push({
       path: fixture.path,
       sha256: fixture.sha256,
@@ -1187,12 +1178,7 @@ try {
     !`${headless.stdout}\n${headless.stderr}`.includes("ANALYZING"),
     headless.stdout,
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(esp.path))
-      .digest("hex"),
-    esp.sha256,
-  );
+  assert.equal(await sha256File(esp.path), esp.sha256);
 
   // A reservation named like the default space still moves into an overlay
   // space, named as Ghidra's memory map names overlay blocks.

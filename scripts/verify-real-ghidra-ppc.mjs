@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectPowerPcReadelf,
@@ -275,9 +275,7 @@ try {
       assert.equal(cliDossier.procedure.address, dossier.procedure.address);
       assert.ok(cliDossier.pseudocode.trim().length > 0);
       assert.equal(
-        createHash("sha256")
-          .update(await readFile(fixture.path))
-          .digest("hex"),
+        await sha256File(fixture.path),
         fixture.sha256,
         "Analysis modified the source executable",
       );
