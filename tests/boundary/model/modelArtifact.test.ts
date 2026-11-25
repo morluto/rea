@@ -69,8 +69,10 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Unknown version admitted");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: `GGUF version bytes ${versionBytes} are unsupported (little-endian ${String(little)}, big-endian ${String(big)}; byte order unknown); supported versions are 2 and 3`,
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        detail: `GGUF version bytes ${versionBytes} are unsupported (little-endian ${String(little)}, big-endian ${String(big)}; byte order unknown); supported versions are 2 and 3`,
+      },
     });
   },
 );
@@ -1462,8 +1464,8 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Pickle admitted");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: expect.stringContaining("PyTorch pickle"),
+      _tag: "AnalysisTargetFailureError",
+      failure: { detail: expect.stringContaining("PyTorch pickle") },
     });
   },
 );
@@ -1489,7 +1491,7 @@ it("admits a valid model after refusing pickle and rejects unapproved path types
   );
   expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
   await writeFile(path, ggufFixture().bytes);
   expect((await provider.inspect({ path, hash: "header" })).ok).toBe(true);

@@ -1,3 +1,4 @@
+import { int32LE as int32 } from "../../src/native/BinaryInteger.fixture.js";
 import { createHash } from "node:crypto";
 import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -91,12 +92,6 @@ const onefile = async (
     }),
   );
   return path;
-};
-
-const int32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeInt32LE(value);
-  return bytes;
 };
 
 const marshalInt = (value: number): Buffer =>

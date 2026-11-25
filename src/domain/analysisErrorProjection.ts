@@ -21,7 +21,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   AnalysisTargetFailureError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -29,11 +28,15 @@ import {
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
 import {
+  TARGET_FAILURE_PROJECTIONS,
   targetFailureDetails,
   targetFailureRetry,
   type TargetFailureRetry,
 } from "./targetFailure.js";
-import { ArtifactOperationError } from "./artifactOperationError.js";
+import {
+  ArtifactOperationError,
+  integrityCheckMeansChanged,
+} from "./artifactOperationError.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -80,6 +83,9 @@ const relatedInputDetails = (
   ...(related?.operations === undefined || related.operations.length === 0
     ? {}
     : { related_operations: [...related.operations] }),
+  ...(related?.providers === undefined || related.providers.length === 0
+    ? {}
+    : { related_providers: [...related.providers] }),
 });
 
 /**
@@ -593,6 +599,9 @@ const projectError = (
     code !== "cleanup_incomplete"
       ? { retry: targetFailureRetry(error.failure) }
       : {}),
+    ...(error instanceof ArtifactOperationError && code === "artifact_changed"
+      ? { retry: TARGET_FAILURE_PROJECTIONS.changed.retry }
+      : {}),
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
   };
@@ -634,12 +643,6 @@ const errorDetails = (
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
-  if (error instanceof AnalysisUnsupportedTargetError)
-    return {
-      operation: error.operation,
-      path: error.path,
-      reason: error.reason,
-    };
   if (error instanceof AnalysisTargetFailureError)
     return {
       operation: error.operation,
@@ -746,15 +749,16 @@ const artifactStateErrorDetails = (
     return {
       operation: error.operation,
       reason: error.reason,
+      ...(error.reason === "integrity" &&
+      integrityCheckMeansChanged(error.integrityCheck)
+        ? { failure_kind: "changed" }
+        : {}),
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
       ...(error.integrityCheck === undefined
         ? {}
         : { integrity_check: error.integrityCheck }),
-      ...(error.parseFailure === undefined
-        ? {}
-        : targetFailureDetails(error.parseFailure)),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),

@@ -19,6 +19,7 @@ import { expect, it, vi } from "vitest";
 
 import {
   inspectOciImageLayoutInputSchema,
+  OCI_IMAGE_LAYOUT_FORMAT,
   ociImageLayoutSchema,
   parseOciDigest,
 } from "../domain/oci/imageLayout.js";
@@ -2039,7 +2040,8 @@ it("projects a non-directory selection as an unsupported target", async () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toMatchObject({
-        _tag: "AnalysisUnsupportedTargetError",
+        _tag: "AnalysisTargetFailureError",
+        failure: { kind: "unsupported", format: OCI_IMAGE_LAYOUT_FORMAT },
       });
   } finally {
     await provider.close();

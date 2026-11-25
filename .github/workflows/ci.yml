@@ -144,19 +144,6 @@ jobs:
         run: |
           test "${SOURCE_SHA}" = "${GITHUB_SHA}"
           test "${SOURCE_SHA}" = "$(git rev-parse HEAD)"
-      - name: Find a verified ancestor for main selection
-        id: baseline
-        if: inputs.source_sha == '' && ((github.event_name == 'push' && vars.REA_CI_FULL_ON_PUSH == 'true') || (github.event_name == 'schedule' && github.event.schedule == '23 1,5,7,11,13,17,19,23 * * *'))
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.sha }}
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          # Warm pushes do not verify provider lanes; only scheduled main runs
-          # prove lane coverage for baseline diffs, including after re-enabling
-          # REA_CI_FULL_ON_PUSH.
-          CI_BASELINE_EVENT: schedule
-        run: node scripts/ci/baseline.mjs
       - name: Admit scheduled qualification
         id: qualification
         if: github.event_name == 'schedule' && inputs.source_sha == ''
@@ -169,6 +156,23 @@ jobs:
           CI_FORCE_FULL: ${{ github.event.schedule == '23 3 * * *' }}
           CI_QUALIFICATION_TIER: ${{ github.event.schedule == '23 1,5,7,11,13,17,19,23 * * *' && 'fast' || 'full' }}
         run: node scripts/ci/qualification.mjs
+      - name: Find a verified ancestor for main selection
+        id: baseline
+        if: >-
+          inputs.source_sha == '' &&
+          ((github.event_name == 'push' && vars.REA_CI_FULL_ON_PUSH == 'true') ||
+          (github.event_name == 'schedule' && github.event.schedule == '23 1,5,7,11,13,17,19,23 * * *' &&
+           steps.qualification.outputs.run_full != 'false'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # Warm pushes do not verify provider lanes; only scheduled main runs
+          # prove lane coverage for baseline diffs, including after re-enabling
+          # REA_CI_FULL_ON_PUSH.
+          CI_BASELINE_EVENT: schedule
+        run: node scripts/ci/baseline.mjs
       - name: Select verification lanes
         id: plan
         env:

@@ -49,7 +49,8 @@ import {
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
@@ -149,7 +150,9 @@ export class ArtifactProvider implements AnalysisProvider {
         options,
       );
     } catch (cause: unknown) {
-      inspected = err(translateArtifactFailure("inspect_artifact", cause));
+      inspected = err(
+        translateArtifactFailure("inspect_artifact", path, cause),
+      );
     }
     // A completed inspection still fails when its readers could not be
     // released. The caller's lifetime keeps this scope, so a later close of
@@ -286,7 +289,11 @@ class BundleResourceArtifactClient implements AnalysisClient {
       );
     } catch (cause: unknown) {
       return err(
-        translateArtifactFailure(operation as ArtifactAnalysisOperation, cause),
+        translateArtifactFailure(
+          operation as ArtifactAnalysisOperation,
+          this.root.callerPath,
+          cause,
+        ),
       );
     }
   }
@@ -474,7 +481,13 @@ class ArtifactClient implements AnalysisClient {
       );
     } catch (cause: unknown) {
       return err(
-        translateArtifactFailure(operation as ArtifactAnalysisOperation, cause),
+        translateArtifactFailure(
+          operation as ArtifactAnalysisOperation,
+          // The caller's spelling, not the resolved file the reader opened.
+          this.target.callerInputPath ??
+            artifactTargetSelectedPath(this.target),
+          cause,
+        ),
       );
     }
   }
@@ -487,10 +500,11 @@ class ArtifactClient implements AnalysisClient {
   private unsupportedTarget(
     operation: string,
     reason: string,
-  ): AnalysisUnsupportedTargetError {
-    return new AnalysisUnsupportedTargetError(
+  ): AnalysisTargetFailureError {
+    return unsupportedTarget(
       operation,
       this.target.sourcePath ?? this.target.path,
+      this.target.format,
       reason,
     );
   }

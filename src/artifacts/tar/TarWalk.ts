@@ -28,10 +28,13 @@ import { TarStreamEnded, type TarByteStream } from "./TarByteStream.js";
 export const TAR_EXTENDED_HEADER_BYTES = 1024 * 1024;
 /**
  * Retained member metadata: a fixed per-member charge plus decoded path and
- * link bytes. It bounds memory for tar streams of many tiny members.
+ * link bytes, and the global pax map. It bounds memory for tar streams of
+ * many tiny members or repeated pax global headers.
  */
 export const TAR_RETAINED_METADATA_BYTES = 64 * 1024 * 1024;
 const MEMBER_OVERHEAD_BYTES = 512;
+/** One map entry retained with a pax keyword, besides its key and value bytes. */
+const PAX_ENTRY_OVERHEAD_BYTES = 64;
 const SCAN_CHUNK_BYTES = 64 * 1024;
 
 export interface TarMember {
@@ -149,6 +152,29 @@ const withPax = (
   return merged;
 };
 
+const paxRecordBytes = (key: string, value: string): number =>
+  Buffer.byteLength(key) + Buffer.byteLength(value) + PAX_ENTRY_OVERHEAD_BYTES;
+
+/**
+ * How many bytes merging `records` adds to the retained global map, before
+ * that map is allocated. Only the changed keys are counted, so a run of tiny
+ * global headers costs their own size, not the whole map's.
+ */
+const mergedPaxBytesDelta = (
+  base: TarPaxRecords,
+  records: TarPaxRecords,
+): number => {
+  let bytes = 0;
+  for (const [key, value] of records) {
+    const previous = base.get(key);
+    if (value === "") {
+      if (previous !== undefined) bytes -= paxRecordBytes(key, previous);
+    } else if (previous === undefined) bytes += paxRecordBytes(key, value);
+    else bytes += Buffer.byteLength(value) - Buffer.byteLength(previous);
+  }
+  return bytes;
+};
+
 const decimal = (value: string | undefined): bigint | undefined =>
   value !== undefined && /^[0-9]+$/u.test(value) ? BigInt(value) : undefined;
 
@@ -220,6 +246,7 @@ export const walkTar = async (
   let paxHeaders = 0;
   const retained = new Budget(TAR_RETAINED_METADATA_BYTES);
   let global: TarPaxRecords = new Map();
+  let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
   let longName: Uint8Array | undefined;
   let longLink: Uint8Array | undefined;
@@ -355,9 +382,23 @@ export const walkTar = async (
             );
             break;
           }
-          if (typeflag === TAR_TYPEFLAGS.paxGlobal)
+          if (typeflag === TAR_TYPEFLAGS.paxGlobal) {
+            // Charge the map that withPax is about to copy. Repeated global
+            // headers otherwise accumulate without reaching this budget.
+            const nextBytes = Math.max(
+              0,
+              chargedGlobalPax + mergedPaxBytesDelta(global, pax.records),
+            );
+            if (nextBytes > chargedGlobalPax)
+              retained.charge(
+                nextBytes - chargedGlobalPax,
+                retainedMetadataLimit,
+              );
+            else if (nextBytes < chargedGlobalPax)
+              retained.refund(chargedGlobalPax - nextBytes);
+            chargedGlobalPax = nextBytes;
             global = withPax(global, pax.records);
-          else local = pax.records;
+          } else local = pax.records;
         } else {
           const end = data.indexOf(0);
           const value = data.subarray(0, end === -1 ? data.length : end);

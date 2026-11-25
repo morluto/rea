@@ -36,6 +36,7 @@ import {
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   AnalysisOutputError,
+  AnalysisTargetFailureError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -214,8 +215,16 @@ const nativeMachoSourcePrimary = (
       optionsWithoutCause,
     );
   }
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
-    return new AnalysisOutputError(operation, cause.message, options);
+  if (
+    cause instanceof ArtifactReaderFailure &&
+    cause.parseFailure !== undefined
+  )
+    return new AnalysisTargetFailureError(
+      operation,
+      path,
+      cause.parseFailure,
+      options,
+    );
   if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
     return readerIntegrityFailure(operation, path, cause, options);
   return new ProviderAdapterError(IDENTITY.id, operation, {

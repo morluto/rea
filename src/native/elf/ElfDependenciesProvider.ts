@@ -5,7 +5,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -44,16 +44,12 @@ export class ElfDependenciesProvider {
   readonly identity = ELF_DEPENDENCIES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_DEPENDENCIES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_DEPENDENCIES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(

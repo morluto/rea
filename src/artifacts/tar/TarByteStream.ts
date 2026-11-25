@@ -60,6 +60,7 @@ export class PlainTarStream implements TarByteStream {
   async read(length: number, signal?: AbortSignal): Promise<Buffer> {
     const available = Math.min(length, this.size - this.#position);
     const bytes = await readArtifactFileBytes(
+      "tar",
       this.handle,
       this.#position,
       available,
@@ -214,6 +215,7 @@ export class GzipTarStream implements TarByteStream {
       if (chunks % 64 === 63) await setImmediate();
       assertArtifactReadActive(signal);
       const chunk = await readArtifactFileBytes(
+        "tar",
         this.#handle,
         position,
         Math.min(SCAN_CHUNK_BYTES, this.#size - position),

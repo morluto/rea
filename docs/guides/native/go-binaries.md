@@ -207,8 +207,8 @@ architecture table was cut short rather than corrupted: `details.failure_kind` i
 acquire the complete file again. A CAFEBABE file whose architecture count
 reads as a Java class-file version is not read as a truncated
 universal file. A FAT form outside REA's coverage, such as an
-alignment exponent above 52, is `unsupported_target` without
-`failure_kind`. The same rules apply to `inspect_rust_binary`,
+alignment exponent above 52, is `unsupported_target` with `details.failure_kind`
+`unsupported`. The same rules apply to `inspect_rust_binary`,
 `inspect_dwarf_units` and `inspect_native_initializers`.
 
 For ELF images without a named build-info section, discovery checks each

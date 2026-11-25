@@ -172,7 +172,7 @@ describe("ZIP Zstandard method 93", () => {
         ),
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining(message),
       });
     },
@@ -197,7 +197,7 @@ describe("ZIP Zstandard method 93", () => {
       ),
     ).rejects.toMatchObject({
       name: "ArtifactReaderFailure",
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("Invalid compressed data"),
     });
   });
@@ -211,7 +211,7 @@ describe("ZIP Zstandard method 93", () => {
     await expect(
       readFirstZstandardMember(zstandardZipFixture(content, { compressed })),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("Invalid compressed data"),
       cause: { code: "ZSTD_error_checksum_wrong" },
     });
@@ -228,12 +228,16 @@ describe("ZIP Zstandard method 93", () => {
       message: expect.stringContaining("Zstandard dictionary"),
       cause: { code: "ZSTD_error_dictionary_wrong" },
     });
-    expect(translateArtifactFailure("extract_artifact", failure)).toMatchObject(
-      {
-        reason: "unavailable",
-        detail: expect.stringContaining("Zstandard dictionary"),
-      },
-    );
+    expect(
+      translateArtifactFailure(
+        "extract_artifact",
+        "/selected/artifact",
+        failure,
+      ),
+    ).toMatchObject({
+      reason: "unavailable",
+      detail: expect.stringContaining("Zstandard dictionary"),
+    });
   });
 
   it.each([
@@ -258,7 +262,7 @@ describe("ZIP Zstandard method 93", () => {
         zstandardZipFixture(content, { compressed: Buffer.from(hex, "hex") }),
       ),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("Invalid compressed data"),
       cause: { code },
     });
@@ -311,7 +315,7 @@ describe("ZIP Zstandard frame completion", () => {
         readFirstZstandardMember(zstandardZipFixture(output, { compressed })),
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("Invalid compressed data"),
       });
     },
@@ -803,7 +807,7 @@ describe("ZipArtifactReader extraction finalization", () => {
       held.release();
       await expect(consuming).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
+        reason: "malformed",
         cause: failure,
       });
       expect(stream.readableEnded).toBe(false);

@@ -820,7 +820,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     capture.format = format;
     expect(projectAnalysisView(parentOf(capture), view())).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisUnsupportedTargetError" },
+      error: { _tag: "AnalysisTargetFailureError" },
     });
   }
   for (const parameters of [{ sensitive_value_count: 1 }, {}, null])
@@ -832,8 +832,10 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     ).toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisUnsupportedTargetError",
-        reason: "sensitive_values_unretained",
+        _tag: "AnalysisTargetFailureError",
+        failure: {
+          detail: expect.stringContaining("sensitive_values_unretained"),
+        },
       },
     });
   const layout = analysisViewLayoutEvidence();
@@ -850,7 +852,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     ),
   ).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
   const cyclic: { self?: unknown } = {};
   cyclic.self = cyclic;

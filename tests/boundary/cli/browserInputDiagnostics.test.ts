@@ -181,7 +181,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
         message: expect.stringMatching(/input.*invalid/iu),
         retryable: false,
         remediation: {
-          action: expect.stringContaining(input.operation),
+          action: expect.stringContaining(`rea ${input.command}`),
         },
         recovery: {
           kind: "inspect_input_contract",
@@ -198,9 +198,10 @@ describe("browser and Inspector CLI input diagnostics", () => {
           ]),
         },
       });
-      expect(result.json).toMatchObject({
-        remediation: { action: expect.stringContaining("tools/list") },
-      });
+      const action = (result.json as { remediation: { action: string } })
+        .remediation.action;
+      expect(action).not.toContain(input.operation);
+      expect(action).not.toContain("tools/list");
       expect(result.stdout).not.toContain(malformedEndpoint);
       expect(result.stderr).not.toContain(malformedEndpoint);
     },

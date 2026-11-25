@@ -6,7 +6,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
   describeElectronFuseFindings,
@@ -99,9 +99,10 @@ const owners = (
   const electronFuses = {
     inspect: vi.fn<OwnerInspect>(async () =>
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_electron_fuses",
           "/work/app",
+          "fixture",
           "unsupported",
         ),
       ),
@@ -111,9 +112,10 @@ const owners = (
   const goBinaries = {
     inspect: vi.fn<OwnerInspect>(async () =>
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_go_binary",
           "/work/app",
+          "fixture",
           "unsupported",
         ),
       ),
@@ -123,9 +125,10 @@ const owners = (
   const rustBinaries = {
     inspect: vi.fn<OwnerInspect>(async () =>
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_rust_binary",
           "/work/app",
+          "fixture",
           "unsupported",
         ),
       ),
@@ -172,9 +175,10 @@ describe("ReleaseExposureService", () => {
     );
     goBinaries.inspect.mockResolvedValue(
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_go_binary",
           "/work/tree/app",
+          "fixture",
           "not a Go binary",
         ),
       ),
@@ -668,9 +672,10 @@ describe("ReleaseExposureService fuse image identity", () => {
       (input as { path: string }).path === "/work/app"
         ? ok(evidence(fuseReport([slice(0)])))
         : err(
-            new AnalysisUnsupportedTargetError(
+            unsupportedTarget(
               "inspect_electron_fuses",
               "/work/helper",
+              "fixture",
               "unsupported",
             ),
           ),
@@ -857,9 +862,10 @@ describe("ReleaseExposureService fuse sampling", () => {
     desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
     const unsupported = (operation: string) =>
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           operation,
           "/work/app/MyApp.exe",
+          "fixture",
           "unsupported",
         ),
       );
@@ -1890,9 +1896,10 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
     [
       "unsupported",
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_electron_fuses",
           "/work/App.app",
+          "fixture",
           "unsupported",
         ),
       ),
@@ -2410,9 +2417,10 @@ describe("ReleaseExposureService undecoded metadata", () => {
     ] as const)
       owner.inspect.mockResolvedValue(
         err(
-          new AnalysisUnsupportedTargetError(
+          unsupportedTarget(
             operation,
             "/work/app",
+            "fixture",
             "Compressed section",
             { undecodedContent },
           ),

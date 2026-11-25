@@ -7,6 +7,7 @@ import {
   DirectoryArtifactRootFailure,
   projectArtifactCloseFailure,
   translateArtifactFailure,
+  translateArtifactOperationFailure,
   type ArtifactResourceOwner,
 } from "../resources/index.js";
 import {
@@ -17,7 +18,7 @@ import {
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
   OCI_IMAGE_LAYOUT_FORMAT,
@@ -78,16 +79,12 @@ const layoutFailureDialect = (
       cause instanceof DirectoryArtifactRootFailure &&
       cause.reason === "path"
     )
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         OPERATION,
         input.path,
-        cause.message,
-        {
-          cause,
-          ...options,
-          remediationAction:
-            "Select an OCI image-layout directory containing oci-layout, index.json, and blobs/.",
-        },
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `${cause.message} Select an OCI image-layout directory containing oci-layout, index.json, and blobs/.`,
+        { ...options, cause },
       );
     // A missing selection, or one under a regular-file ancestor, is a bad
     // `path` rather than an I/O failure; other root I/O stays an I/O failure.
@@ -110,16 +107,12 @@ const layoutFailureDialect = (
       cause.reason === "path" &&
       cause.message.includes("symlink")
     )
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         OPERATION,
         input.path,
-        cause.message,
-        {
-          cause,
-          ...options,
-          remediationAction:
-            "Select the OCI image-layout directory itself; symbolic links are not followed.",
-        },
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `${cause.message} Select the OCI image-layout directory itself. Symbolic links are not followed.`,
+        { ...options, cause },
       );
     if (isParseLimit(cause, OCI_IMAGE_LAYOUT_FORMAT)) {
       const parameter = (
@@ -158,16 +151,14 @@ const layoutFailureDialect = (
     if (formatFailure !== undefined) return formatFailure;
     // A cancelled read goes to the shared cancellation path.
     if (cause instanceof ArtifactReaderFailure && cause.reason !== "cancelled")
-      return translateArtifactFailure(OPERATION, cause);
+      return translateArtifactFailure(OPERATION, input.path, cause);
     return undefined;
   },
   // A file read whose handle close failed reports its own parse outcome as
   // primary, with the unresolved close bound to that read's exact lease.
   readCleanup: (read, primary) => {
     if (primary === undefined) {
-      const failure = translateArtifactFailure(OPERATION, read);
-      bindArtifactFileCleanup(read, failure);
-      return failure;
+      return translateArtifactFailure(OPERATION, input.path, read);
     }
     const cleanup = new ProviderCleanupError(
       OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY.id,
@@ -264,7 +255,7 @@ export class OciImageLayoutProvider {
           return err(
             analysisErrorWithCleanupDependencies(
               layoutFailure(outcome.cause, input),
-              translateArtifactFailure(OPERATION, cleanup),
+              translateArtifactOperationFailure(OPERATION, cleanup),
               OPERATION,
             ),
           );

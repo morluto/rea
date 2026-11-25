@@ -221,7 +221,7 @@ it("refuses a browser scenario without selected response bodies", () => {
   ).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
+      _tag: "AnalysisTargetFailureError",
       message: expect.stringContaining("response_body selected"),
     },
   });

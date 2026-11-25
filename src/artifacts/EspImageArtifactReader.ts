@@ -16,7 +16,10 @@ import {
   ESP_SIGNATURE_BLOCK_BYTES,
   offsetText,
 } from "../domain/firmware/espImageStructures.js";
-import { ArtifactReaderFailure } from "../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../resources/index.js";
 import { readEspFlashRange } from "./EspFlashRegionReads.js";
 import {
   PositionalArtifactReader,
@@ -177,7 +180,7 @@ const flashDumpLimitation = (
 const decodeFailure = (failure: EspImageFailure): ArtifactReaderFailure =>
   failure.kind === "unsupported"
     ? new ArtifactReaderFailure("unavailable", failure.message)
-    : new ArtifactReaderFailure(
-        "format",
+    : malformedArtifact(
+        "esp-image",
         `${LABEL} is malformed: ${failure.message}`,
       );

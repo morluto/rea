@@ -9,7 +9,7 @@ import type {
 } from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../../../domain/analysisErrorCore.js";
 import {
   isParseLimit,
@@ -143,9 +143,10 @@ class TraceStreamRead {
     }
     const version = number(raw.version);
     if (version !== null && version !== 10)
-      throw new AnalysisUnsupportedTargetError(
+      throw unsupportedTarget(
         PLAYWRIGHT_TRACE_OPERATION,
         inventory.artifact.path,
+        "playwright-trace",
         "Only Playwright trace version 10 is supported.",
       );
     if (version !== 10) {
